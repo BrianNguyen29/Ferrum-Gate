@@ -1,12 +1,12 @@
 use anyhow::Context;
 use chrono::Utc;
 use ferrum_proto::{
-    ExecutionId, RollbackContract, RollbackPrepareRequest, RollbackPrepareResponse, RollbackState,
-    RollbackContractId,
+    ExecutionId, RollbackContract, RollbackContractId, RollbackPrepareRequest,
+    RollbackPrepareResponse, RollbackState,
 };
 use std::sync::Arc;
 
-use crate::{AdapterError, AdapterRegistry};
+use crate::{AdapterError, AdapterRegistry, ExecuteReceipt};
 
 pub struct RollbackService {
     registry: Arc<AdapterRegistry>,
@@ -62,12 +62,31 @@ impl RollbackService {
         Ok(receipt.verified)
     }
 
+    pub async fn execute(
+        &self,
+        contract: &RollbackContract,
+        payload: &serde_json::Value,
+    ) -> anyhow::Result<ExecuteReceipt> {
+        let adapter = self
+            .registry
+            .get(&contract.adapter_key)
+            .context("adapter not registered")?;
+        let receipt = adapter
+            .execute(contract, payload)
+            .await
+            .map_err(map_adapter_err)?;
+        Ok(receipt)
+    }
+
     pub async fn compensate(&self, contract: &RollbackContract) -> anyhow::Result<()> {
         let adapter = self
             .registry
             .get(&contract.adapter_key)
             .context("adapter not registered")?;
-        adapter.compensate(contract).await.map_err(map_adapter_err)?;
+        adapter
+            .compensate(contract)
+            .await
+            .map_err(map_adapter_err)?;
         Ok(())
     }
 

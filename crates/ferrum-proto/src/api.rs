@@ -58,3 +58,44 @@ pub enum ApiErrorCode {
     Conflict,
     Internal,
 }
+
+// Execute request/response types
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ExecuteRequest {
+    pub execution_id: crate::ExecutionId,
+    pub payload: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ExecuteResponse {
+    pub execution_id: crate::ExecutionId,
+    pub executed: bool,
+    pub result_digest: Option<String>,
+    pub external_id: Option<String>,
+}
+
+// Verify request/response types
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct VerifyRequest {
+    pub execution_id: crate::ExecutionId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct VerifyResponse {
+    pub execution_id: crate::ExecutionId,
+    pub verified: bool,
+    pub verified_at: Option<crate::Timestamp>,
+}
+
+// Commit request/response types
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CommitRequest {
+    pub execution_id: crate::ExecutionId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CommitResponse {
+    pub execution_id: crate::ExecutionId,
+    pub committed: bool,
+    pub committed_at: Option<crate::Timestamp>,
+}
