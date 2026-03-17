@@ -16,7 +16,8 @@ members = [
   "crates/ferrum-adapter-sqlite",
   "crates/ferrum-adapter-http",
   "crates/ferrum-adapter-maildraft",
-  "crates/ferrum-testkit"
+  "crates/ferrum-testkit",
+  "tests",
 ]
 resolver = "2"
 
