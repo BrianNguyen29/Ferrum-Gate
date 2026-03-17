@@ -1,0 +1,10 @@
+[package]
+name = "ferrum-pdp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+anyhow.workspace = true
+ferrum-proto = { path = "../ferrum-proto" }

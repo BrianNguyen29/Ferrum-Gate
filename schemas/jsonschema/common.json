@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ferrumgate.local/schemas/common.json",
+  "title": "FerrumGate Common Types",
+  "type": "object",
+  "definitions": {
+    "RiskTier": {
+      "type": "string",
+      "enum": [
+        "Low",
+        "Medium",
+        "High",
+        "Critical"
+      ]
+    },
+    "ApprovalMode": {
+      "type": "string",
+      "enum": [
+        "None",
+        "Required",
+        "DraftOnly",
+        "TwoPhaseCommit"
+      ]
+    },
+    "Decision": {
+      "type": "string",
+      "enum": [
+        "Allow",
+        "Deny",
+        "Quarantine",
+        "RequireApproval",
+        "AllowDraftOnly"
+      ]
+    },
+    "TrustLabel": {
+      "type": "string",
+      "enum": [
+        "Trusted",
+        "UserProvided",
+        "InternalPolicy",
+        "InternalSystem",
+        "ExternalWeb",
+        "ExternalEmail",
+        "ExternalRepoText",
+        "ExternalToolMetadata",
+        "ExternalToolOutput",
+        "OCRExtracted",
+        "Untrusted"
+      ]
+    },
+    "SensitivityLabel": {
+      "type": "string",
+      "enum": [
+        "Public",
+        "Internal",
+        "Confidential",
+        "Secret",
+        "Credential",
+        "Pii"
+      ]
+    },
+    "ResourceMode": {
+      "type": "string",
+      "enum": [
+        "Read",
+        "Write",
+        "ReadWrite",
+        "Draft",
+        "Execute",
+        "Admin"
+      ]
+    },
+    "RollbackClass": {
+      "type": "string",
+      "enum": [
+        "R0NativeReversible",
+        "R1SnapshotRecoverable",
+        "R2Compensatable",
+        "R3IrreversibleHighConsequence"
+      ]
+    },
+    "HttpMethod": {
+      "type": "string",
+      "enum": [
+        "Get",
+        "Post",
+        "Put",
+        "Patch",
+        "Delete"
+      ]
+    }
+  }
+}

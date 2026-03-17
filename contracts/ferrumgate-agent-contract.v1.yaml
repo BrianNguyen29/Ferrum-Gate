@@ -1,0 +1,98 @@
+version: "0.1.0"
+name: "FerrumGate v1 agent contract"
+purpose: "Machine-readable contract for agents that must follow FerrumGate execution rules"
+
+core_principles:
+  - "Never infer permission from session continuity."
+  - "Every side effect must bind to an IntentEnvelope."
+  - "Every tool call must use a valid CapabilityLease."
+  - "Every meaningful execution step must emit ProvenanceEvent."
+  - "R3 actions must never auto-commit."
+
+policy_decisions:
+  - Allow
+  - Deny
+  - Quarantine
+  - RequireApproval
+  - AllowDraftOnly
+
+rollback_classes:
+  R0NativeReversible:
+    meaning: "Action can be reversed natively"
+    auto_commit_allowed: true
+  R1SnapshotRecoverable:
+    meaning: "Action can be recovered from snapshot"
+    requires_snapshot_proof: true
+  R2Compensatable:
+    meaning: "Action needs explicit compensation plan"
+    requires_compensation_plan: true
+  R3IrreversibleHighConsequence:
+    meaning: "High-consequence or irreversible action"
+    auto_commit_allowed: false
+    requires_approval_or_draft: true
+
+objects:
+  IntentEnvelope:
+    invariants:
+      - "allowed_outcomes.length >= 1"
+      - "expires_at > created_at"
+      - "if risk_tier == Critical then approval_mode != None"
+      - "if default_rollback_class == R3IrreversibleHighConsequence then approval_mode in [Required, DraftOnly, TwoPhaseCommit]"
+
+  CapabilityLease:
+    invariants:
+      - "ttl_default = 15s"
+      - "ttl_max = 300s"
+      - "single_use_only = true"
+      - "resource_bindings subset_of IntentEnvelope.resource_scope"
+
+  RollbackContract:
+    invariants:
+      - "if rollback_class == R2Compensatable then compensation_plan.length > 0"
+      - "if rollback_class == R3IrreversibleHighConsequence then auto_commit == false"
+      - "EmailSend is always R3 in v1"
+
+  ProvenanceEvent:
+    invariants:
+      - "side effect executions must emit minimum lineage chain"
+
+minimum_lineage_chain:
+  - ActionProposalSubmitted
+  - PolicyEvaluated
+  - CapabilityMinted
+  - ToolCallPrepared
+  - ToolCallExecuted
+  - SideEffectPrepared
+  - SideEffectVerified
+  - "Terminal event: SideEffectCommitted | SideEffectCompensated | SideEffectRolledBack"
+
+agent_checklists:
+  before_propose:
+    - "Confirm action is inside allowed_outcomes"
+    - "Confirm target resource is inside resource_scope"
+    - "Determine if action is read-only or mutation"
+    - "Determine rollback class"
+    - "Check if inputs contain external/untrusted lineage"
+  before_execute:
+    - "Proposal already evaluated by policy"
+    - "CapabilityLease is active and not expired"
+    - "Arguments satisfy constraints"
+    - "Taint score <= max_taint_score"
+    - "RollbackContract prepared if action has side effect"
+    - "Required approval already granted and digest matches"
+  after_execute:
+    - "Sanitize output"
+    - "Verify post-condition"
+    - "Emit ProvenanceEvent"
+    - "Choose one terminal path: commit, compensate, rollback, quarantine"
+
+hard_stop_conditions:
+  - "Capability mismatch"
+  - "Capability expired"
+  - "Capability already used"
+  - "Manifest hash mismatch"
+  - "Taint score exceeds budget"
+  - "Policy decision is Deny"
+  - "Policy decision is Quarantine"
+  - "Approval missing for R3 action"
+  - "Approval digest mismatch"

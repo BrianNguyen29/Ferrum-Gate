@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ferrumgate.local/schemas/rollback-contract.json",
+  "title": "RollbackContract",
+  "type": "object",
+  "required": [
+    "contract_id",
+    "intent_id",
+    "proposal_id",
+    "execution_id",
+    "action_type",
+    "rollback_class",
+    "adapter_key",
+    "target",
+    "prepare_checks",
+    "verify_checks",
+    "compensation_plan",
+    "auto_commit",
+    "state",
+    "created_at"
+  ],
+  "properties": {
+    "contract_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "intent_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "proposal_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "execution_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "action_type": {
+      "type": "string",
+      "enum": [
+        "FileWrite",
+        "FileDelete",
+        "GitCommit",
+        "GitBranchCreate",
+        "SqlMutation",
+        "HttpMutation",
+        "EmailDraftCreate",
+        "EmailSend",
+        "McpToolMutation",
+        "Unknown"
+      ]
+    },
+    "rollback_class": {
+      "$ref": "common.json#/definitions/RollbackClass"
+    },
+    "adapter_key": {
+      "type": "string"
+    },
+    "target": {
+      "type": "object"
+    },
+    "prepare_checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "check_type",
+          "config"
+        ],
+        "properties": {
+          "check_type": {
+            "type": "string",
+            "enum": [
+              "FileExists",
+              "FileHashMatches",
+              "GitRefMatches",
+              "SqlRowCountRange",
+              "HttpStatusExpected",
+              "EmailDraftExists",
+              "JsonPredicate"
+            ]
+          },
+          "config": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "verify_checks": {
+      "type": "array",
+      "items": {
+        "$ref": "#/properties/prepare_checks/items"
+      }
+    },
+    "compensation_plan": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "order",
+          "adapter_key",
+          "operation",
+          "args",
+          "idempotency_key"
+        ],
+        "properties": {
+          "order": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "adapter_key": {
+            "type": "string"
+          },
+          "operation": {
+            "type": "string"
+          },
+          "args": {
+            "type": "object"
+          },
+          "idempotency_key": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "auto_commit": {
+      "type": "boolean"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "PendingPrepare",
+        "Prepared",
+        "ExecutedAwaitingVerify",
+        "Verified",
+        "Committed",
+        "CompensationPending",
+        "Compensated",
+        "RolledBack",
+        "Failed",
+        "Expired"
+      ]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expires_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "metadata": {
+      "type": "object"
+    }
+  }
+}

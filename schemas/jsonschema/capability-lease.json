@@ -1,0 +1,280 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ferrumgate.local/schemas/capability-lease.json",
+  "title": "CapabilityLease",
+  "type": "object",
+  "required": [
+    "capability_id",
+    "intent_id",
+    "proposal_id",
+    "tool_binding",
+    "resource_bindings",
+    "argument_constraints",
+    "taint_budget",
+    "issued_by",
+    "policy_bundle_id",
+    "status",
+    "issued_at",
+    "expires_at"
+  ],
+  "properties": {
+    "capability_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "intent_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "proposal_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "tool_binding": {
+      "type": "object",
+      "required": [
+        "server_name",
+        "tool_name"
+      ],
+      "properties": {
+        "server_name": {
+          "type": "string"
+        },
+        "tool_name": {
+          "type": "string"
+        },
+        "tool_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "resource_bindings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "oneOf": [
+          {
+            "required": [
+              "kind",
+              "path",
+              "mode"
+            ],
+            "properties": {
+              "kind": {
+                "const": "File"
+              },
+              "path": {
+                "type": "string"
+              },
+              "mode": {
+                "$ref": "common.json#/definitions/ResourceMode"
+              },
+              "required_hash": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          },
+          {
+            "required": [
+              "kind",
+              "repo_path",
+              "allowed_refs",
+              "mode"
+            ],
+            "properties": {
+              "kind": {
+                "const": "Git"
+              },
+              "repo_path": {
+                "type": "string"
+              },
+              "allowed_refs": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "mode": {
+                "$ref": "common.json#/definitions/ResourceMode"
+              }
+            }
+          },
+          {
+            "required": [
+              "kind",
+              "db_path",
+              "tables",
+              "mode"
+            ],
+            "properties": {
+              "kind": {
+                "const": "Sqlite"
+              },
+              "db_path": {
+                "type": "string"
+              },
+              "tables": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "mode": {
+                "$ref": "common.json#/definitions/ResourceMode"
+              }
+            }
+          },
+          {
+            "required": [
+              "kind",
+              "method",
+              "base_url",
+              "path_prefix",
+              "header_allowlist",
+              "mode"
+            ],
+            "properties": {
+              "kind": {
+                "const": "Http"
+              },
+              "method": {
+                "$ref": "common.json#/definitions/HttpMethod"
+              },
+              "base_url": {
+                "type": "string"
+              },
+              "path_prefix": {
+                "type": "string"
+              },
+              "header_allowlist": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "mode": {
+                "$ref": "common.json#/definitions/ResourceMode"
+              }
+            }
+          },
+          {
+            "required": [
+              "kind",
+              "recipients",
+              "allow_send",
+              "mode"
+            ],
+            "properties": {
+              "kind": {
+                "const": "EmailDraft"
+              },
+              "recipients": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "allow_send": {
+                "type": "boolean"
+              },
+              "mode": {
+                "$ref": "common.json#/definitions/ResourceMode"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "argument_constraints": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "taint_budget": {
+      "type": "object",
+      "required": [
+        "max_taint_score",
+        "allow_external_tool_output",
+        "allow_external_metadata",
+        "allow_untrusted_text"
+      ],
+      "properties": {
+        "max_taint_score": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "allow_external_tool_output": {
+          "type": "boolean"
+        },
+        "allow_external_metadata": {
+          "type": "boolean"
+        },
+        "allow_untrusted_text": {
+          "type": "boolean"
+        }
+      }
+    },
+    "approval_binding": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "issued_by": {
+      "type": "string"
+    },
+    "policy_bundle_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "tool_manifest_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "manifest_hash": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "Active",
+        "Used",
+        "Expired",
+        "Revoked",
+        "Quarantined"
+      ]
+    },
+    "issued_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "revoked_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "metadata": {
+      "type": "object"
+    }
+  }
+}

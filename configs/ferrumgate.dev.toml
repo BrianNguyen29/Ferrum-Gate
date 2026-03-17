@@ -1,0 +1,20 @@
+[server]
+host = "127.0.0.1"
+port = 8080
+
+[policy]
+bundle_path = "contracts/policy-bundle.example.yaml"
+strict_manifest_pinning = false
+
+[ledger]
+backend = "memory"
+
+[store]
+backend = "sqlite"
+dsn = "sqlite://ferrumgate.dev.db"
+
+[features]
+enable_firewall = true
+enable_provenance = true
+enable_rollback = true
+enable_draft_only_default = true

@@ -1,0 +1,35 @@
+{
+  "intent_id": "55555555-5555-5555-5555-555555555555",
+  "proposal_id": "44444444-4444-4444-4444-444444444444",
+  "tool_binding": {
+    "server_name": "gmail",
+    "tool_name": "gmail.create_draft",
+    "tool_version": "v1"
+  },
+  "resource_bindings": [
+    {
+      "kind": "EmailDraft",
+      "recipients": [
+        "finance@example.com"
+      ],
+      "allow_send": false,
+      "mode": "Draft"
+    }
+  ],
+  "argument_constraints": [
+    {
+      "type": "ExactString",
+      "key": "to",
+      "value": "finance@example.com"
+    }
+  ],
+  "taint_budget": {
+    "max_taint_score": 20,
+    "allow_external_tool_output": false,
+    "allow_external_metadata": false,
+    "allow_untrusted_text": false
+  },
+  "approval_binding": null,
+  "requested_ttl_secs": 15,
+  "metadata": {}
+}

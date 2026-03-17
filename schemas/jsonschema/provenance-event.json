@@ -1,0 +1,235 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ferrumgate.local/schemas/provenance-event.json",
+  "title": "ProvenanceEvent",
+  "type": "object",
+  "required": [
+    "event_id",
+    "kind",
+    "occurred_at",
+    "actor",
+    "object",
+    "trust_labels",
+    "sensitivity_labels",
+    "parent_edges",
+    "hash_chain"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "UserGoalReceived",
+        "IntentCompiled",
+        "IntentRevoked",
+        "ActionProposalSubmitted",
+        "PolicyEvaluated",
+        "CapabilityMinted",
+        "CapabilityRevoked",
+        "ApprovalRequested",
+        "ApprovalGranted",
+        "ApprovalDenied",
+        "ToolCallPrepared",
+        "ToolCallIntercepted",
+        "ToolCallExecuted",
+        "ToolOutputReceived",
+        "ToolOutputSanitized",
+        "DlpBlocked",
+        "SideEffectPrepared",
+        "SideEffectVerified",
+        "SideEffectCommitted",
+        "SideEffectCompensated",
+        "SideEffectRolledBack",
+        "Quarantined",
+        "ErrorRaised"
+      ]
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "actor": {
+      "type": "object",
+      "required": [
+        "actor_type",
+        "actor_id"
+      ],
+      "properties": {
+        "actor_type": {
+          "type": "string",
+          "enum": [
+            "User",
+            "Agent",
+            "PolicyEngine",
+            "Gateway",
+            "Adapter",
+            "Operator",
+            "System"
+          ]
+        },
+        "actor_id": {
+          "type": "string"
+        },
+        "display_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "object": {
+      "type": "object",
+      "required": [
+        "object_type",
+        "object_id"
+      ],
+      "properties": {
+        "object_type": {
+          "type": "string"
+        },
+        "object_id": {
+          "type": "string"
+        },
+        "summary": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "intent_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "proposal_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "execution_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "capability_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "rollback_contract_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "policy_bundle_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "trust_labels": {
+      "type": "array",
+      "items": {
+        "$ref": "common.json#/definitions/TrustLabel"
+      }
+    },
+    "sensitivity_labels": {
+      "type": "array",
+      "items": {
+        "$ref": "common.json#/definitions/SensitivityLabel"
+      }
+    },
+    "parent_edges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "edge_type",
+          "from_event_id"
+        ],
+        "properties": {
+          "edge_type": {
+            "type": "string",
+            "enum": [
+              "DerivedFrom",
+              "AuthorizedBy",
+              "ApprovedBy",
+              "TaintedBy",
+              "UsesManifest",
+              "EvaluatedByPolicy",
+              "Caused",
+              "Compensates",
+              "Verifies",
+              "References"
+            ]
+          },
+          "from_event_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "hash_chain": {
+      "type": "object",
+      "required": [
+        "content_hash",
+        "manifest_hash",
+        "policy_bundle_hash",
+        "previous_ledger_hash"
+      ],
+      "properties": {
+        "content_hash": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "manifest_hash": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "policy_bundle_hash": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "previous_ledger_hash": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "metadata": {
+      "type": "object"
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "rust": {
+      "source": "mindrally/skills",
+      "sourceType": "github",
+      "computedHash": "d66647042598d8c308892dabfefbab38c14c6bcba3b55c8055be6eb22bf0b017"
+    }
+  }
+}

@@ -1,0 +1,16 @@
+[package]
+name = "ferrumd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+ferrum-gateway = { path = "../../crates/ferrum-gateway" }
+ferrum-pdp = { path = "../../crates/ferrum-pdp" }
+ferrum-cap = { path = "../../crates/ferrum-cap" }
+ferrum-rollback = { path = "../../crates/ferrum-rollback" }
+ferrum-store = { path = "../../crates/ferrum-store" }

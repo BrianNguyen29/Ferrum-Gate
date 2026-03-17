@@ -1,0 +1,17 @@
+/target
+**/*.rs.bk
+Cargo.lock
+.env
+.env.*
+/tmp
+/.idea
+/.vscode
+.DS_Store
+*.log
+*.db
+*.sqlite
+*.sqlite3
+*.snap
+*.bak
+coverage/
+dist/

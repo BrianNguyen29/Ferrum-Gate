@@ -1,0 +1,47 @@
+[workspace]
+members = [
+  "bins/ferrumd",
+  "bins/ferrumctl",
+  "crates/ferrum-proto",
+  "crates/ferrum-pdp",
+  "crates/ferrum-cap",
+  "crates/ferrum-rollback",
+  "crates/ferrum-gateway",
+  "crates/ferrum-firewall",
+  "crates/ferrum-store",
+  "crates/ferrum-graph",
+  "crates/ferrum-ledger",
+  "crates/ferrum-adapter-fs",
+  "crates/ferrum-adapter-git",
+  "crates/ferrum-adapter-sqlite",
+  "crates/ferrum-adapter-http",
+  "crates/ferrum-adapter-maildraft",
+  "crates/ferrum-testkit"
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+axum = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace", "cors"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+schemars = { version = "0.8", features = ["chrono", "uuid1", "preserve_order"] }
+sqlx = { version = "0.8", features = ["sqlite", "chrono", "uuid", "runtime-tokio-rustls"] }
+sha2 = "0.10"
+petgraph = "0.7"
+clap = { version = "4", features = ["derive"] }
+indexmap = { version = "1", features = ["serde"] }

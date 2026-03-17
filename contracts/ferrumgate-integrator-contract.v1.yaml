@@ -1,0 +1,28 @@
+version: "0.1.0"
+name: "FerrumGate v1 integrator contract"
+
+integration_rules:
+  - "All mutating tool calls must pass through the FerrumGate gateway."
+  - "Capability validation must happen before upstream tool execution."
+  - "Sanitize output before returning to agent or user plane."
+  - "Persist lineage for every meaningful decision and side effect."
+  - "Do not bypass rollback preparation for mutating actions."
+
+required_bindings:
+  - intent_id
+  - proposal_id
+  - capability_id
+  - execution_id
+
+required_checks:
+  - scope_match
+  - args_match
+  - taint_budget_check
+  - policy_decision_check
+  - manifest_integrity_check
+  - rollback_prepared_if_needed
+
+operator_expectations:
+  - "Approval requests must bind to action digest."
+  - "Quarantined executions must be inspectable."
+  - "Lineage query must explain why an action was allowed or blocked."
