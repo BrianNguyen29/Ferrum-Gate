@@ -1,0 +1,26 @@
+[package]
+name = "integration-tests"
+version = "0.1.0"
+edition = "2024"
+
+[[test]]
+name = "integration_gateway_flow"
+path = "integration_gateway_flow.rs"
+
+[[test]]
+name = "integration_contracts"
+path = "integration_contracts.rs"
+
+[dependencies]
+ferrum-gateway = { path = "../crates/ferrum-gateway" }
+ferrum-proto = { path = "../crates/ferrum-proto" }
+ferrum-store = { path = "../crates/ferrum-store" }
+ferrum-rollback = { path = "../crates/ferrum-rollback" }
+ferrum-pdp = { path = "../crates/ferrum-pdp" }
+ferrum-cap = { path = "../crates/ferrum-cap" }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tempfile = "3"
+axum = "0.8"
+chrono = { version = "0.4", features = ["serde"] }
+tower = "0.5"

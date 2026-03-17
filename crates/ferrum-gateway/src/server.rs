@@ -14,7 +14,7 @@ use ferrum_proto::{
     ProvenanceEventKind, ResourceSelector, RiskTier, RollbackClass, TimeBudget, TrustContextSummary,
     ActorRef, ActorType, ObjectRef, ObjectType, HashChainRef,
 };
-use ferrum_store::{CapabilityRepo, ExecutionRepo, IntentRepo, ProvenanceRepo, RollbackRepo};
+use ferrum_store::{CapabilityRepo, ExecutionRepo, IntentRepo, ProposalRepo, ProvenanceRepo, RollbackRepo};
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
 
@@ -186,7 +186,42 @@ async fn evaluate_proposal(
     Path(_proposal_id): Path<String>,
     Json(proposal): Json<ferrum_proto::ActionProposal>,
 ) -> Result<Json<EvaluateProposalResponse>, ApiProblem> {
-    let intent = minimal_intent_for(proposal.intent_id, proposal.requested_rollback_class.clone());
+    let now = Utc::now();
+    let intent_id = proposal.intent_id;
+
+    // Load the real intent from store if it exists; fall back to minimal intent only if not found
+    let intent = match runtime.store.intents().get(intent_id).await {
+        Ok(Some(real_intent)) => real_intent,
+        Ok(None) => {
+            tracing::warn!("intent {} not found, using minimal intent", intent_id);
+            minimal_intent_for(proposal.intent_id, proposal.requested_rollback_class.clone())
+        }
+        Err(e) => {
+            tracing::warn!("failed to load intent {}: {}, using minimal intent", intent_id, e);
+            minimal_intent_for(proposal.intent_id, proposal.requested_rollback_class.clone())
+        }
+    };
+
+    // Persist the incoming ActionProposal (requires valid intent_id due to FK constraint)
+    if let Err(e) = runtime.store.proposals().insert(&proposal).await {
+        tracing::warn!("failed to persist proposal: {}", e);
+    }
+
+    // Emit provenance for proposal submission
+    let submission_event = create_provenance_event(
+        ProvenanceEventKind::ActionProposalSubmitted,
+        now,
+        Some(intent_id),
+        Some(proposal.proposal_id),
+        None,
+        None,
+        None,
+        None,
+    );
+    if let Err(e) = runtime.store.provenance().append_event(&submission_event).await {
+        tracing::warn!("failed to persist provenance event: {}", e);
+    }
+
     let trust = TrustContextSummary {
         input_labels: Vec::new(),
         sensitivity_labels: Vec::new(),
@@ -201,6 +236,22 @@ async fn evaluate_proposal(
         .evaluate(&intent, &proposal, &trust)
         .await
         .map_err(ApiProblem::internal)?;
+
+    // Emit provenance for policy evaluation
+    let eval_event = create_provenance_event(
+        ProvenanceEventKind::PolicyEvaluated,
+        now,
+        Some(intent_id),
+        Some(proposal.proposal_id),
+        None,
+        None,
+        None,
+        None,
+    );
+    if let Err(e) = runtime.store.provenance().append_event(&eval_event).await {
+        tracing::warn!("failed to persist provenance event: {}", e);
+    }
+
     Ok(Json(out))
 }
 
