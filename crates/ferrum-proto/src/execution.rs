@@ -1,4 +1,7 @@
-use crate::{CapabilityId, ExecutionId, JsonMap, ProposalId, RiskTier, RollbackClass, RollbackContractId, Timestamp};
+use crate::{
+    CapabilityId, ExecutionId, JsonMap, ProposalId, RiskTier, RollbackClass, RollbackContractId,
+    Timestamp,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -14,6 +17,7 @@ pub struct ActionProposal {
     pub expected_effect: String,
     pub estimated_risk: RiskTier,
     pub requested_rollback_class: RollbackClass,
+    pub decision: Option<crate::Decision>,
     pub taint_inputs: Vec<String>,
     pub metadata: JsonMap,
     pub created_at: Timestamp,

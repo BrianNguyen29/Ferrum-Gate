@@ -9,11 +9,13 @@ use chrono::{Duration, Utc};
 use ferrum_proto::{
     ActorRef, ActorType, ApiError, ApiErrorCode, AuthorizeExecutionRequest,
     AuthorizeExecutionResponse, CapabilityId, CapabilityMintRequest, CapabilityMintResponse,
-    CommitRequest, CommitResponse, Decision, EvaluateProposalResponse, ExecuteRequest,
-    ExecuteResponse, ExecutionId, ExecutionRecord, ExecutionState, HashChainRef, HealthResponse,
-    IntentCompileRequest, IntentCompileResponse, IntentEnvelope, IntentStatus, ObjectRef,
-    ObjectType, OutcomeClause, ProvenanceEvent, ProvenanceEventKind, ResourceSelector, RiskTier,
-    RollbackClass, RollbackState, TimeBudget, TrustContextSummary, VerifyRequest, VerifyResponse,
+    CommitRequest, CommitResponse, CompensateRequest, CompensateResponse, Decision,
+    EvaluateProposalResponse, ExecuteRequest, ExecuteResponse, ExecutionId, ExecutionRecord,
+    ExecutionState, HashChainRef, HealthResponse, IntentCompileRequest, IntentCompileResponse,
+    IntentEnvelope, IntentStatus, ObjectRef, ObjectType, OutcomeClause, ProvenanceEvent,
+    ProvenanceEventKind, ResourceSelector, RiskTier, RollbackClass, RollbackRequest,
+    RollbackResponse, RollbackState, TimeBudget, TrustContextSummary, VerifyRequest,
+    VerifyResponse,
 };
 use ferrum_store::{
     CapabilityRepo, ExecutionRepo, IntentRepo, ProposalRepo, ProvenanceRepo, RollbackRepo,
@@ -104,6 +106,14 @@ pub fn build_router(runtime: GatewayRuntime) -> Router {
         .route(
             "/v1/executions/{execution_id}/commit",
             post(commit_execution),
+        )
+        .route(
+            "/v1/executions/{execution_id}/compensate",
+            post(compensate_execution),
+        )
+        .route(
+            "/v1/executions/{execution_id}/rollback",
+            post(rollback_execution),
         )
         .with_state(Arc::new(runtime))
         .layer(TraceLayer::new_for_http())
@@ -288,10 +298,10 @@ async fn evaluate_proposal(
     let trust = TrustContextSummary {
         input_labels: Vec::new(),
         sensitivity_labels: Vec::new(),
-        taint_score: 0,
-        contains_external_metadata: false,
+        taint_score: (proposal.taint_inputs.len() * 10) as u8, // 10 points per taint input
+        contains_external_metadata: !proposal.taint_inputs.is_empty(),
         contains_tool_output: false,
-        contains_untrusted_text: false,
+        contains_untrusted_text: !proposal.taint_inputs.is_empty(),
     };
 
     let out = runtime
@@ -299,6 +309,20 @@ async fn evaluate_proposal(
         .evaluate(&intent, &proposal, &trust)
         .await
         .map_err(ApiProblem::internal)?;
+
+    // Store the decision in the proposal after evaluation
+    let mut proposal_with_decision = proposal.clone();
+    proposal_with_decision.decision = Some(out.decision.clone());
+
+    // Update the proposal with the decision
+    if let Err(e) = runtime
+        .store
+        .proposals()
+        .update(&proposal_with_decision)
+        .await
+    {
+        tracing::warn!("failed to update proposal with decision: {}", e);
+    }
 
     // Emit provenance for policy evaluation with linkage to submission event if proposal was persisted
     let parent_edge = if let Some(submission_event_id) = submission_event_id {
@@ -413,21 +437,72 @@ async fn authorize_execution(
         .await
         .map_err(ApiProblem::from_capability)?;
 
+    // Load the proposal to check its decision
+    let proposal = runtime
+        .store
+        .proposals()
+        .get(request.proposal_id)
+        .await
+        .map_err(|err| ApiProblem::internal(err.into()))?
+        .ok_or_else(|| {
+            ApiProblem::new(
+                StatusCode::NOT_FOUND,
+                ApiErrorCode::NotFound,
+                "proposal not found",
+            )
+        })?;
+
+    // Check proposal decision - fail-safe: block execution for non-Allow decisions
+    let decision = proposal.decision.as_ref();
+    let is_quarantined = decision
+        .map(|d| *d == Decision::Quarantine)
+        .unwrap_or(false);
+    let is_require_approval = decision
+        .map(|d| *d == Decision::RequireApproval)
+        .unwrap_or(false);
+    let is_deny = decision.map(|d| *d == Decision::Deny).unwrap_or(false);
+    let is_draft_only = decision
+        .map(|d| *d == Decision::AllowDraftOnly)
+        .unwrap_or(false);
+
+    // Non-allow decisions should not progress to executable states
+    let is_blocked = is_quarantined || is_require_approval || is_deny || is_draft_only;
+
     let now = Utc::now();
+
+    // Determine execution state and decision based on proposal decision
+    let (execution_state, execution_decision) = if is_blocked {
+        // Blocked decisions get terminal error states:
+        // - Quarantine -> Quarantined (already terminal)
+        // - RequireApproval -> AwaitingApproval (requires external approval before execution)
+        // - Deny -> Denied (terminal, rejected)
+        // - AllowDraftOnly -> Denied (draft-only cannot execute)
+        if is_quarantined {
+            (ExecutionState::Quarantined, Decision::Quarantine)
+        } else if is_require_approval {
+            (ExecutionState::AwaitingApproval, Decision::RequireApproval)
+        } else if is_deny {
+            (ExecutionState::Denied, Decision::Deny)
+        } else {
+            // AllowDraftOnly - treat as denied since we can't execute drafts
+            (ExecutionState::Denied, Decision::Deny)
+        }
+    } else if request.dry_run {
+        (ExecutionState::Authorized, Decision::Allow)
+    } else {
+        (ExecutionState::Prepared, Decision::Allow)
+    };
+
     let record = ExecutionRecord {
         execution_id: ExecutionId::new(),
         proposal_id: request.proposal_id,
         intent_id: lease.intent_id,
         capability_id: lease.capability_id,
         rollback_contract_id: None,
-        decision: Decision::Allow,
-        state: if request.dry_run {
-            ExecutionState::Authorized
-        } else {
-            ExecutionState::Prepared
-        },
+        decision: execution_decision,
+        state: execution_state,
         started_at: now,
-        finished_at: None,
+        finished_at: if is_blocked { Some(now) } else { None },
         result_digest: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
@@ -440,8 +515,20 @@ async fn authorize_execution(
     if let Err(e) = runtime.store.executions().insert(&record).await {
         tracing::warn!("failed to persist execution: {}", e);
     } else {
+        // Emit appropriate provenance event based on decision
+        let event_kind = if is_blocked {
+            if is_quarantined {
+                ProvenanceEventKind::Quarantined
+            } else if is_require_approval {
+                ProvenanceEventKind::ToolCallPrepared // Could add ApprovalRequired variant
+            } else {
+                ProvenanceEventKind::ToolCallPrepared
+            }
+        } else {
+            ProvenanceEventKind::ToolCallPrepared
+        };
         let event = create_provenance_event(
-            ProvenanceEventKind::ToolCallPrepared,
+            event_kind,
             now,
             Some(intent_id),
             Some(proposal_id),
@@ -921,6 +1008,244 @@ async fn perform_commit(
         execution_id,
         committed: true,
         committed_at: Some(now),
+    }))
+}
+
+async fn compensate_execution(
+    State(runtime): State<Arc<GatewayRuntime>>,
+    Path(execution_id_str): Path<String>,
+    Json(req): Json<CompensateRequest>,
+) -> Result<Json<CompensateResponse>, ApiProblem> {
+    let execution_id = parse_execution_id(&execution_id_str)?;
+
+    // Validate that the request execution_id matches the path
+    if req.execution_id != execution_id {
+        return Err(ApiProblem::new(
+            StatusCode::BAD_REQUEST,
+            ApiErrorCode::ValidationError,
+            "execution_id in body does not match path",
+        ));
+    }
+
+    let existing = runtime
+        .store
+        .executions()
+        .get(execution_id)
+        .await
+        .map_err(|err| ApiProblem::internal(err.into()))?
+        .ok_or_else(|| {
+            ApiProblem::new(
+                StatusCode::NOT_FOUND,
+                ApiErrorCode::NotFound,
+                "execution record not found",
+            )
+        })?;
+
+    // State guard: reject if already in a terminal state that cannot be compensated
+    // Note: Committed is allowed (can undo after commit), but Compensated/RolledBack/Denied/Failed/Quarantined are terminal
+    use ferrum_proto::ExecutionState::*;
+    match existing.state {
+        Compensated | RolledBack | Denied | Failed | Quarantined => {
+            return Err(ApiProblem::new(
+                StatusCode::CONFLICT,
+                ApiErrorCode::Conflict,
+                format!("execution already in terminal state: {:?}", existing.state),
+            ));
+        }
+        _ => {}
+    }
+
+    // State guard: compensate requires execution to have a rollback contract
+    let contract_id = existing.rollback_contract_id.ok_or_else(|| {
+        ApiProblem::new(
+            StatusCode::PRECONDITION_FAILED,
+            ApiErrorCode::ValidationError,
+            "execution has no rollback contract",
+        )
+    })?;
+
+    let contract = runtime
+        .store
+        .rollback_contracts()
+        .get(contract_id)
+        .await
+        .map_err(|err| ApiProblem::internal(err.into()))?
+        .ok_or_else(|| {
+            ApiProblem::new(
+                StatusCode::NOT_FOUND,
+                ApiErrorCode::NotFound,
+                "rollback contract not found",
+            )
+        })?;
+
+    // Call rollback service to compensate
+    runtime
+        .rollback
+        .compensate(&contract)
+        .await
+        .map_err(ApiProblem::internal)?;
+
+    let now = Utc::now();
+    let intent_id = existing.intent_id;
+    let proposal_id = existing.proposal_id;
+
+    // Update execution state to Compensated
+    let mut updated_execution = existing.clone();
+    updated_execution.state = ExecutionState::Compensated;
+    updated_execution.finished_at = Some(now);
+
+    if let Err(e) = runtime.store.executions().update(&updated_execution).await {
+        tracing::warn!("failed to update execution state: {}", e);
+    }
+
+    // Advance rollback contract state to Compensated
+    if let Err(e) = runtime
+        .store
+        .rollback_contracts()
+        .update_state(contract_id, RollbackState::Compensated)
+        .await
+    {
+        tracing::warn!("failed to update rollback contract state: {}", e);
+    }
+
+    // Emit SideEffectCompensated provenance event
+    let event = create_provenance_event(
+        ProvenanceEventKind::SideEffectCompensated,
+        now,
+        Some(intent_id),
+        Some(proposal_id),
+        Some(execution_id),
+        None,
+        Some(contract_id),
+        None,
+    );
+    if let Err(e) = runtime.store.provenance().append_event(&event).await {
+        tracing::warn!("failed to persist provenance event: {}", e);
+    }
+
+    Ok(Json(CompensateResponse {
+        execution_id,
+        compensated: true,
+        compensated_at: Some(now),
+    }))
+}
+
+async fn rollback_execution(
+    State(runtime): State<Arc<GatewayRuntime>>,
+    Path(execution_id_str): Path<String>,
+    Json(req): Json<RollbackRequest>,
+) -> Result<Json<RollbackResponse>, ApiProblem> {
+    let execution_id = parse_execution_id(&execution_id_str)?;
+
+    // Validate that the request execution_id matches the path
+    if req.execution_id != execution_id {
+        return Err(ApiProblem::new(
+            StatusCode::BAD_REQUEST,
+            ApiErrorCode::ValidationError,
+            "execution_id in body does not match path",
+        ));
+    }
+
+    let existing = runtime
+        .store
+        .executions()
+        .get(execution_id)
+        .await
+        .map_err(|err| ApiProblem::internal(err.into()))?
+        .ok_or_else(|| {
+            ApiProblem::new(
+                StatusCode::NOT_FOUND,
+                ApiErrorCode::NotFound,
+                "execution record not found",
+            )
+        })?;
+
+    // State guard: reject if already in a terminal state that cannot be rolled back
+    // Note: Committed is allowed (can undo after commit), but Compensated/RolledBack/Denied/Failed/Quarantined are terminal
+    use ferrum_proto::ExecutionState::*;
+    match existing.state {
+        Compensated | RolledBack | Denied | Failed | Quarantined => {
+            return Err(ApiProblem::new(
+                StatusCode::CONFLICT,
+                ApiErrorCode::Conflict,
+                format!("execution already in terminal state: {:?}", existing.state),
+            ));
+        }
+        _ => {}
+    }
+
+    // State guard: rollback requires execution to have a rollback contract
+    let contract_id = existing.rollback_contract_id.ok_or_else(|| {
+        ApiProblem::new(
+            StatusCode::PRECONDITION_FAILED,
+            ApiErrorCode::ValidationError,
+            "execution has no rollback contract",
+        )
+    })?;
+
+    let contract = runtime
+        .store
+        .rollback_contracts()
+        .get(contract_id)
+        .await
+        .map_err(|err| ApiProblem::internal(err.into()))?
+        .ok_or_else(|| {
+            ApiProblem::new(
+                StatusCode::NOT_FOUND,
+                ApiErrorCode::NotFound,
+                "rollback contract not found",
+            )
+        })?;
+
+    // Call rollback service to rollback
+    runtime
+        .rollback
+        .rollback(&contract)
+        .await
+        .map_err(ApiProblem::internal)?;
+
+    let now = Utc::now();
+    let intent_id = existing.intent_id;
+    let proposal_id = existing.proposal_id;
+
+    // Update execution state to RolledBack
+    let mut updated_execution = existing.clone();
+    updated_execution.state = ExecutionState::RolledBack;
+    updated_execution.finished_at = Some(now);
+
+    if let Err(e) = runtime.store.executions().update(&updated_execution).await {
+        tracing::warn!("failed to update execution state: {}", e);
+    }
+
+    // Advance rollback contract state to RolledBack
+    if let Err(e) = runtime
+        .store
+        .rollback_contracts()
+        .update_state(contract_id, RollbackState::RolledBack)
+        .await
+    {
+        tracing::warn!("failed to update rollback contract state: {}", e);
+    }
+
+    // Emit SideEffectRolledBack provenance event
+    let event = create_provenance_event(
+        ProvenanceEventKind::SideEffectRolledBack,
+        now,
+        Some(intent_id),
+        Some(proposal_id),
+        Some(execution_id),
+        None,
+        Some(contract_id),
+        None,
+    );
+    if let Err(e) = runtime.store.provenance().append_event(&event).await {
+        tracing::warn!("failed to persist provenance event: {}", e);
+    }
+
+    Ok(Json(RollbackResponse {
+        execution_id,
+        rolled_back: true,
+        rolled_back_at: Some(now),
     }))
 }
 
