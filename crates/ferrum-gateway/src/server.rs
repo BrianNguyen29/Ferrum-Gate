@@ -183,11 +183,24 @@ async fn compile_intent(
 
 async fn evaluate_proposal(
     State(runtime): State<Arc<GatewayRuntime>>,
-    Path(_proposal_id): Path<String>,
+    Path(proposal_id_from_path): Path<String>,
     Json(proposal): Json<ferrum_proto::ActionProposal>,
 ) -> Result<Json<EvaluateProposalResponse>, ApiProblem> {
     let now = Utc::now();
     let intent_id = proposal.intent_id;
+
+    // Validate path and body proposal_id match
+    let proposal_id_from_body = proposal.proposal_id.to_string();
+    if proposal_id_from_path != proposal_id_from_body {
+        return Err(ApiProblem::new(
+            StatusCode::BAD_REQUEST,
+            ApiErrorCode::ValidationError,
+            format!(
+                "proposal_id mismatch: path has '{}', body has '{}'",
+                proposal_id_from_path, proposal_id_from_body
+            ),
+        ));
+    }
 
     // Load the real intent from store if it exists; fall back to minimal intent only if not found
     let intent = match runtime.store.intents().get(intent_id).await {
@@ -203,24 +216,35 @@ async fn evaluate_proposal(
     };
 
     // Persist the incoming ActionProposal (requires valid intent_id due to FK constraint)
-    if let Err(e) = runtime.store.proposals().insert(&proposal).await {
-        tracing::warn!("failed to persist proposal: {}", e);
-    }
+    // Only emit provenance if proposal was successfully persisted
+    let proposal_persisted = match runtime.store.proposals().insert(&proposal).await {
+        Ok(_) => true,
+        Err(e) => {
+            tracing::warn!("failed to persist proposal: {}", e);
+            false
+        }
+    };
 
-    // Emit provenance for proposal submission
-    let submission_event = create_provenance_event(
-        ProvenanceEventKind::ActionProposalSubmitted,
-        now,
-        Some(intent_id),
-        Some(proposal.proposal_id),
-        None,
-        None,
-        None,
-        None,
-    );
-    if let Err(e) = runtime.store.provenance().append_event(&submission_event).await {
-        tracing::warn!("failed to persist provenance event: {}", e);
-    }
+    // Emit provenance for proposal submission ONLY if proposal was persisted
+    let submission_event_id = if proposal_persisted {
+        let submission_event = create_provenance_event(
+            ProvenanceEventKind::ActionProposalSubmitted,
+            now,
+            Some(intent_id),
+            Some(proposal.proposal_id),
+            None,
+            None,
+            None,
+            None,
+        );
+        let event_id = submission_event.event_id;
+        if let Err(e) = runtime.store.provenance().append_event(&submission_event).await {
+            tracing::warn!("failed to persist provenance event: {}", e);
+        }
+        Some(event_id)
+    } else {
+        None
+    };
 
     let trust = TrustContextSummary {
         input_labels: Vec::new(),
@@ -237,8 +261,18 @@ async fn evaluate_proposal(
         .await
         .map_err(ApiProblem::internal)?;
 
-    // Emit provenance for policy evaluation
-    let eval_event = create_provenance_event(
+    // Emit provenance for policy evaluation with linkage to submission event if proposal was persisted
+    let parent_edge = if let Some(submission_event_id) = submission_event_id {
+        vec![ferrum_proto::ProvenanceEdge {
+            edge_type: ferrum_proto::ProvenanceEdgeType::Caused,
+            from_event_id: submission_event_id,
+            summary: Some("policy evaluation follows proposal submission".to_string()),
+        }]
+    } else {
+        Vec::new()
+    };
+
+    let mut eval_event = create_provenance_event(
         ProvenanceEventKind::PolicyEvaluated,
         now,
         Some(intent_id),
@@ -248,6 +282,8 @@ async fn evaluate_proposal(
         None,
         None,
     );
+    eval_event.parent_edges = parent_edge;
+
     if let Err(e) = runtime.store.provenance().append_event(&eval_event).await {
         tracing::warn!("failed to persist provenance event: {}", e);
     }

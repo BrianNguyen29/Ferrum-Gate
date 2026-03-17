@@ -3,8 +3,13 @@ use ferrum_proto::{
     ActionProposal, Decision, IntentCompileRequest, IntentCompileResponse,
     IntentId, ProposalId, RiskTier, RollbackClass,
     ProvenanceEventKind,
+    CapabilityMintRequest, ToolBinding, ResourceBinding,
+    TaintBudget, ResourceMode,
 };
-use ferrum_store::{ProposalRepo, ProvenanceRepo, SqliteStore, IntentRepo};
+use ferrum_store::{
+    CapabilityRepo, ExecutionRepo, IntentRepo, ProposalRepo, ProvenanceRepo, RollbackRepo,
+    SqliteStore,
+};
 use ferrum_rollback::{RollbackService, AdapterRegistry, NoopRollbackAdapter};
 use ferrum_pdp::StaticPdpEngine;
 use ferrum_cap::{CapabilityService, InMemoryCapabilityService};
@@ -256,4 +261,317 @@ async fn test_evaluate_proposal_falls_back_to_minimal_intent_when_not_found() {
     
     // Policy evaluation provenance should still be emitted even without persisted proposal
     assert!(!eval_events.is_empty());
+    
+    // Verify PolicyEvaluated has empty parent_edges (key provenance hardening requirement)
+    assert!(eval_events[0].parent_edges.is_empty(), 
+        "PolicyEvaluated.parent_edges should be empty when intent is not found");
+    
+    // CRITICAL: ActionProposalSubmitted should NOT be emitted when proposal persistence fails
+    let submission_events = runtime.store.provenance().query(&ferrum_proto::ProvenanceQueryRequest {
+        intent_id: Some(non_existent_intent_id),
+        execution_id: None,
+        capability_id: None,
+        event_kind: Some(ProvenanceEventKind::ActionProposalSubmitted),
+        since: None,
+        until: None,
+    }).await.unwrap();
+    
+    assert!(submission_events.is_empty(), 
+        "ActionProposalSubmitted should NOT be emitted when intent does not exist and proposal persistence fails");
+}
+
+#[tokio::test]
+async fn test_evaluate_proposal_id_mismatch_returns_400_and_no_events() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // First compile an intent to have a real intent in the store
+    let req = sample_intent_request();
+    let app = build_router(runtime.clone());
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Create a proposal with a DIFFERENT proposal_id in body than in path
+    let path_proposal_id = ProposalId::new();
+    let body_proposal_id = ProposalId::new(); // Different!
+    
+    let mut proposal = sample_proposal(intent_id);
+    proposal.proposal_id = body_proposal_id;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", path_proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Should return 400 Bad Request due to proposal_id mismatch
+    assert_eq!(response.status(), 400, "Expected 400 for proposal_id mismatch");
+    
+    // Verify no proposal was persisted (neither path nor body proposal_id)
+    let stored_proposal_path = runtime.store.proposals().get(path_proposal_id).await.unwrap();
+    let stored_proposal_body = runtime.store.proposals().get(body_proposal_id).await.unwrap();
+    assert!(stored_proposal_path.is_none(), "No proposal should be persisted for path proposal_id");
+    assert!(stored_proposal_body.is_none(), "No proposal should be persisted for body proposal_id");
+    
+    // Verify no proposal-related provenance events were emitted
+    let submission_events = runtime.store.provenance().query(&ferrum_proto::ProvenanceQueryRequest {
+        intent_id: Some(intent_id),
+        execution_id: None,
+        capability_id: None,
+        event_kind: Some(ProvenanceEventKind::ActionProposalSubmitted),
+        since: None,
+        until: None,
+    }).await.unwrap();
+    
+    assert!(submission_events.is_empty(), 
+        "ActionProposalSubmitted should NOT be emitted when proposal_id mismatch");
+    
+    let eval_events = runtime.store.provenance().query(&ferrum_proto::ProvenanceQueryRequest {
+        intent_id: Some(intent_id),
+        execution_id: None,
+        capability_id: None,
+        event_kind: Some(ProvenanceEventKind::PolicyEvaluated),
+        since: None,
+        until: None,
+    }).await.unwrap();
+    
+    assert!(eval_events.is_empty(), 
+        "PolicyEvaluated should NOT be emitted when proposal_id mismatch");
+}
+
+#[tokio::test]
+async fn test_full_happy_path_flow_compile_evaluate_mint_authorize_prepare() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Step 1: Compile intent
+    let req = sample_intent_request();
+    let app = build_router(runtime.clone());
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Step 2: Evaluate proposal
+    let proposal = sample_proposal(intent_id);
+    let proposal_id = proposal.proposal_id;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let eval_resp: ferrum_proto::EvaluateProposalResponse = serde_json::from_slice(&body).unwrap();
+    assert_eq!(eval_resp.decision, Decision::Allow);
+
+    // Step 3: Mint capability
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "workspace".to_string(),
+            tool_name: "fs.read".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![ResourceBinding::File {
+            path: "/tmp/test.txt".to_string(),
+            mode: ResourceMode::Read,
+            required_hash: None,
+        }],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    if status != 200 {
+        let err_str = String::from_utf8_lossy(&body);
+        panic!("Mint failed with status={}, body={}", status, err_str);
+    }
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    // Step 4: Authorize execution
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse = serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    // Step 5: Prepare execution
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let prep_resp: ferrum_proto::PrepareExecutionResponse = serde_json::from_slice(&body).unwrap();
+    assert!(prep_resp.prepared);
+    assert!(prep_resp.rollback_contract.is_some());
+
+    let stored_intent = runtime.store.intents().get(intent_id).await.unwrap();
+    assert!(stored_intent.is_some());
+
+    let stored_proposal = runtime.store.proposals().get(proposal_id).await.unwrap();
+    assert!(stored_proposal.is_some());
+
+    let stored_capability = runtime.store.capabilities().get(capability_id).await.unwrap();
+    assert!(stored_capability.is_some());
+
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored_execution.is_some());
+    let rollback_contract_id = stored_execution.unwrap().rollback_contract_id.unwrap();
+
+    let stored_rollback = runtime
+        .store
+        .rollback_contracts()
+        .get(rollback_contract_id)
+        .await
+        .unwrap();
+    assert!(stored_rollback.is_some());
+
+    let all_events = runtime
+        .store
+        .provenance()
+        .query(&ferrum_proto::ProvenanceQueryRequest {
+            intent_id: Some(intent_id),
+            execution_id: None,
+            capability_id: None,
+            event_kind: None,
+            since: None,
+            until: None,
+        })
+        .await
+        .unwrap();
+
+    let has_intent_compiled = all_events
+        .iter()
+        .any(|e| matches!(e.kind, ProvenanceEventKind::IntentCompiled));
+    let has_proposal_submitted = all_events
+        .iter()
+        .any(|e| matches!(e.kind, ProvenanceEventKind::ActionProposalSubmitted));
+    let has_policy_evaluated = all_events
+        .iter()
+        .any(|e| matches!(e.kind, ProvenanceEventKind::PolicyEvaluated));
+    let has_capability_minted = all_events
+        .iter()
+        .any(|e| matches!(e.kind, ProvenanceEventKind::CapabilityMinted));
+    let has_tool_call_prepared = all_events
+        .iter()
+        .any(|e| matches!(e.kind, ProvenanceEventKind::ToolCallPrepared));
+    let has_side_effect_prepared = all_events
+        .iter()
+        .any(|e| matches!(e.kind, ProvenanceEventKind::SideEffectPrepared));
+
+    assert!(has_intent_compiled, "Missing IntentCompiled event");
+    assert!(has_proposal_submitted, "Missing ActionProposalSubmitted event");
+    assert!(has_policy_evaluated, "Missing PolicyEvaluated event");
+    assert!(has_capability_minted, "Missing CapabilityMinted event");
+    assert!(has_tool_call_prepared, "Missing ToolCallPrepared event");
+    assert!(has_side_effect_prepared, "Missing SideEffectPrepared event");
+
+    let policy_eval_event = all_events
+        .iter()
+        .find(|e| matches!(e.kind, ProvenanceEventKind::PolicyEvaluated))
+        .unwrap();
+    assert!(
+        !policy_eval_event.parent_edges.is_empty(),
+        "PolicyEvaluated should have parent edge"
+    );
+    assert!(matches!(
+        policy_eval_event.parent_edges[0].edge_type,
+        ferrum_proto::ProvenanceEdgeType::Caused
+    ));
 }
