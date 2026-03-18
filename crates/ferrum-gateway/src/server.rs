@@ -1,20 +1,23 @@
 use axum::{
+    Json, Router,
     extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
-    Json, Router,
 };
 use chrono::{Duration, Utc};
 use ferrum_proto::{
-    ApiError, ApiErrorCode, AuthorizeExecutionRequest, AuthorizeExecutionResponse, CapabilityId,
-    CapabilityMintRequest, CapabilityMintResponse, Decision, EvaluateProposalResponse,
-    ExecutionId, ExecutionRecord, ExecutionState, HealthResponse, IntentCompileRequest,
-    IntentCompileResponse, IntentEnvelope, IntentStatus, OutcomeClause, ProvenanceEvent,
-    ProvenanceEventKind, ResourceSelector, RiskTier, RollbackClass, TimeBudget, TrustContextSummary,
-    ActorRef, ActorType, ObjectRef, ObjectType, HashChainRef,
+    ActorRef, ActorType, ApiError, ApiErrorCode, AuthorizeExecutionRequest,
+    AuthorizeExecutionResponse, CapabilityId, CapabilityMintRequest, CapabilityMintResponse,
+    CommitRequest, CommitResponse, Decision, EvaluateProposalResponse, ExecuteRequest,
+    ExecuteResponse, ExecutionId, ExecutionRecord, ExecutionState, HashChainRef, HealthResponse,
+    IntentCompileRequest, IntentCompileResponse, IntentEnvelope, IntentStatus, ObjectRef,
+    ObjectType, OutcomeClause, ProvenanceEvent, ProvenanceEventKind, ResourceSelector, RiskTier,
+    RollbackClass, RollbackState, TimeBudget, TrustContextSummary, VerifyRequest, VerifyResponse,
 };
-use ferrum_store::{CapabilityRepo, ExecutionRepo, IntentRepo, ProposalRepo, ProvenanceRepo, RollbackRepo};
+use ferrum_store::{
+    CapabilityRepo, ExecutionRepo, IntentRepo, ProposalRepo, ProvenanceRepo, RollbackRepo,
+};
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
 
@@ -76,11 +79,32 @@ pub fn build_router(runtime: GatewayRuntime) -> Router {
         .route("/v1/healthz", get(healthz))
         .route("/v1/readyz", get(readyz))
         .route("/v1/intents/compile", post(compile_intent))
-        .route("/v1/proposals/{proposal_id}/evaluate", post(evaluate_proposal))
+        .route(
+            "/v1/proposals/{proposal_id}/evaluate",
+            post(evaluate_proposal),
+        )
         .route("/v1/capabilities/mint", post(mint_capability))
-        .route("/v1/capabilities/{capability_id}/revoke", post(revoke_capability))
+        .route(
+            "/v1/capabilities/{capability_id}/revoke",
+            post(revoke_capability),
+        )
         .route("/v1/executions/authorize", post(authorize_execution))
-        .route("/v1/executions/{execution_id}/prepare", post(prepare_execution))
+        .route(
+            "/v1/executions/{execution_id}/prepare",
+            post(prepare_execution),
+        )
+        .route(
+            "/v1/executions/{execution_id}/execute",
+            post(execute_execution),
+        )
+        .route(
+            "/v1/executions/{execution_id}/verify",
+            post(verify_execution),
+        )
+        .route(
+            "/v1/executions/{execution_id}/commit",
+            post(commit_execution),
+        )
         .with_state(Arc::new(runtime))
         .layer(TraceLayer::new_for_http())
 }
@@ -207,11 +231,21 @@ async fn evaluate_proposal(
         Ok(Some(real_intent)) => real_intent,
         Ok(None) => {
             tracing::warn!("intent {} not found, using minimal intent", intent_id);
-            minimal_intent_for(proposal.intent_id, proposal.requested_rollback_class.clone())
+            minimal_intent_for(
+                proposal.intent_id,
+                proposal.requested_rollback_class.clone(),
+            )
         }
         Err(e) => {
-            tracing::warn!("failed to load intent {}: {}, using minimal intent", intent_id, e);
-            minimal_intent_for(proposal.intent_id, proposal.requested_rollback_class.clone())
+            tracing::warn!(
+                "failed to load intent {}: {}, using minimal intent",
+                intent_id,
+                e
+            );
+            minimal_intent_for(
+                proposal.intent_id,
+                proposal.requested_rollback_class.clone(),
+            )
         }
     };
 
@@ -238,7 +272,12 @@ async fn evaluate_proposal(
             None,
         );
         let event_id = submission_event.event_id;
-        if let Err(e) = runtime.store.provenance().append_event(&submission_event).await {
+        if let Err(e) = runtime
+            .store
+            .provenance()
+            .append_event(&submission_event)
+            .await
+        {
             tracing::warn!("failed to persist provenance event: {}", e);
         }
         Some(event_id)
@@ -295,8 +334,12 @@ async fn mint_capability(
     State(runtime): State<Arc<GatewayRuntime>>,
     Json(request): Json<CapabilityMintRequest>,
 ) -> Result<Json<CapabilityMintResponse>, ApiProblem> {
-    let response = runtime.cap.mint(request).await.map_err(ApiProblem::from_capability)?;
-    
+    let response = runtime
+        .cap
+        .mint(request)
+        .await
+        .map_err(ApiProblem::from_capability)?;
+
     let now = Utc::now();
     let capability_id = response.lease.capability_id;
     let intent_id = response.lease.intent_id;
@@ -329,8 +372,12 @@ async fn revoke_capability(
     Path(capability_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiProblem> {
     let id = parse_capability_id(&capability_id)?;
-    let lease = runtime.cap.revoke(id).await.map_err(ApiProblem::from_capability)?;
-    
+    let lease = runtime
+        .cap
+        .revoke(id)
+        .await
+        .map_err(ApiProblem::from_capability)?;
+
     let now = Utc::now();
     if let Err(e) = runtime.store.capabilities().update(&lease).await {
         tracing::warn!("failed to update capability: {}", e);
@@ -437,11 +484,33 @@ async fn prepare_execution(
     let intent_id = existing.intent_id;
     let proposal_id = existing.proposal_id;
 
+    // Load proposal to get the correct rollback class - FAIL CLOSED if not found
+    let requested_rollback_class = match runtime.store.proposals().get(proposal_id).await {
+        Ok(Some(proposal)) => proposal.requested_rollback_class,
+        Ok(None) => {
+            return Err(ApiProblem::new(
+                StatusCode::NOT_FOUND,
+                ApiErrorCode::NotFound,
+                format!(
+                    "proposal {} not found for execution preparation",
+                    proposal_id
+                ),
+            ));
+        }
+        Err(e) => {
+            return Err(ApiProblem::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                ApiErrorCode::Internal,
+                format!("failed to load proposal {}: {}", proposal_id, e),
+            ));
+        }
+    };
+
     let request = runtime.rollback.default_prepare_request(
         intent_id,
         proposal_id,
         execution_id,
-        RollbackClass::R0NativeReversible,
+        requested_rollback_class,
     );
 
     let response = runtime
@@ -487,15 +556,389 @@ async fn prepare_execution(
     }))
 }
 
+async fn execute_execution(
+    State(runtime): State<Arc<GatewayRuntime>>,
+    Path(execution_id_str): Path<String>,
+    Json(req): Json<ExecuteRequest>,
+) -> Result<Json<ExecuteResponse>, ApiProblem> {
+    let execution_id = parse_execution_id(&execution_id_str)?;
+
+    // Validate that the request execution_id matches the path
+    if req.execution_id != execution_id {
+        return Err(ApiProblem::new(
+            StatusCode::BAD_REQUEST,
+            ApiErrorCode::ValidationError,
+            "execution_id in body does not match path",
+        ));
+    }
+
+    let existing = runtime
+        .store
+        .executions()
+        .get(execution_id)
+        .await
+        .map_err(|err| ApiProblem::internal(err.into()))?
+        .ok_or_else(|| {
+            ApiProblem::new(
+                StatusCode::NOT_FOUND,
+                ApiErrorCode::NotFound,
+                "execution record not found",
+            )
+        })?;
+
+    // State guard: execute requires Prepared
+    if !matches!(existing.state, ExecutionState::Prepared) {
+        return Err(ApiProblem::new(
+            StatusCode::CONFLICT,
+            ApiErrorCode::ValidationError,
+            format!(
+                "execution must be in Prepared state to execute, current state: {:?}",
+                existing.state
+            ),
+        ));
+    }
+
+    let contract_id = existing.rollback_contract_id.ok_or_else(|| {
+        ApiProblem::new(
+            StatusCode::PRECONDITION_FAILED,
+            ApiErrorCode::ValidationError,
+            "execution has no rollback contract, must prepare first",
+        )
+    })?;
+
+    let contract = runtime
+        .store
+        .rollback_contracts()
+        .get(contract_id)
+        .await
+        .map_err(|err| ApiProblem::internal(err.into()))?
+        .ok_or_else(|| {
+            ApiProblem::new(
+                StatusCode::NOT_FOUND,
+                ApiErrorCode::NotFound,
+                "rollback contract not found",
+            )
+        })?;
+
+    // Execute via adapter
+    let receipt = runtime
+        .rollback
+        .execute(&contract, &req.payload)
+        .await
+        .map_err(ApiProblem::internal)?;
+
+    let now = Utc::now();
+    let intent_id = existing.intent_id;
+    let proposal_id = existing.proposal_id;
+
+    // Update execution state to Running (executing)
+    let mut updated_execution = existing;
+    updated_execution.state = ExecutionState::Running;
+    updated_execution.result_digest = receipt.result_digest.clone();
+
+    if let Err(e) = runtime.store.executions().update(&updated_execution).await {
+        tracing::warn!("failed to update execution state: {}", e);
+    }
+
+    // Advance rollback contract state to ExecutedAwaitingVerify
+    if let Err(e) = runtime
+        .store
+        .rollback_contracts()
+        .update_state(contract_id, RollbackState::ExecutedAwaitingVerify)
+        .await
+    {
+        tracing::warn!("failed to update rollback contract state: {}", e);
+    }
+
+    // Emit ToolCallExecuted provenance event
+    let event = create_provenance_event(
+        ProvenanceEventKind::ToolCallExecuted,
+        now,
+        Some(intent_id),
+        Some(proposal_id),
+        Some(execution_id),
+        None,
+        Some(contract_id),
+        None,
+    );
+    if let Err(e) = runtime.store.provenance().append_event(&event).await {
+        tracing::warn!("failed to persist provenance event: {}", e);
+    }
+
+    Ok(Json(ExecuteResponse {
+        execution_id,
+        executed: true,
+        result_digest: receipt.result_digest,
+        external_id: receipt.external_id,
+    }))
+}
+
+async fn verify_execution(
+    State(runtime): State<Arc<GatewayRuntime>>,
+    Path(execution_id_str): Path<String>,
+    Json(req): Json<VerifyRequest>,
+) -> Result<Json<VerifyResponse>, ApiProblem> {
+    let execution_id = parse_execution_id(&execution_id_str)?;
+
+    // Validate that the request execution_id matches the path
+    if req.execution_id != execution_id {
+        return Err(ApiProblem::new(
+            StatusCode::BAD_REQUEST,
+            ApiErrorCode::ValidationError,
+            "execution_id in body does not match path",
+        ));
+    }
+
+    let existing = runtime
+        .store
+        .executions()
+        .get(execution_id)
+        .await
+        .map_err(|err| ApiProblem::internal(err.into()))?
+        .ok_or_else(|| {
+            ApiProblem::new(
+                StatusCode::NOT_FOUND,
+                ApiErrorCode::NotFound,
+                "execution record not found",
+            )
+        })?;
+
+    // State guard: verify requires Running
+    if !matches!(existing.state, ExecutionState::Running) {
+        return Err(ApiProblem::new(
+            StatusCode::CONFLICT,
+            ApiErrorCode::ValidationError,
+            format!(
+                "execution must be in Running state to verify, current state: {:?}",
+                existing.state
+            ),
+        ));
+    }
+
+    let contract_id = existing.rollback_contract_id.ok_or_else(|| {
+        ApiProblem::new(
+            StatusCode::PRECONDITION_FAILED,
+            ApiErrorCode::ValidationError,
+            "execution has no rollback contract",
+        )
+    })?;
+
+    let contract = runtime
+        .store
+        .rollback_contracts()
+        .get(contract_id)
+        .await
+        .map_err(|err| ApiProblem::internal(err.into()))?
+        .ok_or_else(|| {
+            ApiProblem::new(
+                StatusCode::NOT_FOUND,
+                ApiErrorCode::NotFound,
+                "rollback contract not found",
+            )
+        })?;
+
+    // Verify via adapter
+    let verified = runtime
+        .rollback
+        .verify(&contract)
+        .await
+        .map_err(ApiProblem::internal)?;
+
+    let now = Utc::now();
+    let intent_id = existing.intent_id;
+    let proposal_id = existing.proposal_id;
+
+    // Update execution state to AwaitingVerification
+    let mut updated_execution = existing.clone();
+    updated_execution.state = if verified {
+        ExecutionState::AwaitingVerification
+    } else {
+        ExecutionState::Failed
+    };
+
+    if let Err(e) = runtime.store.executions().update(&updated_execution).await {
+        tracing::warn!("failed to update execution state: {}", e);
+    }
+
+    // Advance rollback contract state to Verified (or Failed)
+    if verified {
+        if let Err(e) = runtime
+            .store
+            .rollback_contracts()
+            .update_state(contract_id, RollbackState::Verified)
+            .await
+        {
+            tracing::warn!("failed to update rollback contract state: {}", e);
+        }
+    }
+
+    // Emit SideEffectVerified provenance event
+    let event = create_provenance_event(
+        ProvenanceEventKind::SideEffectVerified,
+        now,
+        Some(intent_id),
+        Some(proposal_id),
+        Some(execution_id),
+        None,
+        Some(contract_id),
+        None,
+    );
+    if let Err(e) = runtime.store.provenance().append_event(&event).await {
+        tracing::warn!("failed to persist provenance event: {}", e);
+    }
+
+    // Auto-commit for non-R3 contracts if verified
+    if verified && contract.auto_commit {
+        let commit_response = perform_commit(&runtime, &existing, &contract, now).await?;
+        return Ok(Json(VerifyResponse {
+            execution_id,
+            verified: true,
+            verified_at: Some(commit_response.committed_at.unwrap_or(now)),
+        }));
+    }
+
+    Ok(Json(VerifyResponse {
+        execution_id,
+        verified,
+        verified_at: if verified { Some(now) } else { None },
+    }))
+}
+
+async fn commit_execution(
+    State(runtime): State<Arc<GatewayRuntime>>,
+    Path(execution_id_str): Path<String>,
+    Json(req): Json<CommitRequest>,
+) -> Result<Json<CommitResponse>, ApiProblem> {
+    let execution_id = parse_execution_id(&execution_id_str)?;
+
+    // Validate that the request execution_id matches the path
+    if req.execution_id != execution_id {
+        return Err(ApiProblem::new(
+            StatusCode::BAD_REQUEST,
+            ApiErrorCode::ValidationError,
+            "execution_id in body does not match path",
+        ));
+    }
+
+    let existing = runtime
+        .store
+        .executions()
+        .get(execution_id)
+        .await
+        .map_err(|err| ApiProblem::internal(err.into()))?
+        .ok_or_else(|| {
+            ApiProblem::new(
+                StatusCode::NOT_FOUND,
+                ApiErrorCode::NotFound,
+                "execution record not found",
+            )
+        })?;
+
+    // State guard: commit requires AwaitingVerification
+    if !matches!(existing.state, ExecutionState::AwaitingVerification) {
+        return Err(ApiProblem::new(
+            StatusCode::CONFLICT,
+            ApiErrorCode::ValidationError,
+            format!(
+                "execution must be in AwaitingVerification state to commit, current state: {:?}",
+                existing.state
+            ),
+        ));
+    }
+
+    let contract_id = existing.rollback_contract_id.ok_or_else(|| {
+        ApiProblem::new(
+            StatusCode::PRECONDITION_FAILED,
+            ApiErrorCode::ValidationError,
+            "execution has no rollback contract",
+        )
+    })?;
+
+    let contract = runtime
+        .store
+        .rollback_contracts()
+        .get(contract_id)
+        .await
+        .map_err(|err| ApiProblem::internal(err.into()))?
+        .ok_or_else(|| {
+            ApiProblem::new(
+                StatusCode::NOT_FOUND,
+                ApiErrorCode::NotFound,
+                "rollback contract not found",
+            )
+        })?;
+
+    let now = Utc::now();
+    perform_commit(&runtime, &existing, &contract, now).await
+}
+
+async fn perform_commit(
+    runtime: &Arc<GatewayRuntime>,
+    existing: &ExecutionRecord,
+    contract: &ferrum_proto::RollbackContract,
+    now: chrono::DateTime<Utc>,
+) -> Result<Json<CommitResponse>, ApiProblem> {
+    let execution_id = existing.execution_id;
+    let intent_id = existing.intent_id;
+    let proposal_id = existing.proposal_id;
+    let contract_id = contract.contract_id;
+
+    // Update execution state to Committed
+    let mut updated_execution = existing.clone();
+    updated_execution.state = ExecutionState::Committed;
+    updated_execution.finished_at = Some(now);
+
+    if let Err(e) = runtime.store.executions().update(&updated_execution).await {
+        tracing::warn!("failed to update execution state: {}", e);
+    }
+
+    // Advance rollback contract state to Committed
+    if let Err(e) = runtime
+        .store
+        .rollback_contracts()
+        .update_state(contract_id, RollbackState::Committed)
+        .await
+    {
+        tracing::warn!("failed to update rollback contract state: {}", e);
+    }
+
+    // Emit SideEffectCommitted provenance event
+    let event = create_provenance_event(
+        ProvenanceEventKind::SideEffectCommitted,
+        now,
+        Some(intent_id),
+        Some(proposal_id),
+        Some(execution_id),
+        None,
+        Some(contract_id),
+        None,
+    );
+    if let Err(e) = runtime.store.provenance().append_event(&event).await {
+        tracing::warn!("failed to persist provenance event: {}", e);
+    }
+
+    Ok(Json(CommitResponse {
+        execution_id,
+        committed: true,
+        committed_at: Some(now),
+    }))
+}
+
 fn infer_rollback_class(scope: &[ResourceSelector]) -> RollbackClass {
-    if scope.iter().any(|selector| matches!(selector, ResourceSelector::EmailDraft { .. })) {
+    if scope
+        .iter()
+        .any(|selector| matches!(selector, ResourceSelector::EmailDraft { .. }))
+    {
         RollbackClass::R2Compensatable
     } else {
         RollbackClass::R0NativeReversible
     }
 }
 
-fn minimal_intent_for(intent_id: ferrum_proto::IntentId, rollback: RollbackClass) -> IntentEnvelope {
+fn minimal_intent_for(
+    intent_id: ferrum_proto::IntentId,
+    rollback: RollbackClass,
+) -> IntentEnvelope {
     let now = Utc::now();
     IntentEnvelope {
         intent_id,
@@ -537,7 +980,6 @@ fn minimal_intent_for(intent_id: ferrum_proto::IntentId, rollback: RollbackClass
         expires_at: now + Duration::minutes(15),
     }
 }
-
 
 fn parse_capability_id(value: &str) -> Result<CapabilityId, ApiProblem> {
     let parsed = value.parse::<uuid::Uuid>().map_err(|_| {
