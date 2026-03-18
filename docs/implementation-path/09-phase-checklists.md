@@ -17,9 +17,9 @@
 - [ ] contradiction checks
 
 ## Phase D
-- [ ] fs adapter
-- [ ] sqlite adapter
-- [ ] maildraft adapter
+- [x] fs adapter
+- [x] sqlite adapter
+- [x] maildraft adapter
 
 ## Phase E
 - [ ] gateway calls pdp

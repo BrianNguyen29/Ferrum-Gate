@@ -2073,6 +2073,23 @@ fn determine_adapter_key_from_bindings(bindings: &[ResourceBinding]) -> String {
         return "sqlite".to_string();
     }
 
+    // Route draft-only EmailDraft bindings (allow_send=false) to maildraft adapter.
+    // Keep send-capable bindings (allow_send=true) on noop to preserve existing
+    // firewall test behavior - send semantics remain out of scope for adapter.
+    let has_draft_only_email_binding = bindings.iter().any(|b| {
+        matches!(
+            b,
+            ResourceBinding::EmailDraft {
+                allow_send: false,
+                ..
+            }
+        )
+    });
+
+    if has_draft_only_email_binding {
+        return "maildraft".to_string();
+    }
+
     // Default to noop for other binding types (fail-closed)
     "noop".to_string()
 }
@@ -2110,6 +2127,12 @@ fn determine_rollback_target_from_bindings(bindings: &[ResourceBinding]) -> Roll
                 return RollbackTarget::SqliteTxn {
                     db_path: db_path.clone(),
                     tx_id,
+                };
+            }
+            ResourceBinding::EmailDraft { recipients, .. } => {
+                return RollbackTarget::EmailDraft {
+                    draft_id: None,
+                    recipients: recipients.clone(),
                 };
             }
             _ => continue,

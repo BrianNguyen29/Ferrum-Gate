@@ -42,6 +42,10 @@ async fn create_test_runtime() -> (TempDir, GatewayRuntime, SqliteStore) {
     registry.register(Arc::new(ferrum_adapter_sqlite::SqliteRollbackAdapter::new(
         "sqlite",
     )));
+    // Register maildraft adapter for email draft-only rollback/compensate tests
+    registry.register(Arc::new(ferrum_adapter_maildraft::MaildraftAdapter::new(
+        "maildraft",
+    )));
     let rollback = Arc::new(RollbackService::new(Arc::new(registry)));
 
     let firewall: Arc<dyn SemanticFirewall> = Arc::new(DefaultFirewall::new());
@@ -5431,6 +5435,23 @@ async fn run_email_flow_to_prepared(
     ferrum_proto::ProposalId,
     ferrum_proto::ExecutionId,
 ) {
+    run_email_flow_to_prepared_with_rollback_class(
+        runtime,
+        email_binding,
+        RollbackClass::R0NativeReversible,
+    )
+    .await
+}
+
+async fn run_email_flow_to_prepared_with_rollback_class(
+    runtime: &GatewayRuntime,
+    email_binding: ResourceBinding,
+    requested_rollback_class: RollbackClass,
+) -> (
+    ferrum_proto::IntentId,
+    ferrum_proto::ProposalId,
+    ferrum_proto::ExecutionId,
+) {
     // Create Email scope matching the binding
     let email_scope = ferrum_proto::ResourceSelector::EmailDraft {
         recipient_allowlist: vec![
@@ -5472,7 +5493,7 @@ async fn run_email_flow_to_prepared(
         raw_arguments: serde_json::json!({"to": ["alice@example.com"], "subject": "Test"}),
         expected_effect: "draft email".to_string(),
         estimated_risk: RiskTier::Medium,
-        requested_rollback_class: RollbackClass::R0NativeReversible,
+        requested_rollback_class,
         decision: None,
         taint_inputs: vec![],
         metadata: ferrum_proto::JsonMap::new(),
@@ -7626,4 +7647,174 @@ async fn test_adapter_backed_sqlite_compensate_restores_updated_row() {
         .await
         .unwrap();
     assert!(!all_events.is_empty());
+}
+
+// ============================================
+// MAILDRAFT ADAPTER INTEGRATION TESTS
+// ============================================
+// MAILDRAFT ADAPTER INTEGRATION TESTS
+// ============================================
+
+/// Creates a test runtime with maildraft adapter and returns the shared store for verification.
+/// This allows integration tests to verify maildraft state changes directly.
+async fn create_test_runtime_with_maildraft_store() -> (
+    TempDir,
+    GatewayRuntime,
+    SqliteStore,
+    ferrum_adapter_maildraft::MaildraftStore,
+) {
+    let temp_dir = TempDir::new().expect("failed to create temp dir");
+    let db_path = temp_dir.path().join("store.sqlite");
+    std::fs::File::create(&db_path).expect("failed to create sqlite file");
+    let database_url = format!("sqlite://{}", db_path.display());
+    let store = SqliteStore::connect(&database_url)
+        .await
+        .expect("failed to connect to sqlite");
+    store
+        .apply_embedded_migrations()
+        .await
+        .expect("failed to apply migrations");
+
+    let pdp: Arc<dyn ferrum_pdp::PdpEngine> = Arc::new(StaticPdpEngine::default());
+    let cap: Arc<dyn CapabilityService> = Arc::new(InMemoryCapabilityService::default());
+
+    // Create shared maildraft store
+    let maildraft_store = ferrum_adapter_maildraft::MaildraftStore::new();
+
+    let mut registry = AdapterRegistry::default();
+    registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
+    registry.register(Arc::new(ferrum_adapter_fs::FsRollbackAdapter::new("fs")));
+    registry.register(Arc::new(ferrum_adapter_sqlite::SqliteRollbackAdapter::new(
+        "sqlite",
+    )));
+    registry.register(Arc::new(
+        ferrum_adapter_maildraft::MaildraftAdapter::with_store(
+            "maildraft",
+            maildraft_store.clone(),
+        ),
+    ));
+    let rollback = Arc::new(RollbackService::new(Arc::new(registry)));
+
+    let firewall: Arc<dyn SemanticFirewall> = Arc::new(DefaultFirewall::new());
+    let runtime = GatewayRuntime::new(pdp, cap, rollback, Arc::new(store.clone()), firewall);
+
+    (temp_dir, runtime, store, maildraft_store)
+}
+
+#[tokio::test]
+async fn test_maildraft_adapter_email_draft_flow_with_compensate() {
+    let (_temp_dir, runtime, _store, maildraft_store) =
+        create_test_runtime_with_maildraft_store().await;
+
+    let email_binding = ResourceBinding::EmailDraft {
+        recipients: vec!["alice@example.com".to_string()],
+        allow_send: false,
+        mode: ResourceMode::Write,
+    };
+
+    let (_intent_id, _proposal_id, execution_id) = run_email_flow_to_prepared_with_rollback_class(
+        &runtime,
+        email_binding,
+        RollbackClass::R2Compensatable,
+    )
+    .await;
+
+    let app = build_router(runtime.clone());
+
+    // Execute draft creation
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({
+            "to": ["alice@example.com"],
+            "subject": "Test email",
+            "body": "Hello!"
+        }),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200, "execute draft should succeed");
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let exec_resp: ferrum_proto::ExecuteResponse = serde_json::from_slice(&body).unwrap();
+
+    // Extract draft_id from external_id (maildraft adapter returns draft_id as external_id)
+    let draft_id = exec_resp
+        .external_id
+        .expect("execute response should contain external_id (draft_id)");
+
+    // Verify draft exists in store BEFORE verify/compensate
+    assert!(
+        maildraft_store.draft_exists(&draft_id),
+        "draft should exist after execute"
+    );
+
+    // Verify should succeed but keep the execution pending explicit commit for R2.
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200, "verify should succeed");
+
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    let exec = stored_execution.expect("execution should exist after verify");
+    assert!(matches!(exec.state, ExecutionState::AwaitingVerification));
+
+    let app = build_router(runtime.clone());
+    let commit_req = ferrum_proto::CommitRequest { execution_id };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/commit", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&commit_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200, "explicit commit should succeed");
+
+    // Compensate should delete the draft after explicit commit.
+    let app = build_router(runtime.clone());
+    let compensate_req = ferrum_proto::CompensateRequest { execution_id };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/compensate", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&compensate_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200, "compensate should succeed");
+
+    // Verify draft no longer exists after compensate
+    assert!(
+        !maildraft_store.draft_exists(&draft_id),
+        "draft should be deleted after compensate"
+    );
 }

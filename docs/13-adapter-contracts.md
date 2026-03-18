@@ -19,6 +19,7 @@
 ## Maildraft
 - draft-only trong v1
 - delete draft khi compensate
+- `EmailSend` van ngoai scope recovery / unsend trong v1
 
 ## Git
 - before_ref/after_ref rõ
