@@ -13,6 +13,7 @@ use ferrum_store::{
     ApprovalRepo, CapabilityRepo, ExecutionRepo, IntentRepo, ProposalRepo, ProvenanceRepo,
     RollbackRepo, SqliteStore,
 };
+use sqlx::{Connection, Row};
 use std::sync::Arc;
 use tempfile::TempDir;
 use tower::util::ServiceExt;
@@ -37,12 +38,58 @@ async fn create_test_runtime() -> (TempDir, GatewayRuntime, SqliteStore) {
     registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
     // Register fs adapter for adapter-backed rollback/compensate tests
     registry.register(Arc::new(ferrum_adapter_fs::FsRollbackAdapter::new("fs")));
+    // Register sqlite adapter for sqlite-backed rollback/compensate tests
+    registry.register(Arc::new(ferrum_adapter_sqlite::SqliteRollbackAdapter::new(
+        "sqlite",
+    )));
     let rollback = Arc::new(RollbackService::new(Arc::new(registry)));
 
     let firewall: Arc<dyn SemanticFirewall> = Arc::new(DefaultFirewall::new());
     let runtime = GatewayRuntime::new(pdp, cap, rollback, Arc::new(store.clone()), firewall);
 
     (temp_dir, runtime, store)
+}
+
+fn sqlite_url_for_path(path: &std::path::Path) -> String {
+    format!("sqlite://{}", path.display())
+}
+
+async fn seed_sqlite_row(db_path: &std::path::Path, table: &str, row_id: &str, content: &str) {
+    let mut conn = sqlx::SqliteConnection::connect(&sqlite_url_for_path(db_path))
+        .await
+        .expect("failed to connect to sqlite test db");
+    let create_stmt =
+        format!("CREATE TABLE IF NOT EXISTS {table} (id TEXT PRIMARY KEY, content TEXT NOT NULL)");
+    sqlx::query(&create_stmt)
+        .execute(&mut conn)
+        .await
+        .expect("failed to create sqlite test table");
+    let upsert_stmt = format!(
+        "INSERT INTO {table} (id, content) VALUES (?1, ?2) ON CONFLICT(id) DO UPDATE SET content = excluded.content"
+    );
+    sqlx::query(&upsert_stmt)
+        .bind(row_id)
+        .bind(content)
+        .execute(&mut conn)
+        .await
+        .expect("failed to seed sqlite test row");
+}
+
+async fn fetch_sqlite_row_content(
+    db_path: &std::path::Path,
+    table: &str,
+    row_id: &str,
+) -> Option<String> {
+    let mut conn = sqlx::SqliteConnection::connect(&sqlite_url_for_path(db_path))
+        .await
+        .expect("failed to connect to sqlite test db");
+    let select_stmt = format!("SELECT content FROM {table} WHERE id = ?1");
+    sqlx::query(&select_stmt)
+        .bind(row_id)
+        .fetch_optional(&mut conn)
+        .await
+        .expect("failed to query sqlite test row")
+        .map(|row| row.get::<String, _>(0))
 }
 
 fn sample_intent_request() -> IntentCompileRequest {
@@ -7331,4 +7378,252 @@ async fn test_adapter_backed_compensate_restores_overwritten_file() {
         !all_events.is_empty(),
         "Missing SideEffectCompensated provenance event"
     );
+}
+
+#[tokio::test]
+async fn test_adapter_backed_sqlite_compensate_restores_updated_row() {
+    let (temp_dir, runtime, _store) = create_test_runtime().await;
+
+    let db_path = temp_dir.path().join("adapter_recovery.sqlite");
+    std::fs::File::create(&db_path).expect("failed to create sqlite db file");
+
+    let table = "test_rows";
+    let row_id = "row_1";
+    seed_sqlite_row(&db_path, table, row_id, "original content").await;
+
+    let db_path_str = db_path.to_str().unwrap().to_string();
+    let sqlite_scope = ferrum_proto::ResourceSelector::SqliteDatabase {
+        db_path: db_path_str.clone(),
+        tables: vec![table.to_string()],
+        mode: ferrum_proto::ResourceMode::ReadWrite,
+    };
+
+    let app = build_router(runtime.clone());
+    let mut req = sample_intent_request_with_effect(EffectType::DatabaseMutation);
+    req.requested_resource_scope = vec![sqlite_scope];
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    let proposal = ActionProposal {
+        proposal_id: ferrum_proto::ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Update sqlite row".to_string(),
+        tool_name: "db.update".to_string(),
+        server_name: "database".to_string(),
+        raw_arguments: serde_json::json!({
+            "db_path": db_path_str,
+            "sql": "UPDATE test_rows SET content = 'updated content' WHERE id = 'row_1'"
+        }),
+        expected_effect: "update a sqlite row".to_string(),
+        estimated_risk: RiskTier::Medium,
+        requested_rollback_class: RollbackClass::R2Compensatable,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "database".to_string(),
+            tool_name: "db.update".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![ResourceBinding::Sqlite {
+            db_path: db_path.to_str().unwrap().to_string(),
+            tables: vec![table.to_string()],
+            mode: ResourceMode::ReadWrite,
+        }],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({
+            "db_path": db_path.to_str().unwrap(),
+            "sql": "UPDATE test_rows SET content = 'updated content' WHERE id = 'row_1'",
+            "table": table,
+            "row_id": row_id,
+            "content": "updated content"
+        }),
+    };
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    let updated_content = fetch_sqlite_row_content(&db_path, table, row_id).await;
+    assert_eq!(updated_content.as_deref(), Some("updated content"));
+
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    let app = build_router(runtime.clone());
+    let commit_req = ferrum_proto::CommitRequest { execution_id };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/commit", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&commit_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    let app = build_router(runtime.clone());
+    let compensate_req = ferrum_proto::CompensateRequest { execution_id };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/compensate", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&compensate_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    let restored_content = fetch_sqlite_row_content(&db_path, table, row_id).await;
+    assert_eq!(restored_content.as_deref(), Some("original content"));
+
+    let all_events = runtime
+        .store
+        .provenance()
+        .query(&ferrum_proto::ProvenanceQueryRequest {
+            intent_id: Some(intent_id),
+            execution_id: None,
+            capability_id: None,
+            event_kind: Some(ProvenanceEventKind::SideEffectCompensated),
+            since: None,
+            until: None,
+        })
+        .await
+        .unwrap();
+    assert!(!all_events.is_empty());
 }

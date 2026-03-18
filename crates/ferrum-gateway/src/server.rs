@@ -2035,7 +2035,8 @@ impl ApiProblem {
 }
 
 /// Determine the appropriate adapter key based on resource bindings.
-/// Returns "fs" for filesystem bindings, "noop" for unknown/empty bindings.
+/// Returns "fs" for filesystem bindings, "sqlite" for mutating sqlite bindings,
+/// and "noop" for unknown/empty or read-only bindings.
 /// Fail-closed: defaults to "noop" when no specific adapter is matched.
 fn determine_adapter_key_from_bindings(bindings: &[ResourceBinding]) -> String {
     if bindings.is_empty() {
@@ -2051,24 +2052,71 @@ fn determine_adapter_key_from_bindings(bindings: &[ResourceBinding]) -> String {
         return "fs".to_string();
     }
 
+    // Only route sqlite to the adapter for mutation-capable bindings.
+    let has_mutating_sqlite_binding = bindings.iter().any(|binding| {
+        matches!(
+            binding,
+            ResourceBinding::Sqlite {
+                mode: ResourceMode::ReadWrite,
+                ..
+            } | ResourceBinding::Sqlite {
+                mode: ResourceMode::Write,
+                ..
+            } | ResourceBinding::Sqlite {
+                mode: ResourceMode::Admin,
+                ..
+            }
+        )
+    });
+
+    if has_mutating_sqlite_binding {
+        return "sqlite".to_string();
+    }
+
     // Default to noop for other binding types (fail-closed)
     "noop".to_string()
 }
 
 /// Determine the rollback target based on resource bindings.
 /// For filesystem bindings, returns a FilePath target with the first file binding path.
+/// For mutating sqlite bindings, returns a SqliteTxn target with the db path.
 fn determine_rollback_target_from_bindings(bindings: &[ResourceBinding]) -> RollbackTarget {
     for binding in bindings {
-        if let ResourceBinding::File { path, .. } = binding {
-            return RollbackTarget::FilePath {
-                path: path.clone(),
-                before_hash: None,
-                after_hash: None,
-            };
+        match binding {
+            ResourceBinding::File { path, .. } => {
+                return RollbackTarget::FilePath {
+                    path: path.clone(),
+                    before_hash: None,
+                    after_hash: None,
+                };
+            }
+            ResourceBinding::Sqlite {
+                db_path,
+                mode: ResourceMode::ReadWrite,
+                ..
+            }
+            | ResourceBinding::Sqlite {
+                db_path,
+                mode: ResourceMode::Write,
+                ..
+            }
+            | ResourceBinding::Sqlite {
+                db_path,
+                mode: ResourceMode::Admin,
+                ..
+            } => {
+                // Generate a transaction ID for tracking this execution
+                let tx_id = format!("tx-{}", uuid::Uuid::new_v4());
+                return RollbackTarget::SqliteTxn {
+                    db_path: db_path.clone(),
+                    tx_id,
+                };
+            }
+            _ => continue,
         }
     }
 
-    // Default to generic target for non-filesystem bindings
+    // Default to generic target for non-specific bindings
     RollbackTarget::Generic {
         namespace: "mcp".to_string(),
         identifier: "tool-call".to_string(),

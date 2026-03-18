@@ -16,7 +16,7 @@ Tai lieu nay khoa lai phan evidence/docs cho Phase F theo pham vi branch hien ta
 
 ## 2. Evidence sources trong branch hien tai
 
-- `tests/integration_gateway_flow.rs`: happy path, deny, quarantine, rollback, compensate, approval, draft-only, single-use capability, scope mismatch deny, execution binding enforcement cho ca 5 loai `File`/`Http`/`Sqlite`/`Git`/`EmailDraft`, va fs adapter-backed recovery evidence.
+- `tests/integration_gateway_flow.rs`: happy path, deny, quarantine, rollback, compensate, approval, draft-only, single-use capability, scope mismatch deny, execution binding enforcement cho ca 5 loai `File`/`Http`/`Sqlite`/`Git`/`EmailDraft`, va fs/sqlite adapter-backed recovery evidence.
 - `tests/integration_poisoned_context.rs`: curated poisoned-context regression suite cho trust labeling, taint propagation, quarantine, read-only fail-closed, va MCP scope fail-closed.
 - `tests/integration_lineage_chain.rs`: minimum lineage chain, persisted lineage edges, terminal rollback lineage.
 - `docs/16-release-checklist.md`: release-facing readiness checklist.
@@ -33,7 +33,7 @@ Nhung flow duoi day da co automated evidence trong repo:
 - mint capability -> authorize execution -> prepare execution
 - execute -> verify -> auto-commit cho flow `R0NativeReversible`
 - execute -> verify -> explicit commit cho flow khong auto-commit (co bang chung truc tiep cho R2 va R3)
-- rollback va compensate terminal recovery paths o muc gateway orchestration/state/provenance, va fs adapter-backed recovery cho file create/delete + overwrite/restore
+- rollback va compensate terminal recovery paths o muc gateway orchestration/state/provenance, va fs/sqlite adapter-backed recovery cho file create/delete + overwrite/restore row state
 
 ### 3.2 Policy/firewall hardening da co evidence
 
@@ -67,7 +67,7 @@ Nhung muc duoi day van la open gap hoac gioi han evidence, khong nen bi hieu nha
 
 - supported flow evidence hien tap trung vao gateway + store + firewall path duoc test trong repo; chua phai tuyen bo parity cho moi adapter/runtime ben ngoai
 - lineage query moi o muc incoming-edge persistence/query; replay/query fabric rong hon van la backlog
-- adapter-backed rollback/compensate evidence moi chi duoc cover truc tiep cho filesystem path; chua phai tuyen bo parity cho sqlite/maildraft hay adapter khac
+- adapter-backed rollback/compensate evidence hien da co truc tiep cho filesystem va sqlite path; chua phai tuyen bo parity cho maildraft hay adapter khac
 - config/operator docs, CLI usefulness, va mot so release-checklist items khac van chua dong
 - docs nay khong thay the backlog; cac nang cap tiep theo van nen tiep tuc track o `docs/implementation-path/08-next-issue-backlog.md`
 

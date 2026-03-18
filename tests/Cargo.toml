@@ -25,9 +25,11 @@ ferrum-proto = { path = "../crates/ferrum-proto" }
 ferrum-store = { path = "../crates/ferrum-store" }
 ferrum-rollback = { path = "../crates/ferrum-rollback" }
 ferrum-adapter-fs = { path = "../crates/ferrum-adapter-fs" }
+ferrum-adapter-sqlite = { path = "../crates/ferrum-adapter-sqlite" }
 ferrum-pdp = { path = "../crates/ferrum-pdp" }
 ferrum-cap = { path = "../crates/ferrum-cap" }
 ferrum-firewall = { path = "../crates/ferrum-firewall" }
+sqlx = { workspace = true }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 tempfile = "3"
