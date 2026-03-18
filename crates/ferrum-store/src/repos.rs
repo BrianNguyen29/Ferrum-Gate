@@ -90,6 +90,8 @@ pub trait ProvenanceRepo: Send + Sync {
     async fn get_event(&self, event_id: EventId) -> Result<Option<ProvenanceEvent>>;
     async fn append_edges(&self, to_event_id: EventId, edges: &[ProvenanceEdge]) -> Result<()>;
     async fn query(&self, request: &ProvenanceQueryRequest) -> Result<Vec<ProvenanceEvent>>;
+    /// Query edges where the given event is the target (incoming edges)
+    async fn get_edges_to(&self, event_id: EventId) -> Result<Vec<ProvenanceEdge>>;
 }
 
 #[async_trait]
