@@ -68,6 +68,7 @@ fn sample_proposal(intent_id: IntentId) -> ActionProposal {
         expected_effect: "read a file".to_string(),
         estimated_risk: RiskTier::Low,
         requested_rollback_class: RollbackClass::R0NativeReversible,
+        decision: None,
         taint_inputs: vec![],
         metadata: ferrum_proto::JsonMap::new(),
         created_at: chrono::Utc::now(),
@@ -645,6 +646,7 @@ async fn run_flow_to_prepared(
         expected_effect: "write a file".to_string(),
         estimated_risk: RiskTier::Medium,
         requested_rollback_class: rollback_class,
+        decision: None,
         taint_inputs: vec![],
         metadata: ferrum_proto::JsonMap::new(),
         created_at: chrono::Utc::now(),
@@ -852,12 +854,12 @@ async fn test_full_happy_path_execute_verify_auto_commit() {
 }
 
 #[tokio::test]
-async fn test_r3_no_auto_commit_verify_then_explicit_commit() {
+async fn test_r2_no_auto_commit_verify_then_explicit_commit() {
     let (_temp_dir, runtime, _store) = create_test_runtime().await;
 
-    // Run flow to prepare with R3 (auto-commit disabled)
+    // Run flow to prepare with R2 (auto-commit disabled)
     let (intent_id, _proposal_id, execution_id) =
-        run_flow_to_prepared(&runtime, RollbackClass::R3IrreversibleHighConsequence).await;
+        run_flow_to_prepared(&runtime, RollbackClass::R2Compensatable).await;
 
     // Verify the rollback contract has auto_commit = false
     let stored_execution = runtime
@@ -877,7 +879,7 @@ async fn test_r3_no_auto_commit_verify_then_explicit_commit() {
         .unwrap();
     assert!(
         !stored_contract.auto_commit,
-        "R3 should have auto_commit = false"
+        "R2 should have auto_commit = false"
     );
 
     // Step 6: Execute
@@ -901,7 +903,7 @@ async fn test_r3_no_auto_commit_verify_then_explicit_commit() {
 
     assert_eq!(response.status(), 200);
 
-    // Step 7: Verify (should NOT auto-commit for R3)
+    // Step 7: Verify (should NOT auto-commit for R2)
     let app = build_router(runtime.clone());
     let verify_req = ferrum_proto::VerifyRequest { execution_id };
 
@@ -924,17 +926,17 @@ async fn test_r3_no_auto_commit_verify_then_explicit_commit() {
     let verify_resp: ferrum_proto::VerifyResponse = serde_json::from_slice(&body).unwrap();
     assert!(verify_resp.verified);
 
-    // Verify execution state is AwaitingVerification (NOT committed for R3)
+    // Verify execution state is AwaitingVerification (NOT committed for R2)
     let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
     assert!(stored_execution.is_some());
     let exec = stored_execution.unwrap();
     assert!(
         matches!(exec.state, ExecutionState::AwaitingVerification),
-        "R3 should remain in AwaitingVerification after verify, got {:?}",
+        "R2 should remain in AwaitingVerification after verify, got {:?}",
         exec.state
     );
 
-    // Step 8: Explicit commit (required for R3)
+    // Step 8: Explicit commit (required for R2)
     let app = build_router(runtime.clone());
     let commit_req = ferrum_proto::CommitRequest { execution_id };
 
@@ -994,4 +996,844 @@ async fn test_r3_no_auto_commit_verify_then_explicit_commit() {
         has_side_effect_committed,
         "Missing SideEffectCommitted event"
     );
+}
+
+#[tokio::test]
+async fn test_quarantine_path_blocks_execution_advance() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Step 1: Compile intent
+    let req = sample_intent_request();
+    let app = build_router(runtime.clone());
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Step 2: Create a proposal that triggers quarantine (high taint score + non-R0 rollback class)
+    // The StaticPDPEngine quarantines if taint_score >= 70 AND rollback class is not R0
+    let app = build_router(runtime.clone());
+    let proposal = ActionProposal {
+        proposal_id: ferrum_proto::ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Mutate with high taint".to_string(),
+        tool_name: "db.write".to_string(),
+        server_name: "database".to_string(),
+        raw_arguments: serde_json::json!({"sql": "DROP TABLE users"}),
+        expected_effect: "delete data".to_string(),
+        estimated_risk: RiskTier::High,
+        requested_rollback_class: RollbackClass::R2Compensatable, // Not R0, will trigger quarantine
+        decision: None,
+        taint_inputs: vec!["external_input".to_string(); 10], // High taint inputs
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let eval_resp: ferrum_proto::EvaluateProposalResponse = serde_json::from_slice(&body).unwrap();
+
+    // Verify the decision is Quarantine
+    assert_eq!(eval_resp.decision, Decision::Quarantine);
+
+    // Step 3: Mint capability
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "database".to_string(),
+            tool_name: "db.write".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 100, // Allow high taint
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    // Step 4: Authorize execution - should create a quarantined execution
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let _execution_id = auth_resp.execution.execution_id;
+
+    // Verify the execution is in Quarantined state
+    assert!(matches!(
+        auth_resp.execution.state,
+        ExecutionState::Quarantined
+    ));
+    assert!(matches!(auth_resp.execution.decision, Decision::Quarantine));
+    assert!(auth_resp.execution.finished_at.is_some());
+
+    // Verify Quarantined provenance event was emitted
+    let all_events = runtime
+        .store
+        .provenance()
+        .query(&ferrum_proto::ProvenanceQueryRequest {
+            intent_id: Some(intent_id),
+            execution_id: None,
+            capability_id: None,
+            event_kind: Some(ProvenanceEventKind::Quarantined),
+            since: None,
+            until: None,
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        !all_events.is_empty(),
+        "Missing Quarantined provenance event"
+    );
+}
+
+#[tokio::test]
+async fn test_rollback_path_recovers_execution() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Run flow to prepare with R2 (compensatable)
+    let (intent_id, _proposal_id, execution_id) =
+        run_flow_to_prepared(&runtime, RollbackClass::R2Compensatable).await;
+
+    // Step 6: Execute
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    // Step 7: Verify
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let verify_resp: ferrum_proto::VerifyResponse = serde_json::from_slice(&body).unwrap();
+    assert!(verify_resp.verified);
+
+    // Step 8: Explicit commit (R2 requires manual commit like R3)
+    let app = build_router(runtime.clone());
+    let commit_req = ferrum_proto::CommitRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/commit", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&commit_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    // Step 9: Now rollback the execution
+    let app = build_router(runtime.clone());
+    let rollback_req = ferrum_proto::RollbackRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/rollback", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&rollback_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let rollback_resp: ferrum_proto::RollbackResponse = serde_json::from_slice(&body).unwrap();
+    assert!(rollback_resp.rolled_back);
+    assert!(rollback_resp.rolled_back_at.is_some());
+
+    // Verify execution state is RolledBack
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored_execution.is_some());
+    let exec = stored_execution.unwrap();
+    assert!(matches!(exec.state, ExecutionState::RolledBack));
+
+    // Verify provenance chain includes SideEffectRolledBack
+    let all_events = runtime
+        .store
+        .provenance()
+        .query(&ferrum_proto::ProvenanceQueryRequest {
+            intent_id: Some(intent_id),
+            execution_id: None,
+            capability_id: None,
+            event_kind: Some(ProvenanceEventKind::SideEffectRolledBack),
+            since: None,
+            until: None,
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        !all_events.is_empty(),
+        "Missing SideEffectRolledBack provenance event"
+    );
+}
+
+#[tokio::test]
+async fn test_compensate_path_recovers_execution() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Run flow to prepare with R2 (compensatable)
+    let (intent_id, _proposal_id, execution_id) =
+        run_flow_to_prepared(&runtime, RollbackClass::R2Compensatable).await;
+
+    // Step 6: Execute
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    // Step 7: Verify
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let verify_resp: ferrum_proto::VerifyResponse = serde_json::from_slice(&body).unwrap();
+    assert!(verify_resp.verified);
+
+    // Step 8: Explicit commit
+    let app = build_router(runtime.clone());
+    let commit_req = ferrum_proto::CommitRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/commit", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&commit_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    // Step 9: Now compensate the execution
+    let app = build_router(runtime.clone());
+    let compensate_req = ferrum_proto::CompensateRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/compensate", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&compensate_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compensate_resp: ferrum_proto::CompensateResponse = serde_json::from_slice(&body).unwrap();
+    assert!(compensate_resp.compensated);
+    assert!(compensate_resp.compensated_at.is_some());
+
+    // Verify execution state is Compensated
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored_execution.is_some());
+    let exec = stored_execution.unwrap();
+    assert!(matches!(exec.state, ExecutionState::Compensated));
+
+    // Verify provenance chain includes SideEffectCompensated
+    let all_events = runtime
+        .store
+        .provenance()
+        .query(&ferrum_proto::ProvenanceQueryRequest {
+            intent_id: Some(intent_id),
+            execution_id: None,
+            capability_id: None,
+            event_kind: Some(ProvenanceEventKind::SideEffectCompensated),
+            since: None,
+            until: None,
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        !all_events.is_empty(),
+        "Missing SideEffectCompensated provenance event"
+    );
+}
+
+// ============================================
+// NEGATIVE TESTS: Illegal State Transitions
+// ============================================
+
+#[tokio::test]
+async fn test_prepare_execution_blocks_quarantined_state() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Create an execution in Quarantined state by going through quarantine path
+    // Step 1: Compile intent
+    let req = sample_intent_request();
+    let app = build_router(runtime.clone());
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Step 2: Create a proposal that triggers quarantine
+    let app = build_router(runtime.clone());
+    let proposal = ActionProposal {
+        proposal_id: ferrum_proto::ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Mutate with high taint".to_string(),
+        tool_name: "db.write".to_string(),
+        server_name: "database".to_string(),
+        raw_arguments: serde_json::json!({"sql": "DROP TABLE users"}),
+        expected_effect: "delete data".to_string(),
+        estimated_risk: RiskTier::High,
+        requested_rollback_class: RollbackClass::R2Compensatable,
+        decision: None,
+        taint_inputs: vec!["external_input".to_string(); 10],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 3: Mint capability
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "database".to_string(),
+            tool_name: "db.write".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 100,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    // Step 4: Authorize execution (will create quarantined execution)
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    // Verify execution is in Quarantined state
+    assert!(matches!(
+        auth_resp.execution.state,
+        ExecutionState::Quarantined
+    ));
+
+    // Step 5: Attempt to prepare execution - should fail with 409 Conflict
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        409,
+        "prepare should fail for quarantined execution"
+    );
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let error: ferrum_proto::ApiError = serde_json::from_slice(&body).unwrap();
+    assert!(error.message.contains("quarantined"));
+}
+
+#[tokio::test]
+async fn test_authorize_execution_blocks_proposal_capability_mismatch() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Step 1: Compile intent
+    let req = sample_intent_request();
+    let app = build_router(runtime.clone());
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Step 2: Create and evaluate TWO different proposals for the same intent
+    let app = build_router(runtime.clone());
+    let proposal1 = sample_proposal(intent_id);
+    let proposal1_id = proposal1.proposal_id;
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal1_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal1).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Create second proposal
+    let app = build_router(runtime.clone());
+    let proposal2 = sample_proposal(intent_id);
+    let proposal2_id = proposal2.proposal_id;
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal2_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal2).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 3: Mint capability bound to proposal1
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id: proposal1_id,
+        tool_binding: ToolBinding {
+            server_name: "workspace".to_string(),
+            tool_name: "fs.read".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    // Step 4: Attempt to authorize execution using proposal2_id with capability bound to proposal1
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id: proposal2_id, // Wrong proposal!
+        capability_id,
+        dry_run: false,
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Should fail with 403 Forbidden due to proposal/capability mismatch
+    assert_eq!(
+        response.status(),
+        403,
+        "authorize should fail for proposal/capability mismatch"
+    );
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let error: ferrum_proto::ApiError = serde_json::from_slice(&body).unwrap();
+    assert!(error.message.contains("mismatch"));
+    assert!(error.message.contains(&proposal1_id.to_string()));
+    assert!(error.message.contains(&proposal2_id.to_string()));
+}
+
+#[tokio::test]
+async fn test_prepare_execution_blocks_denied_state() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // We need to create a Denied execution. Currently the system creates Denied
+    // when proposal decision is Deny or AllowDraftOnly.
+    // We'll manually insert a Denied execution to test the guard.
+
+    // First create a basic flow to get valid IDs
+    let (_intent_id, _proposal_id, execution_id) =
+        run_flow_to_prepared(&runtime, RollbackClass::R0NativeReversible).await;
+
+    // Manually update the execution to Denied state
+    let mut execution = runtime
+        .store
+        .executions()
+        .get(execution_id)
+        .await
+        .unwrap()
+        .unwrap();
+    execution.state = ExecutionState::Denied;
+    execution.finished_at = Some(chrono::Utc::now());
+    runtime.store.executions().update(&execution).await.unwrap();
+
+    // Attempt to prepare execution - should fail with 409 Conflict
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        409,
+        "prepare should fail for denied execution"
+    );
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let error: ferrum_proto::ApiError = serde_json::from_slice(&body).unwrap();
+    assert!(error.message.contains("denied"));
+}
+
+#[tokio::test]
+async fn test_prepare_execution_blocks_terminal_states() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Test Committed state
+    let (_intent_id, _proposal_id, execution_id) =
+        run_flow_to_prepared(&runtime, RollbackClass::R0NativeReversible).await;
+
+    // Execute and commit
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({}),
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Verify (auto-commits for R0)
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Verify execution is Committed
+    let execution = runtime
+        .store
+        .executions()
+        .get(execution_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(execution.state, ExecutionState::Committed));
+
+    // Attempt to prepare committed execution - should fail
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 409);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let error: ferrum_proto::ApiError = serde_json::from_slice(&body).unwrap();
+    assert!(error.message.contains("terminal state"));
 }

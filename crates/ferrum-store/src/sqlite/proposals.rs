@@ -42,7 +42,13 @@ impl ProposalRepo for SqliteProposalRepo {
     }
 
     async fn get(&self, proposal_id: ProposalId) -> Result<Option<ActionProposal>> {
-        fetch_entity_by_id(&self.pool, "proposals", "proposal_id", &proposal_id.to_string()).await
+        fetch_entity_by_id(
+            &self.pool,
+            "proposals",
+            "proposal_id",
+            &proposal_id.to_string(),
+        )
+        .await
     }
 
     async fn list_by_intent(&self, intent_id: IntentId) -> Result<Vec<ActionProposal>> {
@@ -52,5 +58,15 @@ impl ProposalRepo for SqliteProposalRepo {
             intent_id.to_string(),
         )
         .await
+    }
+
+    async fn update(&self, proposal: &ActionProposal) -> Result<()> {
+        let raw_json = to_json(proposal)?;
+        sqlx::query("UPDATE proposals SET raw_json = ?1 WHERE proposal_id = ?2")
+            .bind(raw_json)
+            .bind(proposal.proposal_id.to_string())
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 }

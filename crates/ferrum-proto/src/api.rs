@@ -99,3 +99,29 @@ pub struct CommitResponse {
     pub committed: bool,
     pub committed_at: Option<crate::Timestamp>,
 }
+
+// Compensate request/response types
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CompensateRequest {
+    pub execution_id: crate::ExecutionId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CompensateResponse {
+    pub execution_id: crate::ExecutionId,
+    pub compensated: bool,
+    pub compensated_at: Option<crate::Timestamp>,
+}
+
+// Rollback request/response types
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct RollbackRequest {
+    pub execution_id: crate::ExecutionId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct RollbackResponse {
+    pub execution_id: crate::ExecutionId,
+    pub rolled_back: bool,
+    pub rolled_back_at: Option<crate::Timestamp>,
+}
