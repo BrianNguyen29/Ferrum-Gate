@@ -22,5 +22,5 @@
 ## Operator readiness
 - [ ] config docs đúng
 - [ ] CLI hữu dụng tối thiểu
-- [ ] lineage usable
-- [ ] approval flow documented
+- [x] lineage usable
+- [x] approval flow documented

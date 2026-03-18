@@ -28,8 +28,11 @@
 - [ ] gateway emits provenance
 
 ## Phase F
-- [ ] happy path test
-- [ ] deny test
-- [ ] quarantine test
-- [ ] rollback test
-- [ ] poisoned context test
+- [x] happy path test
+- [x] deny test
+- [x] quarantine test
+- [x] rollback test
+- [x] poisoned context test
+- [x] lineage/minimum-chain test
+- [x] supported flows handoff
+- [x] open gaps handoff
