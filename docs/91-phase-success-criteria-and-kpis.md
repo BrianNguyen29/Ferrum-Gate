@@ -12,7 +12,7 @@
 
 - **Phase A**: coi nhu dat release gate; workspace va shape loi da du on dinh de lam nen cho persistence/runtime flow.
 - **Phase B**: coi nhu dat release gate; SQLite-backed persistence cho intents/proposals/capabilities/executions/rollback/provenance da chay qua integration path thuc.
-- **Phase C**: da co firewall MVP co y nghia trong branch hien tai; trust labeling, taint scoring, contradiction checks, output sanitization, basic DLP, va execution-time HTTP egress enforcement da duoc wire vao gateway. Non-HTTP execution-time resource enforcement van con la hardening gap tiep theo, nhung khoang trong an toan lon nhat cho outbound HTTP da duoc dong lai.
+- **Phase C**: da co firewall MVP co y nghia trong branch hien tai; trust labeling, taint scoring, contradiction checks, output sanitization, basic DLP, va execution-time HTTP/File resource enforcement da duoc wire vao gateway. Git/Sqlite/EmailDraft execution-time enforcement van con la hardening gap tiep theo, nhung hai surface co kha nang bi bypass ro nhat trong flow hien tai da duoc dong lai.
 - **Phase E**: coi nhu dat cho supported flow hien tai; gateway da di qua `evaluate -> mint -> authorize -> prepare -> execute -> verify -> commit`, cung negative/recovery paths va approval/draft-only governance.
 - **Phase F**: moi dat mot phan; integration tests va provenance evidence da manh hon, nhung poisoned-context evidence, final docs pack, supported flows list va open gaps list van chua xong.
 
@@ -23,7 +23,7 @@
 - `cargo test --package ferrum-firewall`: `28/28` pass.
 - `cargo test --package integration-tests --test integration_gateway_flow`: `34/34` pass.
 - `cargo test`: full workspace pass tren branch `feat/firewall-mvp`.
-- Gateway firewall coverage hien da co trust-context derivation, read-only contradiction blocking, MCP scope contradiction blocking, compile-time taint lineage propagation, DLP redact/detect, execution-time HTTP binding enforcement, va regression tests cho empty-scope read-only bypass, host/method/header mismatch, va missing HTTP binding.
+- Gateway firewall coverage hien da co trust-context derivation, read-only contradiction blocking, MCP scope contradiction blocking, compile-time taint lineage propagation, DLP redact/detect, execution-time HTTP/File binding enforcement, va regression tests cho empty-scope read-only bypass, host/method/header mismatch, missing binding, file path mismatch, file traversal, va write-on-read binding denial.
 - Mainline da hap thu cac moc quan trong truoc do:
   - `PR #3` - harden proposal provenance coverage
   - `PR #5` - execute / verify / commit gateway flow
@@ -34,7 +34,7 @@
 
 - Co the xem **Phase B** la complete theo tai lieu nay.
 - Co the xem **Phase E** la complete cho supported SQLite-backed gateway flow hien tai.
-- **Phase C** da dat mot MVP co tac dung that cho compile/evaluate va HTTP egress path; co the xem la dat release gate cho firewall MVP hien tai neu chi tinh supported HTTP-bound execution. Neu muon mo rong gate theo nghia rong hon cho moi resource type, van con can them execution-time enforcement cho file/git/sqlite/maildraft bindings.
+- **Phase C** da dat mot MVP co tac dung that cho compile/evaluate va HTTP/File execution path; co the xem la dat release gate cho firewall MVP hien tai tren nhom flow dang duoc cover ro nhat. Neu muon mo rong gate theo nghia rong hon cho moi resource type, van con can them execution-time enforcement cho git/sqlite/maildraft bindings.
 - Chua nen xem **Phase F** la complete cho toi khi co them poisoned-context/regression evidence va docs handoff ro hon.
 
 ---

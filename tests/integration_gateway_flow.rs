@@ -3872,6 +3872,153 @@ async fn run_http_flow_to_prepared(
     (intent_id, proposal_id, execution_id)
 }
 
+async fn run_file_flow_to_prepared(
+    runtime: &GatewayRuntime,
+    file_binding: ResourceBinding,
+    effect_type: EffectType,
+    tool_name: &str,
+    raw_arguments: serde_json::Value,
+    expected_effect: &str,
+) -> (
+    ferrum_proto::IntentId,
+    ferrum_proto::ProposalId,
+    ferrum_proto::ExecutionId,
+) {
+    let app = build_router(runtime.clone());
+    let req = sample_intent_request_with_effect(effect_type);
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    let app = build_router(runtime.clone());
+    let proposal = ActionProposal {
+        proposal_id: ferrum_proto::ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Operate on file".to_string(),
+        tool_name: tool_name.to_string(),
+        server_name: "workspace".to_string(),
+        raw_arguments,
+        expected_effect: expected_effect.to_string(),
+        estimated_risk: RiskTier::Medium,
+        requested_rollback_class: RollbackClass::R0NativeReversible,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "workspace".to_string(),
+            tool_name: tool_name.to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![file_binding],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    (intent_id, proposal_id, execution_id)
+}
+
 #[tokio::test]
 async fn test_http_execution_allowed_with_matching_binding() {
     let (_temp_dir, runtime, _store) = create_test_runtime().await;
@@ -4183,4 +4330,191 @@ async fn test_non_http_execution_unaffected_by_missing_http_binding() {
         .unwrap();
     let execute_resp: ferrum_proto::ExecuteResponse = serde_json::from_slice(&body).unwrap();
     assert!(execute_resp.executed);
+}
+
+#[tokio::test]
+async fn test_file_execution_allowed_with_matching_read_binding() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    let file_binding = ResourceBinding::File {
+        path: "/tmp/readable.txt".to_string(),
+        mode: ResourceMode::Read,
+        required_hash: None,
+    };
+
+    let (_intent_id, _proposal_id, execution_id) = run_file_flow_to_prepared(
+        &runtime,
+        file_binding,
+        EffectType::ReadOnlyAnalysis,
+        "fs.read",
+        serde_json::json!({"path": "/tmp/readable.txt"}),
+        "read a file",
+    )
+    .await;
+
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({
+            "path": "/tmp/readable.txt"
+        }),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+}
+
+#[tokio::test]
+async fn test_file_execution_denied_path_mismatch() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    let (_intent_id, _proposal_id, execution_id) =
+        run_flow_to_prepared(&runtime, RollbackClass::R0NativeReversible).await;
+
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({
+            "path": "/tmp/other.txt",
+            "content": "hello world"
+        }),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 403);
+}
+
+#[tokio::test]
+async fn test_file_execution_denied_write_on_read_binding() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    let file_binding = ResourceBinding::File {
+        path: "/tmp/readable.txt".to_string(),
+        mode: ResourceMode::Read,
+        required_hash: None,
+    };
+
+    let (_intent_id, _proposal_id, execution_id) = run_file_flow_to_prepared(
+        &runtime,
+        file_binding,
+        EffectType::ReadOnlyAnalysis,
+        "fs.read",
+        serde_json::json!({"path": "/tmp/readable.txt"}),
+        "read a file",
+    )
+    .await;
+
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({
+            "path": "/tmp/readable.txt",
+            "content": "hello world"
+        }),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 403);
+}
+
+#[tokio::test]
+async fn test_file_execution_denied_missing_binding() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    let http_binding = ResourceBinding::Http {
+        method: ferrum_proto::HttpMethod::Get,
+        base_url: "https://api.example.com".to_string(),
+        path_prefix: "/v1/".to_string(),
+        header_allowlist: vec![],
+        mode: ResourceMode::Read,
+    };
+
+    let (_intent_id, _proposal_id, execution_id) =
+        run_http_flow_to_prepared(&runtime, http_binding).await;
+
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({
+            "path": "/tmp/test.txt"
+        }),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 403);
+}
+
+#[tokio::test]
+async fn test_file_execution_denied_path_traversal() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    let (_intent_id, _proposal_id, execution_id) =
+        run_flow_to_prepared(&runtime, RollbackClass::R0NativeReversible).await;
+
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({
+            "path": "../etc/passwd",
+            "content": "hello world"
+        }),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 403);
 }

@@ -35,12 +35,12 @@ pub trait SemanticFirewall: Send + Sync {
     /// Enforce execution payload against capability resource bindings.
     ///
     /// Returns Ok(()) if:
-    /// - The payload is not an HTTP execution attempt (non-HTTP flows pass through)
-    /// - An HTTP payload matches at least one Http binding
+    /// - The payload does not look like a recognized bound execution attempt
+    /// - A recognized HTTP or File payload matches at least one corresponding binding
     ///
     /// Returns Err if:
-    /// - HTTP payload has no matching Http binding
-    /// - Method, host, path, or headers violate binding constraints
+    /// - A recognized HTTP or File payload has no matching binding
+    /// - Payload fields violate binding constraints
     fn enforce_execution_payload(
         &self,
         bindings: &[ResourceBinding],
@@ -509,15 +509,28 @@ impl SemanticFirewall for DefaultFirewall {
         bindings: &[ResourceBinding],
         payload: &serde_json::Value,
     ) -> Result<(), EnforcementError> {
-        // Try to parse as HTTP payload
-        let http_payload = match self.try_parse_http_payload(payload) {
-            Some(p) => p,
-            None => {
-                // Not an HTTP execution attempt - pass through for non-HTTP flows
-                return Ok(());
-            }
-        };
+        // Try to parse as HTTP payload first (HTTP has priority)
+        if let Some(http_payload) = self.try_parse_http_payload(payload) {
+            return self.enforce_http_payload(bindings, &http_payload);
+        }
 
+        // Try to parse as File payload
+        if let Some(file_payload) = self.try_parse_file_payload(payload) {
+            return self.enforce_file_payload(bindings, &file_payload);
+        }
+
+        // Not an HTTP or File execution attempt - pass through for other flows
+        Ok(())
+    }
+}
+
+impl DefaultFirewall {
+    /// Enforce HTTP payload against HTTP bindings.
+    fn enforce_http_payload(
+        &self,
+        bindings: &[ResourceBinding],
+        http_payload: &HttpExecutionPayload,
+    ) -> Result<(), EnforcementError> {
         // Find Http bindings from the capability
         let http_bindings: Vec<_> = bindings
             .iter()
@@ -557,7 +570,7 @@ impl SemanticFirewall for DefaultFirewall {
             &http_bindings
         {
             if self.http_binding_matches(
-                &http_payload,
+                http_payload,
                 &parsed_url,
                 binding_method,
                 binding_base_url,
@@ -579,9 +592,155 @@ impl SemanticFirewall for DefaultFirewall {
             ),
         })
     }
-}
 
-impl DefaultFirewall {
+    /// Try to parse a payload as a File execution attempt.
+    /// Returns Some(FileExecutionPayload) if it looks like File operation, None otherwise.
+    fn try_parse_file_payload(&self, payload: &serde_json::Value) -> Option<FileExecutionPayload> {
+        let obj = payload.as_object()?;
+
+        // Must have a "path" string field to be considered a file operation
+        let path = obj.get("path")?.as_str()?.to_string();
+
+        // Infer write intent from explicit mode/content presence
+        // Conservative: if mode starts with 'w' or content/data is present, treat as write
+        let is_write = if let Some(mode) = obj.get("mode").and_then(|m| m.as_str()) {
+            let mode = mode.to_lowercase();
+            mode.starts_with('w') || mode == "append"
+        } else {
+            // Check for content/data fields which suggest a write operation
+            obj.contains_key("content") || obj.contains_key("data") || obj.contains_key("write")
+        };
+
+        Some(FileExecutionPayload { path, is_write })
+    }
+
+    /// Enforce File payload against File bindings.
+    fn enforce_file_payload(
+        &self,
+        bindings: &[ResourceBinding],
+        file_payload: &FileExecutionPayload,
+    ) -> Result<(), EnforcementError> {
+        // Find File bindings from the capability
+        let file_bindings: Vec<_> = bindings
+            .iter()
+            .filter_map(|b| match b {
+                ResourceBinding::File {
+                    path,
+                    mode,
+                    required_hash: _,
+                } => Some((path, mode)),
+                _ => None,
+            })
+            .collect();
+
+        // If no File bindings exist but we have a File payload, deny (fail-closed)
+        if file_bindings.is_empty() {
+            return Err(EnforcementError {
+                code: EnforcementErrorCode::MissingBinding,
+                message: "File execution attempted but no File binding in capability".to_string(),
+            });
+        }
+
+        // Check for path traversal/suspicious patterns (conservative - reject anything suspicious)
+        if self.contains_file_path_traversal(&file_payload.path) {
+            return Err(EnforcementError {
+                code: EnforcementErrorCode::PathViolation,
+                message: format!(
+                    "File path contains traversal or suspicious pattern: {}",
+                    file_payload.path
+                ),
+            });
+        }
+
+        // Normalize the request path for comparison
+        let normalized_request_path = self.normalize_file_path(&file_payload.path);
+
+        // Try to match against any File binding (allow if any matches)
+        for (binding_path, binding_mode) in &file_bindings {
+            let normalized_binding_path = self.normalize_file_path(binding_path);
+
+            // Check exact path match (bindings are exact path grants)
+            if normalized_request_path == normalized_binding_path {
+                // Check mode allows this operation
+                match binding_mode {
+                    ResourceMode::Read => {
+                        // Read mode only allows read operations
+                        if file_payload.is_write {
+                            return Err(EnforcementError {
+                                code: EnforcementErrorCode::ModeViolation,
+                                message: format!(
+                                    "Write attempted on read-only binding for path: {}",
+                                    file_payload.path
+                                ),
+                            });
+                        }
+                        return Ok(());
+                    }
+                    ResourceMode::Write | ResourceMode::ReadWrite => {
+                        // Write/ReadWrite modes allow both read and write
+                        return Ok(());
+                    }
+                    _ => {
+                        // Other modes are more restrictive - continue to check other bindings
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // No binding matched - fail closed
+        Err(EnforcementError {
+            code: EnforcementErrorCode::MissingBinding,
+            message: format!(
+                "File path {} does not match any capability binding",
+                file_payload.path
+            ),
+        })
+    }
+
+    /// Normalize file path for comparison (remove redundant separators, etc.)
+    fn normalize_file_path(&self, path: &str) -> String {
+        // Simple normalization: collapse multiple slashes, remove trailing slash
+        let mut result = path.replace("//", "/");
+        while result.contains("//") {
+            result = result.replace("//", "/");
+        }
+        // Remove trailing slash except for root "/"
+        if result.len() > 1 && result.ends_with('/') {
+            result.pop();
+        }
+        result
+    }
+
+    /// Check for file path traversal patterns (conservative - rejects anything suspicious).
+    fn contains_file_path_traversal(&self, path: &str) -> bool {
+        let decoded = path.to_lowercase();
+
+        // Check for explicit traversal patterns on path segments.
+        if decoded == ".."
+            || decoded.starts_with("../")
+            || decoded.ends_with("/..")
+            || decoded.contains("/../")
+            || decoded.contains("\\..\\")
+            || decoded.starts_with("..\\")
+            || decoded.ends_with("\\..")
+        {
+            return true;
+        }
+
+        // Check for encoded traversal attempts
+        if decoded.contains("%2e%2e") || decoded.contains("%2e.") || decoded.contains(".%2e") {
+            return true;
+        }
+
+        // Check for null byte injection
+        if decoded.contains('\0') || decoded.contains("%00") {
+            return true;
+        }
+
+        false
+    }
+
     /// Infer effect type from expected effect description.
     /// Uses word-boundary matching to avoid substring bugs (e.g., matching "get" inside "target").
     /// Biases toward mutating/high-risk for unknown effects (fail-closed).
@@ -681,7 +840,7 @@ pub struct EnforcementError {
 /// Specific error codes for enforcement failures.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EnforcementErrorCode {
-    /// No matching HTTP binding found for the attempted HTTP execution
+    /// No matching binding found for the attempted execution
     MissingBinding,
     /// Method mismatch between request and binding
     MethodMismatch,
@@ -693,6 +852,8 @@ pub enum EnforcementErrorCode {
     HeaderViolation,
     /// Payload is malformed for HTTP execution
     MalformedPayload,
+    /// Mode violation (e.g., write attempted on read-only binding)
+    ModeViolation,
 }
 
 impl std::fmt::Display for EnforcementError {
@@ -709,6 +870,13 @@ struct HttpExecutionPayload {
     url: String,
     method: HttpMethod,
     headers: HashMap<String, String>,
+}
+
+/// File execution payload extracted from JSON.
+#[derive(Debug, Clone)]
+struct FileExecutionPayload {
+    path: String,
+    is_write: bool,
 }
 
 /// Parsed URL components for comparison.
@@ -1297,6 +1465,14 @@ mod tests {
         }
     }
 
+    fn create_file_binding(path: &str, mode: ResourceMode) -> ResourceBinding {
+        ResourceBinding::File {
+            path: path.to_string(),
+            mode,
+            required_hash: None,
+        }
+    }
+
     #[test]
     fn test_enforce_http_allowed_with_matching_binding() {
         let firewall = DefaultFirewall::new();
@@ -1419,10 +1595,10 @@ mod tests {
         let firewall = DefaultFirewall::new();
         let bindings: Vec<ResourceBinding> = vec![];
 
-        // Non-HTTP payload (no url field)
+        // Payload that does not look like HTTP or File
         let payload = serde_json::json!({
-            "path": "/tmp/test.txt",
-            "content": "hello world"
+            "query": "select 1",
+            "table": "users"
         });
 
         let result = firewall.enforce_execution_payload(&bindings, &payload);
@@ -1647,6 +1823,110 @@ mod tests {
     }
 
     #[test]
+    fn test_enforce_file_allowed_with_matching_read_binding() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_file_binding("/tmp/test.txt", ResourceMode::Read)];
+
+        let payload = serde_json::json!({
+            "path": "/tmp/test.txt"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_ok(), "Expected allowed but got: {:?}", result);
+    }
+
+    #[test]
+    fn test_enforce_file_allowed_with_matching_write_binding() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_file_binding("/tmp/test.txt", ResourceMode::Write)];
+
+        let payload = serde_json::json!({
+            "path": "/tmp/test.txt",
+            "content": "hello world"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_ok(), "Expected allowed but got: {:?}", result);
+    }
+
+    #[test]
+    fn test_enforce_file_denied_missing_binding() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_http_binding(
+            HttpMethod::Get,
+            "https://api.example.com",
+            "/v1/",
+            &[],
+            ResourceMode::Read,
+        )];
+
+        let payload = serde_json::json!({
+            "path": "/tmp/test.txt"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().code,
+            EnforcementErrorCode::MissingBinding
+        );
+    }
+
+    #[test]
+    fn test_enforce_file_denied_path_mismatch() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_file_binding("/tmp/test.txt", ResourceMode::Write)];
+
+        let payload = serde_json::json!({
+            "path": "/tmp/other.txt",
+            "content": "hello world"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().code,
+            EnforcementErrorCode::MissingBinding
+        );
+    }
+
+    #[test]
+    fn test_enforce_file_denied_path_traversal() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_file_binding("/tmp/test.txt", ResourceMode::Write)];
+
+        let payload = serde_json::json!({
+            "path": "../etc/passwd",
+            "content": "hello world"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().code,
+            EnforcementErrorCode::PathViolation
+        );
+    }
+
+    #[test]
+    fn test_enforce_file_denied_write_on_read_binding() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_file_binding("/tmp/test.txt", ResourceMode::Read)];
+
+        let payload = serde_json::json!({
+            "path": "/tmp/test.txt",
+            "content": "hello world"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().code,
+            EnforcementErrorCode::ModeViolation
+        );
+    }
+
+    #[test]
     fn test_noop_firewall_allows_all_http() {
         let firewall = NoopFirewall;
         let bindings: Vec<ResourceBinding> = vec![];
@@ -1655,6 +1935,20 @@ mod tests {
         let payload = serde_json::json!({
             "url": "https://any-site.com/sensitive",
             "method": "DELETE"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_noop_firewall_allows_all_file() {
+        let firewall = NoopFirewall;
+        let bindings: Vec<ResourceBinding> = vec![];
+
+        let payload = serde_json::json!({
+            "path": "/tmp/anywhere.txt",
+            "content": "mutate"
         });
 
         let result = firewall.enforce_execution_payload(&bindings, &payload);
