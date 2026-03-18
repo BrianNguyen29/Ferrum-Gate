@@ -4518,3 +4518,962 @@ async fn test_file_execution_denied_path_traversal() {
 
     assert_eq!(response.status(), 403);
 }
+// ============================================
+// EXECUTION-TIME SQLITE BINDING ENFORCEMENT TESTS (Phase C3)
+// ============================================
+
+async fn run_sqlite_flow_to_prepared(
+    runtime: &GatewayRuntime,
+    sqlite_binding: ResourceBinding,
+) -> (
+    ferrum_proto::IntentId,
+    ferrum_proto::ProposalId,
+    ferrum_proto::ExecutionId,
+) {
+    let app = build_router(runtime.clone());
+    let req = sample_intent_request_with_effect(EffectType::DatabaseMutation);
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    let app = build_router(runtime.clone());
+    let proposal = ActionProposal {
+        proposal_id: ferrum_proto::ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Query SQLite database".to_string(),
+        tool_name: "sqlite.query".to_string(),
+        server_name: "sqlite-adapter".to_string(),
+        raw_arguments: serde_json::json!({"db_path": "/tmp/test.db", "query": "SELECT * FROM users"}),
+        expected_effect: "query SQLite database".to_string(),
+        estimated_risk: RiskTier::Medium,
+        requested_rollback_class: RollbackClass::R0NativeReversible,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "sqlite-adapter".to_string(),
+            tool_name: "sqlite.query".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![sqlite_binding],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    (intent_id, proposal_id, execution_id)
+}
+
+#[tokio::test]
+async fn test_sqlite_execution_allowed_with_matching_binding() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    let sqlite_binding = ResourceBinding::Sqlite {
+        db_path: "/tmp/test.db".to_string(),
+        tables: vec!["users".to_string()],
+        mode: ResourceMode::Read,
+    };
+
+    let (_intent_id, _proposal_id, execution_id) =
+        run_sqlite_flow_to_prepared(&runtime, sqlite_binding).await;
+
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({
+            "db_path": "/tmp/test.db",
+            "query": "SELECT * FROM users WHERE id = 1"
+        }),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        200,
+        "SQLite execution with matching binding should succeed"
+    );
+}
+
+#[tokio::test]
+async fn test_sqlite_execution_denied_db_path_mismatch() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    let sqlite_binding = ResourceBinding::Sqlite {
+        db_path: "/tmp/allowed.db".to_string(),
+        tables: vec![],
+        mode: ResourceMode::ReadWrite,
+    };
+
+    let (_intent_id, _proposal_id, execution_id) =
+        run_sqlite_flow_to_prepared(&runtime, sqlite_binding).await;
+
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({
+            "db_path": "/tmp/other.db",
+            "query": "SELECT * FROM users"
+        }),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 403);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let error: ferrum_proto::ApiError = serde_json::from_slice(&body).unwrap();
+    assert!(matches!(
+        error.code,
+        ferrum_proto::ApiErrorCode::PolicyDenied
+    ));
+}
+
+#[tokio::test]
+async fn test_sqlite_execution_denied_table_not_in_allowlist() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    let sqlite_binding = ResourceBinding::Sqlite {
+        db_path: "/tmp/test.db".to_string(),
+        tables: vec!["users".to_string()], // orders not allowed
+        mode: ResourceMode::Read,
+    };
+
+    let (_intent_id, _proposal_id, execution_id) =
+        run_sqlite_flow_to_prepared(&runtime, sqlite_binding).await;
+
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({
+            "db_path": "/tmp/test.db",
+            "sql": "SELECT * FROM orders"
+        }),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 403);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let error: ferrum_proto::ApiError = serde_json::from_slice(&body).unwrap();
+    assert!(matches!(
+        error.code,
+        ferrum_proto::ApiErrorCode::PolicyDenied
+    ));
+}
+
+#[tokio::test]
+async fn test_sqlite_execution_denied_write_on_read_binding() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    let sqlite_binding = ResourceBinding::Sqlite {
+        db_path: "/tmp/test.db".to_string(),
+        tables: vec![],
+        mode: ResourceMode::Read,
+    };
+
+    let (_intent_id, _proposal_id, execution_id) =
+        run_sqlite_flow_to_prepared(&runtime, sqlite_binding).await;
+
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({
+            "db_path": "/tmp/test.db",
+            "sql": "INSERT INTO users (name) VALUES ('test')"
+        }),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 403);
+}
+
+// ============================================
+// EXECUTION-TIME GIT BINDING ENFORCEMENT TESTS (Phase C3)
+// ============================================
+
+async fn run_git_flow_to_prepared(
+    runtime: &GatewayRuntime,
+    git_binding: ResourceBinding,
+) -> (
+    ferrum_proto::IntentId,
+    ferrum_proto::ProposalId,
+    ferrum_proto::ExecutionId,
+) {
+    let app = build_router(runtime.clone());
+    let req = sample_intent_request_with_effect(EffectType::GitMutation);
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    let app = build_router(runtime.clone());
+    let proposal = ActionProposal {
+        proposal_id: ferrum_proto::ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Execute git operation".to_string(),
+        tool_name: "git.exec".to_string(),
+        server_name: "git-adapter".to_string(),
+        raw_arguments: serde_json::json!({"repo_path": "/repos/myrepo", "operation": "log"}),
+        expected_effect: "git log".to_string(),
+        estimated_risk: RiskTier::Medium,
+        requested_rollback_class: RollbackClass::R0NativeReversible,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "git-adapter".to_string(),
+            tool_name: "git.exec".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![git_binding],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    (intent_id, proposal_id, execution_id)
+}
+
+#[tokio::test]
+async fn test_git_execution_allowed_with_matching_binding() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    let git_binding = ResourceBinding::Git {
+        repo_path: "/repos/myrepo".to_string(),
+        allowed_refs: vec!["main".to_string(), "develop".to_string()],
+        mode: ResourceMode::Read,
+    };
+
+    let (_intent_id, _proposal_id, execution_id) =
+        run_git_flow_to_prepared(&runtime, git_binding).await;
+
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({
+            "repo_path": "/repos/myrepo",
+            "ref": "main",
+            "operation": "log"
+        }),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        200,
+        "Git execution with matching binding should succeed"
+    );
+}
+
+#[tokio::test]
+async fn test_git_execution_denied_repo_path_mismatch() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    let git_binding = ResourceBinding::Git {
+        repo_path: "/repos/allowed".to_string(),
+        allowed_refs: vec![],
+        mode: ResourceMode::ReadWrite,
+    };
+
+    let (_intent_id, _proposal_id, execution_id) =
+        run_git_flow_to_prepared(&runtime, git_binding).await;
+
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({
+            "repo_path": "/repos/other",
+            "ref": "main",
+            "operation": "log"
+        }),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 403);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let error: ferrum_proto::ApiError = serde_json::from_slice(&body).unwrap();
+    assert!(matches!(
+        error.code,
+        ferrum_proto::ApiErrorCode::PolicyDenied
+    ));
+}
+
+#[tokio::test]
+async fn test_git_execution_denied_ref_not_in_allowlist() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    let git_binding = ResourceBinding::Git {
+        repo_path: "/repos/myrepo".to_string(),
+        allowed_refs: vec!["main".to_string()], // feature/* not allowed
+        mode: ResourceMode::Read,
+    };
+
+    let (_intent_id, _proposal_id, execution_id) =
+        run_git_flow_to_prepared(&runtime, git_binding).await;
+
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({
+            "repo_path": "/repos/myrepo",
+            "ref": "feature/experimental",
+            "operation": "checkout"
+        }),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 403);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let error: ferrum_proto::ApiError = serde_json::from_slice(&body).unwrap();
+    assert!(matches!(
+        error.code,
+        ferrum_proto::ApiErrorCode::PolicyDenied
+    ));
+}
+
+#[tokio::test]
+async fn test_git_execution_denied_write_on_read_binding() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    let git_binding = ResourceBinding::Git {
+        repo_path: "/repos/myrepo".to_string(),
+        allowed_refs: vec![],
+        mode: ResourceMode::Read,
+    };
+
+    let (_intent_id, _proposal_id, execution_id) =
+        run_git_flow_to_prepared(&runtime, git_binding).await;
+
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({
+            "repo_path": "/repos/myrepo",
+            "branch": "main",
+            "operation": "push"
+        }),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 403);
+}
+
+// ============================================
+// EXECUTION-TIME EMAIL DRAFT BINDING ENFORCEMENT TESTS (Phase C3)
+// ============================================
+
+async fn run_email_flow_to_prepared(
+    runtime: &GatewayRuntime,
+    email_binding: ResourceBinding,
+) -> (
+    ferrum_proto::IntentId,
+    ferrum_proto::ProposalId,
+    ferrum_proto::ExecutionId,
+) {
+    let app = build_router(runtime.clone());
+    let req = sample_intent_request_with_effect(EffectType::ExternalCommunication);
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    let app = build_router(runtime.clone());
+    let proposal = ActionProposal {
+        proposal_id: ferrum_proto::ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Draft email".to_string(),
+        tool_name: "email.draft".to_string(),
+        server_name: "email-adapter".to_string(),
+        raw_arguments: serde_json::json!({"to": ["alice@example.com"], "subject": "Test"}),
+        expected_effect: "draft email".to_string(),
+        estimated_risk: RiskTier::Medium,
+        requested_rollback_class: RollbackClass::R0NativeReversible,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "email-adapter".to_string(),
+            tool_name: "email.draft".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![email_binding],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    (intent_id, proposal_id, execution_id)
+}
+
+#[tokio::test]
+async fn test_email_execution_allowed_draft_matching_binding() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    let email_binding = ResourceBinding::EmailDraft {
+        recipients: vec![
+            "alice@example.com".to_string(),
+            "bob@example.com".to_string(),
+        ],
+        allow_send: false,
+        mode: ResourceMode::Read,
+    };
+
+    let (_intent_id, _proposal_id, execution_id) =
+        run_email_flow_to_prepared(&runtime, email_binding).await;
+
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({
+            "to": ["alice@example.com"],
+            "subject": "Test email",
+            "body": "Hello!"
+        }),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        200,
+        "Email draft execution with matching binding should succeed"
+    );
+}
+
+#[tokio::test]
+async fn test_email_execution_denied_recipient_not_in_allowlist() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    let email_binding = ResourceBinding::EmailDraft {
+        recipients: vec!["alice@example.com".to_string()],
+        allow_send: true,
+        mode: ResourceMode::Write,
+    };
+
+    let (_intent_id, _proposal_id, execution_id) =
+        run_email_flow_to_prepared(&runtime, email_binding).await;
+
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({
+            "to": ["alice@example.com", "eve@evil.com"],
+            "subject": "Test",
+            "send": true
+        }),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 403);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let error: ferrum_proto::ApiError = serde_json::from_slice(&body).unwrap();
+    assert!(matches!(
+        error.code,
+        ferrum_proto::ApiErrorCode::PolicyDenied
+    ));
+}
+
+#[tokio::test]
+async fn test_email_execution_denied_send_when_not_allowed() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    let email_binding = ResourceBinding::EmailDraft {
+        recipients: vec!["alice@example.com".to_string()],
+        allow_send: false, // send not allowed
+        mode: ResourceMode::Read,
+    };
+
+    let (_intent_id, _proposal_id, execution_id) =
+        run_email_flow_to_prepared(&runtime, email_binding).await;
+
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({
+            "to": ["alice@example.com"],
+            "subject": "Test",
+            "send": true
+        }),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 403);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let error: ferrum_proto::ApiError = serde_json::from_slice(&body).unwrap();
+    assert!(matches!(
+        error.code,
+        ferrum_proto::ApiErrorCode::PolicyDenied
+    ));
+}
+
+#[tokio::test]
+async fn test_email_execution_allowed_send_when_allowed() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    let email_binding = ResourceBinding::EmailDraft {
+        recipients: vec!["alice@example.com".to_string()],
+        allow_send: true,
+        mode: ResourceMode::Write,
+    };
+
+    let (_intent_id, _proposal_id, execution_id) =
+        run_email_flow_to_prepared(&runtime, email_binding).await;
+
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({
+            "to": ["alice@example.com"],
+            "subject": "Test",
+            "send": true
+        }),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        200,
+        "Email send execution with allow_send=true should succeed"
+    );
+}

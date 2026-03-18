@@ -519,7 +519,22 @@ impl SemanticFirewall for DefaultFirewall {
             return self.enforce_file_payload(bindings, &file_payload);
         }
 
-        // Not an HTTP or File execution attempt - pass through for other flows
+        // Try to parse as SQLite payload
+        if let Some(sqlite_payload) = self.try_parse_sqlite_payload(payload) {
+            return self.enforce_sqlite_payload(bindings, &sqlite_payload);
+        }
+
+        // Try to parse as Git payload
+        if let Some(git_payload) = self.try_parse_git_payload(payload) {
+            return self.enforce_git_payload(bindings, &git_payload);
+        }
+
+        // Try to parse as EmailDraft payload
+        if let Some(email_payload) = self.try_parse_email_payload(payload) {
+            return self.enforce_email_payload(bindings, &email_payload);
+        }
+
+        // Not a recognized execution attempt - pass through for other flows
         Ok(())
     }
 }
@@ -698,6 +713,483 @@ impl DefaultFirewall {
         })
     }
 
+    /// Try to parse a payload as a SQLite execution attempt.
+    fn try_parse_sqlite_payload(
+        &self,
+        payload: &serde_json::Value,
+    ) -> Option<SqliteExecutionPayload> {
+        let obj = payload.as_object()?;
+
+        // Must have a "db_path" string field to be considered SQLite
+        let db_path = obj.get("db_path")?.as_str()?.to_string();
+
+        // Get SQL/query if present
+        let sql = obj
+            .get("sql")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let query = obj
+            .get("query")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        let statement = sql.as_deref().or(query.as_deref());
+
+        // Infer tables from query if present
+        let mut tables = Vec::new();
+        if let Some(sql_str) = statement {
+            tables = self.extract_tables_from_sql(sql_str);
+        }
+
+        // Infer write intent from SQL keywords or explicit flags
+        let is_write = if let Some(sql_str) = statement {
+            let lower = sql_str.to_lowercase();
+            lower.contains("insert")
+                || lower.contains("update")
+                || lower.contains("delete")
+                || lower.contains("drop")
+                || lower.contains("create")
+                || lower.contains("alter")
+        } else {
+            obj.contains_key("write")
+                || obj
+                    .get("write_mode")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+        };
+
+        Some(SqliteExecutionPayload {
+            db_path,
+            sql,
+            query,
+            tables,
+            is_write,
+        })
+    }
+
+    /// Extract table names from SQL (basic conservative extraction).
+    fn extract_tables_from_sql(&self, sql: &str) -> Vec<String> {
+        let lower = sql.to_lowercase();
+        let mut tables = Vec::new();
+
+        // Extract FROM clause tables
+        if let Some(from_pos) = lower.find(" from ") {
+            let after_from = &lower[from_pos + 6..];
+            let table_part = after_from
+                .split(|c: char| c.is_whitespace() || c == ',' || c == ';')
+                .next()
+                .unwrap_or("");
+            if !table_part.is_empty() && !table_part.starts_with('(') {
+                tables.push(table_part.to_string());
+            }
+        }
+
+        // Extract INTO clause tables (INSERT INTO)
+        if let Some(into_pos) = lower.find("insert into ") {
+            let after_into = &lower[into_pos + 12..];
+            let table_part = after_into
+                .split(|c: char| c.is_whitespace() || c == '(' || c == ';')
+                .next()
+                .unwrap_or("");
+            if !table_part.is_empty() {
+                tables.push(table_part.to_string());
+            }
+        }
+
+        // Extract UPDATE clause tables
+        if let Some(update_pos) = lower.find("update ") {
+            let after_update = &lower[update_pos + 7..];
+            let table_part = after_update
+                .split(|c: char| c.is_whitespace() || c == ',' || c == ';')
+                .next()
+                .unwrap_or("");
+            if !table_part.is_empty() {
+                tables.push(table_part.to_string());
+            }
+        }
+
+        tables
+    }
+
+    /// Enforce SQLite payload against SQLite bindings.
+    fn enforce_sqlite_payload(
+        &self,
+        bindings: &[ResourceBinding],
+        sqlite_payload: &SqliteExecutionPayload,
+    ) -> Result<(), EnforcementError> {
+        // Find SQLite bindings from the capability
+        let sqlite_bindings: Vec<_> = bindings
+            .iter()
+            .filter_map(|b| match b {
+                ResourceBinding::Sqlite {
+                    db_path,
+                    tables,
+                    mode,
+                } => Some((db_path, tables, mode)),
+                _ => None,
+            })
+            .collect();
+
+        // If no SQLite bindings exist but we have a SQLite payload, deny (fail-closed)
+        if sqlite_bindings.is_empty() {
+            return Err(EnforcementError {
+                code: EnforcementErrorCode::MissingBinding,
+                message: "SQLite execution attempted but no Sqlite binding in capability"
+                    .to_string(),
+            });
+        }
+
+        // Check for path traversal in db_path
+        if self.contains_file_path_traversal(&sqlite_payload.db_path) {
+            return Err(EnforcementError {
+                code: EnforcementErrorCode::PathViolation,
+                message: format!(
+                    "SQLite db_path contains traversal pattern: {}",
+                    sqlite_payload.db_path
+                ),
+            });
+        }
+
+        // Try to match against any SQLite binding (allow if any matches)
+        for (binding_db_path, binding_tables, binding_mode) in &sqlite_bindings {
+            // Check exact db_path match (bindings are exact grants)
+            if sqlite_payload.db_path != **binding_db_path {
+                continue;
+            }
+
+            // If binding specifies tables, check that all accessed tables are allowed
+            if !binding_tables.is_empty() {
+                if sqlite_payload.tables.is_empty() {
+                    return Err(EnforcementError {
+                        code: EnforcementErrorCode::MalformedPayload,
+                        message: format!(
+                            "SQLite payload for {} did not expose table scope for validation",
+                            sqlite_payload.db_path
+                        ),
+                    });
+                }
+
+                for table in &sqlite_payload.tables {
+                    if !binding_tables.contains(table) {
+                        return Err(EnforcementError {
+                            code: EnforcementErrorCode::MissingBinding,
+                            message: format!("SQLite table '{}' not in binding allowlist", table),
+                        });
+                    }
+                }
+            }
+
+            // Check mode allows this operation
+            match binding_mode {
+                ResourceMode::Read => {
+                    if sqlite_payload.is_write {
+                        return Err(EnforcementError {
+                            code: EnforcementErrorCode::ModeViolation,
+                            message: format!(
+                                "SQLite write attempted on read-only binding for db: {}",
+                                sqlite_payload.db_path
+                            ),
+                        });
+                    }
+                    return Ok(());
+                }
+                ResourceMode::Write | ResourceMode::ReadWrite => {
+                    return Ok(());
+                }
+                _ => {
+                    continue;
+                }
+            }
+        }
+
+        // No binding matched - fail closed
+        Err(EnforcementError {
+            code: EnforcementErrorCode::MissingBinding,
+            message: format!(
+                "SQLite db_path {} does not match any capability binding",
+                sqlite_payload.db_path
+            ),
+        })
+    }
+
+    /// Try to parse a payload as a Git execution attempt.
+    fn try_parse_git_payload(&self, payload: &serde_json::Value) -> Option<GitExecutionPayload> {
+        let obj = payload.as_object()?;
+
+        // Must have a "repo_path" string field to be considered Git
+        let repo_path = obj.get("repo_path")?.as_str()?.to_string();
+
+        // Get ref/branch/operation if present
+        let target_ref = obj
+            .get("ref")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let branch = obj
+            .get("branch")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let operation = obj
+            .get("operation")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        // Infer write intent from operation type or explicit flags
+        let is_write = if let Some(ref op) = operation {
+            let lower = op.to_lowercase();
+            lower.contains("push")
+                || lower.contains("commit")
+                || lower.contains("merge")
+                || lower.contains("rebase")
+                || lower.contains("checkout")
+                || lower.contains("reset")
+                || lower.contains("tag")
+        } else {
+            obj.get("write_mode")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        };
+
+        Some(GitExecutionPayload {
+            repo_path,
+            target_ref,
+            branch,
+            operation,
+            is_write,
+        })
+    }
+
+    /// Enforce Git payload against Git bindings.
+    fn enforce_git_payload(
+        &self,
+        bindings: &[ResourceBinding],
+        git_payload: &GitExecutionPayload,
+    ) -> Result<(), EnforcementError> {
+        // Find Git bindings from the capability
+        let git_bindings: Vec<_> = bindings
+            .iter()
+            .filter_map(|b| match b {
+                ResourceBinding::Git {
+                    repo_path,
+                    allowed_refs,
+                    mode,
+                } => Some((repo_path, allowed_refs, mode)),
+                _ => None,
+            })
+            .collect();
+
+        // If no Git bindings exist but we have a Git payload, deny (fail-closed)
+        if git_bindings.is_empty() {
+            return Err(EnforcementError {
+                code: EnforcementErrorCode::MissingBinding,
+                message: "Git execution attempted but no Git binding in capability".to_string(),
+            });
+        }
+
+        // Check for path traversal in repo_path
+        if self.contains_file_path_traversal(&git_payload.repo_path) {
+            return Err(EnforcementError {
+                code: EnforcementErrorCode::PathViolation,
+                message: format!(
+                    "Git repo_path contains traversal pattern: {}",
+                    git_payload.repo_path
+                ),
+            });
+        }
+
+        // Try to match against any Git binding (allow if any matches)
+        for (binding_repo_path, binding_allowed_refs, binding_mode) in &git_bindings {
+            // Check exact repo_path match (bindings are exact grants)
+            if git_payload.repo_path != **binding_repo_path {
+                continue;
+            }
+
+            // If binding specifies allowed refs, check that the target ref is allowed
+            if !binding_allowed_refs.is_empty() {
+                let ref_to_check = git_payload
+                    .target_ref
+                    .as_deref()
+                    .or(git_payload.branch.as_deref());
+
+                if let Some(ref_name) = ref_to_check {
+                    if !binding_allowed_refs.contains(&ref_name.to_string()) {
+                        return Err(EnforcementError {
+                            code: EnforcementErrorCode::MissingBinding,
+                            message: format!("Git ref '{}' not in binding allowlist", ref_name),
+                        });
+                    }
+                } else {
+                    return Err(EnforcementError {
+                        code: EnforcementErrorCode::MalformedPayload,
+                        message: "Git payload omitted ref/branch required by binding allowlist"
+                            .to_string(),
+                    });
+                }
+            }
+
+            // Check mode allows this operation
+            match binding_mode {
+                ResourceMode::Read => {
+                    if git_payload.is_write {
+                        return Err(EnforcementError {
+                            code: EnforcementErrorCode::ModeViolation,
+                            message: format!(
+                                "Git write operation attempted on read-only binding for repo: {}",
+                                git_payload.repo_path
+                            ),
+                        });
+                    }
+                    return Ok(());
+                }
+                ResourceMode::Write | ResourceMode::ReadWrite => {
+                    return Ok(());
+                }
+                _ => {
+                    continue;
+                }
+            }
+        }
+
+        // No binding matched - fail closed
+        Err(EnforcementError {
+            code: EnforcementErrorCode::MissingBinding,
+            message: format!(
+                "Git repo_path {} does not match any capability binding",
+                git_payload.repo_path
+            ),
+        })
+    }
+
+    /// Try to parse a payload as an EmailDraft execution attempt.
+    fn try_parse_email_payload(
+        &self,
+        payload: &serde_json::Value,
+    ) -> Option<EmailDraftExecutionPayload> {
+        let obj = payload.as_object()?;
+
+        // Must have "to" or "recipients" to be considered an email draft operation
+        let to: Vec<String> = obj
+            .get("to")
+            .map(Self::parse_string_or_array_field)
+            .unwrap_or_default();
+
+        let recipients: Vec<String> = obj
+            .get("recipients")
+            .map(Self::parse_string_or_array_field)
+            .unwrap_or_default();
+
+        // If neither "to" nor "recipients" present, not an email payload
+        if to.is_empty() && recipients.is_empty() {
+            return None;
+        }
+
+        // Merge to and recipients
+        let all_recipients: Vec<String> = to
+            .into_iter()
+            .chain(recipients)
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+
+        let subject = obj
+            .get("subject")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        // Infer send intent from explicit send flag or "send" operation
+        let is_send = obj.get("send").and_then(|v| v.as_bool()).unwrap_or(false)
+            || obj
+                .get("operation")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_lowercase() == "send")
+                .unwrap_or(false);
+
+        Some(EmailDraftExecutionPayload {
+            to: all_recipients.clone(),
+            recipients: all_recipients,
+            subject,
+            is_send,
+        })
+    }
+
+    /// Enforce EmailDraft payload against EmailDraft bindings.
+    fn enforce_email_payload(
+        &self,
+        bindings: &[ResourceBinding],
+        email_payload: &EmailDraftExecutionPayload,
+    ) -> Result<(), EnforcementError> {
+        // Find EmailDraft bindings from the capability
+        let email_bindings: Vec<_> = bindings
+            .iter()
+            .filter_map(|b| match b {
+                ResourceBinding::EmailDraft {
+                    recipients,
+                    allow_send,
+                    mode,
+                } => Some((recipients, *allow_send, mode)),
+                _ => None,
+            })
+            .collect();
+
+        // If no EmailDraft bindings exist but we have an email payload, deny (fail-closed)
+        if email_bindings.is_empty() {
+            return Err(EnforcementError {
+                code: EnforcementErrorCode::MissingBinding,
+                message: "Email execution attempted but no EmailDraft binding in capability"
+                    .to_string(),
+            });
+        }
+
+        // Try to match against any EmailDraft binding (allow if any matches)
+        for (binding_recipients, binding_allow_send, binding_mode) in &email_bindings {
+            // Check all recipients are in the allowlist
+            for recipient in &email_payload.to {
+                if !binding_recipients.contains(recipient) {
+                    return Err(EnforcementError {
+                        code: EnforcementErrorCode::MissingBinding,
+                        message: format!(
+                            "Email recipient '{}' not in binding allowlist",
+                            recipient
+                        ),
+                    });
+                }
+            }
+
+            // Check send is allowed if this is a send operation
+            if email_payload.is_send && !binding_allow_send {
+                return Err(EnforcementError {
+                    code: EnforcementErrorCode::ModeViolation,
+                    message: "Email send attempted but binding has allow_send=false".to_string(),
+                });
+            }
+
+            // Check mode allows this operation
+            match binding_mode {
+                ResourceMode::Read | ResourceMode::Draft => {
+                    // Read/Draft mode only allows draft operations (no send)
+                    if email_payload.is_send {
+                        return Err(EnforcementError {
+                            code: EnforcementErrorCode::ModeViolation,
+                            message: "Email send attempted on draft-only binding".to_string(),
+                        });
+                    }
+                    return Ok(());
+                }
+                ResourceMode::Write | ResourceMode::ReadWrite => {
+                    return Ok(());
+                }
+                _ => {
+                    continue;
+                }
+            }
+        }
+
+        // No binding matched - fail closed
+        Err(EnforcementError {
+            code: EnforcementErrorCode::MissingBinding,
+            message: "Email recipients do not match any capability binding".to_string(),
+        })
+    }
+
     /// Normalize file path for comparison (remove redundant separators, etc.)
     fn normalize_file_path(&self, path: &str) -> String {
         // Simple normalization: collapse multiple slashes, remove trailing slash
@@ -739,6 +1231,21 @@ impl DefaultFirewall {
         }
 
         false
+    }
+
+    fn parse_string_or_array_field(value: &serde_json::Value) -> Vec<String> {
+        if let Some(single) = value.as_str() {
+            return vec![single.to_string()];
+        }
+
+        value
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// Infer effect type from expected effect description.
@@ -877,6 +1384,38 @@ struct HttpExecutionPayload {
 struct FileExecutionPayload {
     path: String,
     is_write: bool,
+}
+
+/// SQLite execution payload extracted from JSON.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+struct SqliteExecutionPayload {
+    db_path: String,
+    sql: Option<String>,
+    query: Option<String>,
+    tables: Vec<String>,
+    is_write: bool,
+}
+
+/// Git execution payload extracted from JSON.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+struct GitExecutionPayload {
+    repo_path: String,
+    target_ref: Option<String>,
+    branch: Option<String>,
+    operation: Option<String>,
+    is_write: bool,
+}
+
+/// EmailDraft execution payload extracted from JSON.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+struct EmailDraftExecutionPayload {
+    to: Vec<String>,
+    recipients: Vec<String>,
+    subject: Option<String>,
+    is_send: bool,
 }
 
 /// Parsed URL components for comparison.
@@ -1949,6 +2488,629 @@ mod tests {
         let payload = serde_json::json!({
             "path": "/tmp/anywhere.txt",
             "content": "mutate"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_ok());
+    }
+
+    // ============================================
+    // EXECUTION-TIME SQLITE BINDING ENFORCEMENT TESTS
+    // ============================================
+
+    fn create_sqlite_binding(
+        db_path: &str,
+        tables: &[&str],
+        mode: ResourceMode,
+    ) -> ResourceBinding {
+        ResourceBinding::Sqlite {
+            db_path: db_path.to_string(),
+            tables: tables.iter().map(|s| s.to_string()).collect(),
+            mode,
+        }
+    }
+
+    #[test]
+    fn test_enforce_sqlite_allowed_read_matching_binding() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_sqlite_binding(
+            "/tmp/test.db",
+            &["users", "orders"],
+            ResourceMode::Read,
+        )];
+
+        let payload = serde_json::json!({
+            "db_path": "/tmp/test.db",
+            "query": "SELECT * FROM users WHERE id = 1"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_ok(), "Expected allowed but got: {:?}", result);
+    }
+
+    #[test]
+    fn test_enforce_sqlite_denied_db_path_mismatch() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_sqlite_binding(
+            "/tmp/allowed.db",
+            &["users"],
+            ResourceMode::Read,
+        )];
+
+        let payload = serde_json::json!({
+            "db_path": "/tmp/other.db",
+            "query": "SELECT * FROM users"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().code,
+            EnforcementErrorCode::MissingBinding
+        );
+    }
+
+    #[test]
+    fn test_enforce_sqlite_denied_table_not_in_allowlist() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_sqlite_binding(
+            "/tmp/test.db",
+            &["users"], // Only users table allowed
+            ResourceMode::Read,
+        )];
+
+        let payload = serde_json::json!({
+            "db_path": "/tmp/test.db",
+            "sql": "SELECT * FROM orders WHERE id = 1"  // orders not in allowlist
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().code,
+            EnforcementErrorCode::MissingBinding
+        );
+    }
+
+    #[test]
+    fn test_enforce_sqlite_denied_write_on_read_binding() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_sqlite_binding(
+            "/tmp/test.db",
+            &["users"],
+            ResourceMode::Read,
+        )];
+
+        let payload = serde_json::json!({
+            "db_path": "/tmp/test.db",
+            "sql": "INSERT INTO users (name) VALUES ('test')"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().code,
+            EnforcementErrorCode::ModeViolation
+        );
+    }
+
+    #[test]
+    fn test_enforce_sqlite_allowed_write_with_write_binding() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_sqlite_binding(
+            "/tmp/test.db",
+            &["users"],
+            ResourceMode::Write,
+        )];
+
+        let payload = serde_json::json!({
+            "db_path": "/tmp/test.db",
+            "sql": "INSERT INTO users (name) VALUES ('test')"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_ok(), "Expected allowed but got: {:?}", result);
+    }
+
+    #[test]
+    fn test_enforce_sqlite_allowed_no_tables_constraint() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![ResourceBinding::Sqlite {
+            db_path: "/tmp/test.db".to_string(),
+            tables: vec![], // No table constraints
+            mode: ResourceMode::ReadWrite,
+        }];
+
+        let payload = serde_json::json!({
+            "db_path": "/tmp/test.db",
+            "sql": "SELECT * FROM any_table"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_ok(), "Expected allowed but got: {:?}", result);
+    }
+
+    #[test]
+    fn test_enforce_sqlite_denied_path_traversal() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_sqlite_binding(
+            "/tmp/test.db",
+            &["users"],
+            ResourceMode::Read,
+        )];
+
+        let payload = serde_json::json!({
+            "db_path": "../etc/secrets.db",
+            "query": "SELECT * FROM users"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().code,
+            EnforcementErrorCode::PathViolation
+        );
+    }
+
+    #[test]
+    fn test_enforce_sqlite_denied_missing_binding() {
+        let firewall = DefaultFirewall::new();
+        let bindings: Vec<ResourceBinding> = vec![];
+
+        let payload = serde_json::json!({
+            "db_path": "/tmp/test.db",
+            "query": "SELECT * FROM users"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().code,
+            EnforcementErrorCode::MissingBinding
+        );
+    }
+
+    #[test]
+    fn test_enforce_sqlite_denied_when_table_scope_cannot_be_inferred() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_sqlite_binding(
+            "/tmp/test.db",
+            &["users"],
+            ResourceMode::Read,
+        )];
+
+        let payload = serde_json::json!({
+            "db_path": "/tmp/test.db",
+            "query": "SELECT 1"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().code,
+            EnforcementErrorCode::MalformedPayload
+        );
+    }
+
+    // ============================================
+    // EXECUTION-TIME GIT BINDING ENFORCEMENT TESTS
+    // ============================================
+
+    fn create_git_binding(
+        repo_path: &str,
+        allowed_refs: &[&str],
+        mode: ResourceMode,
+    ) -> ResourceBinding {
+        ResourceBinding::Git {
+            repo_path: repo_path.to_string(),
+            allowed_refs: allowed_refs.iter().map(|s| s.to_string()).collect(),
+            mode,
+        }
+    }
+
+    #[test]
+    fn test_enforce_git_allowed_read_matching_binding() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_git_binding(
+            "/repos/myrepo",
+            &["main", "develop"],
+            ResourceMode::Read,
+        )];
+
+        let payload = serde_json::json!({
+            "repo_path": "/repos/myrepo",
+            "ref": "main",
+            "operation": "log"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_ok(), "Expected allowed but got: {:?}", result);
+    }
+
+    #[test]
+    fn test_enforce_git_denied_repo_path_mismatch() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_git_binding(
+            "/repos/allowed",
+            &["main"],
+            ResourceMode::Read,
+        )];
+
+        let payload = serde_json::json!({
+            "repo_path": "/repos/other",
+            "ref": "main",
+            "operation": "log"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().code,
+            EnforcementErrorCode::MissingBinding
+        );
+    }
+
+    #[test]
+    fn test_enforce_git_denied_ref_not_in_allowlist() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_git_binding(
+            "/repos/myrepo",
+            &["main", "develop"], // feature/* not allowed
+            ResourceMode::Read,
+        )];
+
+        let payload = serde_json::json!({
+            "repo_path": "/repos/myrepo",
+            "ref": "feature/experimental",
+            "operation": "checkout"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().code,
+            EnforcementErrorCode::MissingBinding
+        );
+    }
+
+    #[test]
+    fn test_enforce_git_denied_write_on_read_binding() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_git_binding(
+            "/repos/myrepo",
+            &["main"],
+            ResourceMode::Read,
+        )];
+
+        let payload = serde_json::json!({
+            "repo_path": "/repos/myrepo",
+            "branch": "main",
+            "operation": "push"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().code,
+            EnforcementErrorCode::ModeViolation
+        );
+    }
+
+    #[test]
+    fn test_enforce_git_allowed_write_with_write_binding() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_git_binding(
+            "/repos/myrepo",
+            &["main"],
+            ResourceMode::Write,
+        )];
+
+        let payload = serde_json::json!({
+            "repo_path": "/repos/myrepo",
+            "branch": "main",
+            "operation": "push"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_ok(), "Expected allowed but got: {:?}", result);
+    }
+
+    #[test]
+    fn test_enforce_git_allowed_no_refs_constraint() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![ResourceBinding::Git {
+            repo_path: "/repos/myrepo".to_string(),
+            allowed_refs: vec![], // No ref constraints
+            mode: ResourceMode::ReadWrite,
+        }];
+
+        let payload = serde_json::json!({
+            "repo_path": "/repos/myrepo",
+            "ref": "any-branch",
+            "operation": "checkout"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_ok(), "Expected allowed but got: {:?}", result);
+    }
+
+    #[test]
+    fn test_enforce_git_denied_path_traversal() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_git_binding(
+            "/repos/myrepo",
+            &["main"],
+            ResourceMode::Read,
+        )];
+
+        let payload = serde_json::json!({
+            "repo_path": "../etc",
+            "ref": "main",
+            "operation": "log"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().code,
+            EnforcementErrorCode::PathViolation
+        );
+    }
+
+    #[test]
+    fn test_enforce_git_denied_missing_binding() {
+        let firewall = DefaultFirewall::new();
+        let bindings: Vec<ResourceBinding> = vec![];
+
+        let payload = serde_json::json!({
+            "repo_path": "/repos/myrepo",
+            "ref": "main"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().code,
+            EnforcementErrorCode::MissingBinding
+        );
+    }
+
+    #[test]
+    fn test_enforce_git_denied_missing_ref_when_binding_requires_ref() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_git_binding(
+            "/repos/myrepo",
+            &["main"],
+            ResourceMode::Read,
+        )];
+
+        let payload = serde_json::json!({
+            "repo_path": "/repos/myrepo",
+            "operation": "log"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().code,
+            EnforcementErrorCode::MalformedPayload
+        );
+    }
+
+    // ============================================
+    // EXECUTION-TIME EMAIL DRAFT BINDING ENFORCEMENT TESTS
+    // ============================================
+
+    fn create_email_binding(
+        recipients: &[&str],
+        allow_send: bool,
+        mode: ResourceMode,
+    ) -> ResourceBinding {
+        ResourceBinding::EmailDraft {
+            recipients: recipients.iter().map(|s| s.to_string()).collect(),
+            allow_send,
+            mode,
+        }
+    }
+
+    #[test]
+    fn test_enforce_email_allowed_draft_matching_binding() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_email_binding(
+            &["alice@example.com", "bob@example.com"],
+            false, // allow_send false, draft only
+            ResourceMode::Read,
+        )];
+
+        let payload = serde_json::json!({
+            "to": ["alice@example.com"],
+            "subject": "Test email",
+            "body": "Hello!"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_ok(), "Expected allowed but got: {:?}", result);
+    }
+
+    #[test]
+    fn test_enforce_email_denied_recipient_not_in_allowlist() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_email_binding(
+            &["alice@example.com"],
+            true,
+            ResourceMode::Write,
+        )];
+
+        let payload = serde_json::json!({
+            "to": ["alice@example.com", "eve@evil.com"],
+            "subject": "Test",
+            "send": true
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().code,
+            EnforcementErrorCode::MissingBinding
+        );
+    }
+
+    #[test]
+    fn test_enforce_email_denied_send_when_not_allowed() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_email_binding(
+            &["alice@example.com"],
+            false, // send not allowed
+            ResourceMode::Read,
+        )];
+
+        let payload = serde_json::json!({
+            "to": ["alice@example.com"],
+            "subject": "Test",
+            "send": true
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().code,
+            EnforcementErrorCode::ModeViolation
+        );
+    }
+
+    #[test]
+    fn test_enforce_email_allowed_send_when_allowed() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_email_binding(
+            &["alice@example.com"],
+            true, // send allowed
+            ResourceMode::Write,
+        )];
+
+        let payload = serde_json::json!({
+            "to": ["alice@example.com"],
+            "subject": "Test",
+            "send": true
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_ok(), "Expected allowed but got: {:?}", result);
+    }
+
+    #[test]
+    fn test_enforce_email_recipients_field_also_works() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_email_binding(
+            &["bob@example.com"],
+            false,
+            ResourceMode::Read,
+        )];
+
+        let payload = serde_json::json!({
+            "recipients": ["bob@example.com"],
+            "subject": "Test"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_ok(), "Expected allowed but got: {:?}", result);
+    }
+
+    #[test]
+    fn test_enforce_email_denied_missing_binding() {
+        let firewall = DefaultFirewall::new();
+        let bindings: Vec<ResourceBinding> = vec![];
+
+        let payload = serde_json::json!({
+            "to": ["alice@example.com"],
+            "subject": "Test"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().code,
+            EnforcementErrorCode::MissingBinding
+        );
+    }
+
+    #[test]
+    fn test_enforce_email_allowed_using_operation_field() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_email_binding(
+            &["alice@example.com"],
+            true,
+            ResourceMode::Write,
+        )];
+
+        let payload = serde_json::json!({
+            "to": ["alice@example.com"],
+            "subject": "Test",
+            "operation": "send"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_ok(), "Expected allowed but got: {:?}", result);
+    }
+
+    #[test]
+    fn test_enforce_email_allowed_string_to_field() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_email_binding(
+            &["alice@example.com"],
+            false,
+            ResourceMode::Draft,
+        )];
+
+        let payload = serde_json::json!({
+            "to": "alice@example.com",
+            "subject": "Test"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_ok(), "Expected allowed but got: {:?}", result);
+    }
+
+    // ============================================
+    // NOOP FIREWALL ALLOWS ALL (NEW BINDING TYPES)
+    // ============================================
+
+    #[test]
+    fn test_noop_firewall_allows_all_sqlite() {
+        let firewall = NoopFirewall;
+        let bindings: Vec<ResourceBinding> = vec![];
+
+        let payload = serde_json::json!({
+            "db_path": "/tmp/any.db",
+            "sql": "DROP TABLE users"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_noop_firewall_allows_all_git() {
+        let firewall = NoopFirewall;
+        let bindings: Vec<ResourceBinding> = vec![];
+
+        let payload = serde_json::json!({
+            "repo_path": "/any/repo",
+            "operation": "push",
+            "branch": "main"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_noop_firewall_allows_all_email() {
+        let firewall = NoopFirewall;
+        let bindings: Vec<ResourceBinding> = vec![];
+
+        let payload = serde_json::json!({
+            "to": ["anyone@anywhere.com"],
+            "send": true
         });
 
         let result = firewall.enforce_execution_payload(&bindings, &payload);

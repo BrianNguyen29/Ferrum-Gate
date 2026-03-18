@@ -12,7 +12,7 @@
 
 - **Phase A**: coi nhu dat release gate; workspace va shape loi da du on dinh de lam nen cho persistence/runtime flow.
 - **Phase B**: coi nhu dat release gate; SQLite-backed persistence cho intents/proposals/capabilities/executions/rollback/provenance da chay qua integration path thuc.
-- **Phase C**: da co firewall MVP co y nghia trong branch hien tai; trust labeling, taint scoring, contradiction checks, output sanitization, basic DLP, va execution-time HTTP/File resource enforcement da duoc wire vao gateway. Git/Sqlite/EmailDraft execution-time enforcement van con la hardening gap tiep theo, nhung hai surface co kha nang bi bypass ro nhat trong flow hien tai da duoc dong lai.
+- **Phase C**: da co firewall MVP co y nghia trong branch hien tai; trust labeling, taint scoring, contradiction checks, output sanitization, basic DLP, va execution-time HTTP/File/Sqlite/Git/EmailDraft resource enforcement da duoc wire vao gateway. Tat ca 5 resource binding types (File, Http, Sqlite, Git, EmailDraft) gio day deu co execution-time enforcement.
 - **Phase E**: coi nhu dat cho supported flow hien tai; gateway da di qua `evaluate -> mint -> authorize -> prepare -> execute -> verify -> commit`, cung negative/recovery paths va approval/draft-only governance.
 - **Phase F**: da co poisoned-context suite, provenance minimum-chain evidence, va docs handoff ro rang cho supported flows + open gaps. Phan con lai cua phase nay chu yeu la operator/runtime hardening tiep theo, khong con la mo ho evidence/docs.
 
@@ -27,7 +27,7 @@
 - `cargo test`: full workspace pass tren branch `feat/firewall-mvp`.
 - Provenance edges are now persisted to `provenance_edges` table and queryable via `ProvenanceRepo::get_edges_to()`.
 - `docs/implementation-path/11-phase-f-evidence.md`: handoff tai lieu cho supported flows, evidence links, va open gaps hien tai.
-- Gateway firewall coverage hien da co trust-context derivation, read-only contradiction blocking, MCP scope contradiction blocking, compile-time taint lineage propagation, DLP redact/detect, execution-time HTTP/File binding enforcement, va regression tests cho empty-scope read-only bypass, host/method/header mismatch, missing binding, file path mismatch, file traversal, va write-on-read binding denial.
+- Gateway firewall coverage hien da co trust-context derivation, read-only contradiction blocking, MCP scope contradiction blocking, compile-time taint lineage propagation, DLP redact/detect, execution-time enforcement cho ca 5 resource binding types (File, Http, Sqlite, Git, EmailDraft), va regression tests cho tat ca enforcement paths bao gom: empty-scope read-only bypass, host/method/header mismatch, missing binding, file path mismatch, file traversal, write-on-read binding, Sqlite db_path/table violations, Git repo_path/ref violations, va EmailDraft recipient/send violations.
 - Mainline da hap thu cac moc quan trong truoc do:
   - `PR #3` - harden proposal provenance coverage
   - `PR #5` - execute / verify / commit gateway flow
@@ -38,7 +38,7 @@
 
 - Co the xem **Phase B** la complete theo tai lieu nay.
 - Co the xem **Phase E** la complete cho supported SQLite-backed gateway flow hien tai.
-- **Phase C** da dat mot MVP co tac dung that cho compile/evaluate va HTTP/File execution path; co the xem la dat release gate cho firewall MVP hien tai tren nhom flow dang duoc cover ro nhat. Neu muon mo rong gate theo nghia rong hon cho moi resource type, van con can them execution-time enforcement cho git/sqlite/maildraft bindings.
+- **Phase C** da dat mot MVP co tac dung that cho compile/evaluate va full execution-time enforcement cho ca 5 resource binding types (File, Http, Sqlite, Git, EmailDraft); co the xem la dat release gate cho firewall MVP hien tai voi day du execution-time enforcement coverage.
 - Co the xem **Phase F** da dat muc evidence/docs handoff cho supported gateway flow hien tai; cac gap con lai da duoc liet ke ro thanh open gaps de xu ly tiep.
 
 ---
