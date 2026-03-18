@@ -292,10 +292,36 @@ async fn test_evaluate_proposal_falls_back_to_minimal_intent_when_not_found() {
 
     // Policy evaluation provenance should still be emitted even without persisted proposal
     assert!(!eval_events.is_empty());
+
+    // Verify PolicyEvaluated has empty parent_edges (key provenance hardening requirement)
+    assert!(
+        eval_events[0].parent_edges.is_empty(),
+        "PolicyEvaluated.parent_edges should be empty when intent is not found"
+    );
+
+    // CRITICAL: ActionProposalSubmitted should NOT be emitted when proposal persistence fails
+    let submission_events = runtime
+        .store
+        .provenance()
+        .query(&ferrum_proto::ProvenanceQueryRequest {
+            intent_id: Some(non_existent_intent_id),
+            execution_id: None,
+            capability_id: None,
+            event_kind: Some(ProvenanceEventKind::ActionProposalSubmitted),
+            since: None,
+            until: None,
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        submission_events.is_empty(),
+        "ActionProposalSubmitted should NOT be emitted when intent does not exist and proposal persistence fails"
+    );
 }
 
 #[tokio::test]
-async fn test_evaluate_proposal_rejects_path_body_mismatch() {
+async fn test_evaluate_proposal_id_mismatch_returns_400_and_no_events() {
     let (_temp_dir, runtime, _store) = create_test_runtime().await;
 
     // First compile an intent to have a real intent in the store
@@ -322,12 +348,12 @@ async fn test_evaluate_proposal_rejects_path_body_mismatch() {
     let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
     let intent_id = compile_resp.envelope.intent_id;
 
-    // Create a proposal with one proposal_id
-    let proposal = sample_proposal(intent_id);
-    let body_proposal_id = proposal.proposal_id;
+    // Create a proposal with a DIFFERENT proposal_id in body than in path
+    let path_proposal_id = ProposalId::new();
+    let body_proposal_id = ProposalId::new(); // Different!
 
-    // Use a different proposal_id in the path
-    let path_proposal_id = ferrum_proto::ProposalId::new();
+    let mut proposal = sample_proposal(intent_id);
+    proposal.proposal_id = body_proposal_id;
 
     let app = build_router(runtime.clone());
     let response = app
@@ -342,20 +368,74 @@ async fn test_evaluate_proposal_rejects_path_body_mismatch() {
         .await
         .unwrap();
 
-    // Should fail with 400 Bad Request due to mismatch
-    assert_eq!(response.status(), 400);
+    // Should return 400 Bad Request due to proposal_id mismatch
+    assert_eq!(
+        response.status(),
+        400,
+        "Expected 400 for proposal_id mismatch"
+    );
 
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+    // Verify no proposal was persisted (neither path nor body proposal_id)
+    let stored_proposal_path = runtime
+        .store
+        .proposals()
+        .get(path_proposal_id)
         .await
         .unwrap();
-    let error: ferrum_proto::ApiError = serde_json::from_slice(&body).unwrap();
+    let stored_proposal_body = runtime
+        .store
+        .proposals()
+        .get(body_proposal_id)
+        .await
+        .unwrap();
+    assert!(
+        stored_proposal_path.is_none(),
+        "No proposal should be persisted for path proposal_id"
+    );
+    assert!(
+        stored_proposal_body.is_none(),
+        "No proposal should be persisted for body proposal_id"
+    );
 
-    // Verify the error message mentions the mismatch
-    assert!(error.message.contains("proposal_id mismatch"));
-    assert!(error.message.contains(&body_proposal_id.to_string()));
-    assert!(error.message.contains(&path_proposal_id.to_string()));
+    // Verify no proposal-related provenance events were emitted
+    let submission_events = runtime
+        .store
+        .provenance()
+        .query(&ferrum_proto::ProvenanceQueryRequest {
+            intent_id: Some(intent_id),
+            execution_id: None,
+            capability_id: None,
+            event_kind: Some(ProvenanceEventKind::ActionProposalSubmitted),
+            since: None,
+            until: None,
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        submission_events.is_empty(),
+        "ActionProposalSubmitted should NOT be emitted when proposal_id mismatch"
+    );
+
+    let eval_events = runtime
+        .store
+        .provenance()
+        .query(&ferrum_proto::ProvenanceQueryRequest {
+            intent_id: Some(intent_id),
+            execution_id: None,
+            capability_id: None,
+            event_kind: Some(ProvenanceEventKind::PolicyEvaluated),
+            since: None,
+            until: None,
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        eval_events.is_empty(),
+        "PolicyEvaluated should NOT be emitted when proposal_id mismatch"
+    );
 }
-
 #[tokio::test]
 async fn test_full_happy_path_flow_compile_evaluate_mint_authorize_prepare() {
     let (_temp_dir, runtime, _store) = create_test_runtime().await;
