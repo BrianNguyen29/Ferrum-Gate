@@ -1,7 +1,8 @@
 use ferrum_proto::{
-    ActionProposal, EffectType, IntentEnvelope, ResourceSelector, SensitivityLabel, TrustLabel,
+    ActionProposal, EffectType, HttpMethod, IntentEnvelope, ResourceBinding, ResourceMode,
+    ResourceSelector, SensitivityLabel, TrustLabel,
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// Semantic firewall trait defining core security operations.
 pub trait SemanticFirewall: Send + Sync {
@@ -30,6 +31,21 @@ pub trait SemanticFirewall: Send + Sync {
         raw_inputs: &[ferrum_proto::IntentInputRef],
         taint_inputs: &[String],
     ) -> ferrum_proto::TrustContextSummary;
+
+    /// Enforce execution payload against capability resource bindings.
+    ///
+    /// Returns Ok(()) if:
+    /// - The payload is not an HTTP execution attempt (non-HTTP flows pass through)
+    /// - An HTTP payload matches at least one Http binding
+    ///
+    /// Returns Err if:
+    /// - HTTP payload has no matching Http binding
+    /// - Method, host, path, or headers violate binding constraints
+    fn enforce_execution_payload(
+        &self,
+        bindings: &[ResourceBinding],
+        payload: &serde_json::Value,
+    ) -> Result<(), EnforcementError>;
 }
 
 /// A contradiction represents a policy violation between intent and proposal.
@@ -487,6 +503,82 @@ impl SemanticFirewall for DefaultFirewall {
             contains_untrusted_text,
         }
     }
+
+    fn enforce_execution_payload(
+        &self,
+        bindings: &[ResourceBinding],
+        payload: &serde_json::Value,
+    ) -> Result<(), EnforcementError> {
+        // Try to parse as HTTP payload
+        let http_payload = match self.try_parse_http_payload(payload) {
+            Some(p) => p,
+            None => {
+                // Not an HTTP execution attempt - pass through for non-HTTP flows
+                return Ok(());
+            }
+        };
+
+        // Find Http bindings from the capability
+        let http_bindings: Vec<_> = bindings
+            .iter()
+            .filter_map(|b| match b {
+                ResourceBinding::Http {
+                    method,
+                    base_url,
+                    path_prefix,
+                    header_allowlist,
+                    mode,
+                } => Some((method, base_url, path_prefix, header_allowlist, mode)),
+                _ => None,
+            })
+            .collect();
+
+        // If no HTTP bindings exist but we have an HTTP payload, deny
+        if http_bindings.is_empty() {
+            return Err(EnforcementError {
+                code: EnforcementErrorCode::MissingBinding,
+                message: "HTTP execution attempted but no Http binding in capability".to_string(),
+            });
+        }
+
+        // Parse the request URL
+        let parsed_url = match self.parse_url(&http_payload.url) {
+            Some(u) => u,
+            None => {
+                return Err(EnforcementError {
+                    code: EnforcementErrorCode::MalformedPayload,
+                    message: format!("Invalid URL in payload: {}", http_payload.url),
+                });
+            }
+        };
+
+        // Try to match against any Http binding (allow if any matches)
+        for (binding_method, binding_base_url, binding_path_prefix, binding_allowlist, mode) in
+            &http_bindings
+        {
+            if self.http_binding_matches(
+                &http_payload,
+                &parsed_url,
+                binding_method,
+                binding_base_url,
+                binding_path_prefix,
+                binding_allowlist,
+                mode,
+            ) {
+                return Ok(());
+            }
+        }
+
+        // No binding matched - fail closed
+        Err(EnforcementError {
+            code: EnforcementErrorCode::MissingBinding,
+            message: format!(
+                "HTTP request {} {} does not match any capability binding",
+                format_method(&http_payload.method),
+                http_payload.url
+            ),
+        })
+    }
 }
 
 impl DefaultFirewall {
@@ -579,6 +671,274 @@ fn risk_tier_value(tier: &ferrum_proto::RiskTier) -> u8 {
     }
 }
 
+/// Error type for execution-time HTTP egress enforcement failures.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnforcementError {
+    pub code: EnforcementErrorCode,
+    pub message: String,
+}
+
+/// Specific error codes for enforcement failures.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EnforcementErrorCode {
+    /// No matching HTTP binding found for the attempted HTTP execution
+    MissingBinding,
+    /// Method mismatch between request and binding
+    MethodMismatch,
+    /// Scheme/host/port mismatch
+    HostMismatch,
+    /// Path escapes outside allowed prefix
+    PathViolation,
+    /// Header not in allowlist
+    HeaderViolation,
+    /// Payload is malformed for HTTP execution
+    MalformedPayload,
+}
+
+impl std::fmt::Display for EnforcementError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}: {}", self.code, self.message)
+    }
+}
+
+impl std::error::Error for EnforcementError {}
+
+/// HTTP execution payload extracted from JSON.
+#[derive(Debug, Clone)]
+struct HttpExecutionPayload {
+    url: String,
+    method: HttpMethod,
+    headers: HashMap<String, String>,
+}
+
+/// Parsed URL components for comparison.
+#[derive(Debug, Clone)]
+struct ParsedUrl {
+    scheme: String,
+    host: String,
+    port: Option<u16>,
+    path: String,
+}
+
+/// Parse HTTP method string to enum.
+fn parse_http_method(s: &str) -> Option<HttpMethod> {
+    match s.to_uppercase().as_str() {
+        "GET" => Some(HttpMethod::Get),
+        "POST" => Some(HttpMethod::Post),
+        "PUT" => Some(HttpMethod::Put),
+        "PATCH" => Some(HttpMethod::Patch),
+        "DELETE" => Some(HttpMethod::Delete),
+        _ => None,
+    }
+}
+
+/// Format HTTP method for display.
+fn format_method(m: &HttpMethod) -> &'static str {
+    match m {
+        HttpMethod::Get => "GET",
+        HttpMethod::Post => "POST",
+        HttpMethod::Put => "PUT",
+        HttpMethod::Patch => "PATCH",
+        HttpMethod::Delete => "DELETE",
+    }
+}
+
+impl DefaultFirewall {
+    /// Try to parse a payload as an HTTP execution attempt.
+    /// Returns Some(HttpExecutionPayload) if it looks like HTTP, None otherwise.
+    fn try_parse_http_payload(&self, payload: &serde_json::Value) -> Option<HttpExecutionPayload> {
+        let obj = payload.as_object()?;
+
+        // Must have a "url" string field to be considered HTTP
+        let url = obj.get("url")?.as_str()?.to_string();
+
+        // Must have a "method" string field
+        let method_str = obj.get("method")?.as_str()?;
+        let method = parse_http_method(method_str)?;
+
+        // Optional headers object
+        let headers = if let Some(headers_obj) = obj.get("headers").and_then(|h| h.as_object()) {
+            headers_obj
+                .iter()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.to_lowercase(), s.to_string())))
+                .collect()
+        } else {
+            HashMap::new()
+        };
+
+        Some(HttpExecutionPayload {
+            url,
+            method,
+            headers,
+        })
+    }
+
+    /// Parse URL into components for comparison.
+    fn parse_url(&self, url: &str) -> Option<ParsedUrl> {
+        // Simple URL parsing - handle http:// and https://
+        let url_lower = url.to_lowercase();
+
+        let (scheme, rest) = if url_lower.starts_with("https://") {
+            ("https", &url[8..])
+        } else if url_lower.starts_with("http://") {
+            ("http", &url[7..])
+        } else {
+            return None;
+        };
+
+        // Split host:port from path
+        let (host_port, path) = match rest.find('/') {
+            Some(idx) => (&rest[..idx], &rest[idx..]),
+            None => (rest, "/"),
+        };
+
+        // Parse host and port
+        let (host, port) = match host_port.rfind(':') {
+            Some(idx) => {
+                let host_part = &host_port[..idx];
+                let port_part = &host_port[idx + 1..];
+                match port_part.parse::<u16>() {
+                    Ok(p) => (host_part, Some(p)),
+                    Err(_) => (host_port, None),
+                }
+            }
+            None => (host_port, None),
+        };
+
+        Some(ParsedUrl {
+            scheme: scheme.to_string(),
+            host: host.to_lowercase(),
+            port,
+            path: path.to_string(),
+        })
+    }
+
+    /// Check if an HTTP payload matches a specific binding.
+    #[allow(clippy::too_many_arguments)]
+    fn http_binding_matches(
+        &self,
+        payload: &HttpExecutionPayload,
+        parsed_url: &ParsedUrl,
+        binding_method: &HttpMethod,
+        binding_base_url: &str,
+        binding_path_prefix: &str,
+        binding_allowlist: &[String],
+        mode: &ResourceMode,
+    ) -> bool {
+        // Check method match
+        if payload.method != *binding_method {
+            return false;
+        }
+
+        // Parse binding base URL
+        let binding_parsed = match self.parse_url(binding_base_url) {
+            Some(u) => u,
+            None => return false,
+        };
+
+        // Check scheme match
+        if parsed_url.scheme != binding_parsed.scheme {
+            return false;
+        }
+
+        // Check host match (exact match required)
+        if parsed_url.host != binding_parsed.host {
+            return false;
+        }
+
+        // Check port match (binding port must match request port)
+        // If binding has no explicit port, use default for its scheme
+        let binding_port = binding_parsed.port.unwrap_or_else(|| {
+            if binding_parsed.scheme == "https" {
+                443
+            } else {
+                80
+            }
+        });
+        let request_port = parsed_url.port.unwrap_or_else(|| {
+            if parsed_url.scheme == "https" {
+                443
+            } else {
+                80
+            }
+        });
+        if request_port != binding_port {
+            return false;
+        }
+
+        // Check path prefix (request path must start with binding prefix)
+        // Conservative: reject suspicious path patterns before matching
+        if self.contains_path_traversal(&parsed_url.path) {
+            return false;
+        }
+        if !parsed_url.path.starts_with(binding_path_prefix) {
+            return false;
+        }
+
+        // Check mode allows this operation
+        match mode {
+            ResourceMode::Read => {
+                // Read mode only allows GET
+                if !matches!(payload.method, HttpMethod::Get) {
+                    return false;
+                }
+            }
+            ResourceMode::Write => {
+                // Write mode allows POST, PUT, PATCH, DELETE
+                if matches!(payload.method, HttpMethod::Get) {
+                    return false;
+                }
+            }
+            ResourceMode::ReadWrite => {
+                // ReadWrite allows all methods
+            }
+            _ => {
+                // Other modes are more restrictive - deny for safety
+                return false;
+            }
+        }
+
+        // Check headers against allowlist
+        let allowlist_lower: HashSet<String> =
+            binding_allowlist.iter().map(|h| h.to_lowercase()).collect();
+
+        for header_name in payload.headers.keys() {
+            if !allowlist_lower.contains(header_name) {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    /// Check for path traversal patterns (conservative - rejects anything suspicious).
+    fn contains_path_traversal(&self, path: &str) -> bool {
+        let decoded = path.to_lowercase();
+
+        // Check for explicit traversal patterns
+        if decoded.contains("/..") || decoded.contains("/../") {
+            return true;
+        }
+
+        // Check for encoded traversal attempts
+        if decoded.contains("%2e%2e") || decoded.contains("%2e.") || decoded.contains(".%2e") {
+            return true;
+        }
+
+        // Check for double slashes (could indicate path confusion)
+        if decoded.contains("//") {
+            return true;
+        }
+
+        // Check for null byte injection
+        if decoded.contains('\0') || decoded.contains("%00") {
+            return true;
+        }
+
+        false
+    }
+}
+
 /// Noop firewall for testing and backward compatibility.
 pub struct NoopFirewall;
 
@@ -630,6 +990,15 @@ impl SemanticFirewall for NoopFirewall {
             contains_tool_output: false,
             contains_untrusted_text: false,
         }
+    }
+
+    fn enforce_execution_payload(
+        &self,
+        _bindings: &[ResourceBinding],
+        _payload: &serde_json::Value,
+    ) -> Result<(), EnforcementError> {
+        // Noop allows all executions (for testing/backward compatibility)
+        Ok(())
     }
 }
 
@@ -906,5 +1275,389 @@ mod tests {
 
         let findings = firewall.dlp_findings(&value);
         assert!(findings.is_empty());
+    }
+
+    // ============================================
+    // EXECUTION-TIME HTTP EGRESS ENFORCEMENT TESTS
+    // ============================================
+
+    fn create_http_binding(
+        method: HttpMethod,
+        base_url: &str,
+        path_prefix: &str,
+        header_allowlist: &[&str],
+        mode: ResourceMode,
+    ) -> ResourceBinding {
+        ResourceBinding::Http {
+            method,
+            base_url: base_url.to_string(),
+            path_prefix: path_prefix.to_string(),
+            header_allowlist: header_allowlist.iter().map(|s| s.to_string()).collect(),
+            mode,
+        }
+    }
+
+    #[test]
+    fn test_enforce_http_allowed_with_matching_binding() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_http_binding(
+            HttpMethod::Get,
+            "https://api.example.com",
+            "/v1/",
+            &["content-type", "authorization"],
+            ResourceMode::Read,
+        )];
+
+        let payload = serde_json::json!({
+            "url": "https://api.example.com/v1/users",
+            "method": "GET",
+            "headers": {
+                "content-type": "application/json"
+            }
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_ok(), "Expected allowed but got: {:?}", result);
+    }
+
+    #[test]
+    fn test_enforce_http_denied_host_mismatch() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_http_binding(
+            HttpMethod::Get,
+            "https://api.example.com",
+            "/v1/",
+            &[],
+            ResourceMode::Read,
+        )];
+
+        let payload = serde_json::json!({
+            "url": "https://evil.com/v1/users",
+            "method": "GET"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().code,
+            EnforcementErrorCode::MissingBinding
+        );
+    }
+
+    #[test]
+    fn test_enforce_http_denied_method_mismatch() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_http_binding(
+            HttpMethod::Get,
+            "https://api.example.com",
+            "/v1/",
+            &[],
+            ResourceMode::Read,
+        )];
+
+        let payload = serde_json::json!({
+            "url": "https://api.example.com/v1/users",
+            "method": "POST"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().code,
+            EnforcementErrorCode::MissingBinding
+        );
+    }
+
+    #[test]
+    fn test_enforce_http_denied_header_violation() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_http_binding(
+            HttpMethod::Get,
+            "https://api.example.com",
+            "/v1/",
+            &["content-type"],
+            ResourceMode::Read,
+        )];
+
+        let payload = serde_json::json!({
+            "url": "https://api.example.com/v1/users",
+            "method": "GET",
+            "headers": {
+                "content-type": "application/json",
+                "x-custom-secret": "sensitive-data"
+            }
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().code,
+            EnforcementErrorCode::MissingBinding
+        );
+    }
+
+    #[test]
+    fn test_enforce_http_denied_missing_binding() {
+        let firewall = DefaultFirewall::new();
+        let bindings: Vec<ResourceBinding> = vec![];
+
+        let payload = serde_json::json!({
+            "url": "https://api.example.com/v1/users",
+            "method": "GET"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().code,
+            EnforcementErrorCode::MissingBinding
+        );
+    }
+
+    #[test]
+    fn test_enforce_non_http_passes_through() {
+        let firewall = DefaultFirewall::new();
+        let bindings: Vec<ResourceBinding> = vec![];
+
+        // Non-HTTP payload (no url field)
+        let payload = serde_json::json!({
+            "path": "/tmp/test.txt",
+            "content": "hello world"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(
+            result.is_ok(),
+            "Non-HTTP payload should pass through: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_enforce_http_denied_path_traversal() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_http_binding(
+            HttpMethod::Get,
+            "https://api.example.com",
+            "/v1/",
+            &[],
+            ResourceMode::Read,
+        )];
+
+        // Path traversal attempt
+        let payload = serde_json::json!({
+            "url": "https://api.example.com/v1/../../../etc/passwd",
+            "method": "GET"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().code,
+            EnforcementErrorCode::MissingBinding
+        );
+    }
+
+    #[test]
+    fn test_enforce_http_denied_encoded_traversal() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_http_binding(
+            HttpMethod::Get,
+            "https://api.example.com",
+            "/v1/",
+            &[],
+            ResourceMode::Read,
+        )];
+
+        // Encoded path traversal attempt
+        let payload = serde_json::json!({
+            "url": "https://api.example.com/v1/%2e%2e/%2e%2e/etc/passwd",
+            "method": "GET"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().code,
+            EnforcementErrorCode::MissingBinding
+        );
+    }
+
+    #[test]
+    fn test_enforce_http_denied_port_mismatch() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_http_binding(
+            HttpMethod::Get,
+            "https://api.example.com:8443",
+            "/v1/",
+            &[],
+            ResourceMode::Read,
+        )];
+
+        let payload = serde_json::json!({
+            "url": "https://api.example.com/v1/users",
+            "method": "GET"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().code,
+            EnforcementErrorCode::MissingBinding
+        );
+    }
+
+    #[test]
+    fn test_enforce_http_denied_scheme_mismatch() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_http_binding(
+            HttpMethod::Get,
+            "https://api.example.com",
+            "/v1/",
+            &[],
+            ResourceMode::Read,
+        )];
+
+        let payload = serde_json::json!({
+            "url": "http://api.example.com/v1/users",
+            "method": "GET"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().code,
+            EnforcementErrorCode::MissingBinding
+        );
+    }
+
+    #[test]
+    fn test_enforce_http_allowed_with_path_prefix_match() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_http_binding(
+            HttpMethod::Get,
+            "https://api.example.com",
+            "/v1/public/",
+            &[],
+            ResourceMode::Read,
+        )];
+
+        let payload = serde_json::json!({
+            "url": "https://api.example.com/v1/public/users",
+            "method": "GET"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_enforce_http_denied_path_prefix_mismatch() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_http_binding(
+            HttpMethod::Get,
+            "https://api.example.com",
+            "/v1/public/",
+            &[],
+            ResourceMode::Read,
+        )];
+
+        let payload = serde_json::json!({
+            "url": "https://api.example.com/v1/admin/users",
+            "method": "GET"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().code,
+            EnforcementErrorCode::MissingBinding
+        );
+    }
+
+    #[test]
+    fn test_enforce_http_allowed_post_with_write_mode() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_http_binding(
+            HttpMethod::Post,
+            "https://api.example.com",
+            "/v1/",
+            &[],
+            ResourceMode::Write,
+        )];
+
+        let payload = serde_json::json!({
+            "url": "https://api.example.com/v1/users",
+            "method": "POST",
+            "body": {"name": "test"}
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_enforce_http_denied_post_in_read_mode() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_http_binding(
+            HttpMethod::Get,
+            "https://api.example.com",
+            "/v1/",
+            &[],
+            ResourceMode::Read,
+        )];
+
+        let payload = serde_json::json!({
+            "url": "https://api.example.com/v1/users",
+            "method": "POST"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_enforce_http_multiple_bindings_any_match_allowed() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![
+            create_http_binding(
+                HttpMethod::Get,
+                "https://api1.example.com",
+                "/v1/",
+                &[],
+                ResourceMode::Read,
+            ),
+            create_http_binding(
+                HttpMethod::Get,
+                "https://api2.example.com",
+                "/v1/",
+                &[],
+                ResourceMode::Read,
+            ),
+        ];
+
+        // Should match the second binding
+        let payload = serde_json::json!({
+            "url": "https://api2.example.com/v1/users",
+            "method": "GET"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_noop_firewall_allows_all_http() {
+        let firewall = NoopFirewall;
+        let bindings: Vec<ResourceBinding> = vec![];
+
+        // Even with no bindings, noop allows all
+        let payload = serde_json::json!({
+            "url": "https://any-site.com/sensitive",
+            "method": "DELETE"
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(result.is_ok());
     }
 }

@@ -969,6 +969,26 @@ async fn execute_execution(
             )
         })?;
 
+    // Load capability lease for enforcement check
+    let lease = runtime
+        .cap
+        .get(existing.capability_id)
+        .await
+        .map_err(ApiProblem::from_capability)?;
+
+    // Enforce execution-time HTTP egress policy
+    // Non-HTTP flows pass through unchanged; HTTP flows are validated against bindings
+    if let Err(enforcement_err) = runtime
+        .firewall
+        .enforce_execution_payload(&lease.resource_bindings, &req.payload)
+    {
+        return Err(ApiProblem::new(
+            StatusCode::FORBIDDEN,
+            ApiErrorCode::PolicyDenied,
+            format!("execution denied: {}", enforcement_err),
+        ));
+    }
+
     // Execute via adapter
     let receipt = runtime
         .rollback
