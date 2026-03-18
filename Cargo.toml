@@ -46,3 +46,4 @@ sha2 = "0.10"
 petgraph = "0.7"
 clap = { version = "4", features = ["derive"] }
 indexmap = { version = "1", features = ["serde"] }
+regex = "1"

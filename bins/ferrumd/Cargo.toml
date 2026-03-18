@@ -14,3 +14,4 @@ ferrum-pdp = { path = "../../crates/ferrum-pdp" }
 ferrum-cap = { path = "../../crates/ferrum-cap" }
 ferrum-rollback = { path = "../../crates/ferrum-rollback" }
 ferrum-store = { path = "../../crates/ferrum-store" }
+ferrum-firewall = { path = "../../crates/ferrum-firewall" }

@@ -32,7 +32,7 @@ pub enum Decision {
     AllowDraftOnly,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Hash)]
 pub enum TrustLabel {
     Trusted,
     UserProvided,
@@ -47,7 +47,7 @@ pub enum TrustLabel {
     Untrusted,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Hash)]
 pub enum SensitivityLabel {
     Public,
     Internal,

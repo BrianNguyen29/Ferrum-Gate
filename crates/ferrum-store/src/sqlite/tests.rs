@@ -82,6 +82,7 @@ fn sample_proposal(intent_id: IntentId) -> ActionProposal {
         expected_effect: "read a file".to_string(),
         estimated_risk: ferrum_proto::RiskTier::Low,
         requested_rollback_class: RollbackClass::R0NativeReversible,
+        decision: None,
         taint_inputs: Vec::new(),
         metadata: ferrum_proto::JsonMap::new(),
         created_at: Utc::now(),
@@ -201,7 +202,11 @@ async fn intent_crud_and_status_transition() {
     let intent = sample_intent();
     let intent_id = intent.intent_id;
 
-    store.intents().insert(&intent).await.expect("insert intent");
+    store
+        .intents()
+        .insert(&intent)
+        .await
+        .expect("insert intent");
 
     let fetched = store
         .intents()
@@ -231,7 +236,11 @@ async fn intent_crud_and_status_transition() {
 async fn capability_crud_and_relation_query() {
     let (_temp_dir, store) = create_test_store().await;
     let intent = sample_intent();
-    store.intents().insert(&intent).await.expect("insert intent");
+    store
+        .intents()
+        .insert(&intent)
+        .await
+        .expect("insert intent");
 
     let proposal = sample_proposal(intent.intent_id);
     store
@@ -275,7 +284,11 @@ async fn capability_crud_and_relation_query() {
 async fn execution_and_rollback_state_transitions() {
     let (_temp_dir, store) = create_test_store().await;
     let intent = sample_intent();
-    store.intents().insert(&intent).await.expect("insert intent");
+    store
+        .intents()
+        .insert(&intent)
+        .await
+        .expect("insert intent");
 
     let proposal = sample_proposal(intent.intent_id);
     store
@@ -291,7 +304,11 @@ async fn execution_and_rollback_state_transitions() {
         .await
         .expect("insert capability");
 
-    let execution = sample_execution(intent.intent_id, proposal.proposal_id, capability.capability_id);
+    let execution = sample_execution(
+        intent.intent_id,
+        proposal.proposal_id,
+        capability.capability_id,
+    );
     let execution_id = execution.execution_id;
     store
         .executions()
@@ -340,7 +357,11 @@ async fn execution_and_rollback_state_transitions() {
 async fn approval_resolution_round_trip() {
     let (_temp_dir, store) = create_test_store().await;
     let intent = sample_intent();
-    store.intents().insert(&intent).await.expect("insert intent");
+    store
+        .intents()
+        .insert(&intent)
+        .await
+        .expect("insert intent");
 
     let proposal = sample_proposal(intent.intent_id);
     store
@@ -356,14 +377,22 @@ async fn approval_resolution_round_trip() {
         .await
         .expect("insert capability");
 
-    let execution = sample_execution(intent.intent_id, proposal.proposal_id, capability.capability_id);
+    let execution = sample_execution(
+        intent.intent_id,
+        proposal.proposal_id,
+        capability.capability_id,
+    );
     store
         .executions()
         .insert(&execution)
         .await
         .expect("insert execution");
 
-    let approval = sample_approval(intent.intent_id, proposal.proposal_id, execution.execution_id);
+    let approval = sample_approval(
+        intent.intent_id,
+        proposal.proposal_id,
+        execution.execution_id,
+    );
     let approval_id = approval.approval_id;
     store
         .approvals()
@@ -371,7 +400,11 @@ async fn approval_resolution_round_trip() {
         .await
         .expect("insert approval");
 
-    let pending = store.approvals().list_pending().await.expect("list pending");
+    let pending = store
+        .approvals()
+        .list_pending()
+        .await
+        .expect("list pending");
     assert_eq!(pending.len(), 1);
 
     store

@@ -1,4 +1,5 @@
 use ferrum_cap::CapabilityService;
+use ferrum_firewall::SemanticFirewall;
 use ferrum_pdp::PdpEngine;
 use ferrum_rollback::RollbackService;
 use ferrum_store::SqliteStore;
@@ -10,6 +11,7 @@ pub struct GatewayRuntime {
     pub cap: Arc<dyn CapabilityService>,
     pub rollback: Arc<RollbackService>,
     pub store: Arc<SqliteStore>,
+    pub firewall: Arc<dyn SemanticFirewall>,
 }
 
 impl GatewayRuntime {
@@ -18,8 +20,15 @@ impl GatewayRuntime {
         cap: Arc<dyn CapabilityService>,
         rollback: Arc<RollbackService>,
         store: Arc<SqliteStore>,
+        firewall: Arc<dyn SemanticFirewall>,
     ) -> Self {
-        Self { pdp, cap, rollback, store }
+        Self {
+            pdp,
+            cap,
+            rollback,
+            store,
+            firewall,
+        }
     }
 }
 

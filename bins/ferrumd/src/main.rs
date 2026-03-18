@@ -1,11 +1,12 @@
 use anyhow::Context;
 use ferrum_cap::InMemoryCapabilityService;
-use ferrum_gateway::{run_http_server, GatewayConfig, GatewayRuntime};
+use ferrum_firewall::DefaultFirewall;
+use ferrum_gateway::{GatewayConfig, GatewayRuntime, run_http_server};
 use ferrum_pdp::StaticPdpEngine;
 use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
 use ferrum_store::SqliteStore;
 use std::{net::SocketAddr, sync::Arc};
-use tracing_subscriber::{fmt, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -14,7 +15,7 @@ async fn main() -> anyhow::Result<()> {
         .with_target(false)
         .init();
 
-    let pdp = Arc::new(StaticPdpEngine::default());
+    let pdp = Arc::new(StaticPdpEngine);
     let cap = Arc::new(InMemoryCapabilityService::default());
 
     let mut registry = AdapterRegistry::default();
@@ -24,7 +25,9 @@ async fn main() -> anyhow::Result<()> {
     let store = Arc::new(SqliteStore::connect("sqlite::memory:?cache=shared").await?);
     store.apply_embedded_migrations().await?;
 
-    let runtime = GatewayRuntime::new(pdp, cap, rollback, store);
+    let firewall = Arc::new(DefaultFirewall::new());
+
+    let runtime = GatewayRuntime::new(pdp, cap, rollback, store, firewall);
     let addr: SocketAddr = "127.0.0.1:8080"
         .parse()
         .context("failed to parse bind address")?;

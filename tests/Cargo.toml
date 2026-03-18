@@ -18,6 +18,7 @@ ferrum-store = { path = "../crates/ferrum-store" }
 ferrum-rollback = { path = "../crates/ferrum-rollback" }
 ferrum-pdp = { path = "../crates/ferrum-pdp" }
 ferrum-cap = { path = "../crates/ferrum-cap" }
+ferrum-firewall = { path = "../crates/ferrum-firewall" }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 tempfile = "3"

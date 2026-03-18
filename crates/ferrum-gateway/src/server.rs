@@ -146,16 +146,23 @@ async fn compile_intent(
     let requested_risk = req.requested_risk_tier.unwrap_or(RiskTier::Medium);
     let default_rollback_class = infer_rollback_class(&req.requested_resource_scope);
 
-    let input_labels = req
-        .raw_inputs
-        .iter()
-        .flat_map(|r| r.trust_labels.clone())
-        .collect::<Vec<_>>();
-    let sensitivity_labels = req
-        .raw_inputs
-        .iter()
-        .flat_map(|r| r.sensitivity_labels.clone())
-        .collect::<Vec<_>>();
+    // Use firewall to derive trust context from raw inputs
+    let trust_context = runtime.firewall.derive_trust_context(&req.raw_inputs, &[]);
+
+    // Collect warnings from inferred labels
+    let mut warnings = Vec::new();
+    if trust_context.contains_untrusted_text {
+        warnings.push("Input contains potentially untrusted text".to_string());
+    }
+    if trust_context.contains_external_metadata {
+        warnings.push("Input contains external metadata".to_string());
+    }
+    if trust_context.contains_tool_output {
+        warnings.push("Input contains tool output".to_string());
+    }
+    if trust_context.taint_score > 50 {
+        warnings.push(format!("High taint score: {}", trust_context.taint_score));
+    }
 
     let envelope = IntentEnvelope {
         intent_id: ferrum_proto::IntentId::new(),
@@ -168,7 +175,9 @@ async fn compile_intent(
         allowed_outcomes: vec![OutcomeClause {
             id: "primary".to_string(),
             description: req.agent_plan_summary.unwrap_or_else(|| req.goal.clone()),
-            effect_type: ferrum_proto::EffectType::ReadOnlyAnalysis,
+            effect_type: req
+                .effect_type
+                .unwrap_or(ferrum_proto::EffectType::ReadOnlyAnalysis),
             required: true,
         }],
         forbidden_outcomes: Vec::new(),
@@ -181,14 +190,7 @@ async fn compile_intent(
             max_steps: 8,
             max_retries_per_step: 1,
         },
-        trust_context: TrustContextSummary {
-            input_labels,
-            sensitivity_labels,
-            taint_score: 0,
-            contains_external_metadata: false,
-            contains_tool_output: false,
-            contains_untrusted_text: false,
-        },
+        trust_context,
         derived_from_event_ids: req.raw_inputs.iter().filter_map(|r| r.event_id).collect(),
         tags: Vec::new(),
         metadata: req.metadata,
@@ -216,10 +218,7 @@ async fn compile_intent(
         }
     }
 
-    Ok(Json(IntentCompileResponse {
-        envelope,
-        warnings: Vec::new(),
-    }))
+    Ok(Json(IntentCompileResponse { envelope, warnings }))
 }
 
 async fn evaluate_proposal(
@@ -302,20 +301,123 @@ async fn evaluate_proposal(
         None
     };
 
-    let trust = TrustContextSummary {
-        input_labels: Vec::new(),
-        sensitivity_labels: Vec::new(),
-        taint_score: (proposal.taint_inputs.len() * 10) as u8, // 10 points per taint input
-        contains_external_metadata: !proposal.taint_inputs.is_empty(),
-        contains_tool_output: false,
-        contains_untrusted_text: !proposal.taint_inputs.is_empty(),
+    // Run contradiction check using firewall
+    let contradictions = runtime.firewall.contradiction_check(&intent, &proposal);
+
+    // Severity-based decision mapping (fail-closed for high severity only)
+    // High -> Deny immediately (unacceptable violation)
+    // Medium/Low -> Add as warnings, let PDP decide
+    use ferrum_firewall::Severity;
+    let high_severity_contradictions: Vec<_> = contradictions
+        .iter()
+        .filter(|c| matches!(c.severity, Severity::High))
+        .collect();
+
+    if !high_severity_contradictions.is_empty() {
+        // Fail-closed: High severity contradictions result in immediate Deny
+        let rule_ids: Vec<String> = contradictions.iter().map(|c| c.rule_id.clone()).collect();
+        let reason = contradictions
+            .iter()
+            .map(|c| format!("[{}] {}", c.rule_id, c.message))
+            .collect::<Vec<_>>()
+            .join("; ");
+        let warnings = contradictions.into_iter().map(|c| c.message).collect();
+
+        let out = EvaluateProposalResponse {
+            decision: Decision::Deny,
+            reason,
+            matched_rule_ids: rule_ids,
+            warnings,
+        };
+
+        // Store the denied decision in the proposal
+        let mut proposal_with_decision = proposal.clone();
+        proposal_with_decision.decision = Some(out.decision.clone());
+
+        if let Err(e) = runtime
+            .store
+            .proposals()
+            .update(&proposal_with_decision)
+            .await
+        {
+            tracing::warn!("failed to update proposal with denial decision: {}", e);
+        }
+
+        // Emit provenance for policy evaluation that resulted in denial
+        let mut eval_event = create_provenance_event(
+            ProvenanceEventKind::PolicyEvaluated,
+            now,
+            Some(intent_id),
+            Some(proposal.proposal_id),
+            None,
+            None,
+            None,
+            None,
+        );
+        if let Some(submission_event_id) = submission_event_id {
+            eval_event.parent_edges = vec![ferrum_proto::ProvenanceEdge {
+                edge_type: ferrum_proto::ProvenanceEdgeType::Caused,
+                from_event_id: submission_event_id,
+                summary: Some("policy evaluation follows proposal submission".to_string()),
+            }];
+        }
+
+        if let Err(e) = runtime.store.provenance().append_event(&eval_event).await {
+            tracing::warn!("failed to persist provenance event: {}", e);
+        }
+
+        return Ok(Json(out));
+    }
+
+    // Collect medium/low severity contradictions as warnings for PDP
+    let contradiction_warnings: Vec<String> = contradictions
+        .into_iter()
+        .filter(|c| matches!(c.severity, Severity::Medium | Severity::Low))
+        .map(|c| c.message)
+        .collect();
+
+    // Derive trust context using firewall with intent labels and proposal taint inputs
+    // Combine compile-time taint from intent with proposal-time taint inputs
+    let mut combined_taint_inputs = proposal.taint_inputs.clone();
+
+    // Add compile-time trust labels as taint sources
+    for label in &intent.trust_context.input_labels {
+        combined_taint_inputs.push(format!("{:?}", label).to_lowercase());
+    }
+
+    // Compute combined taint score (conservatively combines both sources)
+    let combined_taint_score = runtime.firewall.compute_taint_score(&combined_taint_inputs);
+
+    // Also compute proposal-only taint for comparison
+    let proposal_taint = runtime.firewall.derive_trust_context(
+        &[], // We already have labels from intent, no new raw inputs here
+        &proposal.taint_inputs,
+    );
+
+    // Merge with intent's trust context - use MAX for boolean flags (conservative)
+    // and combined taint score that includes both compile-time and proposal-time sources
+    let combined_trust = TrustContextSummary {
+        input_labels: intent.trust_context.input_labels.clone(),
+        sensitivity_labels: intent.trust_context.sensitivity_labels.clone(),
+        taint_score: combined_taint_score.min(100), // Hard cap at 100
+        contains_external_metadata: proposal_taint.contains_external_metadata
+            || intent.trust_context.contains_external_metadata,
+        contains_tool_output: proposal_taint.contains_tool_output
+            || intent.trust_context.contains_tool_output,
+        contains_untrusted_text: proposal_taint.contains_untrusted_text
+            || intent.trust_context.contains_untrusted_text,
     };
 
-    let out = runtime
+    let mut out = runtime
         .pdp
-        .evaluate(&intent, &proposal, &trust)
+        .evaluate(&intent, &proposal, &combined_trust)
         .await
         .map_err(ApiProblem::internal)?;
+
+    // Merge contradiction warnings into PDP output
+    if !contradiction_warnings.is_empty() {
+        out.warnings.extend(contradiction_warnings);
+    }
 
     // Store the decision in the proposal after evaluation
     let mut proposal_with_decision = proposal.clone();
