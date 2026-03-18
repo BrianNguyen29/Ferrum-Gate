@@ -17,7 +17,7 @@
 - [ ] single-use capability test
 - [ ] R3 no auto-commit test
 - [ ] rollback/compensate test
-- [ ] poisoned context test
+- [x] poisoned context test
 
 ## Operator readiness
 - [ ] config docs đúng

@@ -11,6 +11,10 @@ path = "integration_gateway_flow.rs"
 name = "integration_contracts"
 path = "integration_contracts.rs"
 
+[[test]]
+name = "integration_poisoned_context"
+path = "integration_poisoned_context.rs"
+
 [dependencies]
 ferrum-gateway = { path = "../crates/ferrum-gateway" }
 ferrum-proto = { path = "../crates/ferrum-proto" }
