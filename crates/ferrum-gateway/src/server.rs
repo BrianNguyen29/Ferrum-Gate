@@ -437,6 +437,18 @@ async fn authorize_execution(
         .await
         .map_err(ApiProblem::from_capability)?;
 
+    // Validate proposal/capability binding: request proposal_id must match capability lease
+    if lease.proposal_id != request.proposal_id {
+        return Err(ApiProblem::new(
+            StatusCode::FORBIDDEN,
+            ApiErrorCode::PolicyDenied,
+            format!(
+                "proposal_id mismatch: capability is bound to proposal '{}', but request specifies proposal '{}'",
+                lease.proposal_id, request.proposal_id
+            ),
+        ));
+    }
+
     // Load the proposal to check its decision
     let proposal = runtime
         .store
@@ -567,6 +579,51 @@ async fn prepare_execution(
             "execution record not found",
         ));
     };
+
+    // State guard: block terminal/error states from proceeding to prepare
+    // Terminal states that should NOT proceed: Quarantined, Denied, Failed, Compensated, RolledBack, Committed
+    // Also block: AwaitingApproval (requires external approval before proceeding)
+    match existing.state {
+        ExecutionState::Quarantined => {
+            return Err(ApiProblem::new(
+                StatusCode::CONFLICT,
+                ApiErrorCode::Conflict,
+                "execution is quarantined and cannot proceed",
+            ));
+        }
+        ExecutionState::AwaitingApproval => {
+            return Err(ApiProblem::new(
+                StatusCode::CONFLICT,
+                ApiErrorCode::ApprovalRequired,
+                "execution is awaiting approval and cannot proceed",
+            ));
+        }
+        ExecutionState::Denied => {
+            return Err(ApiProblem::new(
+                StatusCode::CONFLICT,
+                ApiErrorCode::PolicyDenied,
+                "execution was denied and cannot proceed",
+            ));
+        }
+        ExecutionState::Failed => {
+            return Err(ApiProblem::new(
+                StatusCode::CONFLICT,
+                ApiErrorCode::Conflict,
+                "execution has failed and cannot proceed",
+            ));
+        }
+        ExecutionState::Compensated | ExecutionState::RolledBack | ExecutionState::Committed => {
+            return Err(ApiProblem::new(
+                StatusCode::CONFLICT,
+                ApiErrorCode::Conflict,
+                format!(
+                    "execution is already in terminal state: {:?}",
+                    existing.state
+                ),
+            ));
+        }
+        _ => {} // Proceed for non-terminal states: Proposed, Authorized, Prepared, Running, AwaitingVerification
+    }
 
     let intent_id = existing.intent_id;
     let proposal_id = existing.proposal_id;
@@ -802,6 +859,9 @@ async fn verify_execution(
         ));
     }
 
+    let intent_id = existing.intent_id;
+    let proposal_id = existing.proposal_id;
+
     let contract_id = existing.rollback_contract_id.ok_or_else(|| {
         ApiProblem::new(
             StatusCode::PRECONDITION_FAILED,
@@ -832,8 +892,6 @@ async fn verify_execution(
         .map_err(ApiProblem::internal)?;
 
     let now = Utc::now();
-    let intent_id = existing.intent_id;
-    let proposal_id = existing.proposal_id;
 
     // Update execution state to AwaitingVerification
     let mut updated_execution = existing.clone();
