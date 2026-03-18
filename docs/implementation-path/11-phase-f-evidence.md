@@ -33,7 +33,7 @@ Nhung flow duoi day da co automated evidence trong repo:
 - mint capability -> authorize execution -> prepare execution
 - execute -> verify -> auto-commit cho flow `R0NativeReversible`
 - execute -> verify -> explicit commit cho flow khong auto-commit (co bang chung truc tiep cho R2 va R3)
-- rollback va compensate terminal recovery paths
+- rollback va compensate terminal recovery paths o muc gateway orchestration/state/provenance
 
 ### 3.2 Policy/firewall hardening da co evidence
 
@@ -67,6 +67,7 @@ Nhung muc duoi day van la open gap hoac gioi han evidence, khong nen bi hieu nha
 
 - supported flow evidence hien tap trung vao gateway + store + firewall path duoc test trong repo; chua phai tuyen bo parity cho moi adapter/runtime ben ngoai
 - lineage query moi o muc incoming-edge persistence/query; replay/query fabric rong hon van la backlog
+- rollback/compensate evidence hien la gateway-level; adapter-backed side-effect recovery evidence van chua duoc tuyen bo rong hon
 - config/operator docs, CLI usefulness, va mot so release-checklist items khac van chua dong
 - docs nay khong thay the backlog; cac nang cap tiep theo van nen tiep tuc track o `docs/implementation-path/08-next-issue-backlog.md`
 

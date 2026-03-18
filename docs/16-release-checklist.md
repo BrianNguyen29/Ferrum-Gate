@@ -16,7 +16,7 @@
 - [x] scope mismatch deny test
 - [x] single-use capability test
 - [x] R3 no auto-commit test
-- [ ] rollback/compensate test
+- [x] rollback/compensate test (gateway-level)
 - [x] poisoned context test
 
 ## Operator readiness
