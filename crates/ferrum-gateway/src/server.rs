@@ -7,18 +7,19 @@ use axum::{
 };
 use chrono::{Duration, Utc};
 use ferrum_proto::{
-    ActorRef, ActorType, ApiError, ApiErrorCode, AuthorizeExecutionRequest,
-    AuthorizeExecutionResponse, CapabilityId, CapabilityMintRequest, CapabilityMintResponse,
-    CommitRequest, CommitResponse, CompensateRequest, CompensateResponse, Decision,
-    EvaluateProposalResponse, ExecuteRequest, ExecuteResponse, ExecutionId, ExecutionRecord,
-    ExecutionState, HashChainRef, HealthResponse, IntentCompileRequest, IntentCompileResponse,
-    IntentEnvelope, IntentStatus, ObjectRef, ObjectType, OutcomeClause, ProvenanceEvent,
-    ProvenanceEventKind, ResourceSelector, RiskTier, RollbackClass, RollbackRequest,
-    RollbackResponse, RollbackState, TimeBudget, TrustContextSummary, VerifyRequest,
-    VerifyResponse,
+    ActorRef, ActorType, ApiError, ApiErrorCode, ApprovalId, ApprovalRequest,
+    ApprovalResolveRequest, ApprovalState, AuthorizeExecutionRequest, AuthorizeExecutionResponse,
+    CapabilityId, CapabilityMintRequest, CapabilityMintResponse, CommitRequest, CommitResponse,
+    CompensateRequest, CompensateResponse, Decision, EvaluateProposalResponse, ExecuteRequest,
+    ExecuteResponse, ExecutionId, ExecutionRecord, ExecutionState, HashChainRef, HealthResponse,
+    IntentCompileRequest, IntentCompileResponse, IntentEnvelope, IntentStatus, ObjectRef,
+    ObjectType, OutcomeClause, ProvenanceEvent, ProvenanceEventKind, ResourceSelector, RiskTier,
+    RollbackClass, RollbackRequest, RollbackResponse, RollbackState, TimeBudget,
+    TrustContextSummary, VerifyRequest, VerifyResponse,
 };
 use ferrum_store::{
-    CapabilityRepo, ExecutionRepo, IntentRepo, ProposalRepo, ProvenanceRepo, RollbackRepo,
+    ApprovalRepo, CapabilityRepo, ExecutionRepo, IntentRepo, ProposalRepo, ProvenanceRepo,
+    RollbackRepo,
 };
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
@@ -114,6 +115,12 @@ pub fn build_router(runtime: GatewayRuntime) -> Router {
         .route(
             "/v1/executions/{execution_id}/rollback",
             post(rollback_execution),
+        )
+        .route("/v1/approvals", get(list_pending_approvals))
+        .route("/v1/approvals/{approval_id}", get(get_approval))
+        .route(
+            "/v1/approvals/{approval_id}/resolve",
+            post(resolve_approval),
         )
         .with_state(Arc::new(runtime))
         .layer(TraceLayer::new_for_http())
@@ -477,10 +484,55 @@ async fn authorize_execution(
         .map(|d| *d == Decision::AllowDraftOnly)
         .unwrap_or(false);
 
-    // Non-allow decisions should not progress to executable states
-    let is_blocked = is_quarantined || is_require_approval || is_deny || is_draft_only;
-
     let now = Utc::now();
+
+    // Handle DraftOnly: allow only for dry_run, otherwise fail-closed
+    if is_draft_only && !request.dry_run {
+        let record = ExecutionRecord {
+            execution_id: ExecutionId::new(),
+            proposal_id: request.proposal_id,
+            intent_id: lease.intent_id,
+            capability_id: lease.capability_id,
+            rollback_contract_id: None,
+            decision: Decision::Deny,
+            state: ExecutionState::Denied,
+            started_at: now,
+            finished_at: Some(now),
+            result_digest: None,
+            metadata: ferrum_proto::JsonMap::new(),
+        };
+
+        let execution_id = record.execution_id;
+        let intent_id = record.intent_id;
+        let capability_id = record.capability_id;
+        let proposal_id = record.proposal_id;
+
+        if let Err(e) = runtime.store.executions().insert(&record).await {
+            tracing::warn!("failed to persist execution: {}", e);
+        } else {
+            let event = create_provenance_event(
+                ProvenanceEventKind::ToolCallPrepared,
+                now,
+                Some(intent_id),
+                Some(proposal_id),
+                Some(execution_id),
+                Some(capability_id),
+                None,
+                None,
+            );
+            if let Err(e) = runtime.store.provenance().append_event(&event).await {
+                tracing::warn!("failed to persist provenance event: {}", e);
+            }
+        }
+
+        return Ok(Json(AuthorizeExecutionResponse {
+            execution: record,
+            warnings: vec!["draft-only proposal denied for non-dry-run execution".to_string()],
+        }));
+    }
+
+    // Non-allow decisions should not progress to executable states
+    let is_blocked = is_quarantined || is_require_approval || is_deny;
 
     // Determine execution state and decision based on proposal decision
     let (execution_state, execution_decision) = if is_blocked {
@@ -488,19 +540,20 @@ async fn authorize_execution(
         // - Quarantine -> Quarantined (already terminal)
         // - RequireApproval -> AwaitingApproval (requires external approval before execution)
         // - Deny -> Denied (terminal, rejected)
-        // - AllowDraftOnly -> Denied (draft-only cannot execute)
         if is_quarantined {
             (ExecutionState::Quarantined, Decision::Quarantine)
         } else if is_require_approval {
             (ExecutionState::AwaitingApproval, Decision::RequireApproval)
-        } else if is_deny {
-            (ExecutionState::Denied, Decision::Deny)
         } else {
-            // AllowDraftOnly - treat as denied since we can't execute drafts
             (ExecutionState::Denied, Decision::Deny)
         }
     } else if request.dry_run {
-        (ExecutionState::Authorized, Decision::Allow)
+        let decision = if is_draft_only {
+            Decision::AllowDraftOnly
+        } else {
+            Decision::Allow
+        };
+        (ExecutionState::Authorized, decision)
     } else {
         (ExecutionState::Prepared, Decision::Allow)
     };
@@ -528,14 +581,8 @@ async fn authorize_execution(
         tracing::warn!("failed to persist execution: {}", e);
     } else {
         // Emit appropriate provenance event based on decision
-        let event_kind = if is_blocked {
-            if is_quarantined {
-                ProvenanceEventKind::Quarantined
-            } else if is_require_approval {
-                ProvenanceEventKind::ToolCallPrepared // Could add ApprovalRequired variant
-            } else {
-                ProvenanceEventKind::ToolCallPrepared
-            }
+        let event_kind = if is_quarantined {
+            ProvenanceEventKind::Quarantined
         } else {
             ProvenanceEventKind::ToolCallPrepared
         };
@@ -551,6 +598,54 @@ async fn authorize_execution(
         );
         if let Err(e) = runtime.store.provenance().append_event(&event).await {
             tracing::warn!("failed to persist provenance event: {}", e);
+        }
+    }
+
+    // For RequireApproval, create and persist an approval request
+    if is_require_approval {
+        let approval = ApprovalRequest {
+            approval_id: ApprovalId::new(),
+            intent_id,
+            proposal_id,
+            execution_id: Some(execution_id),
+            requested_by: ActorRef {
+                actor_type: ActorType::Gateway,
+                actor_id: "ferrum-gateway".to_string(),
+                display_name: Some("Ferrum Gateway".to_string()),
+            },
+            reason: proposal.expected_effect.clone(),
+            action_digest: format!("{}/{}", proposal.server_name, proposal.tool_name),
+            expires_at: now + Duration::hours(24),
+            state: ApprovalState::Pending,
+            created_at: now,
+        };
+
+        if let Err(e) = runtime.store.approvals().insert(&approval).await {
+            tracing::warn!("failed to persist approval request: {}", e);
+        } else {
+            tracing::info!(
+                "approval request created: {} for execution: {}",
+                approval.approval_id,
+                execution_id
+            );
+
+            // Emit ApprovalRequested provenance event
+            let event = create_provenance_event(
+                ProvenanceEventKind::ApprovalRequested,
+                now,
+                Some(intent_id),
+                Some(proposal_id),
+                Some(execution_id),
+                Some(capability_id),
+                None,
+                None,
+            );
+            if let Err(e) = runtime.store.provenance().append_event(&event).await {
+                tracing::warn!(
+                    "failed to persist approval requested provenance event: {}",
+                    e
+                );
+            }
         }
     }
 
@@ -579,6 +674,14 @@ async fn prepare_execution(
             "execution record not found",
         ));
     };
+
+    if matches!(existing.decision, Decision::AllowDraftOnly) {
+        return Err(ApiProblem::new(
+            StatusCode::CONFLICT,
+            ApiErrorCode::PolicyDenied,
+            "draft-only execution cannot proceed to prepare",
+        ));
+    }
 
     // State guard: block terminal/error states from proceeding to prepare
     // Terminal states that should NOT proceed: Quarantined, Denied, Failed, Compensated, RolledBack, Committed
@@ -1305,6 +1408,177 @@ async fn rollback_execution(
         rolled_back: true,
         rolled_back_at: Some(now),
     }))
+}
+
+// Approval handlers
+
+async fn get_approval(
+    State(runtime): State<Arc<GatewayRuntime>>,
+    Path(approval_id): Path<String>,
+) -> Result<Json<ApprovalRequest>, ApiProblem> {
+    let approval_id = parse_approval_id(&approval_id)?;
+
+    let approval = runtime
+        .store
+        .approvals()
+        .get(approval_id)
+        .await
+        .map_err(|err| ApiProblem::internal(err.into()))?
+        .ok_or_else(|| {
+            ApiProblem::new(
+                StatusCode::NOT_FOUND,
+                ApiErrorCode::NotFound,
+                "approval not found",
+            )
+        })?;
+
+    Ok(Json(approval))
+}
+
+async fn list_pending_approvals(
+    State(runtime): State<Arc<GatewayRuntime>>,
+) -> Result<Json<Vec<ApprovalRequest>>, ApiProblem> {
+    let pending = runtime
+        .store
+        .approvals()
+        .list_pending()
+        .await
+        .map_err(|err| ApiProblem::internal(err.into()))?;
+
+    Ok(Json(pending))
+}
+
+async fn resolve_approval(
+    State(runtime): State<Arc<GatewayRuntime>>,
+    Path(approval_id): Path<String>,
+    Json(request): Json<ApprovalResolveRequest>,
+) -> Result<Json<ApprovalRequest>, ApiProblem> {
+    let approval_id = parse_approval_id(&approval_id)?;
+
+    // Get the approval
+    let mut approval = runtime
+        .store
+        .approvals()
+        .get(approval_id)
+        .await
+        .map_err(|err| ApiProblem::internal(err.into()))?
+        .ok_or_else(|| {
+            ApiProblem::new(
+                StatusCode::NOT_FOUND,
+                ApiErrorCode::NotFound,
+                "approval not found",
+            )
+        })?;
+
+    // Validate current state - only Pending approvals can be resolved
+    if !matches!(approval.state, ApprovalState::Pending) {
+        return Err(ApiProblem::new(
+            StatusCode::CONFLICT,
+            ApiErrorCode::Conflict,
+            format!(
+                "approval is not in Pending state, current state: {:?}",
+                approval.state
+            ),
+        ));
+    }
+
+    let now = Utc::now();
+
+    // Update approval state based on resolution
+    let new_state = if request.approve {
+        ApprovalState::Granted
+    } else {
+        ApprovalState::Denied
+    };
+
+    approval.state = new_state.clone();
+
+    // Persist the updated approval
+    if let Err(e) = runtime.store.approvals().update(&approval).await {
+        return Err(ApiProblem::internal(e.into()));
+    }
+
+    // Update linked execution if present
+    if let Some(execution_id) = approval.execution_id {
+        let Some(mut execution) = runtime
+            .store
+            .executions()
+            .get(execution_id)
+            .await
+            .map_err(|err| ApiProblem::internal(err.into()))?
+        else {
+            return Err(ApiProblem::new(
+                StatusCode::NOT_FOUND,
+                ApiErrorCode::NotFound,
+                "linked execution not found",
+            ));
+        };
+
+        // Validate execution is in AwaitingApproval state
+        if !matches!(execution.state, ExecutionState::AwaitingApproval) {
+            return Err(ApiProblem::new(
+                StatusCode::CONFLICT,
+                ApiErrorCode::Conflict,
+                format!(
+                    "execution is not in AwaitingApproval state, current state: {:?}",
+                    execution.state
+                ),
+            ));
+        }
+
+        // Transition execution based on approval decision
+        if request.approve {
+            execution.state = ExecutionState::Authorized;
+            execution.decision = Decision::Allow;
+        } else {
+            execution.state = ExecutionState::Denied;
+            execution.decision = Decision::Deny;
+            execution.finished_at = Some(now);
+        }
+
+        if let Err(e) = runtime.store.executions().update(&execution).await {
+            tracing::warn!(
+                "failed to update execution after approval resolution: {}",
+                e
+            );
+        } else {
+            // Emit provenance event for approval resolution
+            let event_kind = if request.approve {
+                ProvenanceEventKind::ApprovalGranted
+            } else {
+                ProvenanceEventKind::ApprovalDenied
+            };
+            let event = create_provenance_event(
+                event_kind,
+                now,
+                Some(execution.intent_id),
+                Some(execution.proposal_id),
+                Some(execution_id),
+                Some(execution.capability_id),
+                None,
+                None,
+            );
+            if let Err(e) = runtime.store.provenance().append_event(&event).await {
+                tracing::warn!(
+                    "failed to persist approval resolution provenance event: {}",
+                    e
+                );
+            }
+        }
+    }
+
+    Ok(Json(approval))
+}
+
+fn parse_approval_id(value: &str) -> Result<ApprovalId, ApiProblem> {
+    let parsed = value.parse::<uuid::Uuid>().map_err(|_| {
+        ApiProblem::new(
+            StatusCode::BAD_REQUEST,
+            ApiErrorCode::ValidationError,
+            "path id is not a valid approval uuid",
+        )
+    })?;
+    Ok(ApprovalId(parsed))
 }
 
 fn infer_rollback_class(scope: &[ResourceSelector]) -> RollbackClass {
