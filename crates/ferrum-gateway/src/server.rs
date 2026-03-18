@@ -15,7 +15,7 @@ use ferrum_proto::{
     IntentCompileRequest, IntentCompileResponse, IntentEnvelope, IntentStatus, ObjectRef,
     ObjectType, OutcomeClause, ProvenanceEvent, ProvenanceEventKind, ResourceBinding, ResourceMode,
     ResourceSelector, RiskTier, RollbackClass, RollbackRequest, RollbackResponse, RollbackState,
-    TimeBudget, TrustContextSummary, VerifyRequest, VerifyResponse,
+    RollbackTarget, TimeBudget, TrustContextSummary, VerifyRequest, VerifyResponse,
 };
 use ferrum_store::{
     ApprovalRepo, CapabilityRepo, ExecutionRepo, IntentRepo, ProposalRepo, ProvenanceRepo,
@@ -1033,11 +1033,24 @@ async fn prepare_execution(
         }
     };
 
+    // Determine adapter key and target from capability resource bindings
+    // Load capability to inspect resource bindings for adapter routing
+    let capability = runtime
+        .cap
+        .get(existing.capability_id)
+        .await
+        .map_err(ApiProblem::from_capability)?;
+
+    let adapter_key = determine_adapter_key_from_bindings(&capability.resource_bindings);
+    let target = determine_rollback_target_from_bindings(&capability.resource_bindings);
+
     let request = runtime.rollback.default_prepare_request(
         intent_id,
         proposal_id,
         execution_id,
         requested_rollback_class,
+        adapter_key,
+        target,
     );
 
     let response = runtime
@@ -2018,6 +2031,47 @@ impl ApiProblem {
                 err.to_string(),
             ),
         }
+    }
+}
+
+/// Determine the appropriate adapter key based on resource bindings.
+/// Returns "fs" for filesystem bindings, "noop" for unknown/empty bindings.
+/// Fail-closed: defaults to "noop" when no specific adapter is matched.
+fn determine_adapter_key_from_bindings(bindings: &[ResourceBinding]) -> String {
+    if bindings.is_empty() {
+        return "noop".to_string();
+    }
+
+    // Check for filesystem bindings first
+    let has_fs_binding = bindings
+        .iter()
+        .any(|b| matches!(b, ResourceBinding::File { .. }));
+
+    if has_fs_binding {
+        return "fs".to_string();
+    }
+
+    // Default to noop for other binding types (fail-closed)
+    "noop".to_string()
+}
+
+/// Determine the rollback target based on resource bindings.
+/// For filesystem bindings, returns a FilePath target with the first file binding path.
+fn determine_rollback_target_from_bindings(bindings: &[ResourceBinding]) -> RollbackTarget {
+    for binding in bindings {
+        if let ResourceBinding::File { path, .. } = binding {
+            return RollbackTarget::FilePath {
+                path: path.clone(),
+                before_hash: None,
+                after_hash: None,
+            };
+        }
+    }
+
+    // Default to generic target for non-filesystem bindings
+    RollbackTarget::Generic {
+        namespace: "mcp".to_string(),
+        identifier: "tool-call".to_string(),
     }
 }
 

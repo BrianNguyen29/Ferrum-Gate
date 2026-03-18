@@ -35,6 +35,8 @@ async fn create_test_runtime() -> (TempDir, GatewayRuntime, SqliteStore) {
 
     let mut registry = AdapterRegistry::default();
     registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
+    // Register fs adapter for adapter-backed rollback/compensate tests
+    registry.register(Arc::new(ferrum_adapter_fs::FsRollbackAdapter::new("fs")));
     let rollback = Arc::new(RollbackService::new(Arc::new(registry)));
 
     let firewall: Arc<dyn SemanticFirewall> = Arc::new(DefaultFirewall::new());
@@ -6729,5 +6731,604 @@ async fn test_readwrite_scope_allows_read_binding() {
         response.status(),
         200,
         "ReadWrite scope should allow Read binding (subset permission)"
+    );
+}
+
+// ============================================
+// ADAPTER-BACKED ROLLBACK/COMPENSATE TESTS (Phase F)
+// ============================================
+
+/// Create test runtime with filesystem adapter registered for adapter-backed tests
+async fn create_test_runtime_with_fs_adapter() -> (TempDir, GatewayRuntime, SqliteStore) {
+    let temp_dir = TempDir::new().expect("failed to create temp dir");
+    let db_path = temp_dir.path().join("store.sqlite");
+    std::fs::File::create(&db_path).expect("failed to create sqlite file");
+    let database_url = format!("sqlite://{}", db_path.display());
+    let store = SqliteStore::connect(&database_url)
+        .await
+        .expect("failed to connect to sqlite");
+    store
+        .apply_embedded_migrations()
+        .await
+        .expect("failed to apply migrations");
+
+    let pdp: Arc<dyn ferrum_pdp::PdpEngine> = Arc::new(StaticPdpEngine::default());
+    let cap: Arc<dyn CapabilityService> = Arc::new(InMemoryCapabilityService::default());
+
+    let mut registry = AdapterRegistry::default();
+    registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
+    // Register the filesystem adapter for adapter-backed evidence tests
+    registry.register(Arc::new(ferrum_adapter_fs::FsRollbackAdapter::new("fs")));
+    let rollback = Arc::new(RollbackService::new(Arc::new(registry)));
+
+    let firewall: Arc<dyn SemanticFirewall> = Arc::new(DefaultFirewall::new());
+    let runtime = GatewayRuntime::new(pdp, cap, rollback, Arc::new(store.clone()), firewall);
+
+    (temp_dir, runtime, store)
+}
+
+#[tokio::test]
+async fn test_adapter_backed_rollback_deletes_created_file() {
+    let (temp_dir, runtime, _store) = create_test_runtime_with_fs_adapter().await;
+
+    // Use a file path within the temp directory to avoid polluting /tmp
+    let test_file = temp_dir.path().join("rollback_test.txt");
+    let file_path = test_file.to_str().unwrap();
+
+    // Run flow to prepare with filesystem binding
+    let file_scope = ferrum_proto::ResourceSelector::FilesystemPath {
+        path: temp_dir.path().to_str().unwrap().to_string(),
+        mode: ferrum_proto::ResourceMode::Write,
+        content_hash: None,
+    };
+    let app = build_router(runtime.clone());
+    let mut req = sample_intent_request_with_effect(EffectType::FileMutation);
+    req.requested_resource_scope = vec![file_scope];
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Create proposal for file write
+    let proposal = ActionProposal {
+        proposal_id: ferrum_proto::ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Write file".to_string(),
+        tool_name: "fs.write".to_string(),
+        server_name: "workspace".to_string(),
+        raw_arguments: serde_json::json!({"path": file_path, "content": "hello world"}),
+        expected_effect: "write a file".to_string(),
+        estimated_risk: RiskTier::Medium,
+        requested_rollback_class: RollbackClass::R2Compensatable,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Mint capability with file binding
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "workspace".to_string(),
+            tool_name: "fs.write".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![ResourceBinding::File {
+            path: file_path.to_string(),
+            mode: ResourceMode::Write,
+            required_hash: None,
+        }],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    // Authorize execution
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    // Prepare execution - this should select the "fs" adapter based on file binding
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Execute - creates the file
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({
+            "path": file_path,
+            "content": "hello world"
+        }),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Verify file was created by fs adapter
+    assert!(
+        test_file.exists(),
+        "File should be created by fs adapter execute"
+    );
+    let content = std::fs::read_to_string(&test_file).unwrap();
+    assert_eq!(
+        content, "hello world",
+        "File should contain executed content"
+    );
+
+    // Verify execution state
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Commit the execution
+    let app = build_router(runtime.clone());
+    let commit_req = ferrum_proto::CommitRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/commit", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&commit_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Rollback the committed execution
+    let app = build_router(runtime.clone());
+    let rollback_req = ferrum_proto::RollbackRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/rollback", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&rollback_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    if status != 200 {
+        let error_str = String::from_utf8_lossy(&body);
+        panic!("Rollback failed with status {:?}: {}", status, error_str);
+    }
+    let rollback_resp: ferrum_proto::RollbackResponse = serde_json::from_slice(&body).unwrap();
+    assert!(rollback_resp.rolled_back);
+
+    // Verify file was deleted by fs adapter rollback (file was newly created, so rollback deletes it)
+    assert!(
+        !test_file.exists(),
+        "File should be deleted by fs adapter rollback"
+    );
+
+    // Verify execution state is RolledBack
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored_execution.is_some());
+    let exec = stored_execution.unwrap();
+    assert!(matches!(exec.state, ExecutionState::RolledBack));
+
+    // Verify provenance chain includes SideEffectRolledBack
+    let all_events = runtime
+        .store
+        .provenance()
+        .query(&ferrum_proto::ProvenanceQueryRequest {
+            intent_id: Some(intent_id),
+            execution_id: None,
+            capability_id: None,
+            event_kind: Some(ProvenanceEventKind::SideEffectRolledBack),
+            since: None,
+            until: None,
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        !all_events.is_empty(),
+        "Missing SideEffectRolledBack provenance event"
+    );
+}
+
+#[tokio::test]
+async fn test_adapter_backed_compensate_restores_overwritten_file() {
+    let (temp_dir, runtime, _store) = create_test_runtime_with_fs_adapter().await;
+
+    // Use a file path within the temp directory
+    let test_file = temp_dir.path().join("compensate_test.txt");
+    let file_path = test_file.to_str().unwrap();
+
+    // Create original file with content BEFORE prepare
+    std::fs::write(&test_file, "original content").expect("Failed to create original file");
+    assert!(test_file.exists());
+
+    // Run flow to prepare with filesystem binding
+    let file_scope = ferrum_proto::ResourceSelector::FilesystemPath {
+        path: temp_dir.path().to_str().unwrap().to_string(),
+        mode: ferrum_proto::ResourceMode::Write,
+        content_hash: None,
+    };
+    let app = build_router(runtime.clone());
+    let mut req = sample_intent_request_with_effect(EffectType::FileMutation);
+    req.requested_resource_scope = vec![file_scope];
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Create proposal for file write (overwrites existing)
+    let proposal = ActionProposal {
+        proposal_id: ferrum_proto::ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Overwrite file".to_string(),
+        tool_name: "fs.write".to_string(),
+        server_name: "workspace".to_string(),
+        raw_arguments: serde_json::json!({"path": file_path, "content": "new content"}),
+        expected_effect: "overwrite a file".to_string(),
+        estimated_risk: RiskTier::Medium,
+        requested_rollback_class: RollbackClass::R2Compensatable,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Mint capability with file binding
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "workspace".to_string(),
+            tool_name: "fs.write".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![ResourceBinding::File {
+            path: file_path.to_string(),
+            mode: ResourceMode::Write,
+            required_hash: None,
+        }],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    // Authorize execution
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    // Prepare execution - fs adapter will snapshot existing file content
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Execute - overwrites the file
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({
+            "path": file_path,
+            "content": "new content"
+        }),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Verify file was overwritten
+    assert!(test_file.exists(), "File should still exist after execute");
+    let content = std::fs::read_to_string(&test_file).unwrap();
+    assert_eq!(
+        content, "new content",
+        "File should contain new content after execute"
+    );
+
+    // Verify
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Commit
+    let app = build_router(runtime.clone());
+    let commit_req = ferrum_proto::CommitRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/commit", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&commit_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Compensate - should restore original content
+    let app = build_router(runtime.clone());
+    let compensate_req = ferrum_proto::CompensateRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/compensate", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&compensate_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compensate_resp: ferrum_proto::CompensateResponse = serde_json::from_slice(&body).unwrap();
+    assert!(compensate_resp.compensated);
+
+    // Verify file was restored to original content by fs adapter compensate
+    assert!(
+        test_file.exists(),
+        "File should still exist after compensate"
+    );
+    let restored_content = std::fs::read_to_string(&test_file).unwrap();
+    assert_eq!(
+        restored_content, "original content",
+        "File should be restored to original content by fs adapter compensate"
+    );
+
+    // Verify execution state is Compensated
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored_execution.is_some());
+    let exec = stored_execution.unwrap();
+    assert!(matches!(exec.state, ExecutionState::Compensated));
+
+    // Verify provenance chain includes SideEffectCompensated
+    let all_events = runtime
+        .store
+        .provenance()
+        .query(&ferrum_proto::ProvenanceQueryRequest {
+            intent_id: Some(intent_id),
+            execution_id: None,
+            capability_id: None,
+            event_kind: Some(ProvenanceEventKind::SideEffectCompensated),
+            since: None,
+            until: None,
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        !all_events.is_empty(),
+        "Missing SideEffectCompensated provenance event"
     );
 }

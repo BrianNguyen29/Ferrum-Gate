@@ -27,6 +27,13 @@ impl RollbackService {
             .context("adapter not registered")?;
 
         let receipt = adapter.prepare(&request).await.map_err(map_adapter_err)?;
+
+        // Merge adapter metadata into contract metadata for recovery operations
+        let mut contract_metadata = request.metadata;
+        for (key, value) in &receipt.adapter_metadata {
+            contract_metadata.insert(key.clone(), value.clone());
+        }
+
         let contract = RollbackContract {
             contract_id: RollbackContractId::new(),
             intent_id: request.intent_id,
@@ -43,7 +50,7 @@ impl RollbackService {
             state: RollbackState::Prepared,
             created_at: Utc::now(),
             expires_at: None,
-            metadata: request.metadata,
+            metadata: contract_metadata,
         };
 
         Ok(RollbackPrepareResponse {
@@ -105,6 +112,8 @@ impl RollbackService {
         proposal_id: ferrum_proto::ProposalId,
         execution_id: ExecutionId,
         requested_rollback_class: ferrum_proto::RollbackClass,
+        adapter_key: String,
+        target: ferrum_proto::RollbackTarget,
     ) -> RollbackPrepareRequest {
         // Auto-commit only for R0 (native reversible). R2 and R3 require manual commit.
         let auto_commit = matches!(
@@ -118,11 +127,8 @@ impl RollbackService {
             execution_id,
             action_type: ferrum_proto::ActionType::McpToolMutation,
             rollback_class: requested_rollback_class,
-            adapter_key: "noop".to_string(),
-            target: ferrum_proto::RollbackTarget::Generic {
-                namespace: "mcp".to_string(),
-                identifier: "tool-call".to_string(),
-            },
+            adapter_key,
+            target,
             prepare_checks: Vec::new(),
             verify_checks: Vec::new(),
             compensation_plan: Vec::new(),

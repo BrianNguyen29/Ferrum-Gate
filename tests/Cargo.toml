@@ -24,6 +24,7 @@ ferrum-gateway = { path = "../crates/ferrum-gateway" }
 ferrum-proto = { path = "../crates/ferrum-proto" }
 ferrum-store = { path = "../crates/ferrum-store" }
 ferrum-rollback = { path = "../crates/ferrum-rollback" }
+ferrum-adapter-fs = { path = "../crates/ferrum-adapter-fs" }
 ferrum-pdp = { path = "../crates/ferrum-pdp" }
 ferrum-cap = { path = "../crates/ferrum-cap" }
 ferrum-firewall = { path = "../crates/ferrum-firewall" }
