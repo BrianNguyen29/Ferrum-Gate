@@ -448,8 +448,13 @@ async fn test_evaluate_proposal_id_mismatch_returns_400_and_no_events() {
 async fn test_full_happy_path_flow_compile_evaluate_mint_authorize_prepare() {
     let (_temp_dir, runtime, _store) = create_test_runtime().await;
 
-    // Step 1: Compile intent
-    let req = sample_intent_request();
+    // Step 1: Compile intent with proper file scope (fail-closed: empty scope denies all)
+    let mut req = sample_intent_request();
+    req.requested_resource_scope = vec![ResourceSelector::FilesystemPath {
+        path: "/tmp".to_string(),
+        mode: ResourceMode::Read,
+        content_hash: None,
+    }];
     let app = build_router(runtime.clone());
 
     let response = app
@@ -700,9 +705,15 @@ async fn run_flow_to_prepared(
     ferrum_proto::ProposalId,
     ferrum_proto::ExecutionId,
 ) {
-    // Step 1: Compile intent with mutating effect type (since we'll test mutations)
+    // Step 1: Compile intent with mutating effect type and proper file scope
     let app = build_router(runtime.clone());
-    let req = sample_intent_request_with_effect(EffectType::FileMutation);
+    let mut req = sample_intent_request_with_effect(EffectType::FileMutation);
+    // Add proper file scope for the test (fail-closed: empty scope denies all)
+    req.requested_resource_scope = vec![ResourceSelector::FilesystemPath {
+        path: "/tmp".to_string(),
+        mode: ResourceMode::Write,
+        content_hash: None,
+    }];
     let response = app
         .oneshot(
             axum::http::Request::builder()
@@ -3732,9 +3743,16 @@ async fn run_http_flow_to_prepared(
     ferrum_proto::ProposalId,
     ferrum_proto::ExecutionId,
 ) {
-    // Step 1: Compile intent
+    // Step 1: Compile intent with HTTP scope matching the binding
+    let http_scope = ferrum_proto::ResourceSelector::HttpEndpoint {
+        method: ferrum_proto::HttpMethod::Get,
+        base_url: "https://api.example.com".to_string(),
+        path_prefix: "/v1/".to_string(),
+        mode: ferrum_proto::ResourceMode::Read,
+    };
     let app = build_router(runtime.clone());
-    let req = sample_intent_request_with_effect(EffectType::ExternalApiCall);
+    let mut req = sample_intent_request_with_effect(EffectType::ExternalApiCall);
+    req.requested_resource_scope = vec![http_scope];
     let response = app
         .oneshot(
             axum::http::Request::builder()
@@ -3884,8 +3902,15 @@ async fn run_file_flow_to_prepared(
     ferrum_proto::ProposalId,
     ferrum_proto::ExecutionId,
 ) {
+    // Create file scope matching the binding path
+    let file_scope = ferrum_proto::ResourceSelector::FilesystemPath {
+        path: "/tmp".to_string(),
+        mode: ferrum_proto::ResourceMode::Read,
+        content_hash: None,
+    };
     let app = build_router(runtime.clone());
-    let req = sample_intent_request_with_effect(effect_type);
+    let mut req = sample_intent_request_with_effect(effect_type);
+    req.requested_resource_scope = vec![file_scope];
     let response = app
         .oneshot(
             axum::http::Request::builder()
@@ -4242,15 +4267,156 @@ async fn test_http_execution_denied_header_violation() {
 async fn test_http_execution_denied_missing_binding() {
     let (_temp_dir, runtime, _store) = create_test_runtime().await;
 
-    // Create capability with NO HTTP bindings (only file binding)
+    // Create intent with BOTH HTTP and File scope to allow file binding minting
+    let http_scope = ferrum_proto::ResourceSelector::HttpEndpoint {
+        method: ferrum_proto::HttpMethod::Get,
+        base_url: "https://api.example.com".to_string(),
+        path_prefix: "/v1/".to_string(),
+        mode: ferrum_proto::ResourceMode::Read,
+    };
+    let file_scope = ferrum_proto::ResourceSelector::FilesystemPath {
+        path: "/tmp".to_string(),
+        mode: ferrum_proto::ResourceMode::Read,
+        content_hash: None,
+    };
+    let app = build_router(runtime.clone());
+    let mut req = sample_intent_request_with_effect(EffectType::ExternalApiCall);
+    req.requested_resource_scope = vec![http_scope, file_scope];
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Evaluate proposal
+    let app = build_router(runtime.clone());
+    let proposal = ActionProposal {
+        proposal_id: ferrum_proto::ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Call external API".to_string(),
+        tool_name: "http.get".to_string(),
+        server_name: "http-adapter".to_string(),
+        raw_arguments: serde_json::json!({"url": "https://api.example.com/v1/data"}),
+        expected_effect: "make HTTP API call".to_string(),
+        estimated_risk: RiskTier::Medium,
+        requested_rollback_class: RollbackClass::R0NativeReversible,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Mint capability with ONLY File binding (no HTTP binding)
     let file_binding = ResourceBinding::File {
         path: "/tmp/test.txt".to_string(),
         mode: ResourceMode::Read,
         required_hash: None,
     };
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "http-adapter".to_string(),
+            tool_name: "http.get".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![file_binding],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
 
-    let (_intent_id, _proposal_id, execution_id) =
-        run_http_flow_to_prepared(&runtime, file_binding).await;
+    // Authorize execution
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    // Prepare execution
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
 
     // Step 6: Execute with HTTP payload but no HTTP binding in capability
     let app = build_router(runtime.clone());
@@ -4522,16 +4688,24 @@ async fn test_file_execution_denied_path_traversal() {
 // EXECUTION-TIME SQLITE BINDING ENFORCEMENT TESTS (Phase C3)
 // ============================================
 
-async fn run_sqlite_flow_to_prepared(
+async fn run_sqlite_flow_to_prepared_with_scope(
     runtime: &GatewayRuntime,
     sqlite_binding: ResourceBinding,
+    scope_db_path: String,
 ) -> (
     ferrum_proto::IntentId,
     ferrum_proto::ProposalId,
     ferrum_proto::ExecutionId,
 ) {
+    // Create SQLite scope - can be broader than binding to test execution-time enforcement
+    let sqlite_scope = ferrum_proto::ResourceSelector::SqliteDatabase {
+        db_path: scope_db_path,
+        tables: vec!["users".to_string(), "orders".to_string()],
+        mode: ferrum_proto::ResourceMode::ReadWrite,
+    };
     let app = build_router(runtime.clone());
-    let req = sample_intent_request_with_effect(EffectType::DatabaseMutation);
+    let mut req = sample_intent_request_with_effect(EffectType::DatabaseMutation);
+    req.requested_resource_scope = vec![sqlite_scope];
     let response = app
         .oneshot(
             axum::http::Request::builder()
@@ -4665,6 +4839,19 @@ async fn run_sqlite_flow_to_prepared(
     (intent_id, proposal_id, execution_id)
 }
 
+// Wrapper with default scope for backward compatibility
+async fn run_sqlite_flow_to_prepared(
+    runtime: &GatewayRuntime,
+    sqlite_binding: ResourceBinding,
+) -> (
+    ferrum_proto::IntentId,
+    ferrum_proto::ProposalId,
+    ferrum_proto::ExecutionId,
+) {
+    run_sqlite_flow_to_prepared_with_scope(runtime, sqlite_binding, "/tmp/test.db".to_string())
+        .await
+}
+
 #[tokio::test]
 async fn test_sqlite_execution_allowed_with_matching_binding() {
     let (_temp_dir, runtime, _store) = create_test_runtime().await;
@@ -4710,14 +4897,19 @@ async fn test_sqlite_execution_allowed_with_matching_binding() {
 async fn test_sqlite_execution_denied_db_path_mismatch() {
     let (_temp_dir, runtime, _store) = create_test_runtime().await;
 
+    // Use exact scope matching the binding, then test execution with different path
     let sqlite_binding = ResourceBinding::Sqlite {
         db_path: "/tmp/allowed.db".to_string(),
         tables: vec![],
         mode: ResourceMode::ReadWrite,
     };
 
-    let (_intent_id, _proposal_id, execution_id) =
-        run_sqlite_flow_to_prepared(&runtime, sqlite_binding).await;
+    let (_intent_id, _proposal_id, execution_id) = run_sqlite_flow_to_prepared_with_scope(
+        &runtime,
+        sqlite_binding,
+        "/tmp/allowed.db".to_string(),
+    )
+    .await;
 
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
@@ -4837,16 +5029,28 @@ async fn test_sqlite_execution_denied_write_on_read_binding() {
 // EXECUTION-TIME GIT BINDING ENFORCEMENT TESTS (Phase C3)
 // ============================================
 
-async fn run_git_flow_to_prepared(
+async fn run_git_flow_to_prepared_with_scope(
     runtime: &GatewayRuntime,
     git_binding: ResourceBinding,
+    scope_repo_path: String,
 ) -> (
     ferrum_proto::IntentId,
     ferrum_proto::ProposalId,
     ferrum_proto::ExecutionId,
 ) {
+    // Create Git scope - can be broader than binding to test execution-time enforcement
+    let git_scope = ferrum_proto::ResourceSelector::GitRepository {
+        repo_path: scope_repo_path,
+        allowed_refs: vec![
+            "main".to_string(),
+            "develop".to_string(),
+            "feature/experimental".to_string(),
+        ],
+        mode: ferrum_proto::ResourceMode::ReadWrite,
+    };
     let app = build_router(runtime.clone());
-    let req = sample_intent_request_with_effect(EffectType::GitMutation);
+    let mut req = sample_intent_request_with_effect(EffectType::GitMutation);
+    req.requested_resource_scope = vec![git_scope];
     let response = app
         .oneshot(
             axum::http::Request::builder()
@@ -4980,6 +5184,18 @@ async fn run_git_flow_to_prepared(
     (intent_id, proposal_id, execution_id)
 }
 
+// Wrapper with default scope for backward compatibility
+async fn run_git_flow_to_prepared(
+    runtime: &GatewayRuntime,
+    git_binding: ResourceBinding,
+) -> (
+    ferrum_proto::IntentId,
+    ferrum_proto::ProposalId,
+    ferrum_proto::ExecutionId,
+) {
+    run_git_flow_to_prepared_with_scope(runtime, git_binding, "/repos/myrepo".to_string()).await
+}
+
 #[tokio::test]
 async fn test_git_execution_allowed_with_matching_binding() {
     let (_temp_dir, runtime, _store) = create_test_runtime().await;
@@ -5026,6 +5242,7 @@ async fn test_git_execution_allowed_with_matching_binding() {
 async fn test_git_execution_denied_repo_path_mismatch() {
     let (_temp_dir, runtime, _store) = create_test_runtime().await;
 
+    // Use exact scope matching the binding, then test execution with different path
     let git_binding = ResourceBinding::Git {
         repo_path: "/repos/allowed".to_string(),
         allowed_refs: vec![],
@@ -5033,7 +5250,8 @@ async fn test_git_execution_denied_repo_path_mismatch() {
     };
 
     let (_intent_id, _proposal_id, execution_id) =
-        run_git_flow_to_prepared(&runtime, git_binding).await;
+        run_git_flow_to_prepared_with_scope(&runtime, git_binding, "/repos/allowed".to_string())
+            .await;
 
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
@@ -5164,8 +5382,18 @@ async fn run_email_flow_to_prepared(
     ferrum_proto::ProposalId,
     ferrum_proto::ExecutionId,
 ) {
+    // Create Email scope matching the binding
+    let email_scope = ferrum_proto::ResourceSelector::EmailDraft {
+        recipient_allowlist: vec![
+            "alice@example.com".to_string(),
+            "bob@example.com".to_string(),
+        ],
+        subject_prefix_allowlist: vec![],
+        mode: ferrum_proto::ResourceMode::Write,
+    };
     let app = build_router(runtime.clone());
-    let req = sample_intent_request_with_effect(EffectType::ExternalCommunication);
+    let mut req = sample_intent_request_with_effect(EffectType::ExternalCommunication);
+    req.requested_resource_scope = vec![email_scope];
     let response = app
         .oneshot(
             axum::http::Request::builder()
@@ -5475,5 +5703,669 @@ async fn test_email_execution_allowed_send_when_allowed() {
         response.status(),
         200,
         "Email send execution with allow_send=true should succeed"
+    );
+}
+
+// ============================================
+// HARDENING TESTS (Phase F)
+// ============================================
+
+#[tokio::test]
+async fn test_single_use_capability_second_authorize_fails() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Run flow to get a valid capability
+    let (_intent_id, proposal_id, execution_id) =
+        run_flow_to_prepared(&runtime, RollbackClass::R0NativeReversible).await;
+
+    // Get the capability_id from the execution
+    let execution = runtime
+        .store
+        .executions()
+        .get(execution_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let capability_id = execution.capability_id;
+
+    // run_flow_to_prepared already calls authorize, so the capability is already used
+
+    // Second authorize with same capability should fail
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Should fail with 403 Forbidden - capability already used
+    assert_eq!(
+        response.status(),
+        403,
+        "Second authorize with same capability should fail"
+    );
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let error: ferrum_proto::ApiError = serde_json::from_slice(&body).unwrap();
+    assert!(
+        matches!(error.code, ferrum_proto::ApiErrorCode::CapabilityUsed),
+        "Expected CapabilityUsed error, got {:?}",
+        error.code
+    );
+}
+
+#[tokio::test]
+async fn test_scope_mismatch_denied_at_mint_time() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Step 1: Compile intent with LIMITED scope (only /tmp/allowed.txt)
+    let file_scope = ferrum_proto::ResourceSelector::FilesystemPath {
+        path: "/tmp/allowed.txt".to_string(),
+        mode: ferrum_proto::ResourceMode::Read,
+        content_hash: None,
+    };
+    let app = build_router(runtime.clone());
+    let mut req = sample_intent_request_with_effect(EffectType::FileMutation);
+    req.requested_resource_scope = vec![file_scope];
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Step 2: Evaluate proposal
+    let proposal = ActionProposal {
+        proposal_id: ferrum_proto::ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Read file".to_string(),
+        tool_name: "fs.read".to_string(),
+        server_name: "workspace".to_string(),
+        raw_arguments: serde_json::json!({"path": "/tmp/allowed.txt"}),
+        expected_effect: "read file".to_string(),
+        estimated_risk: RiskTier::Low,
+        requested_rollback_class: RollbackClass::R0NativeReversible,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 3: Try to mint capability with OUT-OF-SCOPE binding (/etc/passwd)
+    let out_of_scope_binding = ResourceBinding::File {
+        path: "/etc/passwd".to_string(),
+        mode: ResourceMode::Read,
+        required_hash: None,
+    };
+
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "workspace".to_string(),
+            tool_name: "fs.read".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![out_of_scope_binding],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Should fail with 403 Forbidden - scope mismatch
+    assert_eq!(
+        response.status(),
+        403,
+        "Mint with out-of-scope binding should fail"
+    );
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let error: ferrum_proto::ApiError = serde_json::from_slice(&body).unwrap();
+    assert!(
+        matches!(error.code, ferrum_proto::ApiErrorCode::ScopeMismatch),
+        "Expected ScopeMismatch error, got {:?}",
+        error.code
+    );
+}
+
+#[tokio::test]
+async fn test_r2_no_auto_commit_requires_explicit_commit() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // NOTE: This test uses R2 (Compensatable) to verify no-auto-commit semantics.
+    // R2 has auto_commit=false like R3, but doesn't require approval flow.
+    // R3 semantics are tested in the approval flow tests (test_full_approval_flow_approve_then_prepare_succeeds)
+    // which demonstrate R3's require-approval behavior before any execution.
+    let (_intent_id, _proposal_id, execution_id) =
+        run_flow_to_prepared(&runtime, RollbackClass::R2Compensatable).await;
+
+    // Verify the rollback contract has auto_commit = false
+    let stored_execution = runtime
+        .store
+        .executions()
+        .get(execution_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let contract_id = stored_execution.rollback_contract_id.unwrap();
+    let stored_contract = runtime
+        .store
+        .rollback_contracts()
+        .get(contract_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        !stored_contract.auto_commit,
+        "R2 should have auto_commit = false"
+    );
+
+    // Step 6: Execute
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    // Step 7: Verify (should NOT auto-commit for R2)
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let verify_resp: ferrum_proto::VerifyResponse = serde_json::from_slice(&body).unwrap();
+    assert!(verify_resp.verified);
+
+    // Verify execution state is AwaitingVerification (NOT auto-committed for R2)
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored_execution.is_some());
+    let exec = stored_execution.unwrap();
+    assert!(
+        matches!(exec.state, ExecutionState::AwaitingVerification),
+        "R2 should remain in AwaitingVerification after verify, got {:?}",
+        exec.state
+    );
+
+    // Step 8: Explicit commit (required for R2 when not auto-commit)
+    let app = build_router(runtime.clone());
+    let commit_req = ferrum_proto::CommitRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/commit", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&commit_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let commit_resp: ferrum_proto::CommitResponse = serde_json::from_slice(&body).unwrap();
+    assert!(commit_resp.committed);
+    assert!(commit_resp.committed_at.is_some());
+
+    // Verify final state is Committed
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    let exec = stored_execution.unwrap();
+    assert!(
+        matches!(exec.state, ExecutionState::Committed),
+        "R2 should be Committed after explicit commit, got {:?}",
+        exec.state
+    );
+}
+
+// ============================================
+// SCOPE HARDENING TESTS (Mode Subset Checks)
+// ============================================
+
+#[tokio::test]
+async fn test_empty_scope_denies_any_binding() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Step 1: Compile intent with EMPTY scope (read-only analysis has empty scope by default)
+    let req = sample_intent_request(); // ReadOnlyAnalysis effect type
+    let app = build_router(runtime.clone());
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Verify intent has empty scope
+    assert!(
+        compile_resp.envelope.resource_scope.is_empty(),
+        "Intent should have empty scope"
+    );
+
+    // Step 2: Create proposal with File binding
+    let app = build_router(runtime.clone());
+    let proposal = ActionProposal {
+        proposal_id: ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Read file".to_string(),
+        tool_name: "fs.read".to_string(),
+        server_name: "workspace".to_string(),
+        raw_arguments: serde_json::json!({"path": "/tmp/test.txt"}),
+        expected_effect: "read file contents".to_string(),
+        estimated_risk: RiskTier::Low,
+        requested_rollback_class: RollbackClass::R0NativeReversible,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 3: Try to mint capability with File binding - should FAIL
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "workspace".to_string(),
+            tool_name: "fs.read".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![ResourceBinding::File {
+            path: "/tmp/test.txt".to_string(),
+            mode: ResourceMode::Read,
+            required_hash: None,
+        }],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Should fail with 403 Forbidden - empty scope denies all bindings
+    assert_eq!(
+        response.status(),
+        403,
+        "Empty scope should deny any resource binding"
+    );
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let error: ferrum_proto::ApiError = serde_json::from_slice(&body).unwrap();
+    assert!(
+        matches!(error.code, ferrum_proto::ApiErrorCode::ScopeMismatch),
+        "Expected ScopeMismatch error, got {:?}",
+        error.code
+    );
+}
+
+#[tokio::test]
+async fn test_read_scope_denies_readwrite_binding() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Step 1: Compile intent with Read scope
+    let mut req = sample_intent_request_with_effect(EffectType::FileMutation);
+    req.requested_resource_scope = vec![ResourceSelector::FilesystemPath {
+        path: "/tmp".to_string(),
+        mode: ResourceMode::Read, // Read-only scope
+        content_hash: None,
+    }];
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Step 2: Evaluate proposal
+    let app = build_router(runtime.clone());
+    let proposal = ActionProposal {
+        proposal_id: ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Read file".to_string(),
+        tool_name: "fs.read".to_string(),
+        server_name: "workspace".to_string(),
+        raw_arguments: serde_json::json!({"path": "/tmp/test.txt"}),
+        expected_effect: "read file".to_string(),
+        estimated_risk: RiskTier::Low,
+        requested_rollback_class: RollbackClass::R0NativeReversible,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 3: Try to mint capability with ReadWrite binding - should FAIL
+    // Read scope should NOT allow ReadWrite mode (permission widening)
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "workspace".to_string(),
+            tool_name: "fs.write".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![ResourceBinding::File {
+            path: "/tmp/test.txt".to_string(),
+            mode: ResourceMode::ReadWrite, // Wider than scope's Read
+            required_hash: None,
+        }],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Should fail with 403 Forbidden - Read scope cannot grant ReadWrite
+    assert_eq!(
+        response.status(),
+        403,
+        "Read scope should deny ReadWrite binding (permission widening)"
+    );
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let error: ferrum_proto::ApiError = serde_json::from_slice(&body).unwrap();
+    assert!(
+        matches!(error.code, ferrum_proto::ApiErrorCode::ScopeMismatch),
+        "Expected ScopeMismatch error, got {:?}",
+        error.code
+    );
+}
+
+#[tokio::test]
+async fn test_readwrite_scope_allows_read_binding() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Step 1: Compile intent with ReadWrite scope
+    let mut req = sample_intent_request_with_effect(EffectType::FileMutation);
+    req.requested_resource_scope = vec![ResourceSelector::FilesystemPath {
+        path: "/tmp".to_string(),
+        mode: ResourceMode::ReadWrite, // ReadWrite scope
+        content_hash: None,
+    }];
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Step 2: Evaluate proposal
+    let app = build_router(runtime.clone());
+    let proposal = ActionProposal {
+        proposal_id: ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Read file".to_string(),
+        tool_name: "fs.read".to_string(),
+        server_name: "workspace".to_string(),
+        raw_arguments: serde_json::json!({"path": "/tmp/test.txt"}),
+        expected_effect: "read file".to_string(),
+        estimated_risk: RiskTier::Low,
+        requested_rollback_class: RollbackClass::R0NativeReversible,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 3: Mint capability with Read binding - should SUCCEED
+    // ReadWrite scope should allow Read mode (subset permission)
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "workspace".to_string(),
+            tool_name: "fs.read".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![ResourceBinding::File {
+            path: "/tmp/test.txt".to_string(),
+            mode: ResourceMode::Read, // Subset of ReadWrite
+            required_hash: None,
+        }],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Should succeed - Read is subset of ReadWrite scope
+    assert_eq!(
+        response.status(),
+        200,
+        "ReadWrite scope should allow Read binding (subset permission)"
     );
 }

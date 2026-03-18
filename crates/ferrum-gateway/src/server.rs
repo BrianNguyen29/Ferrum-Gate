@@ -13,9 +13,9 @@ use ferrum_proto::{
     CompensateRequest, CompensateResponse, Decision, EvaluateProposalResponse, ExecuteRequest,
     ExecuteResponse, ExecutionId, ExecutionRecord, ExecutionState, HashChainRef, HealthResponse,
     IntentCompileRequest, IntentCompileResponse, IntentEnvelope, IntentStatus, ObjectRef,
-    ObjectType, OutcomeClause, ProvenanceEvent, ProvenanceEventKind, ResourceSelector, RiskTier,
-    RollbackClass, RollbackRequest, RollbackResponse, RollbackState, TimeBudget,
-    TrustContextSummary, VerifyRequest, VerifyResponse,
+    ObjectType, OutcomeClause, ProvenanceEvent, ProvenanceEventKind, ResourceBinding, ResourceMode,
+    ResourceSelector, RiskTier, RollbackClass, RollbackRequest, RollbackResponse, RollbackState,
+    TimeBudget, TrustContextSummary, VerifyRequest, VerifyResponse,
 };
 use ferrum_store::{
     ApprovalRepo, CapabilityRepo, ExecutionRepo, IntentRepo, ProposalRepo, ProvenanceRepo,
@@ -463,10 +463,180 @@ async fn evaluate_proposal(
     Ok(Json(out))
 }
 
+/// Check if a resource binding is within the allowed scope (subset check)
+/// Fail-closed: any mismatch or permission widening results in denial
+fn is_binding_within_scope(binding: &ResourceBinding, scope: &[ResourceSelector]) -> bool {
+    // Fail-closed: if no scope defined, deny any non-empty binding
+    if scope.is_empty() {
+        return false;
+    }
+
+    match binding {
+        ResourceBinding::File { path, mode, .. } => {
+            scope.iter().any(|selector| match selector {
+                ResourceSelector::FilesystemPath {
+                    path: scope_path,
+                    mode: scope_mode,
+                    ..
+                } => {
+                    // Path must be within scope (prefix match)
+                    let path_ok = path.starts_with(scope_path);
+                    // Mode must not exceed scope - conservative subset check
+                    let mode_ok = is_mode_subset_of(mode, scope_mode);
+                    path_ok && mode_ok
+                }
+                _ => false,
+            })
+        }
+        ResourceBinding::Http {
+            base_url,
+            path_prefix,
+            method: _,
+            mode,
+            ..
+        } => scope.iter().any(|selector| match selector {
+            ResourceSelector::HttpEndpoint {
+                base_url: scope_url,
+                path_prefix: scope_prefix,
+                mode: scope_mode,
+                ..
+            } => {
+                let url_ok = base_url == scope_url;
+                let prefix_ok = path_prefix.starts_with(scope_prefix);
+                // Mode must not exceed scope - conservative subset check
+                let mode_ok = is_mode_subset_of(mode, scope_mode);
+                url_ok && prefix_ok && mode_ok
+            }
+            _ => false,
+        }),
+        ResourceBinding::Sqlite {
+            db_path,
+            tables,
+            mode,
+        } => {
+            scope.iter().any(|selector| match selector {
+                ResourceSelector::SqliteDatabase {
+                    db_path: scope_db,
+                    tables: scope_tables,
+                    mode: scope_mode,
+                } => {
+                    let db_ok = db_path == scope_db;
+                    // Tables must be subset of scope tables (or scope allows all)
+                    let tables_ok =
+                        scope_tables.is_empty() || tables.iter().all(|t| scope_tables.contains(t));
+                    // Mode must not exceed scope - conservative subset check
+                    let mode_ok = is_mode_subset_of(mode, scope_mode);
+                    db_ok && tables_ok && mode_ok
+                }
+                _ => false,
+            })
+        }
+        ResourceBinding::Git {
+            repo_path,
+            allowed_refs,
+            mode,
+        } => {
+            scope.iter().any(|selector| match selector {
+                ResourceSelector::GitRepository {
+                    repo_path: scope_repo,
+                    allowed_refs: scope_refs,
+                    mode: scope_mode,
+                } => {
+                    let repo_ok = repo_path == scope_repo;
+                    // Refs must be subset of scope refs (or scope allows all)
+                    let refs_ok = scope_refs.is_empty()
+                        || allowed_refs.iter().all(|r| scope_refs.contains(r));
+                    // Mode must not exceed scope - conservative subset check
+                    let mode_ok = is_mode_subset_of(mode, scope_mode);
+                    repo_ok && refs_ok && mode_ok
+                }
+                _ => false,
+            })
+        }
+        ResourceBinding::EmailDraft {
+            recipients,
+            allow_send,
+            mode,
+        } => {
+            scope.iter().any(|selector| match selector {
+                ResourceSelector::EmailDraft {
+                    recipient_allowlist,
+                    mode: scope_mode,
+                    ..
+                } => {
+                    // Recipients must be in allowlist
+                    let recipients_ok = recipient_allowlist.is_empty()
+                        || recipients.iter().all(|r| recipient_allowlist.contains(r));
+                    // If scope is read-only, cannot send
+                    let send_ok = !matches!((scope_mode, allow_send), (ResourceMode::Read, true));
+                    // Mode must not exceed scope - conservative subset check
+                    let mode_ok = is_mode_subset_of(mode, scope_mode);
+                    recipients_ok && send_ok && mode_ok
+                }
+                _ => false,
+            })
+        }
+    }
+}
+
+/// Check if a requested mode is a subset of (does not exceed) the scope mode.
+/// Conservative permission model: scope_mode must encompass all permissions in requested mode.
+fn is_mode_subset_of(requested: &ResourceMode, scope: &ResourceMode) -> bool {
+    match scope {
+        // Admin scope allows any mode
+        ResourceMode::Admin => true,
+        // ReadWrite scope allows Read, Write, ReadWrite, but NOT Execute/Admin
+        ResourceMode::ReadWrite => matches!(
+            requested,
+            ResourceMode::Read | ResourceMode::Write | ResourceMode::ReadWrite
+        ),
+        // Write scope allows Write and Read (write access typically implies read access to written data)
+        ResourceMode::Write => matches!(requested, ResourceMode::Write | ResourceMode::Read),
+        // Read scope allows only Read (most restrictive)
+        ResourceMode::Read => matches!(requested, ResourceMode::Read),
+        // Draft scope allows only Draft (special purpose mode)
+        ResourceMode::Draft => matches!(requested, ResourceMode::Draft),
+        // Execute scope allows only Execute (special purpose mode)
+        ResourceMode::Execute => matches!(requested, ResourceMode::Execute),
+    }
+}
+
 async fn mint_capability(
     State(runtime): State<Arc<GatewayRuntime>>,
     Json(request): Json<CapabilityMintRequest>,
 ) -> Result<Json<CapabilityMintResponse>, ApiProblem> {
+    // Load intent to check scope constraints
+    let intent = runtime
+        .store
+        .intents()
+        .get(request.intent_id)
+        .await
+        .map_err(|err| ApiProblem::internal(err.into()))?;
+
+    if let Some(ref intent_envelope) = intent {
+        // Check each resource binding is within intent scope
+        for binding in &request.resource_bindings {
+            if !is_binding_within_scope(binding, &intent_envelope.resource_scope) {
+                return Err(ApiProblem::new(
+                    StatusCode::FORBIDDEN,
+                    ApiErrorCode::ScopeMismatch,
+                    format!("resource binding {:?} exceeds intent scope", binding),
+                ));
+            }
+        }
+    }
+    // If intent not found, fail-closed: deny minting
+    else {
+        return Err(ApiProblem::new(
+            StatusCode::NOT_FOUND,
+            ApiErrorCode::NotFound,
+            format!(
+                "intent {} not found for capability minting",
+                request.intent_id
+            ),
+        ));
+    }
+
     let response = runtime
         .cap
         .mint(request)
@@ -587,6 +757,14 @@ async fn authorize_execution(
         .unwrap_or(false);
 
     let now = Utc::now();
+
+    // SINGLE-USE ENFORCEMENT: Mark capability as consumed at authorize time
+    // This ensures exactly one authorize per capability
+    runtime
+        .cap
+        .mark_used(request.capability_id)
+        .await
+        .map_err(ApiProblem::from_capability)?;
 
     // Handle DraftOnly: allow only for dry_run, otherwise fail-closed
     if is_draft_only && !request.dry_run {
@@ -1813,14 +1991,33 @@ impl ApiProblem {
     }
 
     fn from_capability(err: ferrum_cap::CapabilityError) -> Self {
-        let code = match err {
-            ferrum_cap::CapabilityError::NotFound => ApiErrorCode::NotFound,
-            ferrum_cap::CapabilityError::AlreadyUsed => ApiErrorCode::Conflict,
-            ferrum_cap::CapabilityError::Revoked => ApiErrorCode::CapabilityRevoked,
-            ferrum_cap::CapabilityError::Expired => ApiErrorCode::CapabilityExpired,
-            ferrum_cap::CapabilityError::TtlTooLong => ApiErrorCode::ValidationError,
-        };
-        Self::new(StatusCode::BAD_REQUEST, code, err.to_string())
+        match err {
+            ferrum_cap::CapabilityError::NotFound => Self::new(
+                StatusCode::NOT_FOUND,
+                ApiErrorCode::NotFound,
+                err.to_string(),
+            ),
+            ferrum_cap::CapabilityError::AlreadyUsed => Self::new(
+                StatusCode::FORBIDDEN,
+                ApiErrorCode::CapabilityUsed,
+                "capability has already been consumed",
+            ),
+            ferrum_cap::CapabilityError::Revoked => Self::new(
+                StatusCode::FORBIDDEN,
+                ApiErrorCode::CapabilityRevoked,
+                err.to_string(),
+            ),
+            ferrum_cap::CapabilityError::Expired => Self::new(
+                StatusCode::FORBIDDEN,
+                ApiErrorCode::CapabilityExpired,
+                err.to_string(),
+            ),
+            ferrum_cap::CapabilityError::TtlTooLong => Self::new(
+                StatusCode::BAD_REQUEST,
+                ApiErrorCode::ValidationError,
+                err.to_string(),
+            ),
+        }
     }
 }
 

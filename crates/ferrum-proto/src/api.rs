@@ -52,6 +52,8 @@ pub enum ApiErrorCode {
     ApprovalRequired,
     CapabilityExpired,
     CapabilityRevoked,
+    CapabilityUsed,
+    ScopeMismatch,
     IntegrityMismatch,
     RollbackUnsupported,
     AdapterFailure,
