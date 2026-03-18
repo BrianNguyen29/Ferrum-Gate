@@ -15,7 +15,7 @@
 ## Behavior quality
 - [x] scope mismatch deny test
 - [x] single-use capability test
-- [ ] R3 no auto-commit test
+- [x] R3 no auto-commit test
 - [ ] rollback/compensate test
 - [x] poisoned context test
 

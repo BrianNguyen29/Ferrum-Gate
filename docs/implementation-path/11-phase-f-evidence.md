@@ -32,7 +32,7 @@ Nhung flow duoi day da co automated evidence trong repo:
 - evaluate proposal voi cac ket qua `Allow`, `Deny`, `Quarantine`, `RequireApproval`, `AllowDraftOnly`
 - mint capability -> authorize execution -> prepare execution
 - execute -> verify -> auto-commit cho flow `R0NativeReversible`
-- execute -> verify -> explicit commit cho flow khong auto-commit (hien co bang chung truc tiep cho R2)
+- execute -> verify -> explicit commit cho flow khong auto-commit (co bang chung truc tiep cho R2 va R3)
 - rollback va compensate terminal recovery paths
 
 ### 3.2 Policy/firewall hardening da co evidence
@@ -67,7 +67,6 @@ Nhung muc duoi day van la open gap hoac gioi han evidence, khong nen bi hieu nha
 
 - supported flow evidence hien tap trung vao gateway + store + firewall path duoc test trong repo; chua phai tuyen bo parity cho moi adapter/runtime ben ngoai
 - lineage query moi o muc incoming-edge persistence/query; replay/query fabric rong hon van la backlog
-- R3 no-auto-commit van chua co integration evidence tach rieng; hien moi co explicit no-auto-commit evidence cho flow R2 va approval-path evidence rieng
 - config/operator docs, CLI usefulness, va mot so release-checklist items khac van chua dong
 - docs nay khong thay the backlog; cac nang cap tiep theo van nen tiep tuc track o `docs/implementation-path/08-next-issue-backlog.md`
 
@@ -86,5 +85,4 @@ Neu can tiep tuc Phase F/C theo nhung gap con lai, thu tu doc nhanh nen la:
 
 - Phase C: execution-time enforcement cho ca 5 loai da hoan tat; neu can harden tiep thi uu tien scope-subset edge cases va adapter parity
 - Phase F: mo rong lineage query/replay tooling va event linkage cho nhieu hop hon
-- Behavior evidence: bo sung direct integration evidence cho R3 no-auto-commit
 - Operator readiness: bo sung config docs va CLI/debug flow toi thieu

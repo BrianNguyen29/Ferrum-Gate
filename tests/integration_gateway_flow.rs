@@ -6009,6 +6009,368 @@ async fn test_r2_no_auto_commit_requires_explicit_commit() {
     );
 }
 
+#[tokio::test]
+async fn test_r3_no_auto_commit_after_approval_requires_explicit_commit() {
+    // DIRECT R3 NO-AUTO-COMMIT EVIDENCE:
+    // This test proves R3 flows (after approval) do NOT auto-commit on verify,
+    // and require explicit commit, satisfying the invariant from docs/06-constraints-and-invariants.md
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Step 1: Compile intent with mutating effect
+    let req = sample_intent_request_with_effect(EffectType::DatabaseMutation);
+    let app = build_router(runtime.clone());
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Step 2: Create an R3 proposal (requires approval)
+    let proposal = ActionProposal {
+        proposal_id: ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Irreversible high-consequence action".to_string(),
+        tool_name: "db.drop".to_string(),
+        server_name: "database".to_string(),
+        raw_arguments: serde_json::json!({"table": "production_users"}),
+        expected_effect: "drop production table".to_string(),
+        estimated_risk: RiskTier::High,
+        requested_rollback_class: RollbackClass::R3IrreversibleHighConsequence,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let eval_resp: ferrum_proto::EvaluateProposalResponse = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        eval_resp.decision,
+        Decision::RequireApproval,
+        "R3 should require approval"
+    );
+
+    // Step 3: Mint capability
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "database".to_string(),
+            tool_name: "db.drop".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    // Step 4: Authorize execution - should create AwaitingApproval execution
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    // Verify execution is in AwaitingApproval state
+    assert!(matches!(
+        auth_resp.execution.state,
+        ExecutionState::AwaitingApproval
+    ));
+
+    // Step 5: Get approval_id and approve
+    let pending_approvals = runtime.store.approvals().list_pending().await.unwrap();
+    assert!(
+        !pending_approvals.is_empty(),
+        "Approval request should be created"
+    );
+    let approval_id = pending_approvals[0].approval_id;
+
+    let app = build_router(runtime.clone());
+    let resolve_req = ferrum_proto::ApprovalResolveRequest {
+        actor: ferrum_proto::ActorRef {
+            actor_type: ferrum_proto::ActorType::User,
+            actor_id: "admin".to_string(),
+            display_name: Some("Admin".to_string()),
+        },
+        approve: true,
+        reason: Some("Approved for R3 no-auto-commit test".to_string()),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/approvals/{}/resolve", approval_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&resolve_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    // Verify execution transitioned to Authorized
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    let exec = stored_execution.unwrap();
+    assert!(
+        matches!(exec.state, ExecutionState::Authorized),
+        "execution should be Authorized after approval"
+    );
+
+    // CRITICAL: Verify rollback contract has auto_commit = false for R3
+    let contract_id = exec.rollback_contract_id;
+    assert!(
+        contract_id.is_none(),
+        "contract should not exist before prepare"
+    );
+
+    // Step 6: Prepare execution
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let prep_resp: ferrum_proto::PrepareExecutionResponse = serde_json::from_slice(&body).unwrap();
+    assert!(prep_resp.prepared);
+
+    // Verify contract has auto_commit = false (R3 never auto-commits)
+    let stored_execution = runtime
+        .store
+        .executions()
+        .get(execution_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let contract_id = stored_execution.rollback_contract_id.unwrap();
+    let stored_contract = runtime
+        .store
+        .rollback_contracts()
+        .get(contract_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        !stored_contract.auto_commit,
+        "R3 MUST have auto_commit = false (invariant from docs/06-constraints-and-invariants.md)"
+    );
+    assert_eq!(
+        stored_contract.rollback_class,
+        RollbackClass::R3IrreversibleHighConsequence,
+        "Contract should be R3 class"
+    );
+
+    // Step 7: Execute
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({"table": "production_users"}),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    // Step 8: Verify (should NOT auto-commit for R3)
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let verify_resp: ferrum_proto::VerifyResponse = serde_json::from_slice(&body).unwrap();
+    assert!(verify_resp.verified);
+
+    // CRITICAL ASSERTION: R3 must NOT auto-commit on verify
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored_execution.is_some());
+    let exec = stored_execution.unwrap();
+    assert!(
+        matches!(exec.state, ExecutionState::AwaitingVerification),
+        "R3 MUST remain in AwaitingVerification after verify (no auto-commit), got {:?}",
+        exec.state
+    );
+
+    // Step 9: Explicit commit (REQUIRED for R3)
+    let app = build_router(runtime.clone());
+    let commit_req = ferrum_proto::CommitRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/commit", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&commit_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let commit_resp: ferrum_proto::CommitResponse = serde_json::from_slice(&body).unwrap();
+    assert!(commit_resp.committed);
+    assert!(commit_resp.committed_at.is_some());
+
+    // Verify final state is Committed
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    let exec = stored_execution.unwrap();
+    assert!(
+        matches!(exec.state, ExecutionState::Committed),
+        "R3 should be Committed after explicit commit, got {:?}",
+        exec.state
+    );
+
+    // Verify provenance includes all expected events including ApprovalGranted and SideEffectCommitted
+    let all_events = runtime
+        .store
+        .provenance()
+        .query(&ferrum_proto::ProvenanceQueryRequest {
+            intent_id: Some(intent_id),
+            execution_id: None,
+            capability_id: None,
+            event_kind: None,
+            since: None,
+            until: None,
+        })
+        .await
+        .unwrap();
+
+    let has_approval_granted = all_events
+        .iter()
+        .any(|e| matches!(e.kind, ProvenanceEventKind::ApprovalGranted));
+    let has_side_effect_committed = all_events
+        .iter()
+        .any(|e| matches!(e.kind, ProvenanceEventKind::SideEffectCommitted));
+
+    assert!(
+        has_approval_granted,
+        "Missing ApprovalGranted provenance event"
+    );
+    assert!(
+        has_side_effect_committed,
+        "Missing SideEffectCommitted provenance event (explicit commit)"
+    );
+}
+
 // ============================================
 // SCOPE HARDENING TESTS (Mode Subset Checks)
 // ============================================
