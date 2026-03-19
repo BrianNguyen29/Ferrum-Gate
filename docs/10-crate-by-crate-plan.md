@@ -49,11 +49,12 @@
 - before_ref/after_ref local capture da co
 - reset-based rollback path da co
 - gateway routing + integration coverage da co
+- execute-time after_ref handoff vao verify path da co
 
 ## ferrum-adapter-http
-- endpoint allowlist
-- idempotency-aware semantics
-- destructive remote mutation => R3 by default
+- initial GET/status-only slice da co
+- gateway routing + ferrumd registry + local integration coverage da co
+- destructive remote mutation => R3 by default van la backlog
 
 ## ferrum-graph
 - lineage query helpers
