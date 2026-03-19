@@ -19,6 +19,10 @@ path = "integration_poisoned_context.rs"
 name = "integration_lineage_chain"
 path = "integration_lineage_chain.rs"
 
+[[test]]
+name = "integration_provenance_query"
+path = "integration_provenance_query.rs"
+
 [dependencies]
 ferrum-gateway = { path = "../crates/ferrum-gateway" }
 ferrum-proto = { path = "../crates/ferrum-proto" }

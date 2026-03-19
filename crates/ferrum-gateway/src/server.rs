@@ -13,9 +13,10 @@ use ferrum_proto::{
     CompensateRequest, CompensateResponse, Decision, EvaluateProposalResponse, ExecuteRequest,
     ExecuteResponse, ExecutionId, ExecutionRecord, ExecutionState, HashChainRef, HealthResponse,
     IntentCompileRequest, IntentCompileResponse, IntentEnvelope, IntentStatus, ObjectRef,
-    ObjectType, OutcomeClause, ProvenanceEvent, ProvenanceEventKind, ResourceBinding, ResourceMode,
-    ResourceSelector, RiskTier, RollbackClass, RollbackRequest, RollbackResponse, RollbackState,
-    RollbackTarget, TimeBudget, TrustContextSummary, VerifyRequest, VerifyResponse,
+    ObjectType, OutcomeClause, ProvenanceEvent, ProvenanceEventKind, ProvenanceQueryRequest,
+    ProvenanceQueryResponse, ResourceBinding, ResourceMode, ResourceSelector, RiskTier,
+    RollbackClass, RollbackRequest, RollbackResponse, RollbackState, RollbackTarget, TimeBudget,
+    TrustContextSummary, VerifyRequest, VerifyResponse,
 };
 use ferrum_store::{
     ApprovalRepo, CapabilityRepo, ExecutionRepo, IntentRepo, ProposalRepo, ProvenanceRepo,
@@ -126,6 +127,7 @@ pub fn build_router(runtime: GatewayRuntime) -> Router {
             "/v1/provenance/lineage/{execution_id}",
             get(get_execution_lineage),
         )
+        .route("/v1/provenance/query", post(query_provenance))
         .with_state(Arc::new(runtime))
         .layer(TraceLayer::new_for_http())
 }
@@ -1949,6 +1951,20 @@ async fn get_execution_lineage(
 pub(crate) struct LineageResponse {
     pub(crate) execution_id: ExecutionId,
     pub(crate) events: Vec<ProvenanceEvent>,
+}
+
+async fn query_provenance(
+    State(runtime): State<Arc<GatewayRuntime>>,
+    Json(request): Json<ProvenanceQueryRequest>,
+) -> Result<Json<ProvenanceQueryResponse>, ApiProblem> {
+    let events = runtime
+        .store
+        .provenance()
+        .query(&request)
+        .await
+        .map_err(|err| ApiProblem::internal(err.into()))?;
+
+    Ok(Json(ProvenanceQueryResponse { events }))
 }
 
 fn parse_approval_id(value: &str) -> Result<ApprovalId, ApiProblem> {

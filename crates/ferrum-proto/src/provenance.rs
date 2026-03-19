@@ -74,6 +74,7 @@ pub enum ProvenanceEdgeType {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ProvenanceQueryRequest {
     pub intent_id: Option<crate::IntentId>,
     pub execution_id: Option<ExecutionId>,
