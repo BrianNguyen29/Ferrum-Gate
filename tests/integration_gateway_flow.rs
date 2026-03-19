@@ -1,3 +1,4 @@
+use ferrum_adapter_git::GitRollbackAdapter;
 use ferrum_cap::{CapabilityService, InMemoryCapabilityService};
 use ferrum_firewall::{DefaultFirewall, SemanticFirewall};
 use ferrum_gateway::{GatewayRuntime, build_router};
@@ -5,8 +6,8 @@ use ferrum_pdp::StaticPdpEngine;
 use ferrum_proto::{
     ActionProposal, CapabilityMintRequest, Decision, EffectType, ExecutionState,
     IntentCompileRequest, IntentCompileResponse, IntentId, ProposalId, ProvenanceEventKind,
-    ResourceBinding, ResourceMode, ResourceSelector, RiskTier, RollbackClass, SensitivityLabel,
-    TaintBudget, ToolBinding, TrustLabel,
+    ResourceBinding, ResourceMode, ResourceSelector, RiskTier, RollbackClass, RollbackTarget,
+    SensitivityLabel, TaintBudget, ToolBinding, TrustLabel,
 };
 use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
 use ferrum_store::{
@@ -46,6 +47,8 @@ async fn create_test_runtime() -> (TempDir, GatewayRuntime, SqliteStore) {
     registry.register(Arc::new(ferrum_adapter_maildraft::MaildraftAdapter::new(
         "maildraft",
     )));
+    // Register git adapter for git-backed rollback/compensate tests
+    registry.register(Arc::new(GitRollbackAdapter::new("git")));
     let rollback = Arc::new(RollbackService::new(Arc::new(registry)));
 
     let firewall: Arc<dyn SemanticFirewall> = Arc::new(DefaultFirewall::new());
@@ -5421,6 +5424,259 @@ async fn test_git_execution_denied_write_on_read_binding() {
         .unwrap();
 
     assert_eq!(response.status(), 403);
+}
+
+// ============================================
+// GIT ADAPTER ROUTING AND ROLLBACK TARGET TESTS
+// ============================================
+
+/// Initialize a temporary git repository for testing
+fn init_temp_git_repo() -> (TempDir, String) {
+    let temp_dir = TempDir::new().expect("failed to create temp git dir");
+    let repo_path = temp_dir.path().to_str().unwrap().to_string();
+
+    // Initialize git repo
+    let output = std::process::Command::new("git")
+        .args(["init"])
+        .current_dir(&repo_path)
+        .output()
+        .expect("failed to git init");
+    assert!(output.status.success(), "git init failed");
+
+    // Configure git user
+    let output = std::process::Command::new("git")
+        .args(["config", "user.name", "Ferrum Test"])
+        .current_dir(&repo_path)
+        .output()
+        .expect("failed to git config user.name");
+    assert!(output.status.success());
+
+    let output = std::process::Command::new("git")
+        .args(["config", "user.email", "ferrum@example.com"])
+        .current_dir(&repo_path)
+        .output()
+        .expect("failed to git config user.email");
+    assert!(output.status.success());
+
+    // Create initial commit
+    std::fs::write(temp_dir.path().join("README.md"), "hello\n").expect("failed to write README");
+    let output = std::process::Command::new("git")
+        .args(["add", "README.md"])
+        .current_dir(&repo_path)
+        .output()
+        .expect("failed to git add");
+    assert!(output.status.success());
+
+    let output = std::process::Command::new("git")
+        .args(["commit", "-m", "initial"])
+        .current_dir(&repo_path)
+        .output()
+        .expect("failed to git commit");
+    assert!(
+        output.status.success(),
+        "git commit failed: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    (temp_dir, repo_path)
+}
+
+#[tokio::test]
+async fn test_prepare_with_readwrite_git_binding_routes_to_git_adapter() {
+    // Verifies that prepare path with mutating git binding:
+    // 1. Creates rollback contract with adapter_key = "git"
+    // 2. Creates RollbackTarget::GitRef with the expected repo_path
+    let (_git_temp_dir, repo_path) = init_temp_git_repo();
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    let git_binding = ResourceBinding::Git {
+        repo_path: repo_path.clone(),
+        allowed_refs: vec!["main".to_string(), "develop".to_string()],
+        mode: ResourceMode::ReadWrite,
+    };
+
+    let git_scope = ferrum_proto::ResourceSelector::GitRepository {
+        repo_path: repo_path.clone(),
+        allowed_refs: vec![
+            "main".to_string(),
+            "develop".to_string(),
+            "feature/experimental".to_string(),
+        ],
+        mode: ferrum_proto::ResourceMode::ReadWrite,
+    };
+
+    // Step 1: Compile intent
+    let app = build_router(runtime.clone());
+    let mut req = sample_intent_request_with_effect(EffectType::GitMutation);
+    req.requested_resource_scope = vec![git_scope];
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Step 2: Evaluate proposal
+    let app = build_router(runtime.clone());
+    let proposal = ActionProposal {
+        proposal_id: ferrum_proto::ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Execute git operation".to_string(),
+        tool_name: "git.exec".to_string(),
+        server_name: "git-adapter".to_string(),
+        raw_arguments: serde_json::json!({"repo_path": repo_path, "operation": "log"}),
+        expected_effect: "git log".to_string(),
+        estimated_risk: RiskTier::Medium,
+        requested_rollback_class: RollbackClass::R0NativeReversible,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 3: Mint capability with ReadWrite git binding
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "git-adapter".to_string(),
+            tool_name: "git.exec".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![git_binding],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    // Step 4: Authorize execution
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    // Step 5: Prepare and capture rollback contract
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let prep_resp: ferrum_proto::PrepareExecutionResponse = serde_json::from_slice(&body).unwrap();
+    assert!(prep_resp.prepared, "prepared should be true");
+    assert!(
+        prep_resp.rollback_contract.is_some(),
+        "rollback contract should be created for mutating git binding"
+    );
+
+    // === Verify rollback contract routing ===
+    let contract = prep_resp.rollback_contract.unwrap();
+    assert_eq!(
+        contract.adapter_key, "git",
+        "ReadWrite git binding should route to git adapter"
+    );
+
+    // Verify target is GitRef with expected repo_path
+    match &contract.target {
+        RollbackTarget::GitRef {
+            repo_path: actual_repo_path,
+            before_ref: _,
+            after_ref: _,
+        } => {
+            assert_eq!(
+                actual_repo_path.as_str(),
+                repo_path.as_str(),
+                "GitRef target should have correct repo_path"
+            );
+        }
+        other => panic!(
+            "expected RollbackTarget::GitRef for mutating git binding, got {:?}",
+            other
+        ),
+    }
 }
 
 // ============================================
