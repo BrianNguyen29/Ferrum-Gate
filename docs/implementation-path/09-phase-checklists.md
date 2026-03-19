@@ -20,6 +20,7 @@
 - [x] fs adapter
 - [x] sqlite adapter
 - [x] maildraft adapter
+- [x] git adapter
 
 ## Phase E
 - [x] gateway calls pdp

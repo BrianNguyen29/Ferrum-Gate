@@ -6,30 +6,31 @@
 >
 > Tai lieu nay **khong thay the** `09-implementation-path.md`, ma la lop do luong cu the hon de ra quyet dinh "phase da xong chua".
 
-## Current progress snapshot (2026-03-18)
+## Current progress snapshot (2026-03-19)
 
 ### Phase status now
 
 - **Phase A**: coi nhu dat release gate; workspace va shape loi da du on dinh de lam nen cho persistence/runtime flow.
 - **Phase B**: coi nhu dat release gate; SQLite-backed persistence cho intents/proposals/capabilities/executions/rollback/provenance da chay qua integration path thuc.
 - **Phase C**: da co firewall MVP co y nghia trong branch hien tai; trust labeling, taint scoring, contradiction checks, output sanitization, basic DLP, va execution-time HTTP/File/Sqlite/Git/EmailDraft resource enforcement da duoc wire vao gateway. Tat ca 5 resource binding types (File, Http, Sqlite, Git, EmailDraft) gio day deu co execution-time enforcement.
-- **Phase D**: da co adapter-backed rollback evidence toi thieu cho filesystem, sqlite, va maildraft draft-only path; gateway prepare flow gio co the route sang fs/sqlite/maildraft adapter va integration tests da chung minh file create/delete, file overwrite/restore, sqlite row restore, va maildraft draft create/delete recovery. Co the xem la dat release gate Phase D cho supported adapter set hien tai; `EmailSend` van ngoai scope adapter-backed recovery trong v1.
+- **Phase D**: da co adapter-backed rollback evidence toi thieu cho filesystem, sqlite, maildraft draft-only, va git local-ref path; gateway prepare flow gio co the route sang fs/sqlite/maildraft/git adapter va integration tests da chung minh file create/delete, file overwrite/restore, sqlite row restore, maildraft draft create/delete recovery, va git ref restore. Co the xem la dat release gate Phase D cho supported adapter set hien tai; `EmailSend` va HTTP remote recovery van ngoai scope adapter-backed recovery trong v1.
 - **Phase E**: coi nhu dat cho supported flow hien tai; gateway da di qua `evaluate -> mint -> authorize -> prepare -> execute -> verify -> commit`, cung negative/recovery paths va approval/draft-only governance.
-- **Phase F**: da co poisoned-context suite, provenance minimum-chain evidence, provenance query fail-closed endpoint, va docs handoff ro rang cho supported flows + open gaps. Phan con lai cua phase nay chu yeu la operator/runtime hardening tiep theo, khong con la mo ho evidence/docs.
+- **Phase F**: da co poisoned-context suite, provenance minimum-chain evidence, provenance query fail-closed endpoint, va docs handoff ro rang cho supported flows + open gaps. Git gateway path gio da co them evidence end-to-end; phan con lai cua phase nay chu yeu la operator/runtime hardening tiep theo, khong con la mo ho evidence/docs.
 
 ### Latest evidence snapshot
 
 - `cargo check --workspace`: pass sau khi wire firewall vao gateway va cap nhat proto request shape.
 - `cargo clippy -p ferrum-gateway -p ferrum-adapter-maildraft -p ferrum-rollback -- -D warnings`: pass.
 - `cargo test --package ferrum-firewall`: `35/35` pass.
-- `cargo test --package integration-tests --test integration_gateway_flow`: `64/64` pass.
+- `cargo test --package ferrum-adapter-git`: `8/8` pass.
+- `cargo test --package integration-tests --test integration_gateway_flow`: `70/70` pass.
 - `cargo test --package integration-tests --test integration_poisoned_context`: `5/5` pass (curated poisoned-context regression suite).
 - `cargo test --package integration-tests --test integration_lineage_chain`: `5/5` pass (provenance minimum-chain/lineage evidence tests, including execution lineage endpoint).
-- `cargo test`: full workspace pass tren branch `feat/firewall-mvp`.
+- Targeted git adapter/gateway coverage tren branch `feat/git-adapter-ref-capture` da xanh; full `integration_gateway_flow` suite pass sau cac slice git adapter.
 - Provenance edges are now persisted to `provenance_edges` table and queryable via `ProvenanceRepo::get_edges_to()`, execution lineage is available via `GET /v1/provenance/lineage/{execution_id}`, and a minimal fail-closed provenance query endpoint exists at `POST /v1/provenance/query`.
 - `docs/implementation-path/11-phase-f-evidence.md`: handoff tai lieu cho supported flows, evidence links, va open gaps hien tai.
 - Gateway firewall coverage hien da co trust-context derivation, read-only contradiction blocking, MCP scope contradiction blocking, compile-time taint lineage propagation, DLP redact/detect, execution-time enforcement cho ca 5 resource binding types (File, Http, Sqlite, Git, EmailDraft), va regression tests cho tat ca enforcement paths bao gom: empty-scope read-only bypass, host/method/header mismatch, missing binding, file path mismatch, file traversal, write-on-read binding, Sqlite db_path/table violations, Git repo_path/ref violations, va EmailDraft recipient/send violations.
-- Gateway hardening/evidence hien da co them capability single-use deny, scope mismatch deny tai mint time, direct R3 no-auto-commit evidence, fs/sqlite/maildraft adapter-backed recovery evidence cho rollback delete / compensate restore, va explicit prepare-time deny cho `EmailDraft allow_send=true` de tranh silently fall-through sang `noop`.
+- Gateway hardening/evidence hien da co them capability single-use deny, scope mismatch deny tai mint time, direct R3 no-auto-commit evidence, fs/sqlite/maildraft/git adapter-backed recovery evidence, va explicit prepare-time deny cho `EmailDraft allow_send=true` de tranh silently fall-through sang `noop`.
 - Mainline da hap thu cac moc quan trong truoc do:
   - `PR #3` - harden proposal provenance coverage
   - `PR #5` - execute / verify / commit gateway flow
@@ -41,7 +42,7 @@
 - Co the xem **Phase B** la complete theo tai lieu nay.
 - Co the xem **Phase E** la complete cho supported SQLite-backed gateway flow hien tai.
 - **Phase C** da dat mot MVP co tac dung that cho compile/evaluate va full execution-time enforcement cho ca 5 resource binding types (File, Http, Sqlite, Git, EmailDraft); co the xem la dat release gate cho firewall MVP hien tai voi day du execution-time enforcement coverage.
-- Co the xem **Phase F** da dat muc evidence/docs handoff cho supported gateway flow hien tai; cac gap con lai da duoc liet ke ro thanh open gaps de xu ly tiep.
+- Co the xem **Phase F** da dat muc evidence/docs handoff cho supported gateway flow hien tai; cac gap con lai da duoc liet ke ro thanh open gaps de xu ly tiep, voi git gateway path da co them evidence end-to-end.
 
 ---
 

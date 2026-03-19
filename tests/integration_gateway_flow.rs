@@ -1,3 +1,4 @@
+use ferrum_adapter_git::GitRollbackAdapter;
 use ferrum_cap::{CapabilityService, InMemoryCapabilityService};
 use ferrum_firewall::{DefaultFirewall, SemanticFirewall};
 use ferrum_gateway::{GatewayRuntime, build_router};
@@ -5,8 +6,8 @@ use ferrum_pdp::StaticPdpEngine;
 use ferrum_proto::{
     ActionProposal, CapabilityMintRequest, Decision, EffectType, ExecutionState,
     IntentCompileRequest, IntentCompileResponse, IntentId, ProposalId, ProvenanceEventKind,
-    ResourceBinding, ResourceMode, ResourceSelector, RiskTier, RollbackClass, SensitivityLabel,
-    TaintBudget, ToolBinding, TrustLabel,
+    ResourceBinding, ResourceMode, ResourceSelector, RiskTier, RollbackClass, RollbackTarget,
+    SensitivityLabel, TaintBudget, ToolBinding, TrustLabel,
 };
 use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
 use ferrum_store::{
@@ -46,6 +47,8 @@ async fn create_test_runtime() -> (TempDir, GatewayRuntime, SqliteStore) {
     registry.register(Arc::new(ferrum_adapter_maildraft::MaildraftAdapter::new(
         "maildraft",
     )));
+    // Register git adapter for git-backed rollback/compensate tests
+    registry.register(Arc::new(GitRollbackAdapter::new("git")));
     let rollback = Arc::new(RollbackService::new(Arc::new(registry)));
 
     let firewall: Arc<dyn SemanticFirewall> = Arc::new(DefaultFirewall::new());
@@ -5293,18 +5296,19 @@ async fn test_git_execution_allowed_with_matching_binding() {
 
 #[tokio::test]
 async fn test_git_execution_denied_repo_path_mismatch() {
+    // Create a real temp git repo for the allowed binding path
+    let (_git_temp_dir, repo_path) = init_temp_git_repo();
     let (_temp_dir, runtime, _store) = create_test_runtime().await;
 
     // Use exact scope matching the binding, then test execution with different path
     let git_binding = ResourceBinding::Git {
-        repo_path: "/repos/allowed".to_string(),
+        repo_path: repo_path.clone(),
         allowed_refs: vec![],
         mode: ResourceMode::ReadWrite,
     };
 
     let (_intent_id, _proposal_id, execution_id) =
-        run_git_flow_to_prepared_with_scope(&runtime, git_binding, "/repos/allowed".to_string())
-            .await;
+        run_git_flow_to_prepared_with_scope(&runtime, git_binding, repo_path.clone()).await;
 
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
@@ -5421,6 +5425,768 @@ async fn test_git_execution_denied_write_on_read_binding() {
         .unwrap();
 
     assert_eq!(response.status(), 403);
+}
+
+// ============================================
+// GIT ADAPTER ROUTING AND ROLLBACK TARGET TESTS
+// ============================================
+
+/// Initialize a temporary git repository for testing
+fn init_temp_git_repo() -> (TempDir, String) {
+    let temp_dir = TempDir::new().expect("failed to create temp git dir");
+    let repo_path = temp_dir.path().to_str().unwrap().to_string();
+
+    // Initialize git repo
+    let output = std::process::Command::new("git")
+        .args(["init"])
+        .current_dir(&repo_path)
+        .output()
+        .expect("failed to git init");
+    assert!(output.status.success(), "git init failed");
+
+    // Configure git user
+    let output = std::process::Command::new("git")
+        .args(["config", "user.name", "Ferrum Test"])
+        .current_dir(&repo_path)
+        .output()
+        .expect("failed to git config user.name");
+    assert!(output.status.success());
+
+    let output = std::process::Command::new("git")
+        .args(["config", "user.email", "ferrum@example.com"])
+        .current_dir(&repo_path)
+        .output()
+        .expect("failed to git config user.email");
+    assert!(output.status.success());
+
+    // Create initial commit
+    std::fs::write(temp_dir.path().join("README.md"), "hello\n").expect("failed to write README");
+    let output = std::process::Command::new("git")
+        .args(["add", "README.md"])
+        .current_dir(&repo_path)
+        .output()
+        .expect("failed to git add");
+    assert!(output.status.success());
+
+    let output = std::process::Command::new("git")
+        .args(["commit", "-m", "initial"])
+        .current_dir(&repo_path)
+        .output()
+        .expect("failed to git commit");
+    assert!(
+        output.status.success(),
+        "git commit failed: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    (temp_dir, repo_path)
+}
+
+#[tokio::test]
+async fn test_prepare_with_readwrite_git_binding_routes_to_git_adapter() {
+    // Verifies that prepare path with mutating git binding:
+    // 1. Creates rollback contract with adapter_key = "git"
+    // 2. Creates RollbackTarget::GitRef with the expected repo_path
+    let (_git_temp_dir, repo_path) = init_temp_git_repo();
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    let git_binding = ResourceBinding::Git {
+        repo_path: repo_path.clone(),
+        allowed_refs: vec!["main".to_string(), "develop".to_string()],
+        mode: ResourceMode::ReadWrite,
+    };
+
+    let git_scope = ferrum_proto::ResourceSelector::GitRepository {
+        repo_path: repo_path.clone(),
+        allowed_refs: vec![
+            "main".to_string(),
+            "develop".to_string(),
+            "feature/experimental".to_string(),
+        ],
+        mode: ferrum_proto::ResourceMode::ReadWrite,
+    };
+
+    // Step 1: Compile intent
+    let app = build_router(runtime.clone());
+    let mut req = sample_intent_request_with_effect(EffectType::GitMutation);
+    req.requested_resource_scope = vec![git_scope];
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Step 2: Evaluate proposal
+    let app = build_router(runtime.clone());
+    let proposal = ActionProposal {
+        proposal_id: ferrum_proto::ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Execute git operation".to_string(),
+        tool_name: "git.exec".to_string(),
+        server_name: "git-adapter".to_string(),
+        raw_arguments: serde_json::json!({"repo_path": repo_path, "operation": "log"}),
+        expected_effect: "git log".to_string(),
+        estimated_risk: RiskTier::Medium,
+        requested_rollback_class: RollbackClass::R0NativeReversible,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 3: Mint capability with ReadWrite git binding
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "git-adapter".to_string(),
+            tool_name: "git.exec".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![git_binding],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    // Step 4: Authorize execution
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    // Step 5: Prepare and capture rollback contract
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let prep_resp: ferrum_proto::PrepareExecutionResponse = serde_json::from_slice(&body).unwrap();
+    assert!(prep_resp.prepared, "prepared should be true");
+    assert!(
+        prep_resp.rollback_contract.is_some(),
+        "rollback contract should be created for mutating git binding"
+    );
+
+    // === Verify rollback contract routing ===
+    let contract = prep_resp.rollback_contract.unwrap();
+    assert_eq!(
+        contract.adapter_key, "git",
+        "ReadWrite git binding should route to git adapter"
+    );
+
+    // Verify target is GitRef with expected repo_path
+    match &contract.target {
+        RollbackTarget::GitRef {
+            repo_path: actual_repo_path,
+            before_ref: _,
+            after_ref: _,
+        } => {
+            assert_eq!(
+                actual_repo_path.as_str(),
+                repo_path.as_str(),
+                "GitRef target should have correct repo_path"
+            );
+        }
+        other => panic!(
+            "expected RollbackTarget::GitRef for mutating git binding, got {:?}",
+            other
+        ),
+    }
+}
+
+// ============================================
+// GIT ADAPTER EXECUTE/VERIFY/ROLLBACK PATH TESTS
+// ============================================
+
+/// Helper: run git commit in a repo to advance HEAD
+fn git_commit_change(repo_path: &str, filename: &str, content: &str) -> String {
+    use std::process::Command;
+    std::fs::write(std::path::Path::new(repo_path).join(filename), content)
+        .expect("failed to write file");
+    let output = Command::new("git")
+        .args(["add", filename])
+        .current_dir(repo_path)
+        .output()
+        .expect("failed to git add");
+    assert!(output.status.success(), "git add failed");
+    let output = Command::new("git")
+        .args(["commit", "-m", "test commit"])
+        .current_dir(repo_path)
+        .output()
+        .expect("failed to git commit");
+    assert!(
+        output.status.success(),
+        "git commit failed: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let output = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(repo_path)
+        .output()
+        .expect("failed to git rev-parse");
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+/// Helper: get current HEAD ref for a repo
+fn git_head(repo_path: &str) -> String {
+    use std::process::Command;
+    let output = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(repo_path)
+        .output()
+        .expect("failed to git rev-parse");
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+/// Helper: run full flow to prepared for git-backed execution with actual repo path
+async fn run_git_flow_to_prepared_with_real_repo(
+    runtime: &GatewayRuntime,
+    repo_path: String,
+) -> (
+    ferrum_proto::IntentId,
+    ferrum_proto::ProposalId,
+    ferrum_proto::ExecutionId,
+    String, // before_ref captured at prepare time
+) {
+    let git_binding = ResourceBinding::Git {
+        repo_path: repo_path.clone(),
+        allowed_refs: vec!["main".to_string()],
+        mode: ResourceMode::ReadWrite,
+    };
+
+    let git_scope = ferrum_proto::ResourceSelector::GitRepository {
+        repo_path: repo_path.clone(),
+        allowed_refs: vec!["main".to_string()],
+        mode: ferrum_proto::ResourceMode::ReadWrite,
+    };
+
+    // Compile intent
+    let app = build_router(runtime.clone());
+    let mut req = sample_intent_request_with_effect(EffectType::GitMutation);
+    req.requested_resource_scope = vec![git_scope];
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Evaluate proposal
+    let app = build_router(runtime.clone());
+    let proposal = ActionProposal {
+        proposal_id: ferrum_proto::ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Execute git operation".to_string(),
+        tool_name: "git.exec".to_string(),
+        server_name: "git-adapter".to_string(),
+        raw_arguments: serde_json::json!({"repo_path": repo_path, "operation": "log"}),
+        expected_effect: "git log".to_string(),
+        estimated_risk: RiskTier::Medium,
+        requested_rollback_class: RollbackClass::R2Compensatable,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Mint capability
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "git-adapter".to_string(),
+            tool_name: "git.exec".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![git_binding],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    // Authorize
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    // Prepare and capture before_ref from contract metadata
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let prep_resp: ferrum_proto::PrepareExecutionResponse = serde_json::from_slice(&body).unwrap();
+    assert!(prep_resp.prepared);
+
+    // Extract before_ref from contract metadata
+    let contract = prep_resp.rollback_contract.unwrap();
+    let before_ref = contract
+        .metadata
+        .get("before_ref")
+        .and_then(|v| v.as_str())
+        .expect("before_ref should be in contract metadata")
+        .to_string();
+
+    (intent_id, proposal_id, execution_id, before_ref)
+}
+
+#[tokio::test]
+async fn test_git_execute_succeeds_when_after_ref_matches_head() {
+    let (_git_temp_dir, repo_path) = init_temp_git_repo();
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Get current HEAD before prepare (will be the initial commit)
+    let head_before = git_head(&repo_path);
+
+    // Run flow to prepared - captures before_ref
+    let (_intent_id, _proposal_id, execution_id, before_ref) =
+        run_git_flow_to_prepared_with_real_repo(&runtime, repo_path.clone()).await;
+
+    // Verify before_ref matches our earlier HEAD (no changes yet)
+    assert_eq!(before_ref, head_before);
+
+    // Execute with payload.after_ref matching current HEAD
+    let current_head = git_head(&repo_path);
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({"after_ref": current_head}),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        200,
+        "execute should succeed when after_ref matches current HEAD"
+    );
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let execute_resp: ferrum_proto::ExecuteResponse = serde_json::from_slice(&body).unwrap();
+    assert!(execute_resp.executed);
+
+    // Verify execution state is Running
+    let stored_execution = runtime
+        .store
+        .executions()
+        .get(execution_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        matches!(stored_execution.state, ExecutionState::Running),
+        "execution should be in Running state after execute"
+    );
+}
+
+#[tokio::test]
+async fn test_git_verify_succeeds_after_execute() {
+    let (_git_temp_dir, repo_path) = init_temp_git_repo();
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Run flow to prepared
+    let (_intent_id, _proposal_id, execution_id, _before_ref) =
+        run_git_flow_to_prepared_with_real_repo(&runtime, repo_path.clone()).await;
+
+    // Execute with current HEAD as after_ref
+    let current_head = git_head(&repo_path);
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({"after_ref": current_head}),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Verify should succeed since after_ref (current HEAD) hasn't changed
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let verify_resp: ferrum_proto::VerifyResponse = serde_json::from_slice(&body).unwrap();
+    assert!(
+        verify_resp.verified,
+        "verify should succeed after execute when HEAD unchanged"
+    );
+
+    // Verify SideEffectVerified provenance event
+    let events = runtime
+        .store
+        .provenance()
+        .query(&ferrum_proto::ProvenanceQueryRequest {
+            intent_id: None,
+            execution_id: Some(execution_id),
+            capability_id: None,
+            event_kind: Some(ProvenanceEventKind::SideEffectVerified),
+            since: None,
+            until: None,
+        })
+        .await
+        .unwrap();
+    assert!(
+        !events.is_empty(),
+        "SideEffectVerified provenance event should be emitted"
+    );
+}
+
+#[tokio::test]
+async fn test_git_rollback_restores_repo_head_to_before_ref() {
+    let (_git_temp_dir, repo_path) = init_temp_git_repo();
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Capture initial HEAD
+    let head_at_start = git_head(&repo_path);
+
+    // Make a commit to advance HEAD - this simulates work done after prepare
+    // In real scenario this would be done by the tool execution
+    let head_after_commit = git_commit_change(&repo_path, "feature.txt", "new feature\n");
+    assert_ne!(
+        head_at_start, head_after_commit,
+        "commit should advance HEAD"
+    );
+    let current_head = git_head(&repo_path);
+    assert_eq!(current_head, head_after_commit);
+
+    // Run flow to prepared - captures current HEAD (head_after_commit) as before_ref
+    let (_intent_id, _proposal_id, execution_id, before_ref) =
+        run_git_flow_to_prepared_with_real_repo(&runtime, repo_path.clone()).await;
+
+    // Verify before_ref is the commit we made
+    assert_eq!(
+        before_ref, head_after_commit,
+        "before_ref should capture HEAD at prepare time"
+    );
+
+    // Execute with after_ref matching current HEAD
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({"after_ref": current_head}),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Verify
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Commit
+    let app = build_router(runtime.clone());
+    let commit_req = ferrum_proto::CommitRequest { execution_id };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/commit", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&commit_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Now make another commit to advance HEAD past before_ref
+    let head_after_rollback_commit = git_commit_change(&repo_path, "another.txt", "more changes\n");
+    assert_eq!(
+        git_head(&repo_path),
+        head_after_rollback_commit,
+        "HEAD should have advanced after new commit"
+    );
+
+    // Call rollback - should restore to before_ref
+    let app = build_router(runtime.clone());
+    let rollback_req = ferrum_proto::RollbackRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/rollback", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&rollback_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let rollback_resp: ferrum_proto::RollbackResponse = serde_json::from_slice(&body).unwrap();
+    assert!(rollback_resp.rolled_back);
+
+    // CRITICAL: Verify repo HEAD was actually restored to before_ref
+    let restored_head = git_head(&repo_path);
+    assert_eq!(
+        restored_head, before_ref,
+        "repo HEAD should be restored to before_ref after rollback, got {} expected {}",
+        restored_head, before_ref
+    );
+
+    // Verify execution state is RolledBack
+    let stored_execution = runtime
+        .store
+        .executions()
+        .get(execution_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        matches!(stored_execution.state, ExecutionState::RolledBack),
+        "execution should be in RolledBack state"
+    );
+
+    // Verify SideEffectRolledBack provenance event
+    let events = runtime
+        .store
+        .provenance()
+        .query(&ferrum_proto::ProvenanceQueryRequest {
+            intent_id: None,
+            execution_id: Some(execution_id),
+            capability_id: None,
+            event_kind: Some(ProvenanceEventKind::SideEffectRolledBack),
+            since: None,
+            until: None,
+        })
+        .await
+        .unwrap();
+    assert!(
+        !events.is_empty(),
+        "SideEffectRolledBack provenance event should be emitted"
+    );
 }
 
 // ============================================

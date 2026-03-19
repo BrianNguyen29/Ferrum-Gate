@@ -22,8 +22,11 @@
 - `EmailSend` van ngoai scope recovery / unsend trong v1
 
 ## Git
-- before_ref/after_ref rõ
-- revert/reset path
+- `prepare` capture local `HEAD` thanh `before_ref`
+- `execute` hien chi chap nhan `payload.after_ref` va fail-closed neu khong khop `HEAD`
+- `verify` doi chieu `after_ref` hoac fallback `before_ref`
+- `rollback` / `compensate` reset repo ve `before_ref`
+- gateway `prepare` da route mutating `Git` binding sang git adapter va tao `RollbackTarget::GitRef`
 
 ## HTTP
 - allowlist
