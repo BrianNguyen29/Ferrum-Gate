@@ -67,7 +67,7 @@ Nhung muc duoi day van la open gap hoac gioi han evidence, khong nen bi hieu nha
 
 - supported flow evidence hien tap trung vao gateway + store + firewall path duoc test trong repo; chua phai tuyen bo parity cho moi adapter/runtime ben ngoai
 - lineage query moi o muc incoming-edge persistence/query; replay/query fabric rong hon van la backlog
-- adapter-backed rollback/compensate evidence hien da co truc tiep cho filesystem, sqlite, va maildraft draft-only path; `EmailSend` va adapter khac van chua duoc tuyen bo parity
+- adapter-backed rollback/compensate evidence hien da co truc tiep cho filesystem, sqlite, va maildraft draft-only path; `EmailSend` va adapter khac van chua duoc tuyen bo parity; LUU Y: `allow_send=true` EmailDraft bindings bay gio duoc explicitly denied tai gateway prepare-time (PolicyDenied 403), thay vi silently fall-through to noop nhu truoc do - day la improvement ve fail-closed semantics
 - config/operator docs, CLI usefulness, va mot so release-checklist items khac van chua dong
 - docs nay khong thay the backlog; cac nang cap tiep theo van nen tiep tuc track o `docs/implementation-path/08-next-issue-backlog.md`
 

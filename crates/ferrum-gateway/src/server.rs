@@ -1041,6 +1041,28 @@ async fn prepare_execution(
         .await
         .map_err(ApiProblem::from_capability)?;
 
+    // Fail-closed: explicitly deny EmailDraft bindings with allow_send=true.
+    // These represent a send-capable email binding which is out of scope for v1.
+    // Routing to noop would silently succeed; we instead return a clear error.
+    let has_send_email = capability.resource_bindings.iter().any(|b| {
+        matches!(
+            b,
+            ResourceBinding::EmailDraft {
+                allow_send: true,
+                ..
+            }
+        )
+    });
+
+    if has_send_email {
+        return Err(ApiProblem::new(
+            StatusCode::FORBIDDEN,
+            ApiErrorCode::PolicyDenied,
+            "EmailDraft with allow_send=true is not supported in v1: \
+             real send recovery is out of scope; use draft-only (allow_send=false) instead",
+        ));
+    }
+
     let adapter_key = determine_adapter_key_from_bindings(&capability.resource_bindings);
     let target = determine_rollback_target_from_bindings(&capability.resource_bindings);
 
@@ -2073,9 +2095,9 @@ fn determine_adapter_key_from_bindings(bindings: &[ResourceBinding]) -> String {
         return "sqlite".to_string();
     }
 
-    // Route draft-only EmailDraft bindings (allow_send=false) to maildraft adapter.
-    // Keep send-capable bindings (allow_send=true) on noop to preserve existing
-    // firewall test behavior - send semantics remain out of scope for adapter.
+    // Route only draft-only EmailDraft bindings (allow_send=false) to maildraft.
+    // Send-capable bindings (allow_send=true) are denied earlier in prepare_execution,
+    // so they should never reach adapter routing.
     let has_draft_only_email_binding = bindings.iter().any(|b| {
         matches!(
             b,

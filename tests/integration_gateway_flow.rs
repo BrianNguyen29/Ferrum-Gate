@@ -5644,11 +5644,15 @@ async fn test_email_execution_allowed_draft_matching_binding() {
 
 #[tokio::test]
 async fn test_email_execution_denied_recipient_not_in_allowlist() {
+    // NOTE: This test uses allow_send=false to reach prepare, then tests that
+    // execution-time firewall denies recipient allowlist violation.
+    // (allow_send=true is now denied at prepare-time, so we test the execution
+    // firewall enforcement with allow_send=false.)
     let (_temp_dir, runtime, _store) = create_test_runtime().await;
 
     let email_binding = ResourceBinding::EmailDraft {
-        recipients: vec!["alice@example.com".to_string()],
-        allow_send: true,
+        recipients: vec!["alice@example.com".to_string()], // only alice allowed
+        allow_send: false,                                 // use false so prepare succeeds
         mode: ResourceMode::Write,
     };
 
@@ -5659,7 +5663,7 @@ async fn test_email_execution_denied_recipient_not_in_allowlist() {
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
         payload: serde_json::json!({
-            "to": ["alice@example.com", "eve@evil.com"],
+            "to": ["alice@example.com", "eve@evil.com"], // eve not in allowlist
             "subject": "Test",
             "send": true
         }),
@@ -5735,44 +5739,50 @@ async fn test_email_execution_denied_send_when_not_allowed() {
 }
 
 #[tokio::test]
-async fn test_email_execution_allowed_send_when_allowed() {
+async fn test_email_allow_send_true_is_denied_at_prepare_not_silently_routed_to_noop() {
+    // This test verifies the NEW correct behavior: allow_send=true EmailDraft bindings
+    // are denied at prepare time with PolicyDenied, NOT silently routed to noop.
+    // The old buggy behavior (silently routing to noop and succeeding at execute) is now fixed.
+    // See test_email_allow_send_true_prepare_denied_with_explicit_error for the dedicated deny test.
     let (_temp_dir, runtime, _store) = create_test_runtime().await;
 
     let email_binding = ResourceBinding::EmailDraft {
         recipients: vec!["alice@example.com".to_string()],
-        allow_send: true,
+        allow_send: true, // This is the case we're testing - was silently noop, now denied
         mode: ResourceMode::Write,
     };
 
-    let (_intent_id, _proposal_id, execution_id) =
-        run_email_flow_to_prepared(&runtime, email_binding).await;
+    let (_intent_id, _proposal_id, execution_id, _capability_id) =
+        run_email_flow_to_authorized(&runtime, email_binding).await;
 
+    // Attempt to prepare execution - should be denied with explicit error
     let app = build_router(runtime.clone());
-    let execute_req = ferrum_proto::ExecuteRequest {
-        execution_id,
-        payload: serde_json::json!({
-            "to": ["alice@example.com"],
-            "subject": "Test",
-            "send": true
-        }),
-    };
-
     let response = app
         .oneshot(
             axum::http::Request::builder()
-                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
                 .method(axum::http::Method::POST)
                 .header(axum::http::header::CONTENT_TYPE, "application/json")
-                .body(serde_json::to_string(&execute_req).unwrap())
+                .body("{}".to_string())
                 .unwrap(),
         )
         .await
         .unwrap();
 
+    // MUST be denied (fail-closed), not silently routed to noop
     assert_eq!(
         response.status(),
-        200,
-        "Email send execution with allow_send=true should succeed"
+        403,
+        "allow_send=true EmailDraft must be denied at prepare time (fail-closed)"
+    );
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let error: ferrum_proto::ApiError = serde_json::from_slice(&body).unwrap();
+    assert!(
+        matches!(error.code, ferrum_proto::ApiErrorCode::PolicyDenied),
+        "Expected PolicyDenied, got {:?}",
+        error.code
     );
 }
 
@@ -7816,5 +7826,251 @@ async fn test_maildraft_adapter_email_draft_flow_with_compensate() {
     assert!(
         !maildraft_store.draft_exists(&draft_id),
         "draft should be deleted after compensate"
+    );
+}
+
+// ============================================
+// EMAIL DRAFT ALLOW_SEND POLICY TESTS
+// ============================================
+
+/// Helper: run email flow to authorized state with given binding, WITHOUT calling prepare.
+/// Returns (intent_id, proposal_id, execution_id, capability_id).
+async fn run_email_flow_to_authorized(
+    runtime: &GatewayRuntime,
+    email_binding: ResourceBinding,
+) -> (
+    ferrum_proto::IntentId,
+    ferrum_proto::ProposalId,
+    ferrum_proto::ExecutionId,
+    ferrum_proto::CapabilityId,
+) {
+    // Create Email scope matching the binding
+    let email_scope = ferrum_proto::ResourceSelector::EmailDraft {
+        recipient_allowlist: vec![
+            "alice@example.com".to_string(),
+            "bob@example.com".to_string(),
+        ],
+        subject_prefix_allowlist: vec![],
+        mode: ferrum_proto::ResourceMode::Write,
+    };
+    let app = build_router(runtime.clone());
+    let mut req = sample_intent_request_with_effect(EffectType::ExternalCommunication);
+    req.requested_resource_scope = vec![email_scope];
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    let app = build_router(runtime.clone());
+    let proposal = ActionProposal {
+        proposal_id: ferrum_proto::ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Draft email".to_string(),
+        tool_name: "email.draft".to_string(),
+        server_name: "email-adapter".to_string(),
+        raw_arguments: serde_json::json!({"to": ["alice@example.com"], "subject": "Test"}),
+        expected_effect: "draft email".to_string(),
+        estimated_risk: RiskTier::Medium,
+        requested_rollback_class: RollbackClass::R0NativeReversible,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "email-adapter".to_string(),
+            tool_name: "email.draft".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![email_binding],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    (intent_id, proposal_id, execution_id, capability_id)
+}
+
+#[tokio::test]
+async fn test_email_allow_send_true_prepare_denied_with_explicit_error() {
+    // Verify that EmailDraft with allow_send=true is explicitly denied at prepare time
+    // (fail-closed: previously this silently fell through to noop, now it returns a clear error)
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    let email_binding = ResourceBinding::EmailDraft {
+        recipients: vec!["alice@example.com".to_string()],
+        allow_send: true, // This is the problematic case - send-capable binding
+        mode: ResourceMode::Write,
+    };
+
+    let (_intent_id, _proposal_id, execution_id, _capability_id) =
+        run_email_flow_to_authorized(&runtime, email_binding).await;
+
+    // Attempt to prepare execution - should be denied with explicit error
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        403,
+        "prepare should be denied for allow_send=true EmailDraft"
+    );
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let error: ferrum_proto::ApiError = serde_json::from_slice(&body).unwrap();
+    assert!(
+        matches!(error.code, ferrum_proto::ApiErrorCode::PolicyDenied),
+        "Expected PolicyDenied error, got {:?}",
+        error.code
+    );
+    assert!(
+        error.message.contains("allow_send=true") || error.message.contains("not supported"),
+        "Error message should mention allow_send=true / not supported: {}",
+        error.message
+    );
+}
+
+#[tokio::test]
+async fn test_email_allow_send_false_prepare_succeeds_with_maildraft_adapter() {
+    // Verify that EmailDraft with allow_send=false (draft-only) still routes to maildraft
+    // adapter and prepare succeeds (existing behavior preserved).
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    let email_binding = ResourceBinding::EmailDraft {
+        recipients: vec!["alice@example.com".to_string()],
+        allow_send: false, // Draft-only - should still work
+        mode: ResourceMode::Write,
+    };
+
+    let (_intent_id, _proposal_id, execution_id, _capability_id) =
+        run_email_flow_to_authorized(&runtime, email_binding).await;
+
+    // Attempt to prepare execution - should succeed and route to maildraft
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        200,
+        "prepare should succeed for allow_send=false EmailDraft (draft-only)"
+    );
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let prep_resp: ferrum_proto::PrepareExecutionResponse = serde_json::from_slice(&body).unwrap();
+    assert!(prep_resp.prepared, "prepared should be true");
+    assert!(
+        prep_resp.rollback_contract.is_some(),
+        "rollback contract should be created"
+    );
+    let contract = prep_resp.rollback_contract.unwrap();
+    assert_eq!(
+        contract.adapter_key, "maildraft",
+        "draft-only EmailDraft should route to maildraft adapter"
     );
 }
