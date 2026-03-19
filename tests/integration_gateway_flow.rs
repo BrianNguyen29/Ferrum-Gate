@@ -5296,18 +5296,19 @@ async fn test_git_execution_allowed_with_matching_binding() {
 
 #[tokio::test]
 async fn test_git_execution_denied_repo_path_mismatch() {
+    // Create a real temp git repo for the allowed binding path
+    let (_git_temp_dir, repo_path) = init_temp_git_repo();
     let (_temp_dir, runtime, _store) = create_test_runtime().await;
 
     // Use exact scope matching the binding, then test execution with different path
     let git_binding = ResourceBinding::Git {
-        repo_path: "/repos/allowed".to_string(),
+        repo_path: repo_path.clone(),
         allowed_refs: vec![],
         mode: ResourceMode::ReadWrite,
     };
 
     let (_intent_id, _proposal_id, execution_id) =
-        run_git_flow_to_prepared_with_scope(&runtime, git_binding, "/repos/allowed".to_string())
-            .await;
+        run_git_flow_to_prepared_with_scope(&runtime, git_binding, repo_path.clone()).await;
 
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
