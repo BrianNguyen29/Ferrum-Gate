@@ -254,9 +254,11 @@ impl RollbackAdapter for HttpRollbackAdapter {
             let actual = response.status().as_u16();
             (actual == expected_status, Some(actual))
         } else {
-            // No explicit check: trust execute-time status from metadata
-            // (expected_status already extracted from metadata above)
-            (true, None)
+            // No explicit check: trust execute-time status from metadata ONLY if successful.
+            // Stay fail-closed: non-success status codes (4xx, 5xx) do NOT auto-verify.
+            // This prevents a failed HTTP execution (e.g., 500) from incorrectly auto-committing.
+            let is_success = (200..300).contains(&expected_status);
+            (is_success, None)
         };
 
         let mut metadata = JsonMap::new();
@@ -599,5 +601,53 @@ mod tests {
         assert!(receipt.result_digest.is_some());
         assert_eq!(receipt.result_digest.unwrap(), "201");
         let _ = handle.join();
+    }
+
+    /// Regression test: non-success execute-time HTTP status must NOT verify.
+    /// Without explicit HttpStatusExpected, only 2xx statuses should auto-verify.
+    /// A 500 status should cause verify to return verified=false (fail-closed).
+    #[tokio::test]
+    async fn test_verify_fails_for_non_success_execute_time_status() {
+        let adapter = HttpRollbackAdapter::new();
+        let target = make_http_target(HttpMethod::Get, "https://example.com/api");
+
+        // Simulate execute-time metadata with a 500 Internal Server Error
+        let mut metadata = JsonMap::new();
+        metadata.insert("status".to_string(), serde_json::json!(500));
+
+        // No explicit verify_checks - relying on execute-time metadata fallback
+        let contract = make_contract(target, metadata, vec![]);
+
+        let receipt = adapter.verify(&contract).await.unwrap();
+
+        // Must NOT verify - 500 is not a successful HTTP status (fail-closed)
+        assert!(
+            !receipt.verified,
+            "500 status should NOT auto-verify; verify must be fail-closed. metadata={:?}",
+            receipt.adapter_metadata
+        );
+    }
+
+    /// Verify that 2xx execute-time status DOES verify (positive case for the fix).
+    #[tokio::test]
+    async fn test_verify_succeeds_for_success_execute_time_status() {
+        let adapter = HttpRollbackAdapter::new();
+        let target = make_http_target(HttpMethod::Get, "https://example.com/api");
+
+        // Simulate execute-time metadata with a 200 OK
+        let mut metadata = JsonMap::new();
+        metadata.insert("status".to_string(), serde_json::json!(200));
+
+        // No explicit verify_checks - relying on execute-time metadata fallback
+        let contract = make_contract(target, metadata, vec![]);
+
+        let receipt = adapter.verify(&contract).await.unwrap();
+
+        // 200 IS a successful status and should verify
+        assert!(
+            receipt.verified,
+            "200 status should auto-verify; got {:?}",
+            receipt.adapter_metadata
+        );
     }
 }

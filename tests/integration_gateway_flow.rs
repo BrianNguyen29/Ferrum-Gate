@@ -9715,3 +9715,251 @@ async fn test_http_rollback_through_gateway_is_conservative_noop() {
     // Clean up server thread
     let _ = server_handle.join();
 }
+
+#[tokio::test]
+async fn test_http_500_does_not_verify_and_does_not_auto_commit_r0() {
+    // Regression test: a 500 response from HTTP execute must NOT verify
+    // and must NOT auto-commit for R0 path.
+    // See ferrum-adapter-http/src/lib.rs verify() - only 2xx auto-verifies
+    // when using execute-time status metadata fallback.
+
+    // Start local HTTP server that returns 500
+    let (port, server_handle) = start_local_http_server(500);
+
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // HTTP binding with ReadWrite mode - should route to HTTP adapter
+    let http_binding = ResourceBinding::Http {
+        method: ferrum_proto::HttpMethod::Get,
+        base_url: format!("http://127.0.0.1:{}", port),
+        path_prefix: "/test".to_string(),
+        header_allowlist: vec![],
+        mode: ResourceMode::ReadWrite,
+    };
+
+    // HTTP scope matching the binding
+    let http_scope = ferrum_proto::ResourceSelector::HttpEndpoint {
+        method: ferrum_proto::HttpMethod::Get,
+        base_url: format!("http://127.0.0.1:{}", port),
+        path_prefix: "/test".to_string(),
+        mode: ferrum_proto::ResourceMode::ReadWrite,
+    };
+
+    // Step 1: Compile intent with HTTP scope
+    let app = build_router(runtime.clone());
+    let mut req = sample_intent_request_with_effect(EffectType::ExternalApiCall);
+    req.requested_resource_scope = vec![http_scope];
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Step 2: Evaluate proposal
+    let app = build_router(runtime.clone());
+    let proposal = ActionProposal {
+        proposal_id: ferrum_proto::ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Call local HTTP API".to_string(),
+        tool_name: "http.get".to_string(),
+        server_name: "http-adapter".to_string(),
+        raw_arguments: serde_json::json!({"url": format!("http://127.0.0.1:{}/test", port)}),
+        expected_effect: "make HTTP API call".to_string(),
+        estimated_risk: RiskTier::Medium,
+        requested_rollback_class: RollbackClass::R0NativeReversible,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 3: Mint capability with ReadWrite HTTP binding
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "http-adapter".to_string(),
+            tool_name: "http.get".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![http_binding],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    // Step 4: Authorize execution
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    // Step 5: Prepare
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 6: Execute - HTTP adapter performs GET and captures status (500)
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({"url": format!("http://127.0.0.1:{}/test", port)}),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        200,
+        "execute should succeed even with 500"
+    );
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let execute_resp: ferrum_proto::ExecuteResponse = serde_json::from_slice(&body).unwrap();
+    assert!(execute_resp.executed, "executed flag should be true");
+    // result_digest should contain the HTTP status code (500)
+    assert_eq!(
+        execute_resp.result_digest.as_deref(),
+        Some("500"),
+        "result_digest should contain HTTP 500 status code from execute"
+    );
+
+    // Step 7: Verify - MUST fail for 500 (fail-closed: non-2xx does NOT auto-verify)
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        200,
+        "verify endpoint should still return 200"
+    );
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let verify_resp: ferrum_proto::VerifyResponse = serde_json::from_slice(&body).unwrap();
+    // CRITICAL: verify must be FALSE for 500 (fail-closed behavior)
+    assert!(
+        !verify_resp.verified,
+        "verify must be FALSE for 500 response (fail-closed); got verified={}",
+        verify_resp.verified
+    );
+
+    // Clean up server thread
+    let _ = server_handle.join();
+
+    // CRITICAL: execution must NOT be auto-committed for R0 when verify fails
+    // R0 only auto-commits if verify succeeds - since verify failed, state is Failed
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored_execution.is_some());
+    let exec = stored_execution.unwrap();
+    assert!(
+        matches!(exec.state, ExecutionState::Failed),
+        "R0 execution must be Failed when verify fails (not auto-committed), got {:?}",
+        exec.state
+    );
+}
