@@ -21,6 +21,15 @@ pub fn known_contract_paths() -> Vec<&'static str> {
     CONTRACT_PATHS.to_vec()
 }
 
+/// Formats contract paths as either plain text (one per line) or JSON array.
+pub fn format_contract_paths(paths: &[&str], as_json: bool) -> String {
+    if as_json {
+        serde_json::to_string(paths).expect("contract paths must serialize")
+    } else {
+        paths.join("\n")
+    }
+}
+
 fn run_contract_check() -> Result<()> {
     let root = repo_root();
     let script_path = root.join("scripts/check_contract_consistency.py");
@@ -83,8 +92,12 @@ enum DebugCommand {
 
 #[derive(Debug, Subcommand)]
 enum InspectCommand {
-    /// Print the known contract paths, one per line.
-    Contracts,
+    /// Print the known contract paths, one per line or as JSON.
+    Contracts {
+        /// Output paths as a JSON array instead of one per line.
+        #[clap(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -103,10 +116,9 @@ async fn main() -> Result<()> {
             }
         },
         Command::Inspect { sub } => match sub {
-            InspectCommand::Contracts => {
-                for path in known_contract_paths() {
-                    println!("{path}");
-                }
+            InspectCommand::Contracts { json } => {
+                let paths = known_contract_paths();
+                println!("{}", format_contract_paths(&paths, json));
             }
         },
         Command::Validate { sub } => match sub {
@@ -171,5 +183,47 @@ mod tests {
                 "contract path '{path}' should be relative"
             );
         }
+    }
+
+    #[test]
+    fn test_format_contract_paths_plain_text() {
+        let paths = ["a.txt", "b.txt"];
+        let result = format_contract_paths(&paths, false);
+        assert_eq!(result, "a.txt\nb.txt");
+    }
+
+    #[test]
+    fn test_format_contract_paths_json() {
+        let paths = ["a.txt", "b.txt"];
+        let result = format_contract_paths(&paths, true);
+        assert_eq!(result, r#"["a.txt","b.txt"]"#);
+    }
+
+    #[test]
+    fn test_format_contract_paths_single_item_plain() {
+        let paths = ["only.txt"];
+        let result = format_contract_paths(&paths, false);
+        assert_eq!(result, "only.txt");
+    }
+
+    #[test]
+    fn test_format_contract_paths_single_item_json() {
+        let paths = ["only.txt"];
+        let result = format_contract_paths(&paths, true);
+        assert_eq!(result, r#"["only.txt"]"#);
+    }
+
+    #[test]
+    fn test_format_contract_paths_empty_plain() {
+        let paths: [&str; 0] = [];
+        let result = format_contract_paths(&paths, false);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_format_contract_paths_empty_json() {
+        let paths: [&str; 0] = [];
+        let result = format_contract_paths(&paths, true);
+        assert_eq!(result, "[]");
     }
 }
