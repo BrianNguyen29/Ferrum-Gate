@@ -32,6 +32,7 @@ ferrum-adapter-fs = { path = "../crates/ferrum-adapter-fs" }
 ferrum-adapter-sqlite = { path = "../crates/ferrum-adapter-sqlite" }
 ferrum-adapter-maildraft = { path = "../crates/ferrum-adapter-maildraft" }
 ferrum-adapter-git = { path = "../crates/ferrum-adapter-git" }
+ferrum-adapter-http = { path = "../crates/ferrum-adapter-http" }
 ferrum-pdp = { path = "../crates/ferrum-pdp" }
 ferrum-cap = { path = "../crates/ferrum-cap" }
 ferrum-firewall = { path = "../crates/ferrum-firewall" }
