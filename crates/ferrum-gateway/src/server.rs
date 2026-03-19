@@ -2149,8 +2149,9 @@ impl ApiProblem {
 }
 
 /// Determine the appropriate adapter key based on resource bindings.
-/// Returns "fs" for filesystem bindings, "sqlite" for mutating sqlite bindings,
-/// and "noop" for unknown/empty or read-only bindings.
+/// Returns "fs" for filesystem bindings, "git" for mutating git bindings,
+/// "sqlite" for mutating sqlite bindings, and "noop" for unknown/empty or
+/// read-only bindings.
 /// Fail-closed: defaults to "noop" when no specific adapter is matched.
 fn determine_adapter_key_from_bindings(bindings: &[ResourceBinding]) -> String {
     if bindings.is_empty() {
@@ -2164,6 +2165,27 @@ fn determine_adapter_key_from_bindings(bindings: &[ResourceBinding]) -> String {
 
     if has_fs_binding {
         return "fs".to_string();
+    }
+
+    // Only route git to the adapter for mutation-capable bindings.
+    let has_mutating_git_binding = bindings.iter().any(|binding| {
+        matches!(
+            binding,
+            ResourceBinding::Git {
+                mode: ResourceMode::ReadWrite,
+                ..
+            } | ResourceBinding::Git {
+                mode: ResourceMode::Write,
+                ..
+            } | ResourceBinding::Git {
+                mode: ResourceMode::Admin,
+                ..
+            }
+        )
+    });
+
+    if has_mutating_git_binding {
+        return "git".to_string();
     }
 
     // Only route sqlite to the adapter for mutation-capable bindings.
@@ -2210,6 +2232,7 @@ fn determine_adapter_key_from_bindings(bindings: &[ResourceBinding]) -> String {
 
 /// Determine the rollback target based on resource bindings.
 /// For filesystem bindings, returns a FilePath target with the first file binding path.
+/// For mutating git bindings, returns a GitRef target with the repo path.
 /// For mutating sqlite bindings, returns a SqliteTxn target with the db path.
 fn determine_rollback_target_from_bindings(bindings: &[ResourceBinding]) -> RollbackTarget {
     for binding in bindings {
@@ -2243,6 +2266,27 @@ fn determine_rollback_target_from_bindings(bindings: &[ResourceBinding]) -> Roll
                     tx_id,
                 };
             }
+            ResourceBinding::Git {
+                repo_path,
+                mode: ResourceMode::ReadWrite,
+                ..
+            }
+            | ResourceBinding::Git {
+                repo_path,
+                mode: ResourceMode::Write,
+                ..
+            }
+            | ResourceBinding::Git {
+                repo_path,
+                mode: ResourceMode::Admin,
+                ..
+            } => {
+                return RollbackTarget::GitRef {
+                    repo_path: repo_path.clone(),
+                    before_ref: None,
+                    after_ref: None,
+                };
+            }
             ResourceBinding::EmailDraft { recipients, .. } => {
                 return RollbackTarget::EmailDraft {
                     draft_id: None,
@@ -2263,5 +2307,75 @@ fn determine_rollback_target_from_bindings(bindings: &[ResourceBinding]) -> Roll
 impl IntoResponse for ApiProblem {
     fn into_response(self) -> Response {
         (self.1, Json(self.0)).into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{determine_adapter_key_from_bindings, determine_rollback_target_from_bindings};
+    use ferrum_proto::{ResourceBinding, ResourceMode, RollbackTarget};
+
+    #[test]
+    fn routes_mutating_git_bindings_to_git_adapter() {
+        let bindings = vec![ResourceBinding::Git {
+            repo_path: "/tmp/repo".to_string(),
+            allowed_refs: vec!["refs/heads/main".to_string()],
+            mode: ResourceMode::Write,
+        }];
+
+        assert_eq!(determine_adapter_key_from_bindings(&bindings), "git");
+    }
+
+    #[test]
+    fn keeps_read_only_git_bindings_on_noop_adapter() {
+        let bindings = vec![ResourceBinding::Git {
+            repo_path: "/tmp/repo".to_string(),
+            allowed_refs: vec!["refs/heads/main".to_string()],
+            mode: ResourceMode::Read,
+        }];
+
+        assert_eq!(determine_adapter_key_from_bindings(&bindings), "noop");
+    }
+
+    #[test]
+    fn produces_git_ref_target_for_mutating_git_bindings() {
+        let bindings = vec![ResourceBinding::Git {
+            repo_path: "/tmp/repo".to_string(),
+            allowed_refs: vec!["refs/heads/main".to_string()],
+            mode: ResourceMode::ReadWrite,
+        }];
+
+        match determine_rollback_target_from_bindings(&bindings) {
+            RollbackTarget::GitRef {
+                repo_path,
+                before_ref,
+                after_ref,
+            } => {
+                assert_eq!(repo_path, "/tmp/repo");
+                assert_eq!(before_ref, None);
+                assert_eq!(after_ref, None);
+            }
+            other => panic!("expected GitRef target, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn keeps_read_only_git_bindings_on_generic_target() {
+        let bindings = vec![ResourceBinding::Git {
+            repo_path: "/tmp/repo".to_string(),
+            allowed_refs: vec!["refs/heads/main".to_string()],
+            mode: ResourceMode::Read,
+        }];
+
+        match determine_rollback_target_from_bindings(&bindings) {
+            RollbackTarget::Generic {
+                namespace,
+                identifier,
+            } => {
+                assert_eq!(namespace, "mcp");
+                assert_eq!(identifier, "tool-call");
+            }
+            other => panic!("expected Generic target, got {:?}", other),
+        }
     }
 }
