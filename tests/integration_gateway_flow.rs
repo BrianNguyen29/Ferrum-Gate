@@ -9232,7 +9232,7 @@ fn start_local_http_server(response_status: u16) -> (u16, std::thread::JoinHandl
 }
 
 #[tokio::test]
-async fn test_http_execute_and_verify_through_gateway_with_local_server() {
+async fn test_http_execute_and_verify_through_gateway_uses_payload_url_within_scope() {
     // Start local HTTP server that returns 200
     let (port, server_handle) = start_local_http_server(200);
 
@@ -9242,7 +9242,7 @@ async fn test_http_execute_and_verify_through_gateway_with_local_server() {
     let http_binding = ResourceBinding::Http {
         method: ferrum_proto::HttpMethod::Get,
         base_url: format!("http://127.0.0.1:{}", port),
-        path_prefix: "/test".to_string(),
+        path_prefix: "/api".to_string(),
         header_allowlist: vec![],
         mode: ResourceMode::ReadWrite,
     };
@@ -9251,7 +9251,7 @@ async fn test_http_execute_and_verify_through_gateway_with_local_server() {
     let http_scope = ferrum_proto::ResourceSelector::HttpEndpoint {
         method: ferrum_proto::HttpMethod::Get,
         base_url: format!("http://127.0.0.1:{}", port),
-        path_prefix: "/test".to_string(),
+        path_prefix: "/api".to_string(),
         mode: ferrum_proto::ResourceMode::ReadWrite,
     };
 
@@ -9286,7 +9286,7 @@ async fn test_http_execute_and_verify_through_gateway_with_local_server() {
         title: "Call local HTTP API".to_string(),
         tool_name: "http.get".to_string(),
         server_name: "http-adapter".to_string(),
-        raw_arguments: serde_json::json!({"url": format!("http://127.0.0.1:{}/test", port)}),
+        raw_arguments: serde_json::json!({"url": format!("http://127.0.0.1:{}/api/users", port)}),
         expected_effect: "make HTTP API call".to_string(),
         estimated_risk: RiskTier::Medium,
         requested_rollback_class: RollbackClass::R0NativeReversible,
@@ -9393,11 +9393,14 @@ async fn test_http_execute_and_verify_through_gateway_with_local_server() {
         .unwrap();
     assert_eq!(response.status(), 200);
 
-    // Step 6: Execute - HTTP adapter performs GET and captures status
+    // Step 6: Execute - HTTP adapter performs GET against a concrete URL under the bound scope
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
-        payload: serde_json::json!({"url": format!("http://127.0.0.1:{}/test", port)}),
+        payload: serde_json::json!({
+            "url": format!("http://127.0.0.1:{}/api/users", port),
+            "method": "GET"
+        }),
     };
 
     let response = app
@@ -9422,6 +9425,34 @@ async fn test_http_execute_and_verify_through_gateway_with_local_server() {
         execute_resp.result_digest.as_deref(),
         Some("200"),
         "result_digest should contain HTTP status code from execute"
+    );
+
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    let contract_id = stored_execution.unwrap().rollback_contract_id.unwrap();
+    let stored_contract = runtime
+        .store
+        .rollback_contracts()
+        .get(contract_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        stored_contract
+            .metadata
+            .get("bound_url")
+            .unwrap()
+            .as_str()
+            .unwrap(),
+        format!("http://127.0.0.1:{}/api", port)
+    );
+    assert_eq!(
+        stored_contract
+            .metadata
+            .get("executed_url")
+            .unwrap()
+            .as_str()
+            .unwrap(),
+        format!("http://127.0.0.1:{}/api/users", port)
     );
 
     // Step 7: Verify - should succeed using execute-time status metadata

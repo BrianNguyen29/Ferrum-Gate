@@ -30,7 +30,10 @@
 
 ## HTTP
 - initial slice: `prepare` capture method/url/request_digest cho `HttpRequest`
+- `HttpRequest.url` hien duoc hieu la bound URL scope/prefix (`base_url + path_prefix`), khong phai luc nao cung la concrete endpoint
 - `execute` hien chi support `GET` va capture HTTP status
+- `execute` uu tien `payload.url` / `payload.method` neu co; adapter fail-closed neu URL vuot khoi bound scope hoac method khong khop binding
+- execute-time metadata phan biet `bound_url` / `executed_url` de verify dung concrete endpoint da chay
 - `verify` support `HttpStatusExpected`; neu khong co explicit check thi chi auto-verify cho execute-time status `2xx`
 - `rollback` / `compensate` hien la conservative no-op cho `GET`
 - gateway chi route mutating HTTP bindings sang adapter; HTTP read-only bindings van di qua enforcement path hien tai
