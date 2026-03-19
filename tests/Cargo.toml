@@ -11,13 +11,30 @@ path = "integration_gateway_flow.rs"
 name = "integration_contracts"
 path = "integration_contracts.rs"
 
+[[test]]
+name = "integration_poisoned_context"
+path = "integration_poisoned_context.rs"
+
+[[test]]
+name = "integration_lineage_chain"
+path = "integration_lineage_chain.rs"
+
+[[test]]
+name = "integration_provenance_query"
+path = "integration_provenance_query.rs"
+
 [dependencies]
 ferrum-gateway = { path = "../crates/ferrum-gateway" }
 ferrum-proto = { path = "../crates/ferrum-proto" }
 ferrum-store = { path = "../crates/ferrum-store" }
 ferrum-rollback = { path = "../crates/ferrum-rollback" }
+ferrum-adapter-fs = { path = "../crates/ferrum-adapter-fs" }
+ferrum-adapter-sqlite = { path = "../crates/ferrum-adapter-sqlite" }
+ferrum-adapter-maildraft = { path = "../crates/ferrum-adapter-maildraft" }
 ferrum-pdp = { path = "../crates/ferrum-pdp" }
 ferrum-cap = { path = "../crates/ferrum-cap" }
+ferrum-firewall = { path = "../crates/ferrum-firewall" }
+sqlx = { workspace = true }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 tempfile = "3"

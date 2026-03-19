@@ -10,5 +10,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 async-trait = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
 ferrum-proto = { path = "../ferrum-proto" }
 ferrum-rollback = { path = "../ferrum-rollback" }

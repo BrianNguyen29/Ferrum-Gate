@@ -13,14 +13,14 @@
 - [ ] test pass
 
 ## Behavior quality
-- [ ] scope mismatch deny test
-- [ ] single-use capability test
-- [ ] R3 no auto-commit test
-- [ ] rollback/compensate test
-- [ ] poisoned context test
+- [x] scope mismatch deny test
+- [x] single-use capability test
+- [x] R3 no auto-commit test
+- [x] rollback/compensate test (gateway + fs/sqlite/maildraft adapter-backed)
+- [x] poisoned context test
 
 ## Operator readiness
 - [ ] config docs đúng
 - [ ] CLI hữu dụng tối thiểu
-- [ ] lineage usable
-- [ ] approval flow documented
+- [x] lineage usable
+- [x] approval flow documented

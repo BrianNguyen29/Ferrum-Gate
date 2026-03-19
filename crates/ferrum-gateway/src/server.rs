@@ -13,8 +13,9 @@ use ferrum_proto::{
     CompensateRequest, CompensateResponse, Decision, EvaluateProposalResponse, ExecuteRequest,
     ExecuteResponse, ExecutionId, ExecutionRecord, ExecutionState, HashChainRef, HealthResponse,
     IntentCompileRequest, IntentCompileResponse, IntentEnvelope, IntentStatus, ObjectRef,
-    ObjectType, OutcomeClause, ProvenanceEvent, ProvenanceEventKind, ResourceSelector, RiskTier,
-    RollbackClass, RollbackRequest, RollbackResponse, RollbackState, TimeBudget,
+    ObjectType, OutcomeClause, ProvenanceEvent, ProvenanceEventKind, ProvenanceQueryRequest,
+    ProvenanceQueryResponse, ResourceBinding, ResourceMode, ResourceSelector, RiskTier,
+    RollbackClass, RollbackRequest, RollbackResponse, RollbackState, RollbackTarget, TimeBudget,
     TrustContextSummary, VerifyRequest, VerifyResponse,
 };
 use ferrum_store::{
@@ -122,6 +123,11 @@ pub fn build_router(runtime: GatewayRuntime) -> Router {
             "/v1/approvals/{approval_id}/resolve",
             post(resolve_approval),
         )
+        .route(
+            "/v1/provenance/lineage/{execution_id}",
+            get(get_execution_lineage),
+        )
+        .route("/v1/provenance/query", post(query_provenance))
         .with_state(Arc::new(runtime))
         .layer(TraceLayer::new_for_http())
 }
@@ -146,16 +152,23 @@ async fn compile_intent(
     let requested_risk = req.requested_risk_tier.unwrap_or(RiskTier::Medium);
     let default_rollback_class = infer_rollback_class(&req.requested_resource_scope);
 
-    let input_labels = req
-        .raw_inputs
-        .iter()
-        .flat_map(|r| r.trust_labels.clone())
-        .collect::<Vec<_>>();
-    let sensitivity_labels = req
-        .raw_inputs
-        .iter()
-        .flat_map(|r| r.sensitivity_labels.clone())
-        .collect::<Vec<_>>();
+    // Use firewall to derive trust context from raw inputs
+    let trust_context = runtime.firewall.derive_trust_context(&req.raw_inputs, &[]);
+
+    // Collect warnings from inferred labels
+    let mut warnings = Vec::new();
+    if trust_context.contains_untrusted_text {
+        warnings.push("Input contains potentially untrusted text".to_string());
+    }
+    if trust_context.contains_external_metadata {
+        warnings.push("Input contains external metadata".to_string());
+    }
+    if trust_context.contains_tool_output {
+        warnings.push("Input contains tool output".to_string());
+    }
+    if trust_context.taint_score > 50 {
+        warnings.push(format!("High taint score: {}", trust_context.taint_score));
+    }
 
     let envelope = IntentEnvelope {
         intent_id: ferrum_proto::IntentId::new(),
@@ -168,7 +181,9 @@ async fn compile_intent(
         allowed_outcomes: vec![OutcomeClause {
             id: "primary".to_string(),
             description: req.agent_plan_summary.unwrap_or_else(|| req.goal.clone()),
-            effect_type: ferrum_proto::EffectType::ReadOnlyAnalysis,
+            effect_type: req
+                .effect_type
+                .unwrap_or(ferrum_proto::EffectType::ReadOnlyAnalysis),
             required: true,
         }],
         forbidden_outcomes: Vec::new(),
@@ -181,14 +196,7 @@ async fn compile_intent(
             max_steps: 8,
             max_retries_per_step: 1,
         },
-        trust_context: TrustContextSummary {
-            input_labels,
-            sensitivity_labels,
-            taint_score: 0,
-            contains_external_metadata: false,
-            contains_tool_output: false,
-            contains_untrusted_text: false,
-        },
+        trust_context,
         derived_from_event_ids: req.raw_inputs.iter().filter_map(|r| r.event_id).collect(),
         tags: Vec::new(),
         metadata: req.metadata,
@@ -216,10 +224,7 @@ async fn compile_intent(
         }
     }
 
-    Ok(Json(IntentCompileResponse {
-        envelope,
-        warnings: Vec::new(),
-    }))
+    Ok(Json(IntentCompileResponse { envelope, warnings }))
 }
 
 async fn evaluate_proposal(
@@ -302,20 +307,123 @@ async fn evaluate_proposal(
         None
     };
 
-    let trust = TrustContextSummary {
-        input_labels: Vec::new(),
-        sensitivity_labels: Vec::new(),
-        taint_score: (proposal.taint_inputs.len() * 10) as u8, // 10 points per taint input
-        contains_external_metadata: !proposal.taint_inputs.is_empty(),
-        contains_tool_output: false,
-        contains_untrusted_text: !proposal.taint_inputs.is_empty(),
+    // Run contradiction check using firewall
+    let contradictions = runtime.firewall.contradiction_check(&intent, &proposal);
+
+    // Severity-based decision mapping (fail-closed for high severity only)
+    // High -> Deny immediately (unacceptable violation)
+    // Medium/Low -> Add as warnings, let PDP decide
+    use ferrum_firewall::Severity;
+    let high_severity_contradictions: Vec<_> = contradictions
+        .iter()
+        .filter(|c| matches!(c.severity, Severity::High))
+        .collect();
+
+    if !high_severity_contradictions.is_empty() {
+        // Fail-closed: High severity contradictions result in immediate Deny
+        let rule_ids: Vec<String> = contradictions.iter().map(|c| c.rule_id.clone()).collect();
+        let reason = contradictions
+            .iter()
+            .map(|c| format!("[{}] {}", c.rule_id, c.message))
+            .collect::<Vec<_>>()
+            .join("; ");
+        let warnings = contradictions.into_iter().map(|c| c.message).collect();
+
+        let out = EvaluateProposalResponse {
+            decision: Decision::Deny,
+            reason,
+            matched_rule_ids: rule_ids,
+            warnings,
+        };
+
+        // Store the denied decision in the proposal
+        let mut proposal_with_decision = proposal.clone();
+        proposal_with_decision.decision = Some(out.decision.clone());
+
+        if let Err(e) = runtime
+            .store
+            .proposals()
+            .update(&proposal_with_decision)
+            .await
+        {
+            tracing::warn!("failed to update proposal with denial decision: {}", e);
+        }
+
+        // Emit provenance for policy evaluation that resulted in denial
+        let mut eval_event = create_provenance_event(
+            ProvenanceEventKind::PolicyEvaluated,
+            now,
+            Some(intent_id),
+            Some(proposal.proposal_id),
+            None,
+            None,
+            None,
+            None,
+        );
+        if let Some(submission_event_id) = submission_event_id {
+            eval_event.parent_edges = vec![ferrum_proto::ProvenanceEdge {
+                edge_type: ferrum_proto::ProvenanceEdgeType::Caused,
+                from_event_id: submission_event_id,
+                summary: Some("policy evaluation follows proposal submission".to_string()),
+            }];
+        }
+
+        if let Err(e) = runtime.store.provenance().append_event(&eval_event).await {
+            tracing::warn!("failed to persist provenance event: {}", e);
+        }
+
+        return Ok(Json(out));
+    }
+
+    // Collect medium/low severity contradictions as warnings for PDP
+    let contradiction_warnings: Vec<String> = contradictions
+        .into_iter()
+        .filter(|c| matches!(c.severity, Severity::Medium | Severity::Low))
+        .map(|c| c.message)
+        .collect();
+
+    // Derive trust context using firewall with intent labels and proposal taint inputs
+    // Combine compile-time taint from intent with proposal-time taint inputs
+    let mut combined_taint_inputs = proposal.taint_inputs.clone();
+
+    // Add compile-time trust labels as taint sources
+    for label in &intent.trust_context.input_labels {
+        combined_taint_inputs.push(format!("{:?}", label).to_lowercase());
+    }
+
+    // Compute combined taint score (conservatively combines both sources)
+    let combined_taint_score = runtime.firewall.compute_taint_score(&combined_taint_inputs);
+
+    // Also compute proposal-only taint for comparison
+    let proposal_taint = runtime.firewall.derive_trust_context(
+        &[], // We already have labels from intent, no new raw inputs here
+        &proposal.taint_inputs,
+    );
+
+    // Merge with intent's trust context - use MAX for boolean flags (conservative)
+    // and combined taint score that includes both compile-time and proposal-time sources
+    let combined_trust = TrustContextSummary {
+        input_labels: intent.trust_context.input_labels.clone(),
+        sensitivity_labels: intent.trust_context.sensitivity_labels.clone(),
+        taint_score: combined_taint_score.min(100), // Hard cap at 100
+        contains_external_metadata: proposal_taint.contains_external_metadata
+            || intent.trust_context.contains_external_metadata,
+        contains_tool_output: proposal_taint.contains_tool_output
+            || intent.trust_context.contains_tool_output,
+        contains_untrusted_text: proposal_taint.contains_untrusted_text
+            || intent.trust_context.contains_untrusted_text,
     };
 
-    let out = runtime
+    let mut out = runtime
         .pdp
-        .evaluate(&intent, &proposal, &trust)
+        .evaluate(&intent, &proposal, &combined_trust)
         .await
         .map_err(ApiProblem::internal)?;
+
+    // Merge contradiction warnings into PDP output
+    if !contradiction_warnings.is_empty() {
+        out.warnings.extend(contradiction_warnings);
+    }
 
     // Store the decision in the proposal after evaluation
     let mut proposal_with_decision = proposal.clone();
@@ -361,10 +469,180 @@ async fn evaluate_proposal(
     Ok(Json(out))
 }
 
+/// Check if a resource binding is within the allowed scope (subset check)
+/// Fail-closed: any mismatch or permission widening results in denial
+fn is_binding_within_scope(binding: &ResourceBinding, scope: &[ResourceSelector]) -> bool {
+    // Fail-closed: if no scope defined, deny any non-empty binding
+    if scope.is_empty() {
+        return false;
+    }
+
+    match binding {
+        ResourceBinding::File { path, mode, .. } => {
+            scope.iter().any(|selector| match selector {
+                ResourceSelector::FilesystemPath {
+                    path: scope_path,
+                    mode: scope_mode,
+                    ..
+                } => {
+                    // Path must be within scope (prefix match)
+                    let path_ok = path.starts_with(scope_path);
+                    // Mode must not exceed scope - conservative subset check
+                    let mode_ok = is_mode_subset_of(mode, scope_mode);
+                    path_ok && mode_ok
+                }
+                _ => false,
+            })
+        }
+        ResourceBinding::Http {
+            base_url,
+            path_prefix,
+            method: _,
+            mode,
+            ..
+        } => scope.iter().any(|selector| match selector {
+            ResourceSelector::HttpEndpoint {
+                base_url: scope_url,
+                path_prefix: scope_prefix,
+                mode: scope_mode,
+                ..
+            } => {
+                let url_ok = base_url == scope_url;
+                let prefix_ok = path_prefix.starts_with(scope_prefix);
+                // Mode must not exceed scope - conservative subset check
+                let mode_ok = is_mode_subset_of(mode, scope_mode);
+                url_ok && prefix_ok && mode_ok
+            }
+            _ => false,
+        }),
+        ResourceBinding::Sqlite {
+            db_path,
+            tables,
+            mode,
+        } => {
+            scope.iter().any(|selector| match selector {
+                ResourceSelector::SqliteDatabase {
+                    db_path: scope_db,
+                    tables: scope_tables,
+                    mode: scope_mode,
+                } => {
+                    let db_ok = db_path == scope_db;
+                    // Tables must be subset of scope tables (or scope allows all)
+                    let tables_ok =
+                        scope_tables.is_empty() || tables.iter().all(|t| scope_tables.contains(t));
+                    // Mode must not exceed scope - conservative subset check
+                    let mode_ok = is_mode_subset_of(mode, scope_mode);
+                    db_ok && tables_ok && mode_ok
+                }
+                _ => false,
+            })
+        }
+        ResourceBinding::Git {
+            repo_path,
+            allowed_refs,
+            mode,
+        } => {
+            scope.iter().any(|selector| match selector {
+                ResourceSelector::GitRepository {
+                    repo_path: scope_repo,
+                    allowed_refs: scope_refs,
+                    mode: scope_mode,
+                } => {
+                    let repo_ok = repo_path == scope_repo;
+                    // Refs must be subset of scope refs (or scope allows all)
+                    let refs_ok = scope_refs.is_empty()
+                        || allowed_refs.iter().all(|r| scope_refs.contains(r));
+                    // Mode must not exceed scope - conservative subset check
+                    let mode_ok = is_mode_subset_of(mode, scope_mode);
+                    repo_ok && refs_ok && mode_ok
+                }
+                _ => false,
+            })
+        }
+        ResourceBinding::EmailDraft {
+            recipients,
+            allow_send,
+            mode,
+        } => {
+            scope.iter().any(|selector| match selector {
+                ResourceSelector::EmailDraft {
+                    recipient_allowlist,
+                    mode: scope_mode,
+                    ..
+                } => {
+                    // Recipients must be in allowlist
+                    let recipients_ok = recipient_allowlist.is_empty()
+                        || recipients.iter().all(|r| recipient_allowlist.contains(r));
+                    // If scope is read-only, cannot send
+                    let send_ok = !matches!((scope_mode, allow_send), (ResourceMode::Read, true));
+                    // Mode must not exceed scope - conservative subset check
+                    let mode_ok = is_mode_subset_of(mode, scope_mode);
+                    recipients_ok && send_ok && mode_ok
+                }
+                _ => false,
+            })
+        }
+    }
+}
+
+/// Check if a requested mode is a subset of (does not exceed) the scope mode.
+/// Conservative permission model: scope_mode must encompass all permissions in requested mode.
+fn is_mode_subset_of(requested: &ResourceMode, scope: &ResourceMode) -> bool {
+    match scope {
+        // Admin scope allows any mode
+        ResourceMode::Admin => true,
+        // ReadWrite scope allows Read, Write, ReadWrite, but NOT Execute/Admin
+        ResourceMode::ReadWrite => matches!(
+            requested,
+            ResourceMode::Read | ResourceMode::Write | ResourceMode::ReadWrite
+        ),
+        // Write scope allows Write and Read (write access typically implies read access to written data)
+        ResourceMode::Write => matches!(requested, ResourceMode::Write | ResourceMode::Read),
+        // Read scope allows only Read (most restrictive)
+        ResourceMode::Read => matches!(requested, ResourceMode::Read),
+        // Draft scope allows only Draft (special purpose mode)
+        ResourceMode::Draft => matches!(requested, ResourceMode::Draft),
+        // Execute scope allows only Execute (special purpose mode)
+        ResourceMode::Execute => matches!(requested, ResourceMode::Execute),
+    }
+}
+
 async fn mint_capability(
     State(runtime): State<Arc<GatewayRuntime>>,
     Json(request): Json<CapabilityMintRequest>,
 ) -> Result<Json<CapabilityMintResponse>, ApiProblem> {
+    // Load intent to check scope constraints
+    let intent = runtime
+        .store
+        .intents()
+        .get(request.intent_id)
+        .await
+        .map_err(|err| ApiProblem::internal(err.into()))?;
+
+    if let Some(ref intent_envelope) = intent {
+        // Check each resource binding is within intent scope
+        for binding in &request.resource_bindings {
+            if !is_binding_within_scope(binding, &intent_envelope.resource_scope) {
+                return Err(ApiProblem::new(
+                    StatusCode::FORBIDDEN,
+                    ApiErrorCode::ScopeMismatch,
+                    format!("resource binding {:?} exceeds intent scope", binding),
+                ));
+            }
+        }
+    }
+    // If intent not found, fail-closed: deny minting
+    else {
+        return Err(ApiProblem::new(
+            StatusCode::NOT_FOUND,
+            ApiErrorCode::NotFound,
+            format!(
+                "intent {} not found for capability minting",
+                request.intent_id
+            ),
+        ));
+    }
+
     let response = runtime
         .cap
         .mint(request)
@@ -485,6 +763,14 @@ async fn authorize_execution(
         .unwrap_or(false);
 
     let now = Utc::now();
+
+    // SINGLE-USE ENFORCEMENT: Mark capability as consumed at authorize time
+    // This ensures exactly one authorize per capability
+    runtime
+        .cap
+        .mark_used(request.capability_id)
+        .await
+        .map_err(ApiProblem::from_capability)?;
 
     // Handle DraftOnly: allow only for dry_run, otherwise fail-closed
     if is_draft_only && !request.dry_run {
@@ -753,11 +1039,46 @@ async fn prepare_execution(
         }
     };
 
+    // Determine adapter key and target from capability resource bindings
+    // Load capability to inspect resource bindings for adapter routing
+    let capability = runtime
+        .cap
+        .get(existing.capability_id)
+        .await
+        .map_err(ApiProblem::from_capability)?;
+
+    // Fail-closed: explicitly deny EmailDraft bindings with allow_send=true.
+    // These represent a send-capable email binding which is out of scope for v1.
+    // Routing to noop would silently succeed; we instead return a clear error.
+    let has_send_email = capability.resource_bindings.iter().any(|b| {
+        matches!(
+            b,
+            ResourceBinding::EmailDraft {
+                allow_send: true,
+                ..
+            }
+        )
+    });
+
+    if has_send_email {
+        return Err(ApiProblem::new(
+            StatusCode::FORBIDDEN,
+            ApiErrorCode::PolicyDenied,
+            "EmailDraft with allow_send=true is not supported in v1: \
+             real send recovery is out of scope; use draft-only (allow_send=false) instead",
+        ));
+    }
+
+    let adapter_key = determine_adapter_key_from_bindings(&capability.resource_bindings);
+    let target = determine_rollback_target_from_bindings(&capability.resource_bindings);
+
     let request = runtime.rollback.default_prepare_request(
         intent_id,
         proposal_id,
         execution_id,
         requested_rollback_class,
+        adapter_key,
+        target,
     );
 
     let response = runtime
@@ -866,6 +1187,26 @@ async fn execute_execution(
                 "rollback contract not found",
             )
         })?;
+
+    // Load capability lease for enforcement check
+    let lease = runtime
+        .cap
+        .get(existing.capability_id)
+        .await
+        .map_err(ApiProblem::from_capability)?;
+
+    // Enforce execution-time HTTP egress policy
+    // Non-HTTP flows pass through unchanged; HTTP flows are validated against bindings
+    if let Err(enforcement_err) = runtime
+        .firewall
+        .enforce_execution_payload(&lease.resource_bindings, &req.payload)
+    {
+        return Err(ApiProblem::new(
+            StatusCode::FORBIDDEN,
+            ApiErrorCode::PolicyDenied,
+            format!("execution denied: {}", enforcement_err),
+        ));
+    }
 
     // Execute via adapter
     let receipt = runtime
@@ -1570,6 +1911,62 @@ async fn resolve_approval(
     Ok(Json(approval))
 }
 
+async fn get_execution_lineage(
+    State(runtime): State<Arc<GatewayRuntime>>,
+    Path(execution_id_str): Path<String>,
+) -> Result<Json<LineageResponse>, ApiProblem> {
+    let execution_id = parse_execution_id(&execution_id_str)?;
+
+    // Verify the execution record exists (fail-soft: still return lineage if found)
+    let execution_exists = runtime
+        .store
+        .executions()
+        .get(execution_id)
+        .await
+        .map_err(|err| ApiProblem::internal(err.into()))?
+        .is_some();
+
+    if !execution_exists {
+        tracing::warn!(
+            "lineage requested for unknown execution_id: {}",
+            execution_id
+        );
+    }
+
+    // Reconstruct lineage by walking edges backwards from events tagged with this execution
+    let events = runtime
+        .store
+        .provenance()
+        .get_lineage_by_execution(execution_id)
+        .await
+        .map_err(|err| ApiProblem::internal(err.into()))?;
+
+    Ok(Json(LineageResponse {
+        execution_id,
+        events,
+    }))
+}
+
+#[derive(serde::Serialize)]
+pub(crate) struct LineageResponse {
+    pub(crate) execution_id: ExecutionId,
+    pub(crate) events: Vec<ProvenanceEvent>,
+}
+
+async fn query_provenance(
+    State(runtime): State<Arc<GatewayRuntime>>,
+    Json(request): Json<ProvenanceQueryRequest>,
+) -> Result<Json<ProvenanceQueryResponse>, ApiProblem> {
+    let events = runtime
+        .store
+        .provenance()
+        .query(&request)
+        .await
+        .map_err(|err| ApiProblem::internal(err.into()))?;
+
+    Ok(Json(ProvenanceQueryResponse { events }))
+}
+
 fn parse_approval_id(value: &str) -> Result<ApprovalId, ApiProblem> {
     let parsed = value.parse::<uuid::Uuid>().map_err(|_| {
         ApiProblem::new(
@@ -1691,14 +2088,145 @@ impl ApiProblem {
     }
 
     fn from_capability(err: ferrum_cap::CapabilityError) -> Self {
-        let code = match err {
-            ferrum_cap::CapabilityError::NotFound => ApiErrorCode::NotFound,
-            ferrum_cap::CapabilityError::AlreadyUsed => ApiErrorCode::Conflict,
-            ferrum_cap::CapabilityError::Revoked => ApiErrorCode::CapabilityRevoked,
-            ferrum_cap::CapabilityError::Expired => ApiErrorCode::CapabilityExpired,
-            ferrum_cap::CapabilityError::TtlTooLong => ApiErrorCode::ValidationError,
-        };
-        Self::new(StatusCode::BAD_REQUEST, code, err.to_string())
+        match err {
+            ferrum_cap::CapabilityError::NotFound => Self::new(
+                StatusCode::NOT_FOUND,
+                ApiErrorCode::NotFound,
+                err.to_string(),
+            ),
+            ferrum_cap::CapabilityError::AlreadyUsed => Self::new(
+                StatusCode::FORBIDDEN,
+                ApiErrorCode::CapabilityUsed,
+                "capability has already been consumed",
+            ),
+            ferrum_cap::CapabilityError::Revoked => Self::new(
+                StatusCode::FORBIDDEN,
+                ApiErrorCode::CapabilityRevoked,
+                err.to_string(),
+            ),
+            ferrum_cap::CapabilityError::Expired => Self::new(
+                StatusCode::FORBIDDEN,
+                ApiErrorCode::CapabilityExpired,
+                err.to_string(),
+            ),
+            ferrum_cap::CapabilityError::TtlTooLong => Self::new(
+                StatusCode::BAD_REQUEST,
+                ApiErrorCode::ValidationError,
+                err.to_string(),
+            ),
+        }
+    }
+}
+
+/// Determine the appropriate adapter key based on resource bindings.
+/// Returns "fs" for filesystem bindings, "sqlite" for mutating sqlite bindings,
+/// and "noop" for unknown/empty or read-only bindings.
+/// Fail-closed: defaults to "noop" when no specific adapter is matched.
+fn determine_adapter_key_from_bindings(bindings: &[ResourceBinding]) -> String {
+    if bindings.is_empty() {
+        return "noop".to_string();
+    }
+
+    // Check for filesystem bindings first
+    let has_fs_binding = bindings
+        .iter()
+        .any(|b| matches!(b, ResourceBinding::File { .. }));
+
+    if has_fs_binding {
+        return "fs".to_string();
+    }
+
+    // Only route sqlite to the adapter for mutation-capable bindings.
+    let has_mutating_sqlite_binding = bindings.iter().any(|binding| {
+        matches!(
+            binding,
+            ResourceBinding::Sqlite {
+                mode: ResourceMode::ReadWrite,
+                ..
+            } | ResourceBinding::Sqlite {
+                mode: ResourceMode::Write,
+                ..
+            } | ResourceBinding::Sqlite {
+                mode: ResourceMode::Admin,
+                ..
+            }
+        )
+    });
+
+    if has_mutating_sqlite_binding {
+        return "sqlite".to_string();
+    }
+
+    // Route only draft-only EmailDraft bindings (allow_send=false) to maildraft.
+    // Send-capable bindings (allow_send=true) are denied earlier in prepare_execution,
+    // so they should never reach adapter routing.
+    let has_draft_only_email_binding = bindings.iter().any(|b| {
+        matches!(
+            b,
+            ResourceBinding::EmailDraft {
+                allow_send: false,
+                ..
+            }
+        )
+    });
+
+    if has_draft_only_email_binding {
+        return "maildraft".to_string();
+    }
+
+    // Default to noop for other binding types (fail-closed)
+    "noop".to_string()
+}
+
+/// Determine the rollback target based on resource bindings.
+/// For filesystem bindings, returns a FilePath target with the first file binding path.
+/// For mutating sqlite bindings, returns a SqliteTxn target with the db path.
+fn determine_rollback_target_from_bindings(bindings: &[ResourceBinding]) -> RollbackTarget {
+    for binding in bindings {
+        match binding {
+            ResourceBinding::File { path, .. } => {
+                return RollbackTarget::FilePath {
+                    path: path.clone(),
+                    before_hash: None,
+                    after_hash: None,
+                };
+            }
+            ResourceBinding::Sqlite {
+                db_path,
+                mode: ResourceMode::ReadWrite,
+                ..
+            }
+            | ResourceBinding::Sqlite {
+                db_path,
+                mode: ResourceMode::Write,
+                ..
+            }
+            | ResourceBinding::Sqlite {
+                db_path,
+                mode: ResourceMode::Admin,
+                ..
+            } => {
+                // Generate a transaction ID for tracking this execution
+                let tx_id = format!("tx-{}", uuid::Uuid::new_v4());
+                return RollbackTarget::SqliteTxn {
+                    db_path: db_path.clone(),
+                    tx_id,
+                };
+            }
+            ResourceBinding::EmailDraft { recipients, .. } => {
+                return RollbackTarget::EmailDraft {
+                    draft_id: None,
+                    recipients: recipients.clone(),
+                };
+            }
+            _ => continue,
+        }
+    }
+
+    // Default to generic target for non-specific bindings
+    RollbackTarget::Generic {
+        namespace: "mcp".to_string(),
+        identifier: "tool-call".to_string(),
     }
 }
 
