@@ -1228,14 +1228,23 @@ async fn execute_execution(
         tracing::warn!("failed to update execution state: {}", e);
     }
 
-    // Advance rollback contract state to ExecutedAwaitingVerify
+    // Merge adapter execute-time metadata (e.g. git after_ref) into contract and persist.
+    // This ensures verify/rollback read the post-execute state, not the stale prepare-time contract.
+    let mut updated_contract = contract;
+    for (key, value) in &receipt.adapter_metadata {
+        updated_contract.metadata.insert(key.clone(), value.clone());
+    }
+    updated_contract.state = RollbackState::ExecutedAwaitingVerify;
     if let Err(e) = runtime
         .store
         .rollback_contracts()
-        .update_state(contract_id, RollbackState::ExecutedAwaitingVerify)
+        .update(&updated_contract)
         .await
     {
-        tracing::warn!("failed to update rollback contract state: {}", e);
+        tracing::warn!(
+            "failed to update rollback contract with execute metadata: {}",
+            e
+        );
     }
 
     // Emit ToolCallExecuted provenance event
@@ -2226,6 +2235,30 @@ fn determine_adapter_key_from_bindings(bindings: &[ResourceBinding]) -> String {
         return "maildraft".to_string();
     }
 
+    // Route HTTP bindings with mutation-capable modes to the HTTP adapter.
+    // Read-only HTTP bindings (mode=Read) stay on noop to preserve existing
+    // read-only HTTP enforcement tests - those test firewall enforcement at
+    // execute-time, not adapter routing.
+    let has_mutating_http_binding = bindings.iter().any(|binding| {
+        matches!(
+            binding,
+            ResourceBinding::Http {
+                mode: ResourceMode::Write,
+                ..
+            } | ResourceBinding::Http {
+                mode: ResourceMode::ReadWrite,
+                ..
+            } | ResourceBinding::Http {
+                mode: ResourceMode::Admin,
+                ..
+            }
+        )
+    });
+
+    if has_mutating_http_binding {
+        return "http".to_string();
+    }
+
     // Default to noop for other binding types (fail-closed)
     "noop".to_string()
 }
@@ -2291,6 +2324,26 @@ fn determine_rollback_target_from_bindings(bindings: &[ResourceBinding]) -> Roll
                 return RollbackTarget::EmailDraft {
                     draft_id: None,
                     recipients: recipients.clone(),
+                };
+            }
+            ResourceBinding::Http {
+                method,
+                base_url,
+                path_prefix,
+                ..
+            } => {
+                // Only route mutation-capable HTTP bindings to HTTP adapter.
+                // Read-only HTTP bindings (mode=Read) are handled by noop,
+                // so they should never reach this path.
+                use sha2::{Digest, Sha256};
+                let url = format!("{}{}", base_url, path_prefix);
+                let mut hasher = Sha256::new();
+                hasher.update(format!("{:?}:{}", method, url).as_bytes());
+                let request_digest = format!("{:x}", hasher.finalize());
+                return RollbackTarget::HttpRequest {
+                    method: method.clone(),
+                    url,
+                    request_digest,
                 };
             }
             _ => continue,

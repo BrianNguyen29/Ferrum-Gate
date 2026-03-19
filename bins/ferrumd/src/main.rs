@@ -1,6 +1,7 @@
 use anyhow::Context;
 use ferrum_adapter_fs::FsRollbackAdapter;
 use ferrum_adapter_git::register_git_adapter;
+use ferrum_adapter_http::register_http_adapter;
 use ferrum_adapter_maildraft::MaildraftAdapter;
 use ferrum_adapter_sqlite::SqliteRollbackAdapter;
 use ferrum_cap::InMemoryCapabilityService;
@@ -28,6 +29,7 @@ async fn main() -> anyhow::Result<()> {
     register_git_adapter(&mut registry);
     registry.register(Arc::new(SqliteRollbackAdapter::new("sqlite")));
     registry.register(Arc::new(MaildraftAdapter::new("maildraft")));
+    register_http_adapter(&mut registry);
     let rollback = Arc::new(RollbackService::new(Arc::new(registry)));
 
     let store = Arc::new(SqliteStore::connect("sqlite::memory:?cache=shared").await?);
