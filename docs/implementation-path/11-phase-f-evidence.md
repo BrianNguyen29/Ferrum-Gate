@@ -53,6 +53,7 @@ Nhung flow duoi day da co automated evidence trong repo:
 - `parent_edges` duoc persist vao `provenance_edges`
 - lineage edge co the query lai qua store repo
 - `GET /v1/provenance/lineage/{execution_id}` da reconstruct duoc execution lineage theo event graph da persist
+- `POST /v1/provenance/query` fail-closed minimal endpoint da co; generic provenance query/replay fabric/graph tooling rong hon van la open gap
 - terminal events cho commit va rollback da co integration evidence
 
 ### 3.4 Approval / draft-only scope hien tai
@@ -67,7 +68,7 @@ Nhung flow duoi day da co automated evidence trong repo:
 Nhung muc duoi day van la open gap hoac gioi han evidence, khong nen bi hieu nham la "done":
 
 - supported flow evidence hien tap trung vao gateway + store + firewall path duoc test trong repo; chua phai tuyen bo parity cho moi adapter/runtime ben ngoai
-- lineage query da co moc toi thieu o muc execution lineage endpoint; generic provenance query, replay/query fabric, va graph tooling rong hon van la backlog
+- lineage query da co muc toi thieu o muc execution lineage endpoint va provenance query fail-closed endpoint; generic provenance query, replay/query fabric, va graph tooling rong hon van la backlog
 - adapter-backed rollback/compensate evidence hien da co truc tiep cho filesystem, sqlite, va maildraft draft-only path; `EmailSend` va adapter khac van chua duoc tuyen bo parity; LUU Y: `allow_send=true` EmailDraft bindings bay gio duoc explicitly denied tai gateway prepare-time (PolicyDenied 403), thay vi silently fall-through to noop nhu truoc do - day la improvement ve fail-closed semantics
 - config/operator docs, CLI usefulness, va mot so release-checklist items khac van chua dong
 - docs nay khong thay the backlog; cac nang cap tiep theo van nen tiep tuc track o `docs/implementation-path/08-next-issue-backlog.md`

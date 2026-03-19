@@ -9,7 +9,7 @@
 - P1: gateway happy path
 
 ## P2
-- lineage query
+- lineage query: da co execution lineage (`GET /v1/provenance/lineage/{execution_id}`) va provenance query endpoint (`POST /v1/provenance/query`) fail-closed; generic query/replay/graph tooling rong hon van la backlog
 - ledger hash chain
 - ferrumctl hữu dụng hơn
 - git/http adapters
