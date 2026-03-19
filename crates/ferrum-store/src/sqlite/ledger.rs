@@ -70,4 +70,19 @@ impl LedgerRepo for SqliteLedgerRepo {
             })
             .collect()
     }
+
+    async fn get_latest(&self) -> Result<Option<LedgerEntry>> {
+        let rows =
+            sqlx::query("SELECT raw_json FROM ledger_entries ORDER BY entry_id DESC LIMIT 1")
+                .fetch_all(&self.pool)
+                .await?;
+
+        rows.into_iter()
+            .next()
+            .map(|row| -> Result<LedgerEntry> {
+                let raw_json: String = row.try_get("raw_json")?;
+                Ok(serde_json::from_str(&raw_json)?)
+            })
+            .transpose()
+    }
 }

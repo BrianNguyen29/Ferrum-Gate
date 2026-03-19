@@ -19,8 +19,8 @@ use ferrum_proto::{
     TrustContextSummary, VerifyRequest, VerifyResponse,
 };
 use ferrum_store::{
-    ApprovalRepo, CapabilityRepo, ExecutionRepo, IntentRepo, ProposalRepo, ProvenanceRepo,
-    RollbackRepo,
+    ApprovalRepo, CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo, ProposalRepo,
+    ProvenanceRepo, RollbackRepo,
 };
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
@@ -1504,8 +1504,38 @@ async fn perform_commit(
     );
     if let Err(e) = runtime.store.provenance().append_event(&event).await {
         tracing::warn!("failed to persist provenance event: {}", e);
-    }
+    } else {
+        // Provenance event persisted successfully — now append a ledger entry
+        // that wraps this event and links it into the hash chain.
+        let next_entry = match runtime.store.ledger().get_latest().await {
+            Ok(Some(last)) => Some(ferrum_ledger::LedgerEntry::from_event(
+                event.clone(),
+                last.sequence.saturating_add(1),
+                Some(last.entry_hash.clone()),
+            )),
+            Ok(None) => {
+                tracing::debug!("ledger is empty, next entry will be genesis");
+                Some(ferrum_ledger::LedgerEntry::from_event(
+                    event.clone(),
+                    0,
+                    None,
+                ))
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "failed to read ledger tip, proceeding without ledger append: {}",
+                    e
+                );
+                None
+            }
+        };
 
+        if let Some(entry) = next_entry {
+            if let Err(e) = runtime.store.ledger().append(&entry).await {
+                tracing::warn!("failed to append ledger entry: {}", e);
+            }
+        }
+    }
     Ok(Json(CommitResponse {
         execution_id,
         committed: true,

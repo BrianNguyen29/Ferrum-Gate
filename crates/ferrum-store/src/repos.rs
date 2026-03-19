@@ -93,4 +93,6 @@ pub trait LedgerRepo: Send + Sync {
     async fn append(&self, entry: &LedgerEntry) -> Result<()>;
     async fn get_by_event(&self, event_id: EventId) -> Result<Option<LedgerEntry>>;
     async fn list_recent(&self, limit: u32) -> Result<Vec<LedgerEntry>>;
+    /// Returns the most recent ledger entry, if any.
+    async fn get_latest(&self) -> Result<Option<LedgerEntry>>;
 }

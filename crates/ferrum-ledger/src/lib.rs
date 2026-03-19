@@ -230,6 +230,37 @@ fn compute_entry_hash_raw(entry: &LedgerEntry) -> String {
     compute_entry_hash(entry, entry.prev_hash.as_deref())
 }
 
+impl LedgerEntry {
+    /// Construct a ledger entry from a provenance event and chain metadata.
+    ///
+    /// This is the low-level constructor used when building an entry from a
+    /// known previous tip (rather than appending to an in-memory ledger).
+    ///
+    /// # Arguments
+    /// * `event` - The provenance event to wrap
+    /// * `sequence` - This entry's zero-based sequence number
+    /// * `prev_hash` - Hash of the previous entry (None for genesis)
+    pub fn from_event(event: ProvenanceEvent, sequence: u64, prev_hash: Option<Sha256Hex>) -> Self {
+        let entry_hash = {
+            // Build a temporary entry to compute the hash (clone event since we need it after)
+            let temp = LedgerEntry {
+                sequence,
+                prev_hash: prev_hash.clone(),
+                entry_hash: String::new(),
+                event: event.clone(),
+            };
+            compute_entry_hash(&temp, prev_hash.as_deref())
+        };
+
+        LedgerEntry {
+            sequence,
+            prev_hash,
+            entry_hash,
+            event,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
