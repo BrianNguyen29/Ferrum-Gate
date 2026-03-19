@@ -1,20 +1,20 @@
 # 09 — Phase checklists
 
 ## Phase A
-- [ ] cargo check
-- [ ] bins build
-- [ ] no missing modules
+- [x] cargo check
+- [x] bins build
+- [x] no missing modules
 
 ## Phase B
-- [ ] store traits
-- [ ] sqlite implementation
-- [ ] persist core objects
+- [x] store traits
+- [x] sqlite implementation
+- [x] persist core objects
 
 ## Phase C
-- [ ] trust labels
-- [ ] taint scoring
-- [ ] sanitize
-- [ ] contradiction checks
+- [x] trust labels
+- [x] taint scoring
+- [x] sanitize
+- [x] contradiction checks
 
 ## Phase D
 - [x] fs adapter
@@ -22,10 +22,10 @@
 - [x] maildraft adapter
 
 ## Phase E
-- [ ] gateway calls pdp
-- [ ] gateway calls cap
-- [ ] gateway calls rollback
-- [ ] gateway emits provenance
+- [x] gateway calls pdp
+- [x] gateway calls cap
+- [x] gateway calls rollback
+- [x] gateway emits provenance
 
 ## Phase F
 - [x] happy path test
