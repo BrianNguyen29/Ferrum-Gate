@@ -1,4 +1,5 @@
 use chrono::{Duration, Utc};
+use ferrum_ledger::{InMemoryLedger, LedgerEntry};
 use ferrum_proto::{
     ActionProposal, ActorRef, ActorType, ApprovalRequest, ApprovalState, CapabilityLease,
     CapabilityStatus, Decision, EffectType, ExecutionRecord, ExecutionState, IntentEnvelope,
@@ -9,8 +10,8 @@ use ferrum_proto::{
 use tempfile::TempDir;
 
 use crate::{
-    ApprovalRepo, CapabilityRepo, ExecutionRepo, IntentRepo, ProposalRepo, RollbackRepo,
-    SqliteStore,
+    ApprovalRepo, CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo, ProposalRepo,
+    ProvenanceRepo, RollbackRepo, SqliteStore,
 };
 
 async fn create_test_store() -> (TempDir, SqliteStore) {
@@ -420,4 +421,129 @@ async fn approval_resolution_round_trip() {
         .expect("load approval")
         .expect("approval present");
     assert!(matches!(resolved.state, ApprovalState::Granted));
+}
+
+// ---------------------------------------------------------------------------
+// Ledger tests
+// ---------------------------------------------------------------------------
+
+fn make_test_provenance_event(sequence: u64) -> ferrum_proto::ProvenanceEvent {
+    use ferrum_proto::{
+        EventId, HashChainRef, ObjectRef, ObjectType, SensitivityLabel, Timestamp, TrustLabel,
+    };
+
+    ferrum_proto::ProvenanceEvent {
+        event_id: EventId::new(),
+        kind: ferrum_proto::ProvenanceEventKind::UserGoalReceived,
+        occurred_at: Timestamp::default(),
+        actor: ActorRef {
+            actor_type: ActorType::User,
+            actor_id: format!("user-{}", sequence),
+            display_name: None,
+        },
+        object: ObjectRef {
+            object_type: ObjectType::Intent,
+            object_id: format!("intent-{}", sequence),
+            summary: None,
+        },
+        intent_id: None,
+        proposal_id: None,
+        execution_id: None,
+        capability_id: None,
+        rollback_contract_id: None,
+        policy_bundle_id: None,
+        trust_labels: vec![TrustLabel::Trusted],
+        sensitivity_labels: vec![SensitivityLabel::Public],
+        parent_edges: vec![],
+        hash_chain: HashChainRef {
+            content_hash: None,
+            manifest_hash: None,
+            policy_bundle_hash: None,
+            previous_ledger_hash: None,
+        },
+        metadata: ferrum_proto::JsonMap::new(),
+    }
+}
+
+#[tokio::test]
+async fn ledger_append_and_load_single_entry() {
+    let (_temp_dir, store) = create_test_store().await;
+
+    let mut in_mem = InMemoryLedger::new();
+    let event = make_test_provenance_event(0);
+    let entry = in_mem
+        .append(event.clone())
+        .expect("build genesis entry")
+        .clone();
+
+    // Foreign key requires event to exist in provenance_events first
+    store
+        .provenance()
+        .append_event(&event)
+        .await
+        .expect("persist event");
+    store
+        .ledger()
+        .append(&entry)
+        .await
+        .expect("persist genesis");
+
+    let loaded = store
+        .ledger()
+        .get_by_event(entry.event.event_id)
+        .await
+        .expect("load from db")
+        .expect("entry should be present");
+
+    assert_eq!(loaded.entry_hash.as_str(), entry.entry_hash.as_str());
+    assert_eq!(loaded.prev_hash, entry.prev_hash);
+    assert_eq!(loaded.sequence, entry.sequence);
+}
+
+#[tokio::test]
+async fn ledger_append_load_and_verify_chain() {
+    let (_temp_dir, store) = create_test_store().await;
+
+    // Build a chain of 3 entries in memory
+    let mut in_mem = InMemoryLedger::new();
+    let e0 = in_mem
+        .append(make_test_provenance_event(0))
+        .unwrap()
+        .clone();
+    let e1 = in_mem
+        .append(make_test_provenance_event(1))
+        .unwrap()
+        .clone();
+    let e2 = in_mem
+        .append(make_test_provenance_event(2))
+        .unwrap()
+        .clone();
+
+    // Persist all three (events must be in provenance_events first due to FK)
+    let events = [e0.event.clone(), e1.event.clone(), e2.event.clone()];
+    for ev in &events {
+        store
+            .provenance()
+            .append_event(ev)
+            .await
+            .expect("persist event");
+    }
+    store.ledger().append(&e0).await.expect("persist e0");
+    store.ledger().append(&e1).await.expect("persist e1");
+    store.ledger().append(&e2).await.expect("persist e2");
+
+    // Load them back (list_recent returns newest-first, so reverse for ordered reconstruction)
+    let loaded: Vec<LedgerEntry> = store.ledger().list_recent(10).await.expect("load entries");
+    assert_eq!(loaded.len(), 3);
+
+    // Rebuild in-memory ledger from loaded entries (newest-first → reverse to chronological)
+    let by_seq: Vec<LedgerEntry> = {
+        let mut v = loaded;
+        v.reverse();
+        v
+    };
+    let rebuilt = InMemoryLedger::load_entries(by_seq);
+    rebuilt
+        .verify_chain()
+        .expect("chain should be valid after roundtrip");
 }

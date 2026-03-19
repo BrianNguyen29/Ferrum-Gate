@@ -196,6 +196,19 @@ impl InMemoryLedger {
         }
         Ok(())
     }
+
+    /// Loads pre-built entries into a new [`InMemoryLedger`] without re-hashing or
+    /// re-validating chain linkage. Used when rebuilding a ledger from a trusted
+    /// store (e.g. SQLite) that already persisted verified entries.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure the entries form a valid chain (i.e. [`verify_chain`]
+    /// would pass). Passing invalid data will cause subsequent [`verify_chain`]
+    /// calls to fail.
+    pub fn load_entries(entries: Vec<LedgerEntry>) -> Self {
+        Self { entries }
+    }
 }
 
 /// Compute the deterministic hash for a ledger entry.

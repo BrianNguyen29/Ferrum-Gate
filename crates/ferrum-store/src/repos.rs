@@ -1,25 +1,13 @@
 use async_trait::async_trait;
+use ferrum_ledger::LedgerEntry;
 use ferrum_proto::{
     ActionProposal, ApprovalId, ApprovalRequest, ApprovalState, CapabilityId, CapabilityLease,
     CapabilityStatus, EventId, ExecutionId, ExecutionRecord, ExecutionState, IntentEnvelope,
     IntentId, IntentStatus, ProposalId, ProvenanceEdge, ProvenanceEvent, ProvenanceQueryRequest,
-    RollbackContract, RollbackContractId, RollbackState, Timestamp,
+    RollbackContract, RollbackContractId, RollbackState,
 };
-use serde::{Deserialize, Serialize};
 
 use crate::Result;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LedgerEntry {
-    pub entry_id: i64,
-    pub event_id: EventId,
-    pub intent_id: Option<IntentId>,
-    pub execution_id: Option<ExecutionId>,
-    pub occurred_at: Timestamp,
-    pub content_hash: Option<String>,
-    pub previous_ledger_hash: Option<String>,
-    pub raw_json: serde_json::Value,
-}
 
 #[async_trait]
 pub trait IntentRepo: Send + Sync {
