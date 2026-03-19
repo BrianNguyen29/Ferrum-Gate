@@ -117,7 +117,7 @@ impl RollbackService {
     ) -> RollbackPrepareRequest {
         // Auto-commit only for R0 (native reversible). R2 and R3 require manual commit.
         let auto_commit = matches!(
-            requested_rollback_class,
+            &requested_rollback_class,
             ferrum_proto::RollbackClass::R0NativeReversible
         );
 
