@@ -54,6 +54,13 @@ pub fn build_schema_inventory(root: &Path) -> Vec<SchemaEntry<'static>> {
         .collect()
 }
 
+/// Schema inventory entry serialized for JSON output.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct SchemaEntryJson<'a> {
+    pub path: &'a str,
+    pub present: bool,
+}
+
 /// Formats schema inventory as plain text, one line per schema.
 pub fn format_schema_inventory(entries: &[SchemaEntry]) -> String {
     let mut entries_sorted = entries.to_vec();
@@ -66,6 +73,20 @@ pub fn format_schema_inventory(entries: &[SchemaEntry]) -> String {
         })
         .collect();
     lines.join("\n")
+}
+
+/// Formats schema inventory as a JSON array of objects.
+pub fn format_schema_inventory_json(entries: &[SchemaEntry]) -> String {
+    let mut entries_sorted = entries.to_vec();
+    entries_sorted.sort_by(|a, b| a.path.cmp(b.path));
+    let json_entries: Vec<SchemaEntryJson> = entries_sorted
+        .iter()
+        .map(|e| SchemaEntryJson {
+            path: e.path,
+            present: e.present,
+        })
+        .collect();
+    serde_json::to_string(&json_entries).expect("schema inventory must serialize")
 }
 
 /// Formats contract paths as either plain text (one per line) or JSON array.
@@ -146,7 +167,11 @@ enum InspectCommand {
         json: bool,
     },
     /// Print the schema inventory with presence status.
-    Schemas,
+    Schemas {
+        /// Output inventory as a JSON array instead of plain text.
+        #[clap(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -169,10 +194,14 @@ async fn main() -> Result<()> {
                 let paths = known_contract_paths();
                 println!("{}", format_contract_paths(&paths, json));
             }
-            InspectCommand::Schemas => {
+            InspectCommand::Schemas { json } => {
                 let root = repo_root();
                 let inventory = build_schema_inventory(&root);
-                println!("{}", format_schema_inventory(&inventory));
+                if json {
+                    println!("{}", format_schema_inventory_json(&inventory));
+                } else {
+                    println!("{}", format_schema_inventory(&inventory));
+                }
             }
         },
         Command::Validate { sub } => match sub {
@@ -370,5 +399,61 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert!(result.contains("ok  b.json"));
         assert!(result.contains("missing  a.json"));
+    }
+
+    #[test]
+    fn test_format_schema_inventory_json_array_structure() {
+        let entries = &[SchemaEntry {
+            path: "schemas/jsonschema/test.json",
+            present: true,
+        }];
+        let result = format_schema_inventory_json(entries);
+        let parsed: Vec<SchemaEntryJson> =
+            serde_json::from_str(&result).expect("must be valid JSON");
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].path, "schemas/jsonschema/test.json");
+        assert!(parsed[0].present);
+    }
+
+    #[test]
+    fn test_format_schema_inventory_json_sorted() {
+        let entries = &[
+            SchemaEntry {
+                path: "z-schema.json",
+                present: false,
+            },
+            SchemaEntry {
+                path: "a-schema.json",
+                present: true,
+            },
+        ];
+        let result = format_schema_inventory_json(entries);
+        let parsed: Vec<SchemaEntryJson> =
+            serde_json::from_str(&result).expect("must be valid JSON");
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].path, "a-schema.json");
+        assert_eq!(parsed[1].path, "z-schema.json");
+    }
+
+    #[test]
+    fn test_format_schema_inventory_json_multiple() {
+        let entries = &[
+            SchemaEntry {
+                path: "b.json",
+                present: true,
+            },
+            SchemaEntry {
+                path: "a.json",
+                present: false,
+            },
+        ];
+        let result = format_schema_inventory_json(entries);
+        let parsed: Vec<SchemaEntryJson> =
+            serde_json::from_str(&result).expect("must be valid JSON");
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].path, "a.json");
+        assert!(!parsed[0].present);
+        assert_eq!(parsed[1].path, "b.json");
+        assert!(parsed[1].present);
     }
 }
