@@ -21,4 +21,5 @@ ferrum-cap = { path = "../ferrum-cap" }
 ferrum-rollback = { path = "../ferrum-rollback" }
 ferrum-store = { path = "../ferrum-store" }
 ferrum-firewall = { path = "../ferrum-firewall" }
+ferrum-ledger = { path = "../ferrum-ledger" }
 uuid.workspace = true

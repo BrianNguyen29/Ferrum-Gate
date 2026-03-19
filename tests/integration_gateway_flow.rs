@@ -10,8 +10,8 @@ use ferrum_proto::{
 };
 use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
 use ferrum_store::{
-    ApprovalRepo, CapabilityRepo, ExecutionRepo, IntentRepo, ProposalRepo, ProvenanceRepo,
-    RollbackRepo, SqliteStore,
+    ApprovalRepo, CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo, ProposalRepo,
+    ProvenanceRepo, RollbackRepo, SqliteStore,
 };
 use sqlx::{Connection, Row};
 use std::sync::Arc;
@@ -926,7 +926,7 @@ async fn test_full_happy_path_execute_verify_auto_commit() {
     let response = app
         .oneshot(
             axum::http::Request::builder()
-                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .uri(format!("/v1/executions/{}/execute", execution_id))
                 .method(axum::http::Method::POST)
                 .header(axum::http::header::CONTENT_TYPE, "application/json")
                 .body(serde_json::to_string(&execute_req).unwrap())
@@ -949,7 +949,7 @@ async fn test_full_happy_path_execute_verify_auto_commit() {
     let response = app
         .oneshot(
             axum::http::Request::builder()
-                .uri(&format!("/v1/executions/{}/verify", execution_id))
+                .uri(format!("/v1/executions/{}/verify", execution_id))
                 .method(axum::http::Method::POST)
                 .header(axum::http::header::CONTENT_TYPE, "application/json")
                 .body(serde_json::to_string(&verify_req).unwrap())
@@ -8072,5 +8072,265 @@ async fn test_email_allow_send_false_prepare_succeeds_with_maildraft_adapter() {
     assert_eq!(
         contract.adapter_key, "maildraft",
         "draft-only EmailDraft should route to maildraft adapter"
+    );
+}
+
+// ============================================
+// LEDGER INTEGRATION TESTS (Slice 3)
+// ============================================
+
+#[tokio::test]
+async fn test_commit_flow_writes_ledger_entry_linked_to_provenance_event() {
+    // Verifies that perform_commit() appends a ledger entry wrapping the
+    // SideEffectCommitted provenance event, with correct hash-chain linkage.
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Run flow to commit (R0 auto-commits on verify)
+    let (intent_id, _proposal_id, execution_id) =
+        run_flow_to_prepared(&runtime, RollbackClass::R0NativeReversible).await;
+
+    // Execute and verify (auto-commits for R0)
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // --- Verify SideEffectCommitted provenance event was emitted ---
+    let committed_events = runtime
+        .store
+        .provenance()
+        .query(&ferrum_proto::ProvenanceQueryRequest {
+            intent_id: Some(intent_id),
+            execution_id: Some(execution_id),
+            capability_id: None,
+            event_kind: Some(ProvenanceEventKind::SideEffectCommitted),
+            since: None,
+            until: None,
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        !committed_events.is_empty(),
+        "SideEffectCommitted provenance event should be emitted"
+    );
+    let committed_event = &committed_events[0];
+    let committed_event_id = committed_event.event_id;
+
+    // --- Verify ledger entry was written and linked to the provenance event ---
+    let ledger_entry = runtime
+        .store
+        .ledger()
+        .get_by_event(committed_event_id)
+        .await
+        .unwrap();
+
+    assert!(
+        ledger_entry.is_some(),
+        "Ledger entry should exist for SideEffectCommitted event"
+    );
+    let entry = ledger_entry.unwrap();
+
+    // The ledger entry's event must be the SideEffectCommitted provenance event
+    assert!(
+        matches!(entry.event.kind, ProvenanceEventKind::SideEffectCommitted),
+        "Ledger entry should wrap SideEffectCommitted event"
+    );
+    assert_eq!(
+        entry.event.event_id, committed_event_id,
+        "Ledger entry event_id must match committed provenance event"
+    );
+
+    // --- Verify hash-chain linkage ---
+    // Get the tip (latest entry) to verify chain linkage
+    let tip = runtime.store.ledger().get_latest().await.unwrap().unwrap();
+    assert_eq!(
+        tip.event.event_id, committed_event_id,
+        "Latest ledger entry must be the one we just wrote"
+    );
+
+    // For a single commit, the first entry is genesis (sequence 0, no prev_hash)
+    // and the second would be sequence 1 with prev_hash pointing to genesis
+    // But since this is the first commit, we need to check what we actually wrote
+    if entry.sequence == 0 {
+        // Genesis entry
+        assert!(
+            entry.prev_hash.is_none(),
+            "Genesis entry must have no prev_hash"
+        );
+    } else {
+        // Non-genesis: must have prev_hash set to previous entry's hash
+        assert!(
+            entry.prev_hash.is_some(),
+            "Non-genesis entry must have prev_hash set"
+        );
+    }
+
+    // --- Verify execution state is Committed ---
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(
+        matches!(stored_execution.unwrap().state, ExecutionState::Committed),
+        "Execution should be committed"
+    );
+}
+
+#[tokio::test]
+async fn test_ledger_hash_chain_correct_over_multiple_commits() {
+    // Verifies that multiple commits produce a correct hash chain in the ledger.
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // First commit (R0)
+    let (_intent_id1, _proposal_id1, execution_id1) =
+        run_flow_to_prepared(&runtime, RollbackClass::R0NativeReversible).await;
+
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id: execution_id1,
+        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/execute", execution_id1))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest {
+        execution_id: execution_id1,
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/verify", execution_id1))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Get the first ledger entry
+    let tip1 = runtime.store.ledger().get_latest().await.unwrap().unwrap();
+    let first_entry_hash = tip1.entry_hash.clone();
+    let first_sequence = tip1.sequence;
+
+    // Second commit (R2, explicit commit)
+    let (_intent_id2, _proposal_id2, execution_id2) =
+        run_flow_to_prepared(&runtime, RollbackClass::R2Compensatable).await;
+
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id: execution_id2,
+        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "world"}),
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/execute", execution_id2))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest {
+        execution_id: execution_id2,
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/verify", execution_id2))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Explicit commit for R2
+    let app = build_router(runtime.clone());
+    let commit_req = ferrum_proto::CommitRequest {
+        execution_id: execution_id2,
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/commit", execution_id2))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&commit_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Get the second ledger entry
+    let tip2 = runtime.store.ledger().get_latest().await.unwrap().unwrap();
+
+    // Verify sequence incremented
+    assert_eq!(
+        tip2.sequence,
+        first_sequence + 1,
+        "Second entry sequence must be first + 1"
+    );
+
+    // Verify prev_hash points to first entry's hash
+    assert_eq!(
+        tip2.prev_hash.as_ref(),
+        Some(&first_entry_hash),
+        "Second entry's prev_hash must point to first entry's hash"
+    );
+
+    // Verify both entries exist via list_recent
+    let recent = runtime.store.ledger().list_recent(10).await.unwrap();
+    assert!(recent.len() >= 2, "Should have at least 2 ledger entries");
+    // Most recent should be tip2
+    assert_eq!(
+        recent[0].sequence, tip2.sequence,
+        "Most recent entry should be tip2"
     );
 }
