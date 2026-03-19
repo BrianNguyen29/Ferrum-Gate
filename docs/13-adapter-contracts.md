@@ -24,10 +24,14 @@
 ## Git
 - `prepare` capture local `HEAD` thanh `before_ref`
 - `execute` hien chi chap nhan `payload.after_ref` va fail-closed neu khong khop `HEAD`
-- `verify` doi chieu `after_ref` hoac fallback `before_ref`
+- `verify` doi chieu `after_ref` da duoc persist tu execute-time metadata, hoac fallback `before_ref`
 - `rollback` / `compensate` reset repo ve `before_ref`
 - gateway `prepare` da route mutating `Git` binding sang git adapter va tao `RollbackTarget::GitRef`
 
 ## HTTP
-- allowlist
-- destructive remote mutation coi là R3 nếu chưa có recovery rõ
+- initial slice: `prepare` capture method/url/request_digest cho `HttpRequest`
+- `execute` hien chi support `GET` va capture HTTP status
+- `verify` support `HttpStatusExpected`; neu khong co explicit check thi chi auto-verify cho execute-time status `2xx`
+- `rollback` / `compensate` hien la conservative no-op cho `GET`
+- gateway chi route mutating HTTP bindings sang adapter; HTTP read-only bindings van di qua enforcement path hien tai
+- destructive remote mutation van coi la R3 neu chua co recovery ro

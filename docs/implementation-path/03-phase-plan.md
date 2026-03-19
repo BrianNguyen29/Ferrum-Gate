@@ -14,7 +14,7 @@
 - contradiction checks
 
 ## Phase D
-- fs/sqlite/maildraft/git adapters usable
+- fs/sqlite/maildraft/git adapters usable + http initial slice usable
 
 ## Phase E
 - gateway full happy path

@@ -21,6 +21,7 @@
 - [x] sqlite adapter
 - [x] maildraft adapter
 - [x] git adapter
+- [x] http adapter (initial slice)
 
 ## Phase E
 - [x] gateway calls pdp

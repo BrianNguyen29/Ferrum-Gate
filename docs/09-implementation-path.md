@@ -25,6 +25,7 @@ Mục tiêu:
 - sqlite adapter thật
 - maildraft adapter thật
 - git adapter thật
+- http adapter initial slice thật
 
 ## Phase E — Gateway orchestration
 Mục tiêu:
@@ -46,7 +47,7 @@ Mục tiêu:
 4. cap
 5. firewall
 6. rollback
-7. fs/sqlite/maildraft/git adapters
+7. fs/sqlite/maildraft/git/http adapters
 8. graph
 9. ledger
 10. gateway
