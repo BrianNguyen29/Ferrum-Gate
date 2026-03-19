@@ -1,11 +1,21 @@
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
 const CONTRACT_PATHS: &[&str] = &[
     "contracts/ferrumgate-agent-contract.v1.yaml",
     "contracts/ferrumgate-integrator-contract.v1.yaml",
+];
+
+const SCHEMA_PATHS: &[&str] = &[
+    "schemas/jsonschema/action-proposal.json",
+    "schemas/jsonschema/approval-request.json",
+    "schemas/jsonschema/capability-lease.json",
+    "schemas/jsonschema/common.json",
+    "schemas/jsonschema/intent-envelope.json",
+    "schemas/jsonschema/provenance-event.json",
+    "schemas/jsonschema/rollback-contract.json",
 ];
 
 /// Returns the repository root path by resolving from CARGO_MANIFEST_DIR.
@@ -19,6 +29,43 @@ pub fn repo_root() -> PathBuf {
 /// Returns the known contract paths used by inspect.
 pub fn known_contract_paths() -> Vec<&'static str> {
     CONTRACT_PATHS.to_vec()
+}
+
+/// Returns the known schema paths used by inspect.
+pub fn known_schema_paths() -> Vec<&'static str> {
+    SCHEMA_PATHS.to_vec()
+}
+
+/// Schema inventory entry with existence status.
+#[derive(Clone)]
+pub struct SchemaEntry<'a> {
+    pub path: &'a str,
+    pub present: bool,
+}
+
+/// Builds the schema inventory by checking each path against the repo root.
+pub fn build_schema_inventory(root: &Path) -> Vec<SchemaEntry<'static>> {
+    SCHEMA_PATHS
+        .iter()
+        .map(|p| SchemaEntry {
+            path: p,
+            present: root.join(p).exists(),
+        })
+        .collect()
+}
+
+/// Formats schema inventory as plain text, one line per schema.
+pub fn format_schema_inventory(entries: &[SchemaEntry]) -> String {
+    let mut entries_sorted = entries.to_vec();
+    entries_sorted.sort_by(|a, b| a.path.cmp(b.path));
+    let lines: Vec<String> = entries_sorted
+        .iter()
+        .map(|e| {
+            let status = if e.present { "ok" } else { "missing" };
+            format!("{}  {}", status, e.path)
+        })
+        .collect();
+    lines.join("\n")
 }
 
 /// Formats contract paths as either plain text (one per line) or JSON array.
@@ -98,6 +145,8 @@ enum InspectCommand {
         #[clap(long)]
         json: bool,
     },
+    /// Print the schema inventory with presence status.
+    Schemas,
 }
 
 #[derive(Debug, Subcommand)]
@@ -119,6 +168,11 @@ async fn main() -> Result<()> {
             InspectCommand::Contracts { json } => {
                 let paths = known_contract_paths();
                 println!("{}", format_contract_paths(&paths, json));
+            }
+            InspectCommand::Schemas => {
+                let root = repo_root();
+                let inventory = build_schema_inventory(&root);
+                println!("{}", format_schema_inventory(&inventory));
             }
         },
         Command::Validate { sub } => match sub {
@@ -225,5 +279,96 @@ mod tests {
         let paths: [&str; 0] = [];
         let result = format_contract_paths(&paths, true);
         assert_eq!(result, "[]");
+    }
+
+    #[test]
+    fn test_known_schema_paths_not_empty() {
+        let paths = known_schema_paths();
+        assert!(!paths.is_empty(), "known_schema_paths should not be empty");
+        assert!(
+            paths.contains(&"schemas/jsonschema/intent-envelope.json"),
+            "should contain intent-envelope.json"
+        );
+    }
+
+    #[test]
+    fn test_schema_paths_are_relative() {
+        for path in known_schema_paths() {
+            assert!(
+                !path.starts_with('/'),
+                "schema path '{path}' should be relative"
+            );
+        }
+    }
+
+    #[test]
+    fn test_schema_inventory_count() {
+        let root = repo_root();
+        let inventory = build_schema_inventory(&root);
+        assert_eq!(
+            inventory.len(),
+            SCHEMA_PATHS.len(),
+            "inventory should have entry per schema path"
+        );
+    }
+
+    #[test]
+    fn test_format_schema_inventory_sorted() {
+        // Verify alphabetical sorting regardless of status prefix
+        let entries = &[
+            SchemaEntry {
+                path: "z-schema.json",
+                present: false,
+            },
+            SchemaEntry {
+                path: "a-schema.json",
+                present: true,
+            },
+        ];
+        let result = format_schema_inventory(entries);
+        let lines: Vec<&str> = result.lines().collect();
+        assert_eq!(lines.len(), 2);
+        // After sorting, "a-schema.json" line comes before "z-schema.json" line
+        assert!(
+            lines[0].contains("a-schema"),
+            "first line should contain a-schema (alphabetically first)"
+        );
+        assert!(
+            lines[1].contains("z-schema"),
+            "second line should contain z-schema (alphabetically second)"
+        );
+    }
+
+    #[test]
+    fn test_format_schema_inventory_missing_line() {
+        let entries = &[SchemaEntry {
+            path: "schemas/jsonschema/missing.json",
+            present: false,
+        }];
+        let result = format_schema_inventory(entries);
+        assert!(
+            result.starts_with("missing  "),
+            "should start with 'missing'"
+        );
+        assert!(result.contains("schemas/jsonschema/missing.json"));
+    }
+
+    #[test]
+    fn test_format_schema_inventory_multiple() {
+        let entries = &[
+            SchemaEntry {
+                path: "b.json",
+                present: true,
+            },
+            SchemaEntry {
+                path: "a.json",
+                present: false,
+            },
+        ];
+        let result = format_schema_inventory(entries);
+        let lines: Vec<&str> = result.lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert!(result.contains("ok  b.json"));
+        assert!(result.contains("missing  a.json"));
     }
 }
