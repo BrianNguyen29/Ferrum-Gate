@@ -300,12 +300,12 @@ async fn test_evaluate_proposal_loads_real_intent_and_persists() {
 }
 
 #[tokio::test]
-async fn test_evaluate_proposal_falls_back_to_minimal_intent_when_not_found() {
+async fn test_evaluate_proposal_rejects_missing_intent_fail_closed() {
     let (_temp_dir, runtime, _store) = create_test_runtime().await;
 
     // Create a proposal with a non-existent intent_id
-    // Note: The proposal cannot be persisted because of FK constraint (intent must exist)
-    // But the evaluation should still work using fallback minimal intent
+    // Fail-closed: when intent cannot be loaded, the proposal must be rejected,
+    // not using a fallback that could bypass the R3 boundary.
     let non_existent_intent_id = IntentId::new();
     let proposal = sample_proposal(non_existent_intent_id);
     let proposal_id = proposal.proposal_id;
@@ -323,26 +323,21 @@ async fn test_evaluate_proposal_falls_back_to_minimal_intent_when_not_found() {
         .await
         .unwrap();
 
-    // Should still succeed with fallback to minimal intent
-    assert_eq!(response.status(), 200);
+    // Fail-closed: must return 404 when intent not found
+    assert_eq!(
+        response.status(),
+        404,
+        "Expected 404 Not Found when intent does not exist"
+    );
 
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let eval_resp: ferrum_proto::EvaluateProposalResponse = serde_json::from_slice(&body).unwrap();
-
-    // Should still get a decision (allow) since minimal intent passes
-    assert_eq!(eval_resp.decision, Decision::Allow);
-
-    // Note: Proposal will NOT be persisted because intent doesn't exist (FK constraint)
-    // This is expected behavior - the system gracefully handles this by:
-    // 1. Using minimal intent for evaluation (fallback)
-    // 2. Warning about proposal persistence failure
-    // 3. Still returning a decision
+    // Verify no proposal was persisted (intent must exist for FK constraint)
     let stored_proposal = runtime.store.proposals().get(proposal_id).await.unwrap();
-    assert!(stored_proposal.is_none()); // Expected: proposal not persisted due to FK constraint
+    assert!(
+        stored_proposal.is_none(),
+        "Proposal should not be persisted when intent is not found"
+    );
 
-    // However, provenance events should still be emitted
+    // Verify no provenance events were emitted for this failed evaluation
     let eval_events = runtime
         .store
         .provenance()
@@ -357,16 +352,11 @@ async fn test_evaluate_proposal_falls_back_to_minimal_intent_when_not_found() {
         .await
         .unwrap();
 
-    // Policy evaluation provenance should still be emitted even without persisted proposal
-    assert!(!eval_events.is_empty());
-
-    // Verify PolicyEvaluated has empty parent_edges (key provenance hardening requirement)
     assert!(
-        eval_events[0].parent_edges.is_empty(),
-        "PolicyEvaluated.parent_edges should be empty when intent is not found"
+        eval_events.is_empty(),
+        "No PolicyEvaluated event should be emitted when intent is not found (fail-closed)"
     );
 
-    // CRITICAL: ActionProposalSubmitted should NOT be emitted when proposal persistence fails
     let submission_events = runtime
         .store
         .provenance()
@@ -383,7 +373,243 @@ async fn test_evaluate_proposal_falls_back_to_minimal_intent_when_not_found() {
 
     assert!(
         submission_events.is_empty(),
-        "ActionProposalSubmitted should NOT be emitted when intent does not exist and proposal persistence fails"
+        "ActionProposalSubmitted should NOT be emitted when intent does not exist"
+    );
+}
+
+#[tokio::test]
+async fn test_rollback_class_floor_prevents_downgrade_below_intent_default() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Compile an intent with HTTP POST scope which infers R3 as default rollback class
+    let mut req = sample_intent_request();
+    req.requested_resource_scope = vec![ResourceSelector::HttpEndpoint {
+        method: ferrum_proto::HttpMethod::Post,
+        base_url: "https://api.example.com".to_string(),
+        path_prefix: "/v1/".to_string(),
+        mode: ResourceMode::Write,
+    }];
+    req.effect_type = Some(EffectType::ExternalApiCall);
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Verify the intent's default_rollback_class is R3 for HTTP POST
+    assert_eq!(
+        compile_resp.envelope.default_rollback_class,
+        RollbackClass::R3IrreversibleHighConsequence,
+        "HTTP POST intent should have default_rollback_class of R3"
+    );
+
+    // Create a proposal that tries to request R0 (below the intent default of R3)
+    // This should be elevated to R3 during evaluation, triggering RequireApproval
+    let proposal = ActionProposal {
+        proposal_id: ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Try downgrade".to_string(),
+        tool_name: "http.post".to_string(),
+        server_name: "http".to_string(),
+        raw_arguments: serde_json::json!({"url": "https://api.example.com/v1/users"}),
+        expected_effect: "post http request".to_string(), // ExternalApiCall - mutating
+        estimated_risk: RiskTier::High,
+        requested_rollback_class: RollbackClass::R0NativeReversible, // Intentionally below R3
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let eval_resp: ferrum_proto::EvaluateProposalResponse = serde_json::from_slice(&body).unwrap();
+
+    // The client requested R0 but the intent has R3 default.
+    // The floor should be enforced, so R0 should be elevated to R3.
+    // Since R3 requires approval, the decision should be RequireApproval.
+    assert_eq!(
+        eval_resp.decision,
+        Decision::RequireApproval,
+        "Downgrade attempt from R0 to R3 intent should be blocked - R3 requires approval"
+    );
+
+    // Verify the proposal was persisted with the ELEVATED rollback class (R3, not R0)
+    // This proves the floor was enforced at persistence time
+    let stored_proposal = runtime.store.proposals().get(proposal_id).await.unwrap();
+    assert!(stored_proposal.is_some(), "Proposal should be persisted");
+    let stored = stored_proposal.unwrap();
+
+    // The persisted proposal should have R3 (elevated from R0), proving the floor was enforced
+    assert_eq!(
+        stored.requested_rollback_class,
+        RollbackClass::R3IrreversibleHighConsequence,
+        "Persisted rollback class should be R3 (elevated from R0), proving floor was enforced"
+    );
+}
+
+#[tokio::test]
+async fn test_mutating_http_intent_compiles_to_r3() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Compile an intent with mutating HTTP POST scope
+    let mut req = sample_intent_request();
+    req.requested_resource_scope = vec![ResourceSelector::HttpEndpoint {
+        method: ferrum_proto::HttpMethod::Post,
+        base_url: "https://api.example.com".to_string(),
+        path_prefix: "/v1/".to_string(),
+        mode: ResourceMode::Write,
+    }];
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+
+    // Verify the intent's default_rollback_class is R3 for mutating HTTP
+    assert_eq!(
+        compile_resp.envelope.default_rollback_class,
+        RollbackClass::R3IrreversibleHighConsequence,
+        "Mutating HTTP (POST) intent should have default_rollback_class of R3"
+    );
+}
+
+#[tokio::test]
+async fn test_evaluate_proposal_with_r3_intent_requires_approval() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Compile an intent with R3 default (mutating HTTP POST)
+    let mut req = sample_intent_request();
+    req.requested_resource_scope = vec![ResourceSelector::HttpEndpoint {
+        method: ferrum_proto::HttpMethod::Post,
+        base_url: "https://api.example.com".to_string(),
+        path_prefix: "/v1/".to_string(),
+        mode: ResourceMode::Write,
+    }];
+    // Set effect_type to ExternalApiCall to match the proposal's mutating nature
+    // and avoid contradiction check firing
+    req.effect_type = Some(EffectType::ExternalApiCall);
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Create a proposal requesting R3
+    let proposal = ActionProposal {
+        proposal_id: ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Mutating HTTP call".to_string(),
+        tool_name: "http.post".to_string(),
+        server_name: "http".to_string(),
+        raw_arguments: serde_json::json!({"url": "https://api.example.com/v1/users"}),
+        expected_effect: "create a user".to_string(),
+        estimated_risk: RiskTier::High,
+        requested_rollback_class: RollbackClass::R3IrreversibleHighConsequence,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let eval_resp: ferrum_proto::EvaluateProposalResponse = serde_json::from_slice(&body).unwrap();
+
+    // R3 actions should require approval
+    assert_eq!(
+        eval_resp.decision,
+        Decision::RequireApproval,
+        "R3 action should require approval"
+    );
+
+    // Verify the rollback class was persisted correctly
+    let stored_proposal = runtime.store.proposals().get(proposal_id).await.unwrap();
+    assert!(stored_proposal.is_some());
+    assert_eq!(
+        stored_proposal.unwrap().requested_rollback_class,
+        RollbackClass::R3IrreversibleHighConsequence
     );
 }
 

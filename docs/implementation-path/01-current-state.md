@@ -14,10 +14,9 @@
 
 ## Repo chưa có
 - implementation parity day du cho moi adapter/runtime ngoai supported set hien tai
-- http adapter full parity va remote mutation recovery semantics ro rang
+- http adapter full parity beyond GET-only execute/verify va conservative no-op rollback
 - operator/config docs day du cho release
 
 ## Phase hợp lý nhất để tiếp tục
-1. quyet dinh recovery boundary cho remote/destructive HTTP mutations
-2. mo rong HTTP adapter qua GET/status-only initial slice hien tai
-3. tiep tuc operator/release docs va config handoff
+1. mo rong HTTP adapter qua GET/status-only initial slice hien tai ma khong broaden remote mutation recovery promises
+2. tiep tuc operator/release docs va config handoff

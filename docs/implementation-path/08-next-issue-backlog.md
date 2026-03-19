@@ -15,4 +15,4 @@
 
 ## P2
 - lineage query: da co execution lineage (`GET /v1/provenance/lineage/{execution_id}`) va provenance query endpoint (`POST /v1/provenance/query`) fail-closed; generic query/replay/graph tooling rong hon van la backlog
-- http adapter parity beyond GET/status-only initial slice
+- http adapter parity beyond GET/status-only execute/verify; explicit R3 boundary for mutating HTTP methods is now enforced server-side and rollback remains conservative no-op

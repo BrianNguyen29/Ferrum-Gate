@@ -572,7 +572,9 @@ impl RollbackAdapter for HttpRollbackAdapter {
             Self::extract_http_target(&contract.target).map_err(AdapterError::from)?;
 
         // Conservative no-op for this slice.
-        // GET has no side effects and remote mutation recovery remains outside guaranteed scope.
+        // GET has no side effects and rollback is a no-op.
+        // Mutating HTTP methods (POST/PUT/PATCH/DELETE) require explicit R3 boundary
+        // at intent compile time; this adapter cannot recover remote mutations.
 
         let mut metadata = JsonMap::new();
         metadata.insert(
@@ -583,7 +585,7 @@ impl RollbackAdapter for HttpRollbackAdapter {
         metadata.insert(
             "reason".to_string(),
             serde_json::json!(
-                "HTTP adapter rollback is conservative no-op; remote mutation recovery remains an explicit R3 boundary"
+                "HTTP adapter rollback is conservative no-op; mutating HTTP methods require explicit R3 boundary at compile time"
             ),
         );
 

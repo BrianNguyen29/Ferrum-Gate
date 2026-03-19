@@ -54,7 +54,7 @@
 ## ferrum-adapter-http
 - initial GET/status-only slice da co
 - gateway routing + ferrumd registry + local integration coverage da co
-- destructive remote mutation => R3 by default van la backlog
+- destructive remote mutation => R3 by default da duoc enforce server-side; adapter rollback van conservative no-op
 
 ## ferrum-graph
 - lineage query helpers
