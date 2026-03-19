@@ -12,6 +12,7 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 pub const ADAPTER_KEY: &str = "http";
+const APPROVED_HTTP_REQUEST_METADATA_KEY: &str = "approved_http_request";
 
 #[derive(Debug, Error)]
 pub enum HttpAdapterError {
@@ -39,29 +40,43 @@ impl From<HttpAdapterError> for AdapterError {
 /// HttpRollbackAdapter provides HTTP request capture and status-only verification.
 ///
 /// Supported operations:
-/// - `prepare`: captures request metadata (method, url, digest) for idempotent requests
-/// - `execute`: performs a minimal HTTP GET request for status verification
+/// - `prepare`: captures bound scope plus approved-request digest metadata
+/// - `execute`: performs HTTP GET requests only and records execute-time digest metadata
 /// - `verify`: validates expected HTTP status from verify_checks
-/// - `rollback`: conservative no-op for this slice (GET requests are inherently safe)
+/// - `rollback`: conservative no-op (remote mutation recovery is not established)
 /// - `compensate`: alias for rollback in this slice
 ///
 /// URL scope semantics:
 /// - `RollbackTarget::HttpRequest.url` represents the BOUND URL scope/prefix (base_url + path_prefix)
 /// - Execute-time payload may contain a concrete URL within that scope
 /// - Adapter validates fail-closed that actual URL stays within bound scope prefix
-/// - Method must match the bound method (only GET for this slice)
+/// - Method must match the bound method
+///
+/// Approved request digest semantics:
+/// - `prepare` may receive the approved HTTP request payload via transient metadata
+/// - GET digest = SHA256(method:url)
+/// - POST/PUT/PATCH/DELETE digest = SHA256(method:url:body) where body is canonical JSON or empty
+/// - The approved digest binds execute-time payloads to the concrete approved request without
+///   broadening rollback/recovery guarantees for remote mutation methods
 ///
 /// Metadata keys (clearer naming to distinguish bound vs executed):
 /// - `bound_url`: the allowed URL scope prefix from prepare
 /// - `bound_method`: the allowed method from prepare
+/// - `bound_request_digest`: digest of the bound scope target
+/// - `approved_url`: concrete approved URL resolved at prepare time
+/// - `approved_method`: concrete approved method resolved at prepare time
+/// - `approved_body_digest`: SHA256(canonical body) for the approved request body
+/// - `approved_request_digest`: digest of the approved concrete request
 /// - `executed_url`: the concrete URL actually executed (from payload or bound default)
 /// - `executed_method`: the method actually executed (from payload or bound default)
-/// - `executed_request_digest`: SHA256(method:executed_url) - digest of what was actually executed
+/// - `executed_body_digest`: SHA256(canonical body) for the execute-time request body
+/// - `executed_request_digest`: digest computed at execute time including actual body
 ///
-/// This slice is intentionally conservative:
-/// - Only HTTP GET is supported in execute (read-only, idempotent)
-/// - rollback/compensate are no-ops since GET has no side effects
+/// This slice is conservative:
+/// - execute/verify still only support GET
+/// - rollback/compensate are no-ops since mutation recovery guarantees are not yet established
 /// - Response bodies are not captured or compared
+/// - Destructive remote mutation recovery remains an explicit R3 boundary
 pub struct HttpRollbackAdapter {
     client: Client,
 }
@@ -91,12 +106,49 @@ impl HttpRollbackAdapter {
         }
     }
 
-    /// Compute a SHA256 digest from method and URL for request identification.
-    /// Used for executed request digest (based on actual executed URL/method).
+    /// Compute a SHA256 digest from method and URL for scope-level identification.
+    #[cfg_attr(not(test), allow(dead_code))]
     fn compute_request_digest(method: &HttpMethod, url: &str) -> String {
         let mut hasher = Sha256::new();
         hasher.update(format!("{:?}:{}", method, url).as_bytes());
         format!("{:x}", hasher.finalize())
+    }
+
+    /// Compute a SHA256 body-aware digest for concrete HTTP requests.
+    /// For GET: same as compute_request_digest (body not included).
+    /// For POST/PUT/PATCH/DELETE: digest includes canonical JSON serialization of body.
+    fn compute_body_aware_digest(
+        method: &HttpMethod,
+        url: &str,
+        body: &serde_json::Value,
+    ) -> String {
+        let mut hasher = Sha256::new();
+        if Self::is_mutation_method(method) && !body.is_null() {
+            let body_str = serde_json::to_string(body).unwrap_or_default();
+            hasher.update(format!("{:?}:{}:{}", method, url, body_str).as_bytes());
+        } else {
+            hasher.update(format!("{:?}:{}", method, url).as_bytes());
+        }
+        format!("{:x}", hasher.finalize())
+    }
+
+    fn compute_body_digest(body: &serde_json::Value) -> String {
+        let mut hasher = Sha256::new();
+        let body_str = if body.is_null() {
+            String::new()
+        } else {
+            serde_json::to_string(body).unwrap_or_default()
+        };
+        hasher.update(body_str.as_bytes());
+        format!("{:x}", hasher.finalize())
+    }
+
+    /// Returns true if the HTTP method is mutation-capable (has side effects).
+    fn is_mutation_method(method: &HttpMethod) -> bool {
+        matches!(
+            method,
+            HttpMethod::Post | HttpMethod::Put | HttpMethod::Patch | HttpMethod::Delete
+        )
     }
 
     /// Extract expected status code from verify_checks if HttpStatusExpected is present.
@@ -122,15 +174,15 @@ impl HttpRollbackAdapter {
         }
     }
 
-    /// Parse URL and method from execute payload if present.
-    /// Returns (payload_url, payload_method) where either or both may be None if not in payload.
+    /// Parse URL, method, and body from a request payload if present.
+    /// Returns (payload_url, payload_method, payload_body) where any may be absent.
     /// Stay fail-closed if the payload tries to provide malformed or unsupported values.
-    fn parse_payload_url_method(
+    fn parse_request_parts(
         payload: &serde_json::Value,
-    ) -> Result<(Option<String>, Option<HttpMethod>), HttpAdapterError> {
+    ) -> Result<(Option<String>, Option<HttpMethod>, serde_json::Value), HttpAdapterError> {
         let obj = match payload.as_object() {
             Some(o) => o,
-            None => return Ok((None, None)),
+            None => return Ok((None, None, serde_json::Value::Null)),
         };
 
         let url = match obj.get("url") {
@@ -164,7 +216,31 @@ impl HttpRollbackAdapter {
             None => None,
         };
 
-        Ok((url, method))
+        let body = obj.get("body").cloned().unwrap_or(serde_json::Value::Null);
+
+        Ok((url, method, body))
+    }
+
+    fn resolve_request_parts(
+        bound_method: &HttpMethod,
+        bound_url: &str,
+        payload: &serde_json::Value,
+    ) -> Result<(String, HttpMethod, serde_json::Value), HttpAdapterError> {
+        let (payload_url, payload_method, payload_body) = Self::parse_request_parts(payload)?;
+        let resolved_url = payload_url.unwrap_or_else(|| bound_url.to_string());
+        let resolved_method = payload_method.unwrap_or(bound_method.clone());
+
+        Self::validate_url_within_scope(&resolved_url, bound_url)
+            .map_err(HttpAdapterError::Validation)?;
+
+        if resolved_method != *bound_method {
+            return Err(HttpAdapterError::Validation(format!(
+                "executed method {:?} does not match bound method {:?}",
+                resolved_method, bound_method
+            )));
+        }
+
+        Ok((resolved_url, resolved_method, payload_body))
     }
 
     /// Validate that the executed URL stays within the bound URL scope.
@@ -232,7 +308,7 @@ impl RollbackAdapter for HttpRollbackAdapter {
         &self,
         request: &RollbackPrepareRequest,
     ) -> Result<PrepareReceipt, AdapterError> {
-        let (method, url, _) =
+        let (method, url, bound_request_digest) =
             Self::extract_http_target(&request.target).map_err(AdapterError::from)?;
 
         // Validate URL is well-formed
@@ -240,9 +316,18 @@ impl RollbackAdapter for HttpRollbackAdapter {
             return Err(AdapterError::Validation("URL cannot be empty".to_string()).into());
         }
 
-        let request_digest = Self::compute_request_digest(&method, &url);
+        let approved_request_payload = request
+            .metadata
+            .get(APPROVED_HTTP_REQUEST_METADATA_KEY)
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        let (approved_url, approved_method, approved_body) =
+            Self::resolve_request_parts(&method, &url, &approved_request_payload)
+                .map_err(AdapterError::from)?;
+        let approved_request_digest =
+            Self::compute_body_aware_digest(&approved_method, &approved_url, &approved_body);
+        let approved_body_digest = Self::compute_body_digest(&approved_body);
 
-        // Store clearer metadata with "bound_" prefix to indicate scope/prefix semantics
         let mut metadata = JsonMap::new();
         metadata.insert(
             "bound_method".to_string(),
@@ -251,7 +336,24 @@ impl RollbackAdapter for HttpRollbackAdapter {
         metadata.insert("bound_url".to_string(), serde_json::json!(url));
         metadata.insert(
             "bound_request_digest".to_string(),
-            serde_json::json!(request_digest),
+            serde_json::json!(bound_request_digest),
+        );
+        metadata.insert(
+            "approved_method".to_string(),
+            serde_json::json!(format!("{:?}", approved_method)),
+        );
+        metadata.insert("approved_url".to_string(), serde_json::json!(approved_url));
+        metadata.insert(
+            "approved_body_digest".to_string(),
+            serde_json::json!(approved_body_digest),
+        );
+        metadata.insert(
+            "approved_request_digest".to_string(),
+            serde_json::json!(approved_request_digest),
+        );
+        metadata.insert(
+            "approved_body_present".to_string(),
+            serde_json::json!(!approved_body.is_null()),
         );
 
         Ok(PrepareReceipt {
@@ -268,7 +370,6 @@ impl RollbackAdapter for HttpRollbackAdapter {
         let (bound_method, bound_url, _) =
             Self::extract_http_target(&contract.target).map_err(AdapterError::from)?;
 
-        // Only support GET for this conservative first slice
         if bound_method != HttpMethod::Get {
             return Err(AdapterError::Unsupported(format!(
                 "execute only supports HTTP GET in this slice; got {:?}",
@@ -277,40 +378,34 @@ impl RollbackAdapter for HttpRollbackAdapter {
             .into());
         }
 
-        // Parse URL and method from payload (execute-time concrete request)
-        let (payload_url, payload_method) =
-            Self::parse_payload_url_method(payload).map_err(AdapterError::from)?;
+        let (executed_url, executed_method, executed_body) =
+            Self::resolve_request_parts(&bound_method, &bound_url, payload)
+                .map_err(AdapterError::from)?;
 
-        // Resolve actual executed URL/method: payload overrides bound, else use bound
-        let executed_url = payload_url.unwrap_or_else(|| bound_url.clone());
-        let executed_method = payload_method.unwrap_or(bound_method.clone());
+        let executed_request_digest =
+            Self::compute_body_aware_digest(&executed_method, &executed_url, &executed_body);
+        let executed_body_digest = Self::compute_body_digest(&executed_body);
 
-        // Fail-closed: validate executed URL stays within bound scope prefix
-        if let Err(scope_err) = Self::validate_url_within_scope(&executed_url, &bound_url) {
-            return Err(AdapterError::Validation(scope_err).into());
+        if let Some(approved_request_digest) = contract
+            .metadata
+            .get("approved_request_digest")
+            .and_then(|value| value.as_str())
+        {
+            if approved_request_digest != executed_request_digest {
+                return Err(AdapterError::Validation(format!(
+                    "executed request digest does not match approved request digest: approved={} executed={}",
+                    approved_request_digest, executed_request_digest
+                ))
+                .into());
+            }
         }
 
-        // Fail-closed: validate method matches bound method
-        if executed_method != bound_method {
-            return Err(AdapterError::Validation(format!(
-                "executed method {:?} does not match bound method {:?}",
-                executed_method, bound_method
-            ))
-            .into());
-        }
-
-        // Execute the HTTP GET request using the resolved (possibly payload-derived) URL
         let response =
             self.client.get(&executed_url).send().await.map_err(|e| {
                 HttpAdapterError::RequestFailed(format!("GET request failed: {}", e))
             })?;
-
         let status = response.status().as_u16();
 
-        // Compute digest based on actual executed URL/method
-        let executed_request_digest = Self::compute_request_digest(&executed_method, &executed_url);
-
-        // Store clearer metadata distinguishing bound scope vs executed concrete request
         let mut metadata = JsonMap::new();
         metadata.insert(
             "bound_method".to_string(),
@@ -322,6 +417,14 @@ impl RollbackAdapter for HttpRollbackAdapter {
             serde_json::json!(format!("{:?}", executed_method)),
         );
         metadata.insert("executed_url".to_string(), serde_json::json!(executed_url));
+        metadata.insert(
+            "executed_body_digest".to_string(),
+            serde_json::json!(executed_body_digest),
+        );
+        metadata.insert(
+            "executed_body_present".to_string(),
+            serde_json::json!(!executed_body.is_null()),
+        );
         metadata.insert("status".to_string(), serde_json::json!(status));
         metadata.insert("executed".to_string(), serde_json::json!(true));
         metadata.insert(
@@ -339,6 +442,14 @@ impl RollbackAdapter for HttpRollbackAdapter {
     async fn verify(&self, contract: &RollbackContract) -> Result<VerifyReceipt, AdapterError> {
         let (bound_method, bound_url, _) =
             Self::extract_http_target(&contract.target).map_err(AdapterError::from)?;
+
+        if bound_method != HttpMethod::Get {
+            return Err(AdapterError::Unsupported(format!(
+                "verify only supports HTTP GET in this slice; got {:?}",
+                bound_method
+            ))
+            .into());
+        }
 
         // Get expected status from verify_checks
         let expected_status = Self::extract_expected_status(&contract.verify_checks);
@@ -397,15 +508,6 @@ impl RollbackAdapter for HttpRollbackAdapter {
             }
         };
 
-        // Only support GET for verification in this slice
-        if bound_method != HttpMethod::Get {
-            return Err(AdapterError::Unsupported(format!(
-                "verify only supports HTTP GET in this slice; got {:?}",
-                bound_method
-            ))
-            .into());
-        }
-
         // Determine URL to verify against: prefer executed_url from metadata, fall back to bound_url
         // This ensures verify uses the concrete URL that was actually executed, not just the scope prefix
         let verify_url = contract
@@ -415,27 +517,16 @@ impl RollbackAdapter for HttpRollbackAdapter {
             .unwrap_or(&bound_url)
             .to_string();
 
-        // For the conservative GET/no-op slice: when using execute-time status metadata
-        // fallback (i.e., no explicit verify_checks), trust the metadata without
-        // re-executing the HTTP request. This is safe because:
-        // 1. GET requests are idempotent - executing twice doesn't change state
-        // 2. The execute phase already captured the actual status
-        // 3. The alternative (making another HTTP call) could fail if the server
-        //    has shut down or the endpoint is no longer available
         let verify_checks_has_explicit_expectation =
             Self::extract_expected_status(&contract.verify_checks).is_some();
 
         let (verified, actual_status) = if verify_checks_has_explicit_expectation {
-            // Explicit check configured: re-execute HTTP using the executed URL from metadata
             let response = self.client.get(&verify_url).send().await.map_err(|e| {
                 HttpAdapterError::RequestFailed(format!("GET request failed: {}", e))
             })?;
             let actual = response.status().as_u16();
             (actual == expected_status, Some(actual))
         } else {
-            // No explicit check: trust execute-time status from metadata ONLY if successful.
-            // Stay fail-closed: non-success status codes (4xx, 5xx) do NOT auto-verify.
-            // This prevents a failed HTTP execution (e.g., 500) from incorrectly auto-committing.
             let is_success = (200..300).contains(&expected_status);
             (is_success, None)
         };
@@ -480,10 +571,8 @@ impl RollbackAdapter for HttpRollbackAdapter {
         let (_bound_method, _bound_url, bound_request_digest) =
             Self::extract_http_target(&contract.target).map_err(AdapterError::from)?;
 
-        // Conservative no-op for this slice:
-        // HTTP GET requests have no side effects and cannot be "rolled back"
-        // This aligns with fail-closed semantics where we don't attempt
-        // destructive operations that we cannot guarantee are safe
+        // Conservative no-op for this slice.
+        // GET has no side effects and remote mutation recovery remains outside guaranteed scope.
 
         let mut metadata = JsonMap::new();
         metadata.insert(
@@ -493,7 +582,9 @@ impl RollbackAdapter for HttpRollbackAdapter {
         metadata.insert("rollback".to_string(), serde_json::json!("no-op"));
         metadata.insert(
             "reason".to_string(),
-            serde_json::json!("HTTP GET has no side effects; rollback not applicable"),
+            serde_json::json!(
+                "HTTP adapter rollback is conservative no-op; remote mutation recovery remains an explicit R3 boundary"
+            ),
         );
 
         Ok(RecoveryReceipt {
@@ -526,6 +617,13 @@ mod tests {
     }
 
     fn make_prepare_request(target: RollbackTarget) -> RollbackPrepareRequest {
+        make_prepare_request_with_metadata(target, JsonMap::new())
+    }
+
+    fn make_prepare_request_with_metadata(
+        target: RollbackTarget,
+        metadata: JsonMap,
+    ) -> RollbackPrepareRequest {
         RollbackPrepareRequest {
             intent_id: ferrum_proto::IntentId::new(),
             proposal_id: ferrum_proto::ProposalId::new(),
@@ -538,7 +636,7 @@ mod tests {
             verify_checks: vec![],
             compensation_plan: vec![],
             auto_commit: false,
-            metadata: JsonMap::new(),
+            metadata,
         }
     }
 
@@ -652,18 +750,84 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_execute_rejects_non_get_methods() {
+    async fn test_prepare_captures_approved_request_digest_for_mutation_payload() {
         let adapter = HttpRollbackAdapter::new();
         let target = make_http_target(HttpMethod::Post, "https://example.com/api");
-        let contract = make_contract(target, JsonMap::new(), vec![]);
+        let mut metadata = JsonMap::new();
+        metadata.insert(
+            APPROVED_HTTP_REQUEST_METADATA_KEY.to_string(),
+            serde_json::json!({
+                "url": "https://example.com/api/users",
+                "method": "POST",
+                "body": {"name": "test"}
+            }),
+        );
+        let request = make_prepare_request_with_metadata(target, metadata);
 
-        let payload = serde_json::json!({});
-        let err = adapter.execute(&contract, &payload).await.unwrap_err();
+        let receipt = adapter.prepare(&request).await.unwrap();
+        let meta = receipt.adapter_metadata;
+
+        assert_eq!(
+            meta.get("approved_method").unwrap().as_str().unwrap(),
+            "Post"
+        );
+        assert_eq!(
+            meta.get("approved_url").unwrap().as_str().unwrap(),
+            "https://example.com/api/users"
+        );
+        assert_eq!(
+            meta.get("approved_body_present").unwrap().as_bool(),
+            Some(true)
+        );
+        assert!(meta.get("approved_body_digest").unwrap().is_string());
+        assert!(meta.get("approved_request_digest").unwrap().is_string());
+        assert_ne!(
+            meta.get("bound_request_digest"),
+            meta.get("approved_request_digest")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_prepare_rejects_approved_payload_outside_scope() {
+        let adapter = HttpRollbackAdapter::new();
+        let target = make_http_target(HttpMethod::Post, "https://example.com/api");
+        let mut metadata = JsonMap::new();
+        metadata.insert(
+            APPROVED_HTTP_REQUEST_METADATA_KEY.to_string(),
+            serde_json::json!({
+                "url": "https://example.com/other",
+                "method": "POST",
+                "body": {"name": "test"}
+            }),
+        );
+        let request = make_prepare_request_with_metadata(target, metadata);
+
+        let err = adapter.prepare(&request).await.unwrap_err();
         match err {
-            AdapterError::Unsupported(msg) => {
-                assert!(msg.contains("GET"));
-            }
-            _ => panic!("expected unsupported error, got {:?}", err),
+            AdapterError::Validation(msg) => assert!(msg.contains("not within bound scope")),
+            other => panic!("expected validation error, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_prepare_rejects_approved_payload_method_mismatch() {
+        let adapter = HttpRollbackAdapter::new();
+        let target = make_http_target(HttpMethod::Post, "https://example.com/api");
+        let mut metadata = JsonMap::new();
+        metadata.insert(
+            APPROVED_HTTP_REQUEST_METADATA_KEY.to_string(),
+            serde_json::json!({
+                "url": "https://example.com/api/users",
+                "method": "PUT",
+                "body": {"name": "test"}
+            }),
+        );
+        let request = make_prepare_request_with_metadata(target, metadata);
+
+        let err = adapter.prepare(&request).await.unwrap_err();
+        match err {
+            AdapterError::Validation(msg) => assert!(msg.contains("does not match bound method")),
+            other => panic!("expected validation error, got {:?}", other),
         }
     }
 
@@ -847,10 +1011,19 @@ mod tests {
         // Bound URL scope: base path only
         let bound_url = format!("http://127.0.0.1:{}/api", port);
         let target = make_http_target(HttpMethod::Get, &bound_url);
-        let contract = make_contract(target, JsonMap::new(), vec![]);
 
         // Payload URL is a sub-path within the bound scope
         let payload_url = format!("http://127.0.0.1:{}/api/users", port);
+        let mut metadata = JsonMap::new();
+        metadata.insert(
+            "approved_request_digest".to_string(),
+            serde_json::json!(HttpRollbackAdapter::compute_body_aware_digest(
+                &HttpMethod::Get,
+                &payload_url,
+                &serde_json::Value::Null,
+            )),
+        );
+        let contract = make_contract(target, metadata, vec![]);
         let payload = serde_json::json!({
             "url": payload_url,
             "method": "GET"
@@ -868,7 +1041,43 @@ mod tests {
             meta.get("executed_url").unwrap().as_str().unwrap(),
             payload_url
         );
+        assert_eq!(
+            meta.get("executed_request_digest"),
+            contract.metadata.get("approved_request_digest")
+        );
         let _ = handle.join();
+    }
+
+    #[tokio::test]
+    async fn test_execute_rejects_request_digest_mismatch_against_approved_request() {
+        let adapter = HttpRollbackAdapter::new();
+        let bound_url = "https://example.com/api";
+        let target = make_http_target(HttpMethod::Get, bound_url);
+        let approved_url = "https://example.com/api/users";
+        let executed_url = "https://example.com/api/projects";
+
+        let mut metadata = JsonMap::new();
+        metadata.insert(
+            "approved_request_digest".to_string(),
+            serde_json::json!(HttpRollbackAdapter::compute_body_aware_digest(
+                &HttpMethod::Get,
+                approved_url,
+                &serde_json::Value::Null,
+            )),
+        );
+        let contract = make_contract(target, metadata, vec![]);
+        let payload = serde_json::json!({
+            "url": executed_url,
+            "method": "GET"
+        });
+
+        let err = adapter.execute(&contract, &payload).await.unwrap_err();
+        match err {
+            AdapterError::Validation(msg) => {
+                assert!(msg.contains("does not match approved request digest"));
+            }
+            other => panic!("expected validation error, got {:?}", other),
+        }
     }
 
     /// Test that execute fails closed when payload URL is outside the bound scope.
@@ -1013,5 +1222,117 @@ mod tests {
             executed_url
         );
         let _ = handle.join();
+    }
+
+    #[tokio::test]
+    async fn test_verify_rejects_non_get_methods() {
+        let adapter = HttpRollbackAdapter::new();
+        let target = make_http_target(HttpMethod::Post, "https://example.com/api");
+        let contract = make_contract(target, JsonMap::new(), vec![]);
+
+        let err = adapter.verify(&contract).await.unwrap_err();
+        match err {
+            AdapterError::Unsupported(msg) => {
+                assert!(msg.contains("verify only supports HTTP GET"));
+            }
+            other => panic!("expected unsupported error, got {:?}", other),
+        }
+    }
+
+    /// Test that rollback is conservative no-op for all methods.
+    #[tokio::test]
+    async fn test_rollback_is_conservative_noop_for_all_methods() {
+        let methods = vec![
+            HttpMethod::Get,
+            HttpMethod::Post,
+            HttpMethod::Put,
+            HttpMethod::Patch,
+            HttpMethod::Delete,
+        ];
+
+        for method in methods {
+            let adapter = HttpRollbackAdapter::new();
+            let target = make_http_target(method.clone(), "https://example.com/api");
+            let contract = make_contract(target, JsonMap::new(), vec![]);
+
+            let receipt = adapter.rollback(&contract).await.unwrap();
+
+            // Rollback succeeds but is a no-op for all methods
+            assert!(
+                receipt.recovered,
+                "rollback should succeed (no-op) for {:?}",
+                method
+            );
+            let meta = receipt.adapter_metadata;
+            assert_eq!(meta.get("rollback").unwrap().as_str().unwrap(), "no-op");
+            assert!(
+                meta.get("reason")
+                    .unwrap()
+                    .as_str()
+                    .unwrap()
+                    .contains("R3 boundary"),
+                "reason should mention R3 boundary for {:?}",
+                method
+            );
+        }
+    }
+
+    /// Test that body-aware digest is correctly computed for mutations.
+    #[tokio::test]
+    async fn test_body_aware_digest_computation() {
+        let method = HttpMethod::Post;
+        let url = "https://example.com/api";
+
+        // Empty body
+        let empty_body = serde_json::Value::Null;
+        let digest_empty =
+            HttpRollbackAdapter::compute_body_aware_digest(&method, url, &empty_body);
+
+        // Object body
+        let obj_body = serde_json::json!({"key": "value"});
+        let digest_obj = HttpRollbackAdapter::compute_body_aware_digest(&method, url, &obj_body);
+
+        // Array body
+        let arr_body = serde_json::json!([1, 2, 3]);
+        let digest_arr = HttpRollbackAdapter::compute_body_aware_digest(&method, url, &arr_body);
+
+        // All digests should be different
+        assert_ne!(
+            digest_empty, digest_obj,
+            "empty vs object body should differ"
+        );
+        assert_ne!(
+            digest_empty, digest_arr,
+            "empty vs array body should differ"
+        );
+        assert_ne!(digest_obj, digest_arr, "object vs array body should differ");
+
+        // Same body should produce same digest
+        let digest_obj2 = HttpRollbackAdapter::compute_body_aware_digest(&method, url, &obj_body);
+        assert_eq!(
+            digest_obj, digest_obj2,
+            "same body should produce same digest"
+        );
+    }
+
+    /// Test that GET digest does not include body.
+    #[tokio::test]
+    async fn test_get_digest_ignores_body() {
+        let method = HttpMethod::Get;
+        let url = "https://example.com/api";
+
+        let digest_no_body =
+            HttpRollbackAdapter::compute_body_aware_digest(&method, url, &serde_json::Value::Null);
+        let digest_with_body = HttpRollbackAdapter::compute_body_aware_digest(
+            &method,
+            url,
+            &serde_json::json!({"key": "value"}),
+        );
+
+        // For GET, body should not affect digest
+        assert_eq!(
+            digest_no_body, digest_with_body,
+            "GET digest should be same regardless of body"
+        );
     }
 }

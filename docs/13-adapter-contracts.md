@@ -29,12 +29,12 @@
 - gateway `prepare` da route mutating `Git` binding sang git adapter va tao `RollbackTarget::GitRef`
 
 ## HTTP
-- initial slice: `prepare` capture method/url/request_digest cho `HttpRequest`
+- `prepare` capture bound method/url/request_digest cho `HttpRequest`
 - `HttpRequest.url` hien duoc hieu la bound URL scope/prefix (`base_url + path_prefix`), khong phai luc nao cung la concrete endpoint
-- `execute` hien chi support `GET` va capture HTTP status
-- `execute` uu tien `payload.url` / `payload.method` neu co; adapter fail-closed neu URL vuot khoi bound scope hoac method khong khop binding
-- execute-time metadata phan biet `bound_url` / `executed_url` de verify dung concrete endpoint da chay
+- gateway truyen approved HTTP proposal args vao `prepare` de adapter tinh `approved_request_digest` tren concrete request da approve
+- body-aware digest: GET = SHA256(method:url), POST/PUT/PATCH/DELETE = SHA256(method:url:body)
+- `execute` van chi support `GET`; adapter fail-closed neu `payload.url` / `payload.method` vuot bound scope, khong khop binding, hoac khong khop `approved_request_digest`
+- execute-time metadata phan biet `bound_url` / `approved_url` / `executed_url`; body duoc luu duoi dang digest thay vi raw body
 - `verify` support `HttpStatusExpected`; neu khong co explicit check thi chi auto-verify cho execute-time status `2xx`
-- `rollback` / `compensate` hien la conservative no-op cho `GET`
+- `rollback` / `compensate` la conservative no-op; destructive remote mutation van la explicit R3 boundary cho toi khi co recovery ro rang
 - gateway chi route mutating HTTP bindings sang adapter; HTTP read-only bindings van di qua enforcement path hien tai
-- destructive remote mutation van coi la R3 neu chua co recovery ro

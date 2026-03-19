@@ -1017,9 +1017,10 @@ async fn prepare_execution(
     let intent_id = existing.intent_id;
     let proposal_id = existing.proposal_id;
 
-    // Load proposal to get the correct rollback class - FAIL CLOSED if not found
-    let requested_rollback_class = match runtime.store.proposals().get(proposal_id).await {
-        Ok(Some(proposal)) => proposal.requested_rollback_class,
+    // Load proposal to get the correct rollback class and approved request arguments.
+    // HTTP prepare uses the approved arguments to bind a concrete request digest.
+    let proposal = match runtime.store.proposals().get(proposal_id).await {
+        Ok(Some(proposal)) => proposal,
         Ok(None) => {
             return Err(ApiProblem::new(
                 StatusCode::NOT_FOUND,
@@ -1038,6 +1039,7 @@ async fn prepare_execution(
             ));
         }
     };
+    let requested_rollback_class = proposal.requested_rollback_class.clone();
 
     // Determine adapter key and target from capability resource bindings
     // Load capability to inspect resource bindings for adapter routing
@@ -1072,7 +1074,7 @@ async fn prepare_execution(
     let adapter_key = determine_adapter_key_from_bindings(&capability.resource_bindings);
     let target = determine_rollback_target_from_bindings(&capability.resource_bindings);
 
-    let request = runtime.rollback.default_prepare_request(
+    let mut request = runtime.rollback.default_prepare_request(
         intent_id,
         proposal_id,
         execution_id,
@@ -1081,13 +1083,21 @@ async fn prepare_execution(
         target,
     );
 
+    if request.adapter_key == "http" {
+        request.metadata.insert(
+            "approved_http_request".to_string(),
+            proposal.raw_arguments.clone(),
+        );
+    }
+
     let response = runtime
         .rollback
         .prepare(request)
         .await
         .map_err(ApiProblem::internal)?;
 
-    let contract = response.contract.clone();
+    let mut contract = response.contract.clone();
+    contract.metadata.remove("approved_http_request");
     let now = Utc::now();
 
     if let Err(e) = runtime.store.rollback_contracts().insert(&contract).await {

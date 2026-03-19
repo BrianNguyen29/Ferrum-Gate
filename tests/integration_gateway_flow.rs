@@ -9448,11 +9448,31 @@ async fn test_http_execute_and_verify_through_gateway_uses_payload_url_within_sc
     assert_eq!(
         stored_contract
             .metadata
+            .get("approved_url")
+            .unwrap()
+            .as_str()
+            .unwrap(),
+        format!("http://127.0.0.1:{}/api/users", port)
+    );
+    assert_eq!(
+        stored_contract
+            .metadata
             .get("executed_url")
             .unwrap()
             .as_str()
             .unwrap(),
         format!("http://127.0.0.1:{}/api/users", port)
+    );
+    assert_eq!(
+        stored_contract.metadata.get("approved_request_digest"),
+        stored_contract.metadata.get("executed_request_digest")
+    );
+    assert!(
+        stored_contract
+            .metadata
+            .get("approved_http_request")
+            .is_none(),
+        "transient approved_http_request metadata should not be persisted"
     );
 
     // Step 7: Verify - should succeed using execute-time status metadata
