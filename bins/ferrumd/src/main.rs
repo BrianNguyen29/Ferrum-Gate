@@ -1,4 +1,7 @@
 use anyhow::Context;
+use ferrum_adapter_fs::FsRollbackAdapter;
+use ferrum_adapter_maildraft::MaildraftAdapter;
+use ferrum_adapter_sqlite::SqliteRollbackAdapter;
 use ferrum_cap::InMemoryCapabilityService;
 use ferrum_firewall::DefaultFirewall;
 use ferrum_gateway::{GatewayConfig, GatewayRuntime, run_http_server};
@@ -20,6 +23,9 @@ async fn main() -> anyhow::Result<()> {
 
     let mut registry = AdapterRegistry::default();
     registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
+    registry.register(Arc::new(FsRollbackAdapter::new("fs")));
+    registry.register(Arc::new(SqliteRollbackAdapter::new("sqlite")));
+    registry.register(Arc::new(MaildraftAdapter::new("maildraft")));
     let rollback = Arc::new(RollbackService::new(Arc::new(registry)));
 
     let store = Arc::new(SqliteStore::connect("sqlite::memory:?cache=shared").await?);
