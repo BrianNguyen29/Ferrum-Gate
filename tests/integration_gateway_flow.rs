@@ -6189,6 +6189,93 @@ async fn test_git_rollback_restores_repo_head_to_before_ref() {
     );
 }
 
+/// Test that verify uses persisted after_ref from execute, not stale before_ref.
+/// Scenario:
+/// 1. Prepare captures before_ref (HEAD at prepare time)
+/// 2. After prepare, a new commit advances HEAD to a different ref
+/// 3. Execute is called with after_ref = new HEAD (matches current HEAD, succeeds)
+/// 4. Verify MUST use the persisted after_ref (new HEAD), not fall back to before_ref
+///    (which would cause verify to fail since current HEAD != before_ref)
+#[tokio::test]
+async fn test_git_verify_uses_persisted_after_ref_not_stale_before_ref() {
+    let (_git_temp_dir, repo_path) = init_temp_git_repo();
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Initial HEAD at prepare time
+    let head_at_prepare = git_head(&repo_path);
+
+    // Run flow to prepared - captures head_at_prepare as before_ref
+    let (_intent_id, _proposal_id, execution_id, before_ref) =
+        run_git_flow_to_prepared_with_real_repo(&runtime, repo_path.clone()).await;
+    assert_eq!(
+        before_ref, head_at_prepare,
+        "before_ref should capture HEAD at prepare time"
+    );
+
+    // After prepare, make a new commit which advances HEAD
+    let head_after_new_commit = git_commit_change(&repo_path, "feature.txt", "new feature\n");
+    assert_ne!(
+        head_at_prepare, head_after_new_commit,
+        "new commit should produce different HEAD"
+    );
+    let current_head = git_head(&repo_path);
+    assert_eq!(current_head, head_after_new_commit);
+
+    // Execute with after_ref = new HEAD (which matches current HEAD, so adapter validation passes)
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({"after_ref": head_after_new_commit}),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        200,
+        "execute should succeed when after_ref matches current HEAD"
+    );
+
+    // Verify: MUST use persisted after_ref (head_after_new_commit), NOT before_ref (head_at_prepare)
+    // Without the fix, verify falls back to before_ref and fails because current_head != before_ref.
+    // With the fix, verify uses after_ref and succeeds because current_head == after_ref.
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let verify_resp: ferrum_proto::VerifyResponse = serde_json::from_slice(&body).unwrap();
+    assert!(
+        verify_resp.verified,
+        "verify should succeed because it uses persisted after_ref ({}), not stale before_ref ({}). \
+         current_head={}, before_ref={}, head_after_new_commit={}",
+        head_after_new_commit, before_ref, current_head, before_ref, head_after_new_commit
+    );
+}
+
 // ============================================
 // EXECUTION-TIME EMAIL DRAFT BINDING ENFORCEMENT TESTS (Phase C3)
 // ============================================

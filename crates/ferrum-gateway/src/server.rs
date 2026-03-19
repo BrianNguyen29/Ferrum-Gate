@@ -1228,14 +1228,23 @@ async fn execute_execution(
         tracing::warn!("failed to update execution state: {}", e);
     }
 
-    // Advance rollback contract state to ExecutedAwaitingVerify
+    // Merge adapter execute-time metadata (e.g. git after_ref) into contract and persist.
+    // This ensures verify/rollback read the post-execute state, not the stale prepare-time contract.
+    let mut updated_contract = contract;
+    for (key, value) in &receipt.adapter_metadata {
+        updated_contract.metadata.insert(key.clone(), value.clone());
+    }
+    updated_contract.state = RollbackState::ExecutedAwaitingVerify;
     if let Err(e) = runtime
         .store
         .rollback_contracts()
-        .update_state(contract_id, RollbackState::ExecutedAwaitingVerify)
+        .update(&updated_contract)
         .await
     {
-        tracing::warn!("failed to update rollback contract state: {}", e);
+        tracing::warn!(
+            "failed to update rollback contract with execute metadata: {}",
+            e
+        );
     }
 
     // Emit ToolCallExecuted provenance event
