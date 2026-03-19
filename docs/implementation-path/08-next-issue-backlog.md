@@ -6,10 +6,11 @@
 - P0: tests smoke
 - P1: firewall rule-based
 - P1: fs/sqlite/maildraft adapters
+- P1: git adapter local rollback + gateway wiring
 - P1: gateway happy path
+- P1: ledger hash chain
+- P1: ferrumctl debug/inspect/validate slices
 
 ## P2
 - lineage query: da co execution lineage (`GET /v1/provenance/lineage/{execution_id}`) va provenance query endpoint (`POST /v1/provenance/query`) fail-closed; generic query/replay/graph tooling rong hon van la backlog
-- ledger hash chain
-- ferrumctl hữu dụng hơn
-- git/http adapters
+- http adapter

@@ -46,8 +46,9 @@
 - no-send hard rule
 
 ## ferrum-adapter-git
-- before_ref/after_ref
-- revert/reset path
+- before_ref/after_ref local capture da co
+- reset-based rollback path da co
+- gateway routing + integration coverage da co
 
 ## ferrum-adapter-http
 - endpoint allowlist
@@ -67,7 +68,7 @@
 - emit provenance
 
 ## ferrumctl
-- debug/inspect/validate commands
+- debug/inspect/validate commands da co
 
 ## ferrum-testkit / tests
 - fixtures

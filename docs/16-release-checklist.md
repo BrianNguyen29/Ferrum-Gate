@@ -16,7 +16,7 @@
 - [x] scope mismatch deny test
 - [x] single-use capability test
 - [x] R3 no auto-commit test
-- [x] rollback/compensate test (gateway + fs/sqlite/maildraft adapter-backed)
+- [x] rollback/compensate test (gateway + fs/sqlite/maildraft adapter-backed, git rollback-backed)
 - [x] poisoned context test
 
 ## Operator readiness
