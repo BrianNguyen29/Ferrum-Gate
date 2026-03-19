@@ -24,9 +24,9 @@
 - `cargo test --package ferrum-firewall`: `35/35` pass.
 - `cargo test --package integration-tests --test integration_gateway_flow`: `64/64` pass.
 - `cargo test --package integration-tests --test integration_poisoned_context`: `5/5` pass (curated poisoned-context regression suite).
-- `cargo test --package integration-tests --test integration_lineage_chain`: `3/3` pass (provenance minimum-chain/lineage evidence tests).
+- `cargo test --package integration-tests --test integration_lineage_chain`: `5/5` pass (provenance minimum-chain/lineage evidence tests, including execution lineage endpoint).
 - `cargo test`: full workspace pass tren branch `feat/firewall-mvp`.
-- Provenance edges are now persisted to `provenance_edges` table and queryable via `ProvenanceRepo::get_edges_to()`.
+- Provenance edges are now persisted to `provenance_edges` table and queryable via `ProvenanceRepo::get_edges_to()`, and execution lineage is available via `GET /v1/provenance/lineage/{execution_id}`.
 - `docs/implementation-path/11-phase-f-evidence.md`: handoff tai lieu cho supported flows, evidence links, va open gaps hien tai.
 - Gateway firewall coverage hien da co trust-context derivation, read-only contradiction blocking, MCP scope contradiction blocking, compile-time taint lineage propagation, DLP redact/detect, execution-time enforcement cho ca 5 resource binding types (File, Http, Sqlite, Git, EmailDraft), va regression tests cho tat ca enforcement paths bao gom: empty-scope read-only bypass, host/method/header mismatch, missing binding, file path mismatch, file traversal, write-on-read binding, Sqlite db_path/table violations, Git repo_path/ref violations, va EmailDraft recipient/send violations.
 - Gateway hardening/evidence hien da co them capability single-use deny, scope mismatch deny tai mint time, direct R3 no-auto-commit evidence, fs/sqlite/maildraft adapter-backed recovery evidence cho rollback delete / compensate restore, va explicit prepare-time deny cho `EmailDraft allow_send=true` de tranh silently fall-through sang `noop`.

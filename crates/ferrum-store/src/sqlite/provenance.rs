@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use ferrum_proto::{EventId, ProvenanceEdge, ProvenanceEvent, ProvenanceQueryRequest};
+use ferrum_proto::{EventId, ExecutionId, ProvenanceEdge, ProvenanceEvent, ProvenanceQueryRequest};
 use sqlx::{Row, SqlitePool};
 
 use crate::{ProvenanceRepo, Result};
@@ -181,5 +181,82 @@ impl ProvenanceRepo for SqliteProvenanceRepo {
         }
 
         Ok(edges)
+    }
+
+    async fn get_lineage_by_execution(
+        &self,
+        execution_id: ExecutionId,
+    ) -> Result<Vec<ProvenanceEvent>> {
+        use std::collections::HashSet;
+
+        // Phase 1: collect all event_ids reachable from this execution
+        // Start with events directly tagged with execution_id
+        let direct_rows =
+            sqlx::query("SELECT event_id FROM provenance_events WHERE execution_id = ?1")
+                .bind(execution_id.to_string())
+                .fetch_all(&self.pool)
+                .await?;
+
+        let mut frontier: Vec<EventId> = Vec::new();
+        let mut visited: HashSet<EventId> = HashSet::new();
+
+        for row in direct_rows {
+            let event_id_str: String = row.try_get("event_id")?;
+            let uuid = uuid::Uuid::parse_str(&event_id_str)
+                .map_err(|e| crate::StoreError::Internal(format!("invalid event_id: {}", e)))?;
+            let event_id = EventId(uuid);
+            visited.insert(event_id);
+            frontier.push(event_id);
+        }
+
+        // Phase 2: iteratively walk backwards via edges (BFS)
+        while let Some(current_event_id) = frontier.pop() {
+            let edges = self.get_edges_to(current_event_id).await?;
+            for edge in edges {
+                if !visited.contains(&edge.from_event_id) {
+                    visited.insert(edge.from_event_id);
+                    frontier.push(edge.from_event_id);
+                }
+            }
+        }
+
+        // Phase 3: fetch full event records for all visited ids
+        if visited.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut events: Vec<ProvenanceEvent> = Vec::with_capacity(visited.len());
+
+        // Build a query with IN clause using placeholders
+        // SQLite LIMIT for IN clause: we'll batch in chunks of 50
+        let visited_vec: Vec<EventId> = visited.into_iter().collect();
+        let chunk_size = 50;
+
+        for chunk in visited_vec.chunks(chunk_size) {
+            let placeholders: Vec<&str> = chunk.iter().map(|_| "?").collect();
+            let sql = format!(
+                "SELECT raw_json FROM provenance_events WHERE event_id IN ({})",
+                placeholders.join(",")
+            );
+
+            let mut query = sqlx::query(&sql);
+            for id in chunk {
+                query = query.bind(id.to_string());
+            }
+
+            let rows = query.fetch_all(&self.pool).await?;
+            for row in rows {
+                let raw_json: String = row.try_get("raw_json")?;
+                let event: ProvenanceEvent = serde_json::from_str(&raw_json).map_err(|e| {
+                    crate::StoreError::Internal(format!("failed to deserialize event: {}", e))
+                })?;
+                events.push(event);
+            }
+        }
+
+        // Sort by occurred_at ascending
+        events.sort_by(|a, b| a.occurred_at.cmp(&b.occurred_at));
+
+        Ok(events)
     }
 }

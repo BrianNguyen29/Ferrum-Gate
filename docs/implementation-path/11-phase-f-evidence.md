@@ -18,7 +18,7 @@ Tai lieu nay khoa lai phan evidence/docs cho Phase F theo pham vi branch hien ta
 
 - `tests/integration_gateway_flow.rs`: happy path, deny, quarantine, rollback, compensate, approval, draft-only, single-use capability, scope mismatch deny, execution binding enforcement cho ca 5 loai `File`/`Http`/`Sqlite`/`Git`/`EmailDraft`, va fs/sqlite/maildraft adapter-backed recovery evidence.
 - `tests/integration_poisoned_context.rs`: curated poisoned-context regression suite cho trust labeling, taint propagation, quarantine, read-only fail-closed, va MCP scope fail-closed.
-- `tests/integration_lineage_chain.rs`: minimum lineage chain, persisted lineage edges, terminal rollback lineage.
+- `tests/integration_lineage_chain.rs`: minimum lineage chain, persisted lineage edges, execution lineage endpoint, terminal rollback lineage.
 - `docs/16-release-checklist.md`: release-facing readiness checklist.
 - `docs/91-phase-success-criteria-and-kpis.md`: phase-level release gate va KPI snapshot.
 
@@ -52,6 +52,7 @@ Nhung flow duoi day da co automated evidence trong repo:
 - minimum lineage chain theo `docs/04-runtime-flow.md`
 - `parent_edges` duoc persist vao `provenance_edges`
 - lineage edge co the query lai qua store repo
+- `GET /v1/provenance/lineage/{execution_id}` da reconstruct duoc execution lineage theo event graph da persist
 - terminal events cho commit va rollback da co integration evidence
 
 ### 3.4 Approval / draft-only scope hien tai
@@ -66,7 +67,7 @@ Nhung flow duoi day da co automated evidence trong repo:
 Nhung muc duoi day van la open gap hoac gioi han evidence, khong nen bi hieu nham la "done":
 
 - supported flow evidence hien tap trung vao gateway + store + firewall path duoc test trong repo; chua phai tuyen bo parity cho moi adapter/runtime ben ngoai
-- lineage query moi o muc incoming-edge persistence/query; replay/query fabric rong hon van la backlog
+- lineage query da co moc toi thieu o muc execution lineage endpoint; generic provenance query, replay/query fabric, va graph tooling rong hon van la backlog
 - adapter-backed rollback/compensate evidence hien da co truc tiep cho filesystem, sqlite, va maildraft draft-only path; `EmailSend` va adapter khac van chua duoc tuyen bo parity; LUU Y: `allow_send=true` EmailDraft bindings bay gio duoc explicitly denied tai gateway prepare-time (PolicyDenied 403), thay vi silently fall-through to noop nhu truoc do - day la improvement ve fail-closed semantics
 - config/operator docs, CLI usefulness, va mot so release-checklist items khac van chua dong
 - docs nay khong thay the backlog; cac nang cap tiep theo van nen tiep tuc track o `docs/implementation-path/08-next-issue-backlog.md`

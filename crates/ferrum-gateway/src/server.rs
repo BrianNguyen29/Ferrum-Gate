@@ -122,6 +122,10 @@ pub fn build_router(runtime: GatewayRuntime) -> Router {
             "/v1/approvals/{approval_id}/resolve",
             post(resolve_approval),
         )
+        .route(
+            "/v1/provenance/lineage/{execution_id}",
+            get(get_execution_lineage),
+        )
         .with_state(Arc::new(runtime))
         .layer(TraceLayer::new_for_http())
 }
@@ -1903,6 +1907,48 @@ async fn resolve_approval(
     }
 
     Ok(Json(approval))
+}
+
+async fn get_execution_lineage(
+    State(runtime): State<Arc<GatewayRuntime>>,
+    Path(execution_id_str): Path<String>,
+) -> Result<Json<LineageResponse>, ApiProblem> {
+    let execution_id = parse_execution_id(&execution_id_str)?;
+
+    // Verify the execution record exists (fail-soft: still return lineage if found)
+    let execution_exists = runtime
+        .store
+        .executions()
+        .get(execution_id)
+        .await
+        .map_err(|err| ApiProblem::internal(err.into()))?
+        .is_some();
+
+    if !execution_exists {
+        tracing::warn!(
+            "lineage requested for unknown execution_id: {}",
+            execution_id
+        );
+    }
+
+    // Reconstruct lineage by walking edges backwards from events tagged with this execution
+    let events = runtime
+        .store
+        .provenance()
+        .get_lineage_by_execution(execution_id)
+        .await
+        .map_err(|err| ApiProblem::internal(err.into()))?;
+
+    Ok(Json(LineageResponse {
+        execution_id,
+        events,
+    }))
+}
+
+#[derive(serde::Serialize)]
+pub(crate) struct LineageResponse {
+    pub(crate) execution_id: ExecutionId,
+    pub(crate) events: Vec<ProvenanceEvent>,
 }
 
 fn parse_approval_id(value: &str) -> Result<ApprovalId, ApiProblem> {

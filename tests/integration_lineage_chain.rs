@@ -48,6 +48,7 @@ async fn create_test_runtime() -> (TempDir, GatewayRuntime, SqliteStore) {
 
     let mut registry = AdapterRegistry::default();
     registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
+    registry.register(Arc::new(ferrum_adapter_fs::FsRollbackAdapter::new("fs")));
     let rollback = Arc::new(RollbackService::new(Arc::new(registry)));
 
     let firewall: Arc<dyn SemanticFirewall> = Arc::new(DefaultFirewall::new());
@@ -56,7 +57,7 @@ async fn create_test_runtime() -> (TempDir, GatewayRuntime, SqliteStore) {
     (temp_dir, runtime, store)
 }
 
-fn sample_mutation_intent_request() -> IntentCompileRequest {
+fn sample_mutation_intent_request(path: &str) -> IntentCompileRequest {
     IntentCompileRequest {
         principal_id: ferrum_proto::PrincipalId::new(),
         session_id: None,
@@ -66,14 +67,18 @@ fn sample_mutation_intent_request() -> IntentCompileRequest {
         agent_plan_summary: None,
         trusted_context: ferrum_proto::JsonMap::new(),
         raw_inputs: vec![],
-        requested_resource_scope: vec![],
+        requested_resource_scope: vec![ferrum_proto::ResourceSelector::FilesystemPath {
+            path: path.to_string(),
+            mode: ResourceMode::Write,
+            content_hash: None,
+        }],
         requested_risk_tier: Some(RiskTier::Medium),
         effect_type: Some(EffectType::FileMutation),
         metadata: ferrum_proto::JsonMap::new(),
     }
 }
 
-fn sample_mutation_proposal(intent_id: ferrum_proto::IntentId) -> ActionProposal {
+fn sample_mutation_proposal(intent_id: ferrum_proto::IntentId, path: &str) -> ActionProposal {
     ActionProposal {
         proposal_id: ferrum_proto::ProposalId::new(),
         intent_id,
@@ -81,7 +86,7 @@ fn sample_mutation_proposal(intent_id: ferrum_proto::IntentId) -> ActionProposal
         title: "Mutate file".to_string(),
         tool_name: "fs.write".to_string(),
         server_name: "workspace".to_string(),
-        raw_arguments: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        raw_arguments: serde_json::json!({"path": path, "content": "hello"}),
         expected_effect: "write a file".to_string(),
         estimated_risk: RiskTier::Medium,
         requested_rollback_class: RollbackClass::R0NativeReversible,
@@ -94,10 +99,12 @@ fn sample_mutation_proposal(intent_id: ferrum_proto::IntentId) -> ActionProposal
 
 #[tokio::test]
 async fn test_minimum_lineage_chain_events_exist() {
-    let (_temp_dir, runtime, store) = create_test_runtime().await;
+    let (temp_dir, runtime, store) = create_test_runtime().await;
+    let file_path = temp_dir.path().join("test.txt");
+    let file_path = file_path.to_string_lossy().to_string();
 
     // Step 1: Compile intent
-    let req = sample_mutation_intent_request();
+    let req = sample_mutation_intent_request(&file_path);
     let app = build_router(runtime.clone());
 
     let response = app
@@ -120,7 +127,7 @@ async fn test_minimum_lineage_chain_events_exist() {
     let intent_id = compile_resp.envelope.intent_id;
 
     // Step 2: Evaluate proposal
-    let proposal = sample_mutation_proposal(intent_id);
+    let proposal = sample_mutation_proposal(intent_id, &file_path);
     let proposal_id = proposal.proposal_id;
 
     let app = build_router(runtime.clone());
@@ -148,7 +155,7 @@ async fn test_minimum_lineage_chain_events_exist() {
             tool_version: None,
         },
         resource_bindings: vec![ResourceBinding::File {
-            path: "/tmp/test.txt".to_string(),
+            path: file_path.clone(),
             mode: ResourceMode::Write,
             required_hash: None,
         }],
@@ -231,7 +238,7 @@ async fn test_minimum_lineage_chain_events_exist() {
     // Step 6: Execute
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
-        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        payload: serde_json::json!({"path": file_path, "content": "hello"}),
     };
 
     let app = build_router(runtime.clone());
@@ -387,10 +394,12 @@ async fn test_minimum_lineage_chain_events_exist() {
 
 #[tokio::test]
 async fn test_lineage_chain_is_contiguous_no_missing_events() {
-    let (_temp_dir, runtime, store) = create_test_runtime().await;
+    let (temp_dir, runtime, store) = create_test_runtime().await;
+    let file_path = temp_dir.path().join("test.txt");
+    let file_path = file_path.to_string_lossy().to_string();
 
     // Run the same flow to get a complete lineage
-    let req = sample_mutation_intent_request();
+    let req = sample_mutation_intent_request(&file_path);
     let app = build_router(runtime.clone());
 
     let response = app
@@ -412,7 +421,7 @@ async fn test_lineage_chain_is_contiguous_no_missing_events() {
     let intent_id = compile_resp.envelope.intent_id;
 
     // Create and evaluate proposal
-    let proposal = sample_mutation_proposal(intent_id);
+    let proposal = sample_mutation_proposal(intent_id, &file_path);
     let proposal_id = proposal.proposal_id;
 
     let app = build_router(runtime.clone());
@@ -487,10 +496,12 @@ async fn test_lineage_chain_is_contiguous_no_missing_events() {
 
 #[tokio::test]
 async fn test_rollback_lineage_chain_has_terminal_event() {
-    let (_temp_dir, runtime, store) = create_test_runtime().await;
+    let (temp_dir, runtime, store) = create_test_runtime().await;
+    let file_path = temp_dir.path().join("test.txt");
+    let file_path = file_path.to_string_lossy().to_string();
 
     // Run full flow to commit
-    let req = sample_mutation_intent_request();
+    let req = sample_mutation_intent_request(&file_path);
     let app = build_router(runtime.clone());
 
     let response = app
@@ -511,7 +522,7 @@ async fn test_rollback_lineage_chain_has_terminal_event() {
     let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
     let intent_id = compile_resp.envelope.intent_id;
 
-    let proposal = sample_mutation_proposal(intent_id);
+    let proposal = sample_mutation_proposal(intent_id, &file_path);
     let proposal_id = proposal.proposal_id;
 
     // Evaluate proposal
@@ -538,7 +549,7 @@ async fn test_rollback_lineage_chain_has_terminal_event() {
             tool_version: None,
         },
         resource_bindings: vec![ResourceBinding::File {
-            path: "/tmp/test.txt".to_string(),
+            path: file_path.clone(),
             mode: ResourceMode::Write,
             required_hash: None,
         }],
@@ -617,7 +628,7 @@ async fn test_rollback_lineage_chain_has_terminal_event() {
     // Execute
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
-        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        payload: serde_json::json!({"path": file_path, "content": "hello"}),
     };
 
     let app = build_router(runtime.clone());
@@ -694,5 +705,278 @@ async fn test_rollback_lineage_chain_has_terminal_event() {
     assert!(
         matches!(execution.state, ExecutionState::RolledBack),
         "Execution should be in RolledBack state"
+    );
+}
+
+#[tokio::test]
+async fn test_get_execution_lineage_endpoint() {
+    let (temp_dir, runtime, _store) = create_test_runtime().await;
+    let file_path = temp_dir.path().join("test.txt");
+    let file_path = file_path.to_string_lossy().to_string();
+
+    // Run full flow to get a committed execution
+    let req = sample_mutation_intent_request(&file_path);
+    let app = build_router(runtime.clone());
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    let proposal = sample_mutation_proposal(intent_id, &file_path);
+    let proposal_id = proposal.proposal_id;
+
+    let app = build_router(runtime.clone());
+    let _response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Mint capability
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "workspace".to_string(),
+            tool_name: "fs.write".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![ResourceBinding::File {
+            path: file_path.clone(),
+            mode: ResourceMode::Write,
+            required_hash: None,
+        }],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    // Authorize
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    // Prepare
+    let app = build_router(runtime.clone());
+    let _response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Execute
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({"path": file_path, "content": "hello"}),
+    };
+
+    let app = build_router(runtime.clone());
+    let _response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Verify (auto-commits for R0)
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+
+    let app = build_router(runtime.clone());
+    let _response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // === Hit the new lineage endpoint ===
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/provenance/lineage/{}", execution_id))
+                .method(axum::http::Method::GET)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200, "lineage endpoint should return 200");
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let lineage: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    // Verify response structure
+    assert!(
+        lineage.get("execution_id").is_some(),
+        "response should contain execution_id"
+    );
+    assert!(
+        lineage.get("events").is_some(),
+        "response should contain events array"
+    );
+
+    let events = lineage.get("events").unwrap().as_array().unwrap();
+    assert!(
+        !events.is_empty(),
+        "lineage should contain at least one event"
+    );
+
+    // Verify we have events from the minimum lineage chain
+    let event_kinds: Vec<_> = events
+        .iter()
+        .map(|e| e.get("kind").and_then(|k| k.as_str()).unwrap_or(""))
+        .collect();
+
+    assert!(
+        event_kinds.contains(&"SideEffectCommitted"),
+        "lineage should include SideEffectCommitted event, got: {:?}",
+        event_kinds
+    );
+    assert!(
+        event_kinds.contains(&"ToolCallExecuted"),
+        "lineage should include ToolCallExecuted event, got: {:?}",
+        event_kinds
+    );
+
+    // Verify temporal ordering
+    let timestamps: Vec<_> = events.iter().filter_map(|e| e.get("occurred_at")).collect();
+    for i in 1..timestamps.len() {
+        let curr = timestamps[i];
+        let prev = timestamps[i - 1];
+        // timestamps should be comparable as strings (ISO 8601)
+        let curr_str = curr.as_str().unwrap_or("");
+        let prev_str = prev.as_str().unwrap_or("");
+        assert!(
+            curr_str >= prev_str,
+            "events should be in chronological order"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_get_lineage_unknown_execution_returns_empty_events() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    let unknown_execution_id = ferrum_proto::ExecutionId::new();
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/provenance/lineage/{}", unknown_execution_id))
+                .method(axum::http::Method::GET)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Should return 200 with empty events (fail-soft)
+    assert_eq!(
+        response.status(),
+        200,
+        "lineage endpoint should return 200 even for unknown execution"
+    );
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let lineage: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    let events = lineage.get("events").unwrap().as_array().unwrap();
+    assert!(
+        events.is_empty(),
+        "unknown execution should return empty events"
     );
 }
