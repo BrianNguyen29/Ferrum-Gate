@@ -4,13 +4,13 @@ HTTP adapter for idempotency-aware rollback and compensation.
 
 ## Status
 
-Current slice: HTTP execute/verify with approved/bound concrete HTTP methods (GET/POST/PUT/PATCH/DELETE) with body handling. Verify uses execute-time metadata for mutations (no replay).
+Current slice: HTTP execute/verify with approved/bound concrete HTTP methods (GET/POST/PUT/PATCH/DELETE), body handling, and approved header-shape binding. Verify uses execute-time metadata for mutations (no replay).
 
 ## Supported Operations
 
 | Operation | Behavior |
 |-----------|----------|
-| `prepare` | Captures bound scope and approved concrete request digest |
+| `prepare` | Captures bound scope and approved concrete request digest, including headers when present |
 | `execute` | Performs HTTP requests (GET/POST/PUT/PATCH/DELETE); rejects digest mismatch |
 | `verify` | Validates status: GET can re-request; mutations use execute-time metadata only |
 | `rollback` | Conservative no-op (mutation recovery is R3 boundary) |
@@ -18,10 +18,11 @@ Current slice: HTTP execute/verify with approved/bound concrete HTTP methods (GE
 
 ## Body-Aware Digest Semantics
 
-For all HTTP methods, the approved request digest is computed as:
+For all HTTP methods, the approved request digest is computed from request shape:
 
-- `GET`: digest = SHA256(method:url) - no body involved
-- `POST/PUT/PATCH/DELETE`: digest = SHA256(method:url:body) where body is canonical JSON or empty
+- `GET`: digest = SHA256(method:url[:headers])
+- `POST/PUT/PATCH/DELETE`: digest = SHA256(method:url:body[:headers]) where body is canonical JSON or empty
+- Header names are canonicalized to lowercase and sorted before digesting
 
 This lets prepare bind the approved request shape without broadening remote mutation execution or recovery semantics.
 
@@ -41,7 +42,7 @@ This lets prepare bind the approved request shape without broadening remote muta
 
 - Response bodies are not captured or compared
 - rollback/compensate are no-ops for all methods (mutation recovery is R3 boundary)
-- No authentication or custom headers in this slice
+- No dedicated auth object yet; auth/custom request shape is currently supported through allowed headers only
 
 ## Usage
 
@@ -59,11 +60,15 @@ register_http_adapter(&mut registry);
 {
   "url": "https://example.com/api/users",
   "method": "POST",
-  "body": {"name": "test", "email": "test@example.com"}
+  "body": {"name": "test", "email": "test@example.com"},
+  "headers": {
+    "authorization": "Bearer example-token",
+    "x-request-id": "req-123"
+  }
 }
 ```
 
-All fields are optional. If omitted, bound values from prepare are used. For GET, body is ignored for digest purposes.
+All fields are optional. If omitted, bound values from prepare are used. For GET, body is ignored for digest purposes. Headers are validated by gateway allowlist enforcement and bound into request digest when present.
 
 ## Verification Checks
 

@@ -32,9 +32,9 @@
 - `prepare` capture bound method/url/request_digest cho `HttpRequest`
 - `HttpRequest.url` hien duoc hieu la bound URL scope/prefix (`base_url + path_prefix`), khong phai luc nao cung la concrete endpoint
 - gateway truyen approved HTTP proposal args vao `prepare` de adapter tinh `approved_request_digest` tren concrete request da approve
-- body-aware digest: GET = SHA256(method:url), POST/PUT/PATCH/DELETE = SHA256(method:url:body)
-- `execute` van chi support `GET`; adapter fail-closed neu `payload.url` / `payload.method` vuot bound scope, khong khop binding, hoac khong khop `approved_request_digest`
-- execute-time metadata phan biet `bound_url` / `approved_url` / `executed_url`; body duoc luu duoi dang digest thay vi raw body
-- `verify` support `HttpStatusExpected`; neu khong co explicit check thi chi auto-verify cho execute-time status `2xx`
+- request-shape digest da body-aware va header-aware: GET = SHA256(method:url[:headers]), POST/PUT/PATCH/DELETE = SHA256(method:url:body[:headers]); header names duoc canonicalize lowercase truoc khi hash
+- `execute` support GET/POST/PUT/PATCH/DELETE; adapter fail-closed neu `payload.url` / `payload.method` vuot bound scope, khong khop binding, hoac khong khop `approved_request_digest`
+- execute-time metadata phan biet `bound_url` / `approved_url` / `executed_url`; body va headers duoc luu duoi dang digest thay vi raw values
+- `verify` support `HttpStatusExpected`; GET co the re-request, con mutation methods chi verify bang execute-time metadata va khong replay side effect
 - `rollback` / `compensate` la conservative no-op; destructive remote mutation van la explicit R3 boundary cho toi khi co recovery ro rang
 - gateway chi route mutating HTTP bindings sang adapter; HTTP read-only bindings van di qua enforcement path hien tai

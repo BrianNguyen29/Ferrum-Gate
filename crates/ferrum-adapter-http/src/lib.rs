@@ -7,8 +7,9 @@ use ferrum_rollback::{
     AdapterError, AdapterRegistry, ExecuteReceipt, PrepareReceipt, RecoveryReceipt,
     RollbackAdapter, VerifyReceipt,
 };
-use reqwest::{Client, Url};
+use reqwest::{Client, Url, header::HeaderName};
 use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, HashMap};
 use thiserror::Error;
 
 pub const ADAPTER_KEY: &str = "http";
@@ -37,7 +38,7 @@ impl From<HttpAdapterError> for AdapterError {
     }
 }
 
-/// HttpRollbackAdapter provides HTTP request capture and status-only verification.
+/// HttpRollbackAdapter provides conservative HTTP request capture and verification.
 ///
 /// Supported operations:
 /// - `prepare`: captures bound scope plus approved-request digest metadata
@@ -54,8 +55,9 @@ impl From<HttpAdapterError> for AdapterError {
 ///
 /// Approved request digest semantics:
 /// - `prepare` may receive the approved HTTP request payload via transient metadata
-/// - GET digest = SHA256(method:url)
-/// - POST/PUT/PATCH/DELETE digest = SHA256(method:url:body) where body is canonical JSON or empty
+/// - GET digest = SHA256(method:url[:headers])
+/// - POST/PUT/PATCH/DELETE digest = SHA256(method:url:body[:headers]) where body is canonical JSON or empty
+/// - Header names are canonicalized to lowercase before digesting
 /// - The approved digest binds execute-time payloads to the concrete approved request without
 ///   broadening rollback/recovery guarantees for remote mutation methods
 ///
@@ -70,11 +72,13 @@ impl From<HttpAdapterError> for AdapterError {
 /// - `approved_url`: concrete approved URL resolved at prepare time
 /// - `approved_method`: concrete approved method resolved at prepare time
 /// - `approved_body_digest`: SHA256(canonical body) for the approved request body
+/// - `approved_headers_digest`: SHA256(canonical lowercase header map) for approved headers
 /// - `approved_request_digest`: digest of the approved concrete request
 /// - `executed_url`: the concrete URL actually executed (from payload or bound default)
 /// - `executed_method`: the method actually executed (from payload or bound default)
 /// - `executed_body_digest`: SHA256(canonical body) for the execute-time request body
-/// - `executed_request_digest`: digest computed at execute time including actual body
+/// - `executed_headers_digest`: SHA256(canonical lowercase header map) for execute-time headers
+/// - `executed_request_digest`: digest computed at execute time including actual body/header shape
 ///
 /// This slice is conservative:
 /// - rollback/compensate are no-ops since mutation recovery guarantees are not yet established
@@ -117,22 +121,62 @@ impl HttpRollbackAdapter {
         format!("{:x}", hasher.finalize())
     }
 
-    /// Compute a SHA256 body-aware digest for concrete HTTP requests.
-    /// For GET: same as compute_request_digest (body not included).
-    /// For POST/PUT/PATCH/DELETE: digest includes canonical JSON serialization of body.
+    fn canonical_headers(
+        headers: Option<&HashMap<String, String>>,
+    ) -> Option<BTreeMap<String, String>> {
+        let headers = headers?;
+        if headers.is_empty() {
+            return None;
+        }
+
+        Some(
+            headers
+                .iter()
+                .map(|(key, value)| (key.to_lowercase(), value.clone()))
+                .collect(),
+        )
+    }
+
+    fn compute_headers_digest(headers: Option<&HashMap<String, String>>) -> String {
+        let mut hasher = Sha256::new();
+        let headers_str = match Self::canonical_headers(headers) {
+            Some(headers) => serde_json::to_string(&headers).unwrap_or_default(),
+            None => String::new(),
+        };
+        hasher.update(headers_str.as_bytes());
+        format!("{:x}", hasher.finalize())
+    }
+
+    /// Compute a SHA256 digest for concrete HTTP request shape.
+    /// - GET ignores body but includes canonicalized headers when present.
+    /// - POST/PUT/PATCH/DELETE include canonical JSON body and canonicalized headers.
     fn compute_body_aware_digest(
         method: &HttpMethod,
         url: &str,
         body: &serde_json::Value,
+        headers: Option<&HashMap<String, String>>,
     ) -> String {
         let mut hasher = Sha256::new();
+        let headers_str = Self::canonical_headers(headers)
+            .as_ref()
+            .map(|headers| serde_json::to_string(headers).unwrap_or_default());
+
         if Self::is_mutation_method(method) && !body.is_null() {
             let body_str = serde_json::to_string(body).unwrap_or_default();
             hasher.update(format!("{:?}:{}:{}", method, url, body_str).as_bytes());
         } else {
             hasher.update(format!("{:?}:{}", method, url).as_bytes());
         }
+
+        if let Some(headers_str) = headers_str {
+            hasher.update(format!(":{}", headers_str).as_bytes());
+        }
+
         format!("{:x}", hasher.finalize())
+    }
+
+    fn headers_present(headers: Option<&HashMap<String, String>>) -> bool {
+        Self::canonical_headers(headers).is_some()
     }
 
     fn compute_body_digest(body: &serde_json::Value) -> String {
@@ -177,15 +221,23 @@ impl HttpRollbackAdapter {
         }
     }
 
-    /// Parse URL, method, and body from a request payload if present.
-    /// Returns (payload_url, payload_method, payload_body) where any may be absent.
+    /// Parse URL, method, body, and headers from a request payload if present.
+    /// Returns (payload_url, payload_method, payload_body, payload_headers) where any may be absent.
     /// Stay fail-closed if the payload tries to provide malformed or unsupported values.
     fn parse_request_parts(
         payload: &serde_json::Value,
-    ) -> Result<(Option<String>, Option<HttpMethod>, serde_json::Value), HttpAdapterError> {
+    ) -> Result<
+        (
+            Option<String>,
+            Option<HttpMethod>,
+            serde_json::Value,
+            Option<HashMap<String, String>>,
+        ),
+        HttpAdapterError,
+    > {
         let obj = match payload.as_object() {
             Some(o) => o,
-            None => return Ok((None, None, serde_json::Value::Null)),
+            None => return Ok((None, None, serde_json::Value::Null, None)),
         };
 
         let url = match obj.get("url") {
@@ -221,15 +273,50 @@ impl HttpRollbackAdapter {
 
         let body = obj.get("body").cloned().unwrap_or(serde_json::Value::Null);
 
-        Ok((url, method, body))
+        let headers = match obj.get("headers") {
+            Some(value) => {
+                let headers_obj = value.as_object().ok_or_else(|| {
+                    HttpAdapterError::Validation(
+                        "payload headers must be an object when provided".to_string(),
+                    )
+                })?;
+                let mut headers_map = HashMap::new();
+                for (k, v) in headers_obj {
+                    let header_value = v.as_str().ok_or_else(|| {
+                        HttpAdapterError::Validation(format!(
+                            "header value for '{}' must be a string",
+                            k
+                        ))
+                    })?;
+                    headers_map.insert(k.to_lowercase(), header_value.to_string());
+                }
+                if headers_map.is_empty() {
+                    None
+                } else {
+                    Some(headers_map)
+                }
+            }
+            None => None,
+        };
+
+        Ok((url, method, body, headers))
     }
 
     fn resolve_request_parts(
         bound_method: &HttpMethod,
         bound_url: &str,
         payload: &serde_json::Value,
-    ) -> Result<(String, HttpMethod, serde_json::Value), HttpAdapterError> {
-        let (payload_url, payload_method, payload_body) = Self::parse_request_parts(payload)?;
+    ) -> Result<
+        (
+            String,
+            HttpMethod,
+            serde_json::Value,
+            Option<HashMap<String, String>>,
+        ),
+        HttpAdapterError,
+    > {
+        let (payload_url, payload_method, payload_body, payload_headers) =
+            Self::parse_request_parts(payload)?;
         let resolved_url = payload_url.unwrap_or_else(|| bound_url.to_string());
         let resolved_method = payload_method.unwrap_or(bound_method.clone());
 
@@ -243,7 +330,7 @@ impl HttpRollbackAdapter {
             )));
         }
 
-        Ok((resolved_url, resolved_method, payload_body))
+        Ok((resolved_url, resolved_method, payload_body, payload_headers))
     }
 
     /// Validate that the executed URL stays within the bound URL scope.
@@ -324,12 +411,17 @@ impl RollbackAdapter for HttpRollbackAdapter {
             .get(APPROVED_HTTP_REQUEST_METADATA_KEY)
             .cloned()
             .unwrap_or(serde_json::Value::Null);
-        let (approved_url, approved_method, approved_body) =
+        let (approved_url, approved_method, approved_body, approved_headers) =
             Self::resolve_request_parts(&method, &url, &approved_request_payload)
                 .map_err(AdapterError::from)?;
-        let approved_request_digest =
-            Self::compute_body_aware_digest(&approved_method, &approved_url, &approved_body);
+        let approved_request_digest = Self::compute_body_aware_digest(
+            &approved_method,
+            &approved_url,
+            &approved_body,
+            approved_headers.as_ref(),
+        );
         let approved_body_digest = Self::compute_body_digest(&approved_body);
+        let approved_headers_digest = Self::compute_headers_digest(approved_headers.as_ref());
 
         let mut metadata = JsonMap::new();
         metadata.insert(
@@ -351,12 +443,20 @@ impl RollbackAdapter for HttpRollbackAdapter {
             serde_json::json!(approved_body_digest),
         );
         metadata.insert(
+            "approved_headers_digest".to_string(),
+            serde_json::json!(approved_headers_digest),
+        );
+        metadata.insert(
             "approved_request_digest".to_string(),
             serde_json::json!(approved_request_digest),
         );
         metadata.insert(
             "approved_body_present".to_string(),
             serde_json::json!(!approved_body.is_null()),
+        );
+        metadata.insert(
+            "approved_headers_present".to_string(),
+            serde_json::json!(Self::headers_present(approved_headers.as_ref())),
         );
 
         Ok(PrepareReceipt {
@@ -373,13 +473,18 @@ impl RollbackAdapter for HttpRollbackAdapter {
         let (bound_method, bound_url, _) =
             Self::extract_http_target(&contract.target).map_err(AdapterError::from)?;
 
-        let (executed_url, executed_method, executed_body) =
+        let (executed_url, executed_method, executed_body, executed_headers) =
             Self::resolve_request_parts(&bound_method, &bound_url, payload)
                 .map_err(AdapterError::from)?;
 
-        let executed_request_digest =
-            Self::compute_body_aware_digest(&executed_method, &executed_url, &executed_body);
+        let executed_request_digest = Self::compute_body_aware_digest(
+            &executed_method,
+            &executed_url,
+            &executed_body,
+            executed_headers.as_ref(),
+        );
         let executed_body_digest = Self::compute_body_digest(&executed_body);
+        let executed_headers_digest = Self::compute_headers_digest(executed_headers.as_ref());
 
         if let Some(approved_request_digest) = contract
             .metadata
@@ -407,6 +512,16 @@ impl RollbackAdapter for HttpRollbackAdapter {
         if Self::is_mutation_method(&executed_method) && !executed_body.is_null() {
             request = request.json(&executed_body);
         }
+        // Apply headers to the request if provided.
+        // Header validation against allowlist is performed by the firewall before this adapter executes.
+        if let Some(ref headers) = executed_headers {
+            for (name, value) in headers {
+                let header_name = HeaderName::try_from(name.as_str()).map_err(|e| {
+                    HttpAdapterError::Validation(format!("invalid header name '{}': {}", name, e))
+                })?;
+                request = request.header(header_name, value);
+            }
+        }
         let response = request.send().await.map_err(|e| {
             HttpAdapterError::RequestFailed(format!("{:?} request failed: {}", executed_method, e))
         })?;
@@ -428,8 +543,16 @@ impl RollbackAdapter for HttpRollbackAdapter {
             serde_json::json!(executed_body_digest),
         );
         metadata.insert(
+            "executed_headers_digest".to_string(),
+            serde_json::json!(executed_headers_digest),
+        );
+        metadata.insert(
             "executed_body_present".to_string(),
             serde_json::json!(!executed_body.is_null()),
+        );
+        metadata.insert(
+            "executed_headers_present".to_string(),
+            serde_json::json!(Self::headers_present(executed_headers.as_ref())),
         );
         metadata.insert("status".to_string(), serde_json::json!(status));
         metadata.insert("executed".to_string(), serde_json::json!(true));
@@ -1046,6 +1169,7 @@ mod tests {
                 &HttpMethod::Get,
                 &payload_url,
                 &serde_json::Value::Null,
+                None,
             )),
         );
         let contract = make_contract(target, metadata, vec![]);
@@ -1088,6 +1212,7 @@ mod tests {
                 &HttpMethod::Get,
                 approved_url,
                 &serde_json::Value::Null,
+                None,
             )),
         );
         let contract = make_contract(target, metadata, vec![]);
@@ -1224,7 +1349,8 @@ mod tests {
             serde_json::json!(HttpRollbackAdapter::compute_body_aware_digest(
                 &HttpMethod::Post,
                 &bound_url,
-                &serde_json::json!({"name": "test"})
+                &serde_json::json!({"name": "test"}),
+                None,
             )),
         );
         let contract = make_contract(target, metadata, vec![]);
@@ -1264,7 +1390,8 @@ mod tests {
             serde_json::json!(HttpRollbackAdapter::compute_body_aware_digest(
                 &HttpMethod::Put,
                 &bound_url,
-                &serde_json::json!({"name": "updated"})
+                &serde_json::json!({"name": "updated"}),
+                None,
             )),
         );
         let contract = make_contract(target, metadata, vec![]);
@@ -1513,15 +1640,17 @@ mod tests {
         // Empty body
         let empty_body = serde_json::Value::Null;
         let digest_empty =
-            HttpRollbackAdapter::compute_body_aware_digest(&method, url, &empty_body);
+            HttpRollbackAdapter::compute_body_aware_digest(&method, url, &empty_body, None);
 
         // Object body
         let obj_body = serde_json::json!({"key": "value"});
-        let digest_obj = HttpRollbackAdapter::compute_body_aware_digest(&method, url, &obj_body);
+        let digest_obj =
+            HttpRollbackAdapter::compute_body_aware_digest(&method, url, &obj_body, None);
 
         // Array body
         let arr_body = serde_json::json!([1, 2, 3]);
-        let digest_arr = HttpRollbackAdapter::compute_body_aware_digest(&method, url, &arr_body);
+        let digest_arr =
+            HttpRollbackAdapter::compute_body_aware_digest(&method, url, &arr_body, None);
 
         // All digests should be different
         assert_ne!(
@@ -1535,7 +1664,8 @@ mod tests {
         assert_ne!(digest_obj, digest_arr, "object vs array body should differ");
 
         // Same body should produce same digest
-        let digest_obj2 = HttpRollbackAdapter::compute_body_aware_digest(&method, url, &obj_body);
+        let digest_obj2 =
+            HttpRollbackAdapter::compute_body_aware_digest(&method, url, &obj_body, None);
         assert_eq!(
             digest_obj, digest_obj2,
             "same body should produce same digest"
@@ -1548,18 +1678,263 @@ mod tests {
         let method = HttpMethod::Get;
         let url = "https://example.com/api";
 
-        let digest_no_body =
-            HttpRollbackAdapter::compute_body_aware_digest(&method, url, &serde_json::Value::Null);
+        let digest_no_body = HttpRollbackAdapter::compute_body_aware_digest(
+            &method,
+            url,
+            &serde_json::Value::Null,
+            None,
+        );
         let digest_with_body = HttpRollbackAdapter::compute_body_aware_digest(
             &method,
             url,
             &serde_json::json!({"key": "value"}),
+            None,
         );
 
         // For GET, body should not affect digest
         assert_eq!(
             digest_no_body, digest_with_body,
             "GET digest should be same regardless of body"
+        );
+    }
+
+    /// Test that parse_request_parts correctly extracts headers from payload.
+    #[tokio::test]
+    async fn test_parse_request_parts_extracts_headers() {
+        let payload = serde_json::json!({
+            "url": "https://example.com/api",
+            "method": "POST",
+            "body": {"name": "test"},
+            "headers": {
+                "content-type": "application/json",
+                "x-custom-header": "custom-value"
+            }
+        });
+
+        let result = HttpRollbackAdapter::parse_request_parts(&payload).unwrap();
+        let (_url, _method, _body, headers) = result;
+
+        assert!(headers.is_some());
+        let headers = headers.unwrap();
+        assert_eq!(
+            headers.get("content-type"),
+            Some(&"application/json".to_string())
+        );
+        assert_eq!(
+            headers.get("x-custom-header"),
+            Some(&"custom-value".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_parse_request_parts_normalizes_header_names_to_lowercase() {
+        let payload = serde_json::json!({
+            "headers": {
+                "Authorization": "Bearer token123",
+                "X-Custom-Header": "custom-value"
+            }
+        });
+
+        let (_url, _method, _body, headers) =
+            HttpRollbackAdapter::parse_request_parts(&payload).unwrap();
+        let headers = headers.unwrap();
+
+        assert_eq!(
+            headers.get("authorization"),
+            Some(&"Bearer token123".to_string())
+        );
+        assert_eq!(
+            headers.get("x-custom-header"),
+            Some(&"custom-value".to_string())
+        );
+        assert!(!headers.contains_key("Authorization"));
+    }
+
+    /// Test that parse_request_parts handles missing headers gracefully.
+    #[tokio::test]
+    async fn test_parse_request_parts_handles_missing_headers() {
+        let payload = serde_json::json!({
+            "url": "https://example.com/api",
+            "method": "GET"
+        });
+
+        let result = HttpRollbackAdapter::parse_request_parts(&payload).unwrap();
+        let (_url, _method, _body, headers) = result;
+
+        assert!(headers.is_none());
+    }
+
+    /// Test that parse_request_parts rejects non-object headers.
+    #[tokio::test]
+    async fn test_parse_request_parts_rejects_non_object_headers() {
+        let payload = serde_json::json!({
+            "url": "https://example.com/api",
+            "method": "GET",
+            "headers": "not-an-object"
+        });
+
+        let err = HttpRollbackAdapter::parse_request_parts(&payload).unwrap_err();
+        match err {
+            HttpAdapterError::Validation(msg) => {
+                assert!(msg.contains("must be an object"));
+            }
+            other => panic!("expected validation error, got {:?}", other),
+        }
+    }
+
+    /// Test that parse_request_parts rejects non-string header values.
+    #[tokio::test]
+    async fn test_parse_request_parts_rejects_non_string_header_values() {
+        let payload = serde_json::json!({
+            "url": "https://example.com/api",
+            "method": "GET",
+            "headers": {
+                "content-type": 123
+            }
+        });
+
+        let err = HttpRollbackAdapter::parse_request_parts(&payload).unwrap_err();
+        match err {
+            HttpAdapterError::Validation(msg) => {
+                assert!(msg.contains("must be a string"));
+            }
+            other => panic!("expected validation error, got {:?}", other),
+        }
+    }
+
+    /// Test that execute succeeds when headers are provided.
+    /// Header application is verified by integration tests that check server-side header receipt.
+    #[tokio::test]
+    async fn test_execute_succeeds_with_headers() {
+        let (port, handle) = start_local_server(200);
+        let adapter = HttpRollbackAdapter::new();
+
+        let bound_url = format!("http://127.0.0.1:{}/api", port);
+        let target = make_http_target(HttpMethod::Get, &bound_url);
+        let metadata = JsonMap::new();
+        let contract = make_contract(target, metadata, vec![]);
+
+        let payload = serde_json::json!({
+            "headers": {
+                "x-custom-header": "custom-value",
+                "authorization": "Bearer token123"
+            }
+        });
+
+        let receipt = adapter.execute(&contract, &payload).await.unwrap();
+
+        // Execute should succeed with headers
+        assert!(receipt.result_digest.is_some());
+        assert_eq!(receipt.result_digest.unwrap(), "200");
+        let _ = handle.join();
+    }
+
+    /// Test that execute works with empty headers object.
+    #[tokio::test]
+    async fn test_execute_with_empty_headers_object() {
+        let (port, handle) = start_local_server(200);
+        let adapter = HttpRollbackAdapter::new();
+
+        let bound_url = format!("http://127.0.0.1:{}/api", port);
+        let target = make_http_target(HttpMethod::Get, &bound_url);
+        let metadata = JsonMap::new();
+        let contract = make_contract(target, metadata, vec![]);
+
+        let payload = serde_json::json!({
+            "headers": {}
+        });
+
+        let receipt = adapter.execute(&contract, &payload).await.unwrap();
+        assert!(receipt.result_digest.is_some());
+        let _ = handle.join();
+    }
+
+    /// Test that execute fails for invalid header names.
+    #[tokio::test]
+    async fn test_execute_fails_for_invalid_header_name() {
+        let adapter = HttpRollbackAdapter::new();
+
+        let bound_url = "https://example.com/api";
+        let target = make_http_target(HttpMethod::Get, bound_url);
+        let metadata = JsonMap::new();
+        let contract = make_contract(target, metadata, vec![]);
+
+        let payload = serde_json::json!({
+            "headers": {
+                "invalid header name": "value"
+            }
+        });
+
+        let err = adapter.execute(&contract, &payload).await.unwrap_err();
+        match err {
+            AdapterError::Validation(msg) => {
+                assert!(msg.contains("invalid header name"));
+            }
+            other => panic!("expected validation error, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_rejects_request_digest_mismatch_when_headers_differ() {
+        let adapter = HttpRollbackAdapter::new();
+        let bound_url = "https://example.com/api";
+        let target = make_http_target(HttpMethod::Get, bound_url);
+
+        let approved_headers = HashMap::from([(
+            "authorization".to_string(),
+            "Bearer approved-token".to_string(),
+        )]);
+        let mut metadata = JsonMap::new();
+        metadata.insert(
+            "approved_request_digest".to_string(),
+            serde_json::json!(HttpRollbackAdapter::compute_body_aware_digest(
+                &HttpMethod::Get,
+                bound_url,
+                &serde_json::Value::Null,
+                Some(&approved_headers),
+            )),
+        );
+        let contract = make_contract(target, metadata, vec![]);
+        let payload = serde_json::json!({
+            "headers": {
+                "authorization": "Bearer different-token"
+            }
+        });
+
+        let err = adapter.execute(&contract, &payload).await.unwrap_err();
+        match err {
+            AdapterError::Validation(msg) => {
+                assert!(msg.contains("does not match approved request digest"));
+            }
+            other => panic!("expected validation error, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_digest_changes_when_headers_change() {
+        let method = HttpMethod::Get;
+        let url = "https://example.com/api";
+        let headers_a =
+            HashMap::from([("authorization".to_string(), "Bearer token-a".to_string())]);
+        let headers_b =
+            HashMap::from([("authorization".to_string(), "Bearer token-b".to_string())]);
+
+        let digest_a = HttpRollbackAdapter::compute_body_aware_digest(
+            &method,
+            url,
+            &serde_json::Value::Null,
+            Some(&headers_a),
+        );
+        let digest_b = HttpRollbackAdapter::compute_body_aware_digest(
+            &method,
+            url,
+            &serde_json::Value::Null,
+            Some(&headers_b),
+        );
+
+        assert_ne!(
+            digest_a, digest_b,
+            "header changes should affect GET request digest"
         );
     }
 }

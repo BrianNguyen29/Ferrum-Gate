@@ -9762,7 +9762,7 @@ async fn test_http_post_execute_and_verify_through_gateway_after_approval() {
         method: ferrum_proto::HttpMethod::Post,
         base_url: format!("http://127.0.0.1:{}", port),
         path_prefix: "/api".to_string(),
-        header_allowlist: vec![],
+        header_allowlist: vec!["authorization".to_string()],
         mode: ResourceMode::ReadWrite,
     };
 
@@ -9811,7 +9811,10 @@ async fn test_http_post_execute_and_verify_through_gateway_after_approval() {
         raw_arguments: serde_json::json!({
             "url": format!("http://127.0.0.1:{}/api/users", port),
             "method": "POST",
-            "body": {"name": "test"}
+            "body": {"name": "test"},
+            "headers": {
+                "Authorization": "Bearer approved-token"
+            }
         }),
         expected_effect: "create remote HTTP resource".to_string(),
         estimated_risk: RiskTier::High,
@@ -9962,7 +9965,10 @@ async fn test_http_post_execute_and_verify_through_gateway_after_approval() {
         payload: serde_json::json!({
             "url": format!("http://127.0.0.1:{}/api/users", port),
             "method": "POST",
-            "body": {"name": "test"}
+            "body": {"name": "test"},
+            "headers": {
+                "authorization": "Bearer approved-token"
+            }
         }),
     };
     let response = app
@@ -10010,6 +10016,18 @@ async fn test_http_post_execute_and_verify_through_gateway_after_approval() {
         stored_contract
             .metadata
             .get("executed_body_present")
+            .unwrap()
+            .as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        stored_contract.metadata.get("approved_headers_digest"),
+        stored_contract.metadata.get("executed_headers_digest")
+    );
+    assert_eq!(
+        stored_contract
+            .metadata
+            .get("approved_headers_present")
             .unwrap()
             .as_bool(),
         Some(true)
