@@ -9512,7 +9512,9 @@ async fn test_http_execute_and_verify_through_gateway_uses_payload_url_within_sc
         title: "Call local HTTP API".to_string(),
         tool_name: "http.get".to_string(),
         server_name: "http-adapter".to_string(),
-        raw_arguments: serde_json::json!({"url": format!("http://127.0.0.1:{}/api/users", port)}),
+        raw_arguments: serde_json::json!({
+            "url": format!("http://127.0.0.1:{}/api/users?a=1&b=2", port)
+        }),
         expected_effect: "make HTTP API call".to_string(),
         estimated_risk: RiskTier::Medium,
         requested_rollback_class: RollbackClass::R0NativeReversible,
@@ -9624,7 +9626,7 @@ async fn test_http_execute_and_verify_through_gateway_uses_payload_url_within_sc
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
         payload: serde_json::json!({
-            "url": format!("http://127.0.0.1:{}/api/users", port),
+            "url": format!("http://127.0.0.1:{}/api/users?b=2&a=1", port),
             "method": "GET"
         }),
     };
@@ -9678,7 +9680,7 @@ async fn test_http_execute_and_verify_through_gateway_uses_payload_url_within_sc
             .unwrap()
             .as_str()
             .unwrap(),
-        format!("http://127.0.0.1:{}/api/users", port)
+        format!("http://127.0.0.1:{}/api/users?a=1&b=2", port)
     );
     assert_eq!(
         stored_contract
@@ -9687,11 +9689,31 @@ async fn test_http_execute_and_verify_through_gateway_uses_payload_url_within_sc
             .unwrap()
             .as_str()
             .unwrap(),
-        format!("http://127.0.0.1:{}/api/users", port)
+        format!("http://127.0.0.1:{}/api/users?b=2&a=1", port)
     );
     assert_eq!(
         stored_contract.metadata.get("approved_request_digest"),
         stored_contract.metadata.get("executed_request_digest")
+    );
+    assert_eq!(
+        stored_contract.metadata.get("approved_query_digest"),
+        stored_contract.metadata.get("executed_query_digest")
+    );
+    assert_eq!(
+        stored_contract
+            .metadata
+            .get("approved_query_present")
+            .unwrap()
+            .as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        stored_contract
+            .metadata
+            .get("executed_query_present")
+            .unwrap()
+            .as_bool(),
+        Some(true)
     );
     assert!(
         stored_contract

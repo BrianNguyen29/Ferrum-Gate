@@ -4,7 +4,7 @@ HTTP adapter for idempotency-aware rollback and compensation.
 
 ## Status
 
-Current slice: HTTP execute/verify with approved/bound concrete HTTP methods (GET/POST/PUT/PATCH/DELETE), body handling, and approved header-shape binding. Verify uses execute-time metadata for mutations (no replay).
+Current slice: HTTP execute/verify with approved/bound concrete HTTP methods (GET/POST/PUT/PATCH/DELETE), body handling, header-shape binding, and canonical query string binding. Verify uses execute-time metadata for mutations (no replay).
 
 ## Supported Operations
 
@@ -20,11 +20,24 @@ Current slice: HTTP execute/verify with approved/bound concrete HTTP methods (GE
 
 For all HTTP methods, the approved request digest is computed from request shape:
 
-- `GET`: digest = SHA256(method:url[:headers])
-- `POST/PUT/PATCH/DELETE`: digest = SHA256(method:url:body[:headers]) where body is canonical JSON or empty
+- `GET`: digest = SHA256(method:canonical_url[:headers])
+- `POST/PUT/PATCH/DELETE`: digest = SHA256(method:canonical_url:body[:headers]) where body is canonical JSON or empty
 - Header names are canonicalized to lowercase and sorted before digesting
+- Query strings are canonicalized (sorted by key) before digesting so semantically identical query strings produce the same digest
 
 This lets prepare bind the approved request shape without broadening remote mutation execution or recovery semantics.
+
+## Canonical Query String Handling
+
+Query strings in URLs are canonicalized before computing digests to ensure semantically identical queries produce identical digests:
+
+- `?b=2&a=1` and `?a=1&b=2` are treated as the same shape
+- Keys are sorted alphabetically; values are preserved as-is
+- Empty values (e.g., `?flag` without `=value`) are preserved
+
+Query metadata stored in prepare/execute receipts:
+- `approved_query_present` / `executed_query_present`: boolean indicating if query string was present
+- `approved_query_digest` / `executed_query_digest`: SHA256 of the canonical query string (empty string if no query)
 
 ## Verify Behavior by Method
 

@@ -121,6 +121,78 @@ impl HttpRollbackAdapter {
         format!("{:x}", hasher.finalize())
     }
 
+    /// Canonicalize a query string by sorting key-value pairs.
+    /// Returns (canonical_url, canonical_query_string_or_empty).
+    /// Example: "https://example.com/api?b=2&a=1" -> ("https://example.com/api?a=1&b=2", "a=1&b=2")
+    fn canonicalize_query_string(url: &str) -> (String, String) {
+        let Ok(mut parsed) = Url::parse(url) else {
+            return (url.to_string(), String::new());
+        };
+
+        let query = match parsed.query() {
+            Some(q) if !q.is_empty() => q.to_string(),
+            _ => {
+                parsed.set_query(None);
+                return (parsed.to_string(), String::new());
+            }
+        };
+
+        let mut params: Vec<(String, String)> = Self::parse_query_string(&query);
+        params.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+
+        let canonical_query = params
+            .iter()
+            .map(|(k, v): &(String, String)| {
+                if v.is_empty() {
+                    k.clone()
+                } else {
+                    format!("{}={}", k, v)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("&");
+
+        parsed.set_query(Some(&canonical_query));
+
+        (parsed.to_string(), canonical_query)
+    }
+
+    /// Parse a query string into key-value pairs, preserving values (including empty).
+    fn parse_query_string(query: &str) -> Vec<(String, String)> {
+        query
+            .split('&')
+            .filter_map(|pair| {
+                let mut parts = pair.splitn(2, '=');
+                let key = parts.next()?.to_string();
+                let value = parts.next().unwrap_or("").to_string();
+                Some((key, value))
+            })
+            .collect()
+    }
+
+    /// Compute a SHA256 digest for query string presence.
+    /// Empty or absent query produces an empty string digest.
+    fn compute_query_digest(query: Option<&str>) -> String {
+        let mut hasher = Sha256::new();
+        match query {
+            Some(q) if !q.is_empty() => {
+                hasher.update(q.as_bytes());
+            }
+            _ => {}
+        }
+        format!("{:x}", hasher.finalize())
+    }
+
+    /// Extract canonical query string from a URL, returning None if no query is present.
+    fn extract_query_from_url(url: &str) -> Option<String> {
+        let (_, canonical_query) = Self::canonicalize_query_string(url);
+        if canonical_query.is_empty() {
+            None
+        } else {
+            Some(canonical_query)
+        }
+    }
+
     fn canonical_headers(
         headers: Option<&HashMap<String, String>>,
     ) -> Option<BTreeMap<String, String>> {
@@ -150,6 +222,8 @@ impl HttpRollbackAdapter {
     /// Compute a SHA256 digest for concrete HTTP request shape.
     /// - GET ignores body but includes canonicalized headers when present.
     /// - POST/PUT/PATCH/DELETE include canonical JSON body and canonicalized headers.
+    /// - Query strings are canonicalized (sorted by key) before digesting to ensure
+    ///   semantically identical query strings produce the same digest.
     fn compute_body_aware_digest(
         method: &HttpMethod,
         url: &str,
@@ -161,11 +235,14 @@ impl HttpRollbackAdapter {
             .as_ref()
             .map(|headers| serde_json::to_string(headers).unwrap_or_default());
 
+        // Canonicalize URL query string for consistent digest computation
+        let (canonical_url, _canonical_query) = Self::canonicalize_query_string(url);
+
         if Self::is_mutation_method(method) && !body.is_null() {
             let body_str = serde_json::to_string(body).unwrap_or_default();
-            hasher.update(format!("{:?}:{}:{}", method, url, body_str).as_bytes());
+            hasher.update(format!("{:?}:{}:{}", method, canonical_url, body_str).as_bytes());
         } else {
-            hasher.update(format!("{:?}:{}", method, url).as_bytes());
+            hasher.update(format!("{:?}:{}", method, canonical_url).as_bytes());
         }
 
         if let Some(headers_str) = headers_str {
@@ -422,6 +499,9 @@ impl RollbackAdapter for HttpRollbackAdapter {
         );
         let approved_body_digest = Self::compute_body_digest(&approved_body);
         let approved_headers_digest = Self::compute_headers_digest(approved_headers.as_ref());
+        let approved_query = Self::extract_query_from_url(&approved_url);
+        let approved_query_digest = Self::compute_query_digest(approved_query.as_deref());
+        let approved_query_present = approved_query.is_some();
 
         let mut metadata = JsonMap::new();
         metadata.insert(
@@ -458,6 +538,14 @@ impl RollbackAdapter for HttpRollbackAdapter {
             "approved_headers_present".to_string(),
             serde_json::json!(Self::headers_present(approved_headers.as_ref())),
         );
+        metadata.insert(
+            "approved_query_present".to_string(),
+            serde_json::json!(approved_query_present),
+        );
+        metadata.insert(
+            "approved_query_digest".to_string(),
+            serde_json::json!(approved_query_digest),
+        );
 
         Ok(PrepareReceipt {
             accepted: true,
@@ -485,6 +573,9 @@ impl RollbackAdapter for HttpRollbackAdapter {
         );
         let executed_body_digest = Self::compute_body_digest(&executed_body);
         let executed_headers_digest = Self::compute_headers_digest(executed_headers.as_ref());
+        let executed_query = Self::extract_query_from_url(&executed_url);
+        let executed_query_digest = Self::compute_query_digest(executed_query.as_deref());
+        let executed_query_present = executed_query.is_some();
 
         if let Some(approved_request_digest) = contract
             .metadata
@@ -553,6 +644,14 @@ impl RollbackAdapter for HttpRollbackAdapter {
         metadata.insert(
             "executed_headers_present".to_string(),
             serde_json::json!(Self::headers_present(executed_headers.as_ref())),
+        );
+        metadata.insert(
+            "executed_query_present".to_string(),
+            serde_json::json!(executed_query_present),
+        );
+        metadata.insert(
+            "executed_query_digest".to_string(),
+            serde_json::json!(executed_query_digest),
         );
         metadata.insert("status".to_string(), serde_json::json!(status));
         metadata.insert("executed".to_string(), serde_json::json!(true));
@@ -1936,5 +2035,280 @@ mod tests {
             digest_a, digest_b,
             "header changes should affect GET request digest"
         );
+    }
+
+    // === Canonical Query String Tests ===
+
+    #[test]
+    fn test_canonicalize_query_string_sort_keys() {
+        // Different key orders should canonicalize to same form
+        let (url1, query1) =
+            HttpRollbackAdapter::canonicalize_query_string("https://example.com/api?b=2&a=1");
+        let (url2, query2) =
+            HttpRollbackAdapter::canonicalize_query_string("https://example.com/api?a=1&b=2");
+
+        assert_eq!(url1, url2);
+        assert_eq!(query1, query2);
+        assert_eq!(query1, "a=1&b=2");
+    }
+
+    #[test]
+    fn test_canonicalize_query_string_preserves_values() {
+        // Empty values should be preserved
+        let (_url1, query1) =
+            HttpRollbackAdapter::canonicalize_query_string("https://example.com/api?flag&a=1");
+        assert_eq!(query1, "a=1&flag");
+
+        // Values with special characters
+        let (_url2, query2) = HttpRollbackAdapter::canonicalize_query_string(
+            "https://example.com/api?b=hello%20world&a=test",
+        );
+        assert_eq!(query2, "a=test&b=hello%20world");
+    }
+
+    #[test]
+    fn test_canonicalize_query_string_handles_no_query() {
+        let (url, query) =
+            HttpRollbackAdapter::canonicalize_query_string("https://example.com/api");
+        assert_eq!(url, "https://example.com/api");
+        assert!(query.is_empty());
+    }
+
+    #[test]
+    fn test_canonicalize_query_string_handles_empty_query() {
+        let (url, query) =
+            HttpRollbackAdapter::canonicalize_query_string("https://example.com/api?");
+        assert_eq!(url, "https://example.com/api");
+        assert!(query.is_empty());
+    }
+
+    #[test]
+    fn test_query_digest_same_for_semantically_identical_queries() {
+        // Same query string in different order should produce same digest
+        let digest1 = HttpRollbackAdapter::compute_body_aware_digest(
+            &HttpMethod::Get,
+            "https://example.com/api?b=2&a=1",
+            &serde_json::Value::Null,
+            None,
+        );
+        let digest2 = HttpRollbackAdapter::compute_body_aware_digest(
+            &HttpMethod::Get,
+            "https://example.com/api?a=1&b=2",
+            &serde_json::Value::Null,
+            None,
+        );
+        assert_eq!(
+            digest1, digest2,
+            "semantically identical query strings should produce same digest"
+        );
+    }
+
+    #[test]
+    fn test_query_digest_differs_for_different_queries() {
+        // Different query strings should produce different digests
+        let digest1 = HttpRollbackAdapter::compute_body_aware_digest(
+            &HttpMethod::Get,
+            "https://example.com/api?a=1",
+            &serde_json::Value::Null,
+            None,
+        );
+        let digest2 = HttpRollbackAdapter::compute_body_aware_digest(
+            &HttpMethod::Get,
+            "https://example.com/api?a=2",
+            &serde_json::Value::Null,
+            None,
+        );
+        assert_ne!(
+            digest1, digest2,
+            "different query strings should produce different digests"
+        );
+    }
+
+    #[test]
+    fn test_extract_query_from_url() {
+        assert_eq!(
+            HttpRollbackAdapter::extract_query_from_url("https://example.com/api?b=2&a=1"),
+            Some("a=1&b=2".to_string())
+        );
+        assert_eq!(
+            HttpRollbackAdapter::extract_query_from_url("https://example.com/api"),
+            None
+        );
+        assert_eq!(
+            HttpRollbackAdapter::extract_query_from_url("https://example.com/api?"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_query_digest_computation() {
+        // No query
+        let digest_none = HttpRollbackAdapter::compute_query_digest(None);
+        // Empty query
+        let digest_empty = HttpRollbackAdapter::compute_query_digest(Some(""));
+        // With query
+        let digest_a1 = HttpRollbackAdapter::compute_query_digest(Some("a=1"));
+
+        assert_eq!(
+            digest_none, digest_empty,
+            "none and empty query should produce same digest"
+        );
+        assert_ne!(
+            digest_none, digest_a1,
+            "no query vs query should produce different digests"
+        );
+    }
+
+    /// Test that prepare captures query metadata
+    #[tokio::test]
+    async fn test_prepare_captures_query_metadata() {
+        let adapter = HttpRollbackAdapter::new();
+        let target = make_http_target(HttpMethod::Get, "https://example.com/api");
+
+        // First query: ?b=2&a=1
+        let mut metadata = JsonMap::new();
+        metadata.insert(
+            APPROVED_HTTP_REQUEST_METADATA_KEY.to_string(),
+            serde_json::json!({
+                "url": "https://example.com/api?b=2&a=1",
+                "method": "GET"
+            }),
+        );
+        let request = make_prepare_request_with_metadata(target.clone(), metadata);
+
+        let receipt = adapter.prepare(&request).await.unwrap();
+        let meta = receipt.adapter_metadata;
+
+        // Query should be present
+        assert_eq!(
+            meta.get("approved_query_present").unwrap().as_bool(),
+            Some(true),
+            "approved query should be present"
+        );
+        // Query digest should be stored (not raw query)
+        assert!(
+            meta.get("approved_query_digest").unwrap().is_string(),
+            "approved query digest should be stored"
+        );
+
+        let digest1 = meta
+            .get("approved_request_digest")
+            .unwrap()
+            .as_str()
+            .unwrap();
+
+        // Second query: ?a=1&b=2 (same query, different order)
+        let mut metadata2 = JsonMap::new();
+        metadata2.insert(
+            APPROVED_HTTP_REQUEST_METADATA_KEY.to_string(),
+            serde_json::json!({
+                "url": "https://example.com/api?a=1&b=2",
+                "method": "GET"
+            }),
+        );
+        let request2 = make_prepare_request_with_metadata(target.clone(), metadata2);
+        let receipt2 = adapter.prepare(&request2).await.unwrap();
+        let meta2 = receipt2.adapter_metadata;
+
+        let digest2 = meta2
+            .get("approved_request_digest")
+            .unwrap()
+            .as_str()
+            .unwrap();
+
+        // Digests should match for same query in different order
+        assert_eq!(
+            digest1, digest2,
+            "approved_request_digest should match for semantically identical queries"
+        );
+        assert_eq!(
+            meta.get("approved_query_digest").unwrap(),
+            meta2.get("approved_query_digest").unwrap(),
+            "same query in different order should have same digest"
+        );
+    }
+
+    /// Test that execute captures query metadata
+    #[tokio::test]
+    async fn test_execute_captures_query_metadata() {
+        let (port, handle) = start_local_server(200);
+        let adapter = HttpRollbackAdapter::new();
+
+        let bound_url = format!("http://127.0.0.1:{}/api", port);
+        let target = make_http_target(HttpMethod::Get, &bound_url);
+        let metadata = JsonMap::new();
+        let contract = make_contract(target, metadata, vec![]);
+
+        let payload = serde_json::json!({
+            "url": format!("http://127.0.0.1:{}/api?b=2&a=1", port),
+            "method": "GET"
+        });
+
+        let receipt = adapter.execute(&contract, &payload).await.unwrap();
+        let meta = &receipt.adapter_metadata;
+
+        // Query should be present
+        assert_eq!(
+            meta.get("executed_query_present").unwrap().as_bool(),
+            Some(true),
+            "executed query should be present"
+        );
+        // Query digest should be stored
+        assert!(
+            meta.get("executed_query_digest").unwrap().is_string(),
+            "executed query digest should be stored"
+        );
+        let _ = handle.join();
+    }
+
+    /// Test that different query order produces same digest during execute
+    #[tokio::test]
+    async fn test_execute_same_query_different_order_succeeds() {
+        let (port, handle) = start_local_server(200);
+        let adapter = HttpRollbackAdapter::new();
+
+        let bound_url = format!("http://127.0.0.1:{}/api", port);
+        let target = make_http_target(HttpMethod::Get, &bound_url);
+
+        // First prepare with query ?a=1&b=2
+        let mut metadata = JsonMap::new();
+        metadata.insert(
+            APPROVED_HTTP_REQUEST_METADATA_KEY.to_string(),
+            serde_json::json!({
+                "url": format!("http://127.0.0.1:{}/api?a=1&b=2", port),
+                "method": "GET"
+            }),
+        );
+        let request = make_prepare_request_with_metadata(target.clone(), metadata);
+        let receipt = adapter.prepare(&request).await.unwrap();
+        let approved_digest = receipt
+            .adapter_metadata
+            .get("approved_request_digest")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        // Contract with approved digest
+        let mut contract_metadata = JsonMap::new();
+        contract_metadata.insert(
+            "approved_request_digest".to_string(),
+            serde_json::json!(approved_digest),
+        );
+        let contract = make_contract(target.clone(), contract_metadata, vec![]);
+
+        // Execute with query ?b=2&a=1 (different order, same semantic)
+        let payload = serde_json::json!({
+            "url": format!("http://127.0.0.1:{}/api?b=2&a=1", port),
+            "method": "GET"
+        });
+
+        // Should succeed because digests match
+        let result = adapter.execute(&contract, &payload).await;
+        assert!(
+            result.is_ok(),
+            "semantically identical query in different order should execute successfully"
+        );
+        let _ = handle.join();
     }
 }
