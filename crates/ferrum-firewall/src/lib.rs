@@ -1380,6 +1380,9 @@ struct HttpExecutionPayload {
     /// Indicates if auth (bearer or basic) was present in the payload.
     /// When true, this is treated like having an "authorization" header for allowlist checking.
     auth_present: bool,
+    /// If api_key auth is present, this stores the specific header name (e.g., "X-API-Key").
+    /// When present, this specific header must be in the allowlist.
+    api_key_header: Option<String>,
 }
 
 /// File execution payload extracted from JSON.
@@ -1479,18 +1482,23 @@ impl DefaultFirewall {
         // Check for dedicated auth field (bearer or basic)
         let auth_present = self.payload_has_http_auth(payload);
 
+        // Extract api_key header if api_key auth is present
+        let api_key_header = self.extract_api_key_header(payload);
+
         Some(HttpExecutionPayload {
             url,
             method,
             headers,
             auth_present,
+            api_key_header,
         })
     }
 
-    /// Check if the payload contains an HTTP auth object (bearer or basic).
+    /// Check if the payload contains an HTTP auth object (bearer, basic, or api_key).
     /// Expected shapes:
     /// - Bearer: {"auth": {"type": "bearer", "token": "..."}}
     /// - Basic: {"auth": {"type": "basic", "username": "...", "password": "..."}}
+    /// - ApiKey: {"auth": {"type": "api_key", "header": "X-API-Key", "key": "..."}}
     fn payload_has_http_auth(&self, payload: &serde_json::Value) -> bool {
         let obj = match payload.as_object() {
             Some(o) => o,
@@ -1524,7 +1532,30 @@ impl DefaultFirewall {
                         .map(|p| !p.is_empty())
                         .unwrap_or(false)
             }
+            "api_key" => {
+                // API key auth requires header and key
+                auth.get("header")
+                    .and_then(|h| h.as_str())
+                    .map(|h| !h.is_empty())
+                    .unwrap_or(false)
+                    && auth.get("key").and_then(|k| k.as_str()).is_some()
+            }
             _ => false,
+        }
+    }
+
+    /// Extract the API key header name from the payload if api_key auth is present.
+    /// Returns Some(header_name) if api_key auth is present, None otherwise.
+    fn extract_api_key_header(&self, payload: &serde_json::Value) -> Option<String> {
+        let obj = payload.as_object()?;
+        let auth = obj.get("auth")?.as_object()?;
+        let auth_type = auth.get("type")?.as_str()?.to_lowercase();
+        if auth_type == "api_key" {
+            auth.get("header")
+                .and_then(|h| h.as_str())
+                .map(|h| h.to_lowercase())
+        } else {
+            None
         }
     }
 
@@ -1663,10 +1694,20 @@ impl DefaultFirewall {
             }
         }
 
-        // If auth (bearer or basic) is present, treat it like having the authorization header
-        // for allowlist checking purposes
-        if payload.auth_present && !allowlist_lower.contains("authorization") {
+        // If auth (bearer or basic) is present (NOT api_key), treat it like having the authorization header
+        // for allowlist checking purposes. Api_key is handled separately via api_key_header.
+        if payload.auth_present
+            && payload.api_key_header.is_none()
+            && !allowlist_lower.contains("authorization")
+        {
             return false;
+        }
+
+        // If api_key auth is present, the specific API key header must be in the allowlist
+        if let Some(ref api_key_header) = payload.api_key_header {
+            if !allowlist_lower.contains(api_key_header) {
+                return false;
+            }
         }
 
         true
@@ -3169,5 +3210,230 @@ mod tests {
 
         let result = firewall.enforce_execution_payload(&bindings, &payload);
         assert!(result.is_ok());
+    }
+
+    // ============================================
+    // HTTP AUTH ALLOWLIST ENFORCEMENT TESTS
+    // ============================================
+
+    /// Test that api_key auth is allowed when specific header is in allowlist.
+    #[test]
+    fn test_enforce_http_api_key_auth_allowed_when_header_in_allowlist() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_http_binding(
+            HttpMethod::Get,
+            "https://api.example.com",
+            "/v1/",
+            &["content-type", "x-api-key"], // x-api-key is in allowlist
+            ResourceMode::Read,
+        )];
+
+        let payload = serde_json::json!({
+            "url": "https://api.example.com/v1/users",
+            "method": "GET",
+            "auth": {
+                "type": "api_key",
+                "header": "X-API-Key",
+                "key": "test-key-123"
+            }
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(
+            result.is_ok(),
+            "api_key auth should be allowed when header is in allowlist"
+        );
+    }
+
+    /// Test that api_key auth is denied when specific header is NOT in allowlist.
+    #[test]
+    fn test_enforce_http_api_key_auth_denied_when_header_not_in_allowlist() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_http_binding(
+            HttpMethod::Get,
+            "https://api.example.com",
+            "/v1/",
+            &["content-type"], // x-api-key is NOT in allowlist
+            ResourceMode::Read,
+        )];
+
+        let payload = serde_json::json!({
+            "url": "https://api.example.com/v1/users",
+            "method": "GET",
+            "auth": {
+                "type": "api_key",
+                "header": "X-API-Key",
+                "key": "test-key-123"
+            }
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(
+            result.is_err(),
+            "api_key auth should be denied when header is not in allowlist"
+        );
+        assert_eq!(
+            result.unwrap_err().code,
+            EnforcementErrorCode::MissingBinding,
+            "should be MissingBinding when api_key header not in allowlist"
+        );
+    }
+
+    /// Test that api_key auth with different header is denied when that header is not in allowlist.
+    #[test]
+    fn test_enforce_http_api_key_auth_denied_when_different_header_not_in_allowlist() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_http_binding(
+            HttpMethod::Get,
+            "https://api.example.com",
+            "/v1/",
+            &["content-type", "x-api-key"], // x-api-key is in allowlist, but request uses X-Custom-Key
+            ResourceMode::Read,
+        )];
+
+        let payload = serde_json::json!({
+            "url": "https://api.example.com/v1/users",
+            "method": "GET",
+            "auth": {
+                "type": "api_key",
+                "header": "X-Custom-Key",  // Different header not in allowlist
+                "key": "test-key"
+            }
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(
+            result.is_err(),
+            "api_key auth with header not in allowlist should be denied"
+        );
+        assert_eq!(
+            result.unwrap_err().code,
+            EnforcementErrorCode::MissingBinding,
+            "should be MissingBinding when api_key header not in allowlist"
+        );
+    }
+
+    /// Test that basic auth is denied when authorization is NOT in allowlist.
+    #[test]
+    fn test_enforce_http_basic_auth_denied_when_authorization_not_in_allowlist() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_http_binding(
+            HttpMethod::Get,
+            "https://api.example.com",
+            "/v1/",
+            &["content-type"], // authorization is NOT in allowlist
+            ResourceMode::Read,
+        )];
+
+        let payload = serde_json::json!({
+            "url": "https://api.example.com/v1/users",
+            "method": "GET",
+            "auth": {
+                "type": "basic",
+                "username": "user",
+                "password": "pass"
+            }
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(
+            result.is_err(),
+            "basic auth should be denied when authorization not in allowlist"
+        );
+        assert_eq!(
+            result.unwrap_err().code,
+            EnforcementErrorCode::MissingBinding,
+            "should be MissingBinding when authorization not in allowlist for basic auth"
+        );
+    }
+
+    /// Test that basic auth is allowed when authorization is in allowlist.
+    #[test]
+    fn test_enforce_http_basic_auth_allowed_when_authorization_in_allowlist() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_http_binding(
+            HttpMethod::Get,
+            "https://api.example.com",
+            "/v1/",
+            &["content-type", "authorization"], // authorization is in allowlist
+            ResourceMode::Read,
+        )];
+
+        let payload = serde_json::json!({
+            "url": "https://api.example.com/v1/users",
+            "method": "GET",
+            "auth": {
+                "type": "basic",
+                "username": "user",
+                "password": "pass"
+            }
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(
+            result.is_ok(),
+            "basic auth should be allowed when authorization is in allowlist"
+        );
+    }
+
+    /// Test that bearer auth is denied when authorization is NOT in allowlist.
+    #[test]
+    fn test_enforce_http_bearer_auth_denied_when_authorization_not_in_allowlist() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_http_binding(
+            HttpMethod::Get,
+            "https://api.example.com",
+            "/v1/",
+            &["content-type"], // authorization is NOT in allowlist
+            ResourceMode::Read,
+        )];
+
+        let payload = serde_json::json!({
+            "url": "https://api.example.com/v1/users",
+            "method": "GET",
+            "auth": {
+                "type": "bearer",
+                "token": "my-token"
+            }
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(
+            result.is_err(),
+            "bearer auth should be denied when authorization not in allowlist"
+        );
+        assert_eq!(
+            result.unwrap_err().code,
+            EnforcementErrorCode::MissingBinding,
+            "should be MissingBinding when authorization not in allowlist for bearer auth"
+        );
+    }
+
+    /// Test that bearer auth is allowed when authorization is in allowlist.
+    #[test]
+    fn test_enforce_http_bearer_auth_allowed_when_authorization_in_allowlist() {
+        let firewall = DefaultFirewall::new();
+        let bindings = vec![create_http_binding(
+            HttpMethod::Get,
+            "https://api.example.com",
+            "/v1/",
+            &["content-type", "authorization"], // authorization is in allowlist
+            ResourceMode::Read,
+        )];
+
+        let payload = serde_json::json!({
+            "url": "https://api.example.com/v1/users",
+            "method": "GET",
+            "auth": {
+                "type": "bearer",
+                "token": "my-token"
+            }
+        });
+
+        let result = firewall.enforce_execution_payload(&bindings, &payload);
+        assert!(
+            result.is_ok(),
+            "bearer auth should be allowed when authorization is in allowlist"
+        );
     }
 }

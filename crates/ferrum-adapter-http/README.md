@@ -4,7 +4,7 @@ HTTP adapter for idempotency-aware rollback and compensation.
 
 ## Status
 
-Current slice: HTTP execute/verify with approved/bound concrete HTTP methods (GET/POST/PUT/PATCH/DELETE), body handling, header-shape binding, canonical query string binding, and dedicated bearer/basic auth representation. Verify uses execute-time metadata for mutations (no replay).
+Current slice: HTTP execute/verify with approved/bound concrete HTTP methods (GET/POST/PUT/PATCH/DELETE), body handling, header-shape binding, canonical query string binding, and dedicated bearer/basic/api_key auth representation. Verify uses execute-time metadata for mutations (no replay).
 
 ## Supported Operations
 
@@ -42,7 +42,7 @@ Query metadata stored in prepare/execute receipts:
 
 ## Dedicated Auth Representation
 
-The adapter supports a dedicated `auth` field for bearer and basic authentication, providing an alternative to passing auth via headers:
+The adapter supports a dedicated `auth` field for bearer, basic, and api_key authentication, providing an alternative to passing auth via headers:
 
 ```json
 {
@@ -65,13 +65,26 @@ Basic auth example:
     "password": "mypassword"
   }
 }
+
+API key auth example:
+
+{
+  "url": "https://example.com/api/users",
+  "method": "GET",
+  "auth": {
+    "type": "api_key",
+    "header": "X-API-Key",
+    "key": "my-api-key"
+  }
+}
 ```
 
 ### Auth Parsing Rules
 
 - The adapter fail-closed on malformed auth (missing token, empty token, unsupported type)
 - Ambiguous auth is rejected: if both `headers.authorization` AND `auth` are supplied, the request is rejected
-- Supported auth types: `bearer` (with token) and `basic` (with username and password)
+- Ambiguous auth is rejected: if the API key header is present in both `headers` AND `auth.api_key`, the request is rejected
+- Supported auth types: `bearer` (with token), `basic` (with username and password), and `api_key` (with header name and key)
 
 ### Auth Metadata
 
@@ -82,6 +95,8 @@ Auth presence and digest (not raw token) are stored in metadata:
 ### Firewall Allowlist Enforcement
 
 When `auth.bearer` or `auth.basic` is present, the firewall treats it like having the `authorization` header for header allowlist checking purposes. The binding's `header_allowlist` must include `authorization` to permit bearer or basic auth.
+
+When `auth.api_key` is present, the firewall checks that the specific API key header (e.g., `X-API-Key`) is in the binding's `header_allowlist`. The header name from `auth.api_key.header` must be present in the allowlist.
 
 ## Verify Behavior by Method
 
@@ -147,9 +162,27 @@ Basic auth example:
 }
 ```
 
+API key auth example:
+
+```json
+{
+  "url": "https://example.com/api/users",
+  "method": "POST",
+  "body": {"name": "test", "email": "test@example.com"},
+  "headers": {
+    "x-request-id": "req-123"
+  },
+  "auth": {
+    "type": "api_key",
+    "header": "X-API-Key",
+    "key": "my-api-key"
+  }
+}
+```
+
 All fields are optional. If omitted, bound values from prepare are used. For GET, body is ignored for digest purposes. Headers and auth are validated by gateway allowlist enforcement and bound into request digest when present.
 
-**Note**: Use either `headers.authorization` OR `auth` field, not both. Using both is treated as ambiguous and rejected.
+**Note**: Use either `headers.authorization` OR `auth` field for bearer/basic, not both. Using both is treated as ambiguous and rejected. For API key auth, use either `headers.{header}` OR `auth.api_key`, not both.
 
 ## Verification Checks
 
