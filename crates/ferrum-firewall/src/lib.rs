@@ -1377,9 +1377,9 @@ struct HttpExecutionPayload {
     url: String,
     method: HttpMethod,
     headers: HashMap<String, String>,
-    /// Indicates if auth.bearer was present in the payload.
+    /// Indicates if auth (bearer or basic) was present in the payload.
     /// When true, this is treated like having an "authorization" header for allowlist checking.
-    auth_bearer_present: bool,
+    auth_present: bool,
 }
 
 /// File execution payload extracted from JSON.
@@ -1476,20 +1476,22 @@ impl DefaultFirewall {
             HashMap::new()
         };
 
-        // Check for dedicated auth.bearer field
-        let auth_bearer_present = self.payload_has_bearer_auth(payload);
+        // Check for dedicated auth field (bearer or basic)
+        let auth_present = self.payload_has_http_auth(payload);
 
         Some(HttpExecutionPayload {
             url,
             method,
             headers,
-            auth_bearer_present,
+            auth_present,
         })
     }
 
-    /// Check if the payload contains a bearer auth object.
-    /// Expected shape: {"auth": {"type": "bearer", "token": "..."}}
-    fn payload_has_bearer_auth(&self, payload: &serde_json::Value) -> bool {
+    /// Check if the payload contains an HTTP auth object (bearer or basic).
+    /// Expected shapes:
+    /// - Bearer: {"auth": {"type": "bearer", "token": "..."}}
+    /// - Basic: {"auth": {"type": "basic", "username": "...", "password": "..."}}
+    fn payload_has_http_auth(&self, payload: &serde_json::Value) -> bool {
         let obj = match payload.as_object() {
             Some(o) => o,
             None => return false,
@@ -1505,10 +1507,25 @@ impl DefaultFirewall {
             Some(t) => t.to_lowercase(),
             None => return false,
         };
-        if auth_type != "bearer" {
-            return false;
+        match auth_type.as_str() {
+            "bearer" => {
+                // Bearer auth requires a token
+                auth.get("token").and_then(|t| t.as_str()).is_some()
+            }
+            "basic" => {
+                // Basic auth requires username and password
+                auth.get("username")
+                    .and_then(|u| u.as_str())
+                    .map(|u| !u.is_empty())
+                    .unwrap_or(false)
+                    && auth
+                        .get("password")
+                        .and_then(|p| p.as_str())
+                        .map(|p| !p.is_empty())
+                        .unwrap_or(false)
+            }
+            _ => false,
         }
-        auth.get("token").and_then(|t| t.as_str()).is_some()
     }
 
     /// Parse URL into components for comparison.
@@ -1646,9 +1663,9 @@ impl DefaultFirewall {
             }
         }
 
-        // If auth.bearer is present, treat it like having the authorization header
+        // If auth (bearer or basic) is present, treat it like having the authorization header
         // for allowlist checking purposes
-        if payload.auth_bearer_present && !allowlist_lower.contains("authorization") {
+        if payload.auth_present && !allowlist_lower.contains("authorization") {
             return false;
         }
 

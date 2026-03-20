@@ -4,7 +4,7 @@ HTTP adapter for idempotency-aware rollback and compensation.
 
 ## Status
 
-Current slice: HTTP execute/verify with approved/bound concrete HTTP methods (GET/POST/PUT/PATCH/DELETE), body handling, header-shape binding, canonical query string binding, and dedicated bearer auth representation. Verify uses execute-time metadata for mutations (no replay).
+Current slice: HTTP execute/verify with approved/bound concrete HTTP methods (GET/POST/PUT/PATCH/DELETE), body handling, header-shape binding, canonical query string binding, and dedicated bearer/basic auth representation. Verify uses execute-time metadata for mutations (no replay).
 
 ## Supported Operations
 
@@ -24,7 +24,7 @@ For all HTTP methods, the approved request digest is computed from request shape
 - `POST/PUT/PATCH/DELETE`: digest = SHA256(method:canonical_url:body[:headers]) where body is canonical JSON or empty
 - Header names are canonicalized to lowercase and sorted before digesting
 - Query strings are canonicalized (sorted by key) before digesting so semantically identical query strings produce the same digest
-- Bearer auth tokens are included in the digest when specified via the `auth` field
+- Bearer and basic auth tokens are included in the digest when specified via the `auth` field
 
 This lets prepare bind the approved request shape without broadening remote mutation execution or recovery semantics.
 
@@ -40,9 +40,9 @@ Query metadata stored in prepare/execute receipts:
 - `approved_query_present` / `executed_query_present`: boolean indicating if query string was present
 - `approved_query_digest` / `executed_query_digest`: SHA256 of the canonical query string (empty string if no query)
 
-## Dedicated Bearer Auth Representation
+## Dedicated Auth Representation
 
-The adapter supports a dedicated `auth` field for bearer authentication, providing an alternative to passing auth via headers:
+The adapter supports a dedicated `auth` field for bearer and basic authentication, providing an alternative to passing auth via headers:
 
 ```json
 {
@@ -53,13 +53,25 @@ The adapter supports a dedicated `auth` field for bearer authentication, providi
     "token": "my-secret-token"
   }
 }
+
+Basic auth example:
+
+{
+  "url": "https://example.com/api/users",
+  "method": "GET",
+  "auth": {
+    "type": "basic",
+    "username": "myuser",
+    "password": "mypassword"
+  }
+}
 ```
 
 ### Auth Parsing Rules
 
 - The adapter fail-closed on malformed auth (missing token, empty token, unsupported type)
 - Ambiguous auth is rejected: if both `headers.authorization` AND `auth` are supplied, the request is rejected
-- Only `bearer` auth type is supported
+- Supported auth types: `bearer` (with token) and `basic` (with username and password)
 
 ### Auth Metadata
 
@@ -69,7 +81,7 @@ Auth presence and digest (not raw token) are stored in metadata:
 
 ### Firewall Allowlist Enforcement
 
-When `auth.bearer` is present, the firewall treats it like having the `authorization` header for header allowlist checking purposes. The binding's `header_allowlist` must include `authorization` to permit bearer auth.
+When `auth.bearer` or `auth.basic` is present, the firewall treats it like having the `authorization` header for header allowlist checking purposes. The binding's `header_allowlist` must include `authorization` to permit bearer or basic auth.
 
 ## Verify Behavior by Method
 
@@ -87,7 +99,6 @@ When `auth.bearer` is present, the firewall treats it like having the `authoriza
 
 - Response bodies are not captured or compared
 - rollback/compensate are no-ops for all methods (mutation recovery is R3 boundary)
-- Only bearer auth type is supported
 
 ## Usage
 
@@ -101,6 +112,8 @@ register_http_adapter(&mut registry);
 
 ## Execute Payload Format
 
+Bearer auth example:
+
 ```json
 {
   "url": "https://example.com/api/users",
@@ -112,6 +125,24 @@ register_http_adapter(&mut registry);
   "auth": {
     "type": "bearer",
     "token": "my-secret-token"
+  }
+}
+```
+
+Basic auth example:
+
+```json
+{
+  "url": "https://example.com/api/users",
+  "method": "POST",
+  "body": {"name": "test", "email": "test@example.com"},
+  "headers": {
+    "x-request-id": "req-123"
+  },
+  "auth": {
+    "type": "basic",
+    "username": "myuser",
+    "password": "mypassword"
   }
 }
 ```

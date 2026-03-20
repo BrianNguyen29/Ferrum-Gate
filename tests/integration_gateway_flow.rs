@@ -10389,6 +10389,268 @@ async fn test_http_post_execute_and_verify_with_bearer_auth_through_gateway_afte
 }
 
 #[tokio::test]
+async fn test_http_execute_denied_when_bearer_auth_missing_from_header_allowlist() {
+    // Regression test: when payload-level dedicated HTTP auth (auth.bearer) is used
+    // but the HTTP binding's header_allowlist does NOT contain "authorization",
+    // the request must be denied (fail-closed).
+    // See ferrum-adapter-http/README.md: "The binding's header_allowlist must include
+    // authorization to permit bearer auth."
+
+    let (port, _server_handle) = start_local_http_server(201);
+
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // HTTP binding with EMPTY header_allowlist - does NOT include "authorization"
+    // This means bearer auth should be REJECTED even though it's in the payload
+    let http_binding = ResourceBinding::Http {
+        method: ferrum_proto::HttpMethod::Post,
+        base_url: format!("http://127.0.0.1:{}", port),
+        path_prefix: "/api".to_string(),
+        header_allowlist: vec![], // NOTE: empty - "authorization" NOT allowed
+        mode: ResourceMode::ReadWrite,
+    };
+
+    let http_scope = ferrum_proto::ResourceSelector::HttpEndpoint {
+        method: ferrum_proto::HttpMethod::Post,
+        base_url: format!("http://127.0.0.1:{}", port),
+        path_prefix: "/api".to_string(),
+        mode: ferrum_proto::ResourceMode::ReadWrite,
+    };
+
+    // Step 1: Compile intent with mutating HTTP scope
+    let app = build_router(runtime.clone());
+    let mut req = sample_intent_request_with_effect(EffectType::ExternalApiCall);
+    req.requested_resource_scope = vec![http_scope];
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Step 2: Evaluate proposal - R3 requires approval
+    let app = build_router(runtime.clone());
+    let proposal = ActionProposal {
+        proposal_id: ferrum_proto::ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Create resource with bearer auth".to_string(),
+        tool_name: "http.post".to_string(),
+        server_name: "http-adapter".to_string(),
+        raw_arguments: serde_json::json!({
+            "url": format!("http://127.0.0.1:{}/api/users", port),
+            "method": "POST",
+            "body": {"name": "test"},
+            "auth": {
+                "type": "bearer",
+                "token": "some-token"
+            }
+        }),
+        expected_effect: "create remote HTTP resource".to_string(),
+        estimated_risk: RiskTier::High,
+        requested_rollback_class: RollbackClass::R0NativeReversible,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 3: Mint capability with HTTP binding (empty header_allowlist)
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "http-adapter".to_string(),
+            tool_name: "http.post".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![http_binding],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    // Step 4: Authorize execution -> AwaitingApproval
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    // Step 5: Resolve approval
+    let pending_approvals = runtime.store.approvals().list_pending().await.unwrap();
+    assert!(!pending_approvals.is_empty());
+    let approval_id = pending_approvals[0].approval_id;
+
+    let app = build_router(runtime.clone());
+    let resolve_req = ferrum_proto::ApprovalResolveRequest {
+        actor: ferrum_proto::ActorRef {
+            actor_type: ferrum_proto::ActorType::User,
+            actor_id: "admin".to_string(),
+            display_name: Some("Admin".to_string()),
+        },
+        approve: true,
+        reason: Some("Approved for header allowlist test".to_string()),
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/approvals/{}/resolve", approval_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&resolve_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 6: Prepare execution
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 7: Execute with bearer auth - MUST BE DENIED because header_allowlist
+    // does not include "authorization"
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({
+            "url": format!("http://127.0.0.1:{}/api/users", port),
+            "method": "POST",
+            "body": {"name": "test"},
+            "auth": {
+                "type": "bearer",
+                "token": "some-token"
+            }
+        }),
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // FAIL-CLOSED: execute must return 403 Forbidden when bearer auth is used
+    // but "authorization" is not in header_allowlist
+    assert_eq!(
+        response.status(),
+        403,
+        "execute should be FORBIDDEN when bearer auth is used but header_allowlist does not contain 'authorization'"
+    );
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let error: ferrum_proto::ApiError = serde_json::from_slice(&body).unwrap();
+    assert!(
+        error.message.contains("authorization") || error.message.contains("denied"),
+        "error message should mention authorization allowlist violation, got: {}",
+        error.message
+    );
+
+    // Verify execution state is still Prepared (fail-closed: firewall denied before
+    // execution started, so state never transitioned to Running/Failed)
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored_execution.is_some());
+    let exec = stored_execution.unwrap();
+    assert!(
+        matches!(exec.state, ExecutionState::Prepared),
+        "execution should remain Prepared when firewall denies before execution starts, got {:?}",
+        exec.state
+    );
+
+    // Note: We don't join server_handle because the HTTP server was never contacted
+    // (firewall denied before connection was made), so the server thread is still waiting.
+    // The server will be dropped when temp_dir is dropped.
+}
+
+#[tokio::test]
 async fn test_http_rollback_through_gateway_is_conservative_noop() {
     // Start local HTTP server that returns 200
     let (port, server_handle) = start_local_http_server(200);
@@ -10877,4 +11139,311 @@ async fn test_http_500_does_not_verify_and_does_not_auto_commit_r0() {
         "R0 execution must be Failed when verify fails (not auto-committed), got {:?}",
         exec.state
     );
+}
+
+#[tokio::test]
+async fn test_http_execute_succeeds_with_basic_auth_through_full_flow() {
+    // Integration test: successful Basic auth flow through approval/prepare/execute/verify.
+    // This proves that basic auth works end-to-end, not just at the adapter level.
+
+    let (port, server_handle) = start_local_http_server(201);
+
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // HTTP binding WITH authorization in header_allowlist to permit basic auth
+    let http_binding = ResourceBinding::Http {
+        method: ferrum_proto::HttpMethod::Post,
+        base_url: format!("http://127.0.0.1:{}", port),
+        path_prefix: "/api".to_string(),
+        header_allowlist: vec!["authorization".to_string()],
+        mode: ResourceMode::ReadWrite,
+    };
+
+    let http_scope = ferrum_proto::ResourceSelector::HttpEndpoint {
+        method: ferrum_proto::HttpMethod::Post,
+        base_url: format!("http://127.0.0.1:{}", port),
+        path_prefix: "/api".to_string(),
+        mode: ferrum_proto::ResourceMode::ReadWrite,
+    };
+
+    // Step 1: Compile intent with mutating HTTP scope (R3 default)
+    let app = build_router(runtime.clone());
+    let mut req = sample_intent_request_with_effect(EffectType::ExternalApiCall);
+    req.requested_resource_scope = vec![http_scope];
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Step 2: Evaluate proposal with basic auth in raw_arguments
+    let app = build_router(runtime.clone());
+    let proposal = ActionProposal {
+        proposal_id: ferrum_proto::ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Create resource with basic auth".to_string(),
+        tool_name: "http.post".to_string(),
+        server_name: "http-adapter".to_string(),
+        raw_arguments: serde_json::json!({
+            "url": format!("http://127.0.0.1:{}/api/users", port),
+            "method": "POST",
+            "body": {"name": "test"},
+            "auth": {
+                "type": "basic",
+                "username": "testuser",
+                "password": "testpass"
+            }
+        }),
+        expected_effect: "create remote HTTP resource".to_string(),
+        estimated_risk: RiskTier::High,
+        requested_rollback_class: RollbackClass::R0NativeReversible,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 3: Mint capability
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "http-adapter".to_string(),
+            tool_name: "http.post".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![http_binding],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    // Step 4: Authorize execution -> AwaitingApproval (R3 requires approval)
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+    assert!(matches!(
+        auth_resp.execution.state,
+        ExecutionState::AwaitingApproval
+    ));
+
+    // Step 5: Resolve approval (grant)
+    let pending_approvals = runtime.store.approvals().list_pending().await.unwrap();
+    assert!(!pending_approvals.is_empty());
+    let approval_id = pending_approvals[0].approval_id;
+
+    let app = build_router(runtime.clone());
+    let resolve_req = ferrum_proto::ApprovalResolveRequest {
+        actor: ferrum_proto::ActorRef {
+            actor_type: ferrum_proto::ActorType::User,
+            actor_id: "admin".to_string(),
+            display_name: Some("Admin".to_string()),
+        },
+        approve: true,
+        reason: Some("Approved for basic auth test".to_string()),
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/approvals/{}/resolve", approval_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&resolve_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 6: Prepare execution
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let prep_resp: ferrum_proto::PrepareExecutionResponse = serde_json::from_slice(&body).unwrap();
+    assert!(prep_resp.prepared);
+    assert!(prep_resp.rollback_contract.is_some());
+
+    // Step 7: Execute with basic auth
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({
+            "url": format!("http://127.0.0.1:{}/api/users", port),
+            "method": "POST",
+            "body": {"name": "test"},
+            "auth": {
+                "type": "basic",
+                "username": "testuser",
+                "password": "testpass"
+            }
+        }),
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Execute should succeed (201 Created)
+    assert_eq!(
+        response.status(),
+        200,
+        "execute should succeed with basic auth when header_allowlist contains authorization"
+    );
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let execute_resp: ferrum_proto::ExecuteResponse = serde_json::from_slice(&body).unwrap();
+    assert!(execute_resp.executed);
+
+    // Step 8: Verify. For POST this must use execute-time metadata only.
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200, "verify should succeed for POST");
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let verify_resp: ferrum_proto::VerifyResponse = serde_json::from_slice(&body).unwrap();
+    assert!(verify_resp.verified);
+
+    // R3 must remain AwaitingVerification after verify (no auto-commit).
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    let exec = stored_execution.unwrap();
+    assert!(matches!(exec.state, ExecutionState::AwaitingVerification));
+
+    // Step 9: Explicit commit (required for R3)
+    let app = build_router(runtime.clone());
+    let commit_req = ferrum_proto::CommitRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/commit", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&commit_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let commit_resp: ferrum_proto::CommitResponse = serde_json::from_slice(&body).unwrap();
+    assert!(commit_resp.committed);
+    assert!(commit_resp.committed_at.is_some());
+
+    // Verify final state is Committed
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    let exec = stored_execution.unwrap();
+    assert!(matches!(exec.state, ExecutionState::Committed));
+
+    let _ = server_handle.join();
 }

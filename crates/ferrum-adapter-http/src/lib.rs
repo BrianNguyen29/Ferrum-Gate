@@ -88,12 +88,29 @@ pub struct HttpRollbackAdapter {
     client: Client,
 }
 
-/// Dedicated bearer auth representation for HTTP requests.
-/// This allows auth to be specified separately from headers while maintaining
-/// header allowlist semantics for the authorization header.
+/// Dedicated HTTP auth representation for HTTP requests.
+/// Supports both bearer and basic auth, allowing auth to be specified separately
+/// from headers while maintaining header allowlist semantics for the authorization header.
 #[derive(Debug, Clone)]
-struct BearerAuth {
-    token: String,
+enum HttpAuth {
+    Bearer { token: String },
+    Basic { username: String, password: String },
+}
+
+impl HttpAuth {
+    /// Compute a digest for this auth credential (without storing raw credentials).
+    fn compute_digest(&self) -> String {
+        let mut hasher = Sha256::new();
+        match self {
+            HttpAuth::Bearer { token } => {
+                hasher.update(format!("bearer:{}", token).as_bytes());
+            }
+            HttpAuth::Basic { username, password } => {
+                hasher.update(format!("basic:{}:{}", username, password).as_bytes());
+            }
+        }
+        format!("{:x}", hasher.finalize())
+    }
 }
 
 impl HttpRollbackAdapter {
@@ -318,7 +335,7 @@ impl HttpRollbackAdapter {
             Option<HttpMethod>,
             serde_json::Value,
             Option<HashMap<String, String>>,
-            Option<BearerAuth>,
+            Option<HttpAuth>,
         ),
         HttpAdapterError,
     > {
@@ -389,9 +406,9 @@ impl HttpRollbackAdapter {
         // Parse dedicated auth field if present
         let auth = match obj.get("auth") {
             Some(value) => {
-                let bearer = Self::parse_bearer_auth(value)
+                let http_auth = Self::parse_http_auth(value)
                     .map_err(|e| HttpAdapterError::Validation(format!("invalid auth: {}", e)))?;
-                Some(bearer)
+                Some(http_auth)
             }
             None => None,
         };
@@ -410,9 +427,11 @@ impl HttpRollbackAdapter {
         Ok((url, method, body, headers, auth))
     }
 
-    /// Parse bearer auth from auth JSON value.
-    /// Expected shape: {"type": "bearer", "token": "..."}
-    fn parse_bearer_auth(value: &serde_json::Value) -> Result<BearerAuth, String> {
+    /// Parse HTTP auth from auth JSON value.
+    /// Expected shapes:
+    /// - Bearer: {"type": "bearer", "token": "..."}
+    /// - Basic: {"type": "basic", "username": "...", "password": "..."}
+    fn parse_http_auth(value: &serde_json::Value) -> Result<HttpAuth, String> {
         let obj = value.as_object().ok_or_else(|| "auth must be an object")?;
 
         let auth_type = obj
@@ -420,50 +439,88 @@ impl HttpRollbackAdapter {
             .and_then(|v| v.as_str())
             .ok_or_else(|| "auth.type must be a string")?;
 
-        if auth_type.to_lowercase() != "bearer" {
-            return Err(format!(
-                "unsupported auth type: {} (only bearer supported)",
-                auth_type
-            ));
+        match auth_type.to_lowercase().as_str() {
+            "bearer" => {
+                let token = obj
+                    .get("token")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "auth.token must be a string")?;
+
+                if token.is_empty() {
+                    return Err("auth.token must not be empty".to_string());
+                }
+
+                Ok(HttpAuth::Bearer {
+                    token: token.to_string(),
+                })
+            }
+            "basic" => {
+                let username = obj
+                    .get("username")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "auth.username must be a string")?;
+
+                let password = obj
+                    .get("password")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "auth.password must be a string")?;
+
+                if username.is_empty() {
+                    return Err("auth.username must not be empty".to_string());
+                }
+
+                Ok(HttpAuth::Basic {
+                    username: username.to_string(),
+                    password: password.to_string(),
+                })
+            }
+            other => Err(format!(
+                "unsupported auth type: {} (only bearer and basic supported)",
+                other
+            )),
         }
-
-        let token = obj
-            .get("token")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "auth.token must be a string")?;
-
-        if token.is_empty() {
-            return Err("auth.token must not be empty".to_string());
-        }
-
-        Ok(BearerAuth {
-            token: token.to_string(),
-        })
     }
 
-    /// Compute SHA256 digest for bearer auth token (without storing raw token).
-    fn compute_auth_digest(token: &str) -> String {
-        let mut hasher = Sha256::new();
-        hasher.update(token.as_bytes());
-        format!("{:x}", hasher.finalize())
-    }
-
-    /// Apply bearer auth to the request headers, returning updated headers map.
+    /// Apply HTTP auth to the request headers, returning updated headers map.
     /// Does not mutate the original headers; returns a new HashMap if auth is applied.
-    fn apply_bearer_auth(
+    fn apply_http_auth(
         headers: Option<&HashMap<String, String>>,
-        auth: Option<&BearerAuth>,
+        auth: Option<&HttpAuth>,
     ) -> Option<HashMap<String, String>> {
         match (headers, auth) {
-            (Some(h), Some(a)) => {
+            (Some(h), Some(HttpAuth::Bearer { token })) => {
                 let mut new_headers = h.clone();
-                new_headers.insert("authorization".to_string(), format!("Bearer {}", a.token));
+                new_headers.insert("authorization".to_string(), format!("Bearer {}", token));
+                Some(new_headers)
+            }
+            (Some(h), Some(HttpAuth::Basic { username, password })) => {
+                let mut new_headers = h.clone();
+                let credentials = base64::Engine::encode(
+                    &base64::engine::general_purpose::STANDARD,
+                    format!("{}:{}", username, password),
+                );
+                new_headers.insert(
+                    "authorization".to_string(),
+                    format!("Basic {}", credentials),
+                );
                 Some(new_headers)
             }
             (Some(h), None) => Some(h.clone()),
-            (None, Some(a)) => Some({
+            (None, Some(HttpAuth::Bearer { token })) => Some({
                 let mut new_headers = HashMap::new();
-                new_headers.insert("authorization".to_string(), format!("Bearer {}", a.token));
+                new_headers.insert("authorization".to_string(), format!("Bearer {}", token));
+                new_headers
+            }),
+            (None, Some(HttpAuth::Basic { username, password })) => Some({
+                let mut new_headers = HashMap::new();
+                let credentials = base64::Engine::encode(
+                    &base64::engine::general_purpose::STANDARD,
+                    format!("{}:{}", username, password),
+                );
+                new_headers.insert(
+                    "authorization".to_string(),
+                    format!("Basic {}", credentials),
+                );
                 new_headers
             }),
             (None, None) => None,
@@ -480,7 +537,7 @@ impl HttpRollbackAdapter {
             HttpMethod,
             serde_json::Value,
             Option<HashMap<String, String>>,
-            Option<BearerAuth>,
+            Option<HttpAuth>,
         ),
         HttpAdapterError,
     > {
@@ -590,9 +647,9 @@ impl RollbackAdapter for HttpRollbackAdapter {
             Self::resolve_request_parts(&method, &url, &approved_request_payload)
                 .map_err(AdapterError::from)?;
 
-        // Apply bearer auth to headers for digest computation (if present)
+        // Apply HTTP auth to headers for digest computation (if present)
         let headers_for_digest =
-            Self::apply_bearer_auth(approved_headers.as_ref(), approved_auth.as_ref());
+            Self::apply_http_auth(approved_headers.as_ref(), approved_auth.as_ref());
 
         let approved_request_digest = Self::compute_body_aware_digest(
             &approved_method,
@@ -606,9 +663,7 @@ impl RollbackAdapter for HttpRollbackAdapter {
         let approved_query_digest = Self::compute_query_digest(approved_query.as_deref());
         let approved_query_present = approved_query.is_some();
         let approved_auth_present = approved_auth.is_some();
-        let approved_auth_digest = approved_auth
-            .as_ref()
-            .map(|a| Self::compute_auth_digest(&a.token));
+        let approved_auth_digest = approved_auth.as_ref().map(|a| a.compute_digest());
 
         let mut metadata = JsonMap::new();
         metadata.insert(
@@ -683,9 +738,9 @@ impl RollbackAdapter for HttpRollbackAdapter {
             Self::resolve_request_parts(&bound_method, &bound_url, payload)
                 .map_err(AdapterError::from)?;
 
-        // Apply bearer auth to headers for digest computation and request execution
+        // Apply HTTP auth to headers for digest computation and request execution
         let headers_for_request =
-            Self::apply_bearer_auth(executed_headers.as_ref(), executed_auth.as_ref());
+            Self::apply_http_auth(executed_headers.as_ref(), executed_auth.as_ref());
 
         let executed_request_digest = Self::compute_body_aware_digest(
             &executed_method,
@@ -699,9 +754,7 @@ impl RollbackAdapter for HttpRollbackAdapter {
         let executed_query_digest = Self::compute_query_digest(executed_query.as_deref());
         let executed_query_present = executed_query.is_some();
         let executed_auth_present = executed_auth.is_some();
-        let executed_auth_digest = executed_auth
-            .as_ref()
-            .map(|a| Self::compute_auth_digest(&a.token));
+        let executed_auth_digest = executed_auth.as_ref().map(|a| a.compute_digest());
 
         if let Some(approved_request_digest) = contract
             .metadata
@@ -2470,8 +2523,11 @@ mod tests {
         assert!(headers.is_none());
         // Auth should be present
         assert!(auth.is_some());
-        let bearer = auth.unwrap();
-        assert_eq!(bearer.token, "test-token-123");
+        let http_auth = auth.unwrap();
+        match http_auth {
+            HttpAuth::Bearer { token } => assert_eq!(token, "test-token-123"),
+            HttpAuth::Basic { .. } => panic!("expected bearer auth, got basic"),
+        }
     }
 
     /// Test that parse_request_parts rejects malformed auth (missing token).
@@ -2524,7 +2580,7 @@ mod tests {
             "url": "https://example.com/api",
             "method": "GET",
             "auth": {
-                "type": "basic",
+                "type": "digest",
                 "token": "user:pass"
             }
         });
@@ -2580,15 +2636,15 @@ mod tests {
         }
     }
 
-    /// Test that apply_bearer_auth correctly adds authorization header.
+    /// Test that apply_http_auth correctly adds authorization header for bearer auth.
     #[test]
-    fn test_apply_bearer_auth_adds_header() {
+    fn test_apply_http_auth_adds_bearer_header() {
         let headers: HashMap<String, String> = HashMap::new();
-        let auth = BearerAuth {
+        let auth = HttpAuth::Bearer {
             token: "test-token".to_string(),
         };
 
-        let result = HttpRollbackAdapter::apply_bearer_auth(Some(&headers), Some(&auth));
+        let result = HttpRollbackAdapter::apply_http_auth(Some(&headers), Some(&auth));
         assert!(result.is_some());
         let result = result.unwrap();
         assert_eq!(
@@ -2597,16 +2653,34 @@ mod tests {
         );
     }
 
-    /// Test that apply_bearer_auth merges with existing headers.
+    /// Test that apply_http_auth correctly adds authorization header for basic auth.
     #[test]
-    fn test_apply_bearer_auth_merges_with_headers() {
+    fn test_apply_http_auth_adds_basic_header() {
+        let headers: HashMap<String, String> = HashMap::new();
+        let auth = HttpAuth::Basic {
+            username: "user".to_string(),
+            password: "pass".to_string(),
+        };
+
+        let result = HttpRollbackAdapter::apply_http_auth(Some(&headers), Some(&auth));
+        assert!(result.is_some());
+        let result = result.unwrap();
+        assert_eq!(
+            result.get("authorization"),
+            Some(&"Basic dXNlcjpwYXNz".to_string())
+        );
+    }
+
+    /// Test that apply_http_auth merges with existing headers.
+    #[test]
+    fn test_apply_http_auth_merges_with_headers() {
         let mut headers = HashMap::new();
         headers.insert("content-type".to_string(), "application/json".to_string());
-        let auth = BearerAuth {
+        let auth = HttpAuth::Bearer {
             token: "test-token".to_string(),
         };
 
-        let result = HttpRollbackAdapter::apply_bearer_auth(Some(&headers), Some(&auth));
+        let result = HttpRollbackAdapter::apply_http_auth(Some(&headers), Some(&auth));
         assert!(result.is_some());
         let result = result.unwrap();
         assert_eq!(
