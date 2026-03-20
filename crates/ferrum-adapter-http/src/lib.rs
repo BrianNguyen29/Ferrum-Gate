@@ -41,8 +41,8 @@ impl From<HttpAdapterError> for AdapterError {
 ///
 /// Supported operations:
 /// - `prepare`: captures bound scope plus approved-request digest metadata
-/// - `execute`: performs HTTP GET requests only and records execute-time digest metadata
-/// - `verify`: validates expected HTTP status from verify_checks
+/// - `execute`: performs HTTP requests (GET/POST/PUT/PATCH/DELETE) with body handling
+/// - `verify`: validates status - GET can re-request; mutations use execute-time metadata only
 /// - `rollback`: conservative no-op (remote mutation recovery is not established)
 /// - `compensate`: alias for rollback in this slice
 ///
@@ -59,6 +59,10 @@ impl From<HttpAdapterError> for AdapterError {
 /// - The approved digest binds execute-time payloads to the concrete approved request without
 ///   broadening rollback/recovery guarantees for remote mutation methods
 ///
+/// Verify semantics by method:
+/// - GET: re-requests if explicit HttpStatusExpected check; otherwise uses execute-time metadata
+/// - Mutations: ALWAYS uses execute-time metadata only (no replay). Fail-closed if metadata missing.
+///
 /// Metadata keys (clearer naming to distinguish bound vs executed):
 /// - `bound_url`: the allowed URL scope prefix from prepare
 /// - `bound_method`: the allowed method from prepare
@@ -73,7 +77,6 @@ impl From<HttpAdapterError> for AdapterError {
 /// - `executed_request_digest`: digest computed at execute time including actual body
 ///
 /// This slice is conservative:
-/// - execute/verify still only support GET
 /// - rollback/compensate are no-ops since mutation recovery guarantees are not yet established
 /// - Response bodies are not captured or compared
 /// - Destructive remote mutation recovery remains an explicit R3 boundary
@@ -370,14 +373,6 @@ impl RollbackAdapter for HttpRollbackAdapter {
         let (bound_method, bound_url, _) =
             Self::extract_http_target(&contract.target).map_err(AdapterError::from)?;
 
-        if bound_method != HttpMethod::Get {
-            return Err(AdapterError::Unsupported(format!(
-                "execute only supports HTTP GET in this slice; got {:?}",
-                bound_method
-            ))
-            .into());
-        }
-
         let (executed_url, executed_method, executed_body) =
             Self::resolve_request_parts(&bound_method, &bound_url, payload)
                 .map_err(AdapterError::from)?;
@@ -400,10 +395,21 @@ impl RollbackAdapter for HttpRollbackAdapter {
             }
         }
 
-        let response =
-            self.client.get(&executed_url).send().await.map_err(|e| {
-                HttpAdapterError::RequestFailed(format!("GET request failed: {}", e))
-            })?;
+        // Execute the HTTP request with the appropriate method.
+        // For mutation-capable methods, body is sent as canonical JSON when present.
+        let mut request = match executed_method {
+            HttpMethod::Get => self.client.get(&executed_url),
+            HttpMethod::Post => self.client.post(&executed_url),
+            HttpMethod::Put => self.client.put(&executed_url),
+            HttpMethod::Patch => self.client.patch(&executed_url),
+            HttpMethod::Delete => self.client.delete(&executed_url),
+        };
+        if Self::is_mutation_method(&executed_method) && !executed_body.is_null() {
+            request = request.json(&executed_body);
+        }
+        let response = request.send().await.map_err(|e| {
+            HttpAdapterError::RequestFailed(format!("{:?} request failed: {}", executed_method, e))
+        })?;
         let status = response.status().as_u16();
 
         let mut metadata = JsonMap::new();
@@ -443,73 +449,21 @@ impl RollbackAdapter for HttpRollbackAdapter {
         let (bound_method, bound_url, _) =
             Self::extract_http_target(&contract.target).map_err(AdapterError::from)?;
 
-        if bound_method != HttpMethod::Get {
-            return Err(AdapterError::Unsupported(format!(
-                "verify only supports HTTP GET in this slice; got {:?}",
-                bound_method
-            ))
-            .into());
-        }
+        // For mutation-capable methods, verify MUST use execute-time metadata only.
+        // Replaying mutating requests during verify is NOT safe - it would re-execute the side effect.
+        // This is the key distinction from GET where re-requesting is safe.
+        let is_mutation = Self::is_mutation_method(&bound_method);
 
-        // Get expected status from verify_checks
-        let expected_status = Self::extract_expected_status(&contract.verify_checks);
+        // Get expected status from verify_checks (explicit expectation)
+        let explicit_expected_status = Self::extract_expected_status(&contract.verify_checks);
 
-        // Fall back to execute-time status metadata if no explicit check is configured.
-        // This enables verify to succeed when the execute phase captured the HTTP status,
-        // allowing end-to-end coverage without requiring explicit HttpStatusExpected checks.
-        // Stay fail-closed: if no status metadata exists, verify fails.
-        let expected_status = match expected_status {
-            Some(s) => s,
-            None => {
-                // Try to get execute-time status from contract metadata
-                if let Some(execute_status) = contract.metadata.get("status") {
-                    if let Some(status_val) = execute_status.as_u64() {
-                        status_val as u16
-                    } else {
-                        return Ok(VerifyReceipt {
-                            verified: false,
-                            adapter_metadata: {
-                                let mut m = JsonMap::new();
-                                // Use executed_url from metadata if available, else fall back to bound_url
-                                let verify_url = contract
-                                    .metadata
-                                    .get("executed_url")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or(&bound_url);
-                                m.insert("url".to_string(), serde_json::json!(verify_url));
-                                m.insert(
-                                    "reason".to_string(),
-                                    serde_json::json!("execute-time status is not a valid number"),
-                                );
-                                m
-                            },
-                        });
-                    }
-                } else {
-                    return Ok(VerifyReceipt {
-                        verified: false,
-                        adapter_metadata: {
-                            let mut m = JsonMap::new();
-                            // Use executed_url from metadata if available, else fall back to bound_url
-                            let verify_url = contract
-                                .metadata
-                                .get("executed_url")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or(&bound_url);
-                            m.insert("url".to_string(), serde_json::json!(verify_url));
-                            m.insert(
-                                "reason".to_string(),
-                                serde_json::json!("no HttpStatusExpected check configured and no execute-time status in metadata"),
-                            );
-                            m
-                        },
-                    });
-                }
-            }
-        };
+        // Get execute-time status from metadata (always required for mutations)
+        let execute_status = contract
+            .metadata
+            .get("status")
+            .and_then(|v| v.as_u64())
+            .map(|s| s as u16);
 
-        // Determine URL to verify against: prefer executed_url from metadata, fall back to bound_url
-        // This ensures verify uses the concrete URL that was actually executed, not just the scope prefix
         let verify_url = contract
             .metadata
             .get("executed_url")
@@ -517,18 +471,87 @@ impl RollbackAdapter for HttpRollbackAdapter {
             .unwrap_or(&bound_url)
             .to_string();
 
-        let verify_checks_has_explicit_expectation =
-            Self::extract_expected_status(&contract.verify_checks).is_some();
+        // Fail-closed: mutation methods require execute-time status in metadata
+        if is_mutation && execute_status.is_none() {
+            return Ok(VerifyReceipt {
+                verified: false,
+                adapter_metadata: {
+                    let mut m = JsonMap::new();
+                    m.insert(
+                        "bound_method".to_string(),
+                        serde_json::json!(format!("{:?}", bound_method)),
+                    );
+                    m.insert("bound_url".to_string(), serde_json::json!(bound_url));
+                    m.insert("verify_url".to_string(), serde_json::json!(verify_url));
+                    m.insert(
+                        "reason".to_string(),
+                        serde_json::json!(
+                            "mutation method verify requires execute-time status in metadata"
+                        ),
+                    );
+                    m
+                },
+            });
+        }
 
-        let (verified, actual_status) = if verify_checks_has_explicit_expectation {
+        // Determine expected status:
+        // - Explicit check if provided
+        // - Otherwise use execute-time metadata (required for mutations, optional for GET)
+        let expected_status = match explicit_expected_status {
+            Some(s) => s,
+            None => {
+                match execute_status {
+                    Some(s) => s,
+                    None => {
+                        // GET with no status metadata - fail closed
+                        return Ok(VerifyReceipt {
+                            verified: false,
+                            adapter_metadata: {
+                                let mut m = JsonMap::new();
+                                m.insert(
+                                    "bound_method".to_string(),
+                                    serde_json::json!(format!("{:?}", bound_method)),
+                                );
+                                m.insert("bound_url".to_string(), serde_json::json!(bound_url));
+                                m.insert("verify_url".to_string(), serde_json::json!(verify_url));
+                                m.insert(
+                                    "reason".to_string(),
+                                    serde_json::json!("no HttpStatusExpected check and no execute-time status in metadata"),
+                                );
+                                m
+                            },
+                        });
+                    }
+                }
+            }
+        };
+
+        // For GET with explicit check: optionally re-request to verify current server state
+        // For mutations: always use execute-time metadata (do not replay)
+        // For GET without explicit check: only 2xx auto-verifies via execute-time metadata
+        let (verified, actual_status) = if !is_mutation && explicit_expected_status.is_some() {
+            // GET with explicit check: re-request to verify actual current state
             let response = self.client.get(&verify_url).send().await.map_err(|e| {
                 HttpAdapterError::RequestFailed(format!("GET request failed: {}", e))
             })?;
             let actual = response.status().as_u16();
             (actual == expected_status, Some(actual))
+        } else if !is_mutation {
+            // GET without explicit check: auto-verify only 2xx via execute-time metadata
+            let actual = execute_status.unwrap_or(expected_status);
+            let verified = (200..300).contains(&actual);
+            (verified, Some(actual))
+        } else if explicit_expected_status.is_some() {
+            // Mutation with explicit expectation: crosscheck execute-time status only (no replay)
+            let actual = execute_status.unwrap();
+            let verified = actual == expected_status;
+            (verified, Some(actual))
         } else {
-            let is_success = (200..300).contains(&expected_status);
-            (is_success, None)
+            // Mutation without explicit check: auto-verify only successful execute-time statuses.
+            // Stay fail-closed for non-2xx outcomes like 4xx/5xx.
+            let actual = execute_status.unwrap();
+            let verified = (200..300).contains(&actual);
+            (verified, Some(actual))
         };
 
         let mut metadata = JsonMap::new();
@@ -543,13 +566,13 @@ impl RollbackAdapter for HttpRollbackAdapter {
         );
         if let Some(actual) = actual_status {
             metadata.insert("actual_status".to_string(), serde_json::json!(actual));
-            metadata.insert("verify_url".to_string(), serde_json::json!(verify_url));
-        } else {
+        }
+        metadata.insert("verify_url".to_string(), serde_json::json!(verify_url));
+        if is_mutation || explicit_expected_status.is_none() {
             metadata.insert(
                 "verified_via".to_string(),
-                serde_json::json!("execute-time metadata fallback"),
+                serde_json::json!("execute-time metadata"),
             );
-            metadata.insert("verify_url".to_string(), serde_json::json!(verify_url));
         }
         metadata.insert("verified".to_string(), serde_json::json!(verified));
 
@@ -1187,6 +1210,203 @@ mod tests {
         let _ = handle.join();
     }
 
+    /// Test execute with POST method and body.
+    #[tokio::test]
+    async fn test_execute_post_with_body() {
+        let (port, handle) = start_local_server(201);
+        let adapter = HttpRollbackAdapter::new();
+
+        let bound_url = format!("http://127.0.0.1:{}/api", port);
+        let target = make_http_target(HttpMethod::Post, &bound_url);
+        let mut metadata = JsonMap::new();
+        metadata.insert(
+            "approved_request_digest".to_string(),
+            serde_json::json!(HttpRollbackAdapter::compute_body_aware_digest(
+                &HttpMethod::Post,
+                &bound_url,
+                &serde_json::json!({"name": "test"})
+            )),
+        );
+        let contract = make_contract(target, metadata, vec![]);
+        let payload = serde_json::json!({
+            "body": {"name": "test"}
+        });
+
+        let receipt = adapter.execute(&contract, &payload).await.unwrap();
+
+        assert!(receipt.result_digest.is_some());
+        assert_eq!(receipt.result_digest.unwrap(), "201");
+        let meta = &receipt.adapter_metadata;
+        assert_eq!(
+            meta.get("executed_method").unwrap().as_str().unwrap(),
+            "Post"
+        );
+        assert!(
+            meta.get("executed_body_present")
+                .unwrap()
+                .as_bool()
+                .unwrap()
+        );
+        let _ = handle.join();
+    }
+
+    /// Test execute with PUT method.
+    #[tokio::test]
+    async fn test_execute_put_with_body() {
+        let (port, handle) = start_local_server(200);
+        let adapter = HttpRollbackAdapter::new();
+
+        let bound_url = format!("http://127.0.0.1:{}/api/users/1", port);
+        let target = make_http_target(HttpMethod::Put, &bound_url);
+        let mut metadata = JsonMap::new();
+        metadata.insert(
+            "approved_request_digest".to_string(),
+            serde_json::json!(HttpRollbackAdapter::compute_body_aware_digest(
+                &HttpMethod::Put,
+                &bound_url,
+                &serde_json::json!({"name": "updated"})
+            )),
+        );
+        let contract = make_contract(target, metadata, vec![]);
+        let payload = serde_json::json!({
+            "body": {"name": "updated"}
+        });
+
+        let receipt = adapter.execute(&contract, &payload).await.unwrap();
+
+        assert!(receipt.result_digest.is_some());
+        assert_eq!(receipt.result_digest.unwrap(), "200");
+        let _ = handle.join();
+    }
+
+    /// Test execute with DELETE method.
+    #[tokio::test]
+    async fn test_execute_delete() {
+        let (port, handle) = start_local_server(204);
+        let adapter = HttpRollbackAdapter::new();
+
+        let bound_url = format!("http://127.0.0.1:{}/api/users/1", port);
+        let target = make_http_target(HttpMethod::Delete, &bound_url);
+        let metadata = JsonMap::new();
+        let contract = make_contract(target, metadata, vec![]);
+        let payload = serde_json::json!({});
+
+        let receipt = adapter.execute(&contract, &payload).await.unwrap();
+
+        assert!(receipt.result_digest.is_some());
+        assert_eq!(receipt.result_digest.unwrap(), "204");
+        let _ = handle.join();
+    }
+
+    /// Test verify for mutation using execute-time metadata (positive case).
+    #[tokio::test]
+    async fn test_verify_mutation_uses_execute_time_metadata() {
+        let adapter = HttpRollbackAdapter::new();
+        let target = make_http_target(HttpMethod::Post, "https://example.com/api");
+
+        // Simulate execute-time metadata with 201 Created
+        let mut metadata = JsonMap::new();
+        metadata.insert("status".to_string(), serde_json::json!(201));
+        metadata.insert(
+            "executed_url".to_string(),
+            serde_json::json!("https://example.com/api/users"),
+        );
+        metadata.insert("executed_method".to_string(), serde_json::json!("Post"));
+
+        let contract = make_contract(target, metadata, vec![]);
+
+        let receipt = adapter.verify(&contract).await.unwrap();
+
+        // Should verify - 201 matches expected from execute-time metadata
+        assert!(
+            receipt.verified,
+            "201 should verify via execute-time metadata"
+        );
+        let meta = &receipt.adapter_metadata;
+        assert_eq!(
+            meta.get("verified_via").unwrap().as_str().unwrap(),
+            "execute-time metadata"
+        );
+    }
+
+    /// Test verify for mutation with explicit status check acts as crosscheck.
+    #[tokio::test]
+    async fn test_verify_mutation_with_explicit_check_crosscheck() {
+        let adapter = HttpRollbackAdapter::new();
+        let target = make_http_target(HttpMethod::Post, "https://example.com/api");
+
+        // Execute-time metadata says 201
+        let mut metadata = JsonMap::new();
+        metadata.insert("status".to_string(), serde_json::json!(201));
+        metadata.insert(
+            "executed_url".to_string(),
+            serde_json::json!("https://example.com/api/users"),
+        );
+
+        // Explicit check says 201
+        let check = make_status_check(201);
+        let contract = make_contract(target, metadata, vec![check]);
+
+        let receipt = adapter.verify(&contract).await.unwrap();
+
+        // Should verify - 201 matches both execute-time and explicit
+        assert!(receipt.verified);
+    }
+
+    /// Test verify for mutation without explicit check only auto-verifies 2xx.
+    #[tokio::test]
+    async fn test_verify_mutation_without_explicit_check_rejects_non_success_status() {
+        let adapter = HttpRollbackAdapter::new();
+        let target = make_http_target(HttpMethod::Post, "https://example.com/api");
+
+        let mut metadata = JsonMap::new();
+        metadata.insert("status".to_string(), serde_json::json!(500));
+        metadata.insert(
+            "executed_url".to_string(),
+            serde_json::json!("https://example.com/api/users"),
+        );
+
+        let contract = make_contract(target, metadata, vec![]);
+        let receipt = adapter.verify(&contract).await.unwrap();
+
+        assert!(
+            !receipt.verified,
+            "500 should not auto-verify for mutations"
+        );
+        assert_eq!(
+            receipt
+                .adapter_metadata
+                .get("actual_status")
+                .unwrap()
+                .as_u64(),
+            Some(500)
+        );
+    }
+
+    /// Test verify for mutation fails when execute-time status doesn't match explicit check.
+    #[tokio::test]
+    async fn test_verify_mutation_fails_when_status_mismatch() {
+        let adapter = HttpRollbackAdapter::new();
+        let target = make_http_target(HttpMethod::Post, "https://example.com/api");
+
+        // Execute-time metadata says 201
+        let mut metadata = JsonMap::new();
+        metadata.insert("status".to_string(), serde_json::json!(201));
+        metadata.insert(
+            "executed_url".to_string(),
+            serde_json::json!("https://example.com/api/users"),
+        );
+
+        // Explicit check says 200 - mismatch
+        let check = make_status_check(200);
+        let contract = make_contract(target, metadata, vec![check]);
+
+        let receipt = adapter.verify(&contract).await.unwrap();
+
+        // Should NOT verify - execute-time (201) doesn't match explicit (200)
+        assert!(!receipt.verified, "201 != 200 should fail verify");
+    }
+
     /// Test that verify uses executed_url from metadata when re-checking explicit status.
     /// This verifies the fix where verify re-executes against the actual executed URL, not the bound scope.
     #[tokio::test]
@@ -1227,18 +1447,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_verify_rejects_non_get_methods() {
+    async fn test_verify_fails_closed_for_mutation_without_execute_metadata() {
         let adapter = HttpRollbackAdapter::new();
         let target = make_http_target(HttpMethod::Post, "https://example.com/api");
         let contract = make_contract(target, JsonMap::new(), vec![]);
 
-        let err = adapter.verify(&contract).await.unwrap_err();
-        match err {
-            AdapterError::Unsupported(msg) => {
-                assert!(msg.contains("verify only supports HTTP GET"));
-            }
-            other => panic!("expected unsupported error, got {:?}", other),
-        }
+        // Mutation without execute-time metadata should fail-closed (verified: false)
+        let receipt = adapter.verify(&contract).await.unwrap();
+        assert!(!receipt.verified);
+        let meta = &receipt.adapter_metadata;
+        assert_eq!(meta.get("bound_method").unwrap().as_str().unwrap(), "Post");
+        assert!(
+            meta.get("reason")
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .contains("mutation method verify requires execute-time status in metadata")
+        );
     }
 
     /// Test that rollback is conservative no-op for all methods.
