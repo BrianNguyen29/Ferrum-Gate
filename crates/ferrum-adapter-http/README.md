@@ -4,13 +4,13 @@ HTTP adapter for idempotency-aware rollback and compensation.
 
 ## Status
 
-Current slice: HTTP execute/verify with approved/bound concrete HTTP methods (GET/POST/PUT/PATCH/DELETE), body handling, header-shape binding, and canonical query string binding. Verify uses execute-time metadata for mutations (no replay).
+Current slice: HTTP execute/verify with approved/bound concrete HTTP methods (GET/POST/PUT/PATCH/DELETE), body handling, header-shape binding, canonical query string binding, and dedicated bearer auth representation. Verify uses execute-time metadata for mutations (no replay).
 
 ## Supported Operations
 
 | Operation | Behavior |
 |-----------|----------|
-| `prepare` | Captures bound scope and approved concrete request digest, including headers when present |
+| `prepare` | Captures bound scope and approved concrete request digest, including headers and auth when present |
 | `execute` | Performs HTTP requests (GET/POST/PUT/PATCH/DELETE); rejects digest mismatch |
 | `verify` | Validates status: GET can re-request; mutations use execute-time metadata only |
 | `rollback` | Conservative no-op (mutation recovery is R3 boundary) |
@@ -24,6 +24,7 @@ For all HTTP methods, the approved request digest is computed from request shape
 - `POST/PUT/PATCH/DELETE`: digest = SHA256(method:canonical_url:body[:headers]) where body is canonical JSON or empty
 - Header names are canonicalized to lowercase and sorted before digesting
 - Query strings are canonicalized (sorted by key) before digesting so semantically identical query strings produce the same digest
+- Bearer auth tokens are included in the digest when specified via the `auth` field
 
 This lets prepare bind the approved request shape without broadening remote mutation execution or recovery semantics.
 
@@ -38,6 +39,37 @@ Query strings in URLs are canonicalized before computing digests to ensure seman
 Query metadata stored in prepare/execute receipts:
 - `approved_query_present` / `executed_query_present`: boolean indicating if query string was present
 - `approved_query_digest` / `executed_query_digest`: SHA256 of the canonical query string (empty string if no query)
+
+## Dedicated Bearer Auth Representation
+
+The adapter supports a dedicated `auth` field for bearer authentication, providing an alternative to passing auth via headers:
+
+```json
+{
+  "url": "https://example.com/api/users",
+  "method": "GET",
+  "auth": {
+    "type": "bearer",
+    "token": "my-secret-token"
+  }
+}
+```
+
+### Auth Parsing Rules
+
+- The adapter fail-closed on malformed auth (missing token, empty token, unsupported type)
+- Ambiguous auth is rejected: if both `headers.authorization` AND `auth` are supplied, the request is rejected
+- Only `bearer` auth type is supported
+
+### Auth Metadata
+
+Auth presence and digest (not raw token) are stored in metadata:
+- `approved_auth_present` / `executed_auth_present`: boolean indicating if auth was present
+- `approved_auth_digest` / `executed_auth_digest`: SHA256 of the auth token
+
+### Firewall Allowlist Enforcement
+
+When `auth.bearer` is present, the firewall treats it like having the `authorization` header for header allowlist checking purposes. The binding's `header_allowlist` must include `authorization` to permit bearer auth.
 
 ## Verify Behavior by Method
 
@@ -55,7 +87,7 @@ Query metadata stored in prepare/execute receipts:
 
 - Response bodies are not captured or compared
 - rollback/compensate are no-ops for all methods (mutation recovery is R3 boundary)
-- No dedicated auth object yet; auth/custom request shape is currently supported through allowed headers only
+- Only bearer auth type is supported
 
 ## Usage
 
@@ -75,13 +107,18 @@ register_http_adapter(&mut registry);
   "method": "POST",
   "body": {"name": "test", "email": "test@example.com"},
   "headers": {
-    "authorization": "Bearer example-token",
     "x-request-id": "req-123"
+  },
+  "auth": {
+    "type": "bearer",
+    "token": "my-secret-token"
   }
 }
 ```
 
-All fields are optional. If omitted, bound values from prepare are used. For GET, body is ignored for digest purposes. Headers are validated by gateway allowlist enforcement and bound into request digest when present.
+All fields are optional. If omitted, bound values from prepare are used. For GET, body is ignored for digest purposes. Headers and auth are validated by gateway allowlist enforcement and bound into request digest when present.
+
+**Note**: Use either `headers.authorization` OR `auth` field, not both. Using both is treated as ambiguous and rejected.
 
 ## Verification Checks
 

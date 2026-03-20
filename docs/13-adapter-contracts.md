@@ -32,9 +32,12 @@
 - `prepare` capture bound method/url/request_digest cho `HttpRequest`
 - `HttpRequest.url` hien duoc hieu la bound URL scope/prefix (`base_url + path_prefix`), khong phai luc nao cung la concrete endpoint
 - gateway truyen approved HTTP proposal args vao `prepare` de adapter tinh `approved_request_digest` tren concrete request da approve
-- request-shape digest da body-aware, header-aware, va query-aware: GET = SHA256(method:canonical_url[:headers]), POST/PUT/PATCH/DELETE = SHA256(method:canonical_url:body[:headers]); header names duoc canonicalize lowercase truoc khi hash; query strings duoc canonicalize (sort by key) truoc khi hash de dam bao `?a=1&b=2` va `?b=2&a=1` cung tao ra cung mot digest
+- request-shape digest da body-aware, header-aware, query-aware, va auth-aware: GET = SHA256(method:canonical_url[:headers]), POST/PUT/PATCH/DELETE = SHA256(method:canonical_url:body[:headers]); header names duoc canonicalize lowercase truoc khi hash; query strings duoc canonicalize (sort by key) truoc khi hash de dam bao `?a=1&b=2` va `?b=2&a=1` cung tao ra cung mot digest; bearer auth token duoc bao gom trong digest khi su dung `auth` field
+- dedicated auth representation: `{"auth": {"type": "bearer", "token": "..."}}`; adapter fail-closed khi malformed auth (token rong, unsupported type); reject ambiguous auth khi ca `headers.authorization` va `auth` deu duoc cung cap
+- auth metadata chi luu presence boolean va digest (SHA256 cua token), khong luu raw token
 - `execute` support GET/POST/PUT/PATCH/DELETE; adapter fail-closed neu `payload.url` / `payload.method` vuot bound scope, khong khop binding, hoac khong khop `approved_request_digest`
-- execute-time metadata phan biet `bound_url` / `approved_url` / `executed_url`; body, headers, va query duoc luu duoi dang digest thay vi raw values; `approved_query_present` / `executed_query_present` boolean cho presence; `approved_query_digest` / `executed_query_digest` cho query string digest
+- execute-time metadata phan biet `bound_url` / `approved_url` / `executed_url`; body, headers, va query duoc luu duoi dang digest thay vi raw values; `approved_query_present` / `executed_query_present` boolean cho presence; `approved_query_digest` / `executed_query_digest` cho query string digest; `approved_auth_present` / `executed_auth_present` va `approved_auth_digest` / `executed_auth_digest` cho auth
+- firewall enforce allowlist: khi `auth.bearer` present, firewall treat nhu co `authorization` header trong allowlist checking
 - `verify` support `HttpStatusExpected`; GET co the re-request, con mutation methods chi verify bang execute-time metadata va khong replay side effect
 - `rollback` / `compensate` la conservative no-op; destructive remote mutation van la explicit R3 boundary cho toi khi co recovery ro rang
 - gateway chi route mutating HTTP bindings sang adapter; HTTP read-only bindings van di qua enforcement path hien tai

@@ -88,6 +88,14 @@ pub struct HttpRollbackAdapter {
     client: Client,
 }
 
+/// Dedicated bearer auth representation for HTTP requests.
+/// This allows auth to be specified separately from headers while maintaining
+/// header allowlist semantics for the authorization header.
+#[derive(Debug, Clone)]
+struct BearerAuth {
+    token: String,
+}
+
 impl HttpRollbackAdapter {
     pub fn new() -> Self {
         Self {
@@ -298,9 +306,10 @@ impl HttpRollbackAdapter {
         }
     }
 
-    /// Parse URL, method, body, and headers from a request payload if present.
-    /// Returns (payload_url, payload_method, payload_body, payload_headers) where any may be absent.
+    /// Parse URL, method, body, headers, and auth from a request payload if present.
+    /// Returns (payload_url, payload_method, payload_body, payload_headers, payload_auth) where any may be absent.
     /// Stay fail-closed if the payload tries to provide malformed or unsupported values.
+    /// Rejects ambiguous/conflicting auth where both headers.authorization and auth are supplied.
     fn parse_request_parts(
         payload: &serde_json::Value,
     ) -> Result<
@@ -309,12 +318,13 @@ impl HttpRollbackAdapter {
             Option<HttpMethod>,
             serde_json::Value,
             Option<HashMap<String, String>>,
+            Option<BearerAuth>,
         ),
         HttpAdapterError,
     > {
         let obj = match payload.as_object() {
             Some(o) => o,
-            None => return Ok((None, None, serde_json::Value::Null, None)),
+            None => return Ok((None, None, serde_json::Value::Null, None, None)),
         };
 
         let url = match obj.get("url") {
@@ -376,7 +386,88 @@ impl HttpRollbackAdapter {
             None => None,
         };
 
-        Ok((url, method, body, headers))
+        // Parse dedicated auth field if present
+        let auth = match obj.get("auth") {
+            Some(value) => {
+                let bearer = Self::parse_bearer_auth(value)
+                    .map_err(|e| HttpAdapterError::Validation(format!("invalid auth: {}", e)))?;
+                Some(bearer)
+            }
+            None => None,
+        };
+
+        // Fail-closed: reject ambiguous/conflicting auth where both headers.authorization and auth are supplied
+        let has_auth_header = headers
+            .as_ref()
+            .map(|h| h.contains_key("authorization"))
+            .unwrap_or(false);
+        if has_auth_header && auth.is_some() {
+            return Err(HttpAdapterError::Validation(
+                "ambiguous auth: both headers.authorization and auth field are supplied; use only one".to_string(),
+            ));
+        }
+
+        Ok((url, method, body, headers, auth))
+    }
+
+    /// Parse bearer auth from auth JSON value.
+    /// Expected shape: {"type": "bearer", "token": "..."}
+    fn parse_bearer_auth(value: &serde_json::Value) -> Result<BearerAuth, String> {
+        let obj = value.as_object().ok_or_else(|| "auth must be an object")?;
+
+        let auth_type = obj
+            .get("type")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "auth.type must be a string")?;
+
+        if auth_type.to_lowercase() != "bearer" {
+            return Err(format!(
+                "unsupported auth type: {} (only bearer supported)",
+                auth_type
+            ));
+        }
+
+        let token = obj
+            .get("token")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "auth.token must be a string")?;
+
+        if token.is_empty() {
+            return Err("auth.token must not be empty".to_string());
+        }
+
+        Ok(BearerAuth {
+            token: token.to_string(),
+        })
+    }
+
+    /// Compute SHA256 digest for bearer auth token (without storing raw token).
+    fn compute_auth_digest(token: &str) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(token.as_bytes());
+        format!("{:x}", hasher.finalize())
+    }
+
+    /// Apply bearer auth to the request headers, returning updated headers map.
+    /// Does not mutate the original headers; returns a new HashMap if auth is applied.
+    fn apply_bearer_auth(
+        headers: Option<&HashMap<String, String>>,
+        auth: Option<&BearerAuth>,
+    ) -> Option<HashMap<String, String>> {
+        match (headers, auth) {
+            (Some(h), Some(a)) => {
+                let mut new_headers = h.clone();
+                new_headers.insert("authorization".to_string(), format!("Bearer {}", a.token));
+                Some(new_headers)
+            }
+            (Some(h), None) => Some(h.clone()),
+            (None, Some(a)) => Some({
+                let mut new_headers = HashMap::new();
+                new_headers.insert("authorization".to_string(), format!("Bearer {}", a.token));
+                new_headers
+            }),
+            (None, None) => None,
+        }
     }
 
     fn resolve_request_parts(
@@ -389,10 +480,11 @@ impl HttpRollbackAdapter {
             HttpMethod,
             serde_json::Value,
             Option<HashMap<String, String>>,
+            Option<BearerAuth>,
         ),
         HttpAdapterError,
     > {
-        let (payload_url, payload_method, payload_body, payload_headers) =
+        let (payload_url, payload_method, payload_body, payload_headers, payload_auth) =
             Self::parse_request_parts(payload)?;
         let resolved_url = payload_url.unwrap_or_else(|| bound_url.to_string());
         let resolved_method = payload_method.unwrap_or(bound_method.clone());
@@ -407,7 +499,13 @@ impl HttpRollbackAdapter {
             )));
         }
 
-        Ok((resolved_url, resolved_method, payload_body, payload_headers))
+        Ok((
+            resolved_url,
+            resolved_method,
+            payload_body,
+            payload_headers,
+            payload_auth,
+        ))
     }
 
     /// Validate that the executed URL stays within the bound URL scope.
@@ -488,20 +586,29 @@ impl RollbackAdapter for HttpRollbackAdapter {
             .get(APPROVED_HTTP_REQUEST_METADATA_KEY)
             .cloned()
             .unwrap_or(serde_json::Value::Null);
-        let (approved_url, approved_method, approved_body, approved_headers) =
+        let (approved_url, approved_method, approved_body, approved_headers, approved_auth) =
             Self::resolve_request_parts(&method, &url, &approved_request_payload)
                 .map_err(AdapterError::from)?;
+
+        // Apply bearer auth to headers for digest computation (if present)
+        let headers_for_digest =
+            Self::apply_bearer_auth(approved_headers.as_ref(), approved_auth.as_ref());
+
         let approved_request_digest = Self::compute_body_aware_digest(
             &approved_method,
             &approved_url,
             &approved_body,
-            approved_headers.as_ref(),
+            headers_for_digest.as_ref(),
         );
         let approved_body_digest = Self::compute_body_digest(&approved_body);
-        let approved_headers_digest = Self::compute_headers_digest(approved_headers.as_ref());
+        let approved_headers_digest = Self::compute_headers_digest(headers_for_digest.as_ref());
         let approved_query = Self::extract_query_from_url(&approved_url);
         let approved_query_digest = Self::compute_query_digest(approved_query.as_deref());
         let approved_query_present = approved_query.is_some();
+        let approved_auth_present = approved_auth.is_some();
+        let approved_auth_digest = approved_auth
+            .as_ref()
+            .map(|a| Self::compute_auth_digest(&a.token));
 
         let mut metadata = JsonMap::new();
         metadata.insert(
@@ -536,7 +643,7 @@ impl RollbackAdapter for HttpRollbackAdapter {
         );
         metadata.insert(
             "approved_headers_present".to_string(),
-            serde_json::json!(Self::headers_present(approved_headers.as_ref())),
+            serde_json::json!(Self::headers_present(headers_for_digest.as_ref())),
         );
         metadata.insert(
             "approved_query_present".to_string(),
@@ -546,6 +653,17 @@ impl RollbackAdapter for HttpRollbackAdapter {
             "approved_query_digest".to_string(),
             serde_json::json!(approved_query_digest),
         );
+        // Store auth presence and digest only, not raw token
+        metadata.insert(
+            "approved_auth_present".to_string(),
+            serde_json::json!(approved_auth_present),
+        );
+        if let Some(digest) = approved_auth_digest {
+            metadata.insert(
+                "approved_auth_digest".to_string(),
+                serde_json::json!(digest),
+            );
+        }
 
         Ok(PrepareReceipt {
             accepted: true,
@@ -561,21 +679,29 @@ impl RollbackAdapter for HttpRollbackAdapter {
         let (bound_method, bound_url, _) =
             Self::extract_http_target(&contract.target).map_err(AdapterError::from)?;
 
-        let (executed_url, executed_method, executed_body, executed_headers) =
+        let (executed_url, executed_method, executed_body, executed_headers, executed_auth) =
             Self::resolve_request_parts(&bound_method, &bound_url, payload)
                 .map_err(AdapterError::from)?;
+
+        // Apply bearer auth to headers for digest computation and request execution
+        let headers_for_request =
+            Self::apply_bearer_auth(executed_headers.as_ref(), executed_auth.as_ref());
 
         let executed_request_digest = Self::compute_body_aware_digest(
             &executed_method,
             &executed_url,
             &executed_body,
-            executed_headers.as_ref(),
+            headers_for_request.as_ref(),
         );
         let executed_body_digest = Self::compute_body_digest(&executed_body);
-        let executed_headers_digest = Self::compute_headers_digest(executed_headers.as_ref());
+        let executed_headers_digest = Self::compute_headers_digest(headers_for_request.as_ref());
         let executed_query = Self::extract_query_from_url(&executed_url);
         let executed_query_digest = Self::compute_query_digest(executed_query.as_deref());
         let executed_query_present = executed_query.is_some();
+        let executed_auth_present = executed_auth.is_some();
+        let executed_auth_digest = executed_auth
+            .as_ref()
+            .map(|a| Self::compute_auth_digest(&a.token));
 
         if let Some(approved_request_digest) = contract
             .metadata
@@ -603,9 +729,9 @@ impl RollbackAdapter for HttpRollbackAdapter {
         if Self::is_mutation_method(&executed_method) && !executed_body.is_null() {
             request = request.json(&executed_body);
         }
-        // Apply headers to the request if provided.
+        // Apply headers to the request if provided (includes bearer auth if specified via auth field).
         // Header validation against allowlist is performed by the firewall before this adapter executes.
-        if let Some(ref headers) = executed_headers {
+        if let Some(ref headers) = headers_for_request {
             for (name, value) in headers {
                 let header_name = HeaderName::try_from(name.as_str()).map_err(|e| {
                     HttpAdapterError::Validation(format!("invalid header name '{}': {}", name, e))
@@ -643,7 +769,7 @@ impl RollbackAdapter for HttpRollbackAdapter {
         );
         metadata.insert(
             "executed_headers_present".to_string(),
-            serde_json::json!(Self::headers_present(executed_headers.as_ref())),
+            serde_json::json!(Self::headers_present(headers_for_request.as_ref())),
         );
         metadata.insert(
             "executed_query_present".to_string(),
@@ -659,6 +785,17 @@ impl RollbackAdapter for HttpRollbackAdapter {
             "executed_request_digest".to_string(),
             serde_json::json!(executed_request_digest),
         );
+        // Store auth presence and digest only, not raw token
+        metadata.insert(
+            "executed_auth_present".to_string(),
+            serde_json::json!(executed_auth_present),
+        );
+        if let Some(digest) = executed_auth_digest {
+            metadata.insert(
+                "executed_auth_digest".to_string(),
+                serde_json::json!(digest),
+            );
+        }
 
         Ok(ExecuteReceipt {
             external_id: None,
@@ -1811,7 +1948,7 @@ mod tests {
         });
 
         let result = HttpRollbackAdapter::parse_request_parts(&payload).unwrap();
-        let (_url, _method, _body, headers) = result;
+        let (_url, _method, _body, headers, _auth) = result;
 
         assert!(headers.is_some());
         let headers = headers.unwrap();
@@ -1834,7 +1971,7 @@ mod tests {
             }
         });
 
-        let (_url, _method, _body, headers) =
+        let (_url, _method, _body, headers, _auth) =
             HttpRollbackAdapter::parse_request_parts(&payload).unwrap();
         let headers = headers.unwrap();
 
@@ -1858,7 +1995,7 @@ mod tests {
         });
 
         let result = HttpRollbackAdapter::parse_request_parts(&payload).unwrap();
-        let (_url, _method, _body, headers) = result;
+        let (_url, _method, _body, headers, _auth) = result;
 
         assert!(headers.is_none());
     }
@@ -2310,5 +2447,419 @@ mod tests {
             "semantically identical query in different order should execute successfully"
         );
         let _ = handle.join();
+    }
+
+    // === Bearer Auth Tests ===
+
+    /// Test that parse_request_parts accepts valid bearer auth object.
+    #[tokio::test]
+    async fn test_parse_request_parts_accepts_bearer_auth() {
+        let payload = serde_json::json!({
+            "url": "https://example.com/api",
+            "method": "GET",
+            "auth": {
+                "type": "bearer",
+                "token": "test-token-123"
+            }
+        });
+
+        let result = HttpRollbackAdapter::parse_request_parts(&payload).unwrap();
+        let (_url, _method, _body, headers, auth) = result;
+
+        // No headers since we used auth field
+        assert!(headers.is_none());
+        // Auth should be present
+        assert!(auth.is_some());
+        let bearer = auth.unwrap();
+        assert_eq!(bearer.token, "test-token-123");
+    }
+
+    /// Test that parse_request_parts rejects malformed auth (missing token).
+    #[tokio::test]
+    async fn test_parse_request_parts_rejects_auth_missing_token() {
+        let payload = serde_json::json!({
+            "url": "https://example.com/api",
+            "method": "GET",
+            "auth": {
+                "type": "bearer"
+            }
+        });
+
+        let err = HttpRollbackAdapter::parse_request_parts(&payload).unwrap_err();
+        match err {
+            HttpAdapterError::Validation(msg) => {
+                assert!(msg.contains("invalid auth"));
+                assert!(msg.contains("token"));
+            }
+            other => panic!("expected validation error, got {:?}", other),
+        }
+    }
+
+    /// Test that parse_request_parts rejects auth with empty token.
+    #[tokio::test]
+    async fn test_parse_request_parts_rejects_auth_empty_token() {
+        let payload = serde_json::json!({
+            "url": "https://example.com/api",
+            "method": "GET",
+            "auth": {
+                "type": "bearer",
+                "token": ""
+            }
+        });
+
+        let err = HttpRollbackAdapter::parse_request_parts(&payload).unwrap_err();
+        match err {
+            HttpAdapterError::Validation(msg) => {
+                assert!(msg.contains("invalid auth"));
+                assert!(msg.contains("empty"));
+            }
+            other => panic!("expected validation error, got {:?}", other),
+        }
+    }
+
+    /// Test that parse_request_parts rejects unsupported auth type.
+    #[tokio::test]
+    async fn test_parse_request_parts_rejects_unsupported_auth_type() {
+        let payload = serde_json::json!({
+            "url": "https://example.com/api",
+            "method": "GET",
+            "auth": {
+                "type": "basic",
+                "token": "user:pass"
+            }
+        });
+
+        let err = HttpRollbackAdapter::parse_request_parts(&payload).unwrap_err();
+        match err {
+            HttpAdapterError::Validation(msg) => {
+                assert!(msg.contains("unsupported auth type"));
+            }
+            other => panic!("expected validation error, got {:?}", other),
+        }
+    }
+
+    /// Test that parse_request_parts rejects non-object auth.
+    #[tokio::test]
+    async fn test_parse_request_parts_rejects_non_object_auth() {
+        let payload = serde_json::json!({
+            "url": "https://example.com/api",
+            "method": "GET",
+            "auth": "not-an-object"
+        });
+
+        let err = HttpRollbackAdapter::parse_request_parts(&payload).unwrap_err();
+        match err {
+            HttpAdapterError::Validation(msg) => {
+                assert!(msg.contains("invalid auth"));
+            }
+            other => panic!("expected validation error, got {:?}", other),
+        }
+    }
+
+    /// Test that parse_request_parts rejects ambiguous auth (both headers.authorization and auth).
+    #[tokio::test]
+    async fn test_parse_request_parts_rejects_ambiguous_auth() {
+        let payload = serde_json::json!({
+            "url": "https://example.com/api",
+            "method": "GET",
+            "headers": {
+                "authorization": "Bearer header-token"
+            },
+            "auth": {
+                "type": "bearer",
+                "token": "auth-token"
+            }
+        });
+
+        let err = HttpRollbackAdapter::parse_request_parts(&payload).unwrap_err();
+        match err {
+            HttpAdapterError::Validation(msg) => {
+                assert!(msg.contains("ambiguous auth"));
+            }
+            other => panic!("expected validation error, got {:?}", other),
+        }
+    }
+
+    /// Test that apply_bearer_auth correctly adds authorization header.
+    #[test]
+    fn test_apply_bearer_auth_adds_header() {
+        let headers: HashMap<String, String> = HashMap::new();
+        let auth = BearerAuth {
+            token: "test-token".to_string(),
+        };
+
+        let result = HttpRollbackAdapter::apply_bearer_auth(Some(&headers), Some(&auth));
+        assert!(result.is_some());
+        let result = result.unwrap();
+        assert_eq!(
+            result.get("authorization"),
+            Some(&"Bearer test-token".to_string())
+        );
+    }
+
+    /// Test that apply_bearer_auth merges with existing headers.
+    #[test]
+    fn test_apply_bearer_auth_merges_with_headers() {
+        let mut headers = HashMap::new();
+        headers.insert("content-type".to_string(), "application/json".to_string());
+        let auth = BearerAuth {
+            token: "test-token".to_string(),
+        };
+
+        let result = HttpRollbackAdapter::apply_bearer_auth(Some(&headers), Some(&auth));
+        assert!(result.is_some());
+        let result = result.unwrap();
+        assert_eq!(
+            result.get("authorization"),
+            Some(&"Bearer test-token".to_string())
+        );
+        assert_eq!(
+            result.get("content-type"),
+            Some(&"application/json".to_string())
+        );
+    }
+
+    /// Test that execute with bearer auth succeeds.
+    #[tokio::test]
+    async fn test_execute_with_bearer_auth_succeeds() {
+        let (port, handle) = start_local_server(200);
+        let adapter = HttpRollbackAdapter::new();
+
+        let bound_url = format!("http://127.0.0.1:{}/api", port);
+        let target = make_http_target(HttpMethod::Get, &bound_url);
+        let metadata = JsonMap::new();
+        let contract = make_contract(target, metadata, vec![]);
+
+        let payload = serde_json::json!({
+            "auth": {
+                "type": "bearer",
+                "token": "test-token-123"
+            }
+        });
+
+        let receipt = adapter.execute(&contract, &payload).await.unwrap();
+
+        assert!(receipt.result_digest.is_some());
+        assert_eq!(receipt.result_digest.unwrap(), "200");
+        // Auth should be stored in metadata as presence and digest only
+        let meta = &receipt.adapter_metadata;
+        assert_eq!(
+            meta.get("executed_auth_present").unwrap().as_bool(),
+            Some(true)
+        );
+        assert!(
+            meta.get("executed_auth_digest").unwrap().is_string(),
+            "auth digest should be stored, not raw token"
+        );
+        let _ = handle.join();
+    }
+
+    /// Test that prepare captures bearer auth metadata.
+    #[tokio::test]
+    async fn test_prepare_captures_bearer_auth_metadata() {
+        let adapter = HttpRollbackAdapter::new();
+        let target = make_http_target(HttpMethod::Get, "https://example.com/api");
+
+        let mut metadata = JsonMap::new();
+        metadata.insert(
+            APPROVED_HTTP_REQUEST_METADATA_KEY.to_string(),
+            serde_json::json!({
+                "url": "https://example.com/api",
+                "method": "GET",
+                "auth": {
+                    "type": "bearer",
+                    "token": "prepare-token"
+                }
+            }),
+        );
+        let request = make_prepare_request_with_metadata(target, metadata);
+
+        let receipt = adapter.prepare(&request).await.unwrap();
+        let meta = receipt.adapter_metadata;
+
+        // Auth presence and digest should be stored
+        assert_eq!(
+            meta.get("approved_auth_present").unwrap().as_bool(),
+            Some(true)
+        );
+        assert!(
+            meta.get("approved_auth_digest").unwrap().is_string(),
+            "auth digest should be stored, not raw token"
+        );
+        // Headers digest should reflect the bearer auth being applied
+        assert_eq!(
+            meta.get("approved_headers_present").unwrap().as_bool(),
+            Some(true),
+            "headers should be present after applying bearer auth"
+        );
+    }
+
+    /// Test that bearer auth token affects request digest.
+    #[tokio::test]
+    async fn test_bearer_auth_affects_request_digest() {
+        let adapter = HttpRollbackAdapter::new();
+        let bound_url = "https://example.com/api";
+        let target = make_http_target(HttpMethod::Get, bound_url);
+
+        // First with token A
+        let mut metadata1 = JsonMap::new();
+        metadata1.insert(
+            APPROVED_HTTP_REQUEST_METADATA_KEY.to_string(),
+            serde_json::json!({
+                "url": bound_url,
+                "method": "GET",
+                "auth": {
+                    "type": "bearer",
+                    "token": "token-a"
+                }
+            }),
+        );
+        let request1 = make_prepare_request_with_metadata(target.clone(), metadata1);
+        let receipt1 = adapter.prepare(&request1).await.unwrap();
+        let digest1 = receipt1
+            .adapter_metadata
+            .get("approved_request_digest")
+            .unwrap()
+            .as_str()
+            .unwrap();
+
+        // Second with token B
+        let mut metadata2 = JsonMap::new();
+        metadata2.insert(
+            APPROVED_HTTP_REQUEST_METADATA_KEY.to_string(),
+            serde_json::json!({
+                "url": bound_url,
+                "method": "GET",
+                "auth": {
+                    "type": "bearer",
+                    "token": "token-b"
+                }
+            }),
+        );
+        let request2 = make_prepare_request_with_metadata(target.clone(), metadata2);
+        let receipt2 = adapter.prepare(&request2).await.unwrap();
+        let digest2 = receipt2
+            .adapter_metadata
+            .get("approved_request_digest")
+            .unwrap()
+            .as_str()
+            .unwrap();
+
+        // Digests should differ for different tokens
+        assert_ne!(
+            digest1, digest2,
+            "different bearer tokens should produce different request digests"
+        );
+    }
+
+    /// Test that execute succeeds when auth matches approved auth.
+    #[tokio::test]
+    async fn test_execute_succeeds_when_auth_matches_approved() {
+        let (port, handle) = start_local_server(200);
+        let adapter = HttpRollbackAdapter::new();
+
+        let bound_url = format!("http://127.0.0.1:{}/api", port);
+        let target = make_http_target(HttpMethod::Get, &bound_url);
+
+        // Prepare with specific auth token
+        let mut prepare_metadata = JsonMap::new();
+        prepare_metadata.insert(
+            APPROVED_HTTP_REQUEST_METADATA_KEY.to_string(),
+            serde_json::json!({
+                "url": bound_url,
+                "method": "GET",
+                "auth": {
+                    "type": "bearer",
+                    "token": "approved-token"
+                }
+            }),
+        );
+        let prepare_request = make_prepare_request_with_metadata(target.clone(), prepare_metadata);
+        let receipt = adapter.prepare(&prepare_request).await.unwrap();
+        let approved_digest = receipt
+            .adapter_metadata
+            .get("approved_request_digest")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        // Contract with approved digest
+        let mut contract_metadata = JsonMap::new();
+        contract_metadata.insert(
+            "approved_request_digest".to_string(),
+            serde_json::json!(approved_digest),
+        );
+        let contract = make_contract(target, contract_metadata, vec![]);
+
+        // Execute with same auth token
+        let payload = serde_json::json!({
+            "auth": {
+                "type": "bearer",
+                "token": "approved-token"
+            }
+        });
+
+        let result = adapter.execute(&contract, &payload).await;
+        assert!(
+            result.is_ok(),
+            "execute should succeed when auth matches approved"
+        );
+        let _ = handle.join();
+    }
+
+    /// Test that execute fails when auth differs from approved.
+    #[tokio::test]
+    async fn test_execute_fails_when_auth_differs_from_approved() {
+        let adapter = HttpRollbackAdapter::new();
+        let bound_url = "https://example.com/api";
+        let target = make_http_target(HttpMethod::Get, bound_url);
+
+        // Prepare with token A
+        let mut prepare_metadata = JsonMap::new();
+        prepare_metadata.insert(
+            APPROVED_HTTP_REQUEST_METADATA_KEY.to_string(),
+            serde_json::json!({
+                "url": bound_url,
+                "method": "GET",
+                "auth": {
+                    "type": "bearer",
+                    "token": "token-a"
+                }
+            }),
+        );
+        let prepare_request = make_prepare_request_with_metadata(target.clone(), prepare_metadata);
+        let receipt = adapter.prepare(&prepare_request).await.unwrap();
+        let approved_digest = receipt
+            .adapter_metadata
+            .get("approved_request_digest")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        // Contract with approved digest
+        let mut contract_metadata = JsonMap::new();
+        contract_metadata.insert(
+            "approved_request_digest".to_string(),
+            serde_json::json!(approved_digest),
+        );
+        let contract = make_contract(target, contract_metadata, vec![]);
+
+        // Execute with different token
+        let payload = serde_json::json!({
+            "auth": {
+                "type": "bearer",
+                "token": "token-b"
+            }
+        });
+
+        let err = adapter.execute(&contract, &payload).await.unwrap_err();
+        match err {
+            AdapterError::Validation(msg) => {
+                assert!(msg.contains("does not match approved request digest"));
+            }
+            other => panic!("expected validation error, got {:?}", other),
+        }
     }
 }

@@ -1377,6 +1377,9 @@ struct HttpExecutionPayload {
     url: String,
     method: HttpMethod,
     headers: HashMap<String, String>,
+    /// Indicates if auth.bearer was present in the payload.
+    /// When true, this is treated like having an "authorization" header for allowlist checking.
+    auth_bearer_present: bool,
 }
 
 /// File execution payload extracted from JSON.
@@ -1473,11 +1476,39 @@ impl DefaultFirewall {
             HashMap::new()
         };
 
+        // Check for dedicated auth.bearer field
+        let auth_bearer_present = self.payload_has_bearer_auth(payload);
+
         Some(HttpExecutionPayload {
             url,
             method,
             headers,
+            auth_bearer_present,
         })
+    }
+
+    /// Check if the payload contains a bearer auth object.
+    /// Expected shape: {"auth": {"type": "bearer", "token": "..."}}
+    fn payload_has_bearer_auth(&self, payload: &serde_json::Value) -> bool {
+        let obj = match payload.as_object() {
+            Some(o) => o,
+            None => return false,
+        };
+        let auth = match obj.get("auth") {
+            Some(a) => match a.as_object() {
+                Some(auth_obj) => auth_obj,
+                None => return false,
+            },
+            None => return false,
+        };
+        let auth_type = match auth.get("type").and_then(|t| t.as_str()) {
+            Some(t) => t.to_lowercase(),
+            None => return false,
+        };
+        if auth_type != "bearer" {
+            return false;
+        }
+        auth.get("token").and_then(|t| t.as_str()).is_some()
     }
 
     /// Parse URL into components for comparison.
@@ -1613,6 +1644,12 @@ impl DefaultFirewall {
             if !allowlist_lower.contains(header_name) {
                 return false;
             }
+        }
+
+        // If auth.bearer is present, treat it like having the authorization header
+        // for allowlist checking purposes
+        if payload.auth_bearer_present && !allowlist_lower.contains("authorization") {
+            return false;
         }
 
         true

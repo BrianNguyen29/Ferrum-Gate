@@ -10085,6 +10085,310 @@ async fn test_http_post_execute_and_verify_through_gateway_after_approval() {
 }
 
 #[tokio::test]
+async fn test_http_post_execute_and_verify_with_bearer_auth_through_gateway_after_approval() {
+    let (port, server_handle) = start_local_http_server(201);
+
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    let http_binding = ResourceBinding::Http {
+        method: ferrum_proto::HttpMethod::Post,
+        base_url: format!("http://127.0.0.1:{}", port),
+        path_prefix: "/api".to_string(),
+        header_allowlist: vec!["authorization".to_string()],
+        mode: ResourceMode::ReadWrite,
+    };
+
+    let http_scope = ferrum_proto::ResourceSelector::HttpEndpoint {
+        method: ferrum_proto::HttpMethod::Post,
+        base_url: format!("http://127.0.0.1:{}", port),
+        path_prefix: "/api".to_string(),
+        mode: ferrum_proto::ResourceMode::ReadWrite,
+    };
+
+    let app = build_router(runtime.clone());
+    let mut req = sample_intent_request_with_effect(EffectType::ExternalApiCall);
+    req.requested_resource_scope = vec![http_scope];
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+    assert_eq!(
+        compile_resp.envelope.default_rollback_class,
+        RollbackClass::R3IrreversibleHighConsequence
+    );
+
+    let app = build_router(runtime.clone());
+    let proposal = ActionProposal {
+        proposal_id: ferrum_proto::ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Create local HTTP resource with bearer auth".to_string(),
+        tool_name: "http.post".to_string(),
+        server_name: "http-adapter".to_string(),
+        raw_arguments: serde_json::json!({
+            "url": format!("http://127.0.0.1:{}/api/users", port),
+            "method": "POST",
+            "body": {"name": "test"},
+            "auth": {
+                "type": "bearer",
+                "token": "approved-token"
+            }
+        }),
+        expected_effect: "create remote HTTP resource".to_string(),
+        estimated_risk: RiskTier::High,
+        requested_rollback_class: RollbackClass::R0NativeReversible,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let eval_resp: ferrum_proto::EvaluateProposalResponse = serde_json::from_slice(&body).unwrap();
+    assert_eq!(eval_resp.decision, Decision::RequireApproval);
+
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "http-adapter".to_string(),
+            tool_name: "http.post".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![http_binding],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+    assert!(matches!(
+        auth_resp.execution.state,
+        ExecutionState::AwaitingApproval
+    ));
+
+    let pending_approvals = runtime.store.approvals().list_pending().await.unwrap();
+    assert!(!pending_approvals.is_empty());
+    let approval_id = pending_approvals[0].approval_id;
+
+    let app = build_router(runtime.clone());
+    let resolve_req = ferrum_proto::ApprovalResolveRequest {
+        actor: ferrum_proto::ActorRef {
+            actor_type: ferrum_proto::ActorType::User,
+            actor_id: "admin".to_string(),
+            display_name: Some("Admin".to_string()),
+        },
+        approve: true,
+        reason: Some("Approved for HTTP POST bearer auth parity test".to_string()),
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/approvals/{}/resolve", approval_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&resolve_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({
+            "url": format!("http://127.0.0.1:{}/api/users", port),
+            "method": "POST",
+            "body": {"name": "test"},
+            "auth": {
+                "type": "bearer",
+                "token": "approved-token"
+            }
+        }),
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200, "execute should succeed for POST");
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let execute_resp: ferrum_proto::ExecuteResponse = serde_json::from_slice(&body).unwrap();
+    assert!(execute_resp.executed);
+    assert_eq!(execute_resp.result_digest.as_deref(), Some("201"));
+
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    let contract_id = stored_execution.unwrap().rollback_contract_id.unwrap();
+    let stored_contract = runtime
+        .store
+        .rollback_contracts()
+        .get(contract_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        stored_contract.metadata.get("approved_request_digest"),
+        stored_contract.metadata.get("executed_request_digest")
+    );
+    assert_eq!(
+        stored_contract.metadata.get("approved_auth_digest"),
+        stored_contract.metadata.get("executed_auth_digest")
+    );
+    assert_eq!(
+        stored_contract
+            .metadata
+            .get("approved_auth_present")
+            .unwrap()
+            .as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        stored_contract
+            .metadata
+            .get("executed_auth_present")
+            .unwrap()
+            .as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        stored_contract.metadata.get("approved_headers_digest"),
+        stored_contract.metadata.get("executed_headers_digest")
+    );
+
+    let metadata_json = serde_json::to_string(&stored_contract.metadata).unwrap();
+    assert!(
+        !metadata_json.contains("approved-token"),
+        "raw auth token must not be persisted in rollback contract metadata"
+    );
+
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200, "verify should succeed for POST");
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let verify_resp: ferrum_proto::VerifyResponse = serde_json::from_slice(&body).unwrap();
+    assert!(verify_resp.verified);
+
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    let exec = stored_execution.unwrap();
+    assert!(matches!(exec.state, ExecutionState::AwaitingVerification));
+
+    let _ = server_handle.join();
+}
+
+#[tokio::test]
 async fn test_http_rollback_through_gateway_is_conservative_noop() {
     // Start local HTTP server that returns 200
     let (port, server_handle) = start_local_http_server(200);
