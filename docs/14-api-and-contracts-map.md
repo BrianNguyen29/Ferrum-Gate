@@ -8,6 +8,8 @@
 ## OpenAPI
 - `openapi/ferrumgate-control-api.v1.yaml`
 
+Note: the quick-ref endpoint table below is aligned to the current gateway routes exercised by integration tests. If the OpenAPI file drifts, treat the implemented `/v1/...` routes as the operational truth until the spec is refreshed.
+
 ## Schemas
 - `schemas/jsonschema/common.json`
 - `schemas/jsonschema/intent-envelope.json`
@@ -16,6 +18,22 @@
 - `schemas/jsonschema/rollback-contract.json`
 - `schemas/jsonschema/provenance-event.json`
 - `schemas/jsonschema/approval-request.json`
+
+## Core control-plane endpoints (operator quick-ref)
+
+| Lifecycle step | Purpose |
+|---------------|---------|
+| `POST /v1/intents/compile` | Parse and scope intent from agent |
+| `POST /v1/proposals/{proposal_id}/evaluate` | Evaluate proposal against policy bundle |
+| `POST /v1/capabilities/mint` | Issue a limited-capability lease |
+| `POST /v1/executions/authorize` | Gateway-level capability check before execution |
+| `POST /v1/executions/{execution_id}/prepare` | Prepare rollback contract for the operation |
+| `POST /v1/executions/{execution_id}/execute` | Run the tool/adapter (fs, git, sqlite, http, maildraft) |
+| `POST /v1/executions/{execution_id}/verify` | Verify result against intent and policy |
+| `POST /v1/executions/{execution_id}/commit` | Finalize and commit the action |
+| `POST /v1/executions/{execution_id}/rollback` | Trigger rollback via prepared adapter |
+
+HTTP adapter rollback is a **no-op by design** today; see `15-deployment-and-operations.md` for caveats.
 
 ## Khi nào phải cập nhật đồng thời
 Nếu thay:
