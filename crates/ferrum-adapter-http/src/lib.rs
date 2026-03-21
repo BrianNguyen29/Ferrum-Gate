@@ -115,6 +115,16 @@ impl HttpAuth {
         }
         format!("{:x}", hasher.finalize())
     }
+
+    /// Returns the auth kind string for observability metadata.
+    /// Returns "bearer", "basic", or "api_key" - no secrets stored.
+    fn kind_str(&self) -> &'static str {
+        match self {
+            HttpAuth::Bearer { .. } => "bearer",
+            HttpAuth::Basic { .. } => "basic",
+            HttpAuth::ApiKey { .. } => "api_key",
+        }
+    }
 }
 
 impl HttpRollbackAdapter {
@@ -772,6 +782,13 @@ impl RollbackAdapter for HttpRollbackAdapter {
                 serde_json::json!(digest),
             );
         }
+        // Store auth kind for observability only (no secrets)
+        if let Some(auth) = &approved_auth {
+            metadata.insert(
+                "approved_auth_kind".to_string(),
+                serde_json::json!(auth.kind_str()),
+            );
+        }
 
         Ok(PrepareReceipt {
             accepted: true,
@@ -900,6 +917,13 @@ impl RollbackAdapter for HttpRollbackAdapter {
             metadata.insert(
                 "executed_auth_digest".to_string(),
                 serde_json::json!(digest),
+            );
+        }
+        // Store auth kind for observability only (no secrets)
+        if let Some(auth) = &executed_auth {
+            metadata.insert(
+                "executed_auth_kind".to_string(),
+                serde_json::json!(auth.kind_str()),
             );
         }
 
@@ -2779,6 +2803,11 @@ mod tests {
             meta.get("executed_auth_digest").unwrap().is_string(),
             "auth digest should be stored, not raw token"
         );
+        // Auth kind for observability
+        assert_eq!(
+            meta.get("executed_auth_kind").unwrap().as_str().unwrap(),
+            "bearer"
+        );
         let _ = handle.join();
     }
 
@@ -2813,6 +2842,11 @@ mod tests {
         assert!(
             meta.get("approved_auth_digest").unwrap().is_string(),
             "auth digest should be stored, not raw token"
+        );
+        // Auth kind for observability
+        assert_eq!(
+            meta.get("approved_auth_kind").unwrap().as_str().unwrap(),
+            "bearer"
         );
         // Headers digest should reflect the bearer auth being applied
         assert_eq!(
@@ -3207,6 +3241,11 @@ mod tests {
             meta.get("executed_auth_digest").unwrap().is_string(),
             "auth digest should be stored, not raw key"
         );
+        // Auth kind for observability
+        assert_eq!(
+            meta.get("executed_auth_kind").unwrap().as_str().unwrap(),
+            "api_key"
+        );
         let _ = handle.join();
     }
 
@@ -3242,6 +3281,11 @@ mod tests {
         assert!(
             meta.get("approved_auth_digest").unwrap().is_string(),
             "auth digest should be stored, not raw key"
+        );
+        // Auth kind for observability
+        assert_eq!(
+            meta.get("approved_auth_kind").unwrap().as_str().unwrap(),
+            "api_key"
         );
         // Headers digest should reflect the api_key auth being applied
         assert_eq!(
@@ -3424,5 +3468,125 @@ mod tests {
             }
             other => panic!("expected validation error, got {:?}", other),
         }
+    }
+
+    // === Auth Kind Observability Tests ===
+
+    /// Test that execute with basic auth includes auth_kind in metadata.
+    #[tokio::test]
+    async fn test_execute_with_basic_auth_includes_auth_kind() {
+        let (port, handle) = start_local_server(200);
+        let adapter = HttpRollbackAdapter::new();
+
+        let bound_url = format!("http://127.0.0.1:{}/api", port);
+        let target = make_http_target(HttpMethod::Get, &bound_url);
+        let metadata = JsonMap::new();
+        let contract = make_contract(target, metadata, vec![]);
+
+        let payload = serde_json::json!({
+            "auth": {
+                "type": "basic",
+                "username": "testuser",
+                "password": "testpass"
+            }
+        });
+
+        let receipt = adapter.execute(&contract, &payload).await.unwrap();
+
+        assert!(receipt.result_digest.is_some());
+        let meta = &receipt.adapter_metadata;
+        assert_eq!(
+            meta.get("executed_auth_present").unwrap().as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            meta.get("executed_auth_kind").unwrap().as_str().unwrap(),
+            "basic"
+        );
+        let _ = handle.join();
+    }
+
+    /// Test that prepare with basic auth includes auth_kind in metadata.
+    #[tokio::test]
+    async fn test_prepare_with_basic_auth_includes_auth_kind() {
+        let adapter = HttpRollbackAdapter::new();
+        let target = make_http_target(HttpMethod::Get, "https://example.com/api");
+
+        let mut metadata = JsonMap::new();
+        metadata.insert(
+            APPROVED_HTTP_REQUEST_METADATA_KEY.to_string(),
+            serde_json::json!({
+                "url": "https://example.com/api",
+                "method": "GET",
+                "auth": {
+                    "type": "basic",
+                    "username": "testuser",
+                    "password": "testpass"
+                }
+            }),
+        );
+        let request = make_prepare_request_with_metadata(target, metadata);
+
+        let receipt = adapter.prepare(&request).await.unwrap();
+        let meta = receipt.adapter_metadata;
+
+        assert_eq!(
+            meta.get("approved_auth_present").unwrap().as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            meta.get("approved_auth_kind").unwrap().as_str().unwrap(),
+            "basic"
+        );
+    }
+
+    /// Test that execute without auth does NOT include auth_kind in metadata.
+    #[tokio::test]
+    async fn test_execute_without_auth_has_no_auth_kind() {
+        let (port, handle) = start_local_server(200);
+        let adapter = HttpRollbackAdapter::new();
+
+        let bound_url = format!("http://127.0.0.1:{}/api", port);
+        let target = make_http_target(HttpMethod::Get, &bound_url);
+        let metadata = JsonMap::new();
+        let contract = make_contract(target, metadata, vec![]);
+
+        let payload = serde_json::json!({});
+
+        let receipt = adapter.execute(&contract, &payload).await.unwrap();
+
+        assert!(receipt.result_digest.is_some());
+        let meta = &receipt.adapter_metadata;
+        assert_eq!(
+            meta.get("executed_auth_present").unwrap().as_bool(),
+            Some(false)
+        );
+        assert!(
+            meta.get("executed_auth_kind").is_none(),
+            "auth_kind should not be present when no auth is used"
+        );
+        let _ = handle.join();
+    }
+
+    /// Test that prepare without auth does NOT include auth_kind in metadata.
+    #[tokio::test]
+    async fn test_prepare_without_auth_has_no_auth_kind() {
+        let adapter = HttpRollbackAdapter::new();
+        let target = make_http_target(HttpMethod::Get, "https://example.com/api");
+
+        let metadata = JsonMap::new();
+        let request = make_prepare_request_with_metadata(target, metadata);
+
+        let receipt = adapter.prepare(&request).await.unwrap();
+        let meta = receipt.adapter_metadata;
+
+        assert_eq!(
+            meta.get("approved_auth_present").unwrap().as_bool(),
+            Some(false)
+        );
+        assert!(
+            meta.get("approved_auth_kind").is_none(),
+            "auth_kind should not be present when no auth is used"
+        );
     }
 }

@@ -91,6 +91,7 @@ API key auth example:
 Auth presence and digest (not raw token) are stored in metadata:
 - `approved_auth_present` / `executed_auth_present`: boolean indicating if auth was present
 - `approved_auth_digest` / `executed_auth_digest`: SHA256 of the auth token
+- `approved_auth_kind` / `executed_auth_kind`: auth type for observability only (`"bearer"`, `"basic"`, or `"api_key"`); only present when `auth` field is used
 
 ### Firewall Allowlist Enforcement
 
