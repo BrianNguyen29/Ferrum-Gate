@@ -25,7 +25,7 @@ Mục tiêu:
 - sqlite adapter thật
 - maildraft adapter thật
 - git adapter thật
-- http adapter initial slice thật
+- http adapter full parity (GET/POST/PUT/PATCH/DELETE + body/header/query binding + auth) thật
 
 ## Phase E — Gateway orchestration
 Mục tiêu:

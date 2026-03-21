@@ -21,7 +21,7 @@
 - [x] sqlite adapter
 - [x] maildraft adapter
 - [x] git adapter
-- [x] http adapter (initial slice)
+- [x] http adapter (full parity: GET/POST/PUT/PATCH/DELETE + body/header/query binding + auth)
 
 ## Phase E
 - [x] gateway calls pdp
