@@ -8,8 +8,6 @@
 ## OpenAPI
 - `openapi/ferrumgate-control-api.v1.yaml`
 
-Note: the quick-ref endpoint table below is aligned to the current gateway routes exercised by integration tests. If the OpenAPI file drifts, treat the implemented `/v1/...` routes as the operational truth until the spec is refreshed.
-
 ## Schemas
 - `schemas/jsonschema/common.json`
 - `schemas/jsonschema/intent-envelope.json`
@@ -31,6 +29,7 @@ Note: the quick-ref endpoint table below is aligned to the current gateway route
 | `POST /v1/executions/{execution_id}/execute` | Run the tool/adapter (fs, git, sqlite, http, maildraft) |
 | `POST /v1/executions/{execution_id}/verify` | Verify result against intent and policy |
 | `POST /v1/executions/{execution_id}/commit` | Finalize and commit the action |
+| `POST /v1/executions/{execution_id}/compensate` | Trigger compensation when a recovery path exists |
 | `POST /v1/executions/{execution_id}/rollback` | Trigger rollback via prepared adapter |
 
 HTTP adapter rollback is a **no-op by design** today; see `15-deployment-and-operations.md` for caveats.

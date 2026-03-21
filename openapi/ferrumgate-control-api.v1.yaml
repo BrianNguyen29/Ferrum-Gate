@@ -214,33 +214,109 @@ paths:
         '404':
           $ref: '#/components/responses/ApiError'
 
+  /v1/executions/{execution_id}/execute:
+    post:
+      summary: Execute the prepared operation
+      operationId: executeOperation
+      parameters:
+        - $ref: '#/components/parameters/ExecutionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExecuteRequest'
+      responses:
+        '200':
+          description: Execution result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecuteResponse'
+        '404':
+          $ref: '#/components/responses/ApiError'
+
+  /v1/executions/{execution_id}/verify:
+    post:
+      summary: Verify execution result against intent and policy
+      operationId: verifyExecution
+      parameters:
+        - $ref: '#/components/parameters/ExecutionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyRequest'
+      responses:
+        '200':
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerifyResponse'
+        '404':
+          $ref: '#/components/responses/ApiError'
+
   /v1/executions/{execution_id}/commit:
     post:
       summary: Commit verified execution
       operationId: commitExecution
       parameters:
         - $ref: '#/components/parameters/ExecutionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommitRequest'
       responses:
         '200':
           description: Committed
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ExecutionRecord'
+                $ref: '#/components/schemas/CommitResponse'
 
-  /v1/executions/{execution_id}/rollback:
+  /v1/executions/{execution_id}/compensate:
     post:
-      summary: Roll back or compensate execution
-      operationId: rollbackExecution
+      summary: Request compensation
+      operationId: compensateExecution
       parameters:
         - $ref: '#/components/parameters/ExecutionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompensateRequest'
       responses:
         '200':
-          description: Recovered
+          description: Compensation acknowledged
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ExecutionRecord'
+                $ref: '#/components/schemas/CompensateResponse'
+
+  /v1/executions/{execution_id}/rollback:
+    post:
+      summary: Request rollback or compensation (no-op for HTTP adapter)
+      operationId: rollbackExecution
+      parameters:
+        - $ref: '#/components/parameters/ExecutionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RollbackRequest'
+      responses:
+        '200':
+          description: Rollback acknowledged (may be no-op)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RollbackResponse'
 
   /v1/executions/{execution_id}:
     get:
@@ -852,6 +928,120 @@ components:
           type: array
           items:
             type: string
+
+    ExecuteRequest:
+      type: object
+      required: [execution_id, payload]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+        payload:
+          type: object
+
+    VerifyRequest:
+      type: object
+      required: [execution_id]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+
+    ExecuteResponse:
+      type: object
+      required: [execution_id, executed]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+        executed:
+          type: boolean
+        result_digest:
+          type: string
+          nullable: true
+        external_id:
+          type: string
+          nullable: true
+
+    VerifyResponse:
+      type: object
+      required: [execution_id, verified]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+        verified:
+          type: boolean
+        verified_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    CommitRequest:
+      type: object
+      required: [execution_id]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+
+    CommitResponse:
+      type: object
+      required: [execution_id, committed]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+        committed:
+          type: boolean
+        committed_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    CompensateRequest:
+      type: object
+      required: [execution_id]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+
+    CompensateResponse:
+      type: object
+      required: [execution_id, compensated]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+        compensated:
+          type: boolean
+        compensated_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    RollbackRequest:
+      type: object
+      required: [execution_id]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+
+    RollbackResponse:
+      type: object
+      required: [execution_id, rolled_back]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+        rolled_back:
+          type: boolean
+        rolled_back_at:
+          type: string
+          format: date-time
+          nullable: true
 
     RollbackContract:
       type: object
