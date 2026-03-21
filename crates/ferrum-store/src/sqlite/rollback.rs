@@ -74,7 +74,11 @@ impl RollbackRepo for SqliteRollbackRepo {
         Ok(())
     }
 
-    async fn update_state(&self, contract_id: RollbackContractId, state: RollbackState) -> Result<()> {
+    async fn update_state(
+        &self,
+        contract_id: RollbackContractId,
+        state: RollbackState,
+    ) -> Result<()> {
         let Some(mut contract) = self.get(contract_id).await? else {
             return Ok(());
         };

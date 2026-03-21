@@ -1,7 +1,7 @@
 use axum::{
     Json, Router,
     extract::{Path, State},
-    http::StatusCode,
+    http::{StatusCode, header::AUTHORIZATION},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
@@ -25,7 +25,7 @@ use ferrum_store::{
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
 
-use crate::{GatewayConfig, GatewayRuntime};
+use crate::{AuthMode, GatewayConfig, GatewayRuntime, ServerConfig};
 
 fn create_provenance_event(
     kind: ProvenanceEventKind,
@@ -70,16 +70,38 @@ fn create_provenance_event(
     }
 }
 
-pub async fn run_http_server(config: GatewayConfig, runtime: GatewayRuntime) -> anyhow::Result<()> {
-    let app = build_router(runtime);
+/// HTTP server entry point. Chooses auth-aware or auth-disabled router based on config.
+/// Auth-aware router enforces bearer token on all non-health endpoints.
+pub async fn run_http_server(
+    config: GatewayConfig,
+    runtime: GatewayRuntime,
+    server_config: ServerConfig,
+) -> anyhow::Result<()> {
+    let app = if server_config.auth_mode == AuthMode::Bearer {
+        build_authenticated_router(runtime, server_config)
+    } else {
+        build_router(runtime)
+    };
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
     tracing::info!("ferrumd listening on {}", config.bind_addr);
     axum::serve(listener, app).await?;
     Ok(())
 }
 
+/// Builds the auth-disabled router used by integration tests and local development.
+/// All routes are accessible without authentication.
 pub fn build_router(runtime: GatewayRuntime) -> Router {
-    Router::new()
+    build_router_inner(runtime, None)
+}
+
+/// Builds an auth-aware router that enforces bearer token on all non-health endpoints.
+/// Health endpoints (/v1/healthz, /v1/readyz) remain unauthenticated.
+pub fn build_authenticated_router(runtime: GatewayRuntime, server_config: ServerConfig) -> Router {
+    build_router_inner(runtime, Some(server_config))
+}
+
+fn build_router_inner(runtime: GatewayRuntime, auth_config: Option<ServerConfig>) -> Router {
+    let router = Router::new()
         .route("/v1/healthz", get(healthz))
         .route("/v1/readyz", get(readyz))
         .route("/v1/intents/compile", post(compile_intent))
@@ -117,6 +139,7 @@ pub fn build_router(runtime: GatewayRuntime) -> Router {
             "/v1/executions/{execution_id}/rollback",
             post(rollback_execution),
         )
+        .route("/v1/executions/{execution_id}", get(get_execution))
         .route("/v1/approvals", get(list_pending_approvals))
         .route("/v1/approvals/{approval_id}", get(get_approval))
         .route(
@@ -129,7 +152,59 @@ pub fn build_router(runtime: GatewayRuntime) -> Router {
         )
         .route("/v1/provenance/query", post(query_provenance))
         .with_state(Arc::new(runtime))
-        .layer(TraceLayer::new_for_http())
+        .layer(TraceLayer::new_for_http());
+
+    if let Some(server_config) = auth_config {
+        let bearer_token = server_config.bearer_token.clone();
+        router.layer(axum::middleware::from_fn_with_state(
+            bearer_token,
+            bearer_auth_middleware,
+        ))
+    } else {
+        router
+    }
+}
+
+/// Bearer authentication middleware.
+/// Returns 401 with ApiErrorCode::PolicyDenied when auth is missing or invalid.
+/// Health endpoints pass through without authentication.
+async fn bearer_auth_middleware(
+    State(token): State<Option<String>>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let path = request.uri().path().to_string();
+
+    // Health endpoints are always accessible without auth
+    if path == "/v1/healthz" || path == "/v1/readyz" {
+        return next.run(request).await;
+    }
+
+    let token = match token {
+        Some(t) if !t.is_empty() => t,
+        _ => {
+            return ApiProblem::auth_error("authentication required");
+        }
+    };
+
+    // Extract Bearer token from Authorization header
+    let auth_header = request
+        .headers()
+        .get(AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
+
+    let provided = match auth_header {
+        Some(h) if h.starts_with("Bearer ") => &h[7..],
+        _ => {
+            return ApiProblem::auth_error("missing or invalid Authorization header");
+        }
+    };
+
+    if provided != token {
+        return ApiProblem::auth_error("invalid bearer token");
+    }
+
+    next.run(request).await
 }
 
 async fn healthz() -> Json<HealthResponse> {
@@ -1813,6 +1888,31 @@ async fn rollback_execution(
     }))
 }
 
+// Execution inspect handler
+
+async fn get_execution(
+    State(runtime): State<Arc<GatewayRuntime>>,
+    Path(execution_id_str): Path<String>,
+) -> Result<Json<ExecutionRecord>, ApiProblem> {
+    let execution_id = parse_execution_id(&execution_id_str)?;
+
+    let execution = runtime
+        .store
+        .executions()
+        .get(execution_id)
+        .await
+        .map_err(|err| ApiProblem::internal(err.into()))?
+        .ok_or_else(|| {
+            ApiProblem::new(
+                StatusCode::NOT_FOUND,
+                ApiErrorCode::NotFound,
+                "execution record not found",
+            )
+        })?;
+
+    Ok(Json(execution))
+}
+
 // Approval handlers
 
 async fn get_approval(
@@ -2173,6 +2273,16 @@ impl ApiProblem {
             ),
         }
     }
+
+    /// Creates an authentication/authorization error response.
+    fn auth_error(message: impl Into<String>) -> Response {
+        let problem = Self::new(
+            StatusCode::UNAUTHORIZED,
+            ApiErrorCode::PolicyDenied,
+            message,
+        );
+        (StatusCode::UNAUTHORIZED, Json(problem.0)).into_response()
+    }
 }
 
 /// Determine the appropriate adapter key based on resource bindings.
@@ -2384,12 +2494,45 @@ impl IntoResponse for ApiProblem {
 #[cfg(test)]
 mod tests {
     use super::{
-        determine_adapter_key_from_bindings, determine_rollback_target_from_bindings,
-        infer_rollback_class,
+        build_authenticated_router, determine_adapter_key_from_bindings,
+        determine_rollback_target_from_bindings, infer_rollback_class,
     };
+    use axum::{
+        body::{self, Body},
+        http::{Request, StatusCode, header::AUTHORIZATION},
+    };
+    use ferrum_cap::{CapabilityService, InMemoryCapabilityService};
+    use ferrum_firewall::{DefaultFirewall, SemanticFirewall};
+    use ferrum_pdp::StaticPdpEngine;
     use ferrum_proto::{
-        HttpMethod, ResourceBinding, ResourceMode, ResourceSelector, RollbackClass, RollbackTarget,
+        ApiError, ApiErrorCode, HttpMethod, ResourceBinding, ResourceMode, ResourceSelector,
+        RollbackClass, RollbackTarget,
     };
+    use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
+    use ferrum_store::SqliteStore;
+    use std::sync::Arc;
+    use tower::util::ServiceExt;
+
+    use crate::{AuthMode, GatewayRuntime, ServerConfig};
+
+    async fn create_test_runtime() -> GatewayRuntime {
+        let pdp: Arc<dyn ferrum_pdp::PdpEngine> = Arc::new(StaticPdpEngine);
+        let cap: Arc<dyn CapabilityService> = Arc::new(InMemoryCapabilityService::default());
+        let firewall: Arc<dyn SemanticFirewall> = Arc::new(DefaultFirewall::new());
+
+        let mut registry = AdapterRegistry::default();
+        registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
+        let rollback = Arc::new(RollbackService::new(Arc::new(registry)));
+
+        let store = Arc::new(
+            SqliteStore::connect("sqlite::memory:?cache=shared")
+                .await
+                .unwrap(),
+        );
+        store.apply_embedded_migrations().await.unwrap();
+
+        GatewayRuntime::new(pdp, cap, rollback, store, firewall)
+    }
 
     #[test]
     fn routes_mutating_git_bindings_to_git_adapter() {
@@ -2631,5 +2774,80 @@ mod tests {
             ),
             RollbackClass::R0NativeReversible
         );
+    }
+
+    #[tokio::test]
+    async fn authenticated_router_allows_health_without_bearer_token() {
+        let app = build_authenticated_router(
+            create_test_runtime().await,
+            ServerConfig {
+                auth_mode: AuthMode::Bearer,
+                bearer_token: Some("test-token".to_string()),
+            },
+        );
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/healthz")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn authenticated_router_rejects_missing_bearer_token() {
+        let app = build_authenticated_router(
+            create_test_runtime().await,
+            ServerConfig {
+                auth_mode: AuthMode::Bearer,
+                bearer_token: Some("test-token".to_string()),
+            },
+        );
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let body = body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let error: ApiError = serde_json::from_slice(&body).unwrap();
+        assert!(matches!(error.code, ApiErrorCode::PolicyDenied));
+    }
+
+    #[tokio::test]
+    async fn authenticated_router_allows_valid_bearer_token() {
+        let app = build_authenticated_router(
+            create_test_runtime().await,
+            ServerConfig {
+                auth_mode: AuthMode::Bearer,
+                bearer_token: Some("test-token".to_string()),
+            },
+        );
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header(AUTHORIZATION, "Bearer test-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
     }
 }

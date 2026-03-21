@@ -2,16 +2,20 @@ openapi: 3.1.0
 info:
   title: FerrumGate Control API
   version: 0.1.0
-  description: REST control plane API for FerrumGate v1.
+  description: REST control plane API for FerrumGate v1. When `ferrumd` runs with `auth.mode = bearer`, all non-health routes require bearer authentication.
 
 servers:
   - url: http://localhost:8080
+
+security:
+  - ControlPlaneBearer: []
 
 paths:
   /v1/healthz:
     get:
       summary: Basic health check
       operationId: healthz
+      security: []
       responses:
         '200':
           description: OK
@@ -24,6 +28,7 @@ paths:
     get:
       summary: Deep readiness check
       operationId: readyz
+      security: []
       responses:
         '200':
           description: Ready
@@ -333,22 +338,18 @@ paths:
                 $ref: '#/components/schemas/ExecutionRecord'
 
   /v1/approvals:
-    post:
-      summary: Create approval request
-      operationId: createApproval
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ApprovalRequest'
+    get:
+      summary: List pending approvals
+      operationId: listPendingApprovals
       responses:
-        '201':
-          description: Approval created
+        '200':
+          description: Pending approvals
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApprovalRequest'
+                type: array
+                items:
+                  $ref: '#/components/schemas/ApprovalRequest'
 
   /v1/approvals/{approval_id}:
     get:
@@ -402,20 +403,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProvenanceQueryResponse'
 
-  /v1/provenance/events/{event_id}:
-    get:
-      summary: Get provenance event
-      operationId: getProvenanceEvent
-      parameters:
-        - $ref: '#/components/parameters/EventId'
-      responses:
-        '200':
-          description: Provenance event
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ProvenanceEvent'
-
   /v1/provenance/lineage/{execution_id}:
     get:
       summary: Get lineage for execution
@@ -439,6 +426,12 @@ paths:
                       $ref: '#/components/schemas/ProvenanceEvent'
 
 components:
+  securitySchemes:
+    ControlPlaneBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque token
+
   parameters:
     IntentId:
       name: intent_id

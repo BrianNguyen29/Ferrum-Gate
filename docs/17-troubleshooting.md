@@ -32,12 +32,25 @@ Kiểm tra:
 ## Common operational issues (current reality)
 
 ### State resets on restart
-ferrumd uses `sqlite::memory:?cache=shared`. All state (capability leases, action history, rollback contracts) is lost when the process exits. **This is expected behavior in the current dev configuration.** If you need persistence, a persistent SQLite path or external database is required — not yet implemented.
+- If `ferrumd` auto-loads `configs/ferrumgate.dev.toml`, the store uses `sqlite://ferrumgate.dev.db` and execution/provenance state should survive restart.
+- If state is still resetting, check whether `ferrumd` actually found a config file or fell back to `sqlite::memory:?cache=shared`.
+- Capability leases still use the in-memory capability service, so active leases do not survive process restart even when the SQLite store is persistent.
 
 ### ferrumd not reachable
-- ferrumd binds to `127.0.0.1:8080` (hardcoded). It is not reachable on other interfaces by default.
-- Check that no other process is using port 8080.
-- If you need remote access, you must proxy through the local interface or reconfigure the hardcoded bind address in `bins/ferrumd/src/main.rs`.
+- Check the effective bind address from CLI/env/config (`--bind`, `FERRUMD_BIND_ADDR`, config file).
+- Check that no other process is using the configured port.
+- If startup fails on a non-loopback bind, verify that bearer auth is enabled or that `allow_insecure_nonlocal` was explicitly set.
+
+### bearer auth returns 401
+- All non-health routes require `Authorization: Bearer <token>` when `auth.mode = "bearer"`.
+- Verify that `FERRUMD_BEARER_TOKEN` or `auth.bearer_token` is set on the server side.
+- Verify that the client (`ferrumctl` or curl) is sending the same token.
+- `ferrumctl` accepts `--bearer-token` or `FERRUMCTL_BEARER_TOKEN`.
+
+### prod config fails at startup
+- `configs/ferrumgate.prod.toml` enables `auth.mode = "bearer"`.
+- Startup will fail until a bearer token is supplied via config or `FERRUMD_BEARER_TOKEN`.
+- Startup also fails if a non-loopback bind is requested while auth is disabled and `allow_insecure_nonlocal` is not enabled.
 
 ### HTTP adapter mutation has no automatic rollback
 HTTP rollback is a **no-op by design**. If an HTTP adapter mutates remote state (e.g., a PUT or DELETE to an external API), the rollback adapter will not undo that mutation. Operators must manually compensate in this case. See `15-deployment-and-operations.md` for the open gap.

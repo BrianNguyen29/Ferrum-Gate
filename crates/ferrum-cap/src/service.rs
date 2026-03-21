@@ -24,10 +24,17 @@ pub enum CapabilityError {
 
 #[async_trait]
 pub trait CapabilityService: Send + Sync {
-    async fn mint(&self, request: CapabilityMintRequest) -> Result<CapabilityMintResponse, CapabilityError>;
+    async fn mint(
+        &self,
+        request: CapabilityMintRequest,
+    ) -> Result<CapabilityMintResponse, CapabilityError>;
     async fn get(&self, capability_id: CapabilityId) -> Result<CapabilityLease, CapabilityError>;
-    async fn mark_used(&self, capability_id: CapabilityId) -> Result<CapabilityLease, CapabilityError>;
-    async fn revoke(&self, capability_id: CapabilityId) -> Result<CapabilityLease, CapabilityError>;
+    async fn mark_used(
+        &self,
+        capability_id: CapabilityId,
+    ) -> Result<CapabilityLease, CapabilityError>;
+    async fn revoke(&self, capability_id: CapabilityId)
+    -> Result<CapabilityLease, CapabilityError>;
 }
 
 #[derive(Default)]
@@ -37,7 +44,10 @@ pub struct InMemoryCapabilityService {
 
 #[async_trait]
 impl CapabilityService for InMemoryCapabilityService {
-    async fn mint(&self, request: CapabilityMintRequest) -> Result<CapabilityMintResponse, CapabilityError> {
+    async fn mint(
+        &self,
+        request: CapabilityMintRequest,
+    ) -> Result<CapabilityMintResponse, CapabilityError> {
         if request.requested_ttl_secs > 300 {
             return Err(CapabilityError::TtlTooLong);
         }
@@ -63,7 +73,10 @@ impl CapabilityService for InMemoryCapabilityService {
             metadata: request.metadata,
         };
 
-        self.inner.write().await.insert(lease.capability_id, lease.clone());
+        self.inner
+            .write()
+            .await
+            .insert(lease.capability_id, lease.clone());
 
         Ok(CapabilityMintResponse {
             lease,
@@ -85,9 +98,14 @@ impl CapabilityService for InMemoryCapabilityService {
         Ok(lease)
     }
 
-    async fn mark_used(&self, capability_id: CapabilityId) -> Result<CapabilityLease, CapabilityError> {
+    async fn mark_used(
+        &self,
+        capability_id: CapabilityId,
+    ) -> Result<CapabilityLease, CapabilityError> {
         let mut guard = self.inner.write().await;
-        let lease = guard.get_mut(&capability_id).ok_or(CapabilityError::NotFound)?;
+        let lease = guard
+            .get_mut(&capability_id)
+            .ok_or(CapabilityError::NotFound)?;
 
         if matches!(lease.status, CapabilityStatus::Used) {
             return Err(CapabilityError::AlreadyUsed);
@@ -103,9 +121,14 @@ impl CapabilityService for InMemoryCapabilityService {
         Ok(lease.clone())
     }
 
-    async fn revoke(&self, capability_id: CapabilityId) -> Result<CapabilityLease, CapabilityError> {
+    async fn revoke(
+        &self,
+        capability_id: CapabilityId,
+    ) -> Result<CapabilityLease, CapabilityError> {
         let mut guard = self.inner.write().await;
-        let lease = guard.get_mut(&capability_id).ok_or(CapabilityError::NotFound)?;
+        let lease = guard
+            .get_mut(&capability_id)
+            .ok_or(CapabilityError::NotFound)?;
         lease.status = CapabilityStatus::Revoked;
         lease.revoked_at = Some(Utc::now());
         Ok(lease.clone())

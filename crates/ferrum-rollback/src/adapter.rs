@@ -42,14 +42,20 @@ pub struct RecoveryReceipt {
 pub trait RollbackAdapter: Send + Sync {
     fn key(&self) -> &'static str;
 
-    async fn prepare(&self, request: &RollbackPrepareRequest) -> Result<PrepareReceipt, AdapterError>;
+    async fn prepare(
+        &self,
+        request: &RollbackPrepareRequest,
+    ) -> Result<PrepareReceipt, AdapterError>;
     async fn execute(
         &self,
         contract: &RollbackContract,
         payload: &serde_json::Value,
     ) -> Result<ExecuteReceipt, AdapterError>;
     async fn verify(&self, contract: &RollbackContract) -> Result<VerifyReceipt, AdapterError>;
-    async fn compensate(&self, contract: &RollbackContract) -> Result<RecoveryReceipt, AdapterError>;
+    async fn compensate(
+        &self,
+        contract: &RollbackContract,
+    ) -> Result<RecoveryReceipt, AdapterError>;
     async fn rollback(&self, contract: &RollbackContract) -> Result<RecoveryReceipt, AdapterError>;
 }
 
@@ -84,8 +90,14 @@ impl RollbackAdapter for NoopRollbackAdapter {
         self.key
     }
 
-    async fn prepare(&self, _request: &RollbackPrepareRequest) -> Result<PrepareReceipt, AdapterError> {
-        Ok(PrepareReceipt { accepted: true, adapter_metadata: JsonMap::new() })
+    async fn prepare(
+        &self,
+        _request: &RollbackPrepareRequest,
+    ) -> Result<PrepareReceipt, AdapterError> {
+        Ok(PrepareReceipt {
+            accepted: true,
+            adapter_metadata: JsonMap::new(),
+        })
     }
 
     async fn execute(
@@ -101,14 +113,29 @@ impl RollbackAdapter for NoopRollbackAdapter {
     }
 
     async fn verify(&self, _contract: &RollbackContract) -> Result<VerifyReceipt, AdapterError> {
-        Ok(VerifyReceipt { verified: true, adapter_metadata: JsonMap::new() })
+        Ok(VerifyReceipt {
+            verified: true,
+            adapter_metadata: JsonMap::new(),
+        })
     }
 
-    async fn compensate(&self, _contract: &RollbackContract) -> Result<RecoveryReceipt, AdapterError> {
-        Ok(RecoveryReceipt { recovered: true, adapter_metadata: JsonMap::new() })
+    async fn compensate(
+        &self,
+        _contract: &RollbackContract,
+    ) -> Result<RecoveryReceipt, AdapterError> {
+        Ok(RecoveryReceipt {
+            recovered: true,
+            adapter_metadata: JsonMap::new(),
+        })
     }
 
-    async fn rollback(&self, _contract: &RollbackContract) -> Result<RecoveryReceipt, AdapterError> {
-        Ok(RecoveryReceipt { recovered: true, adapter_metadata: JsonMap::new() })
+    async fn rollback(
+        &self,
+        _contract: &RollbackContract,
+    ) -> Result<RecoveryReceipt, AdapterError> {
+        Ok(RecoveryReceipt {
+            recovered: true,
+            adapter_metadata: JsonMap::new(),
+        })
     }
 }

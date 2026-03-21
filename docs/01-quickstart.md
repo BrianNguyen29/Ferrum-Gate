@@ -54,14 +54,51 @@ Note: for HTTP adapters, rollback is a **no-op by design** today; manual compens
 # Build
 cargo build -p ferrumd
 
-# Run (no runtime config knobs yet)
+# Run with the repo dev config (auto-loaded when present)
 cargo run -p ferrumd
+
+# Or point to a specific config file explicitly
+cargo run -p ferrumd -- --config configs/ferrumgate.dev.toml
+
+# Override config via CLI/env when needed
+FERRUMD_STORE_DSN="sqlite://./tmp/ferrumgate.sqlite" \
+FERRUMD_LOG_FILTER=debug \
+cargo run -p ferrumd -- --bind 127.0.0.1:8081
 
 # Binary also available after build:
 ./target/debug/ferrumd
 ```
 
-ferrumd starts a single HTTP server on `127.0.0.1:8080` and connects to an in-memory SQLite store (`sqlite::memory:?cache=shared`). All state is lost when the process exits.
+Config precedence is `CLI > env > config file > defaults`.
+
+In repo-local development, `ferrumd` auto-loads `configs/ferrumgate.dev.toml` when it exists. That config keeps the default loopback bind (`127.0.0.1:8080`) but uses a file-backed SQLite store (`sqlite://ferrumgate.dev.db`), so state survives restarts.
+
+If no config file is found, `ferrumd` falls back to `sqlite::memory:?cache=shared`.
+
+## Control-plane auth (current operator path)
+
+- `auth.mode = "disabled"` is acceptable for loopback/local dev.
+- Non-loopback bind with auth disabled is rejected at startup unless `allow_insecure_nonlocal = true` is set explicitly.
+- `auth.mode = "bearer"` requires a bearer token from config or `FERRUMD_BEARER_TOKEN`.
+- TLS is still expected to be terminated by a reverse proxy or other ingress layer; in-process TLS is not implemented here.
+
+## ferrumctl quick checks
+
+```sh
+# Health
+cargo run -p ferrumctl -- server health
+
+# Inspect an execution
+cargo run -p ferrumctl -- server inspect-execution <execution_id>
+
+# List pending approvals
+cargo run -p ferrumctl -- server inspect-approvals
+
+# Inspect lineage
+cargo run -p ferrumctl -- server inspect-lineage <execution_id>
+```
+
+`ferrumctl` defaults to `http://127.0.0.1:8080`. If control-plane bearer auth is enabled, pass `--bearer-token <token>` or set `FERRUMCTL_BEARER_TOKEN`.
 
 ## Điều không được làm
 

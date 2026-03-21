@@ -31,8 +31,15 @@
 | `POST /v1/executions/{execution_id}/commit` | Finalize and commit the action |
 | `POST /v1/executions/{execution_id}/compensate` | Trigger compensation when a recovery path exists |
 | `POST /v1/executions/{execution_id}/rollback` | Trigger rollback via prepared adapter |
+| `GET /v1/executions/{execution_id}` | Inspect the stored execution record |
+| `GET /v1/approvals` | List pending approvals |
+| `GET /v1/approvals/{approval_id}` | Inspect a specific approval |
+| `GET /v1/provenance/lineage/{execution_id}` | Inspect the execution lineage chain |
+| `POST /v1/provenance/query` | Query provenance events by filter |
 
 HTTP adapter rollback is a **no-op by design** today; see `15-deployment-and-operations.md` for caveats.
+
+When `ferrumd` runs with `auth.mode = "bearer"`, all non-health control-plane routes require `Authorization: Bearer <token>`.
 
 ## Khi nào phải cập nhật đồng thời
 Nếu thay:

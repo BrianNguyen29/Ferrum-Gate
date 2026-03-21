@@ -98,6 +98,22 @@ enum HttpAuth {
     ApiKey { header: String, key: String },
 }
 
+type ParsedRequestParts = (
+    Option<String>,
+    Option<HttpMethod>,
+    serde_json::Value,
+    Option<HashMap<String, String>>,
+    Option<HttpAuth>,
+);
+
+type ResolvedRequestParts = (
+    String,
+    HttpMethod,
+    serde_json::Value,
+    Option<HashMap<String, String>>,
+    Option<HttpAuth>,
+);
+
 impl HttpAuth {
     /// Compute a digest for this auth credential (without storing raw credentials).
     fn compute_digest(&self) -> String {
@@ -343,16 +359,7 @@ impl HttpRollbackAdapter {
     /// Rejects ambiguous/conflicting auth where both headers.authorization and auth are supplied.
     fn parse_request_parts(
         payload: &serde_json::Value,
-    ) -> Result<
-        (
-            Option<String>,
-            Option<HttpMethod>,
-            serde_json::Value,
-            Option<HashMap<String, String>>,
-            Option<HttpAuth>,
-        ),
-        HttpAdapterError,
-    > {
+    ) -> Result<ParsedRequestParts, HttpAdapterError> {
         let obj = match payload.as_object() {
             Some(o) => o,
             None => return Ok((None, None, serde_json::Value::Null, None, None)),
@@ -461,19 +468,19 @@ impl HttpRollbackAdapter {
     /// - Basic: {"type": "basic", "username": "...", "password": "..."}
     /// - ApiKey: {"type": "api_key", "header": "X-API-Key", "key": "..."}
     fn parse_http_auth(value: &serde_json::Value) -> Result<HttpAuth, String> {
-        let obj = value.as_object().ok_or_else(|| "auth must be an object")?;
+        let obj = value.as_object().ok_or("auth must be an object")?;
 
         let auth_type = obj
             .get("type")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| "auth.type must be a string")?;
+            .ok_or("auth.type must be a string")?;
 
         match auth_type.to_lowercase().as_str() {
             "bearer" => {
                 let token = obj
                     .get("token")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| "auth.token must be a string")?;
+                    .ok_or("auth.token must be a string")?;
 
                 if token.is_empty() {
                     return Err("auth.token must not be empty".to_string());
@@ -487,12 +494,12 @@ impl HttpRollbackAdapter {
                 let username = obj
                     .get("username")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| "auth.username must be a string")?;
+                    .ok_or("auth.username must be a string")?;
 
                 let password = obj
                     .get("password")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| "auth.password must be a string")?;
+                    .ok_or("auth.password must be a string")?;
 
                 if username.is_empty() {
                     return Err("auth.username must not be empty".to_string());
@@ -507,12 +514,12 @@ impl HttpRollbackAdapter {
                 let header = obj
                     .get("header")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| "auth.header must be a string")?;
+                    .ok_or("auth.header must be a string")?;
 
                 let key = obj
                     .get("key")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| "auth.key must be a string")?;
+                    .ok_or("auth.key must be a string")?;
 
                 if header.is_empty() {
                     return Err("auth.header must not be empty".to_string());
@@ -594,16 +601,7 @@ impl HttpRollbackAdapter {
         bound_method: &HttpMethod,
         bound_url: &str,
         payload: &serde_json::Value,
-    ) -> Result<
-        (
-            String,
-            HttpMethod,
-            serde_json::Value,
-            Option<HashMap<String, String>>,
-            Option<HttpAuth>,
-        ),
-        HttpAdapterError,
-    > {
+    ) -> Result<ResolvedRequestParts, HttpAdapterError> {
         let (payload_url, payload_method, payload_body, payload_headers, payload_auth) =
             Self::parse_request_parts(payload)?;
         let resolved_url = payload_url.unwrap_or_else(|| bound_url.to_string());
@@ -698,7 +696,7 @@ impl RollbackAdapter for HttpRollbackAdapter {
 
         // Validate URL is well-formed
         if url.is_empty() {
-            return Err(AdapterError::Validation("URL cannot be empty".to_string()).into());
+            return Err(AdapterError::Validation("URL cannot be empty".to_string()));
         }
 
         let approved_request_payload = request
@@ -835,8 +833,7 @@ impl RollbackAdapter for HttpRollbackAdapter {
                 return Err(AdapterError::Validation(format!(
                     "executed request digest does not match approved request digest: approved={} executed={}",
                     approved_request_digest, executed_request_digest
-                ))
-                .into());
+                )));
             }
         }
 

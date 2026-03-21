@@ -29,7 +29,10 @@ impl PdpEngine for StaticPdpEngine {
         let mut warnings = Vec::new();
 
         if trust.taint_score >= 70
-            && !matches!(proposal.requested_rollback_class, RollbackClass::R0NativeReversible)
+            && !matches!(
+                proposal.requested_rollback_class,
+                RollbackClass::R0NativeReversible
+            )
         {
             matched_rule_ids.push("quarantine.high.taint.mutation".to_string());
             return Ok(EvaluateProposalResponse {
