@@ -282,6 +282,231 @@ async fn capability_crud_and_relation_query() {
 }
 
 #[tokio::test]
+async fn capability_mark_used_if_active_success() {
+    let (_temp_dir, store) = create_test_store().await;
+    let intent = sample_intent();
+    store
+        .intents()
+        .insert(&intent)
+        .await
+        .expect("insert intent");
+
+    let proposal = sample_proposal(intent.intent_id);
+    store
+        .proposals()
+        .insert(&proposal)
+        .await
+        .expect("insert proposal");
+
+    let capability = sample_capability(intent.intent_id, proposal.proposal_id);
+    let capability_id = capability.capability_id;
+    store
+        .capabilities()
+        .insert(&capability)
+        .await
+        .expect("insert capability");
+
+    // First mark_used_if_active should succeed and return true
+    let result = store
+        .capabilities()
+        .mark_used_if_active(capability_id)
+        .await
+        .expect("mark_used_if_active should succeed");
+    assert!(result, "First mark_used_if_active should return true");
+
+    // Verify the capability is now marked as Used
+    let fetched = store
+        .capabilities()
+        .get(capability_id)
+        .await
+        .expect("load capability")
+        .expect("capability present");
+    assert!(matches!(fetched.status, CapabilityStatus::Used));
+}
+
+#[tokio::test]
+async fn capability_mark_used_if_active_second_is_noop() {
+    let (_temp_dir, store) = create_test_store().await;
+    let intent = sample_intent();
+    store
+        .intents()
+        .insert(&intent)
+        .await
+        .expect("insert intent");
+
+    let proposal = sample_proposal(intent.intent_id);
+    store
+        .proposals()
+        .insert(&proposal)
+        .await
+        .expect("insert proposal");
+
+    let capability = sample_capability(intent.intent_id, proposal.proposal_id);
+    let capability_id = capability.capability_id;
+    store
+        .capabilities()
+        .insert(&capability)
+        .await
+        .expect("insert capability");
+
+    // First mark_used_if_active succeeds
+    let first_result = store
+        .capabilities()
+        .mark_used_if_active(capability_id)
+        .await
+        .expect("first mark_used_if_active should succeed");
+    assert!(first_result, "First call should return true");
+
+    // Second mark_used_if_active should be a no-op and return false
+    let second_result = store
+        .capabilities()
+        .mark_used_if_active(capability_id)
+        .await
+        .expect("second mark_used_if_active should succeed");
+    assert!(!second_result, "Second call should return false (no-op)");
+
+    // Verify the capability is still Used (not changed)
+    let fetched = store
+        .capabilities()
+        .get(capability_id)
+        .await
+        .expect("load capability")
+        .expect("capability present");
+    assert!(matches!(fetched.status, CapabilityStatus::Used));
+}
+
+#[tokio::test]
+async fn capability_revoke_persists_revoked_at() {
+    let (_temp_dir, store) = create_test_store().await;
+    let intent = sample_intent();
+    store
+        .intents()
+        .insert(&intent)
+        .await
+        .expect("insert intent");
+
+    let proposal = sample_proposal(intent.intent_id);
+    store
+        .proposals()
+        .insert(&proposal)
+        .await
+        .expect("insert proposal");
+
+    let capability = sample_capability(intent.intent_id, proposal.proposal_id);
+    let capability_id = capability.capability_id;
+    store
+        .capabilities()
+        .insert(&capability)
+        .await
+        .expect("insert capability");
+
+    // Revoke the capability
+    store
+        .capabilities()
+        .revoke(capability_id)
+        .await
+        .expect("revoke should succeed");
+
+    // Verify the capability is now Revoked
+    let fetched = store
+        .capabilities()
+        .get(capability_id)
+        .await
+        .expect("load capability")
+        .expect("capability present");
+    assert!(matches!(fetched.status, CapabilityStatus::Revoked));
+    assert!(fetched.revoked_at.is_some(), "revoked_at should be set");
+}
+
+#[tokio::test]
+async fn capability_list_active_filters_correctly() {
+    let (_temp_dir, store) = create_test_store().await;
+    let intent = sample_intent();
+    store
+        .intents()
+        .insert(&intent)
+        .await
+        .expect("insert intent");
+
+    let proposal = sample_proposal(intent.intent_id);
+    store
+        .proposals()
+        .insert(&proposal)
+        .await
+        .expect("insert proposal");
+
+    let capability1 = sample_capability(intent.intent_id, proposal.proposal_id);
+    let capability1_id = capability1.capability_id;
+    store
+        .capabilities()
+        .insert(&capability1)
+        .await
+        .expect("insert capability1");
+
+    // Create a second capability
+    let capability2 = sample_capability(intent.intent_id, proposal.proposal_id);
+    store
+        .capabilities()
+        .insert(&capability2)
+        .await
+        .expect("insert capability2");
+
+    let mut expired_capability = sample_capability(intent.intent_id, proposal.proposal_id);
+    expired_capability.expires_at = Utc::now() - Duration::minutes(1);
+    store
+        .capabilities()
+        .insert(&expired_capability)
+        .await
+        .expect("insert expired capability");
+
+    let active_list = store
+        .capabilities()
+        .list_active()
+        .await
+        .expect("list_active should succeed");
+    assert_eq!(
+        active_list.len(),
+        2,
+        "Should have 2 non-expired active capabilities"
+    );
+
+    // Mark one as Used
+    store
+        .capabilities()
+        .mark_used_if_active(capability1_id)
+        .await
+        .expect("mark_used_if_active should succeed");
+
+    let active_list = store
+        .capabilities()
+        .list_active()
+        .await
+        .expect("list_active should succeed");
+    assert_eq!(
+        active_list.len(),
+        1,
+        "Should have 1 active capability after marking one as used"
+    );
+    assert_eq!(active_list[0].capability_id, capability2.capability_id);
+
+    store
+        .capabilities()
+        .revoke(capability2.capability_id)
+        .await
+        .expect("revoke should succeed");
+
+    let active_list = store
+        .capabilities()
+        .list_active()
+        .await
+        .expect("list_active should succeed");
+    assert!(
+        active_list.is_empty(),
+        "Should have no active capabilities after revoking all"
+    );
+}
+
+#[tokio::test]
 async fn execution_and_rollback_state_transitions() {
     let (_temp_dir, store) = create_test_store().await;
     let intent = sample_intent();
