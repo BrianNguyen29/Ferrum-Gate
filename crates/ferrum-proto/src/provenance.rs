@@ -77,9 +77,11 @@ pub enum ProvenanceEdgeType {
 #[serde(deny_unknown_fields)]
 pub struct ProvenanceQueryRequest {
     pub intent_id: Option<crate::IntentId>,
+    pub proposal_id: Option<ProposalId>,
     pub execution_id: Option<ExecutionId>,
     pub capability_id: Option<CapabilityId>,
     pub event_kind: Option<ProvenanceEventKind>,
+    pub terminal_only: Option<bool>,
     pub since: Option<Timestamp>,
     pub until: Option<Timestamp>,
 }

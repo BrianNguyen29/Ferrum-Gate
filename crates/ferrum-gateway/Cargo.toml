@@ -24,4 +24,5 @@ ferrum-rollback = { path = "../ferrum-rollback" }
 ferrum-store = { path = "../ferrum-store" }
 ferrum-firewall = { path = "../ferrum-firewall" }
 ferrum-ledger = { path = "../ferrum-ledger" }
+ferrum-graph = { path = "../ferrum-graph" }
 uuid.workspace = true

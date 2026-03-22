@@ -146,9 +146,11 @@ async fn test_compile_time_trust_labeling_catches_prompt_injection() {
         .provenance()
         .query(&ferrum_proto::ProvenanceQueryRequest {
             intent_id: Some(intent_id),
+            proposal_id: None,
             execution_id: None,
             capability_id: None,
             event_kind: Some(ProvenanceEventKind::IntentCompiled),
+            terminal_only: None,
             since: None,
             until: None,
         })
@@ -268,9 +270,11 @@ async fn test_taint_propagates_into_evaluate_decision() {
         .provenance()
         .query(&ferrum_proto::ProvenanceQueryRequest {
             intent_id: Some(intent_id),
+            proposal_id: None,
             execution_id: None,
             capability_id: None,
             event_kind: Some(ProvenanceEventKind::PolicyEvaluated),
+            terminal_only: None,
             since: None,
             until: None,
         })
@@ -492,9 +496,11 @@ async fn test_high_taint_non_r0_mutation_quarantines() {
         .provenance()
         .query(&ferrum_proto::ProvenanceQueryRequest {
             intent_id: Some(intent_id),
+            proposal_id: None,
             execution_id: None,
             capability_id: None,
             event_kind: Some(ProvenanceEventKind::Quarantined),
+            terminal_only: None,
             since: None,
             until: None,
         })
@@ -602,9 +608,11 @@ async fn test_read_only_intent_fails_closed_against_mutation() {
         .provenance()
         .query(&ferrum_proto::ProvenanceQueryRequest {
             intent_id: Some(intent_id),
+            proposal_id: None,
             execution_id: None,
             capability_id: None,
             event_kind: Some(ProvenanceEventKind::PolicyEvaluated),
+            terminal_only: None,
             since: None,
             until: None,
         })
@@ -736,9 +744,11 @@ async fn test_mcp_scope_constraints_fail_closed_with_poisoned_context() {
         .provenance()
         .query(&ferrum_proto::ProvenanceQueryRequest {
             intent_id: Some(intent_id),
+            proposal_id: None,
             execution_id: None,
             capability_id: None,
             event_kind: Some(ProvenanceEventKind::PolicyEvaluated),
+            terminal_only: None,
             since: None,
             until: None,
         })

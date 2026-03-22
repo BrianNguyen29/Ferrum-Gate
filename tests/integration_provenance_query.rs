@@ -15,7 +15,7 @@ use ferrum_proto::{
     ResourceMode, RiskTier, RollbackClass, TaintBudget, ToolBinding,
 };
 use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
-use ferrum_store::SqliteStore;
+use ferrum_store::{ProvenanceRepo, SqliteStore};
 use std::sync::Arc;
 use tempfile::TempDir;
 use tower::util::ServiceExt;
@@ -89,7 +89,11 @@ fn sample_proposal(intent_id: ferrum_proto::IntentId, path: &str) -> ActionPropo
 
 async fn create_execution_with_events(
     runtime: &GatewayRuntime,
-) -> (ferrum_proto::ExecutionId, ferrum_proto::IntentId) {
+) -> (
+    ferrum_proto::ExecutionId,
+    ferrum_proto::IntentId,
+    ferrum_proto::ProposalId,
+) {
     // Use a synthetic path - it's just stored as metadata, doesn't need to exist
     let path = "/tmp/test-path".to_string();
 
@@ -201,7 +205,7 @@ async fn create_execution_with_events(
         serde_json::from_slice(&body).unwrap();
     let execution_id = auth_resp.execution.execution_id;
 
-    (execution_id, intent_id)
+    (execution_id, intent_id, proposal_id)
 }
 
 /// Test: query by execution_id returns matching events
@@ -211,14 +215,16 @@ async fn test_provenance_query_by_execution_id() {
     // Keep runtime_temp_dir alive for the duration of the test
     let _ = &runtime_temp_dir;
 
-    let (execution_id, intent_id) = create_execution_with_events(&runtime).await;
+    let (execution_id, intent_id, proposal_id) = create_execution_with_events(&runtime).await;
 
     // Query by execution_id
     let query_req = ProvenanceQueryRequest {
         intent_id: None,
+        proposal_id: None,
         execution_id: Some(execution_id),
         capability_id: None,
         event_kind: None,
+        terminal_only: None,
         since: None,
         until: None,
     };
@@ -259,9 +265,11 @@ async fn test_provenance_query_by_execution_id() {
     // Also verify we can query by intent_id
     let query_req = ProvenanceQueryRequest {
         intent_id: Some(intent_id),
+        proposal_id: None,
         execution_id: None,
         capability_id: None,
         event_kind: None,
+        terminal_only: None,
         since: None,
         until: None,
     };
@@ -298,12 +306,56 @@ async fn test_provenance_query_by_execution_id() {
         );
     }
 
+    // And query by proposal_id
+    let query_req = ProvenanceQueryRequest {
+        intent_id: None,
+        proposal_id: Some(proposal_id),
+        execution_id: None,
+        capability_id: None,
+        event_kind: None,
+        terminal_only: None,
+        since: None,
+        until: None,
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/provenance/query")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&query_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let query_resp: ferrum_proto::ProvenanceQueryResponse = serde_json::from_slice(&body).unwrap();
+    assert!(
+        !query_resp.events.is_empty(),
+        "expected events for proposal_id"
+    );
+    for event in &query_resp.events {
+        assert_eq!(
+            event.proposal_id,
+            Some(proposal_id),
+            "event should belong to the queried proposal"
+        );
+    }
+
     // Query with non-existent execution_id should return empty events
     let query_req = ProvenanceQueryRequest {
         intent_id: None,
+        proposal_id: None,
         execution_id: Some(ferrum_proto::ExecutionId::new()),
         capability_id: None,
         event_kind: None,
+        terminal_only: None,
         since: None,
         until: None,
     };
@@ -337,14 +389,16 @@ async fn test_provenance_query_by_execution_id() {
 async fn test_provenance_query_by_time_window() {
     let (_temp_dir, runtime, _store) = create_test_runtime().await;
 
-    let (execution_id, _intent_id) = create_execution_with_events(&runtime).await;
+    let (execution_id, _intent_id, _proposal_id) = create_execution_with_events(&runtime).await;
 
     // Query with full time range (should return events)
     let query_req = ProvenanceQueryRequest {
         intent_id: None,
+        proposal_id: None,
         execution_id: Some(execution_id),
         capability_id: None,
         event_kind: None,
+        terminal_only: None,
         since: None,
         until: None,
     };
@@ -374,9 +428,11 @@ async fn test_provenance_query_by_time_window() {
     let past_time = chrono::Utc::now() - chrono::Duration::hours(1);
     let query_req = ProvenanceQueryRequest {
         intent_id: None,
+        proposal_id: None,
         execution_id: Some(execution_id),
         capability_id: None,
         event_kind: None,
+        terminal_only: None,
         since: Some(past_time),
         until: Some(past_time + chrono::Duration::minutes(5)),
     };
@@ -408,9 +464,11 @@ async fn test_provenance_query_by_time_window() {
     // Query with since only (from past to now)
     let query_req = ProvenanceQueryRequest {
         intent_id: None,
+        proposal_id: None,
         execution_id: Some(execution_id),
         capability_id: None,
         event_kind: None,
+        terminal_only: None,
         since: Some(past_time),
         until: None,
     };
@@ -449,9 +507,11 @@ async fn test_provenance_query_rejects_unknown_fields() {
     // Valid request (should succeed)
     let query_req = ProvenanceQueryRequest {
         intent_id: None,
+        proposal_id: None,
         execution_id: None,
         capability_id: None,
         event_kind: None,
+        terminal_only: None,
         since: None,
         until: None,
     };
@@ -523,14 +583,16 @@ async fn test_provenance_query_rejects_unknown_fields() {
 async fn test_provenance_query_by_event_kind() {
     let (_temp_dir, runtime, _store) = create_test_runtime().await;
 
-    let (execution_id, _intent_id) = create_execution_with_events(&runtime).await;
+    let (execution_id, _intent_id, _proposal_id) = create_execution_with_events(&runtime).await;
 
     // Query by event_kind = IntentCompiled
     let query_req = ProvenanceQueryRequest {
         intent_id: None,
+        proposal_id: None,
         execution_id: Some(execution_id),
         capability_id: None,
         event_kind: Some(ProvenanceEventKind::IntentCompiled),
+        terminal_only: None,
         since: None,
         until: None,
     };
@@ -561,4 +623,91 @@ async fn test_provenance_query_by_event_kind() {
             "expected IntentCompiled events"
         );
     }
+}
+
+/// Test: query can return terminal events only
+#[tokio::test]
+async fn test_provenance_query_terminal_only() {
+    let (_temp_dir, runtime, store) = create_test_runtime().await;
+
+    let (execution_id, intent_id, proposal_id) = create_execution_with_events(&runtime).await;
+
+    store
+        .provenance()
+        .append_event(&ferrum_proto::ProvenanceEvent {
+            event_id: ferrum_proto::EventId::new(),
+            kind: ProvenanceEventKind::SideEffectCommitted,
+            occurred_at: chrono::Utc::now(),
+            actor: ferrum_proto::ActorRef {
+                actor_type: ferrum_proto::ActorType::Gateway,
+                actor_id: "gateway".to_string(),
+                display_name: Some("Ferrum Gateway".to_string()),
+            },
+            object: ferrum_proto::ObjectRef {
+                object_type: ferrum_proto::ObjectType::SideEffect,
+                object_id: execution_id.to_string(),
+                summary: Some("terminal query test".to_string()),
+            },
+            intent_id: Some(intent_id),
+            proposal_id: Some(proposal_id),
+            execution_id: Some(execution_id),
+            capability_id: None,
+            rollback_contract_id: None,
+            policy_bundle_id: None,
+            trust_labels: Vec::new(),
+            sensitivity_labels: Vec::new(),
+            parent_edges: Vec::new(),
+            hash_chain: ferrum_proto::HashChainRef {
+                content_hash: None,
+                manifest_hash: None,
+                policy_bundle_hash: None,
+                previous_ledger_hash: None,
+            },
+            metadata: ferrum_proto::JsonMap::new(),
+        })
+        .await
+        .unwrap();
+
+    let query_req = ProvenanceQueryRequest {
+        intent_id: None,
+        proposal_id: None,
+        execution_id: Some(execution_id),
+        capability_id: None,
+        event_kind: None,
+        terminal_only: Some(true),
+        since: None,
+        until: None,
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/provenance/query")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&query_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let query_resp: ferrum_proto::ProvenanceQueryResponse = serde_json::from_slice(&body).unwrap();
+
+    assert!(!query_resp.events.is_empty(), "expected terminal events");
+    assert!(query_resp.events.iter().all(|event| {
+        matches!(
+            event.kind,
+            ProvenanceEventKind::SideEffectCommitted
+                | ProvenanceEventKind::SideEffectCompensated
+                | ProvenanceEventKind::SideEffectRolledBack
+                | ProvenanceEventKind::ApprovalDenied
+                | ProvenanceEventKind::Quarantined
+                | ProvenanceEventKind::ErrorRaised
+        )
+    }));
 }

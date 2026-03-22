@@ -270,9 +270,11 @@ async fn test_mint_persists_across_runtime_restart() {
         .provenance()
         .query(&ferrum_proto::ProvenanceQueryRequest {
             intent_id: Some(intent_id),
+            proposal_id: None,
             execution_id: None,
             capability_id: Some(capability_id),
             event_kind: Some(ProvenanceEventKind::CapabilityMinted),
+            terminal_only: None,
             since: None,
             until: None,
         })
@@ -504,9 +506,11 @@ async fn test_revoked_capability_fails_across_runtime_restart() {
         .provenance()
         .query(&ferrum_proto::ProvenanceQueryRequest {
             intent_id: Some(intent_id),
+            proposal_id: None,
             execution_id: None,
             capability_id: Some(capability_id),
             event_kind: Some(ProvenanceEventKind::CapabilityRevoked),
+            terminal_only: None,
             since: None,
             until: None,
         })
@@ -878,9 +882,11 @@ async fn test_mint_provenance_emitted_only_on_success() {
         .provenance()
         .query(&ferrum_proto::ProvenanceQueryRequest {
             intent_id: Some(intent_id),
+            proposal_id: None,
             execution_id: None,
             capability_id: None,
             event_kind: Some(ProvenanceEventKind::CapabilityMinted),
+            terminal_only: None,
             since: None,
             until: None,
         })

@@ -68,7 +68,20 @@ FERRUMD_BEARER_TOKEN="replace-me" \
 cargo run -p ferrumd -- \
   --config configs/ferrumgate.prod.toml \
   --bind 0.0.0.0:8080
+
+# Print resolved config sources and startup-guard verdict, then exit
+cargo run -p ferrumd -- --print-effective-config
+
+# Validate startup guard only, without binding the listener
+cargo run -p ferrumd -- --check-startup-guard
 ```
+
+## Operator diagnostics
+
+- `cargo run -p ferrumd -- --print-effective-config` prints the effective bind/store/auth/log settings, which source won (`cli`, `env`, `file`, `default`, or auto dev config), and whether the startup guard would pass.
+- `cargo run -p ferrumd -- --check-startup-guard` is the fastest preflight when operators want to confirm non-loopback/auth settings before rollout.
+- `cargo run -p ferrumctl -- server ready` hits `/v1/readyz` for a lightweight readiness check after startup.
+- `cargo run -p ferrumctl -- server inspect-provenance --execution-id <id> --terminal-only` returns only terminal provenance events for a governed execution.
 
 ## Operations checklist
 

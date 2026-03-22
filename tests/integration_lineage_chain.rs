@@ -280,9 +280,11 @@ async fn test_minimum_lineage_chain_events_exist() {
         .provenance()
         .query(&ferrum_proto::ProvenanceQueryRequest {
             intent_id: Some(intent_id),
+            proposal_id: None,
             execution_id: None,
             capability_id: None,
             event_kind: None,
+            terminal_only: None,
             since: None,
             until: None,
         })
@@ -453,9 +455,11 @@ async fn test_lineage_chain_is_contiguous_no_missing_events() {
         .provenance()
         .query(&ferrum_proto::ProvenanceQueryRequest {
             intent_id: Some(intent_id),
+            proposal_id: None,
             execution_id: None,
             capability_id: None,
             event_kind: None,
+            terminal_only: None,
             since: None,
             until: None,
         })
@@ -684,9 +688,11 @@ async fn test_rollback_lineage_chain_has_terminal_event() {
         .provenance()
         .query(&ferrum_proto::ProvenanceQueryRequest {
             intent_id: Some(intent_id),
+            proposal_id: None,
             execution_id: None,
             capability_id: None,
             event_kind: None,
+            terminal_only: None,
             since: None,
             until: None,
         })
