@@ -156,7 +156,7 @@ mod tests {
 
     use crate::CapabilityService;
     use crate::sqlite::SqliteCapabilityService;
-    use ferrum_store::{IntentRepo, ProposalRepo, SqliteStore};
+    use ferrum_store::{CapabilityRepo, IntentRepo, ProposalRepo, SqliteStore};
 
     async fn create_test_store() -> (TempDir, SqliteStore) {
         let temp_dir = TempDir::new().expect("failed to create temp dir");
@@ -446,13 +446,22 @@ mod tests {
         let repo = store.capabilities();
         let service = SqliteCapabilityService::new(Arc::new(repo));
 
-        // request with 1 second TTL
-        let request = make_mint_request(intent_id, proposal_id, 1);
+        let request = make_mint_request(intent_id, proposal_id, 60);
         let response = service.mint(request).await.expect("mint should succeed");
         let capability_id = response.lease.capability_id;
 
-        // wait for expiration
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+        let mut expired_lease = store
+            .capabilities()
+            .get(capability_id)
+            .await
+            .expect("load capability from store")
+            .expect("capability present");
+        expired_lease.expires_at = Utc::now() - Duration::seconds(1);
+        store
+            .capabilities()
+            .update(&expired_lease)
+            .await
+            .expect("persist expired capability");
 
         // get should return Expired
         let err = service

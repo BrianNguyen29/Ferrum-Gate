@@ -23,6 +23,10 @@ path = "integration_lineage_chain.rs"
 name = "integration_provenance_query"
 path = "integration_provenance_query.rs"
 
+[[test]]
+name = "integration_capability_restart"
+path = "integration_capability_restart.rs"
+
 [dependencies]
 ferrum-gateway = { path = "../crates/ferrum-gateway" }
 ferrum-proto = { path = "../crates/ferrum-proto" }
@@ -41,5 +45,6 @@ serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 tempfile = "3"
 axum = "0.8"
+futures = "0.3"
 chrono = { version = "0.4", features = ["serde"] }
 tower = "0.5"

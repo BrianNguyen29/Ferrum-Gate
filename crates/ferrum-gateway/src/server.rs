@@ -19,8 +19,7 @@ use ferrum_proto::{
     TrustContextSummary, VerifyRequest, VerifyResponse,
 };
 use ferrum_store::{
-    ApprovalRepo, CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo, ProposalRepo,
-    ProvenanceRepo, RollbackRepo,
+    ApprovalRepo, ExecutionRepo, IntentRepo, LedgerRepo, ProposalRepo, ProvenanceRepo, RollbackRepo,
 };
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
@@ -743,22 +742,20 @@ async fn mint_capability(
     let proposal_id = response.lease.proposal_id;
     let policy_bundle_id = response.lease.policy_bundle_id;
 
-    if let Err(e) = runtime.store.capabilities().insert(&response.lease).await {
-        tracing::warn!("failed to persist capability: {}", e);
-    } else {
-        let event = create_provenance_event(
-            ProvenanceEventKind::CapabilityMinted,
-            now,
-            Some(intent_id),
-            Some(proposal_id),
-            None,
-            Some(capability_id),
-            None,
-            Some(policy_bundle_id),
-        );
-        if let Err(e) = runtime.store.provenance().append_event(&event).await {
-            tracing::warn!("failed to persist provenance event: {}", e);
-        }
+    // Emit provenance only after capability service operation succeeds.
+    // The capability service handles its own durable persistence.
+    let event = create_provenance_event(
+        ProvenanceEventKind::CapabilityMinted,
+        now,
+        Some(intent_id),
+        Some(proposal_id),
+        None,
+        Some(capability_id),
+        None,
+        Some(policy_bundle_id),
+    );
+    if let Err(e) = runtime.store.provenance().append_event(&event).await {
+        tracing::warn!("failed to persist provenance event: {}", e);
     }
 
     Ok(Json(response))
@@ -776,22 +773,20 @@ async fn revoke_capability(
         .map_err(ApiProblem::from_capability)?;
 
     let now = Utc::now();
-    if let Err(e) = runtime.store.capabilities().update(&lease).await {
-        tracing::warn!("failed to update capability: {}", e);
-    } else {
-        let event = create_provenance_event(
-            ProvenanceEventKind::CapabilityRevoked,
-            now,
-            Some(lease.intent_id),
-            Some(lease.proposal_id),
-            None,
-            Some(lease.capability_id),
-            None,
-            Some(lease.policy_bundle_id),
-        );
-        if let Err(e) = runtime.store.provenance().append_event(&event).await {
-            tracing::warn!("failed to persist provenance event: {}", e);
-        }
+    // Emit provenance only after capability service operation succeeds.
+    // The capability service handles its own durable persistence.
+    let event = create_provenance_event(
+        ProvenanceEventKind::CapabilityRevoked,
+        now,
+        Some(lease.intent_id),
+        Some(lease.proposal_id),
+        None,
+        Some(lease.capability_id),
+        None,
+        Some(lease.policy_bundle_id),
+    );
+    if let Err(e) = runtime.store.provenance().append_event(&event).await {
+        tracing::warn!("failed to persist provenance event: {}", e);
     }
 
     Ok(Json(serde_json::json!({
