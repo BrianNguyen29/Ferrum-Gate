@@ -1,7 +1,7 @@
 use axum::{
     Json, Router,
     extract::{Path, State},
-    http::StatusCode,
+    http::{StatusCode, header::AUTHORIZATION},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
@@ -25,7 +25,7 @@ use ferrum_store::{
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
 
-use crate::{GatewayConfig, GatewayRuntime};
+use crate::{AuthMode, GatewayConfig, GatewayRuntime, ServerConfig};
 
 fn create_provenance_event(
     kind: ProvenanceEventKind,
@@ -70,16 +70,38 @@ fn create_provenance_event(
     }
 }
 
-pub async fn run_http_server(config: GatewayConfig, runtime: GatewayRuntime) -> anyhow::Result<()> {
-    let app = build_router(runtime);
+/// HTTP server entry point. Chooses auth-aware or auth-disabled router based on config.
+/// Auth-aware router enforces bearer token on all non-health endpoints.
+pub async fn run_http_server(
+    config: GatewayConfig,
+    runtime: GatewayRuntime,
+    server_config: ServerConfig,
+) -> anyhow::Result<()> {
+    let app = if server_config.auth_mode == AuthMode::Bearer {
+        build_authenticated_router(runtime, server_config)
+    } else {
+        build_router(runtime)
+    };
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
     tracing::info!("ferrumd listening on {}", config.bind_addr);
     axum::serve(listener, app).await?;
     Ok(())
 }
 
+/// Builds the auth-disabled router used by integration tests and local development.
+/// All routes are accessible without authentication.
 pub fn build_router(runtime: GatewayRuntime) -> Router {
-    Router::new()
+    build_router_inner(runtime, None)
+}
+
+/// Builds an auth-aware router that enforces bearer token on all non-health endpoints.
+/// Health endpoints (/v1/healthz, /v1/readyz) remain unauthenticated.
+pub fn build_authenticated_router(runtime: GatewayRuntime, server_config: ServerConfig) -> Router {
+    build_router_inner(runtime, Some(server_config))
+}
+
+fn build_router_inner(runtime: GatewayRuntime, auth_config: Option<ServerConfig>) -> Router {
+    let router = Router::new()
         .route("/v1/healthz", get(healthz))
         .route("/v1/readyz", get(readyz))
         .route("/v1/intents/compile", post(compile_intent))
@@ -117,6 +139,7 @@ pub fn build_router(runtime: GatewayRuntime) -> Router {
             "/v1/executions/{execution_id}/rollback",
             post(rollback_execution),
         )
+        .route("/v1/executions/{execution_id}", get(get_execution))
         .route("/v1/approvals", get(list_pending_approvals))
         .route("/v1/approvals/{approval_id}", get(get_approval))
         .route(
@@ -129,7 +152,59 @@ pub fn build_router(runtime: GatewayRuntime) -> Router {
         )
         .route("/v1/provenance/query", post(query_provenance))
         .with_state(Arc::new(runtime))
-        .layer(TraceLayer::new_for_http())
+        .layer(TraceLayer::new_for_http());
+
+    if let Some(server_config) = auth_config {
+        let bearer_token = server_config.bearer_token.clone();
+        router.layer(axum::middleware::from_fn_with_state(
+            bearer_token,
+            bearer_auth_middleware,
+        ))
+    } else {
+        router
+    }
+}
+
+/// Bearer authentication middleware.
+/// Returns 401 with ApiErrorCode::PolicyDenied when auth is missing or invalid.
+/// Health endpoints pass through without authentication.
+async fn bearer_auth_middleware(
+    State(token): State<Option<String>>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let path = request.uri().path().to_string();
+
+    // Health endpoints are always accessible without auth
+    if path == "/v1/healthz" || path == "/v1/readyz" {
+        return next.run(request).await;
+    }
+
+    let token = match token {
+        Some(t) if !t.is_empty() => t,
+        _ => {
+            return ApiProblem::auth_error("authentication required");
+        }
+    };
+
+    // Extract Bearer token from Authorization header
+    let auth_header = request
+        .headers()
+        .get(AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
+
+    let provided = match auth_header {
+        Some(h) if h.starts_with("Bearer ") => &h[7..],
+        _ => {
+            return ApiProblem::auth_error("missing or invalid Authorization header");
+        }
+    };
+
+    if provided != token {
+        return ApiProblem::auth_error("invalid bearer token");
+    }
+
+    next.run(request).await
 }
 
 async fn healthz() -> Json<HealthResponse> {
@@ -248,32 +323,43 @@ async fn evaluate_proposal(
         ));
     }
 
-    // Load the real intent from store if it exists; fall back to minimal intent only if not found
-    let intent = match runtime.store.intents().get(intent_id).await {
-        Ok(Some(real_intent)) => real_intent,
-        Ok(None) => {
-            tracing::warn!("intent {} not found, using minimal intent", intent_id);
-            minimal_intent_for(
-                proposal.intent_id,
-                proposal.requested_rollback_class.clone(),
+    // Load the real intent from store.
+    // Fail-closed: if intent cannot be loaded, reject the proposal instead of using
+    // a fallback derived from the client (which could allow boundary bypass).
+    let intent = runtime
+        .store
+        .intents()
+        .get(intent_id)
+        .await
+        .map_err(|e| {
+            tracing::warn!("failed to load intent {}: {}", intent_id, e);
+            ApiProblem::internal(e.into())
+        })?
+        .ok_or_else(|| {
+            tracing::warn!("intent {} not found", intent_id);
+            ApiProblem::new(
+                StatusCode::NOT_FOUND,
+                ApiErrorCode::NotFound,
+                format!("intent {} not found", intent_id),
             )
-        }
-        Err(e) => {
-            tracing::warn!(
-                "failed to load intent {}: {}, using minimal intent",
-                intent_id,
-                e
-            );
-            minimal_intent_for(
-                proposal.intent_id,
-                proposal.requested_rollback_class.clone(),
-            )
-        }
-    };
+        })?;
 
-    // Persist the incoming ActionProposal (requires valid intent_id due to FK constraint)
+    // Treat incoming rollback class as untrusted. Compute an effective class that is
+    // at least the intent's default floor. This prevents clients from downgrading below
+    // the R3 boundary that mutating HTTP selectors impose at compile time.
+    let effective_rollback_class = rollback_class_floor(
+        intent.default_rollback_class.clone(),
+        proposal.requested_rollback_class.clone(),
+    );
+
+    // Create a proposal with the effective rollback class for PDP evaluation and persistence.
+    // The raw client value is not used for security-sensitive operations.
+    let mut proposal_for_eval = proposal.clone();
+    proposal_for_eval.requested_rollback_class = effective_rollback_class;
+
+    // Persist the proposal with effective rollback class (requires valid intent_id due to FK constraint)
     // Only emit provenance if proposal was successfully persisted
-    let proposal_persisted = match runtime.store.proposals().insert(&proposal).await {
+    let proposal_persisted = match runtime.store.proposals().insert(&proposal_for_eval).await {
         Ok(_) => true,
         Err(e) => {
             tracing::warn!("failed to persist proposal: {}", e);
@@ -308,7 +394,9 @@ async fn evaluate_proposal(
     };
 
     // Run contradiction check using firewall
-    let contradictions = runtime.firewall.contradiction_check(&intent, &proposal);
+    let contradictions = runtime
+        .firewall
+        .contradiction_check(&intent, &proposal_for_eval);
 
     // Severity-based decision mapping (fail-closed for high severity only)
     // High -> Deny immediately (unacceptable violation)
@@ -336,8 +424,8 @@ async fn evaluate_proposal(
             warnings,
         };
 
-        // Store the denied decision in the proposal
-        let mut proposal_with_decision = proposal.clone();
+        // Store the denied decision in the proposal (already has effective rollback class)
+        let mut proposal_with_decision = proposal_for_eval.clone();
         proposal_with_decision.decision = Some(out.decision.clone());
 
         if let Err(e) = runtime
@@ -416,7 +504,7 @@ async fn evaluate_proposal(
 
     let mut out = runtime
         .pdp
-        .evaluate(&intent, &proposal, &combined_trust)
+        .evaluate(&intent, &proposal_for_eval, &combined_trust)
         .await
         .map_err(ApiProblem::internal)?;
 
@@ -425,8 +513,8 @@ async fn evaluate_proposal(
         out.warnings.extend(contradiction_warnings);
     }
 
-    // Store the decision in the proposal after evaluation
-    let mut proposal_with_decision = proposal.clone();
+    // Store the decision in the proposal after evaluation (already has effective rollback class)
+    let mut proposal_with_decision = proposal_for_eval.clone();
     proposal_with_decision.decision = Some(out.decision.clone());
 
     // Update the proposal with the decision
@@ -1017,9 +1105,10 @@ async fn prepare_execution(
     let intent_id = existing.intent_id;
     let proposal_id = existing.proposal_id;
 
-    // Load proposal to get the correct rollback class - FAIL CLOSED if not found
-    let requested_rollback_class = match runtime.store.proposals().get(proposal_id).await {
-        Ok(Some(proposal)) => proposal.requested_rollback_class,
+    // Load proposal to get the correct rollback class and approved request arguments.
+    // HTTP prepare uses the approved arguments to bind a concrete request digest.
+    let proposal = match runtime.store.proposals().get(proposal_id).await {
+        Ok(Some(proposal)) => proposal,
         Ok(None) => {
             return Err(ApiProblem::new(
                 StatusCode::NOT_FOUND,
@@ -1038,6 +1127,7 @@ async fn prepare_execution(
             ));
         }
     };
+    let requested_rollback_class = proposal.requested_rollback_class.clone();
 
     // Determine adapter key and target from capability resource bindings
     // Load capability to inspect resource bindings for adapter routing
@@ -1072,7 +1162,7 @@ async fn prepare_execution(
     let adapter_key = determine_adapter_key_from_bindings(&capability.resource_bindings);
     let target = determine_rollback_target_from_bindings(&capability.resource_bindings);
 
-    let request = runtime.rollback.default_prepare_request(
+    let mut request = runtime.rollback.default_prepare_request(
         intent_id,
         proposal_id,
         execution_id,
@@ -1081,13 +1171,21 @@ async fn prepare_execution(
         target,
     );
 
+    if request.adapter_key == "http" {
+        request.metadata.insert(
+            "approved_http_request".to_string(),
+            proposal.raw_arguments.clone(),
+        );
+    }
+
     let response = runtime
         .rollback
         .prepare(request)
         .await
         .map_err(ApiProblem::internal)?;
 
-    let contract = response.contract.clone();
+    let mut contract = response.contract.clone();
+    contract.metadata.remove("approved_http_request");
     let now = Utc::now();
 
     if let Err(e) = runtime.store.rollback_contracts().insert(&contract).await {
@@ -1790,6 +1888,31 @@ async fn rollback_execution(
     }))
 }
 
+// Execution inspect handler
+
+async fn get_execution(
+    State(runtime): State<Arc<GatewayRuntime>>,
+    Path(execution_id_str): Path<String>,
+) -> Result<Json<ExecutionRecord>, ApiProblem> {
+    let execution_id = parse_execution_id(&execution_id_str)?;
+
+    let execution = runtime
+        .store
+        .executions()
+        .get(execution_id)
+        .await
+        .map_err(|err| ApiProblem::internal(err.into()))?
+        .ok_or_else(|| {
+            ApiProblem::new(
+                StatusCode::NOT_FOUND,
+                ApiErrorCode::NotFound,
+                "execution record not found",
+            )
+        })?;
+
+    Ok(Json(execution))
+}
+
 // Approval handlers
 
 async fn get_approval(
@@ -2018,6 +2141,23 @@ fn parse_approval_id(value: &str) -> Result<ApprovalId, ApiProblem> {
 }
 
 fn infer_rollback_class(scope: &[ResourceSelector]) -> RollbackClass {
+    // Mutating HTTP endpoints (POST/PUT/PATCH/DELETE) are remote destructive calls
+    // that cannot be automatically rolled back; they require explicit R3 boundary.
+    if scope.iter().any(|selector| {
+        matches!(
+            selector,
+            ResourceSelector::HttpEndpoint {
+                method: ferrum_proto::HttpMethod::Post
+                    | ferrum_proto::HttpMethod::Put
+                    | ferrum_proto::HttpMethod::Patch
+                    | ferrum_proto::HttpMethod::Delete,
+                ..
+            }
+        )
+    }) {
+        return RollbackClass::R3IrreversibleHighConsequence;
+    }
+    // Email drafts are compensatable via email revocation.
     if scope
         .iter()
         .any(|selector| matches!(selector, ResourceSelector::EmailDraft { .. }))
@@ -2028,49 +2168,27 @@ fn infer_rollback_class(scope: &[ResourceSelector]) -> RollbackClass {
     }
 }
 
-fn minimal_intent_for(
-    intent_id: ferrum_proto::IntentId,
-    rollback: RollbackClass,
-) -> IntentEnvelope {
-    let now = Utc::now();
-    IntentEnvelope {
-        intent_id,
-        principal_id: ferrum_proto::PrincipalId::new(),
-        session_id: None,
-        channel_id: None,
-        title: "scaffold-intent".to_string(),
-        goal: "scaffold evaluation".to_string(),
-        normalized_goal: "scaffold evaluation".to_string(),
-        allowed_outcomes: vec![OutcomeClause {
-            id: "default".to_string(),
-            description: "scaffold outcome".to_string(),
-            effect_type: ferrum_proto::EffectType::ReadOnlyAnalysis,
-            required: true,
-        }],
-        forbidden_outcomes: Vec::new(),
-        resource_scope: Vec::new(),
-        risk_tier: RiskTier::Medium,
-        approval_mode: ferrum_proto::ApprovalMode::None,
-        default_rollback_class: rollback,
-        time_budget: TimeBudget {
-            max_duration_ms: 30_000,
-            max_steps: 8,
-            max_retries_per_step: 1,
-        },
-        trust_context: TrustContextSummary {
-            input_labels: Vec::new(),
-            sensitivity_labels: Vec::new(),
-            taint_score: 0,
-            contains_external_metadata: false,
-            contains_tool_output: false,
-            contains_untrusted_text: false,
-        },
-        derived_from_event_ids: Vec::new(),
-        tags: Vec::new(),
-        metadata: ferrum_proto::JsonMap::new(),
-        status: IntentStatus::Active,
-        created_at: now,
-        expires_at: now + Duration::minutes(15),
+/// Compute the rollback class floor: the effective rollback class must be at least
+/// as high as both the intent's default and the client's requested class.
+/// This enforces the R3 boundary end-to-end by preventing downgrade attacks.
+fn rollback_class_floor(default: RollbackClass, requested: RollbackClass) -> RollbackClass {
+    use ferrum_proto::RollbackClass::*;
+    let default_ord = match default {
+        R0NativeReversible => 0,
+        R1SnapshotRecoverable => 1,
+        R2Compensatable => 2,
+        R3IrreversibleHighConsequence => 3,
+    };
+    let requested_ord = match requested {
+        R0NativeReversible => 0,
+        R1SnapshotRecoverable => 1,
+        R2Compensatable => 2,
+        R3IrreversibleHighConsequence => 3,
+    };
+    if default_ord >= requested_ord {
+        default
+    } else {
+        requested
     }
 }
 
@@ -2154,6 +2272,16 @@ impl ApiProblem {
                 err.to_string(),
             ),
         }
+    }
+
+    /// Creates an authentication/authorization error response.
+    fn auth_error(message: impl Into<String>) -> Response {
+        let problem = Self::new(
+            StatusCode::UNAUTHORIZED,
+            ApiErrorCode::PolicyDenied,
+            message,
+        );
+        (StatusCode::UNAUTHORIZED, Json(problem.0)).into_response()
     }
 }
 
@@ -2365,8 +2493,46 @@ impl IntoResponse for ApiProblem {
 
 #[cfg(test)]
 mod tests {
-    use super::{determine_adapter_key_from_bindings, determine_rollback_target_from_bindings};
-    use ferrum_proto::{ResourceBinding, ResourceMode, RollbackTarget};
+    use super::{
+        build_authenticated_router, determine_adapter_key_from_bindings,
+        determine_rollback_target_from_bindings, infer_rollback_class,
+    };
+    use axum::{
+        body::{self, Body},
+        http::{Request, StatusCode, header::AUTHORIZATION},
+    };
+    use ferrum_cap::{CapabilityService, InMemoryCapabilityService};
+    use ferrum_firewall::{DefaultFirewall, SemanticFirewall};
+    use ferrum_pdp::StaticPdpEngine;
+    use ferrum_proto::{
+        ApiError, ApiErrorCode, HttpMethod, ResourceBinding, ResourceMode, ResourceSelector,
+        RollbackClass, RollbackTarget,
+    };
+    use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
+    use ferrum_store::SqliteStore;
+    use std::sync::Arc;
+    use tower::util::ServiceExt;
+
+    use crate::{AuthMode, GatewayRuntime, ServerConfig};
+
+    async fn create_test_runtime() -> GatewayRuntime {
+        let pdp: Arc<dyn ferrum_pdp::PdpEngine> = Arc::new(StaticPdpEngine);
+        let cap: Arc<dyn CapabilityService> = Arc::new(InMemoryCapabilityService::default());
+        let firewall: Arc<dyn SemanticFirewall> = Arc::new(DefaultFirewall::new());
+
+        let mut registry = AdapterRegistry::default();
+        registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
+        let rollback = Arc::new(RollbackService::new(Arc::new(registry)));
+
+        let store = Arc::new(
+            SqliteStore::connect("sqlite::memory:?cache=shared")
+                .await
+                .unwrap(),
+        );
+        store.apply_embedded_migrations().await.unwrap();
+
+        GatewayRuntime::new(pdp, cap, rollback, store, firewall)
+    }
 
     #[test]
     fn routes_mutating_git_bindings_to_git_adapter() {
@@ -2430,5 +2596,258 @@ mod tests {
             }
             other => panic!("expected Generic target, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn infers_r3_for_http_post() {
+        let scope = vec![ResourceSelector::HttpEndpoint {
+            method: HttpMethod::Post,
+            base_url: "https://api.example.com".to_string(),
+            path_prefix: "/v1/".to_string(),
+            mode: ResourceMode::Write,
+        }];
+        assert_eq!(
+            infer_rollback_class(&scope),
+            RollbackClass::R3IrreversibleHighConsequence
+        );
+    }
+
+    #[test]
+    fn infers_r3_for_http_put() {
+        let scope = vec![ResourceSelector::HttpEndpoint {
+            method: HttpMethod::Put,
+            base_url: "https://api.example.com".to_string(),
+            path_prefix: "/v1/".to_string(),
+            mode: ResourceMode::Write,
+        }];
+        assert_eq!(
+            infer_rollback_class(&scope),
+            RollbackClass::R3IrreversibleHighConsequence
+        );
+    }
+
+    #[test]
+    fn infers_r3_for_http_patch() {
+        let scope = vec![ResourceSelector::HttpEndpoint {
+            method: HttpMethod::Patch,
+            base_url: "https://api.example.com".to_string(),
+            path_prefix: "/v1/".to_string(),
+            mode: ResourceMode::Write,
+        }];
+        assert_eq!(
+            infer_rollback_class(&scope),
+            RollbackClass::R3IrreversibleHighConsequence
+        );
+    }
+
+    #[test]
+    fn infers_r3_for_http_delete() {
+        let scope = vec![ResourceSelector::HttpEndpoint {
+            method: HttpMethod::Delete,
+            base_url: "https://api.example.com".to_string(),
+            path_prefix: "/v1/".to_string(),
+            mode: ResourceMode::Write,
+        }];
+        assert_eq!(
+            infer_rollback_class(&scope),
+            RollbackClass::R3IrreversibleHighConsequence
+        );
+    }
+
+    #[test]
+    fn infers_r0_for_http_get() {
+        let scope = vec![ResourceSelector::HttpEndpoint {
+            method: HttpMethod::Get,
+            base_url: "https://api.example.com".to_string(),
+            path_prefix: "/v1/".to_string(),
+            mode: ResourceMode::Read,
+        }];
+        assert_eq!(
+            infer_rollback_class(&scope),
+            RollbackClass::R0NativeReversible
+        );
+    }
+
+    #[test]
+    fn infers_r2_for_email_draft() {
+        let scope = vec![ResourceSelector::EmailDraft {
+            recipient_allowlist: vec!["@example.com".to_string()],
+            subject_prefix_allowlist: vec!["[Test]".to_string()],
+            mode: ResourceMode::Write,
+        }];
+        assert_eq!(infer_rollback_class(&scope), RollbackClass::R2Compensatable);
+    }
+
+    #[test]
+    fn infers_r0_for_empty_scope() {
+        let scope: Vec<ResourceSelector> = vec![];
+        assert_eq!(
+            infer_rollback_class(&scope),
+            RollbackClass::R0NativeReversible
+        );
+    }
+
+    #[test]
+    fn http_mutating_takes_precedence_over_email() {
+        // R3 should take precedence over R2 when both are present.
+        let scope = vec![
+            ResourceSelector::HttpEndpoint {
+                method: HttpMethod::Post,
+                base_url: "https://api.example.com".to_string(),
+                path_prefix: "/v1/".to_string(),
+                mode: ResourceMode::Write,
+            },
+            ResourceSelector::EmailDraft {
+                recipient_allowlist: vec!["@example.com".to_string()],
+                subject_prefix_allowlist: vec!["[Test]".to_string()],
+                mode: ResourceMode::Write,
+            },
+        ];
+        assert_eq!(
+            infer_rollback_class(&scope),
+            RollbackClass::R3IrreversibleHighConsequence
+        );
+    }
+
+    #[test]
+    fn rollback_class_floor_uses_default_when_higher_than_requested() {
+        // Intent default R2, client requests R0 -> floor should be R2
+        assert_eq!(
+            super::rollback_class_floor(
+                RollbackClass::R2Compensatable,
+                RollbackClass::R0NativeReversible
+            ),
+            RollbackClass::R2Compensatable
+        );
+    }
+
+    #[test]
+    fn rollback_class_floor_uses_requested_when_higher_than_default() {
+        // Intent default R1, client requests R2 -> floor should be R2
+        assert_eq!(
+            super::rollback_class_floor(
+                RollbackClass::R1SnapshotRecoverable,
+                RollbackClass::R2Compensatable
+            ),
+            RollbackClass::R2Compensatable
+        );
+    }
+
+    #[test]
+    fn rollback_class_floor_uses_default_when_equal_to_requested() {
+        // Intent default R3, client requests R3 -> floor should be R3
+        assert_eq!(
+            super::rollback_class_floor(
+                RollbackClass::R3IrreversibleHighConsequence,
+                RollbackClass::R3IrreversibleHighConsequence
+            ),
+            RollbackClass::R3IrreversibleHighConsequence
+        );
+    }
+
+    #[test]
+    fn rollback_class_floor_r3_is_highest() {
+        // R3 should always be returned if either default or requested is R3
+        assert_eq!(
+            super::rollback_class_floor(
+                RollbackClass::R3IrreversibleHighConsequence,
+                RollbackClass::R0NativeReversible
+            ),
+            RollbackClass::R3IrreversibleHighConsequence
+        );
+        assert_eq!(
+            super::rollback_class_floor(
+                RollbackClass::R0NativeReversible,
+                RollbackClass::R3IrreversibleHighConsequence
+            ),
+            RollbackClass::R3IrreversibleHighConsequence
+        );
+    }
+
+    #[test]
+    fn rollback_class_floor_preserves_r0_for_read_only() {
+        // R0 should be preserved when both are R0
+        assert_eq!(
+            super::rollback_class_floor(
+                RollbackClass::R0NativeReversible,
+                RollbackClass::R0NativeReversible
+            ),
+            RollbackClass::R0NativeReversible
+        );
+    }
+
+    #[tokio::test]
+    async fn authenticated_router_allows_health_without_bearer_token() {
+        let app = build_authenticated_router(
+            create_test_runtime().await,
+            ServerConfig {
+                auth_mode: AuthMode::Bearer,
+                bearer_token: Some("test-token".to_string()),
+            },
+        );
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/healthz")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn authenticated_router_rejects_missing_bearer_token() {
+        let app = build_authenticated_router(
+            create_test_runtime().await,
+            ServerConfig {
+                auth_mode: AuthMode::Bearer,
+                bearer_token: Some("test-token".to_string()),
+            },
+        );
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let body = body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let error: ApiError = serde_json::from_slice(&body).unwrap();
+        assert!(matches!(error.code, ApiErrorCode::PolicyDenied));
+    }
+
+    #[tokio::test]
+    async fn authenticated_router_allows_valid_bearer_token() {
+        let app = build_authenticated_router(
+            create_test_runtime().await,
+            ServerConfig {
+                auth_mode: AuthMode::Bearer,
+                bearer_token: Some("test-token".to_string()),
+            },
+        );
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header(AUTHORIZATION, "Bearer test-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
     }
 }

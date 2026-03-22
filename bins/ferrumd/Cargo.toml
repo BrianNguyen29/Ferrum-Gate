@@ -20,3 +20,6 @@ ferrum-adapter-git = { path = "../../crates/ferrum-adapter-git" }
 ferrum-adapter-http = { path = "../../crates/ferrum-adapter-http" }
 ferrum-adapter-sqlite = { path = "../../crates/ferrum-adapter-sqlite" }
 ferrum-adapter-maildraft = { path = "../../crates/ferrum-adapter-maildraft" }
+clap = { workspace = true, features = ["derive"] }
+serde.workspace = true
+toml = "0.8"

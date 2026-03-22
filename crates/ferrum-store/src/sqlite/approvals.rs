@@ -42,7 +42,13 @@ impl ApprovalRepo for SqliteApprovalRepo {
     }
 
     async fn get(&self, approval_id: ApprovalId) -> Result<Option<ApprovalRequest>> {
-        fetch_entity_by_id(&self.pool, "approvals", "approval_id", &approval_id.to_string()).await
+        fetch_entity_by_id(
+            &self.pool,
+            "approvals",
+            "approval_id",
+            &approval_id.to_string(),
+        )
+        .await
     }
 
     async fn update(&self, approval: &ApprovalRequest) -> Result<()> {

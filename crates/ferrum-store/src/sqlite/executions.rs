@@ -44,7 +44,13 @@ impl ExecutionRepo for SqliteExecutionRepo {
     }
 
     async fn get(&self, execution_id: ExecutionId) -> Result<Option<ExecutionRecord>> {
-        fetch_entity_by_id(&self.pool, "executions", "execution_id", &execution_id.to_string()).await
+        fetch_entity_by_id(
+            &self.pool,
+            "executions",
+            "execution_id",
+            &execution_id.to_string(),
+        )
+        .await
     }
 
     async fn update(&self, execution: &ExecutionRecord) -> Result<()> {
@@ -88,7 +94,10 @@ impl ExecutionRepo for SqliteExecutionRepo {
         .await
     }
 
-    async fn list_by_capability(&self, capability_id: CapabilityId) -> Result<Vec<ExecutionRecord>> {
+    async fn list_by_capability(
+        &self,
+        capability_id: CapabilityId,
+    ) -> Result<Vec<ExecutionRecord>> {
         fetch_entities(
             &self.pool,
             "SELECT raw_json FROM executions WHERE capability_id = ?1 ORDER BY started_at DESC",

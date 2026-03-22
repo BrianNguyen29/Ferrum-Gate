@@ -1,20 +1,88 @@
 # 15 — Deployment and operations
 
-## Development
-- single process
-- sqlite local
-- memory ledger chấp nhận được
+## Current runtime shape (as of today)
 
-## Staging / production-like
-- persistent store
-- provenance bật
-- rollback bật
-- strict manifest pinning nên bật
-- logs không lộ secrets
+Ferrumd still runs as a **single process**, but it no longer depends on hardcoded bind/store values.
+
+| Item | Current behavior | Notes |
+|------|------------------|-------|
+| Bind address | config-driven | CLI/env/config file; default loopback is `127.0.0.1:8080` |
+| Store DSN | config-driven | repo dev config uses `sqlite://ferrumgate.dev.db`; fallback is in-memory SQLite |
+| Rollback adapters | fs, git, sqlite, maildraft, http, noop | Registered at startup |
+| Capability service | in-memory `InMemoryCapabilityService` | Capability leases still do not survive process restart |
+| Control-plane auth | `disabled` or `bearer` | Health endpoints stay unauthenticated |
+| TLS termination | external only | No in-process TLS listener today |
+
+## Runtime config surface
+
+`ferrumd` resolves config in this order:
+
+1. CLI flags
+2. env vars
+3. config file
+4. built-in defaults
+
+Supported inputs today:
+
+| Purpose | CLI | Env | Config |
+|---------|-----|-----|--------|
+| Config path | `--config` | `FERRUMD_CONFIG` | n/a |
+| Bind address | `--bind` | `FERRUMD_BIND_ADDR` | `[server] host`, `port` |
+| Store DSN | `--store-dsn` | `FERRUMD_STORE_DSN` | `[store] dsn` |
+| Auth mode | `--auth-mode` | `FERRUMD_AUTH_MODE` | `[auth] mode` |
+| Bearer token | `--bearer-token` | `FERRUMD_BEARER_TOKEN` | `[auth] bearer_token` |
+| Insecure nonlocal bind override | `--allow-insecure-nonlocal` | `FERRUMD_ALLOW_INSECURE_NONLOCAL` | `[server] allow_insecure_nonlocal` |
+| Log filter | `--log-filter` | `FERRUMD_LOG_FILTER` | top-level `log_filter` |
+
+Repo-shipped examples:
+
+- `configs/ferrumgate.dev.toml`
+- `configs/ferrumgate.prod.toml`
+
+## Development
+
+- local/dev startup auto-loads `configs/ferrumgate.dev.toml` when run from the repo root
+- dev config binds to loopback and persists state in `ferrumgate.dev.db`
+- if no config file is present, ferrumd falls back to `sqlite::memory:?cache=shared`
+- memory ledger remains acceptable for local/dev debugging
+
+## Control-plane auth and network exposure
+
+- `auth.mode = "disabled"` is intended for loopback-only local development.
+- all non-health routes require `Authorization: Bearer <token>` when `auth.mode = "bearer"`.
+- `/v1/healthz` and `/v1/readyz` remain unauthenticated for liveness/readiness checks.
+- fail-closed startup guard: non-loopback bind with auth disabled is rejected unless `allow_insecure_nonlocal = true` is set explicitly.
+- there is still **no in-process TLS**; if the control plane leaves loopback, terminate TLS and restrict network exposure at an external proxy/load balancer.
+
+## Example commands
+
+```sh
+# Default repo-local dev startup
+cargo run -p ferrumd
+
+# Explicit dev config
+cargo run -p ferrumd -- --config configs/ferrumgate.dev.toml
+
+# Bearer-authenticated non-loopback startup
+FERRUMD_BEARER_TOKEN="replace-me" \
+cargo run -p ferrumd -- \
+  --config configs/ferrumgate.prod.toml \
+  --bind 0.0.0.0:8080
+```
 
 ## Operations checklist
-- policy bundle đúng environment
-- rollback không bị tắt
-- sanitize/DLP bật
-- TTL hợp lý
-- lineage query usable
+
+- policy bundle matches the environment
+- rollback remains enabled
+- sanitize/DLP stays enabled in the selected policy/runtime path
+- TTL stays conservative for the capability window
+- lineage query remains usable (`ferrumctl` or API)
+- bearer auth is enabled before binding non-loopback unless there is a deliberate local exception
+- TLS terminates at a reverse proxy or other ingress layer for any non-loopback exposure
+
+## Open gaps (operator-facing)
+
+- **HTTP remote mutation recovery is not automated**: HTTP rollback/compensation on remote mutation is a **no-op by design** today. Operators must still compensate manually when remote HTTP state was mutated.
+- **Capability leases are still process-local**: the control-plane store is now configurable and can be persistent, but capability state still uses the in-memory capability service. A process restart invalidates active capability leases.
+- **No built-in TLS listener**: bearer auth exists at the app layer, but certificate lifecycle and TLS termination still belong to external infrastructure.
+- **No HA / multi-node story yet**: the daemon is still a single-process control plane, not a replicated service.

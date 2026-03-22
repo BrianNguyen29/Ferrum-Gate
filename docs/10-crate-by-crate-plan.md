@@ -52,9 +52,11 @@
 - execute-time after_ref handoff vao verify path da co
 
 ## ferrum-adapter-http
-- initial GET/status-only slice da co
+- full GET/POST/PUT/PATCH/DELETE execute/verify da co
+- body/header/query digest binding da co
+- dedicated bearer/basic/api_key auth with auth_kind observability metadata da co
 - gateway routing + ferrumd registry + local integration coverage da co
-- destructive remote mutation => R3 by default van la backlog
+- mutating HTTP (POST/PUT/PATCH/DELETE) => explicit R3 boundary enforced server-side; rollback/compensate van conservative no-op
 
 ## ferrum-graph
 - lineage query helpers

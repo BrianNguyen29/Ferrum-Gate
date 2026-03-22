@@ -43,8 +43,13 @@ impl CapabilityRepo for SqliteCapabilityRepo {
     }
 
     async fn get(&self, capability_id: CapabilityId) -> Result<Option<CapabilityLease>> {
-        fetch_entity_by_id(&self.pool, "capabilities", "capability_id", &capability_id.to_string())
-            .await
+        fetch_entity_by_id(
+            &self.pool,
+            "capabilities",
+            "capability_id",
+            &capability_id.to_string(),
+        )
+        .await
     }
 
     async fn update(&self, capability: &CapabilityLease) -> Result<()> {
@@ -69,7 +74,11 @@ impl CapabilityRepo for SqliteCapabilityRepo {
         Ok(())
     }
 
-    async fn update_status(&self, capability_id: CapabilityId, status: CapabilityStatus) -> Result<()> {
+    async fn update_status(
+        &self,
+        capability_id: CapabilityId,
+        status: CapabilityStatus,
+    ) -> Result<()> {
         let Some(mut capability) = self.get(capability_id).await? else {
             return Ok(());
         };

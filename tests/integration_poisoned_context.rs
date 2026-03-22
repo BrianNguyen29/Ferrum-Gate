@@ -316,8 +316,14 @@ async fn test_high_taint_non_r0_mutation_quarantines() {
         },
     ];
 
-    let req =
+    let mut req =
         sample_intent_request_with_effect_and_inputs(EffectType::FileMutation, external_inputs);
+    // Provide resource scope so capability mint succeeds (scope check fails closed on empty scope)
+    req.requested_resource_scope = vec![ferrum_proto::ResourceSelector::FilesystemPath {
+        path: "/tmp".to_string(),
+        mode: ResourceMode::Write,
+        content_hash: None,
+    }];
     let app = build_router(runtime.clone());
 
     let response = app
