@@ -14,6 +14,7 @@ sqlx = { workspace = true }
 ferrum-proto = { path = "../ferrum-proto" }
 ferrum-ledger = { path = "../ferrum-ledger" }
 uuid = { workspace = true }
+chrono = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"

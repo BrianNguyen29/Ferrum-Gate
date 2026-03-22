@@ -34,7 +34,7 @@ Kiểm tra:
 ### State resets on restart
 - If `ferrumd` auto-loads `configs/ferrumgate.dev.toml`, the store uses `sqlite://ferrumgate.dev.db` and execution/provenance state should survive restart.
 - If state is still resetting, check whether `ferrumd` actually found a config file or fell back to `sqlite::memory:?cache=shared`.
-- Capability leases still use the in-memory capability service, so active leases do not survive process restart even when the SQLite store is persistent.
+- Capabilities are now persisted in SQLite via `SqliteCapabilityService`. On startup, `ferrumd` reconciles legacy active capabilities with execution history. Active capability leases survive process restart when the SQLite store is persistent.
 
 ### ferrumd not reachable
 - Check the effective bind address from CLI/env/config (`--bind`, `FERRUMD_BIND_ADDR`, config file).

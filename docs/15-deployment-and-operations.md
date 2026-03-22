@@ -9,7 +9,7 @@ Ferrumd still runs as a **single process**, but it no longer depends on hardcode
 | Bind address | config-driven | CLI/env/config file; default loopback is `127.0.0.1:8080` |
 | Store DSN | config-driven | repo dev config uses `sqlite://ferrumgate.dev.db`; fallback is in-memory SQLite |
 | Rollback adapters | fs, git, sqlite, maildraft, http, noop | Registered at startup |
-| Capability service | in-memory `InMemoryCapabilityService` | Capability leases still do not survive process restart |
+| Capability service | durable `SqliteCapabilityService` | Capabilities are persisted in SQLite; restart does not invalidate active leases |
 | Control-plane auth | `disabled` or `bearer` | Health endpoints stay unauthenticated |
 | TLS termination | external only | No in-process TLS listener today |
 
@@ -80,9 +80,9 @@ cargo run -p ferrumd -- \
 - bearer auth is enabled before binding non-loopback unless there is a deliberate local exception
 - TLS terminates at a reverse proxy or other ingress layer for any non-loopback exposure
 
-## Open gaps (operator-facing)
+## Operator-facing gaps and notes
 
 - **HTTP remote mutation recovery is not automated**: HTTP rollback/compensation on remote mutation is a **no-op by design** today. Operators must still compensate manually when remote HTTP state was mutated.
-- **Capability leases are still process-local**: the control-plane store is now configurable and can be persistent, but capability state still uses the in-memory capability service. A process restart invalidates active capability leases.
+- **Capability persistence is now durable**: capabilities are stored in SQLite via `SqliteCapabilityService`. On startup, `ferrumd` reconciles legacy active capabilities with execution history. Gateway no longer dual-writes capabilities; the capability service handles durable persistence. If capability persistence fails at runtime, the gateway fails closed and does not silently continue.
 - **No built-in TLS listener**: bearer auth exists at the app layer, but certificate lifecycle and TLS termination still belong to external infrastructure.
 - **No HA / multi-node story yet**: the daemon is still a single-process control plane, not a replicated service.

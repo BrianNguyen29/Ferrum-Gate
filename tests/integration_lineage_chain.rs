@@ -15,7 +15,7 @@
 //! 7. SideEffectVerified
 //! 8. terminal event (SideEffectCommitted / SideEffectCompensated / SideEffectRolledBack)
 
-use ferrum_cap::{CapabilityService, InMemoryCapabilityService};
+use ferrum_cap::{CapabilityService, SqliteCapabilityService};
 use ferrum_firewall::{DefaultFirewall, SemanticFirewall};
 use ferrum_gateway::{GatewayRuntime, build_router};
 use ferrum_pdp::StaticPdpEngine;
@@ -44,7 +44,8 @@ async fn create_test_runtime() -> (TempDir, GatewayRuntime, SqliteStore) {
         .expect("failed to apply migrations");
 
     let pdp: Arc<dyn ferrum_pdp::PdpEngine> = Arc::new(StaticPdpEngine::default());
-    let cap: Arc<dyn CapabilityService> = Arc::new(InMemoryCapabilityService::default());
+    let cap: Arc<dyn CapabilityService> =
+        Arc::new(SqliteCapabilityService::new(Arc::new(store.capabilities())));
 
     let mut registry = AdapterRegistry::default();
     registry.register(Arc::new(NoopRollbackAdapter::new("noop")));

@@ -37,6 +37,19 @@ pub trait CapabilityRepo: Send + Sync {
         status: CapabilityStatus,
     ) -> Result<()>;
     async fn list_by_intent(&self, intent_id: IntentId) -> Result<Vec<CapabilityLease>>;
+
+    /// Atomically mark a capability as Used if it is currently Active.
+    /// Returns true if the capability was successfully marked as Used,
+    /// false if it was already Used, Expired, Revoked, or Quarantined.
+    /// This is fail-closed: once used, a capability cannot be used again.
+    async fn mark_used_if_active(&self, capability_id: CapabilityId) -> Result<bool>;
+
+    /// Revoke a capability, setting its status to Revoked and persisting revoked_at.
+    async fn revoke(&self, capability_id: CapabilityId) -> Result<()>;
+
+    /// List capabilities that are active and not yet expired.
+    /// Used for reconciliation and auditing.
+    async fn list_active(&self) -> Result<Vec<CapabilityLease>>;
 }
 
 #[async_trait]

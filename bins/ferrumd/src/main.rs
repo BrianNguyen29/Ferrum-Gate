@@ -5,7 +5,7 @@ use ferrum_adapter_git::register_git_adapter;
 use ferrum_adapter_http::register_http_adapter;
 use ferrum_adapter_maildraft::MaildraftAdapter;
 use ferrum_adapter_sqlite::SqliteRollbackAdapter;
-use ferrum_cap::InMemoryCapabilityService;
+use ferrum_cap::SqliteCapabilityService;
 use ferrum_firewall::DefaultFirewall;
 use ferrum_gateway::{AuthMode, GatewayConfig, GatewayRuntime, ServerConfig, run_http_server};
 use ferrum_pdp::StaticPdpEngine;
@@ -280,7 +280,6 @@ async fn main() -> Result<()> {
     validate_startup_guard(&config)?;
 
     let pdp = Arc::new(StaticPdpEngine);
-    let cap = Arc::new(InMemoryCapabilityService::default());
 
     let mut registry = AdapterRegistry::default();
     registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
@@ -293,6 +292,22 @@ async fn main() -> Result<()> {
 
     let store = Arc::new(SqliteStore::connect(&config.store_dsn).await?);
     store.apply_embedded_migrations().await?;
+
+    // Reconcile legacy split-brain: any capability that is Active but already has
+    // execution history is transitioned to Used. Fail-closed if reconciliation errors.
+    let reconciled = store
+        .reconcile_capabilities_with_executions()
+        .await
+        .context("capability reconciliation failed")?;
+    if reconciled > 0 {
+        tracing::info!(
+            "reconciled {} capability rows with split-brain state",
+            reconciled
+        );
+    }
+
+    let cap: Arc<dyn ferrum_cap::CapabilityService> =
+        Arc::new(SqliteCapabilityService::new(Arc::new(store.capabilities())));
 
     let firewall = Arc::new(DefaultFirewall::new());
 
