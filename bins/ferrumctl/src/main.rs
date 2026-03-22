@@ -197,11 +197,15 @@ struct ProvenanceQueryRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     intent_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    proposal_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     execution_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     capability_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     event_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    terminal_only: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     since: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -252,6 +256,14 @@ impl ServerClient {
     async fn health(&self) -> Result<HealthResponse> {
         let resp = self
             .request(reqwest::Method::GET, "/v1/healthz")
+            .send()
+            .await?;
+        self.decode_json(resp).await
+    }
+
+    async fn ready(&self) -> Result<HealthResponse> {
+        let resp = self
+            .request(reqwest::Method::GET, "/v1/readyz")
             .send()
             .await?;
         self.decode_json(resp).await
@@ -334,7 +346,7 @@ enum Command {
     /// Server commands for remote inspection and control.
     Server {
         #[command(subcommand)]
-        sub: ServerCommand,
+        sub: Box<ServerCommand>,
     },
     /// Debug commands for repository introspection.
     Debug {
@@ -357,6 +369,18 @@ enum Command {
 enum ServerCommand {
     /// Check server health.
     Health {
+        /// Server base URL (e.g. http://127.0.0.1:8080).
+        /// Can also be set via FERRUMCTL_SERVER_URL env var.
+        #[arg(long, env = "FERRUMCTL_SERVER_URL")]
+        server_url: Option<String>,
+
+        /// Bearer token for authentication.
+        /// Can also be set via FERRUMCTL_BEARER_TOKEN env var.
+        #[arg(long, env = "FERRUMCTL_BEARER_TOKEN")]
+        bearer_token: Option<String>,
+    },
+    /// Check deep readiness.
+    Ready {
         /// Server base URL (e.g. http://127.0.0.1:8080).
         /// Can also be set via FERRUMCTL_SERVER_URL env var.
         #[arg(long, env = "FERRUMCTL_SERVER_URL")]
@@ -438,6 +462,10 @@ enum ServerCommand {
         #[arg(long)]
         intent_id: Option<String>,
 
+        /// Filter by proposal ID.
+        #[arg(long)]
+        proposal_id: Option<String>,
+
         /// Filter by execution ID.
         #[arg(long)]
         execution_id: Option<String>,
@@ -449,6 +477,10 @@ enum ServerCommand {
         /// Filter by event kind.
         #[arg(long)]
         event_kind: Option<String>,
+
+        /// Return only terminal provenance events.
+        #[arg(long)]
+        terminal_only: bool,
 
         /// Filter events since timestamp (ISO 8601).
         #[arg(long)]
@@ -515,6 +547,14 @@ async fn run_server_health(url: Option<String>, token: Option<String>) -> Result
     let client = ServerClient::new(&url, token);
     let health = client.health().await?;
     println!("{}", health.status);
+    Ok(())
+}
+
+async fn run_server_ready(url: Option<String>, token: Option<String>) -> Result<()> {
+    let url = resolve_server_url(url)?;
+    let client = ServerClient::new(&url, token);
+    let ready = client.ready().await?;
+    println!("{}", ready.status);
     Ok(())
 }
 
@@ -678,12 +718,18 @@ async fn run_inspect_provenance(options: InspectProvenanceOptions) -> Result<()>
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Command::Server { sub } => match sub {
+        Command::Server { sub } => match *sub {
             ServerCommand::Health {
                 server_url,
                 bearer_token,
             } => {
                 run_server_health(server_url, bearer_token).await?;
+            }
+            ServerCommand::Ready {
+                server_url,
+                bearer_token,
+            } => {
+                run_server_ready(server_url, bearer_token).await?;
             }
             ServerCommand::InspectExecution {
                 execution_id,
@@ -718,9 +764,11 @@ async fn main() -> Result<()> {
             }
             ServerCommand::InspectProvenance {
                 intent_id,
+                proposal_id,
                 execution_id,
                 capability_id,
                 event_kind,
+                terminal_only,
                 since,
                 until,
                 server_url,
@@ -729,9 +777,11 @@ async fn main() -> Result<()> {
             } => {
                 let query = ProvenanceQueryRequest {
                     intent_id,
+                    proposal_id,
                     execution_id,
                     capability_id,
                     event_kind,
+                    terminal_only: terminal_only.then_some(true),
                     since,
                     until,
                 };

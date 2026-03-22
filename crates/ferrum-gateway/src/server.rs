@@ -6,6 +6,7 @@ use axum::{
     routing::{get, post},
 };
 use chrono::{Duration, Utc};
+use ferrum_graph::LineageGraph;
 use ferrum_proto::{
     ActorRef, ActorType, ApiError, ApiErrorCode, ApprovalId, ApprovalRequest,
     ApprovalResolveRequest, ApprovalState, AuthorizeExecutionRequest, AuthorizeExecutionResponse,
@@ -2120,6 +2121,13 @@ async fn query_provenance(
         .query(&request)
         .await
         .map_err(|err| ApiProblem::internal(err.into()))?;
+
+    let graph = LineageGraph::from_events(events);
+    let events = if request.terminal_only.unwrap_or(false) {
+        graph.terminal_events()
+    } else {
+        graph.into_events()
+    };
 
     Ok(Json(ProvenanceQueryResponse { events }))
 }

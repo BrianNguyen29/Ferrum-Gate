@@ -77,7 +77,7 @@ impl ProvenanceRepo for SqliteProvenanceRepo {
 
     async fn query(&self, request: &ProvenanceQueryRequest) -> Result<Vec<ProvenanceEvent>> {
         let rows = sqlx::query(
-            "SELECT raw_json, kind, intent_id, execution_id, capability_id
+            "SELECT raw_json, kind, intent_id, proposal_id, execution_id, capability_id
              FROM provenance_events
              ORDER BY occurred_at ASC",
         )
@@ -90,6 +90,7 @@ impl ProvenanceRepo for SqliteProvenanceRepo {
         for row in rows {
             let kind: String = row.try_get("kind")?;
             let intent_id: Option<String> = row.try_get("intent_id")?;
+            let proposal_id: Option<String> = row.try_get("proposal_id")?;
             let execution_id: Option<String> = row.try_get("execution_id")?;
             let capability_id: Option<String> = row.try_get("capability_id")?;
 
@@ -101,6 +102,12 @@ impl ProvenanceRepo for SqliteProvenanceRepo {
 
             if let Some(filter_execution) = request.execution_id {
                 if execution_id.as_deref() != Some(&filter_execution.to_string()) {
+                    continue;
+                }
+            }
+
+            if let Some(filter_proposal) = request.proposal_id {
+                if proposal_id.as_deref() != Some(&filter_proposal.to_string()) {
                     continue;
                 }
             }

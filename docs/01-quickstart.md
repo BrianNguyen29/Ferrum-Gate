@@ -60,6 +60,12 @@ cargo run -p ferrumd
 # Or point to a specific config file explicitly
 cargo run -p ferrumd -- --config configs/ferrumgate.dev.toml
 
+# Print the resolved effective config and exit
+cargo run -p ferrumd -- --print-effective-config
+
+# Preflight startup guard without starting the server
+cargo run -p ferrumd -- --check-startup-guard
+
 # Override config via CLI/env when needed
 FERRUMD_STORE_DSN="sqlite://./tmp/ferrumgate.sqlite" \
 FERRUMD_LOG_FILTER=debug \
@@ -88,6 +94,9 @@ If no config file is found, `ferrumd` falls back to `sqlite::memory:?cache=share
 # Health
 cargo run -p ferrumctl -- server health
 
+# Ready check
+cargo run -p ferrumctl -- server ready
+
 # Inspect an execution
 cargo run -p ferrumctl -- server inspect-execution <execution_id>
 
@@ -96,6 +105,11 @@ cargo run -p ferrumctl -- server inspect-approvals
 
 # Inspect lineage
 cargo run -p ferrumctl -- server inspect-lineage <execution_id>
+
+# Query terminal provenance events for an execution
+cargo run -p ferrumctl -- server inspect-provenance \
+  --execution-id <execution_id> \
+  --terminal-only
 ```
 
 `ferrumctl` defaults to `http://127.0.0.1:8080`. If control-plane bearer auth is enabled, pass `--bearer-token <token>` or set `FERRUMCTL_BEARER_TOKEN`.

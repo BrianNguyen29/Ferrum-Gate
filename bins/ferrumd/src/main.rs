@@ -11,7 +11,7 @@ use ferrum_gateway::{AuthMode, GatewayConfig, GatewayRuntime, ServerConfig, run_
 use ferrum_pdp::StaticPdpEngine;
 use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
 use ferrum_store::SqliteStore;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -57,6 +57,14 @@ struct Args {
     /// If not provided, falls back to RUST_LOG env var or config file value.
     #[arg(long)]
     log_filter: Option<String>,
+
+    /// Print the resolved effective runtime config and exit.
+    #[arg(long)]
+    print_effective_config: bool,
+
+    /// Validate startup guard and exit without starting the server.
+    #[arg(long)]
+    check_startup_guard: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -67,6 +75,49 @@ struct RuntimeConfig {
     bearer_token: Option<String>,
     allow_insecure_nonlocal: bool,
     log_filter: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum ConfigSource {
+    Cli,
+    Env,
+    File,
+    Default,
+    AutoDevConfig,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct StartupGuardDiagnostic {
+    ok: bool,
+    message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct EffectiveRuntimeConfig {
+    config_path: Option<String>,
+    config_path_source: Option<ConfigSource>,
+    bind_addr: String,
+    bind_addr_source: ConfigSource,
+    loopback_bind: bool,
+    store_dsn_display: String,
+    store_dsn_source: ConfigSource,
+    store_is_persistent: bool,
+    auth_mode: String,
+    auth_mode_source: ConfigSource,
+    bearer_token_present: bool,
+    bearer_token_source: Option<ConfigSource>,
+    allow_insecure_nonlocal: bool,
+    allow_insecure_nonlocal_source: ConfigSource,
+    log_filter: Option<String>,
+    log_filter_source: Option<ConfigSource>,
+    startup_guard: StartupGuardDiagnostic,
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedRuntimeConfig {
+    runtime: RuntimeConfig,
+    effective: EffectiveRuntimeConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -105,21 +156,19 @@ struct AuthSection {
     bearer_token: Option<String>,
 }
 
-fn resolve_config() -> Result<RuntimeConfig> {
-    let args = Args::parse();
-
+fn resolve_config_from_args(args: &Args) -> Result<ResolvedRuntimeConfig> {
     // Determine config file path
-    let config_path = if let Some(p) = &args.config {
-        Some(p.clone())
+    let (config_path, config_path_source) = if let Some(p) = &args.config {
+        (Some(p.clone()), Some(ConfigSource::Cli))
     } else if let Ok(env_path) = std::env::var("FERRUMD_CONFIG") {
-        Some(PathBuf::from(env_path))
+        (Some(PathBuf::from(env_path)), Some(ConfigSource::Env))
     } else {
         // Auto-load dev config if it exists in repo cwd
         let dev_path = PathBuf::from(DEV_CONFIG_PATH);
         if dev_path.exists() {
-            Some(dev_path)
+            (Some(dev_path), Some(ConfigSource::AutoDevConfig))
         } else {
-            None
+            (None, None)
         }
     };
 
@@ -148,75 +197,146 @@ fn resolve_config() -> Result<RuntimeConfig> {
     let env_log_filter = std::env::var("FERRUMD_LOG_FILTER").ok();
 
     // Resolve bind address: CLI > env > file > default
-    let bind_addr = if let Some(bind_str) = &args.bind {
-        bind_str
-            .parse::<SocketAddr>()
-            .context("failed to parse bind address")?
+    let (bind_addr, bind_addr_source) = if let Some(bind_str) = &args.bind {
+        (
+            bind_str
+                .parse::<SocketAddr>()
+                .context("failed to parse bind address")?,
+            ConfigSource::Cli,
+        )
     } else if let Some(bind_str) = env_bind {
-        bind_str
-            .parse::<SocketAddr>()
-            .context("failed to parse bind address from FERRUMD_BIND_ADDR")?
+        (
+            bind_str
+                .parse::<SocketAddr>()
+                .context("failed to parse bind address from FERRUMD_BIND_ADDR")?,
+            ConfigSource::Env,
+        )
     } else if let (Some(host), Some(port)) = (&server.host, server.port) {
         let addr_str = format!("{}:{}", host, port);
-        addr_str
-            .parse::<SocketAddr>()
-            .context("failed to parse bind address from config")?
+        (
+            addr_str
+                .parse::<SocketAddr>()
+                .context("failed to parse bind address from config")?,
+            ConfigSource::File,
+        )
     } else {
-        DEFAULT_BIND_ADDR
-            .parse::<SocketAddr>()
-            .context("failed to parse default bind address")?
+        (
+            DEFAULT_BIND_ADDR
+                .parse::<SocketAddr>()
+                .context("failed to parse default bind address")?,
+            ConfigSource::Default,
+        )
     };
 
     // Resolve store DSN: CLI > env > file > default (memory)
-    let store_dsn = args
-        .store_dsn
-        .or(env_store_dsn)
-        .or(file_config.store.as_ref().and_then(|s| s.dsn.clone()))
-        .unwrap_or_else(|| DEFAULT_STORE_DSN.to_string());
-
-    // Resolve auth mode: CLI > env > file > default (disabled)
-    let auth_mode: AuthMode = if let Some(s) = args
-        .auth_mode
-        .as_ref()
-        .or(env_auth_mode.as_ref())
-        .or(auth.mode.as_ref())
-    {
-        s.parse::<AuthMode>().map_err(|_| {
-            anyhow::anyhow!("invalid auth_mode '{}', must be 'disabled' or 'bearer'", s)
-        })?
+    let (store_dsn, store_dsn_source) = if let Some(value) = args.store_dsn.clone() {
+        (value, ConfigSource::Cli)
+    } else if let Some(value) = env_store_dsn {
+        (value, ConfigSource::Env)
+    } else if let Some(value) = file_config.store.as_ref().and_then(|s| s.dsn.clone()) {
+        (value, ConfigSource::File)
     } else {
-        AuthMode::Disabled
+        (DEFAULT_STORE_DSN.to_string(), ConfigSource::Default)
     };
 
+    // Resolve auth mode: CLI > env > file > default (disabled)
+    let (auth_mode_raw, auth_mode_source) = if let Some(value) = args.auth_mode.clone() {
+        (value, ConfigSource::Cli)
+    } else if let Some(value) = env_auth_mode {
+        (value, ConfigSource::Env)
+    } else if let Some(value) = auth.mode.clone() {
+        (value, ConfigSource::File)
+    } else {
+        ("disabled".to_string(), ConfigSource::Default)
+    };
+    let auth_mode: AuthMode = auth_mode_raw.parse::<AuthMode>().map_err(|_| {
+        anyhow::anyhow!(
+            "invalid auth_mode '{}', must be 'disabled' or 'bearer'",
+            auth_mode_raw
+        )
+    })?;
+
     // Resolve bearer token: CLI > env > file > default (none)
-    let bearer_token = args
-        .bearer_token
-        .or(env_bearer_token)
-        .or(auth.bearer_token.clone());
+    let (bearer_token, bearer_token_source) = if let Some(value) = args.bearer_token.clone() {
+        (Some(value), Some(ConfigSource::Cli))
+    } else if let Some(value) = env_bearer_token {
+        (Some(value), Some(ConfigSource::Env))
+    } else if let Some(value) = auth.bearer_token.clone() {
+        (Some(value), Some(ConfigSource::File))
+    } else {
+        (None, None)
+    };
 
     // Resolve allow_insecure_nonlocal: CLI > env > file > default (false)
-    let allow_insecure_nonlocal = if args.allow_insecure_nonlocal {
-        true
+    let (allow_insecure_nonlocal, allow_insecure_nonlocal_source) = if args.allow_insecure_nonlocal
+    {
+        (true, ConfigSource::Cli)
     } else if let Some(value) = env_allow_insecure_nonlocal {
-        value
+        (value, ConfigSource::Env)
+    } else if let Some(value) = server.allow_insecure_nonlocal {
+        (value, ConfigSource::File)
     } else {
-        server.allow_insecure_nonlocal.unwrap_or(false)
+        (false, ConfigSource::Default)
     };
 
     // Resolve log filter: CLI > env > file > default
-    let log_filter = args
-        .log_filter
-        .or(env_log_filter)
-        .or(file_config.log_filter.clone());
+    let (log_filter, log_filter_source) = if let Some(value) = args.log_filter.clone() {
+        (Some(value), Some(ConfigSource::Cli))
+    } else if let Some(value) = env_log_filter {
+        (Some(value), Some(ConfigSource::Env))
+    } else if let Some(value) = file_config.log_filter.clone() {
+        (Some(value), Some(ConfigSource::File))
+    } else {
+        (None, None)
+    };
 
-    Ok(RuntimeConfig {
+    let runtime = RuntimeConfig {
         bind_addr,
         store_dsn,
         auth_mode,
         bearer_token,
         allow_insecure_nonlocal,
         log_filter,
+    };
+    let startup_guard = startup_guard_diagnostic(&runtime);
+
+    Ok(ResolvedRuntimeConfig {
+        effective: EffectiveRuntimeConfig {
+            config_path: config_path.as_ref().map(|path| path.display().to_string()),
+            config_path_source,
+            bind_addr: runtime.bind_addr.to_string(),
+            bind_addr_source,
+            loopback_bind: runtime.bind_addr.ip().is_loopback(),
+            store_dsn_display: display_store_dsn(&runtime.store_dsn),
+            store_dsn_source,
+            store_is_persistent: !runtime.store_dsn.contains(":memory:"),
+            auth_mode: match runtime.auth_mode {
+                AuthMode::Disabled => "disabled".to_string(),
+                AuthMode::Bearer => "bearer".to_string(),
+            },
+            auth_mode_source,
+            bearer_token_present: runtime
+                .bearer_token
+                .as_deref()
+                .map(|token| !token.is_empty())
+                .unwrap_or(false),
+            bearer_token_source,
+            allow_insecure_nonlocal: runtime.allow_insecure_nonlocal,
+            allow_insecure_nonlocal_source,
+            log_filter: runtime.log_filter.clone(),
+            log_filter_source,
+            startup_guard,
+        },
+        runtime,
     })
+}
+
+fn display_store_dsn(store_dsn: &str) -> String {
+    if store_dsn.starts_with("sqlite:") {
+        store_dsn.to_string()
+    } else {
+        "[redacted-non-sqlite-dsn]".to_string()
+    }
 }
 
 fn parse_env_bool(name: &str, value: &str) -> Result<bool> {
@@ -244,34 +364,75 @@ fn apply_log_filter(config: &RuntimeConfig) {
         .init();
 }
 
-fn validate_startup_guard(config: &RuntimeConfig) -> Result<()> {
+fn startup_guard_diagnostic(config: &RuntimeConfig) -> StartupGuardDiagnostic {
     let is_loopback = config.bind_addr.ip().is_loopback();
 
     if !is_loopback && !config.allow_insecure_nonlocal && config.auth_mode == AuthMode::Disabled {
-        anyhow::bail!(
-            "refusing to bind to non-loopback address {} with auth disabled. \
-             Either use loopback (127.x.x.x), enable --allow-insecure-nonlocal, \
-             or set auth_mode to 'bearer'",
-            config.bind_addr
-        );
+        return StartupGuardDiagnostic {
+            ok: false,
+            message: format!(
+                "refusing to bind to non-loopback address {} with auth disabled. Either use loopback (127.x.x.x), enable --allow-insecure-nonlocal, or set auth_mode to 'bearer'",
+                config.bind_addr
+            ),
+        };
     }
 
     if config.auth_mode == AuthMode::Bearer {
         let token = config.bearer_token.as_deref().unwrap_or("");
         if token.is_empty() {
-            anyhow::bail!(
-                "auth_mode is 'bearer' but bearer_token is not set. \
-                 Provide --bearer-token or set auth.bearer_token in config."
-            );
+            return StartupGuardDiagnostic {
+                ok: false,
+                message: "auth_mode is 'bearer' but bearer_token is not set. Provide --bearer-token or set auth.bearer_token in config.".to_string(),
+            };
         }
+    }
+
+    StartupGuardDiagnostic {
+        ok: true,
+        message: "startup guard passed".to_string(),
+    }
+}
+
+fn validate_startup_guard(config: &RuntimeConfig) -> Result<()> {
+    let diagnostic = startup_guard_diagnostic(config);
+    if !diagnostic.ok {
+        anyhow::bail!(diagnostic.message);
     }
 
     Ok(())
 }
 
+fn print_effective_config(config: &EffectiveRuntimeConfig) -> Result<()> {
+    println!("{}", serde_json::to_string_pretty(config)?);
+    Ok(())
+}
+
+fn run_startup_guard_check(config: &EffectiveRuntimeConfig) -> Result<()> {
+    if config.startup_guard.ok {
+        println!("startup_guard: ok");
+        return Ok(());
+    }
+
+    anyhow::bail!("startup_guard: {}", config.startup_guard.message)
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    let config = resolve_config()?;
+    let args = Args::parse();
+    let resolved = resolve_config_from_args(&args)?;
+
+    if args.print_effective_config {
+        print_effective_config(&resolved.effective)?;
+        if !args.check_startup_guard {
+            return Ok(());
+        }
+    }
+
+    if args.check_startup_guard {
+        return run_startup_guard_check(&resolved.effective);
+    }
+
+    let config = resolved.runtime;
 
     // Apply log filter before any tracing calls
     apply_log_filter(&config);
@@ -391,5 +552,30 @@ mod tests {
         let config = make_config("127.0.0.1:8080", AuthMode::Bearer);
         let error = validate_startup_guard(&config).unwrap_err();
         assert!(error.to_string().contains("bearer_token is not set"));
+    }
+
+    #[test]
+    fn startup_guard_diagnostic_reports_failure_reason() {
+        let config = make_config("0.0.0.0:8080", AuthMode::Disabled);
+        let diagnostic = startup_guard_diagnostic(&config);
+
+        assert!(!diagnostic.ok);
+        assert!(
+            diagnostic
+                .message
+                .contains("refusing to bind to non-loopback address")
+        );
+    }
+
+    #[test]
+    fn display_store_dsn_redacts_non_sqlite_values() {
+        assert_eq!(
+            display_store_dsn("postgres://user:pass@example.com/db"),
+            "[redacted-non-sqlite-dsn]"
+        );
+        assert_eq!(
+            display_store_dsn("sqlite://./ferrumgate.db"),
+            "sqlite://./ferrumgate.db"
+        );
     }
 }

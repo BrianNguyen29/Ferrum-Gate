@@ -1151,6 +1151,10 @@ components:
           type: string
           format: uuid
           nullable: true
+        proposal_id:
+          type: string
+          format: uuid
+          nullable: true
         execution_id:
           type: string
           format: uuid
@@ -1161,6 +1165,9 @@ components:
           nullable: true
         event_kind:
           type: string
+          nullable: true
+        terminal_only:
+          type: boolean
           nullable: true
         since:
           type: string

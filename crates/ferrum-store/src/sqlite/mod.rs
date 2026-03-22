@@ -114,14 +114,13 @@ impl SqliteStore {
                 .executions()
                 .list_by_capability(capability.capability_id)
                 .await?;
-            if !executions.is_empty() {
-                if self
+            if !executions.is_empty()
+                && self
                     .capabilities()
                     .mark_used_if_active(capability.capability_id)
                     .await?
-                {
-                    reconciled_count += 1;
-                }
+            {
+                reconciled_count += 1;
             }
         }
 
