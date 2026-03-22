@@ -90,3 +90,13 @@ pub struct ProvenanceQueryRequest {
 pub struct ProvenanceQueryResponse {
     pub events: Vec<ProvenanceEvent>,
 }
+
+/// Response for a single provenance event query.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ProvenanceEventResponse {
+    pub event: ProvenanceEvent,
+    /// Ancestry events returned when ancestry=true query param is set.
+    /// Events are ordered by occurred_at (oldest first).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ancestry: Option<Vec<ProvenanceEvent>>,
+}

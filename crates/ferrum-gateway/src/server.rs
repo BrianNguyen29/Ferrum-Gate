@@ -1,6 +1,6 @@
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{StatusCode, header::AUTHORIZATION},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -14,14 +14,15 @@ use ferrum_proto::{
     CompensateRequest, CompensateResponse, Decision, EvaluateProposalResponse, ExecuteRequest,
     ExecuteResponse, ExecutionId, ExecutionRecord, ExecutionState, HashChainRef, HealthResponse,
     IntentCompileRequest, IntentCompileResponse, IntentEnvelope, IntentStatus, ObjectRef,
-    ObjectType, OutcomeClause, ProvenanceEvent, ProvenanceEventKind, ProvenanceQueryRequest,
-    ProvenanceQueryResponse, ResourceBinding, ResourceMode, ResourceSelector, RiskTier,
-    RollbackClass, RollbackRequest, RollbackResponse, RollbackState, RollbackTarget, TimeBudget,
-    TrustContextSummary, VerifyRequest, VerifyResponse,
+    ObjectType, OutcomeClause, ProvenanceEvent, ProvenanceEventKind, ProvenanceEventResponse,
+    ProvenanceQueryRequest, ProvenanceQueryResponse, ResourceBinding, ResourceMode,
+    ResourceSelector, RiskTier, RollbackClass, RollbackRequest, RollbackResponse, RollbackState,
+    RollbackTarget, TimeBudget, TrustContextSummary, VerifyRequest, VerifyResponse,
 };
 use ferrum_store::{
     ApprovalRepo, ExecutionRepo, IntentRepo, LedgerRepo, ProposalRepo, ProvenanceRepo, RollbackRepo,
 };
+use serde::Deserialize;
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
 
@@ -149,6 +150,10 @@ fn build_router_inner(runtime: GatewayRuntime, auth_config: Option<ServerConfig>
         .route(
             "/v1/provenance/lineage/{execution_id}",
             get(get_execution_lineage),
+        )
+        .route(
+            "/v1/provenance/events/{event_id}",
+            get(get_provenance_event),
         )
         .route("/v1/provenance/query", post(query_provenance))
         .with_state(Arc::new(runtime))
@@ -2132,6 +2137,54 @@ async fn query_provenance(
     Ok(Json(ProvenanceQueryResponse { events }))
 }
 
+#[derive(Debug, Deserialize)]
+pub(crate) struct ProvenanceEventQueryParams {
+    /// When true, include ancestry (walk backwards from this event using parent edges).
+    #[serde(default)]
+    ancestry: bool,
+}
+
+async fn get_provenance_event(
+    State(runtime): State<Arc<GatewayRuntime>>,
+    Path(event_id_str): Path<String>,
+    Query(params): Query<ProvenanceEventQueryParams>,
+) -> Result<Json<ProvenanceEventResponse>, ApiProblem> {
+    let event_id = parse_event_id(&event_id_str)?;
+
+    let event = runtime
+        .store
+        .provenance()
+        .get_event(event_id)
+        .await
+        .map_err(|err| ApiProblem::internal(err.into()))?
+        .ok_or_else(|| {
+            ApiProblem::new(
+                StatusCode::NOT_FOUND,
+                ApiErrorCode::NotFound,
+                format!("provenance event {} not found", event_id),
+            )
+        })?;
+
+    let ancestry = if params.ancestry {
+        let lineage = runtime
+            .store
+            .provenance()
+            .get_lineage_by_event(event_id)
+            .await
+            .map_err(|err| ApiProblem::internal(err.into()))?;
+
+        let ancestors = lineage
+            .into_iter()
+            .filter(|lineage_event| lineage_event.event_id != event_id)
+            .collect();
+        Some(ancestors)
+    } else {
+        None
+    };
+
+    Ok(Json(ProvenanceEventResponse { event, ancestry }))
+}
+
 fn parse_approval_id(value: &str) -> Result<ApprovalId, ApiProblem> {
     let parsed = value.parse::<uuid::Uuid>().map_err(|_| {
         ApiProblem::new(
@@ -2215,6 +2268,17 @@ fn parse_execution_id(value: &str) -> Result<ExecutionId, ApiProblem> {
         )
     })?;
     Ok(ExecutionId(parsed))
+}
+
+fn parse_event_id(value: &str) -> Result<ferrum_proto::EventId, ApiProblem> {
+    let parsed = value.parse::<uuid::Uuid>().map_err(|_| {
+        ApiProblem::new(
+            StatusCode::BAD_REQUEST,
+            ApiErrorCode::ValidationError,
+            "path id is not a valid event uuid",
+        )
+    })?;
+    Ok(ferrum_proto::EventId(parsed))
 }
 
 #[derive(Debug)]
