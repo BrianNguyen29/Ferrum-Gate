@@ -2271,6 +2271,11 @@ impl ApiProblem {
                 ApiErrorCode::ValidationError,
                 err.to_string(),
             ),
+            ferrum_cap::CapabilityError::Internal => Self::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                ApiErrorCode::Internal,
+                err.to_string(),
+            ),
         }
     }
 
