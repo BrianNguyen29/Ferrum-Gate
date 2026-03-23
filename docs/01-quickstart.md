@@ -103,8 +103,14 @@ cargo run -p ferrumctl -- server inspect-execution <execution_id>
 # List pending approvals
 cargo run -p ferrumctl -- server inspect-approvals
 
-# Inspect lineage
+# Inspect lineage (text)
 cargo run -p ferrumctl -- server inspect-lineage <execution_id>
+
+# Inspect lineage (JSON)
+cargo run -p ferrumctl -- server inspect-lineage <execution_id> --format json
+
+# Inspect lineage (DOT/Graphviz) and write to file
+cargo run -p ferrumctl -- server inspect-lineage <execution_id> --format dot --output lineage.dot
 
 # Query terminal provenance events for an execution
 cargo run -p ferrumctl -- server inspect-provenance \

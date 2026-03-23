@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use reqwest::Client;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -176,6 +176,12 @@ struct ApprovalRequest {
     created_at: String,
 }
 
+/// Edge from a parent event to this event.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct ProvenanceEdge {
+    from_event_id: String,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct ProvenanceEvent {
     event_id: String,
@@ -184,6 +190,8 @@ struct ProvenanceEvent {
     intent_id: Option<String>,
     proposal_id: Option<String>,
     execution_id: Option<String>,
+    #[serde(default)]
+    parent_edges: Vec<ProvenanceEdge>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -341,6 +349,16 @@ struct Cli {
     command: Command,
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum LineageFormat {
+    /// Human-readable text output (default).
+    Text,
+    /// JSON array of events.
+    Json,
+    /// Graphviz DOT format for visualization.
+    Dot,
+}
+
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Server commands for remote inspection and control.
@@ -452,9 +470,14 @@ enum ServerCommand {
         #[arg(long, env = "FERRUMCTL_BEARER_TOKEN")]
         bearer_token: Option<String>,
 
-        /// Output as JSON instead of human-readable.
+        /// Output format: text (default), json, or dot (Graphviz).
+        #[arg(long, value_enum, default_value = "text")]
+        format: LineageFormat,
+
+        /// Output file path. When set, writes to file instead of stdout.
+        /// Required for dot format when redirecting to a file.
         #[arg(long)]
-        json: bool,
+        output: Option<PathBuf>,
     },
     /// Query provenance events with filters.
     InspectProvenance {
@@ -653,34 +676,101 @@ async fn run_inspect_lineage(
     execution_id: &str,
     url: Option<String>,
     token: Option<String>,
-    as_json: bool,
+    format: LineageFormat,
+    output: Option<PathBuf>,
 ) -> Result<()> {
     let url = resolve_server_url(url)?;
     let client = ServerClient::new(&url, token);
     let lineage = client.get_lineage(execution_id).await?;
 
-    if as_json {
-        println!("{}", serde_json::to_string_pretty(&lineage)?);
+    let rendered = match format {
+        LineageFormat::Json => serde_json::to_string_pretty(&lineage)?,
+        LineageFormat::Text => {
+            let mut s = format!("Lineage for execution: {}\n", lineage.execution_id);
+            s.push_str(&format!("{} events:\n", lineage.events.len()));
+            for event in lineage.events {
+                s.push_str(&format!(
+                    "  [{}] {}  {}\n",
+                    event.occurred_at, event.kind, event.event_id
+                ));
+                if let Some(iid) = &event.intent_id {
+                    s.push_str(&format!("    intent: {}\n", iid));
+                }
+                if let Some(pid) = &event.proposal_id {
+                    s.push_str(&format!("    proposal: {}\n", pid));
+                }
+                if let Some(eid) = &event.execution_id {
+                    s.push_str(&format!("    execution: {}\n", eid));
+                }
+            }
+            s
+        }
+        LineageFormat::Dot => render_lineage_dot(&lineage),
+    };
+
+    if let Some(path) = output {
+        std::fs::write(&path, &rendered)
+            .with_context(|| format!("failed to write to {}", path.display()))?;
     } else {
-        println!("Lineage for execution: {}", lineage.execution_id);
-        println!("{} events:", lineage.events.len());
-        for event in lineage.events {
-            println!(
-                "  [{}] {}  {}",
-                event.occurred_at, event.kind, event.event_id
-            );
-            if let Some(iid) = event.intent_id {
-                println!("    intent: {}", iid);
-            }
-            if let Some(pid) = event.proposal_id {
-                println!("    proposal: {}", pid);
-            }
-            if let Some(eid) = event.execution_id {
-                println!("    execution: {}", eid);
-            }
+        println!("{}", rendered);
+    }
+
+    Ok(())
+}
+
+/// Renders a `LineageResponse` as a deterministic Graphviz DOT graph.
+/// The graph is named after the execution ID and lists all events as nodes
+/// with directed edges representing parent→child relationships via parent_edges.
+fn render_lineage_dot(lineage: &LineageResponse) -> String {
+    let exec_id = &lineage.execution_id;
+    let mut lines = Vec::new();
+    lines.push(format!("digraph {} {{", dot_escape(exec_id)));
+    lines.push("  rankdir=TB;".to_string());
+    lines.push("  node [shape=box fontname=\"Helvetica\"];".to_string());
+
+    // Collect edges first for determinism: sort by (parent, child)
+    // Edges come from parent_edges: from_event_id -> event.event_id
+    let mut edges: Vec<(&str, &str)> = Vec::new();
+    for event in &lineage.events {
+        for parent_edge in &event.parent_edges {
+            edges.push((parent_edge.from_event_id.as_str(), event.event_id.as_str()));
         }
     }
-    Ok(())
+    edges.sort_by(|a, b| a.0.cmp(b.0).then_with(|| a.1.cmp(b.1)));
+
+    // Render event nodes (deduplicated by event_id)
+    let mut event_ids: Vec<&str> = lineage.events.iter().map(|e| e.event_id.as_str()).collect();
+    event_ids.sort();
+    event_ids.dedup();
+
+    for eid in &event_ids {
+        lines.push(format!(
+            "  \"{}\" [label=\"{}\"];",
+            dot_escape(eid),
+            dot_escape(eid)
+        ));
+    }
+
+    // Render edges
+    for (parent, child) in &edges {
+        lines.push(format!(
+            "  \"{}\" -> \"{}\";",
+            dot_escape(parent),
+            dot_escape(child)
+        ));
+    }
+
+    lines.push("}".to_string());
+    lines.join("\n")
+}
+
+/// Escapes a string for safe use inside a DOT node label or node ID.
+fn dot_escape(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t")
 }
 
 async fn run_inspect_provenance(options: InspectProvenanceOptions) -> Result<()> {
@@ -758,9 +848,11 @@ async fn main() -> Result<()> {
                 execution_id,
                 server_url,
                 bearer_token,
-                json,
+                format,
+                output,
             } => {
-                run_inspect_lineage(&execution_id, server_url, bearer_token, json).await?;
+                run_inspect_lineage(&execution_id, server_url, bearer_token, format, output)
+                    .await?;
             }
             ServerCommand::InspectProvenance {
                 intent_id,
@@ -1069,5 +1161,144 @@ mod tests {
         assert!(!parsed[0].present);
         assert_eq!(parsed[1].path, "b.json");
         assert!(parsed[1].present);
+    }
+
+    // -------------------------------------------------------------------------
+    // DOT rendering tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_render_lineage_dot_empty() {
+        let lineage = LineageResponse {
+            execution_id: "exec-0".to_string(),
+            events: vec![],
+        };
+        let dot = render_lineage_dot(&lineage);
+        assert!(dot.starts_with("digraph exec-0 {"));
+        assert!(dot.contains("rankdir=TB;"));
+        assert!(dot.ends_with("}"));
+        // no nodes or edges for empty events
+        assert!(!dot.contains(" -> "));
+    }
+
+    #[test]
+    fn test_render_lineage_dot_determinism() {
+        let lineage = LineageResponse {
+            execution_id: "exec-deterministic".to_string(),
+            events: vec![
+                ProvenanceEvent {
+                    event_id: "evt-2".to_string(),
+                    kind: "executed".to_string(),
+                    occurred_at: "2024-01-01T00:00:00Z".to_string(),
+                    intent_id: Some("intent-a".to_string()),
+                    proposal_id: Some("prop-1".to_string()),
+                    execution_id: Some("evt-1".to_string()),
+                    parent_edges: vec![ProvenanceEdge {
+                        from_event_id: "evt-1".to_string(),
+                    }],
+                },
+                ProvenanceEvent {
+                    event_id: "evt-1".to_string(),
+                    kind: "proposed".to_string(),
+                    occurred_at: "2024-01-01T00:00:01Z".to_string(),
+                    intent_id: Some("intent-a".to_string()),
+                    proposal_id: None,
+                    execution_id: None,
+                    parent_edges: vec![],
+                },
+            ],
+        };
+        let dot1 = render_lineage_dot(&lineage);
+        let dot2 = render_lineage_dot(&lineage);
+        assert_eq!(dot1, dot2, "DOT output must be deterministic");
+    }
+
+    #[test]
+    fn test_render_lineage_dot_edges() {
+        let lineage = LineageResponse {
+            execution_id: "exec-edges".to_string(),
+            events: vec![
+                ProvenanceEvent {
+                    event_id: "evt-child".to_string(),
+                    kind: "executed".to_string(),
+                    occurred_at: "2024-01-01T00:00:02Z".to_string(),
+                    intent_id: None,
+                    proposal_id: Some("prop-parent".to_string()),
+                    execution_id: Some("evt-parent".to_string()),
+                    parent_edges: vec![ProvenanceEdge {
+                        from_event_id: "evt-parent".to_string(),
+                    }],
+                },
+                ProvenanceEvent {
+                    event_id: "evt-parent".to_string(),
+                    kind: "proposed".to_string(),
+                    occurred_at: "2024-01-01T00:00:01Z".to_string(),
+                    intent_id: None,
+                    proposal_id: None,
+                    execution_id: None,
+                    parent_edges: vec![],
+                },
+            ],
+        };
+        let dot = render_lineage_dot(&lineage);
+        // Should contain exactly one edge from parent to child
+        assert!(dot.contains("\"evt-parent\" -> \"evt-child\""));
+        // Should not contain duplicate edges
+        let edge_count = dot.matches("\"evt-parent\" -> \"evt-child\"").count();
+        assert_eq!(edge_count, 1, "edge should appear exactly once");
+    }
+
+    #[test]
+    fn test_render_lineage_dot_escapes_special_chars() {
+        let lineage = LineageResponse {
+            execution_id: "exec\"special\\path".to_string(),
+            events: vec![ProvenanceEvent {
+                event_id: "evt\"new\nline".to_string(),
+                kind: "kind".to_string(),
+                occurred_at: "2024-01-01T00:00:00Z".to_string(),
+                intent_id: None,
+                proposal_id: None,
+                execution_id: None,
+                parent_edges: vec![],
+            }],
+        };
+        let dot = render_lineage_dot(&lineage);
+        // Escaped characters should not break DOT syntax
+        assert!(!dot.contains("digraph exec\"special"));
+        assert!(dot.contains("digraph exec\\\"special"));
+    }
+
+    #[test]
+    fn test_render_lineage_dot_no_extraneous_edges() {
+        // Events without parent_edges should not create edges
+        let lineage = LineageResponse {
+            execution_id: "exec-no-edge".to_string(),
+            events: vec![
+                ProvenanceEvent {
+                    event_id: "evt-orphan".to_string(),
+                    kind: "orphan".to_string(),
+                    occurred_at: "2024-01-01T00:00:00Z".to_string(),
+                    intent_id: None,
+                    proposal_id: None,
+                    execution_id: None,
+                    parent_edges: vec![],
+                },
+                ProvenanceEvent {
+                    event_id: "evt-half".to_string(),
+                    kind: "half".to_string(),
+                    occurred_at: "2024-01-01T00:00:01Z".to_string(),
+                    intent_id: None,
+                    proposal_id: Some("prop-only".to_string()),
+                    execution_id: None,
+                    parent_edges: vec![],
+                },
+            ],
+        };
+        let dot = render_lineage_dot(&lineage);
+        // No edges should be present since no event has parent_edges
+        assert!(!dot.contains(" -> "));
+        // Both nodes should still be present
+        assert!(dot.contains("\"evt-orphan\""));
+        assert!(dot.contains("\"evt-half\""));
     }
 }

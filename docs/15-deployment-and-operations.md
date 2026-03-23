@@ -82,6 +82,7 @@ cargo run -p ferrumd -- --check-startup-guard
 - `cargo run -p ferrumd -- --check-startup-guard` is the fastest preflight when operators want to confirm non-loopback/auth settings before rollout.
 - `cargo run -p ferrumctl -- server ready` hits `/v1/readyz` for a lightweight readiness check after startup.
 - `cargo run -p ferrumctl -- server inspect-provenance --execution-id <id> --terminal-only` returns only terminal provenance events for a governed execution.
+- `cargo run -p ferrumctl -- server inspect-lineage <id> --format dot --output <path>` exports the event lineage as a Graphviz DOT file for visualization.
 
 ## Operations checklist
 
