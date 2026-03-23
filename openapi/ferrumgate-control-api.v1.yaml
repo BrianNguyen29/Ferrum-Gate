@@ -403,6 +403,42 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProvenanceQueryResponse'
 
+  /v1/provenance/events/external:
+    post:
+      summary: Ingest an externally-observed runtime event into provenance lineage
+      description: |
+        Ingests an externally-observed event into the FerrumGate provenance lineage.
+
+        This endpoint provides a vendor-neutral boundary for anchoring external runtime
+        observations into an existing execution lineage. The server validates:
+        - execution_id must refer to an existing execution record
+        - parent_event_id must refer to an existing provenance event
+        - parent event must belong to the same execution_id
+
+        The server derives internal lineage context (actor, object, timestamps) from
+        existing state rather than trusting caller-supplied linkage intent.
+
+        Fail-closed: any validation failure results in an error response without
+        creating any provenance record.
+      operationId: ingestExternalEvent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExternalEventIngestRequest'
+      responses:
+        '200':
+          description: External event ingested successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExternalEventIngestResponse'
+        '400':
+          $ref: '#/components/responses/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
+
   /v1/provenance/events/{event_id}:
     get:
       summary: Get a single provenance event
@@ -1290,3 +1326,47 @@ components:
           type: object
         metadata:
           type: object
+
+    ExternalEventIngestRequest:
+      type: object
+      additionalProperties: false
+      required: [execution_id, parent_event_id, source_system, source_event_id]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+          description: The execution_id that this external event is being anchored to.
+        parent_event_id:
+          type: string
+          format: uuid
+          description: The parent event within the same execution that this external event observes.
+        source_system:
+          type: string
+          description: Identifier for the external system or runtime that observed this event.
+        source_event_id:
+          type: string
+          description: The event identifier assigned by the external source system.
+        observed_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Optional wall-clock time when the external system observed the event.
+        summary:
+          type: string
+          nullable: true
+          description: Optional human-readable summary describing what was observed.
+        payload_digest:
+          type: string
+          nullable: true
+          description: Optional digest of the external event payload for integrity verification.
+        metadata:
+          type: object
+          nullable: true
+          description: Optional lightweight metadata bag. Small/simple values only. Stored under `external_metadata` so caller keys cannot override server-owned correlation fields.
+
+    ExternalEventIngestResponse:
+      type: object
+      required: [event]
+      properties:
+        event:
+          $ref: '#/components/schemas/ProvenanceEvent'

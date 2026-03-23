@@ -12,12 +12,14 @@ use ferrum_proto::{
     ApprovalResolveRequest, ApprovalState, AuthorizeExecutionRequest, AuthorizeExecutionResponse,
     CapabilityId, CapabilityMintRequest, CapabilityMintResponse, CommitRequest, CommitResponse,
     CompensateRequest, CompensateResponse, Decision, EvaluateProposalResponse, EventId,
-    ExecuteRequest, ExecuteResponse, ExecutionId, ExecutionRecord, ExecutionState, HashChainRef,
-    HealthResponse, IntentCompileRequest, IntentCompileResponse, IntentEnvelope, IntentStatus,
-    ObjectRef, ObjectType, OutcomeClause, ProvenanceEvent, ProvenanceEventKind,
-    ProvenanceEventResponse, ProvenanceQueryRequest, ProvenanceQueryResponse, ResourceBinding,
-    ResourceMode, ResourceSelector, RiskTier, RollbackClass, RollbackRequest, RollbackResponse,
-    RollbackState, RollbackTarget, TimeBudget, TrustContextSummary, VerifyRequest, VerifyResponse,
+    ExecuteRequest, ExecuteResponse, ExecutionId, ExecutionRecord, ExecutionState,
+    ExternalEventIngestRequest, ExternalEventIngestResponse, HashChainRef, HealthResponse,
+    IntentCompileRequest, IntentCompileResponse, IntentEnvelope, IntentStatus, ObjectRef,
+    ObjectType, OutcomeClause, ProvenanceEdge, ProvenanceEdgeType, ProvenanceEvent,
+    ProvenanceEventKind, ProvenanceEventResponse, ProvenanceQueryRequest, ProvenanceQueryResponse,
+    ResourceBinding, ResourceMode, ResourceSelector, RiskTier, RollbackClass, RollbackRequest,
+    RollbackResponse, RollbackState, RollbackTarget, TimeBudget, TrustContextSummary, TrustLabel,
+    VerifyRequest, VerifyResponse,
 };
 use ferrum_store::{
     ApprovalRepo, ExecutionRepo, IntentRepo, LedgerRepo, ProposalRepo, ProvenanceRepo, RollbackRepo,
@@ -156,6 +158,10 @@ fn build_router_inner(runtime: GatewayRuntime, auth_config: Option<ServerConfig>
             get(get_execution_lineage),
         )
         .route("/v1/provenance/query", post(query_provenance))
+        .route(
+            "/v1/provenance/events/external",
+            post(ingest_external_event),
+        )
         .with_state(Arc::new(runtime))
         .layer(TraceLayer::new_for_http());
 
@@ -2238,6 +2244,147 @@ async fn get_provenance_event(
         ancestry,
         descendants,
     }))
+}
+
+/// Ingests an externally-observed runtime event into the provenance lineage.
+///
+/// Fail-closed validations:
+/// - execution_id must refer to an existing execution record
+/// - parent_event_id must refer to an existing provenance event
+/// - parent event must belong to the same execution_id
+///
+/// The server derives internal lineage context (actor, object, timestamps) from
+/// existing state rather than trusting caller-supplied linkage intent.
+async fn ingest_external_event(
+    State(runtime): State<Arc<GatewayRuntime>>,
+    Json(request): Json<ExternalEventIngestRequest>,
+) -> Result<Json<ExternalEventIngestResponse>, ApiProblem> {
+    let now = Utc::now();
+
+    // Fail-closed: execution_id must refer to an existing execution
+    let execution = runtime
+        .store
+        .executions()
+        .get(request.execution_id)
+        .await
+        .map_err(|err| ApiProblem::internal(err.into()))?
+        .ok_or_else(|| {
+            ApiProblem::new(
+                StatusCode::NOT_FOUND,
+                ApiErrorCode::NotFound,
+                format!("execution {} not found", request.execution_id),
+            )
+        })?;
+
+    // Fail-closed: parent_event_id must refer to an existing provenance event
+    let parent_event = runtime
+        .store
+        .provenance()
+        .get_event(request.parent_event_id)
+        .await
+        .map_err(|err| ApiProblem::internal(err.into()))?
+        .ok_or_else(|| {
+            ApiProblem::new(
+                StatusCode::NOT_FOUND,
+                ApiErrorCode::NotFound,
+                format!("parent event {} not found", request.parent_event_id),
+            )
+        })?;
+
+    // Fail-closed: parent event must belong to the same execution_id
+    if parent_event.execution_id != Some(request.execution_id) {
+        return Err(ApiProblem::new(
+            StatusCode::BAD_REQUEST,
+            ApiErrorCode::ValidationError,
+            format!(
+                "parent event {} does not belong to execution {}",
+                request.parent_event_id, request.execution_id
+            ),
+        ));
+    }
+
+    // Build metadata from request fields.
+    // Preserve server-owned correlation keys even when caller metadata contains
+    // similarly named fields by nesting caller metadata separately.
+    let mut metadata = ferrum_proto::JsonMap::new();
+    if let Some(ref extra) = request.metadata {
+        metadata.insert(
+            "external_metadata".to_string(),
+            serde_json::Value::Object(
+                extra
+                    .iter()
+                    .map(|(key, value)| (key.clone(), value.clone()))
+                    .collect::<serde_json::Map<String, serde_json::Value>>(),
+            ),
+        );
+    }
+    metadata.insert(
+        "source_system".to_string(),
+        serde_json::Value::String(request.source_system.clone()),
+    );
+    metadata.insert(
+        "source_event_id".to_string(),
+        serde_json::Value::String(request.source_event_id.clone()),
+    );
+    if let Some(ref summary) = request.summary {
+        metadata.insert(
+            "summary".to_string(),
+            serde_json::Value::String(summary.clone()),
+        );
+    }
+    if let Some(ref payload_digest) = request.payload_digest {
+        metadata.insert(
+            "payload_digest".to_string(),
+            serde_json::Value::String(payload_digest.clone()),
+        );
+    }
+    // Create the new event linked to the parent via parent_edges
+    let event = ProvenanceEvent {
+        event_id: EventId::new(),
+        kind: ProvenanceEventKind::ExternalEventObserved,
+        occurred_at: request.observed_at.unwrap_or(now),
+        actor: ActorRef {
+            actor_type: ActorType::Gateway,
+            actor_id: "ferrum-gateway".to_string(),
+            display_name: Some("Ferrum Gateway".to_string()),
+        },
+        object: ObjectRef {
+            object_type: ObjectType::Unknown,
+            object_id: request.source_event_id.clone(),
+            summary: request.summary.clone(),
+        },
+        intent_id: Some(execution.intent_id),
+        proposal_id: Some(execution.proposal_id),
+        execution_id: Some(request.execution_id),
+        capability_id: Some(execution.capability_id),
+        rollback_contract_id: execution.rollback_contract_id,
+        policy_bundle_id: None,
+        trust_labels: vec![TrustLabel::ExternalToolOutput],
+        sensitivity_labels: Vec::new(),
+        parent_edges: vec![ProvenanceEdge {
+            edge_type: ProvenanceEdgeType::ObservedBy,
+            from_event_id: request.parent_event_id,
+            summary: Some(format!(
+                "external event from {} observed",
+                request.source_system
+            )),
+        }],
+        hash_chain: HashChainRef {
+            content_hash: None,
+            manifest_hash: None,
+            policy_bundle_hash: None,
+            previous_ledger_hash: None,
+        },
+        metadata,
+    };
+
+    // Persist the event
+    if let Err(e) = runtime.store.provenance().append_event(&event).await {
+        tracing::warn!("failed to persist external event ingest: {}", e);
+        return Err(ApiProblem::internal(e.into()));
+    }
+
+    Ok(Json(ExternalEventIngestResponse { event }))
 }
 
 fn parse_event_id(value: &str) -> Result<EventId, ApiProblem> {
