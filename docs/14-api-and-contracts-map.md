@@ -38,6 +38,18 @@
 | `GET /v1/provenance/events/{event_id}` | Inspect a single provenance event, optionally with `?ancestry=true` and/or `?descendants=true` |
 | `POST /v1/provenance/query` | Query provenance events by `intent_id`, `proposal_id`, `execution_id`, `capability_id`, `event_kind`, time window, or `terminal_only` |
 
+## `ferrumctl` lineage and provenance inspection
+
+`ferrumctl server inspect-lineage <execution_id>` supports three output formats via `--format`:
+
+| Format | Description |
+|--------|-------------|
+| `text` | Human-readable event list (default) |
+| `json` | Full lineage as structured JSON |
+| `dot` | Graphviz DOT graph; use `--output <path>` to write to file |
+
+`ferrumctl server inspect-provenance` returns events filtered by the query parameters listed above.
+
 HTTP adapter rollback is a **no-op by design** today; see `15-deployment-and-operations.md` for caveats.
 
 When `ferrumd` runs with `auth.mode = "bearer"`, all non-health control-plane routes require `Authorization: Bearer <token>`.
