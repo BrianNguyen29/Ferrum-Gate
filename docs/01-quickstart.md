@@ -110,6 +110,12 @@ cargo run -p ferrumctl -- server inspect-lineage <execution_id>
 cargo run -p ferrumctl -- server inspect-provenance \
   --execution-id <execution_id> \
   --terminal-only
+
+# Inspect a single provenance event by ID
+cargo run -p ferrumctl -- server inspect-event <event_id>
+
+# Inspect event with ancestry and descendants
+cargo run -p ferrumctl -- server inspect-event <event_id> --ancestry --descendants
 ```
 
 `ferrumctl` defaults to `http://127.0.0.1:8080`. If control-plane bearer auth is enabled, pass `--bearer-token <token>` or set `FERRUMCTL_BEARER_TOKEN`.
