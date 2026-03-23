@@ -225,6 +225,31 @@ struct ProvenanceQueryResponse {
     events: Vec<ProvenanceEvent>,
 }
 
+// =============================================================================
+// External event ingest types
+// =============================================================================
+
+#[derive(Debug, Clone, Serialize)]
+struct ExternalEventIngestRequest {
+    execution_id: String,
+    parent_event_id: String,
+    source_system: String,
+    source_event_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    observed_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    summary: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    payload_digest: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metadata: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ExternalEventIngestResponse {
+    event: ProvenanceEvent,
+}
+
 struct InspectProvenanceOptions {
     query: ProvenanceQueryRequest,
     url: Option<String>,
@@ -310,6 +335,18 @@ impl ServerClient {
         let resp = self
             .request(reqwest::Method::POST, "/v1/provenance/query")
             .json(query)
+            .send()
+            .await?;
+        self.decode_json(resp).await
+    }
+
+    async fn post_external_event(
+        &self,
+        req: &ExternalEventIngestRequest,
+    ) -> Result<ExternalEventIngestResponse> {
+        let resp = self
+            .request(reqwest::Method::POST, "/v1/provenance/events/external")
+            .json(req)
             .send()
             .await?;
         self.decode_json(resp).await
@@ -522,6 +559,53 @@ enum ServerCommand {
         bearer_token: Option<String>,
 
         /// Output as JSON instead of human-readable.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Ingest an externally-observed runtime event into the provenance lineage.
+    IngestExternalEvent {
+        /// Execution ID (UUID) to anchor the external event to.
+        #[arg(long)]
+        execution_id: String,
+
+        /// Parent event ID (UUID) within the same execution that this external event observes.
+        #[arg(long)]
+        parent_event_id: String,
+
+        /// Identifier for the external system or runtime that observed this event.
+        #[arg(long)]
+        source_system: String,
+
+        /// Event identifier assigned by the external source system.
+        #[arg(long)]
+        source_event_id: String,
+
+        /// Wall-clock time when the external system observed the event (ISO 8601).
+        #[arg(long)]
+        observed_at: Option<String>,
+
+        /// Human-readable summary describing what was observed.
+        #[arg(long)]
+        summary: Option<String>,
+
+        /// Digest of the external event payload for integrity verification.
+        #[arg(long)]
+        payload_digest: Option<String>,
+
+        /// JSON object of metadata to attach to the external event.
+        /// Must be a JSON object (e.g. --metadata-json '{"key":"value"}').
+        #[arg(long, value_parser = parse_metadata_json)]
+        metadata_json: Option<serde_json::Map<String, serde_json::Value>>,
+
+        /// Server base URL (e.g. http://127.0.0.1:8080).
+        #[arg(long, env = "FERRUMCTL_SERVER_URL")]
+        server_url: Option<String>,
+
+        /// Bearer token for authentication.
+        #[arg(long, env = "FERRUMCTL_BEARER_TOKEN")]
+        bearer_token: Option<String>,
+
+        /// Output the returned event as JSON instead of human-readable.
         #[arg(long)]
         json: bool,
     },
@@ -773,6 +857,17 @@ fn dot_escape(s: &str) -> String {
         .replace('\t', "\\t")
 }
 
+/// Parses a JSON string into a Map<String, JsonValue>.
+/// Returns an error if the input is not a JSON object.
+fn parse_metadata_json(s: &str) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(s).map_err(|e| format!("invalid JSON: {}", e))?;
+    match value {
+        serde_json::Value::Object(map) => Ok(map),
+        _ => Err(String::from("metadata must be a JSON object")),
+    }
+}
+
 async fn run_inspect_provenance(options: InspectProvenanceOptions) -> Result<()> {
     let InspectProvenanceOptions {
         query,
@@ -799,6 +894,55 @@ async fn run_inspect_provenance(options: InspectProvenanceOptions) -> Result<()>
                 "  [{}] {}  {}",
                 event.occurred_at, event.kind, event.event_id
             );
+        }
+    }
+    Ok(())
+}
+
+async fn run_ingest_external_event(
+    execution_id: String,
+    parent_event_id: String,
+    source_system: String,
+    source_event_id: String,
+    observed_at: Option<String>,
+    summary: Option<String>,
+    payload_digest: Option<String>,
+    metadata_json: Option<serde_json::Map<String, serde_json::Value>>,
+    url: Option<String>,
+    token: Option<String>,
+    as_json: bool,
+) -> Result<()> {
+    let url = resolve_server_url(url)?;
+    let client = ServerClient::new(&url, token);
+
+    let req = ExternalEventIngestRequest {
+        execution_id,
+        parent_event_id,
+        source_system,
+        source_event_id,
+        observed_at,
+        summary,
+        payload_digest,
+        metadata: metadata_json,
+    };
+
+    let response = client.post_external_event(&req).await?;
+
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&response.event)?);
+    } else {
+        println!("External event ingested successfully.");
+        println!("  Event ID:    {}", response.event.event_id);
+        println!("  Kind:        {}", response.event.kind);
+        println!("  Occurred at: {}", response.event.occurred_at);
+        if let Some(iid) = &response.event.intent_id {
+            println!("  Intent ID:   {}", iid);
+        }
+        if let Some(pid) = &response.event.proposal_id {
+            println!("  Proposal ID: {}", pid);
+        }
+        if let Some(eid) = &response.event.execution_id {
+            println!("  Execution:   {}", eid);
         }
     }
     Ok(())
@@ -883,6 +1027,34 @@ async fn main() -> Result<()> {
                     token: bearer_token,
                     as_json: json,
                 })
+                .await?;
+            }
+            ServerCommand::IngestExternalEvent {
+                execution_id,
+                parent_event_id,
+                source_system,
+                source_event_id,
+                observed_at,
+                summary,
+                payload_digest,
+                metadata_json,
+                server_url,
+                bearer_token,
+                json,
+            } => {
+                run_ingest_external_event(
+                    execution_id,
+                    parent_event_id,
+                    source_system,
+                    source_event_id,
+                    observed_at,
+                    summary,
+                    payload_digest,
+                    metadata_json,
+                    server_url,
+                    bearer_token,
+                    json,
+                )
                 .await?;
             }
         },
@@ -1300,5 +1472,92 @@ mod tests {
         // Both nodes should still be present
         assert!(dot.contains("\"evt-orphan\""));
         assert!(dot.contains("\"evt-half\""));
+    }
+
+    // -------------------------------------------------------------------------
+    // External event metadata parsing tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_metadata_json_valid_object() {
+        let input = r#"{"key":"value","num":42}"#;
+        let result = parse_metadata_json(input);
+        assert!(result.is_ok());
+        let map = result.unwrap();
+        assert_eq!(map.len(), 2);
+        assert_eq!(
+            map.get("key").unwrap(),
+            &serde_json::Value::String("value".to_string())
+        );
+        assert_eq!(
+            map.get("num").unwrap(),
+            &serde_json::Value::Number(42.into())
+        );
+    }
+
+    #[test]
+    fn test_parse_metadata_json_empty_object() {
+        let input = "{}";
+        let result = parse_metadata_json(input);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_parse_metadata_json_nested_object() {
+        let input = r#"{"outer":{"inner":"value"}}"#;
+        let result = parse_metadata_json(input);
+        assert!(result.is_ok());
+        let map = result.unwrap();
+        assert!(map.contains_key("outer"));
+    }
+
+    #[test]
+    fn test_parse_metadata_json_invalid_json() {
+        let input = "not json at all";
+        let result = parse_metadata_json(input);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("invalid JSON"));
+    }
+
+    #[test]
+    fn test_parse_metadata_json_array_rejected() {
+        let input = r#"[1,2,3]"#;
+        let result = parse_metadata_json(input);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "metadata must be a JSON object");
+    }
+
+    #[test]
+    fn test_parse_metadata_json_string_rejected() {
+        let input = r#""just a string""#;
+        let result = parse_metadata_json(input);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "metadata must be a JSON object");
+    }
+
+    #[test]
+    fn test_parse_metadata_json_number_rejected() {
+        let input = "12345";
+        let result = parse_metadata_json(input);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "metadata must be a JSON object");
+    }
+
+    #[test]
+    fn test_parse_metadata_json_bool_rejected() {
+        let input = "true";
+        let result = parse_metadata_json(input);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "metadata must be a JSON object");
+    }
+
+    #[test]
+    fn test_parse_metadata_json_null_rejected() {
+        let input = "null";
+        let result = parse_metadata_json(input);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "metadata must be a JSON object");
     }
 }

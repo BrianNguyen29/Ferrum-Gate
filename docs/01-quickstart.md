@@ -116,6 +116,14 @@ cargo run -p ferrumctl -- server inspect-lineage <execution_id> --format dot --o
 cargo run -p ferrumctl -- server inspect-provenance \
   --execution-id <execution_id> \
   --terminal-only
+
+# Ingest an external runtime event into provenance lineage
+# (operator boundary: records vendor-neutral external observations)
+cargo run -p ferrumctl -- server ingest-external-event \
+  --execution-id <uuid> \
+  --parent-event-id <uuid> \
+  --source-system <string> \
+  --source-event-id <string>
 ```
 
 `ferrumctl` defaults to `http://127.0.0.1:8080`. If control-plane bearer auth is enabled, pass `--bearer-token <token>` or set `FERRUMCTL_BEARER_TOKEN`.
