@@ -37,6 +37,19 @@
 | `GET /v1/provenance/lineage/{execution_id}` | Inspect the execution lineage chain |
 | `GET /v1/provenance/events/{event_id}` | Inspect a single provenance event, optionally with `?ancestry=true` and/or `?descendants=true` |
 | `POST /v1/provenance/query` | Query provenance events by `intent_id`, `proposal_id`, `execution_id`, `capability_id`, `event_kind`, time window, or `terminal_only` |
+| `POST /v1/provenance/events/external` | Ingest an externally-observed runtime event into the provenance lineage (fail-closed: execution_id and parent_event_id must exist and belong to the same execution). Also available as `ferrumctl server ingest-external-event`. |
+
+## `ferrumctl` lineage and provenance inspection
+
+`ferrumctl server inspect-lineage <execution_id>` supports three output formats via `--format`:
+
+| Format | Description |
+|--------|-------------|
+| `text` | Human-readable event list (default) |
+| `json` | Full lineage as structured JSON |
+| `dot` | Graphviz DOT graph; use `--output <path>` to write to file |
+
+`ferrumctl server inspect-provenance` returns events filtered by the query parameters listed above.
 
 HTTP adapter rollback is a **no-op by design** today; see `15-deployment-and-operations.md` for caveats.
 

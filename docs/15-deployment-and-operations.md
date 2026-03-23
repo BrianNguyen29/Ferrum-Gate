@@ -83,6 +83,8 @@ cargo run -p ferrumd -- --check-startup-guard
 - `cargo run -p ferrumctl -- server ready` hits `/v1/readyz` for a lightweight readiness check after startup.
 - `cargo run -p ferrumctl -- server inspect-provenance --execution-id <id> --terminal-only` returns only terminal provenance events for a governed execution.
 - `cargo run -p ferrumctl -- server inspect-event <event_id> [--ancestry] [--descendants]` inspects a single provenance event, optionally including its ancestor chain and/or descendant chain.
+- `cargo run -p ferrumctl -- server inspect-lineage <id> --format dot --output <path>` exports the event lineage as a Graphviz DOT file for visualization.
+- `POST /v1/provenance/events/external` is the first P3 runtime boundary: it records a vendor-neutral externally observed event against an existing execution lineage and fails closed if the execution or parent event is missing/mismatched. Available as `ferrumctl server ingest-external-event`.
 
 ## Operations checklist
 

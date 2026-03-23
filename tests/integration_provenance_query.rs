@@ -11,10 +11,10 @@ use ferrum_gateway::{GatewayRuntime, build_router};
 use ferrum_pdp::StaticPdpEngine;
 use ferrum_proto::{
     ActionProposal, ActorRef, ActorType, AuthorizeExecutionRequest, CapabilityMintRequest,
-    EffectType, HashChainRef, IntentCompileRequest, JsonMap, ObjectRef, ObjectType, ProvenanceEdge,
-    ProvenanceEdgeType, ProvenanceEvent, ProvenanceEventKind, ProvenanceEventResponse,
-    ProvenanceQueryRequest, ResourceBinding, ResourceMode, RiskTier, RollbackClass, TaintBudget,
-    ToolBinding,
+    EffectType, ExternalEventIngestRequest, HashChainRef, IntentCompileRequest, JsonMap, ObjectRef,
+    ObjectType, ProvenanceEdge, ProvenanceEdgeType, ProvenanceEvent, ProvenanceEventKind,
+    ProvenanceEventResponse, ProvenanceQueryRequest, ResourceBinding, ResourceMode, RiskTier,
+    RollbackClass, TaintBudget, ToolBinding, TrustLabel,
 };
 use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
 use ferrum_store::{ProvenanceRepo, SqliteStore};
@@ -828,4 +828,360 @@ async fn test_get_provenance_event_returns_not_found_for_unknown_event() {
         .unwrap();
 
     assert_eq!(response.status(), axum::http::StatusCode::NOT_FOUND);
+}
+
+/// Test: ingest external event successfully links to parent event in same execution
+#[tokio::test]
+async fn test_ingest_external_event_happy_path() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    let (execution_id, _intent_id, _proposal_id) = create_execution_with_events(&runtime).await;
+
+    // Get a provenance event for this execution to use as parent
+    let query_req = ProvenanceQueryRequest {
+        intent_id: None,
+        proposal_id: None,
+        execution_id: Some(execution_id),
+        capability_id: None,
+        event_kind: None,
+        terminal_only: None,
+        since: None,
+        until: None,
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/provenance/query")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&query_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let query_resp: ferrum_proto::ProvenanceQueryResponse = serde_json::from_slice(&body).unwrap();
+    let parent_event_id = query_resp
+        .events
+        .first()
+        .expect("expected at least one event")
+        .event_id;
+
+    // Ingest external event
+    let mut extra_metadata = JsonMap::new();
+    extra_metadata.insert(
+        "source_system".to_string(),
+        serde_json::Value::String("spoof-attempt".to_string()),
+    );
+    extra_metadata.insert(
+        "trace_id".to_string(),
+        serde_json::Value::String("trace-123".to_string()),
+    );
+
+    let ingest_req = ExternalEventIngestRequest {
+        execution_id,
+        parent_event_id,
+        source_system: "test-runtime".to_string(),
+        source_event_id: "ext-event-123".to_string(),
+        observed_at: None,
+        summary: Some("External system observed something".to_string()),
+        payload_digest: Some("sha256:abc123".to_string()),
+        metadata: Some(extra_metadata),
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/provenance/events/external")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&ingest_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let ingest_resp: ferrum_proto::ExternalEventIngestResponse =
+        serde_json::from_slice(&body).unwrap();
+
+    // Verify the returned event
+    assert_eq!(
+        ingest_resp.event.kind,
+        ProvenanceEventKind::ExternalEventObserved
+    );
+    assert_eq!(ingest_resp.event.execution_id, Some(execution_id));
+    assert_eq!(ingest_resp.event.parent_edges.len(), 1);
+    assert_eq!(
+        ingest_resp.event.parent_edges[0].from_event_id,
+        parent_event_id
+    );
+    assert_eq!(
+        ingest_resp.event.parent_edges[0].edge_type,
+        ProvenanceEdgeType::ObservedBy
+    );
+    assert_eq!(
+        ingest_resp
+            .event
+            .metadata
+            .get("source_system")
+            .and_then(|v| v.as_str()),
+        Some("test-runtime")
+    );
+    assert_eq!(
+        ingest_resp
+            .event
+            .metadata
+            .get("source_event_id")
+            .and_then(|v| v.as_str()),
+        Some("ext-event-123")
+    );
+    assert!(
+        ingest_resp
+            .event
+            .trust_labels
+            .contains(&TrustLabel::ExternalToolOutput)
+    );
+    assert_eq!(
+        ingest_resp
+            .event
+            .metadata
+            .get("external_metadata")
+            .and_then(|v| v.get("trace_id"))
+            .and_then(|v| v.as_str()),
+        Some("trace-123")
+    );
+    assert_eq!(
+        ingest_resp
+            .event
+            .metadata
+            .get("source_system")
+            .and_then(|v| v.as_str()),
+        Some("test-runtime")
+    );
+}
+
+/// Test: ingest external event with unknown execution_id fails
+#[tokio::test]
+async fn test_ingest_external_event_unknown_execution_fails() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    let ingest_req = ExternalEventIngestRequest {
+        execution_id: ferrum_proto::ExecutionId::new(),
+        parent_event_id: ferrum_proto::EventId::new(),
+        source_system: "test-runtime".to_string(),
+        source_event_id: "ext-event-123".to_string(),
+        observed_at: None,
+        summary: None,
+        payload_digest: None,
+        metadata: None,
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/provenance/events/external")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&ingest_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Should fail with 404
+    assert_eq!(response.status(), axum::http::StatusCode::NOT_FOUND);
+}
+
+/// Test: ingest external event with unknown parent_event_id fails
+#[tokio::test]
+async fn test_ingest_external_event_unknown_parent_event_fails() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    let (execution_id, _intent_id, _proposal_id) = create_execution_with_events(&runtime).await;
+
+    let ingest_req = ExternalEventIngestRequest {
+        execution_id,
+        parent_event_id: ferrum_proto::EventId::new(),
+        source_system: "test-runtime".to_string(),
+        source_event_id: "ext-event-123".to_string(),
+        observed_at: None,
+        summary: None,
+        payload_digest: None,
+        metadata: None,
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/provenance/events/external")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&ingest_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Should fail with 404
+    assert_eq!(response.status(), axum::http::StatusCode::NOT_FOUND);
+}
+
+/// Test: ingest external event with mismatched execution_id/parent_event fails
+#[tokio::test]
+async fn test_ingest_external_event_mismatched_execution_fails() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Create two executions
+    let (execution_id1, _intent_id1, _proposal_id1) = create_execution_with_events(&runtime).await;
+    let (execution_id2, _intent_id2, _proposal_id2) = create_execution_with_events(&runtime).await;
+
+    // Get a provenance event for execution_id1
+    let query_req = ProvenanceQueryRequest {
+        intent_id: None,
+        proposal_id: None,
+        execution_id: Some(execution_id1),
+        capability_id: None,
+        event_kind: None,
+        terminal_only: None,
+        since: None,
+        until: None,
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/provenance/query")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&query_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let query_resp: ferrum_proto::ProvenanceQueryResponse = serde_json::from_slice(&body).unwrap();
+    let parent_event_id = query_resp
+        .events
+        .first()
+        .expect("expected at least one event")
+        .event_id;
+
+    // Try to ingest with execution_id2 but parent_event_id from execution_id1
+    let ingest_req = ExternalEventIngestRequest {
+        execution_id: execution_id2,
+        parent_event_id,
+        source_system: "test-runtime".to_string(),
+        source_event_id: "ext-event-123".to_string(),
+        observed_at: None,
+        summary: None,
+        payload_digest: None,
+        metadata: None,
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/provenance/events/external")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&ingest_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Should fail with 400 - parent event does not belong to execution
+    assert_eq!(response.status(), axum::http::StatusCode::BAD_REQUEST);
+}
+
+/// Test: ingest external event rejects unknown JSON fields (fail-closed)
+#[tokio::test]
+async fn test_ingest_external_event_rejects_unknown_fields() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    let (execution_id, _intent_id, _proposal_id) = create_execution_with_events(&runtime).await;
+
+    // Get a parent event
+    let query_req = ProvenanceQueryRequest {
+        intent_id: None,
+        proposal_id: None,
+        execution_id: Some(execution_id),
+        capability_id: None,
+        event_kind: None,
+        terminal_only: None,
+        since: None,
+        until: None,
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/provenance/query")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&query_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let query_resp: ferrum_proto::ProvenanceQueryResponse = serde_json::from_slice(&body).unwrap();
+    let parent_event_id = query_resp
+        .events
+        .first()
+        .expect("expected at least one event")
+        .event_id;
+
+    // Request with unknown field should be rejected
+    let invalid_json = serde_json::json!({
+        "execution_id": execution_id.to_string(),
+        "parent_event_id": parent_event_id.to_string(),
+        "source_system": "test",
+        "source_event_id": "ext-123",
+        "unknown_field": "should fail"
+    });
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/provenance/events/external")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(invalid_json.to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Should be rejected due to deny_unknown_fields
+    assert!(
+        response.status() == axum::http::StatusCode::BAD_REQUEST
+            || response.status() == axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+        "expected 400/422 for unknown fields, got {}",
+        response.status()
+    );
 }

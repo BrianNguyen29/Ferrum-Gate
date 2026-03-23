@@ -103,8 +103,14 @@ cargo run -p ferrumctl -- server inspect-execution <execution_id>
 # List pending approvals
 cargo run -p ferrumctl -- server inspect-approvals
 
-# Inspect lineage
+# Inspect lineage (text)
 cargo run -p ferrumctl -- server inspect-lineage <execution_id>
+
+# Inspect lineage (JSON)
+cargo run -p ferrumctl -- server inspect-lineage <execution_id> --format json
+
+# Inspect lineage (DOT/Graphviz) and write to file
+cargo run -p ferrumctl -- server inspect-lineage <execution_id> --format dot --output lineage.dot
 
 # Query terminal provenance events for an execution
 cargo run -p ferrumctl -- server inspect-provenance \
@@ -116,6 +122,14 @@ cargo run -p ferrumctl -- server inspect-event <event_id>
 
 # Inspect event with ancestry and descendants
 cargo run -p ferrumctl -- server inspect-event <event_id> --ancestry --descendants
+
+# Ingest an external runtime event into provenance lineage
+# (operator boundary: records vendor-neutral external observations)
+cargo run -p ferrumctl -- server ingest-external-event \
+  --execution-id <uuid> \
+  --parent-event-id <uuid> \
+  --source-system <string> \
+  --source-event-id <string>
 ```
 
 `ferrumctl` defaults to `http://127.0.0.1:8080`. If control-plane bearer auth is enabled, pass `--bearer-token <token>` or set `FERRUMCTL_BEARER_TOKEN`.

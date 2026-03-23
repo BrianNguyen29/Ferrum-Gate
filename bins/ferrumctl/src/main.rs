@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use reqwest::Client;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -176,6 +176,12 @@ struct ApprovalRequest {
     created_at: String,
 }
 
+/// Edge from a parent event to this event.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct ProvenanceEdge {
+    from_event_id: String,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct ProvenanceEvent {
     event_id: String,
@@ -184,6 +190,8 @@ struct ProvenanceEvent {
     intent_id: Option<String>,
     proposal_id: Option<String>,
     execution_id: Option<String>,
+    #[serde(default)]
+    parent_edges: Vec<ProvenanceEdge>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -224,6 +232,31 @@ struct ProvenanceQueryRequest {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct ProvenanceQueryResponse {
     events: Vec<ProvenanceEvent>,
+}
+
+// =============================================================================
+// External event ingest types
+// =============================================================================
+
+#[derive(Debug, Clone, Serialize)]
+struct ExternalEventIngestRequest {
+    execution_id: String,
+    parent_event_id: String,
+    source_system: String,
+    source_event_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    observed_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    summary: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    payload_digest: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metadata: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ExternalEventIngestResponse {
+    event: ProvenanceEvent,
 }
 
 struct InspectProvenanceOptions {
@@ -334,6 +367,18 @@ impl ServerClient {
         self.decode_json(resp).await
     }
 
+    async fn post_external_event(
+        &self,
+        req: &ExternalEventIngestRequest,
+    ) -> Result<ExternalEventIngestResponse> {
+        let resp = self
+            .request(reqwest::Method::POST, "/v1/provenance/events/external")
+            .json(req)
+            .send()
+            .await?;
+        self.decode_json(resp).await
+    }
+
     async fn decode_json<T: DeserializeOwned>(&self, resp: reqwest::Response) -> Result<T> {
         if !resp.status().is_success() {
             return self.render_error(resp).await;
@@ -366,6 +411,16 @@ impl ServerClient {
 struct Cli {
     #[command(subcommand)]
     command: Command,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum LineageFormat {
+    /// Human-readable text output (default).
+    Text,
+    /// JSON array of events.
+    Json,
+    /// Graphviz DOT format for visualization.
+    Dot,
 }
 
 #[derive(Debug, Subcommand)]
@@ -479,9 +534,14 @@ enum ServerCommand {
         #[arg(long, env = "FERRUMCTL_BEARER_TOKEN")]
         bearer_token: Option<String>,
 
-        /// Output as JSON instead of human-readable.
+        /// Output format: text (default), json, or dot (Graphviz).
+        #[arg(long, value_enum, default_value = "text")]
+        format: LineageFormat,
+
+        /// Output file path. When set, writes to file instead of stdout.
+        /// Required for dot format when redirecting to a file.
         #[arg(long)]
-        json: bool,
+        output: Option<PathBuf>,
     },
     /// Query provenance events with filters.
     InspectProvenance {
@@ -551,6 +611,53 @@ enum ServerCommand {
         bearer_token: Option<String>,
 
         /// Output as JSON instead of human-readable.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Ingest an externally-observed runtime event into the provenance lineage.
+    IngestExternalEvent {
+        /// Execution ID (UUID) to anchor the external event to.
+        #[arg(long)]
+        execution_id: String,
+
+        /// Parent event ID (UUID) within the same execution that this external event observes.
+        #[arg(long)]
+        parent_event_id: String,
+
+        /// Identifier for the external system or runtime that observed this event.
+        #[arg(long)]
+        source_system: String,
+
+        /// Event identifier assigned by the external source system.
+        #[arg(long)]
+        source_event_id: String,
+
+        /// Wall-clock time when the external system observed the event (ISO 8601).
+        #[arg(long)]
+        observed_at: Option<String>,
+
+        /// Human-readable summary describing what was observed.
+        #[arg(long)]
+        summary: Option<String>,
+
+        /// Digest of the external event payload for integrity verification.
+        #[arg(long)]
+        payload_digest: Option<String>,
+
+        /// JSON object of metadata to attach to the external event.
+        /// Must be a JSON object (e.g. --metadata-json '{"key":"value"}').
+        #[arg(long, value_parser = parse_metadata_json)]
+        metadata_json: Option<serde_json::Map<String, serde_json::Value>>,
+
+        /// Server base URL (e.g. http://127.0.0.1:8080).
+        #[arg(long, env = "FERRUMCTL_SERVER_URL")]
+        server_url: Option<String>,
+
+        /// Bearer token for authentication.
+        #[arg(long, env = "FERRUMCTL_BEARER_TOKEN")]
+        bearer_token: Option<String>,
+
+        /// Output the returned event as JSON instead of human-readable.
         #[arg(long)]
         json: bool,
     },
@@ -705,34 +812,112 @@ async fn run_inspect_lineage(
     execution_id: &str,
     url: Option<String>,
     token: Option<String>,
-    as_json: bool,
+    format: LineageFormat,
+    output: Option<PathBuf>,
 ) -> Result<()> {
     let url = resolve_server_url(url)?;
     let client = ServerClient::new(&url, token);
     let lineage = client.get_lineage(execution_id).await?;
 
-    if as_json {
-        println!("{}", serde_json::to_string_pretty(&lineage)?);
+    let rendered = match format {
+        LineageFormat::Json => serde_json::to_string_pretty(&lineage)?,
+        LineageFormat::Text => {
+            let mut s = format!("Lineage for execution: {}\n", lineage.execution_id);
+            s.push_str(&format!("{} events:\n", lineage.events.len()));
+            for event in lineage.events {
+                s.push_str(&format!(
+                    "  [{}] {}  {}\n",
+                    event.occurred_at, event.kind, event.event_id
+                ));
+                if let Some(iid) = &event.intent_id {
+                    s.push_str(&format!("    intent: {}\n", iid));
+                }
+                if let Some(pid) = &event.proposal_id {
+                    s.push_str(&format!("    proposal: {}\n", pid));
+                }
+                if let Some(eid) = &event.execution_id {
+                    s.push_str(&format!("    execution: {}\n", eid));
+                }
+            }
+            s
+        }
+        LineageFormat::Dot => render_lineage_dot(&lineage),
+    };
+
+    if let Some(path) = output {
+        std::fs::write(&path, &rendered)
+            .with_context(|| format!("failed to write to {}", path.display()))?;
     } else {
-        println!("Lineage for execution: {}", lineage.execution_id);
-        println!("{} events:", lineage.events.len());
-        for event in lineage.events {
-            println!(
-                "  [{}] {}  {}",
-                event.occurred_at, event.kind, event.event_id
-            );
-            if let Some(iid) = event.intent_id {
-                println!("    intent: {}", iid);
-            }
-            if let Some(pid) = event.proposal_id {
-                println!("    proposal: {}", pid);
-            }
-            if let Some(eid) = event.execution_id {
-                println!("    execution: {}", eid);
-            }
+        println!("{}", rendered);
+    }
+
+    Ok(())
+}
+
+/// Renders a `LineageResponse` as a deterministic Graphviz DOT graph.
+/// The graph is named after the execution ID and lists all events as nodes
+/// with directed edges representing parent→child relationships via parent_edges.
+fn render_lineage_dot(lineage: &LineageResponse) -> String {
+    let exec_id = &lineage.execution_id;
+    let mut lines = Vec::new();
+    lines.push(format!("digraph {} {{", dot_escape(exec_id)));
+    lines.push("  rankdir=TB;".to_string());
+    lines.push("  node [shape=box fontname=\"Helvetica\"];".to_string());
+
+    // Collect edges first for determinism: sort by (parent, child)
+    // Edges come from parent_edges: from_event_id -> event.event_id
+    let mut edges: Vec<(&str, &str)> = Vec::new();
+    for event in &lineage.events {
+        for parent_edge in &event.parent_edges {
+            edges.push((parent_edge.from_event_id.as_str(), event.event_id.as_str()));
         }
     }
-    Ok(())
+    edges.sort_by(|a, b| a.0.cmp(b.0).then_with(|| a.1.cmp(b.1)));
+
+    // Render event nodes (deduplicated by event_id)
+    let mut event_ids: Vec<&str> = lineage.events.iter().map(|e| e.event_id.as_str()).collect();
+    event_ids.sort();
+    event_ids.dedup();
+
+    for eid in &event_ids {
+        lines.push(format!(
+            "  \"{}\" [label=\"{}\"];",
+            dot_escape(eid),
+            dot_escape(eid)
+        ));
+    }
+
+    // Render edges
+    for (parent, child) in &edges {
+        lines.push(format!(
+            "  \"{}\" -> \"{}\";",
+            dot_escape(parent),
+            dot_escape(child)
+        ));
+    }
+
+    lines.push("}".to_string());
+    lines.join("\n")
+}
+
+/// Escapes a string for safe use inside a DOT node label or node ID.
+fn dot_escape(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t")
+}
+
+/// Parses a JSON string into a Map<String, JsonValue>.
+/// Returns an error if the input is not a JSON object.
+fn parse_metadata_json(s: &str) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(s).map_err(|e| format!("invalid JSON: {}", e))?;
+    match value {
+        serde_json::Value::Object(map) => Ok(map),
+        _ => Err(String::from("metadata must be a JSON object")),
+    }
 }
 
 async fn run_inspect_provenance(options: InspectProvenanceOptions) -> Result<()> {
@@ -809,6 +994,55 @@ async fn run_inspect_event(
     Ok(())
 }
 
+async fn run_ingest_external_event(
+    execution_id: String,
+    parent_event_id: String,
+    source_system: String,
+    source_event_id: String,
+    observed_at: Option<String>,
+    summary: Option<String>,
+    payload_digest: Option<String>,
+    metadata_json: Option<serde_json::Map<String, serde_json::Value>>,
+    url: Option<String>,
+    token: Option<String>,
+    as_json: bool,
+) -> Result<()> {
+    let url = resolve_server_url(url)?;
+    let client = ServerClient::new(&url, token);
+
+    let req = ExternalEventIngestRequest {
+        execution_id,
+        parent_event_id,
+        source_system,
+        source_event_id,
+        observed_at,
+        summary,
+        payload_digest,
+        metadata: metadata_json,
+    };
+
+    let response = client.post_external_event(&req).await?;
+
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&response.event)?);
+    } else {
+        println!("External event ingested successfully.");
+        println!("  Event ID:    {}", response.event.event_id);
+        println!("  Kind:        {}", response.event.kind);
+        println!("  Occurred at: {}", response.event.occurred_at);
+        if let Some(iid) = &response.event.intent_id {
+            println!("  Intent ID:   {}", iid);
+        }
+        if let Some(pid) = &response.event.proposal_id {
+            println!("  Proposal ID: {}", pid);
+        }
+        if let Some(eid) = &response.event.execution_id {
+            println!("  Execution:   {}", eid);
+        }
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -853,9 +1087,11 @@ async fn main() -> Result<()> {
                 execution_id,
                 server_url,
                 bearer_token,
-                json,
+                format,
+                output,
             } => {
-                run_inspect_lineage(&execution_id, server_url, bearer_token, json).await?;
+                run_inspect_lineage(&execution_id, server_url, bearer_token, format, output)
+                    .await?;
             }
             ServerCommand::InspectProvenance {
                 intent_id,
@@ -900,6 +1136,34 @@ async fn main() -> Result<()> {
                     &event_id,
                     ancestry,
                     descendants,
+                    server_url,
+                    bearer_token,
+                    json,
+                )
+                .await?;
+            }
+            ServerCommand::IngestExternalEvent {
+                execution_id,
+                parent_event_id,
+                source_system,
+                source_event_id,
+                observed_at,
+                summary,
+                payload_digest,
+                metadata_json,
+                server_url,
+                bearer_token,
+                json,
+            } => {
+                run_ingest_external_event(
+                    execution_id,
+                    parent_event_id,
+                    source_system,
+                    source_event_id,
+                    observed_at,
+                    summary,
+                    payload_digest,
+                    metadata_json,
                     server_url,
                     bearer_token,
                     json,
@@ -1182,5 +1446,231 @@ mod tests {
         assert!(!parsed[0].present);
         assert_eq!(parsed[1].path, "b.json");
         assert!(parsed[1].present);
+    }
+
+    // -------------------------------------------------------------------------
+    // DOT rendering tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_render_lineage_dot_empty() {
+        let lineage = LineageResponse {
+            execution_id: "exec-0".to_string(),
+            events: vec![],
+        };
+        let dot = render_lineage_dot(&lineage);
+        assert!(dot.starts_with("digraph exec-0 {"));
+        assert!(dot.contains("rankdir=TB;"));
+        assert!(dot.ends_with("}"));
+        // no nodes or edges for empty events
+        assert!(!dot.contains(" -> "));
+    }
+
+    #[test]
+    fn test_render_lineage_dot_determinism() {
+        let lineage = LineageResponse {
+            execution_id: "exec-deterministic".to_string(),
+            events: vec![
+                ProvenanceEvent {
+                    event_id: "evt-2".to_string(),
+                    kind: "executed".to_string(),
+                    occurred_at: "2024-01-01T00:00:00Z".to_string(),
+                    intent_id: Some("intent-a".to_string()),
+                    proposal_id: Some("prop-1".to_string()),
+                    execution_id: Some("evt-1".to_string()),
+                    parent_edges: vec![ProvenanceEdge {
+                        from_event_id: "evt-1".to_string(),
+                    }],
+                },
+                ProvenanceEvent {
+                    event_id: "evt-1".to_string(),
+                    kind: "proposed".to_string(),
+                    occurred_at: "2024-01-01T00:00:01Z".to_string(),
+                    intent_id: Some("intent-a".to_string()),
+                    proposal_id: None,
+                    execution_id: None,
+                    parent_edges: vec![],
+                },
+            ],
+        };
+        let dot1 = render_lineage_dot(&lineage);
+        let dot2 = render_lineage_dot(&lineage);
+        assert_eq!(dot1, dot2, "DOT output must be deterministic");
+    }
+
+    #[test]
+    fn test_render_lineage_dot_edges() {
+        let lineage = LineageResponse {
+            execution_id: "exec-edges".to_string(),
+            events: vec![
+                ProvenanceEvent {
+                    event_id: "evt-child".to_string(),
+                    kind: "executed".to_string(),
+                    occurred_at: "2024-01-01T00:00:02Z".to_string(),
+                    intent_id: None,
+                    proposal_id: Some("prop-parent".to_string()),
+                    execution_id: Some("evt-parent".to_string()),
+                    parent_edges: vec![ProvenanceEdge {
+                        from_event_id: "evt-parent".to_string(),
+                    }],
+                },
+                ProvenanceEvent {
+                    event_id: "evt-parent".to_string(),
+                    kind: "proposed".to_string(),
+                    occurred_at: "2024-01-01T00:00:01Z".to_string(),
+                    intent_id: None,
+                    proposal_id: None,
+                    execution_id: None,
+                    parent_edges: vec![],
+                },
+            ],
+        };
+        let dot = render_lineage_dot(&lineage);
+        // Should contain exactly one edge from parent to child
+        assert!(dot.contains("\"evt-parent\" -> \"evt-child\""));
+        // Should not contain duplicate edges
+        let edge_count = dot.matches("\"evt-parent\" -> \"evt-child\"").count();
+        assert_eq!(edge_count, 1, "edge should appear exactly once");
+    }
+
+    #[test]
+    fn test_render_lineage_dot_escapes_special_chars() {
+        let lineage = LineageResponse {
+            execution_id: "exec\"special\\path".to_string(),
+            events: vec![ProvenanceEvent {
+                event_id: "evt\"new\nline".to_string(),
+                kind: "kind".to_string(),
+                occurred_at: "2024-01-01T00:00:00Z".to_string(),
+                intent_id: None,
+                proposal_id: None,
+                execution_id: None,
+                parent_edges: vec![],
+            }],
+        };
+        let dot = render_lineage_dot(&lineage);
+        // Escaped characters should not break DOT syntax
+        assert!(!dot.contains("digraph exec\"special"));
+        assert!(dot.contains("digraph exec\\\"special"));
+    }
+
+    #[test]
+    fn test_render_lineage_dot_no_extraneous_edges() {
+        // Events without parent_edges should not create edges
+        let lineage = LineageResponse {
+            execution_id: "exec-no-edge".to_string(),
+            events: vec![
+                ProvenanceEvent {
+                    event_id: "evt-orphan".to_string(),
+                    kind: "orphan".to_string(),
+                    occurred_at: "2024-01-01T00:00:00Z".to_string(),
+                    intent_id: None,
+                    proposal_id: None,
+                    execution_id: None,
+                    parent_edges: vec![],
+                },
+                ProvenanceEvent {
+                    event_id: "evt-half".to_string(),
+                    kind: "half".to_string(),
+                    occurred_at: "2024-01-01T00:00:01Z".to_string(),
+                    intent_id: None,
+                    proposal_id: Some("prop-only".to_string()),
+                    execution_id: None,
+                    parent_edges: vec![],
+                },
+            ],
+        };
+        let dot = render_lineage_dot(&lineage);
+        // No edges should be present since no event has parent_edges
+        assert!(!dot.contains(" -> "));
+        // Both nodes should still be present
+        assert!(dot.contains("\"evt-orphan\""));
+        assert!(dot.contains("\"evt-half\""));
+    }
+
+    // -------------------------------------------------------------------------
+    // External event metadata parsing tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_metadata_json_valid_object() {
+        let input = r#"{"key":"value","num":42}"#;
+        let result = parse_metadata_json(input);
+        assert!(result.is_ok());
+        let map = result.unwrap();
+        assert_eq!(map.len(), 2);
+        assert_eq!(
+            map.get("key").unwrap(),
+            &serde_json::Value::String("value".to_string())
+        );
+        assert_eq!(
+            map.get("num").unwrap(),
+            &serde_json::Value::Number(42.into())
+        );
+    }
+
+    #[test]
+    fn test_parse_metadata_json_empty_object() {
+        let input = "{}";
+        let result = parse_metadata_json(input);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_parse_metadata_json_nested_object() {
+        let input = r#"{"outer":{"inner":"value"}}"#;
+        let result = parse_metadata_json(input);
+        assert!(result.is_ok());
+        let map = result.unwrap();
+        assert!(map.contains_key("outer"));
+    }
+
+    #[test]
+    fn test_parse_metadata_json_invalid_json() {
+        let input = "not json at all";
+        let result = parse_metadata_json(input);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("invalid JSON"));
+    }
+
+    #[test]
+    fn test_parse_metadata_json_array_rejected() {
+        let input = r#"[1,2,3]"#;
+        let result = parse_metadata_json(input);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "metadata must be a JSON object");
+    }
+
+    #[test]
+    fn test_parse_metadata_json_string_rejected() {
+        let input = r#""just a string""#;
+        let result = parse_metadata_json(input);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "metadata must be a JSON object");
+    }
+
+    #[test]
+    fn test_parse_metadata_json_number_rejected() {
+        let input = "12345";
+        let result = parse_metadata_json(input);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "metadata must be a JSON object");
+    }
+
+    #[test]
+    fn test_parse_metadata_json_bool_rejected() {
+        let input = "true";
+        let result = parse_metadata_json(input);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "metadata must be a JSON object");
+    }
+
+    #[test]
+    fn test_parse_metadata_json_null_rejected() {
+        let input = "null";
+        let result = parse_metadata_json(input);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "metadata must be a JSON object");
     }
 }
