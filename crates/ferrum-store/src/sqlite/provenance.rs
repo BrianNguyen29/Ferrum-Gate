@@ -234,6 +234,7 @@ impl ProvenanceRepo for SqliteProvenanceRepo {
                 "Compensates" => ferrum_proto::ProvenanceEdgeType::Compensates,
                 "Verifies" => ferrum_proto::ProvenanceEdgeType::Verifies,
                 "References" => ferrum_proto::ProvenanceEdgeType::References,
+                "ObservedBy" => ferrum_proto::ProvenanceEdgeType::ObservedBy,
                 _other => ferrum_proto::ProvenanceEdgeType::References, // fallback
             };
 
@@ -279,6 +280,7 @@ impl ProvenanceRepo for SqliteProvenanceRepo {
                 "Compensates" => ferrum_proto::ProvenanceEdgeType::Compensates,
                 "Verifies" => ferrum_proto::ProvenanceEdgeType::Verifies,
                 "References" => ferrum_proto::ProvenanceEdgeType::References,
+                "ObservedBy" => ferrum_proto::ProvenanceEdgeType::ObservedBy,
                 _other => ferrum_proto::ProvenanceEdgeType::References, // fallback
             };
 
