@@ -24,3 +24,4 @@
 - [x] CLI hữu dụng tối thiểu (`ferrumctl server health/inspect-*` documented and implemented)
 - [x] lineage usable
 - [x] approval flow documented
+- [x] runbooks updated (`runbooks/ops-tls-ingress-runbook.md` — TLS/ingress production runbook)
