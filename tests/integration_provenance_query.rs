@@ -759,7 +759,7 @@ async fn test_provenance_query_terminal_only() {
 }
 
 #[tokio::test]
-async fn test_get_provenance_event_with_ancestry_walks_parent_chain() {
+async fn test_get_provenance_event_returns_ancestry_and_descendants() {
     let (_temp_dir, runtime, store) = create_test_runtime().await;
 
     let root = sample_provenance_event(ProvenanceEventKind::IntentCompiled, Vec::new());
@@ -776,8 +776,8 @@ async fn test_get_provenance_event_with_ancestry_walks_parent_chain() {
         .oneshot(
             axum::http::Request::builder()
                 .uri(format!(
-                    "/v1/provenance/events/{}?ancestry=true",
-                    leaf.event_id
+                    "/v1/provenance/events/{}?ancestry=true&descendants=true",
+                    middle.event_id
                 ))
                 .method(axum::http::Method::GET)
                 .body(axum::body::Body::empty())
@@ -792,10 +792,20 @@ async fn test_get_provenance_event_with_ancestry_walks_parent_chain() {
         .unwrap();
     let event_resp: ProvenanceEventResponse = serde_json::from_slice(&body).unwrap();
 
-    assert_eq!(event_resp.event.event_id, leaf.event_id);
+    assert_eq!(event_resp.event.event_id, middle.event_id);
+
     let ancestry = event_resp.ancestry.expect("expected ancestry in response");
     let ancestry_ids: Vec<_> = ancestry.into_iter().map(|event| event.event_id).collect();
-    assert_eq!(ancestry_ids, vec![root.event_id, middle.event_id]);
+    assert_eq!(ancestry_ids, vec![root.event_id]);
+
+    let descendants = event_resp
+        .descendants
+        .expect("expected descendants in response");
+    let descendant_ids: Vec<_> = descendants
+        .into_iter()
+        .map(|event| event.event_id)
+        .collect();
+    assert_eq!(descendant_ids, vec![leaf.event_id]);
 }
 
 #[tokio::test]

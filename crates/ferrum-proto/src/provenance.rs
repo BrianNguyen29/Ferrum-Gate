@@ -91,12 +91,15 @@ pub struct ProvenanceQueryResponse {
     pub events: Vec<ProvenanceEvent>,
 }
 
-/// Response for a single provenance event query.
+/// Response for a single provenance event lookup.
+/// Contains the event and optional ancestry/descendants when requested.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ProvenanceEventResponse {
     pub event: ProvenanceEvent,
-    /// Ancestry events returned when ancestry=true query param is set.
-    /// Events are ordered by occurred_at (oldest first).
+    /// Ancestor events reachable by walking backwards via parent_edges (when ?ancestry=true)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ancestry: Option<Vec<ProvenanceEvent>>,
+    /// Descendant events reachable by walking forwards via child_edges (when ?descendants=true)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub descendants: Option<Vec<ProvenanceEvent>>,
 }

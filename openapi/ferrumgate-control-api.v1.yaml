@@ -415,6 +415,12 @@ paths:
           schema:
             type: boolean
           description: When true, include ancestor events reached by walking parent edges backwards.
+        - name: descendants
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: When true, include descendant events reached by walking child edges forwards.
       responses:
         '200':
           description: Provenance event result
@@ -1218,6 +1224,11 @@ components:
         event:
           $ref: '#/components/schemas/ProvenanceEvent'
         ancestry:
+          type: array
+          nullable: true
+          items:
+            $ref: '#/components/schemas/ProvenanceEvent'
+        descendants:
           type: array
           nullable: true
           items:

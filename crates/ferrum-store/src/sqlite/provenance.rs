@@ -249,6 +249,51 @@ impl ProvenanceRepo for SqliteProvenanceRepo {
         Ok(edges)
     }
 
+    async fn get_edges_from(&self, event_id: EventId) -> Result<Vec<ProvenanceEdge>> {
+        let rows = sqlx::query(
+            "SELECT to_event_id, edge_type, summary
+             FROM provenance_edges
+             WHERE from_event_id = ?1",
+        )
+        .bind(event_id.to_string())
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut edges = Vec::with_capacity(rows.len());
+        for row in rows {
+            let to_event_id_str: String = row.try_get("to_event_id")?;
+            let uuid = uuid::Uuid::parse_str(&to_event_id_str).map_err(|e| {
+                crate::StoreError::Internal(format!("invalid event_id in edge: {}", e))
+            })?;
+            let to_event_id = EventId(uuid);
+
+            let edge_type_str: String = row.try_get("edge_type")?;
+            let edge_type = match edge_type_str.as_str() {
+                "DerivedFrom" => ferrum_proto::ProvenanceEdgeType::DerivedFrom,
+                "AuthorizedBy" => ferrum_proto::ProvenanceEdgeType::AuthorizedBy,
+                "ApprovedBy" => ferrum_proto::ProvenanceEdgeType::ApprovedBy,
+                "TaintedBy" => ferrum_proto::ProvenanceEdgeType::TaintedBy,
+                "UsesManifest" => ferrum_proto::ProvenanceEdgeType::UsesManifest,
+                "EvaluatedByPolicy" => ferrum_proto::ProvenanceEdgeType::EvaluatedByPolicy,
+                "Caused" => ferrum_proto::ProvenanceEdgeType::Caused,
+                "Compensates" => ferrum_proto::ProvenanceEdgeType::Compensates,
+                "Verifies" => ferrum_proto::ProvenanceEdgeType::Verifies,
+                "References" => ferrum_proto::ProvenanceEdgeType::References,
+                _other => ferrum_proto::ProvenanceEdgeType::References, // fallback
+            };
+
+            let summary: Option<String> = row.try_get("summary")?;
+
+            edges.push(ProvenanceEdge {
+                edge_type,
+                from_event_id: to_event_id, // Note: from_event_id in ProvenanceEdge is the source, which here is the to_event_id from the DB (child)
+                summary,
+            });
+        }
+
+        Ok(edges)
+    }
+
     async fn get_lineage_by_event(&self, event_id: EventId) -> Result<Vec<ProvenanceEvent>> {
         let visited = self.collect_lineage_event_ids(vec![event_id]).await?;
         self.fetch_events_by_ids(&visited).await
