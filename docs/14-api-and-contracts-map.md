@@ -35,6 +35,7 @@
 | `GET /v1/approvals` | List pending approvals |
 | `GET /v1/approvals/{approval_id}` | Inspect a specific approval |
 | `GET /v1/provenance/lineage/{execution_id}` | Inspect the execution lineage chain |
+| `GET /v1/provenance/events/{event_id}` | Inspect a single provenance event, optionally with `?ancestry=true` and/or `?descendants=true` |
 | `POST /v1/provenance/query` | Query provenance events by `intent_id`, `proposal_id`, `execution_id`, `capability_id`, `event_kind`, time window, or `terminal_only` |
 
 HTTP adapter rollback is a **no-op by design** today; see `15-deployment-and-operations.md` for caveats.

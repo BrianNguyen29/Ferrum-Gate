@@ -1,4 +1,4 @@
-//! Integration tests for POST /v1/provenance/query endpoint
+//! Integration tests for provenance query and event endpoints.
 //!
 //! Tests:
 //! 1. Happy path: query by execution_id returns matching events
@@ -10,9 +10,11 @@ use ferrum_firewall::{DefaultFirewall, SemanticFirewall};
 use ferrum_gateway::{GatewayRuntime, build_router};
 use ferrum_pdp::StaticPdpEngine;
 use ferrum_proto::{
-    ActionProposal, AuthorizeExecutionRequest, CapabilityMintRequest, EffectType,
-    IntentCompileRequest, ProvenanceEventKind, ProvenanceQueryRequest, ResourceBinding,
-    ResourceMode, RiskTier, RollbackClass, TaintBudget, ToolBinding,
+    ActionProposal, ActorRef, ActorType, AuthorizeExecutionRequest, CapabilityMintRequest,
+    EffectType, HashChainRef, IntentCompileRequest, JsonMap, ObjectRef, ObjectType, ProvenanceEdge,
+    ProvenanceEdgeType, ProvenanceEvent, ProvenanceEventKind, ProvenanceEventResponse,
+    ProvenanceQueryRequest, ResourceBinding, ResourceMode, RiskTier, RollbackClass, TaintBudget,
+    ToolBinding,
 };
 use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
 use ferrum_store::{ProvenanceRepo, SqliteStore};
@@ -84,6 +86,50 @@ fn sample_proposal(intent_id: ferrum_proto::IntentId, path: &str) -> ActionPropo
         taint_inputs: vec![],
         metadata: ferrum_proto::JsonMap::new(),
         created_at: chrono::Utc::now(),
+    }
+}
+
+fn sample_provenance_event(
+    kind: ProvenanceEventKind,
+    parent_ids: Vec<ferrum_proto::EventId>,
+) -> ProvenanceEvent {
+    ProvenanceEvent {
+        event_id: ferrum_proto::EventId::new(),
+        kind,
+        occurred_at: chrono::Utc::now(),
+        actor: ActorRef {
+            actor_type: ActorType::System,
+            actor_id: "integration-test".to_string(),
+            display_name: Some("Integration Test".to_string()),
+        },
+        object: ObjectRef {
+            object_type: ObjectType::Unknown,
+            object_id: "provenance-test-object".to_string(),
+            summary: Some("synthetic provenance event".to_string()),
+        },
+        intent_id: None,
+        proposal_id: None,
+        execution_id: None,
+        capability_id: None,
+        rollback_contract_id: None,
+        policy_bundle_id: None,
+        trust_labels: Vec::new(),
+        sensitivity_labels: Vec::new(),
+        parent_edges: parent_ids
+            .into_iter()
+            .map(|from_event_id| ProvenanceEdge {
+                edge_type: ProvenanceEdgeType::DerivedFrom,
+                from_event_id,
+                summary: None,
+            })
+            .collect(),
+        hash_chain: HashChainRef {
+            content_hash: None,
+            manifest_hash: None,
+            policy_bundle_hash: None,
+            previous_ledger_hash: None,
+        },
+        metadata: JsonMap::new(),
     }
 }
 
@@ -710,4 +756,76 @@ async fn test_provenance_query_terminal_only() {
                 | ProvenanceEventKind::ErrorRaised
         )
     }));
+}
+
+#[tokio::test]
+async fn test_get_provenance_event_returns_ancestry_and_descendants() {
+    let (_temp_dir, runtime, store) = create_test_runtime().await;
+
+    let root = sample_provenance_event(ProvenanceEventKind::IntentCompiled, Vec::new());
+    let middle =
+        sample_provenance_event(ProvenanceEventKind::ToolCallPrepared, vec![root.event_id]);
+    let leaf = sample_provenance_event(ProvenanceEventKind::ErrorRaised, vec![middle.event_id]);
+
+    store.provenance().append_event(&root).await.unwrap();
+    store.provenance().append_event(&middle).await.unwrap();
+    store.provenance().append_event(&leaf).await.unwrap();
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!(
+                    "/v1/provenance/events/{}?ancestry=true&descendants=true",
+                    middle.event_id
+                ))
+                .method(axum::http::Method::GET)
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let event_resp: ProvenanceEventResponse = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(event_resp.event.event_id, middle.event_id);
+
+    let ancestry = event_resp.ancestry.expect("expected ancestry in response");
+    let ancestry_ids: Vec<_> = ancestry.into_iter().map(|event| event.event_id).collect();
+    assert_eq!(ancestry_ids, vec![root.event_id]);
+
+    let descendants = event_resp
+        .descendants
+        .expect("expected descendants in response");
+    let descendant_ids: Vec<_> = descendants
+        .into_iter()
+        .map(|event| event.event_id)
+        .collect();
+    assert_eq!(descendant_ids, vec![leaf.event_id]);
+}
+
+#[tokio::test]
+async fn test_get_provenance_event_returns_not_found_for_unknown_event() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!(
+                    "/v1/provenance/events/{}",
+                    ferrum_proto::EventId::new()
+                ))
+                .method(axum::http::Method::GET)
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), axum::http::StatusCode::NOT_FOUND);
 }

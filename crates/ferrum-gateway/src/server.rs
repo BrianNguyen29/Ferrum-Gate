@@ -1,6 +1,6 @@
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{StatusCode, header::AUTHORIZATION},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -11,17 +11,18 @@ use ferrum_proto::{
     ActorRef, ActorType, ApiError, ApiErrorCode, ApprovalId, ApprovalRequest,
     ApprovalResolveRequest, ApprovalState, AuthorizeExecutionRequest, AuthorizeExecutionResponse,
     CapabilityId, CapabilityMintRequest, CapabilityMintResponse, CommitRequest, CommitResponse,
-    CompensateRequest, CompensateResponse, Decision, EvaluateProposalResponse, ExecuteRequest,
-    ExecuteResponse, ExecutionId, ExecutionRecord, ExecutionState, HashChainRef, HealthResponse,
-    IntentCompileRequest, IntentCompileResponse, IntentEnvelope, IntentStatus, ObjectRef,
-    ObjectType, OutcomeClause, ProvenanceEvent, ProvenanceEventKind, ProvenanceQueryRequest,
-    ProvenanceQueryResponse, ResourceBinding, ResourceMode, ResourceSelector, RiskTier,
-    RollbackClass, RollbackRequest, RollbackResponse, RollbackState, RollbackTarget, TimeBudget,
-    TrustContextSummary, VerifyRequest, VerifyResponse,
+    CompensateRequest, CompensateResponse, Decision, EvaluateProposalResponse, EventId,
+    ExecuteRequest, ExecuteResponse, ExecutionId, ExecutionRecord, ExecutionState, HashChainRef,
+    HealthResponse, IntentCompileRequest, IntentCompileResponse, IntentEnvelope, IntentStatus,
+    ObjectRef, ObjectType, OutcomeClause, ProvenanceEvent, ProvenanceEventKind,
+    ProvenanceEventResponse, ProvenanceQueryRequest, ProvenanceQueryResponse, ResourceBinding,
+    ResourceMode, ResourceSelector, RiskTier, RollbackClass, RollbackRequest, RollbackResponse,
+    RollbackState, RollbackTarget, TimeBudget, TrustContextSummary, VerifyRequest, VerifyResponse,
 };
 use ferrum_store::{
     ApprovalRepo, ExecutionRepo, IntentRepo, LedgerRepo, ProposalRepo, ProvenanceRepo, RollbackRepo,
 };
+use serde::Deserialize;
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
 
@@ -145,6 +146,10 @@ fn build_router_inner(runtime: GatewayRuntime, auth_config: Option<ServerConfig>
         .route(
             "/v1/approvals/{approval_id}/resolve",
             post(resolve_approval),
+        )
+        .route(
+            "/v1/provenance/events/{event_id}",
+            get(get_provenance_event),
         )
         .route(
             "/v1/provenance/lineage/{execution_id}",
@@ -2130,6 +2135,149 @@ async fn query_provenance(
     };
 
     Ok(Json(ProvenanceQueryResponse { events }))
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ProvenanceEventQueryParams {
+    #[serde(default)]
+    pub ancestry: bool,
+    #[serde(default)]
+    pub descendants: bool,
+}
+
+async fn get_provenance_event(
+    State(runtime): State<Arc<GatewayRuntime>>,
+    Path(event_id_str): Path<String>,
+    Query(params): Query<ProvenanceEventQueryParams>,
+) -> Result<Json<ProvenanceEventResponse>, ApiProblem> {
+    let event_id = parse_event_id(&event_id_str)?;
+
+    let event = runtime
+        .store
+        .provenance()
+        .get_event(event_id)
+        .await
+        .map_err(|err| ApiProblem::internal(err.into()))?
+        .ok_or_else(|| {
+            ApiProblem::new(
+                StatusCode::NOT_FOUND,
+                ApiErrorCode::NotFound,
+                format!("provenance event {} not found", event_id),
+            )
+        })?;
+
+    let ancestry = if params.ancestry {
+        // Collect all ancestors by walking backwards via edges
+        let mut visited = std::collections::HashSet::new();
+        let mut frontier = vec![event_id];
+
+        while let Some(current_id) = frontier.pop() {
+            if !visited.insert(current_id) {
+                continue;
+            }
+
+            let edges = runtime
+                .store
+                .provenance()
+                .get_edges_to(current_id)
+                .await
+                .map_err(|err| ApiProblem::internal(err.into()))?;
+
+            for edge in edges {
+                if !visited.contains(&edge.from_event_id) {
+                    frontier.push(edge.from_event_id);
+                }
+            }
+        }
+
+        // Fetch full event records for all visited ids (excluding the starting event)
+        visited.remove(&event_id);
+        if !visited.is_empty() {
+            let mut events: Vec<ProvenanceEvent> = Vec::with_capacity(visited.len());
+            for &visited_id in &visited {
+                if let Some(ancestor_event) = runtime
+                    .store
+                    .provenance()
+                    .get_event(visited_id)
+                    .await
+                    .map_err(|err| ApiProblem::internal(err.into()))?
+                {
+                    events.push(ancestor_event);
+                }
+            }
+            events.sort_by(|a, b| a.occurred_at.cmp(&b.occurred_at));
+            Some(events)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let descendants = if params.descendants {
+        // Collect all descendants by walking forwards via edges
+        let mut visited = std::collections::HashSet::new();
+        let mut frontier = vec![event_id];
+
+        while let Some(current_id) = frontier.pop() {
+            if !visited.insert(current_id) {
+                continue;
+            }
+
+            let edges = runtime
+                .store
+                .provenance()
+                .get_edges_from(current_id)
+                .await
+                .map_err(|err| ApiProblem::internal(err.into()))?;
+
+            for edge in edges {
+                if !visited.contains(&edge.from_event_id) {
+                    frontier.push(edge.from_event_id);
+                }
+            }
+        }
+
+        // Fetch full event records for all visited ids (excluding the starting event)
+        visited.remove(&event_id);
+        if !visited.is_empty() {
+            let mut events: Vec<ProvenanceEvent> = Vec::with_capacity(visited.len());
+            for &visited_id in &visited {
+                if let Some(descendant_event) = runtime
+                    .store
+                    .provenance()
+                    .get_event(visited_id)
+                    .await
+                    .map_err(|err| ApiProblem::internal(err.into()))?
+                {
+                    events.push(descendant_event);
+                }
+            }
+            events.sort_by(|a, b| a.occurred_at.cmp(&b.occurred_at));
+            Some(events)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    Ok(Json(ProvenanceEventResponse {
+        event,
+        ancestry,
+        descendants,
+    }))
+}
+
+fn parse_event_id(value: &str) -> Result<EventId, ApiProblem> {
+    let parsed = value.parse::<uuid::Uuid>().map_err(|_| {
+        ApiProblem::new(
+            StatusCode::BAD_REQUEST,
+            ApiErrorCode::ValidationError,
+            "path id is not a valid event uuid",
+        )
+    })?;
+    Ok(EventId(parsed))
 }
 
 fn parse_approval_id(value: &str) -> Result<ApprovalId, ApiProblem> {

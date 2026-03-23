@@ -403,6 +403,36 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProvenanceQueryResponse'
 
+  /v1/provenance/events/{event_id}:
+    get:
+      summary: Get a single provenance event
+      operationId: getProvenanceEvent
+      parameters:
+        - $ref: '#/components/parameters/EventId'
+        - name: ancestry
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: When true, include ancestor events reached by walking parent edges backwards.
+        - name: descendants
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: When true, include descendant events reached by walking child edges forwards.
+      responses:
+        '200':
+          description: Provenance event result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProvenanceEventResponse'
+        '400':
+          $ref: '#/components/responses/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
+
   /v1/provenance/lineage/{execution_id}:
     get:
       summary: Get lineage for execution
@@ -1184,6 +1214,23 @@ components:
       properties:
         events:
           type: array
+          items:
+            $ref: '#/components/schemas/ProvenanceEvent'
+
+    ProvenanceEventResponse:
+      type: object
+      required: [event]
+      properties:
+        event:
+          $ref: '#/components/schemas/ProvenanceEvent'
+        ancestry:
+          type: array
+          nullable: true
+          items:
+            $ref: '#/components/schemas/ProvenanceEvent'
+        descendants:
+          type: array
+          nullable: true
           items:
             $ref: '#/components/schemas/ProvenanceEvent'
 

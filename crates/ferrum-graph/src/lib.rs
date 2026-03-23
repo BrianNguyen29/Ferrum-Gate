@@ -5,16 +5,38 @@ use ferrum_proto::{EventId, ProvenanceEvent, ProvenanceEventKind};
 #[derive(Default)]
 pub struct LineageGraph {
     events: Vec<ProvenanceEvent>,
+    /// Reverse index: from_event_id -> event_ids that have this as a parent
+    child_index: HashMap<EventId, Vec<EventId>>,
 }
 
 impl LineageGraph {
     pub fn from_events(events: Vec<ProvenanceEvent>) -> Self {
-        let mut graph = Self { events };
+        let mut graph = Self {
+            events,
+            child_index: HashMap::new(),
+        };
+        // Build child_index for forward traversal
+        for event in &graph.events {
+            for edge in &event.parent_edges {
+                graph
+                    .child_index
+                    .entry(edge.from_event_id)
+                    .or_default()
+                    .push(event.event_id);
+            }
+        }
         graph.sort();
         graph
     }
 
     pub fn push(&mut self, event: ProvenanceEvent) {
+        // Update child_index when pushing
+        for edge in &event.parent_edges {
+            self.child_index
+                .entry(edge.from_event_id)
+                .or_default()
+                .push(event.event_id);
+        }
         self.events.push(event);
         self.sort();
     }
@@ -63,6 +85,44 @@ impl LineageGraph {
 
         lineage.sort_by(|a, b| a.occurred_at.cmp(&b.occurred_at));
         lineage
+    }
+
+    /// Walk forwards from a given event, collecting all descendant events.
+    /// Uses the child_index to find children at each step.
+    pub fn walk_forwards_from(&self, event_id: EventId) -> Vec<ProvenanceEvent> {
+        let by_id: HashMap<EventId, &ProvenanceEvent> = self
+            .events
+            .iter()
+            .map(|event| (event.event_id, event))
+            .collect();
+        let mut visited: HashSet<EventId> = HashSet::new();
+        let mut frontier = vec![event_id];
+        let mut descendants = Vec::new();
+
+        while let Some(current_id) = frontier.pop() {
+            if !visited.insert(current_id) {
+                continue;
+            }
+
+            // Get children from the child_index
+            if let Some(child_ids) = self.child_index.get(&current_id) {
+                for &child_id in child_ids {
+                    if !visited.contains(&child_id) {
+                        frontier.push(child_id);
+                    }
+                }
+            }
+
+            // Don't include the starting event in descendants
+            if current_id != event_id {
+                if let Some(event) = by_id.get(&current_id) {
+                    descendants.push((*event).clone());
+                }
+            }
+        }
+
+        descendants.sort_by(|a, b| a.occurred_at.cmp(&b.occurred_at));
+        descendants
     }
 
     fn sort(&mut self) {
@@ -178,5 +238,30 @@ mod tests {
             lineage_ids,
             vec![root.event_id, middle.event_id, leaf.event_id]
         );
+    }
+
+    #[test]
+    fn walk_forwards_returns_multi_hop_descendants() {
+        let base_time = Utc::now();
+        let root = make_event(ProvenanceEventKind::IntentCompiled, base_time, Vec::new());
+        let middle = make_event(
+            ProvenanceEventKind::ToolCallPrepared,
+            base_time + Duration::seconds(1),
+            vec![root.event_id],
+        );
+        let leaf = make_event(
+            ProvenanceEventKind::SideEffectCommitted,
+            base_time + Duration::seconds(2),
+            vec![middle.event_id],
+        );
+        let graph = LineageGraph::from_events(vec![leaf.clone(), root.clone(), middle.clone()]);
+
+        let descendants = graph.walk_forwards_from(root.event_id);
+        let descendant_ids: Vec<EventId> = descendants
+            .into_iter()
+            .map(|event| event.event_id)
+            .collect();
+
+        assert_eq!(descendant_ids, vec![middle.event_id, leaf.event_id]);
     }
 }
