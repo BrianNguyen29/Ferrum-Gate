@@ -95,6 +95,9 @@ pub trait ProvenanceRepo: Send + Sync {
     async fn get_edges_to(&self, event_id: EventId) -> Result<Vec<ProvenanceEdge>>;
     /// Query edges where the given event is the source (outgoing edges / descendants)
     async fn get_edges_from(&self, event_id: EventId) -> Result<Vec<ProvenanceEdge>>;
+    /// Reconstruct the lineage chain for a single event by walking edges backwards.
+    /// Returns events ordered by occurred_at (oldest first), including the starting event.
+    async fn get_lineage_by_event(&self, event_id: EventId) -> Result<Vec<ProvenanceEvent>>;
     /// Reconstruct the lineage chain for an execution by walking edges backwards.
     /// Returns events ordered by occurred_at (oldest first).
     async fn get_lineage_by_execution(

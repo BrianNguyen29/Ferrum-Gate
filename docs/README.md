@@ -31,6 +31,7 @@ Sau đó mới đọc:
 - `15-deployment-and-operations.md`
 - `16-release-checklist.md`
 - `17-troubleshooting.md`
+- `runbooks/` — operator runbooks for specific production scenarios
 
 ## Thư mục con
 - .agents - các kĩ năng chuyên biệt về rust, hãy luôn sử dụng trong quá trình làm việc, và yêu cầu các sub-agents cũng sử dụng khi cần

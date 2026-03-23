@@ -2139,10 +2139,12 @@ async fn query_provenance(
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct ProvenanceEventQueryParams {
-    #[serde(default)]
-    pub ancestry: bool,
+    /// When true, include descendant events (walk forwards from this event using child edges).
     #[serde(default)]
     pub descendants: bool,
+    /// When true, include ancestry (walk backwards from this event using parent edges).
+    #[serde(default)]
+    pub ancestry: bool,
 }
 
 async fn get_provenance_event(
@@ -2167,49 +2169,18 @@ async fn get_provenance_event(
         })?;
 
     let ancestry = if params.ancestry {
-        // Collect all ancestors by walking backwards via edges
-        let mut visited = std::collections::HashSet::new();
-        let mut frontier = vec![event_id];
+        let lineage = runtime
+            .store
+            .provenance()
+            .get_lineage_by_event(event_id)
+            .await
+            .map_err(|err| ApiProblem::internal(err.into()))?;
 
-        while let Some(current_id) = frontier.pop() {
-            if !visited.insert(current_id) {
-                continue;
-            }
-
-            let edges = runtime
-                .store
-                .provenance()
-                .get_edges_to(current_id)
-                .await
-                .map_err(|err| ApiProblem::internal(err.into()))?;
-
-            for edge in edges {
-                if !visited.contains(&edge.from_event_id) {
-                    frontier.push(edge.from_event_id);
-                }
-            }
-        }
-
-        // Fetch full event records for all visited ids (excluding the starting event)
-        visited.remove(&event_id);
-        if !visited.is_empty() {
-            let mut events: Vec<ProvenanceEvent> = Vec::with_capacity(visited.len());
-            for &visited_id in &visited {
-                if let Some(ancestor_event) = runtime
-                    .store
-                    .provenance()
-                    .get_event(visited_id)
-                    .await
-                    .map_err(|err| ApiProblem::internal(err.into()))?
-                {
-                    events.push(ancestor_event);
-                }
-            }
-            events.sort_by(|a, b| a.occurred_at.cmp(&b.occurred_at));
-            Some(events)
-        } else {
-            None
-        }
+        let ancestors = lineage
+            .into_iter()
+            .filter(|lineage_event| lineage_event.event_id != event_id)
+            .collect();
+        Some(ancestors)
     } else {
         None
     };
