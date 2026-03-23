@@ -195,6 +195,15 @@ struct ProvenanceEvent {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+struct ProvenanceEventResponse {
+    event: ProvenanceEvent,
+    #[serde(default)]
+    ancestry: Option<Vec<ProvenanceEvent>>,
+    #[serde(default)]
+    descendants: Option<Vec<ProvenanceEvent>>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 struct LineageResponse {
     execution_id: String,
     events: Vec<ProvenanceEvent>,
@@ -335,6 +344,24 @@ impl ServerClient {
         let resp = self
             .request(reqwest::Method::POST, "/v1/provenance/query")
             .json(query)
+            .send()
+            .await?;
+        self.decode_json(resp).await
+    }
+
+    async fn get_event(
+        &self,
+        event_id: &str,
+        ancestry: bool,
+        descendants: bool,
+    ) -> Result<ProvenanceEventResponse> {
+        let path = format!("/v1/provenance/events/{}", event_id);
+        let resp = self
+            .request(reqwest::Method::GET, &path)
+            .query(&[
+                ("ancestry", ancestry.to_string()),
+                ("descendants", descendants.to_string()),
+            ])
             .send()
             .await?;
         self.decode_json(resp).await
@@ -549,6 +576,31 @@ enum ServerCommand {
         /// Filter events until timestamp (ISO 8601).
         #[arg(long)]
         until: Option<String>,
+
+        /// Server base URL (e.g. http://127.0.0.1:8080).
+        #[arg(long, env = "FERRUMCTL_SERVER_URL")]
+        server_url: Option<String>,
+
+        /// Bearer token for authentication.
+        #[arg(long, env = "FERRUMCTL_BEARER_TOKEN")]
+        bearer_token: Option<String>,
+
+        /// Output as JSON instead of human-readable.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Inspect a single provenance event by ID with optional ancestry/descendants.
+    InspectEvent {
+        /// Event ID (UUID).
+        event_id: String,
+
+        /// Include ancestor events in response.
+        #[arg(long)]
+        ancestry: bool,
+
+        /// Include descendant events in response.
+        #[arg(long)]
+        descendants: bool,
 
         /// Server base URL (e.g. http://127.0.0.1:8080).
         #[arg(long, env = "FERRUMCTL_SERVER_URL")]
@@ -899,6 +951,49 @@ async fn run_inspect_provenance(options: InspectProvenanceOptions) -> Result<()>
     Ok(())
 }
 
+async fn run_inspect_event(
+    event_id: &str,
+    ancestry: bool,
+    descendants: bool,
+    url: Option<String>,
+    token: Option<String>,
+    as_json: bool,
+) -> Result<()> {
+    let url = resolve_server_url(url)?;
+    let client = ServerClient::new(&url, token);
+    let response = client.get_event(event_id, ancestry, descendants).await?;
+
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&response)?);
+    } else {
+        println!("Event: {}", response.event.event_id);
+        println!("  Kind:       {}", response.event.kind);
+        println!("  Occurred:   {}", response.event.occurred_at);
+        if let Some(iid) = response.event.intent_id {
+            println!("  Intent:     {}", iid);
+        }
+        if let Some(pid) = response.event.proposal_id {
+            println!("  Proposal:   {}", pid);
+        }
+        if let Some(eid) = response.event.execution_id {
+            println!("  Execution:  {}", eid);
+        }
+        if let Some(anc) = response.ancestry {
+            println!("\nAncestry ({} events):", anc.len());
+            for e in anc {
+                println!("  [{}] {}  {}", e.occurred_at, e.kind, e.event_id);
+            }
+        }
+        if let Some(desc) = response.descendants {
+            println!("\nDescendants ({} events):", desc.len());
+            for e in desc {
+                println!("  [{}] {}  {}", e.occurred_at, e.kind, e.event_id);
+            }
+        }
+    }
+    Ok(())
+}
+
 async fn run_ingest_external_event(
     execution_id: String,
     parent_event_id: String,
@@ -1027,6 +1122,24 @@ async fn main() -> Result<()> {
                     token: bearer_token,
                     as_json: json,
                 })
+                .await?;
+            }
+            ServerCommand::InspectEvent {
+                event_id,
+                ancestry,
+                descendants,
+                server_url,
+                bearer_token,
+                json,
+            } => {
+                run_inspect_event(
+                    &event_id,
+                    ancestry,
+                    descendants,
+                    server_url,
+                    bearer_token,
+                    json,
+                )
                 .await?;
             }
             ServerCommand::IngestExternalEvent {

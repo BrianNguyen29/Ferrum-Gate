@@ -117,6 +117,12 @@ cargo run -p ferrumctl -- server inspect-provenance \
   --execution-id <execution_id> \
   --terminal-only
 
+# Inspect a single provenance event by ID
+cargo run -p ferrumctl -- server inspect-event <event_id>
+
+# Inspect event with ancestry and descendants
+cargo run -p ferrumctl -- server inspect-event <event_id> --ancestry --descendants
+
 # Ingest an external runtime event into provenance lineage
 # (operator boundary: records vendor-neutral external observations)
 cargo run -p ferrumctl -- server ingest-external-event \
