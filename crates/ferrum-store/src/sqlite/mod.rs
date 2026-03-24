@@ -23,7 +23,7 @@ pub use rollback::SqliteRollbackRepo;
 
 use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
 
-use crate::Result;
+use crate::{CapabilityRepo, ExecutionRepo, Result};
 
 #[derive(Clone)]
 pub struct SqliteStore {
@@ -100,5 +100,30 @@ impl SqliteStore {
 
     pub fn ledger(&self) -> SqliteLedgerRepo {
         SqliteLedgerRepo::new(self.pool.clone())
+    }
+
+    /// Reconcile legacy split-brain state: for any capability that is Active in SQLite
+    /// but already has execution history, transition it to Used.
+    /// This is fail-closed: if reconciliation fails, an error is returned.
+    pub async fn reconcile_capabilities_with_executions(&self) -> Result<usize> {
+        let active_capabilities = self.capabilities().list_active().await?;
+        let mut reconciled_count = 0;
+
+        for capability in active_capabilities {
+            let executions = self
+                .executions()
+                .list_by_capability(capability.capability_id)
+                .await?;
+            if !executions.is_empty()
+                && self
+                    .capabilities()
+                    .mark_used_if_active(capability.capability_id)
+                    .await?
+            {
+                reconciled_count += 1;
+            }
+        }
+
+        Ok(reconciled_count)
     }
 }

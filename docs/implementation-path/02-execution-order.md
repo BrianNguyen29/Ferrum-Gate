@@ -15,7 +15,7 @@ F. hardening and evidence
 4. cap
 5. firewall
 6. rollback
-7. adapters fs/sqlite/maildraft
+7. adapters fs/sqlite/maildraft/git/http
 8. graph
 9. ledger
 10. gateway

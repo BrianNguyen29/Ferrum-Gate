@@ -24,6 +24,8 @@ Mục tiêu:
 - fs adapter thật
 - sqlite adapter thật
 - maildraft adapter thật
+- git adapter thật
+- http adapter full parity (GET/POST/PUT/PATCH/DELETE + body/header/query binding + auth) thật
 
 ## Phase E — Gateway orchestration
 Mục tiêu:
@@ -34,6 +36,7 @@ Mục tiêu:
 Mục tiêu:
 - tests
 - poisoned context regression
+- supported flows / open gaps handoff
 - examples
 - CLI / debug flow
 
@@ -44,7 +47,7 @@ Mục tiêu:
 4. cap
 5. firewall
 6. rollback
-7. fs/sqlite/maildraft adapters
+7. fs/sqlite/maildraft/git/http adapters
 8. graph
 9. ledger
 10. gateway

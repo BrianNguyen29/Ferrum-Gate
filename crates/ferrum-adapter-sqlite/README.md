@@ -1,6 +1,9 @@
 # ferrum-adapter-sqlite
 
-Adapter skeleton.
+SQLite rollback adapter used for supported recovery evidence.
 
-Trạng thái:
-- placeholder để agent khác có thể hoàn thiện tiếp.
+Trang thai hien tai:
+- execute thuc hien row upsert tren file-backed SQLite DB
+- prepare/execute luu metadata can thiet cho verify va recovery
+- verify doi chieu row state voi execute-time snapshot
+- rollback/compensate khoi phuc row cu hoac xoa row moi tao neu truoc do khong ton tai

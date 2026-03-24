@@ -20,6 +20,8 @@ pub enum CapabilityError {
     Expired,
     #[error("requested ttl exceeds max allowed")]
     TtlTooLong,
+    #[error("capability persistence failure")]
+    Internal,
 }
 
 #[async_trait]

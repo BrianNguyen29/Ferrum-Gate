@@ -1,11 +1,12 @@
 # Contributing
 
 ## Development flow
-1. Read `docs/00-repo-map.md`
-2. Read `docs/12-agent-handoff.md`
-3. Pick one crate or one document boundary at a time
-4. Do not change contracts and schemas without updating docs and tests
-5. Preserve intent/capability/provenance/rollback invariants
+1. Read `docs/README.md`
+2. Read `docs/00-project-canon.md`
+3. Read `docs/implementation-path/README.md`
+4. Pick one crate or one document boundary at a time
+5. Do not change contracts and schemas without updating docs and tests
+6. Preserve intent/capability/provenance/rollback invariants
 
 ## Commit style
 Use conventional commits where possible:

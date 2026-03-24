@@ -6,6 +6,7 @@ use axum::{
     routing::{get, post},
 };
 use chrono::{Duration, Utc};
+use ferrum_graph::LineageGraph;
 use ferrum_proto::{
     ActorRef, ActorType, ApiError, ApiErrorCode, ApprovalId, ApprovalRequest,
     ApprovalResolveRequest, ApprovalState, AuthorizeExecutionRequest, AuthorizeExecutionResponse,
@@ -23,7 +24,7 @@ use ferrum_store::{
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
 
-use crate::{GatewayConfig, GatewayRuntime};
+use crate::{AuthMode, GatewayConfig, GatewayRuntime, ServerConfig};
 
 fn create_provenance_event(
     kind: ProvenanceEventKind,
@@ -68,16 +69,38 @@ fn create_provenance_event(
     }
 }
 
-pub async fn run_http_server(config: GatewayConfig, runtime: GatewayRuntime) -> anyhow::Result<()> {
-    let app = build_router(runtime);
+/// HTTP server entry point. Chooses auth-aware or auth-disabled router based on config.
+/// Auth-aware router enforces bearer token on all non-health endpoints.
+pub async fn run_http_server(
+    config: GatewayConfig,
+    runtime: GatewayRuntime,
+    server_config: ServerConfig,
+) -> anyhow::Result<()> {
+    let app = if server_config.auth_mode == AuthMode::Bearer {
+        build_authenticated_router(runtime, server_config)
+    } else {
+        build_router(runtime)
+    };
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
     tracing::info!("ferrumd listening on {}", config.bind_addr);
     axum::serve(listener, app).await?;
     Ok(())
 }
 
+/// Builds the auth-disabled router used by integration tests and local development.
+/// All routes are accessible without authentication.
 pub fn build_router(runtime: GatewayRuntime) -> Router {
-    Router::new()
+    build_router_inner(runtime, None)
+}
+
+/// Builds an auth-aware router that enforces bearer token on all non-health endpoints.
+/// Health endpoints (/v1/healthz, /v1/readyz) remain unauthenticated.
+pub fn build_authenticated_router(runtime: GatewayRuntime, server_config: ServerConfig) -> Router {
+    build_router_inner(runtime, Some(server_config))
+}
+
+fn build_router_inner(runtime: GatewayRuntime, auth_config: Option<ServerConfig>) -> Router {
+    let router = Router::new()
         .route("/v1/healthz", get(healthz))
         .route("/v1/readyz", get(readyz))
         .route("/v1/intents/compile", post(compile_intent))
@@ -110,7 +133,59 @@ pub fn build_router(runtime: GatewayRuntime) -> Router {
             post(compensate_execution),
         )
         .with_state(Arc::new(runtime))
-        .layer(TraceLayer::new_for_http())
+        .layer(TraceLayer::new_for_http());
+
+    if let Some(server_config) = auth_config {
+        let bearer_token = server_config.bearer_token.clone();
+        router.layer(axum::middleware::from_fn_with_state(
+            bearer_token,
+            bearer_auth_middleware,
+        ))
+    } else {
+        router
+    }
+}
+
+/// Bearer authentication middleware.
+/// Returns 401 with ApiErrorCode::PolicyDenied when auth is missing or invalid.
+/// Health endpoints pass through without authentication.
+async fn bearer_auth_middleware(
+    State(token): State<Option<String>>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let path = request.uri().path().to_string();
+
+    // Health endpoints are always accessible without auth
+    if path == "/v1/healthz" || path == "/v1/readyz" {
+        return next.run(request).await;
+    }
+
+    let token = match token {
+        Some(t) if !t.is_empty() => t,
+        _ => {
+            return ApiProblem::auth_error("authentication required");
+        }
+    };
+
+    // Extract Bearer token from Authorization header
+    let auth_header = request
+        .headers()
+        .get(AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
+
+    let provided = match auth_header {
+        Some(h) if h.starts_with("Bearer ") => &h[7..],
+        _ => {
+            return ApiProblem::auth_error("missing or invalid Authorization header");
+        }
+    };
+
+    if provided != token {
+        return ApiProblem::auth_error("invalid bearer token");
+    }
+
+    next.run(request).await
 }
 
 async fn healthz() -> Json<HealthResponse> {
@@ -133,16 +208,23 @@ async fn compile_intent(
     let requested_risk = req.requested_risk_tier.unwrap_or(RiskTier::Medium);
     let default_rollback_class = infer_rollback_class(&req.requested_resource_scope);
 
-    let input_labels = req
-        .raw_inputs
-        .iter()
-        .flat_map(|r| r.trust_labels.clone())
-        .collect::<Vec<_>>();
-    let sensitivity_labels = req
-        .raw_inputs
-        .iter()
-        .flat_map(|r| r.sensitivity_labels.clone())
-        .collect::<Vec<_>>();
+    // Use firewall to derive trust context from raw inputs
+    let trust_context = runtime.firewall.derive_trust_context(&req.raw_inputs, &[]);
+
+    // Collect warnings from inferred labels
+    let mut warnings = Vec::new();
+    if trust_context.contains_untrusted_text {
+        warnings.push("Input contains potentially untrusted text".to_string());
+    }
+    if trust_context.contains_external_metadata {
+        warnings.push("Input contains external metadata".to_string());
+    }
+    if trust_context.contains_tool_output {
+        warnings.push("Input contains tool output".to_string());
+    }
+    if trust_context.taint_score > 50 {
+        warnings.push(format!("High taint score: {}", trust_context.taint_score));
+    }
 
     let envelope = IntentEnvelope {
         intent_id: ferrum_proto::IntentId::new(),
@@ -155,7 +237,9 @@ async fn compile_intent(
         allowed_outcomes: vec![OutcomeClause {
             id: "primary".to_string(),
             description: req.agent_plan_summary.unwrap_or_else(|| req.goal.clone()),
-            effect_type: ferrum_proto::EffectType::ReadOnlyAnalysis,
+            effect_type: req
+                .effect_type
+                .unwrap_or(ferrum_proto::EffectType::ReadOnlyAnalysis),
             required: true,
         }],
         forbidden_outcomes: Vec::new(),
@@ -168,14 +252,7 @@ async fn compile_intent(
             max_steps: 8,
             max_retries_per_step: 1,
         },
-        trust_context: TrustContextSummary {
-            input_labels,
-            sensitivity_labels,
-            taint_score: 0,
-            contains_external_metadata: false,
-            contains_tool_output: false,
-            contains_untrusted_text: false,
-        },
+        trust_context,
         derived_from_event_ids: req.raw_inputs.iter().filter_map(|r| r.event_id).collect(),
         tags: Vec::new(),
         metadata: req.metadata,
@@ -208,15 +285,12 @@ async fn compile_intent(
         tracing::warn!("failed to persist provenance event: {}", e);
     }
 
-    Ok(Json(IntentCompileResponse {
-        envelope,
-        warnings: Vec::new(),
-    }))
+    Ok(Json(IntentCompileResponse { envelope, warnings }))
 }
 
 async fn evaluate_proposal(
     State(runtime): State<Arc<GatewayRuntime>>,
-    Path(_proposal_id): Path<String>,
+    Path(proposal_id_from_path): Path<String>,
     Json(proposal): Json<ferrum_proto::ActionProposal>,
 ) -> Result<Json<EvaluateProposalResponse>, ApiProblem> {
     let intent = minimal_intent_for(
@@ -259,10 +333,195 @@ async fn evaluate_proposal(
 
     let out = runtime
         .pdp
-        .evaluate(&intent, &proposal, &trust)
+        .evaluate(&intent, &proposal_for_eval, &combined_trust)
         .await
         .map_err(ApiProblem::internal)?;
+
+    // Merge contradiction warnings into PDP output
+    if !contradiction_warnings.is_empty() {
+        out.warnings.extend(contradiction_warnings);
+    }
+
+    // Store the decision in the proposal after evaluation (already has effective rollback class)
+    let mut proposal_with_decision = proposal_for_eval.clone();
+    proposal_with_decision.decision = Some(out.decision.clone());
+
+    // Update the proposal with the decision
+    if let Err(e) = runtime
+        .store
+        .proposals()
+        .update(&proposal_with_decision)
+        .await
+    {
+        tracing::warn!("failed to update proposal with decision: {}", e);
+    }
+
+    // Emit provenance for policy evaluation with linkage to submission event if proposal was persisted
+    let parent_edge = if let Some(submission_event_id) = submission_event_id {
+        vec![ferrum_proto::ProvenanceEdge {
+            edge_type: ferrum_proto::ProvenanceEdgeType::Caused,
+            from_event_id: submission_event_id,
+            summary: Some("policy evaluation follows proposal submission".to_string()),
+        }]
+    } else {
+        Vec::new()
+    };
+
+    let mut eval_event = create_provenance_event(
+        ProvenanceEventKind::PolicyEvaluated,
+        now,
+        Some(intent_id),
+        Some(proposal.proposal_id),
+        None,
+        None,
+        None,
+        None,
+    );
+    eval_event.parent_edges = parent_edge;
+
+    if let Err(e) = runtime.store.provenance().append_event(&eval_event).await {
+        tracing::warn!("failed to persist provenance event: {}", e);
+    }
+
     Ok(Json(out))
+}
+
+/// Check if a resource binding is within the allowed scope (subset check)
+/// Fail-closed: any mismatch or permission widening results in denial
+fn is_binding_within_scope(binding: &ResourceBinding, scope: &[ResourceSelector]) -> bool {
+    // Fail-closed: if no scope defined, deny any non-empty binding
+    if scope.is_empty() {
+        return false;
+    }
+
+    match binding {
+        ResourceBinding::File { path, mode, .. } => {
+            scope.iter().any(|selector| match selector {
+                ResourceSelector::FilesystemPath {
+                    path: scope_path,
+                    mode: scope_mode,
+                    ..
+                } => {
+                    // Path must be within scope (prefix match)
+                    let path_ok = path.starts_with(scope_path);
+                    // Mode must not exceed scope - conservative subset check
+                    let mode_ok = is_mode_subset_of(mode, scope_mode);
+                    path_ok && mode_ok
+                }
+                _ => false,
+            })
+        }
+        ResourceBinding::Http {
+            base_url,
+            path_prefix,
+            method: _,
+            mode,
+            ..
+        } => scope.iter().any(|selector| match selector {
+            ResourceSelector::HttpEndpoint {
+                base_url: scope_url,
+                path_prefix: scope_prefix,
+                mode: scope_mode,
+                ..
+            } => {
+                let url_ok = base_url == scope_url;
+                let prefix_ok = path_prefix.starts_with(scope_prefix);
+                // Mode must not exceed scope - conservative subset check
+                let mode_ok = is_mode_subset_of(mode, scope_mode);
+                url_ok && prefix_ok && mode_ok
+            }
+            _ => false,
+        }),
+        ResourceBinding::Sqlite {
+            db_path,
+            tables,
+            mode,
+        } => {
+            scope.iter().any(|selector| match selector {
+                ResourceSelector::SqliteDatabase {
+                    db_path: scope_db,
+                    tables: scope_tables,
+                    mode: scope_mode,
+                } => {
+                    let db_ok = db_path == scope_db;
+                    // Tables must be subset of scope tables (or scope allows all)
+                    let tables_ok =
+                        scope_tables.is_empty() || tables.iter().all(|t| scope_tables.contains(t));
+                    // Mode must not exceed scope - conservative subset check
+                    let mode_ok = is_mode_subset_of(mode, scope_mode);
+                    db_ok && tables_ok && mode_ok
+                }
+                _ => false,
+            })
+        }
+        ResourceBinding::Git {
+            repo_path,
+            allowed_refs,
+            mode,
+        } => {
+            scope.iter().any(|selector| match selector {
+                ResourceSelector::GitRepository {
+                    repo_path: scope_repo,
+                    allowed_refs: scope_refs,
+                    mode: scope_mode,
+                } => {
+                    let repo_ok = repo_path == scope_repo;
+                    // Refs must be subset of scope refs (or scope allows all)
+                    let refs_ok = scope_refs.is_empty()
+                        || allowed_refs.iter().all(|r| scope_refs.contains(r));
+                    // Mode must not exceed scope - conservative subset check
+                    let mode_ok = is_mode_subset_of(mode, scope_mode);
+                    repo_ok && refs_ok && mode_ok
+                }
+                _ => false,
+            })
+        }
+        ResourceBinding::EmailDraft {
+            recipients,
+            allow_send,
+            mode,
+        } => {
+            scope.iter().any(|selector| match selector {
+                ResourceSelector::EmailDraft {
+                    recipient_allowlist,
+                    mode: scope_mode,
+                    ..
+                } => {
+                    // Recipients must be in allowlist
+                    let recipients_ok = recipient_allowlist.is_empty()
+                        || recipients.iter().all(|r| recipient_allowlist.contains(r));
+                    // If scope is read-only, cannot send
+                    let send_ok = !matches!((scope_mode, allow_send), (ResourceMode::Read, true));
+                    // Mode must not exceed scope - conservative subset check
+                    let mode_ok = is_mode_subset_of(mode, scope_mode);
+                    recipients_ok && send_ok && mode_ok
+                }
+                _ => false,
+            })
+        }
+    }
+}
+
+/// Check if a requested mode is a subset of (does not exceed) the scope mode.
+/// Conservative permission model: scope_mode must encompass all permissions in requested mode.
+fn is_mode_subset_of(requested: &ResourceMode, scope: &ResourceMode) -> bool {
+    match scope {
+        // Admin scope allows any mode
+        ResourceMode::Admin => true,
+        // ReadWrite scope allows Read, Write, ReadWrite, but NOT Execute/Admin
+        ResourceMode::ReadWrite => matches!(
+            requested,
+            ResourceMode::Read | ResourceMode::Write | ResourceMode::ReadWrite
+        ),
+        // Write scope allows Write and Read (write access typically implies read access to written data)
+        ResourceMode::Write => matches!(requested, ResourceMode::Write | ResourceMode::Read),
+        // Read scope allows only Read (most restrictive)
+        ResourceMode::Read => matches!(requested, ResourceMode::Read),
+        // Draft scope allows only Draft (special purpose mode)
+        ResourceMode::Draft => matches!(requested, ResourceMode::Draft),
+        // Execute scope allows only Execute (special purpose mode)
+        ResourceMode::Execute => matches!(requested, ResourceMode::Execute),
+    }
 }
 
 async fn mint_capability(
@@ -523,20 +782,97 @@ async fn authorize_execution(
     }
 
     let now = Utc::now();
+
+    // SINGLE-USE ENFORCEMENT: Mark capability as consumed at authorize time
+    // This ensures exactly one authorize per capability
+    runtime
+        .cap
+        .mark_used(request.capability_id)
+        .await
+        .map_err(ApiProblem::from_capability)?;
+
+    // Handle DraftOnly: allow only for dry_run, otherwise fail-closed
+    if is_draft_only && !request.dry_run {
+        let record = ExecutionRecord {
+            execution_id: ExecutionId::new(),
+            proposal_id: request.proposal_id,
+            intent_id: lease.intent_id,
+            capability_id: lease.capability_id,
+            rollback_contract_id: None,
+            decision: Decision::Deny,
+            state: ExecutionState::Denied,
+            started_at: now,
+            finished_at: Some(now),
+            result_digest: None,
+            metadata: ferrum_proto::JsonMap::new(),
+        };
+
+        let execution_id = record.execution_id;
+        let intent_id = record.intent_id;
+        let capability_id = record.capability_id;
+        let proposal_id = record.proposal_id;
+
+        if let Err(e) = runtime.store.executions().insert(&record).await {
+            tracing::warn!("failed to persist execution: {}", e);
+        } else {
+            let event = create_provenance_event(
+                ProvenanceEventKind::ToolCallPrepared,
+                now,
+                Some(intent_id),
+                Some(proposal_id),
+                Some(execution_id),
+                Some(capability_id),
+                None,
+                None,
+            );
+            if let Err(e) = runtime.store.provenance().append_event(&event).await {
+                tracing::warn!("failed to persist provenance event: {}", e);
+            }
+        }
+
+        return Ok(Json(AuthorizeExecutionResponse {
+            execution: record,
+            warnings: vec!["draft-only proposal denied for non-dry-run execution".to_string()],
+        }));
+    }
+
+    // Non-allow decisions should not progress to executable states
+    let is_blocked = is_quarantined || is_require_approval || is_deny;
+
+    // Determine execution state and decision based on proposal decision
+    let (execution_state, execution_decision) = if is_blocked {
+        // Blocked decisions get terminal error states:
+        // - Quarantine -> Quarantined (already terminal)
+        // - RequireApproval -> AwaitingApproval (requires external approval before execution)
+        // - Deny -> Denied (terminal, rejected)
+        if is_quarantined {
+            (ExecutionState::Quarantined, Decision::Quarantine)
+        } else if is_require_approval {
+            (ExecutionState::AwaitingApproval, Decision::RequireApproval)
+        } else {
+            (ExecutionState::Denied, Decision::Deny)
+        }
+    } else if request.dry_run {
+        let decision = if is_draft_only {
+            Decision::AllowDraftOnly
+        } else {
+            Decision::Allow
+        };
+        (ExecutionState::Authorized, decision)
+    } else {
+        (ExecutionState::Prepared, Decision::Allow)
+    };
+
     let record = ExecutionRecord {
         execution_id: ExecutionId::new(),
         proposal_id: request.proposal_id,
         intent_id: lease_used.intent_id,
         capability_id: lease_used.capability_id,
         rollback_contract_id: None,
-        decision: Decision::Allow,
-        state: if request.dry_run {
-            ExecutionState::Authorized
-        } else {
-            ExecutionState::Prepared
-        },
+        decision: execution_decision,
+        state: execution_state,
         started_at: now,
-        finished_at: None,
+        finished_at: if is_blocked { Some(now) } else { None },
         result_digest: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
@@ -569,6 +905,54 @@ async fn authorize_execution(
         tracing::warn!("failed to persist provenance event: {}", e);
     }
 
+    // For RequireApproval, create and persist an approval request
+    if is_require_approval {
+        let approval = ApprovalRequest {
+            approval_id: ApprovalId::new(),
+            intent_id,
+            proposal_id,
+            execution_id: Some(execution_id),
+            requested_by: ActorRef {
+                actor_type: ActorType::Gateway,
+                actor_id: "ferrum-gateway".to_string(),
+                display_name: Some("Ferrum Gateway".to_string()),
+            },
+            reason: proposal.expected_effect.clone(),
+            action_digest: format!("{}/{}", proposal.server_name, proposal.tool_name),
+            expires_at: now + Duration::hours(24),
+            state: ApprovalState::Pending,
+            created_at: now,
+        };
+
+        if let Err(e) = runtime.store.approvals().insert(&approval).await {
+            tracing::warn!("failed to persist approval request: {}", e);
+        } else {
+            tracing::info!(
+                "approval request created: {} for execution: {}",
+                approval.approval_id,
+                execution_id
+            );
+
+            // Emit ApprovalRequested provenance event
+            let event = create_provenance_event(
+                ProvenanceEventKind::ApprovalRequested,
+                now,
+                Some(intent_id),
+                Some(proposal_id),
+                Some(execution_id),
+                Some(capability_id),
+                None,
+                None,
+            );
+            if let Err(e) = runtime.store.provenance().append_event(&event).await {
+                tracing::warn!(
+                    "failed to persist approval requested provenance event: {}",
+                    e
+                );
+            }
+        }
+    }
+
     Ok(Json(AuthorizeExecutionResponse {
         execution: record,
         warnings: Vec::new(),
@@ -595,15 +979,134 @@ async fn prepare_execution(
         ));
     };
 
+    if matches!(existing.decision, Decision::AllowDraftOnly) {
+        return Err(ApiProblem::new(
+            StatusCode::CONFLICT,
+            ApiErrorCode::PolicyDenied,
+            "draft-only execution cannot proceed to prepare",
+        ));
+    }
+
+    // State guard: block terminal/error states from proceeding to prepare
+    // Terminal states that should NOT proceed: Quarantined, Denied, Failed, Compensated, RolledBack, Committed
+    // Also block: AwaitingApproval (requires external approval before proceeding)
+    match existing.state {
+        ExecutionState::Quarantined => {
+            return Err(ApiProblem::new(
+                StatusCode::CONFLICT,
+                ApiErrorCode::Conflict,
+                "execution is quarantined and cannot proceed",
+            ));
+        }
+        ExecutionState::AwaitingApproval => {
+            return Err(ApiProblem::new(
+                StatusCode::CONFLICT,
+                ApiErrorCode::ApprovalRequired,
+                "execution is awaiting approval and cannot proceed",
+            ));
+        }
+        ExecutionState::Denied => {
+            return Err(ApiProblem::new(
+                StatusCode::CONFLICT,
+                ApiErrorCode::PolicyDenied,
+                "execution was denied and cannot proceed",
+            ));
+        }
+        ExecutionState::Failed => {
+            return Err(ApiProblem::new(
+                StatusCode::CONFLICT,
+                ApiErrorCode::Conflict,
+                "execution has failed and cannot proceed",
+            ));
+        }
+        ExecutionState::Compensated | ExecutionState::RolledBack | ExecutionState::Committed => {
+            return Err(ApiProblem::new(
+                StatusCode::CONFLICT,
+                ApiErrorCode::Conflict,
+                format!(
+                    "execution is already in terminal state: {:?}",
+                    existing.state
+                ),
+            ));
+        }
+        _ => {} // Proceed for non-terminal states: Proposed, Authorized, Prepared, Running, AwaitingVerification
+    }
+
     let intent_id = existing.intent_id;
     let proposal_id = existing.proposal_id;
 
-    let request = runtime.rollback.default_prepare_request(
+    // Load proposal to get the correct rollback class and approved request arguments.
+    // HTTP prepare uses the approved arguments to bind a concrete request digest.
+    let proposal = match runtime.store.proposals().get(proposal_id).await {
+        Ok(Some(proposal)) => proposal,
+        Ok(None) => {
+            return Err(ApiProblem::new(
+                StatusCode::NOT_FOUND,
+                ApiErrorCode::NotFound,
+                format!(
+                    "proposal {} not found for execution preparation",
+                    proposal_id
+                ),
+            ));
+        }
+        Err(e) => {
+            return Err(ApiProblem::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                ApiErrorCode::Internal,
+                format!("failed to load proposal {}: {}", proposal_id, e),
+            ));
+        }
+    };
+    let requested_rollback_class = proposal.requested_rollback_class.clone();
+
+    // Determine adapter key and target from capability resource bindings
+    // Load capability to inspect resource bindings for adapter routing
+    let capability = runtime
+        .cap
+        .get(existing.capability_id)
+        .await
+        .map_err(ApiProblem::from_capability)?;
+
+    // Fail-closed: explicitly deny EmailDraft bindings with allow_send=true.
+    // These represent a send-capable email binding which is out of scope for v1.
+    // Routing to noop would silently succeed; we instead return a clear error.
+    let has_send_email = capability.resource_bindings.iter().any(|b| {
+        matches!(
+            b,
+            ResourceBinding::EmailDraft {
+                allow_send: true,
+                ..
+            }
+        )
+    });
+
+    if has_send_email {
+        return Err(ApiProblem::new(
+            StatusCode::FORBIDDEN,
+            ApiErrorCode::PolicyDenied,
+            "EmailDraft with allow_send=true is not supported in v1: \
+             real send recovery is out of scope; use draft-only (allow_send=false) instead",
+        ));
+    }
+
+    let adapter_key = determine_adapter_key_from_bindings(&capability.resource_bindings);
+    let target = determine_rollback_target_from_bindings(&capability.resource_bindings);
+
+    let mut request = runtime.rollback.default_prepare_request(
         intent_id,
         proposal_id,
         execution_id,
-        RollbackClass::R0NativeReversible,
+        requested_rollback_class,
+        adapter_key,
+        target,
     );
+
+    if request.adapter_key == "http" {
+        request.metadata.insert(
+            "approved_http_request".to_string(),
+            proposal.raw_arguments.clone(),
+        );
+    }
 
     let response = runtime
         .rollback
@@ -611,7 +1114,8 @@ async fn prepare_execution(
         .await
         .map_err(ApiProblem::internal)?;
 
-    let contract = response.contract.clone();
+    let mut contract = response.contract.clone();
+    contract.metadata.remove("approved_http_request");
     let now = Utc::now();
 
     // Fail closed: return an error if rollback contract cannot be persisted.
@@ -1509,19 +2013,614 @@ impl ApiProblem {
     }
 
     fn from_capability(err: ferrum_cap::CapabilityError) -> Self {
-        let code = match err {
-            ferrum_cap::CapabilityError::NotFound => ApiErrorCode::NotFound,
-            ferrum_cap::CapabilityError::AlreadyUsed => ApiErrorCode::Conflict,
-            ferrum_cap::CapabilityError::Revoked => ApiErrorCode::CapabilityRevoked,
-            ferrum_cap::CapabilityError::Expired => ApiErrorCode::CapabilityExpired,
-            ferrum_cap::CapabilityError::TtlTooLong => ApiErrorCode::ValidationError,
-        };
-        Self::new(StatusCode::BAD_REQUEST, code, err.to_string())
+        match err {
+            ferrum_cap::CapabilityError::NotFound => Self::new(
+                StatusCode::NOT_FOUND,
+                ApiErrorCode::NotFound,
+                err.to_string(),
+            ),
+            ferrum_cap::CapabilityError::AlreadyUsed => Self::new(
+                StatusCode::FORBIDDEN,
+                ApiErrorCode::CapabilityUsed,
+                "capability has already been consumed",
+            ),
+            ferrum_cap::CapabilityError::Revoked => Self::new(
+                StatusCode::FORBIDDEN,
+                ApiErrorCode::CapabilityRevoked,
+                err.to_string(),
+            ),
+            ferrum_cap::CapabilityError::Expired => Self::new(
+                StatusCode::FORBIDDEN,
+                ApiErrorCode::CapabilityExpired,
+                err.to_string(),
+            ),
+            ferrum_cap::CapabilityError::TtlTooLong => Self::new(
+                StatusCode::BAD_REQUEST,
+                ApiErrorCode::ValidationError,
+                err.to_string(),
+            ),
+            ferrum_cap::CapabilityError::Internal => Self::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                ApiErrorCode::Internal,
+                err.to_string(),
+            ),
+        }
+    }
+
+    /// Creates an authentication/authorization error response.
+    fn auth_error(message: impl Into<String>) -> Response {
+        let problem = Self::new(
+            StatusCode::UNAUTHORIZED,
+            ApiErrorCode::PolicyDenied,
+            message,
+        );
+        (StatusCode::UNAUTHORIZED, Json(problem.0)).into_response()
+    }
+}
+
+/// Determine the appropriate adapter key based on resource bindings.
+/// Returns "fs" for filesystem bindings, "git" for mutating git bindings,
+/// "sqlite" for mutating sqlite bindings, and "noop" for unknown/empty or
+/// read-only bindings.
+/// Fail-closed: defaults to "noop" when no specific adapter is matched.
+fn determine_adapter_key_from_bindings(bindings: &[ResourceBinding]) -> String {
+    if bindings.is_empty() {
+        return "noop".to_string();
+    }
+
+    // Check for filesystem bindings first
+    let has_fs_binding = bindings
+        .iter()
+        .any(|b| matches!(b, ResourceBinding::File { .. }));
+
+    if has_fs_binding {
+        return "fs".to_string();
+    }
+
+    // Only route git to the adapter for mutation-capable bindings.
+    let has_mutating_git_binding = bindings.iter().any(|binding| {
+        matches!(
+            binding,
+            ResourceBinding::Git {
+                mode: ResourceMode::ReadWrite,
+                ..
+            } | ResourceBinding::Git {
+                mode: ResourceMode::Write,
+                ..
+            } | ResourceBinding::Git {
+                mode: ResourceMode::Admin,
+                ..
+            }
+        )
+    });
+
+    if has_mutating_git_binding {
+        return "git".to_string();
+    }
+
+    // Only route sqlite to the adapter for mutation-capable bindings.
+    let has_mutating_sqlite_binding = bindings.iter().any(|binding| {
+        matches!(
+            binding,
+            ResourceBinding::Sqlite {
+                mode: ResourceMode::ReadWrite,
+                ..
+            } | ResourceBinding::Sqlite {
+                mode: ResourceMode::Write,
+                ..
+            } | ResourceBinding::Sqlite {
+                mode: ResourceMode::Admin,
+                ..
+            }
+        )
+    });
+
+    if has_mutating_sqlite_binding {
+        return "sqlite".to_string();
+    }
+
+    // Route only draft-only EmailDraft bindings (allow_send=false) to maildraft.
+    // Send-capable bindings (allow_send=true) are denied earlier in prepare_execution,
+    // so they should never reach adapter routing.
+    let has_draft_only_email_binding = bindings.iter().any(|b| {
+        matches!(
+            b,
+            ResourceBinding::EmailDraft {
+                allow_send: false,
+                ..
+            }
+        )
+    });
+
+    if has_draft_only_email_binding {
+        return "maildraft".to_string();
+    }
+
+    // Route HTTP bindings with mutation-capable modes to the HTTP adapter.
+    // Read-only HTTP bindings (mode=Read) stay on noop to preserve existing
+    // read-only HTTP enforcement tests - those test firewall enforcement at
+    // execute-time, not adapter routing.
+    let has_mutating_http_binding = bindings.iter().any(|binding| {
+        matches!(
+            binding,
+            ResourceBinding::Http {
+                mode: ResourceMode::Write,
+                ..
+            } | ResourceBinding::Http {
+                mode: ResourceMode::ReadWrite,
+                ..
+            } | ResourceBinding::Http {
+                mode: ResourceMode::Admin,
+                ..
+            }
+        )
+    });
+
+    if has_mutating_http_binding {
+        return "http".to_string();
+    }
+
+    // Default to noop for other binding types (fail-closed)
+    "noop".to_string()
+}
+
+/// Determine the rollback target based on resource bindings.
+/// For filesystem bindings, returns a FilePath target with the first file binding path.
+/// For mutating git bindings, returns a GitRef target with the repo path.
+/// For mutating sqlite bindings, returns a SqliteTxn target with the db path.
+fn determine_rollback_target_from_bindings(bindings: &[ResourceBinding]) -> RollbackTarget {
+    for binding in bindings {
+        match binding {
+            ResourceBinding::File { path, .. } => {
+                return RollbackTarget::FilePath {
+                    path: path.clone(),
+                    before_hash: None,
+                    after_hash: None,
+                };
+            }
+            ResourceBinding::Sqlite {
+                db_path,
+                mode: ResourceMode::ReadWrite,
+                ..
+            }
+            | ResourceBinding::Sqlite {
+                db_path,
+                mode: ResourceMode::Write,
+                ..
+            }
+            | ResourceBinding::Sqlite {
+                db_path,
+                mode: ResourceMode::Admin,
+                ..
+            } => {
+                // Generate a transaction ID for tracking this execution
+                let tx_id = format!("tx-{}", uuid::Uuid::new_v4());
+                return RollbackTarget::SqliteTxn {
+                    db_path: db_path.clone(),
+                    tx_id,
+                };
+            }
+            ResourceBinding::Git {
+                repo_path,
+                mode: ResourceMode::ReadWrite,
+                ..
+            }
+            | ResourceBinding::Git {
+                repo_path,
+                mode: ResourceMode::Write,
+                ..
+            }
+            | ResourceBinding::Git {
+                repo_path,
+                mode: ResourceMode::Admin,
+                ..
+            } => {
+                return RollbackTarget::GitRef {
+                    repo_path: repo_path.clone(),
+                    before_ref: None,
+                    after_ref: None,
+                };
+            }
+            ResourceBinding::EmailDraft { recipients, .. } => {
+                return RollbackTarget::EmailDraft {
+                    draft_id: None,
+                    recipients: recipients.clone(),
+                };
+            }
+            ResourceBinding::Http {
+                method,
+                base_url,
+                path_prefix,
+                ..
+            } => {
+                // Only route mutation-capable HTTP bindings to HTTP adapter.
+                // Read-only HTTP bindings (mode=Read) are handled by noop,
+                // so they should never reach this path.
+                use sha2::{Digest, Sha256};
+                let url = format!("{}{}", base_url, path_prefix);
+                let mut hasher = Sha256::new();
+                hasher.update(format!("{:?}:{}", method, url).as_bytes());
+                let request_digest = format!("{:x}", hasher.finalize());
+                return RollbackTarget::HttpRequest {
+                    method: method.clone(),
+                    url,
+                    request_digest,
+                };
+            }
+            _ => continue,
+        }
+    }
+
+    // Default to generic target for non-specific bindings
+    RollbackTarget::Generic {
+        namespace: "mcp".to_string(),
+        identifier: "tool-call".to_string(),
     }
 }
 
 impl IntoResponse for ApiProblem {
     fn into_response(self) -> Response {
         (self.1, Json(self.0)).into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        build_authenticated_router, determine_adapter_key_from_bindings,
+        determine_rollback_target_from_bindings, infer_rollback_class,
+    };
+    use axum::{
+        body::{self, Body},
+        http::{Request, StatusCode, header::AUTHORIZATION},
+    };
+    use ferrum_cap::{CapabilityService, InMemoryCapabilityService};
+    use ferrum_firewall::{DefaultFirewall, SemanticFirewall};
+    use ferrum_pdp::StaticPdpEngine;
+    use ferrum_proto::{
+        ApiError, ApiErrorCode, HttpMethod, ResourceBinding, ResourceMode, ResourceSelector,
+        RollbackClass, RollbackTarget,
+    };
+    use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
+    use ferrum_store::SqliteStore;
+    use std::sync::Arc;
+    use tower::util::ServiceExt;
+
+    use crate::{AuthMode, GatewayRuntime, ServerConfig};
+
+    async fn create_test_runtime() -> GatewayRuntime {
+        let pdp: Arc<dyn ferrum_pdp::PdpEngine> = Arc::new(StaticPdpEngine);
+        let cap: Arc<dyn CapabilityService> = Arc::new(InMemoryCapabilityService::default());
+        let firewall: Arc<dyn SemanticFirewall> = Arc::new(DefaultFirewall::new());
+
+        let mut registry = AdapterRegistry::default();
+        registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
+        let rollback = Arc::new(RollbackService::new(Arc::new(registry)));
+
+        let store = Arc::new(
+            SqliteStore::connect("sqlite::memory:?cache=shared")
+                .await
+                .unwrap(),
+        );
+        store.apply_embedded_migrations().await.unwrap();
+
+        GatewayRuntime::new(pdp, cap, rollback, store, firewall)
+    }
+
+    #[test]
+    fn routes_mutating_git_bindings_to_git_adapter() {
+        let bindings = vec![ResourceBinding::Git {
+            repo_path: "/tmp/repo".to_string(),
+            allowed_refs: vec!["refs/heads/main".to_string()],
+            mode: ResourceMode::Write,
+        }];
+
+        assert_eq!(determine_adapter_key_from_bindings(&bindings), "git");
+    }
+
+    #[test]
+    fn keeps_read_only_git_bindings_on_noop_adapter() {
+        let bindings = vec![ResourceBinding::Git {
+            repo_path: "/tmp/repo".to_string(),
+            allowed_refs: vec!["refs/heads/main".to_string()],
+            mode: ResourceMode::Read,
+        }];
+
+        assert_eq!(determine_adapter_key_from_bindings(&bindings), "noop");
+    }
+
+    #[test]
+    fn produces_git_ref_target_for_mutating_git_bindings() {
+        let bindings = vec![ResourceBinding::Git {
+            repo_path: "/tmp/repo".to_string(),
+            allowed_refs: vec!["refs/heads/main".to_string()],
+            mode: ResourceMode::ReadWrite,
+        }];
+
+        match determine_rollback_target_from_bindings(&bindings) {
+            RollbackTarget::GitRef {
+                repo_path,
+                before_ref,
+                after_ref,
+            } => {
+                assert_eq!(repo_path, "/tmp/repo");
+                assert_eq!(before_ref, None);
+                assert_eq!(after_ref, None);
+            }
+            other => panic!("expected GitRef target, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn keeps_read_only_git_bindings_on_generic_target() {
+        let bindings = vec![ResourceBinding::Git {
+            repo_path: "/tmp/repo".to_string(),
+            allowed_refs: vec!["refs/heads/main".to_string()],
+            mode: ResourceMode::Read,
+        }];
+
+        match determine_rollback_target_from_bindings(&bindings) {
+            RollbackTarget::Generic {
+                namespace,
+                identifier,
+            } => {
+                assert_eq!(namespace, "mcp");
+                assert_eq!(identifier, "tool-call");
+            }
+            other => panic!("expected Generic target, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn infers_r3_for_http_post() {
+        let scope = vec![ResourceSelector::HttpEndpoint {
+            method: HttpMethod::Post,
+            base_url: "https://api.example.com".to_string(),
+            path_prefix: "/v1/".to_string(),
+            mode: ResourceMode::Write,
+        }];
+        assert_eq!(
+            infer_rollback_class(&scope),
+            RollbackClass::R3IrreversibleHighConsequence
+        );
+    }
+
+    #[test]
+    fn infers_r3_for_http_put() {
+        let scope = vec![ResourceSelector::HttpEndpoint {
+            method: HttpMethod::Put,
+            base_url: "https://api.example.com".to_string(),
+            path_prefix: "/v1/".to_string(),
+            mode: ResourceMode::Write,
+        }];
+        assert_eq!(
+            infer_rollback_class(&scope),
+            RollbackClass::R3IrreversibleHighConsequence
+        );
+    }
+
+    #[test]
+    fn infers_r3_for_http_patch() {
+        let scope = vec![ResourceSelector::HttpEndpoint {
+            method: HttpMethod::Patch,
+            base_url: "https://api.example.com".to_string(),
+            path_prefix: "/v1/".to_string(),
+            mode: ResourceMode::Write,
+        }];
+        assert_eq!(
+            infer_rollback_class(&scope),
+            RollbackClass::R3IrreversibleHighConsequence
+        );
+    }
+
+    #[test]
+    fn infers_r3_for_http_delete() {
+        let scope = vec![ResourceSelector::HttpEndpoint {
+            method: HttpMethod::Delete,
+            base_url: "https://api.example.com".to_string(),
+            path_prefix: "/v1/".to_string(),
+            mode: ResourceMode::Write,
+        }];
+        assert_eq!(
+            infer_rollback_class(&scope),
+            RollbackClass::R3IrreversibleHighConsequence
+        );
+    }
+
+    #[test]
+    fn infers_r0_for_http_get() {
+        let scope = vec![ResourceSelector::HttpEndpoint {
+            method: HttpMethod::Get,
+            base_url: "https://api.example.com".to_string(),
+            path_prefix: "/v1/".to_string(),
+            mode: ResourceMode::Read,
+        }];
+        assert_eq!(
+            infer_rollback_class(&scope),
+            RollbackClass::R0NativeReversible
+        );
+    }
+
+    #[test]
+    fn infers_r2_for_email_draft() {
+        let scope = vec![ResourceSelector::EmailDraft {
+            recipient_allowlist: vec!["@example.com".to_string()],
+            subject_prefix_allowlist: vec!["[Test]".to_string()],
+            mode: ResourceMode::Write,
+        }];
+        assert_eq!(infer_rollback_class(&scope), RollbackClass::R2Compensatable);
+    }
+
+    #[test]
+    fn infers_r0_for_empty_scope() {
+        let scope: Vec<ResourceSelector> = vec![];
+        assert_eq!(
+            infer_rollback_class(&scope),
+            RollbackClass::R0NativeReversible
+        );
+    }
+
+    #[test]
+    fn http_mutating_takes_precedence_over_email() {
+        // R3 should take precedence over R2 when both are present.
+        let scope = vec![
+            ResourceSelector::HttpEndpoint {
+                method: HttpMethod::Post,
+                base_url: "https://api.example.com".to_string(),
+                path_prefix: "/v1/".to_string(),
+                mode: ResourceMode::Write,
+            },
+            ResourceSelector::EmailDraft {
+                recipient_allowlist: vec!["@example.com".to_string()],
+                subject_prefix_allowlist: vec!["[Test]".to_string()],
+                mode: ResourceMode::Write,
+            },
+        ];
+        assert_eq!(
+            infer_rollback_class(&scope),
+            RollbackClass::R3IrreversibleHighConsequence
+        );
+    }
+
+    #[test]
+    fn rollback_class_floor_uses_default_when_higher_than_requested() {
+        // Intent default R2, client requests R0 -> floor should be R2
+        assert_eq!(
+            super::rollback_class_floor(
+                RollbackClass::R2Compensatable,
+                RollbackClass::R0NativeReversible
+            ),
+            RollbackClass::R2Compensatable
+        );
+    }
+
+    #[test]
+    fn rollback_class_floor_uses_requested_when_higher_than_default() {
+        // Intent default R1, client requests R2 -> floor should be R2
+        assert_eq!(
+            super::rollback_class_floor(
+                RollbackClass::R1SnapshotRecoverable,
+                RollbackClass::R2Compensatable
+            ),
+            RollbackClass::R2Compensatable
+        );
+    }
+
+    #[test]
+    fn rollback_class_floor_uses_default_when_equal_to_requested() {
+        // Intent default R3, client requests R3 -> floor should be R3
+        assert_eq!(
+            super::rollback_class_floor(
+                RollbackClass::R3IrreversibleHighConsequence,
+                RollbackClass::R3IrreversibleHighConsequence
+            ),
+            RollbackClass::R3IrreversibleHighConsequence
+        );
+    }
+
+    #[test]
+    fn rollback_class_floor_r3_is_highest() {
+        // R3 should always be returned if either default or requested is R3
+        assert_eq!(
+            super::rollback_class_floor(
+                RollbackClass::R3IrreversibleHighConsequence,
+                RollbackClass::R0NativeReversible
+            ),
+            RollbackClass::R3IrreversibleHighConsequence
+        );
+        assert_eq!(
+            super::rollback_class_floor(
+                RollbackClass::R0NativeReversible,
+                RollbackClass::R3IrreversibleHighConsequence
+            ),
+            RollbackClass::R3IrreversibleHighConsequence
+        );
+    }
+
+    #[test]
+    fn rollback_class_floor_preserves_r0_for_read_only() {
+        // R0 should be preserved when both are R0
+        assert_eq!(
+            super::rollback_class_floor(
+                RollbackClass::R0NativeReversible,
+                RollbackClass::R0NativeReversible
+            ),
+            RollbackClass::R0NativeReversible
+        );
+    }
+
+    #[tokio::test]
+    async fn authenticated_router_allows_health_without_bearer_token() {
+        let app = build_authenticated_router(
+            create_test_runtime().await,
+            ServerConfig {
+                auth_mode: AuthMode::Bearer,
+                bearer_token: Some("test-token".to_string()),
+            },
+        );
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/healthz")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn authenticated_router_rejects_missing_bearer_token() {
+        let app = build_authenticated_router(
+            create_test_runtime().await,
+            ServerConfig {
+                auth_mode: AuthMode::Bearer,
+                bearer_token: Some("test-token".to_string()),
+            },
+        );
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let body = body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let error: ApiError = serde_json::from_slice(&body).unwrap();
+        assert!(matches!(error.code, ApiErrorCode::PolicyDenied));
+    }
+
+    #[tokio::test]
+    async fn authenticated_router_allows_valid_bearer_token() {
+        let app = build_authenticated_router(
+            create_test_runtime().await,
+            ServerConfig {
+                auth_mode: AuthMode::Bearer,
+                bearer_token: Some("test-token".to_string()),
+            },
+        );
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header(AUTHORIZATION, "Bearer test-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
     }
 }

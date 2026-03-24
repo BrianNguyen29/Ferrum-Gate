@@ -11,7 +11,9 @@ axum.workspace = true
 chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 tokio.workspace = true
+tower.workspace = true
 tower-http.workspace = true
 tracing.workspace = true
 
@@ -20,4 +22,7 @@ ferrum-pdp = { path = "../ferrum-pdp" }
 ferrum-cap = { path = "../ferrum-cap" }
 ferrum-rollback = { path = "../ferrum-rollback" }
 ferrum-store = { path = "../ferrum-store" }
+ferrum-firewall = { path = "../ferrum-firewall" }
+ferrum-ledger = { path = "../ferrum-ledger" }
+ferrum-graph = { path = "../ferrum-graph" }
 uuid.workspace = true

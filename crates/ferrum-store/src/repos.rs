@@ -1,25 +1,13 @@
 use async_trait::async_trait;
+use ferrum_ledger::LedgerEntry;
 use ferrum_proto::{
     ActionProposal, ApprovalId, ApprovalRequest, ApprovalState, CapabilityId, CapabilityLease,
     CapabilityStatus, EventId, ExecutionId, ExecutionRecord, ExecutionState, IntentEnvelope,
     IntentId, IntentStatus, ProposalId, ProvenanceEdge, ProvenanceEvent, ProvenanceQueryRequest,
     RollbackContract, RollbackContractId, RollbackState, Timestamp,
 };
-use serde::{Deserialize, Serialize};
 
 use crate::Result;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LedgerEntry {
-    pub entry_id: i64,
-    pub event_id: EventId,
-    pub intent_id: Option<IntentId>,
-    pub execution_id: Option<ExecutionId>,
-    pub occurred_at: Timestamp,
-    pub content_hash: Option<String>,
-    pub previous_ledger_hash: Option<String>,
-    pub raw_json: serde_json::Value,
-}
 
 #[async_trait]
 pub trait IntentRepo: Send + Sync {
@@ -34,6 +22,7 @@ pub trait IntentRepo: Send + Sync {
 pub trait ProposalRepo: Send + Sync {
     async fn insert(&self, proposal: &ActionProposal) -> Result<()>;
     async fn get(&self, proposal_id: ProposalId) -> Result<Option<ActionProposal>>;
+    async fn update(&self, proposal: &ActionProposal) -> Result<()>;
     async fn list_by_intent(&self, intent_id: IntentId) -> Result<Vec<ActionProposal>>;
 }
 
@@ -48,6 +37,19 @@ pub trait CapabilityRepo: Send + Sync {
         status: CapabilityStatus,
     ) -> Result<()>;
     async fn list_by_intent(&self, intent_id: IntentId) -> Result<Vec<CapabilityLease>>;
+
+    /// Atomically mark a capability as Used if it is currently Active.
+    /// Returns true if the capability was successfully marked as Used,
+    /// false if it was already Used, Expired, Revoked, or Quarantined.
+    /// This is fail-closed: once used, a capability cannot be used again.
+    async fn mark_used_if_active(&self, capability_id: CapabilityId) -> Result<bool>;
+
+    /// Revoke a capability, setting its status to Revoked and persisting revoked_at.
+    async fn revoke(&self, capability_id: CapabilityId) -> Result<()>;
+
+    /// List capabilities that are active and not yet expired.
+    /// Used for reconciliation and auditing.
+    async fn list_active(&self) -> Result<Vec<CapabilityLease>>;
 }
 
 #[async_trait]
@@ -154,6 +156,19 @@ pub trait ProvenanceRepo: Send + Sync {
     async fn get_event(&self, event_id: EventId) -> Result<Option<ProvenanceEvent>>;
     async fn append_edges(&self, to_event_id: EventId, edges: &[ProvenanceEdge]) -> Result<()>;
     async fn query(&self, request: &ProvenanceQueryRequest) -> Result<Vec<ProvenanceEvent>>;
+    /// Query edges where the given event is the target (incoming edges / ancestry)
+    async fn get_edges_to(&self, event_id: EventId) -> Result<Vec<ProvenanceEdge>>;
+    /// Query edges where the given event is the source (outgoing edges / descendants)
+    async fn get_edges_from(&self, event_id: EventId) -> Result<Vec<ProvenanceEdge>>;
+    /// Reconstruct the lineage chain for a single event by walking edges backwards.
+    /// Returns events ordered by occurred_at (oldest first), including the starting event.
+    async fn get_lineage_by_event(&self, event_id: EventId) -> Result<Vec<ProvenanceEvent>>;
+    /// Reconstruct the lineage chain for an execution by walking edges backwards.
+    /// Returns events ordered by occurred_at (oldest first).
+    async fn get_lineage_by_execution(
+        &self,
+        execution_id: ExecutionId,
+    ) -> Result<Vec<ProvenanceEvent>>;
 }
 
 #[async_trait]
@@ -161,4 +176,6 @@ pub trait LedgerRepo: Send + Sync {
     async fn append(&self, entry: &LedgerEntry) -> Result<()>;
     async fn get_by_event(&self, event_id: EventId) -> Result<Option<LedgerEntry>>;
     async fn list_recent(&self, limit: u32) -> Result<Vec<LedgerEntry>>;
+    /// Returns the most recent ledger entry, if any.
+    async fn get_latest(&self) -> Result<Option<LedgerEntry>>;
 }

@@ -59,4 +59,14 @@ impl ProposalRepo for SqliteProposalRepo {
         )
         .await
     }
+
+    async fn update(&self, proposal: &ActionProposal) -> Result<()> {
+        let raw_json = to_json(proposal)?;
+        sqlx::query("UPDATE proposals SET raw_json = ?1 WHERE proposal_id = ?2")
+            .bind(raw_json)
+            .bind(proposal.proposal_id.to_string())
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
 }

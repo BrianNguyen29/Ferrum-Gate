@@ -46,13 +46,17 @@
 - no-send hard rule
 
 ## ferrum-adapter-git
-- before_ref/after_ref
-- revert/reset path
+- before_ref/after_ref local capture da co
+- reset-based rollback path da co
+- gateway routing + integration coverage da co
+- execute-time after_ref handoff vao verify path da co
 
 ## ferrum-adapter-http
-- endpoint allowlist
-- idempotency-aware semantics
-- destructive remote mutation => R3 by default
+- full GET/POST/PUT/PATCH/DELETE execute/verify da co
+- body/header/query digest binding da co
+- dedicated bearer/basic/api_key auth with auth_kind observability metadata da co
+- gateway routing + ferrumd registry + local integration coverage da co
+- mutating HTTP (POST/PUT/PATCH/DELETE) => explicit R3 boundary enforced server-side; rollback/compensate van conservative no-op
 
 ## ferrum-graph
 - lineage query helpers
@@ -67,7 +71,7 @@
 - emit provenance
 
 ## ferrumctl
-- debug/inspect/validate commands
+- debug/inspect/validate commands da co
 
 ## ferrum-testkit / tests
 - fixtures

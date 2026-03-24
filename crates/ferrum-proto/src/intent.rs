@@ -118,6 +118,8 @@ pub struct IntentCompileRequest {
     pub raw_inputs: Vec<IntentInputRef>,
     pub requested_resource_scope: Vec<ResourceSelector>,
     pub requested_risk_tier: Option<RiskTier>,
+    /// Optional effect type for the intent. Defaults to ReadOnlyAnalysis if not specified.
+    pub effect_type: Option<EffectType>,
     pub metadata: JsonMap,
 }
 

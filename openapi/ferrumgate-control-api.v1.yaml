@@ -2,16 +2,20 @@ openapi: 3.1.0
 info:
   title: FerrumGate Control API
   version: 0.1.0
-  description: REST control plane API for FerrumGate v1.
+  description: REST control plane API for FerrumGate v1. When `ferrumd` runs with `auth.mode = bearer`, all non-health routes require bearer authentication.
 
 servers:
   - url: http://localhost:8080
+
+security:
+  - ControlPlaneBearer: []
 
 paths:
   /v1/healthz:
     get:
       summary: Basic health check
       operationId: healthz
+      security: []
       responses:
         '200':
           description: OK
@@ -24,6 +28,7 @@ paths:
     get:
       summary: Deep readiness check
       operationId: readyz
+      security: []
       responses:
         '200':
           description: Ready
@@ -214,33 +219,109 @@ paths:
         '404':
           $ref: '#/components/responses/ApiError'
 
+  /v1/executions/{execution_id}/execute:
+    post:
+      summary: Execute the prepared operation
+      operationId: executeOperation
+      parameters:
+        - $ref: '#/components/parameters/ExecutionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExecuteRequest'
+      responses:
+        '200':
+          description: Execution result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecuteResponse'
+        '404':
+          $ref: '#/components/responses/ApiError'
+
+  /v1/executions/{execution_id}/verify:
+    post:
+      summary: Verify execution result against intent and policy
+      operationId: verifyExecution
+      parameters:
+        - $ref: '#/components/parameters/ExecutionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyRequest'
+      responses:
+        '200':
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerifyResponse'
+        '404':
+          $ref: '#/components/responses/ApiError'
+
   /v1/executions/{execution_id}/commit:
     post:
       summary: Commit verified execution
       operationId: commitExecution
       parameters:
         - $ref: '#/components/parameters/ExecutionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommitRequest'
       responses:
         '200':
           description: Committed
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ExecutionRecord'
+                $ref: '#/components/schemas/CommitResponse'
 
-  /v1/executions/{execution_id}/rollback:
+  /v1/executions/{execution_id}/compensate:
     post:
-      summary: Roll back or compensate execution
-      operationId: rollbackExecution
+      summary: Request compensation
+      operationId: compensateExecution
       parameters:
         - $ref: '#/components/parameters/ExecutionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompensateRequest'
       responses:
         '200':
-          description: Recovered
+          description: Compensation acknowledged
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ExecutionRecord'
+                $ref: '#/components/schemas/CompensateResponse'
+
+  /v1/executions/{execution_id}/rollback:
+    post:
+      summary: Request rollback or compensation (no-op for HTTP adapter)
+      operationId: rollbackExecution
+      parameters:
+        - $ref: '#/components/parameters/ExecutionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RollbackRequest'
+      responses:
+        '200':
+          description: Rollback acknowledged (may be no-op)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RollbackResponse'
 
   /v1/executions/{execution_id}:
     get:
@@ -336,12 +417,14 @@ paths:
             schema:
               $ref: '#/components/schemas/ApprovalRequest'
       responses:
-        '201':
-          description: Approval created
+        '200':
+          description: Pending approvals
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApprovalRequest'
+                type: array
+                items:
+                  $ref: '#/components/schemas/ApprovalRequest'
 
   /v1/approvals/{approval_id}:
     get:
@@ -395,19 +478,71 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProvenanceQueryResponse'
 
-  /v1/provenance/events/{event_id}:
-    get:
-      summary: Get provenance event
-      operationId: getProvenanceEvent
-      parameters:
-        - $ref: '#/components/parameters/EventId'
+  /v1/provenance/events/external:
+    post:
+      summary: Ingest an externally-observed runtime event into provenance lineage
+      description: |
+        Ingests an externally-observed event into the FerrumGate provenance lineage.
+
+        This endpoint provides a vendor-neutral boundary for anchoring external runtime
+        observations into an existing execution lineage. The server validates:
+        - execution_id must refer to an existing execution record
+        - parent_event_id must refer to an existing provenance event
+        - parent event must belong to the same execution_id
+
+        The server derives internal lineage context (actor, object, timestamps) from
+        existing state rather than trusting caller-supplied linkage intent.
+
+        Fail-closed: any validation failure results in an error response without
+        creating any provenance record.
+      operationId: ingestExternalEvent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExternalEventIngestRequest'
       responses:
         '200':
-          description: Provenance event
+          description: External event ingested successfully
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ProvenanceEvent'
+                $ref: '#/components/schemas/ExternalEventIngestResponse'
+        '400':
+          $ref: '#/components/responses/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
+
+  /v1/provenance/events/{event_id}:
+    get:
+      summary: Get a single provenance event
+      operationId: getProvenanceEvent
+      parameters:
+        - $ref: '#/components/parameters/EventId'
+        - name: ancestry
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: When true, include ancestor events reached by walking parent edges backwards.
+        - name: descendants
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: When true, include descendant events reached by walking child edges forwards.
+      responses:
+        '200':
+          description: Provenance event result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProvenanceEventResponse'
+        '400':
+          $ref: '#/components/responses/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
 
   /v1/provenance/lineage/{execution_id}:
     get:
@@ -432,6 +567,12 @@ paths:
                       $ref: '#/components/schemas/ProvenanceEvent'
 
 components:
+  securitySchemes:
+    ControlPlaneBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque token
+
   parameters:
     IntentId:
       name: intent_id
@@ -922,6 +1063,120 @@ components:
           items:
             type: string
 
+    ExecuteRequest:
+      type: object
+      required: [execution_id, payload]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+        payload:
+          type: object
+
+    VerifyRequest:
+      type: object
+      required: [execution_id]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+
+    ExecuteResponse:
+      type: object
+      required: [execution_id, executed]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+        executed:
+          type: boolean
+        result_digest:
+          type: string
+          nullable: true
+        external_id:
+          type: string
+          nullable: true
+
+    VerifyResponse:
+      type: object
+      required: [execution_id, verified]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+        verified:
+          type: boolean
+        verified_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    CommitRequest:
+      type: object
+      required: [execution_id]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+
+    CommitResponse:
+      type: object
+      required: [execution_id, committed]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+        committed:
+          type: boolean
+        committed_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    CompensateRequest:
+      type: object
+      required: [execution_id]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+
+    CompensateResponse:
+      type: object
+      required: [execution_id, compensated]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+        compensated:
+          type: boolean
+        compensated_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    RollbackRequest:
+      type: object
+      required: [execution_id]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+
+    RollbackResponse:
+      type: object
+      required: [execution_id, rolled_back]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+        rolled_back:
+          type: boolean
+        rolled_back_at:
+          type: string
+          format: date-time
+          nullable: true
+
     RollbackContract:
       type: object
       required:
@@ -1050,6 +1305,10 @@ components:
           type: string
           format: uuid
           nullable: true
+        proposal_id:
+          type: string
+          format: uuid
+          nullable: true
         execution_id:
           type: string
           format: uuid
@@ -1060,6 +1319,9 @@ components:
           nullable: true
         event_kind:
           type: string
+          nullable: true
+        terminal_only:
+          type: boolean
           nullable: true
         since:
           type: string
@@ -1076,6 +1338,23 @@ components:
       properties:
         events:
           type: array
+          items:
+            $ref: '#/components/schemas/ProvenanceEvent'
+
+    ProvenanceEventResponse:
+      type: object
+      required: [event]
+      properties:
+        event:
+          $ref: '#/components/schemas/ProvenanceEvent'
+        ancestry:
+          type: array
+          nullable: true
+          items:
+            $ref: '#/components/schemas/ProvenanceEvent'
+        descendants:
+          type: array
+          nullable: true
           items:
             $ref: '#/components/schemas/ProvenanceEvent'
 
@@ -1135,3 +1414,47 @@ components:
           type: object
         metadata:
           type: object
+
+    ExternalEventIngestRequest:
+      type: object
+      additionalProperties: false
+      required: [execution_id, parent_event_id, source_system, source_event_id]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+          description: The execution_id that this external event is being anchored to.
+        parent_event_id:
+          type: string
+          format: uuid
+          description: The parent event within the same execution that this external event observes.
+        source_system:
+          type: string
+          description: Identifier for the external system or runtime that observed this event.
+        source_event_id:
+          type: string
+          description: The event identifier assigned by the external source system.
+        observed_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Optional wall-clock time when the external system observed the event.
+        summary:
+          type: string
+          nullable: true
+          description: Optional human-readable summary describing what was observed.
+        payload_digest:
+          type: string
+          nullable: true
+          description: Optional digest of the external event payload for integrity verification.
+        metadata:
+          type: object
+          nullable: true
+          description: Optional lightweight metadata bag. Small/simple values only. Stored under `external_metadata` so caller keys cannot override server-owned correlation fields.
+
+    ExternalEventIngestResponse:
+      type: object
+      required: [event]
+      properties:
+        event:
+          $ref: '#/components/schemas/ProvenanceEvent'

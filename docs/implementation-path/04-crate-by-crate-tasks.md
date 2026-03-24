@@ -19,7 +19,7 @@ Taint/trust/sanitize/DLP.
 State transitions + adapter registry + verify/rollback.
 
 ## adapters
-fs -> sqlite -> maildraft -> git/http.
+fs -> sqlite -> maildraft -> git da co; http full parity (GET/POST/PUT/PATCH/DELETE + body/header/query binding + auth) da co.
 
 ## gateway
 Wire full flow.
