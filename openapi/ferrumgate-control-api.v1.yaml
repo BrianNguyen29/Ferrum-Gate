@@ -339,8 +339,83 @@ paths:
 
   /v1/approvals:
     get:
-      summary: List pending approvals
-      operationId: listPendingApprovals
+      summary: List pending approval requests
+      operationId: listApprovals
+      description: |
+        Returns all approval requests in the Pending state, ordered by
+        created_at descending (most recent first). Use this endpoint to
+        discover approvals that require operator action before they can be
+        resolved via POST /v1/approvals/{approval_id}/resolve.
+
+        Supports pagination via `limit` plus either `cursor` or `offset`.
+        Defaults: limit=50, offset=0. Maximum limit: 100 (conservatively clamped).
+
+        Cursor pagination is preferred for stable operator paging while the
+        pending approvals set is changing. Offset pagination is deprecated,
+        retained temporarily for compatibility, and returns `next_cursor: null`.
+
+        Optionally filter by `proposal_id` to return only pending approvals
+        for a specific proposal. Optionally filter by `execution_id` to return
+        only pending approvals linked to a specific execution. When both
+        `proposal_id` and `execution_id` are provided, both filters apply (AND semantics).
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum number of approvals to return (1-100). Defaults to 50. Values above 100 are clamped to 100.
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: offset
+          in: query
+          description: Deprecated compatibility pagination parameter. Number of approvals to skip before returning results. Defaults to 0. Ignored when cursor is provided. New integrations should use cursor-based pagination.
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: cursor
+          in: query
+          description: Cursor for keyset pagination. Use an empty value to request the first cursor-based page, then pass the returned next_cursor to advance.
+          required: false
+          schema:
+            type: string
+        - name: proposal_id
+          in: query
+          description: Optional proposal_id filter. When provided, returns only pending approvals for this proposal.
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: execution_id
+          in: query
+          description: Optional execution_id filter. When provided, returns only pending approvals linked to this execution.
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Paginated list of pending approval requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListApprovalsResponse'
+        '400':
+          $ref: '#/components/responses/ApiError'
+        '500':
+          $ref: '#/components/responses/ApiError'
+    post:
+      summary: Create approval request
+      operationId: createApproval
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApprovalRequest'
       responses:
         '200':
           description: Pending approvals
@@ -1197,6 +1272,19 @@ components:
         created_at:
           type: string
           format: date-time
+
+    ListApprovalsResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ApprovalRequest'
+        next_cursor:
+          type: string
+          nullable: true
+          description: Cursor for the next page. Null when no further page exists or when using offset mode.
 
     ApprovalResolveRequest:
       type: object

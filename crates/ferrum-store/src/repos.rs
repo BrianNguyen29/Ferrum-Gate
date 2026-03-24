@@ -83,6 +83,71 @@ pub trait ApprovalRepo: Send + Sync {
     async fn update(&self, approval: &ApprovalRequest) -> Result<()>;
     async fn resolve(&self, approval_id: ApprovalId, state: ApprovalState) -> Result<()>;
     async fn list_pending(&self) -> Result<Vec<ApprovalRequest>>;
+    async fn list_pending_paginated(&self, limit: u32, offset: u32)
+    -> Result<Vec<ApprovalRequest>>;
+    async fn list_pending_by_proposal_paginated(
+        &self,
+        proposal_id: ProposalId,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<ApprovalRequest>>;
+
+    /// Cursor-based pagination for pending approvals.
+    /// Returns (items, next_cursor) where next_cursor is None if this is the last page.
+    /// Ordering: created_at DESC, approval_id DESC (stable descending).
+    async fn list_pending_cursor(
+        &self,
+        limit: u32,
+        after_cursor: Option<&str>,
+    ) -> Result<(Vec<ApprovalRequest>, Option<String>)>;
+
+    /// Cursor-based pagination for pending approvals filtered by proposal_id.
+    /// Returns (items, next_cursor) where next_cursor is None if this is the last page.
+    /// Ordering: created_at DESC, approval_id DESC (stable descending).
+    async fn list_pending_by_proposal_cursor(
+        &self,
+        proposal_id: ProposalId,
+        limit: u32,
+        after_cursor: Option<&str>,
+    ) -> Result<(Vec<ApprovalRequest>, Option<String>)>;
+
+    /// Offset-based pagination for pending approvals filtered by execution_id.
+    async fn list_pending_by_execution_id_paginated(
+        &self,
+        execution_id: ExecutionId,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<ApprovalRequest>>;
+
+    /// Cursor-based pagination for pending approvals filtered by execution_id.
+    /// Returns (items, next_cursor) where next_cursor is None if this is the last page.
+    /// Ordering: created_at DESC, approval_id DESC (stable descending).
+    async fn list_pending_by_execution_id_cursor(
+        &self,
+        execution_id: ExecutionId,
+        limit: u32,
+        after_cursor: Option<&str>,
+    ) -> Result<(Vec<ApprovalRequest>, Option<String>)>;
+
+    /// Offset-based pagination for pending approvals filtered by both proposal_id and execution_id.
+    async fn list_pending_by_proposal_and_execution_id_paginated(
+        &self,
+        proposal_id: ProposalId,
+        execution_id: ExecutionId,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<ApprovalRequest>>;
+
+    /// Cursor-based pagination for pending approvals filtered by both proposal_id and execution_id.
+    /// Returns (items, next_cursor) where next_cursor is None if this is the last page.
+    /// Ordering: created_at DESC, approval_id DESC (stable descending).
+    async fn list_pending_by_proposal_and_execution_id_cursor(
+        &self,
+        proposal_id: ProposalId,
+        execution_id: ExecutionId,
+        limit: u32,
+        after_cursor: Option<&str>,
+    ) -> Result<(Vec<ApprovalRequest>, Option<String>)>;
 }
 
 #[async_trait]

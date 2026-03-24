@@ -1,21 +1,11 @@
-use anyhow::{Context, Result};
-use clap::Parser;
-use ferrum_adapter_fs::FsRollbackAdapter;
-use ferrum_adapter_git::register_git_adapter;
-use ferrum_adapter_http::register_http_adapter;
-use ferrum_adapter_maildraft::MaildraftAdapter;
-use ferrum_adapter_sqlite::SqliteRollbackAdapter;
-use ferrum_cap::SqliteCapabilityService;
-use ferrum_firewall::DefaultFirewall;
-use ferrum_gateway::{AuthMode, GatewayConfig, GatewayRuntime, ServerConfig, run_http_server};
+use anyhow::Context;
+use ferrum_cap::InMemoryCapabilityService;
+use ferrum_gateway::{GatewayConfig, GatewayRuntime, run_http_server};
 use ferrum_pdp::StaticPdpEngine;
 use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
 use ferrum_store::SqliteStore;
-use serde::{Deserialize, Serialize};
-use std::net::SocketAddr;
-use std::path::PathBuf;
-use std::sync::Arc;
-use tracing_subscriber::EnvFilter;
+use std::{net::SocketAddr, sync::Arc};
+use tracing_subscriber::{EnvFilter, fmt};
 
 const DEFAULT_BIND_ADDR: &str = "127.0.0.1:8080";
 const DEV_CONFIG_PATH: &str = "configs/ferrumgate.dev.toml";
