@@ -13,8 +13,8 @@ async-trait = { workspace = true }
 sqlx = { workspace = true }
 ferrum-proto = { path = "../ferrum-proto" }
 uuid = { workspace = true }
+chrono = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"
 tokio = { workspace = true, features = ["test-util"] }
-chrono = { workspace = true }

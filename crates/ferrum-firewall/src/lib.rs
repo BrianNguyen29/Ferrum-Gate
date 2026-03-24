@@ -5,7 +5,11 @@ pub trait SemanticFirewall {
         vec![]
     }
 
-    fn contradiction_check(&self, _intent: &IntentEnvelope, _proposal: &ActionProposal) -> Vec<String> {
+    fn contradiction_check(
+        &self,
+        _intent: &IntentEnvelope,
+        _proposal: &ActionProposal,
+    ) -> Vec<String> {
         vec![]
     }
 

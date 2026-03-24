@@ -43,7 +43,13 @@ impl ProvenanceRepo for SqliteProvenanceRepo {
     }
 
     async fn get_event(&self, event_id: EventId) -> Result<Option<ProvenanceEvent>> {
-        fetch_entity_by_id(&self.pool, "provenance_events", "event_id", &event_id.to_string()).await
+        fetch_entity_by_id(
+            &self.pool,
+            "provenance_events",
+            "event_id",
+            &event_id.to_string(),
+        )
+        .await
     }
 
     async fn append_edges(&self, to_event_id: EventId, edges: &[ProvenanceEdge]) -> Result<()> {

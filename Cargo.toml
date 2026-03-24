@@ -16,7 +16,8 @@ members = [
   "crates/ferrum-adapter-sqlite",
   "crates/ferrum-adapter-http",
   "crates/ferrum-adapter-maildraft",
-  "crates/ferrum-testkit"
+  "crates/ferrum-testkit",
+  "tests"
 ]
 resolver = "2"
 
@@ -45,3 +46,4 @@ sha2 = "0.10"
 petgraph = "0.7"
 clap = { version = "4", features = ["derive"] }
 indexmap = { version = "1", features = ["serde"] }
+tempfile = "3"

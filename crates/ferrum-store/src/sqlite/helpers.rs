@@ -30,7 +30,10 @@ pub async fn fetch_raw_json_by_id(
     id_value: &str,
 ) -> Result<Option<String>> {
     let sql = format!("SELECT raw_json FROM {table} WHERE {id_column} = ?1");
-    let row = sqlx::query(&sql).bind(id_value).fetch_optional(pool).await?;
+    let row = sqlx::query(&sql)
+        .bind(id_value)
+        .fetch_optional(pool)
+        .await?;
     row.map(|row| raw_json(&row)).transpose()
 }
 

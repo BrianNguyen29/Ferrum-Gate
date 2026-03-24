@@ -50,12 +50,11 @@ impl LedgerRepo for SqliteLedgerRepo {
     }
 
     async fn list_recent(&self, limit: u32) -> Result<Vec<LedgerEntry>> {
-        let rows = sqlx::query(
-            "SELECT raw_json FROM ledger_entries ORDER BY entry_id DESC LIMIT ?1",
-        )
-        .bind(i64::from(limit))
-        .fetch_all(&self.pool)
-        .await?;
+        let rows =
+            sqlx::query("SELECT raw_json FROM ledger_entries ORDER BY entry_id DESC LIMIT ?1")
+                .bind(i64::from(limit))
+                .fetch_all(&self.pool)
+                .await?;
 
         rows.into_iter()
             .map(|row| -> Result<LedgerEntry> {

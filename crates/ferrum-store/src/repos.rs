@@ -2,8 +2,8 @@ use async_trait::async_trait;
 use ferrum_proto::{
     ActionProposal, ApprovalId, ApprovalRequest, ApprovalState, CapabilityId, CapabilityLease,
     CapabilityStatus, EventId, ExecutionId, ExecutionRecord, ExecutionState, IntentEnvelope,
-    IntentId, IntentStatus, ProposalId, ProvenanceEdge, ProvenanceEvent,
-    ProvenanceQueryRequest, RollbackContract, RollbackContractId, RollbackState, Timestamp,
+    IntentId, IntentStatus, ProposalId, ProvenanceEdge, ProvenanceEvent, ProvenanceQueryRequest,
+    RollbackContract, RollbackContractId, RollbackState, Timestamp,
 };
 use serde::{Deserialize, Serialize};
 
@@ -42,7 +42,11 @@ pub trait CapabilityRepo: Send + Sync {
     async fn insert(&self, capability: &CapabilityLease) -> Result<()>;
     async fn get(&self, capability_id: CapabilityId) -> Result<Option<CapabilityLease>>;
     async fn update(&self, capability: &CapabilityLease) -> Result<()>;
-    async fn update_status(&self, capability_id: CapabilityId, status: CapabilityStatus) -> Result<()>;
+    async fn update_status(
+        &self,
+        capability_id: CapabilityId,
+        status: CapabilityStatus,
+    ) -> Result<()>;
     async fn list_by_intent(&self, intent_id: IntentId) -> Result<Vec<CapabilityLease>>;
 }
 
@@ -53,7 +57,8 @@ pub trait ExecutionRepo: Send + Sync {
     async fn update(&self, execution: &ExecutionRecord) -> Result<()>;
     async fn update_state(&self, execution_id: ExecutionId, state: ExecutionState) -> Result<()>;
     async fn list_by_intent(&self, intent_id: IntentId) -> Result<Vec<ExecutionRecord>>;
-    async fn list_by_capability(&self, capability_id: CapabilityId) -> Result<Vec<ExecutionRecord>>;
+    async fn list_by_capability(&self, capability_id: CapabilityId)
+    -> Result<Vec<ExecutionRecord>>;
 }
 
 #[async_trait]
@@ -61,7 +66,11 @@ pub trait RollbackRepo: Send + Sync {
     async fn insert(&self, contract: &RollbackContract) -> Result<()>;
     async fn get(&self, contract_id: RollbackContractId) -> Result<Option<RollbackContract>>;
     async fn update(&self, contract: &RollbackContract) -> Result<()>;
-    async fn update_state(&self, contract_id: RollbackContractId, state: RollbackState) -> Result<()>;
+    async fn update_state(
+        &self,
+        contract_id: RollbackContractId,
+        state: RollbackState,
+    ) -> Result<()>;
     async fn list_by_execution(&self, execution_id: ExecutionId) -> Result<Vec<RollbackContract>>;
 }
 
@@ -72,6 +81,71 @@ pub trait ApprovalRepo: Send + Sync {
     async fn update(&self, approval: &ApprovalRequest) -> Result<()>;
     async fn resolve(&self, approval_id: ApprovalId, state: ApprovalState) -> Result<()>;
     async fn list_pending(&self) -> Result<Vec<ApprovalRequest>>;
+    async fn list_pending_paginated(&self, limit: u32, offset: u32)
+    -> Result<Vec<ApprovalRequest>>;
+    async fn list_pending_by_proposal_paginated(
+        &self,
+        proposal_id: ProposalId,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<ApprovalRequest>>;
+
+    /// Cursor-based pagination for pending approvals.
+    /// Returns (items, next_cursor) where next_cursor is None if this is the last page.
+    /// Ordering: created_at DESC, approval_id DESC (stable descending).
+    async fn list_pending_cursor(
+        &self,
+        limit: u32,
+        after_cursor: Option<&str>,
+    ) -> Result<(Vec<ApprovalRequest>, Option<String>)>;
+
+    /// Cursor-based pagination for pending approvals filtered by proposal_id.
+    /// Returns (items, next_cursor) where next_cursor is None if this is the last page.
+    /// Ordering: created_at DESC, approval_id DESC (stable descending).
+    async fn list_pending_by_proposal_cursor(
+        &self,
+        proposal_id: ProposalId,
+        limit: u32,
+        after_cursor: Option<&str>,
+    ) -> Result<(Vec<ApprovalRequest>, Option<String>)>;
+
+    /// Offset-based pagination for pending approvals filtered by execution_id.
+    async fn list_pending_by_execution_id_paginated(
+        &self,
+        execution_id: ExecutionId,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<ApprovalRequest>>;
+
+    /// Cursor-based pagination for pending approvals filtered by execution_id.
+    /// Returns (items, next_cursor) where next_cursor is None if this is the last page.
+    /// Ordering: created_at DESC, approval_id DESC (stable descending).
+    async fn list_pending_by_execution_id_cursor(
+        &self,
+        execution_id: ExecutionId,
+        limit: u32,
+        after_cursor: Option<&str>,
+    ) -> Result<(Vec<ApprovalRequest>, Option<String>)>;
+
+    /// Offset-based pagination for pending approvals filtered by both proposal_id and execution_id.
+    async fn list_pending_by_proposal_and_execution_id_paginated(
+        &self,
+        proposal_id: ProposalId,
+        execution_id: ExecutionId,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<ApprovalRequest>>;
+
+    /// Cursor-based pagination for pending approvals filtered by both proposal_id and execution_id.
+    /// Returns (items, next_cursor) where next_cursor is None if this is the last page.
+    /// Ordering: created_at DESC, approval_id DESC (stable descending).
+    async fn list_pending_by_proposal_and_execution_id_cursor(
+        &self,
+        proposal_id: ProposalId,
+        execution_id: ExecutionId,
+        limit: u32,
+        after_cursor: Option<&str>,
+    ) -> Result<(Vec<ApprovalRequest>, Option<String>)>;
 }
 
 #[async_trait]

@@ -19,7 +19,12 @@ impl GatewayRuntime {
         rollback: Arc<RollbackService>,
         store: Arc<SqliteStore>,
     ) -> Self {
-        Self { pdp, cap, rollback, store }
+        Self {
+            pdp,
+            cap,
+            rollback,
+            store,
+        }
     }
 }
 

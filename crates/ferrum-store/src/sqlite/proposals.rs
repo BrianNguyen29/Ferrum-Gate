@@ -42,7 +42,13 @@ impl ProposalRepo for SqliteProposalRepo {
     }
 
     async fn get(&self, proposal_id: ProposalId) -> Result<Option<ActionProposal>> {
-        fetch_entity_by_id(&self.pool, "proposals", "proposal_id", &proposal_id.to_string()).await
+        fetch_entity_by_id(
+            &self.pool,
+            "proposals",
+            "proposal_id",
+            &proposal_id.to_string(),
+        )
+        .await
     }
 
     async fn list_by_intent(&self, intent_id: IntentId) -> Result<Vec<ActionProposal>> {

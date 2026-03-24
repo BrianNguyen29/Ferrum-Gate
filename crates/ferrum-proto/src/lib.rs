@@ -1,15 +1,15 @@
-pub mod ids;
-pub mod common;
-pub mod intent;
+pub mod api;
+pub mod approval;
 pub mod capability;
+pub mod common;
+pub mod execution;
+pub mod ids;
+pub mod intent;
 pub mod provenance;
 pub mod rollback;
-pub mod execution;
-pub mod approval;
-pub mod api;
 
-pub use approval::*;
 pub use api::*;
+pub use approval::*;
 pub use capability::*;
 pub use common::*;
 pub use execution::*;

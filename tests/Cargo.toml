@@ -1,0 +1,29 @@
+[package]
+name = "ferrum-gateway-integration-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+axum.workspace = true
+chrono.workspace = true
+ferrum-cap = { path = "../crates/ferrum-cap" }
+ferrum-gateway = { path = "../crates/ferrum-gateway" }
+ferrum-pdp = { path = "../crates/ferrum-pdp" }
+ferrum-proto = { path = "../crates/ferrum-proto" }
+ferrum-rollback = { path = "../crates/ferrum-rollback" }
+ferrum-store = { path = "../crates/ferrum-store" }
+http-body-util = "0.1"
+hyper = "1"
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+tower.workspace = true
+uuid.workspace = true
+
+[[test]]
+name = "integration_gateway_flow"
+path = "integration_gateway_flow.rs"

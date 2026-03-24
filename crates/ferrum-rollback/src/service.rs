@@ -1,8 +1,8 @@
 use anyhow::Context;
 use chrono::Utc;
 use ferrum_proto::{
-    ExecutionId, RollbackContract, RollbackPrepareRequest, RollbackPrepareResponse, RollbackState,
-    RollbackContractId,
+    ExecutionId, RollbackContract, RollbackContractId, RollbackPrepareRequest,
+    RollbackPrepareResponse, RollbackState,
 };
 use std::sync::Arc;
 
@@ -67,7 +67,10 @@ impl RollbackService {
             .registry
             .get(&contract.adapter_key)
             .context("adapter not registered")?;
-        adapter.compensate(contract).await.map_err(map_adapter_err)?;
+        adapter
+            .compensate(contract)
+            .await
+            .map_err(map_adapter_err)?;
         Ok(())
     }
 

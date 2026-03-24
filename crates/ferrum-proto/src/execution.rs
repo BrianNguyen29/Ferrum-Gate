@@ -1,4 +1,7 @@
-use crate::{CapabilityId, ExecutionId, JsonMap, ProposalId, RiskTier, RollbackClass, RollbackContractId, Timestamp};
+use crate::{
+    CapabilityId, ExecutionId, JsonMap, ProposalId, RiskTier, RollbackClass, RollbackContractId,
+    Timestamp,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 

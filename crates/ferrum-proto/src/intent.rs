@@ -1,6 +1,6 @@
 use crate::{
-    ChannelId, EventId, JsonMap, PrincipalId, ResourceMode, RiskTier, RollbackClass,
-    SessionId, TimeBudget, Timestamp, TrustContextSummary,
+    ChannelId, EventId, JsonMap, PrincipalId, ResourceMode, RiskTier, RollbackClass, SessionId,
+    TimeBudget, Timestamp, TrustContextSummary,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
