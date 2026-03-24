@@ -36,22 +36,6 @@ pub struct HealthResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct RollbackExecutionResponse {
-    pub execution_id: crate::ExecutionId,
-    pub rolled_back: bool,
-    pub contract_id: Option<crate::RollbackContractId>,
-    pub warnings: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct CompensateExecutionResponse {
-    pub execution_id: crate::ExecutionId,
-    pub compensated: bool,
-    pub contract_id: Option<crate::RollbackContractId>,
-    pub warnings: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ApiError {
     pub code: ApiErrorCode,
     pub message: String,
@@ -77,13 +61,69 @@ pub enum ApiErrorCode {
     Internal,
 }
 
-/// Response envelope for paginated approval lists.
-/// Uses cursor-based pagination for stable, deterministic page boundaries.
+// Execute request/response types
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct ListApprovalsResponse {
-    /// List of approval requests on this page.
-    pub items: Vec<crate::ApprovalRequest>,
-    /// Opaque cursor for the next page. Null if this is the last page.
-    /// Pass this value as the `cursor` query param to fetch the next page.
-    pub next_cursor: Option<String>,
+pub struct ExecuteRequest {
+    pub execution_id: crate::ExecutionId,
+    pub payload: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ExecuteResponse {
+    pub execution_id: crate::ExecutionId,
+    pub executed: bool,
+    pub result_digest: Option<String>,
+    pub external_id: Option<String>,
+}
+
+// Verify request/response types
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct VerifyRequest {
+    pub execution_id: crate::ExecutionId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct VerifyResponse {
+    pub execution_id: crate::ExecutionId,
+    pub verified: bool,
+    pub verified_at: Option<crate::Timestamp>,
+}
+
+// Commit request/response types
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CommitRequest {
+    pub execution_id: crate::ExecutionId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CommitResponse {
+    pub execution_id: crate::ExecutionId,
+    pub committed: bool,
+    pub committed_at: Option<crate::Timestamp>,
+}
+
+// Compensate request/response types
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CompensateRequest {
+    pub execution_id: crate::ExecutionId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CompensateResponse {
+    pub execution_id: crate::ExecutionId,
+    pub compensated: bool,
+    pub compensated_at: Option<crate::Timestamp>,
+}
+
+// Rollback request/response types
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct RollbackRequest {
+    pub execution_id: crate::ExecutionId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct RollbackResponse {
+    pub execution_id: crate::ExecutionId,
+    pub rolled_back: bool,
+    pub rolled_back_at: Option<crate::Timestamp>,
 }

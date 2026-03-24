@@ -4,7 +4,7 @@ use ferrum_proto::{
     ActionProposal, ApprovalId, ApprovalRequest, ApprovalState, CapabilityId, CapabilityLease,
     CapabilityStatus, EventId, ExecutionId, ExecutionRecord, ExecutionState, IntentEnvelope,
     IntentId, IntentStatus, ProposalId, ProvenanceEdge, ProvenanceEvent, ProvenanceQueryRequest,
-    RollbackContract, RollbackContractId, RollbackState, Timestamp,
+    RollbackContract, RollbackContractId, RollbackState,
 };
 
 use crate::Result;

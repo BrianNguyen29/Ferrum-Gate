@@ -154,11 +154,1606 @@ impl DefaultFirewall {
         }
     }
 
+    /// Check if content contains URL patterns indicating external web content.
+    fn contains_url(&self, content: &str) -> bool {
+        content.contains("http://") || content.contains("https://")
+    }
+
+    /// Check if content contains prompt injection indicators.
+    fn contains_injection_indicators(&self, content: &str) -> bool {
+        let lower = content.to_lowercase();
+        self.injection_indicators
+            .iter()
+            .any(|indicator| lower.contains(indicator))
+    }
+
+    /// Check if content appears to be tool output (contains specific markers).
+    fn appears_to_be_tool_output(&self, content: &str) -> bool {
+        // Check for common tool output patterns
+        content.contains("```") || // Code blocks
+        content.starts_with("$") || // Shell commands
+        content.contains("Output:") ||
+        content.contains("Result:")
+    }
+
+    /// Check if key is a secret-bearing key.
+    fn is_secret_key(&self, key: &str) -> bool {
+        let lower = key.to_lowercase();
+        self.secret_keys.iter().any(|sk| lower.contains(sk))
+    }
+
+    /// Recursively sanitize JSON value.
+    fn sanitize_value(
+        &self,
+        value: serde_json::Value,
+        path: &str,
+        findings: &mut Vec<DlpFinding>,
+    ) -> serde_json::Value {
+        match value {
+            serde_json::Value::Object(map) => {
+                let mut sanitized = serde_json::Map::new();
+                for (key, val) in map {
+                    let new_path = if path.is_empty() {
+                        key.clone()
+                    } else {
+                        format!("{}.{}", path, key)
+                    };
+
+                    if self.is_secret_key(&key) {
+                        // Record finding and redact
+                        findings.push(DlpFinding {
+                            pattern_name: "secret_key".to_string(),
+                            field_path: new_path.clone(),
+                            severity: Severity::High,
+                            message: format!("Redacted secret-bearing field: {}", key),
+                        });
+                        sanitized.insert(key, serde_json::Value::String("[REDACTED]".to_string()));
+                    } else {
+                        sanitized.insert(key, self.sanitize_value(val, &new_path, findings));
+                    }
+                }
+                serde_json::Value::Object(sanitized)
+            }
+            serde_json::Value::Array(arr) => {
+                let sanitized: Vec<serde_json::Value> = arr
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, v)| self.sanitize_value(v, &format!("{}[{}]", path, i), findings))
+                    .collect();
+                serde_json::Value::Array(sanitized)
+            }
+            serde_json::Value::String(s) => {
+                // Check for secret patterns in string values
+                let mut redacted = s.clone();
+                for (pattern_name, pattern) in &self.secret_patterns {
+                    if pattern.is_match(&s) {
+                        findings.push(DlpFinding {
+                            pattern_name: pattern_name.clone(),
+                            field_path: path.to_string(),
+                            severity: Severity::High,
+                            message: format!("Detected potential secret pattern: {}", pattern_name),
+                        });
+                        redacted = pattern.replace_all(&redacted, "[REDACTED]").to_string();
+                    }
+                }
+                serde_json::Value::String(redacted)
+            }
+            other => other,
+        }
+    }
+
+    /// Scan for DLP findings without sanitizing.
+    fn scan_for_findings(
+        &self,
+        value: &serde_json::Value,
+        path: &str,
+        findings: &mut Vec<DlpFinding>,
+    ) {
+        match value {
+            serde_json::Value::Object(map) => {
+                for (key, val) in map {
+                    let new_path = if path.is_empty() {
+                        key.clone()
+                    } else {
+                        format!("{}.{}", path, key)
+                    };
+
+                    if self.is_secret_key(key) {
+                        findings.push(DlpFinding {
+                            pattern_name: "secret_key".to_string(),
+                            field_path: new_path.clone(),
+                            severity: Severity::High,
+                            message: format!("Detected secret-bearing field: {}", key),
+                        });
+                    }
+
+                    self.scan_for_findings(val, &new_path, findings);
+                }
+            }
+            serde_json::Value::Array(arr) => {
+                for (i, v) in arr.iter().enumerate() {
+                    self.scan_for_findings(v, &format!("{}[{}]", path, i), findings);
+                }
+            }
+            serde_json::Value::String(s) => {
+                for (pattern_name, pattern) in &self.secret_patterns {
+                    if pattern.is_match(s) {
+                        findings.push(DlpFinding {
+                            pattern_name: pattern_name.clone(),
+                            field_path: path.to_string(),
+                            severity: Severity::High,
+                            message: format!("Detected potential secret pattern: {}", pattern_name),
+                        });
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Check if effect type is read-only.
+    fn is_read_only_effect(&self, effect: &EffectType) -> bool {
+        matches!(
+            effect,
+            EffectType::ReadOnlyAnalysis | EffectType::DraftCreation
+        )
+    }
+
+    /// Check if effect type is mutating.
+    fn is_mutating_effect(&self, effect: &EffectType) -> bool {
+        matches!(
+            effect,
+            EffectType::FileMutation
+                | EffectType::GitMutation
+                | EffectType::DatabaseMutation
+                | EffectType::ExternalApiCall
+                | EffectType::ExternalCommunication
+                | EffectType::Scheduling
+                | EffectType::AdministrativeChange
+        )
+    }
+
+    /// Check if proposal tool matches any MCP tool scope in intent.
+    fn proposal_matches_mcp_scope(
+        &self,
+        intent: &IntentEnvelope,
+        proposal: &ActionProposal,
+    ) -> bool {
+        intent.resource_scope.iter().any(|selector| {
+            if let ResourceSelector::McpTool {
+                server_name,
+                tool_name,
+                ..
+            } = selector
+            {
+                server_name == &proposal.server_name && tool_name == &proposal.tool_name
+            } else {
+                false
+            }
+        })
+    }
+
+    /// Check if intent has any MCP tool scope selectors.
+    fn has_mcp_tool_scope(&self, intent: &IntentEnvelope) -> bool {
+        intent
+            .resource_scope
+            .iter()
+            .any(|selector| matches!(selector, ResourceSelector::McpTool { .. }))
+    }
+}
+
+impl SemanticFirewall for DefaultFirewall {
+    fn label_input(&self, content: &str, existing: &[TrustLabel]) -> Vec<TrustLabel> {
+        let mut labels: HashSet<TrustLabel> = existing.iter().cloned().collect();
+
+        // Infer labels from content
+        if self.contains_url(content) {
+            labels.insert(TrustLabel::ExternalWeb);
+        }
+
+        if self.contains_injection_indicators(content) {
+            labels.insert(TrustLabel::Untrusted);
+        }
+
+        if self.appears_to_be_tool_output(content) {
+            labels.insert(TrustLabel::ExternalToolOutput);
+        }
+
+        // Content length heuristics for external metadata
+        if content.len() > 1000 && self.contains_url(content) {
+            labels.insert(TrustLabel::ExternalToolMetadata);
+        }
+
+        labels.into_iter().collect()
+    }
+
+    fn contradiction_check(
+        &self,
+        intent: &IntentEnvelope,
+        proposal: &ActionProposal,
+    ) -> Vec<Contradiction> {
+        let mut contradictions = Vec::new();
+
+        // Rule 1: Read-only intent vs mutating proposal
+        // Enforce even with empty scope - read-only intent must fail closed against mutating proposals
+        let intent_read_only = intent
+            .allowed_outcomes
+            .iter()
+            .all(|o| self.is_read_only_effect(&o.effect_type));
+        let proposal_mutating =
+            self.is_mutating_effect(&self.infer_effect_type(&proposal.expected_effect));
+
+        if intent_read_only && proposal_mutating {
+            contradictions.push(Contradiction {
+                rule_id: "read_only_violation".to_string(),
+                severity: Severity::High,
+                message: format!(
+                    "Intent allows only read-only effects, but proposal '{}' has mutating effect",
+                    proposal.title
+                ),
+            });
+        }
+
+        // Rule 2: MCP tool scope violation
+        if self.has_mcp_tool_scope(intent) && !self.proposal_matches_mcp_scope(intent, proposal) {
+            contradictions.push(Contradiction {
+                rule_id: "mcp_scope_violation".to_string(),
+                severity: Severity::High,
+                message: format!(
+                    "Proposal uses tool '{}/{}' which is not in the intent's MCP tool scope",
+                    proposal.server_name, proposal.tool_name
+                ),
+            });
+        }
+
+        // Rule 3: Risk tier escalation
+        let intent_risk_value = risk_tier_value(&intent.risk_tier);
+        let proposal_risk_value = risk_tier_value(&proposal.estimated_risk);
+        if proposal_risk_value > intent_risk_value + 1 {
+            contradictions.push(Contradiction {
+                rule_id: "risk_escalation".to_string(),
+                severity: Severity::Medium,
+                message: format!(
+                    "Proposal risk tier {:?} exceeds intent risk tier {:?}",
+                    proposal.estimated_risk, intent.risk_tier
+                ),
+            });
+        }
+
+        contradictions
+    }
+
+    fn sanitize_output(&self, value: serde_json::Value) -> serde_json::Value {
+        let mut _findings = Vec::new();
+        self.sanitize_value(value, "", &mut _findings)
+    }
+
+    fn dlp_findings(&self, value: &serde_json::Value) -> Vec<DlpFinding> {
+        let mut findings = Vec::new();
+        self.scan_for_findings(value, "", &mut findings);
+        findings
+    }
+
+    fn compute_taint_score(&self, taint_inputs: &[String]) -> u8 {
+        // Conservative scoring: each unique taint source contributes
+        // Weight by source type
+        let mut score: u8 = 0;
+        let unique_sources: HashSet<&String> = taint_inputs.iter().collect();
+
+        for source in unique_sources {
+            let source_lower = source.to_lowercase();
+            let increment = if source_lower.contains("external") {
+                25
+            } else if source_lower.contains("untrusted") {
+                30
+            } else if source_lower.contains("user") {
+                15
+            } else if source_lower.contains("web") || source_lower.contains("url") {
+                20
+            } else {
+                10
+            };
+            score = score.saturating_add(increment);
+        }
+
+        // Cap at 100
+        score.min(100)
+    }
+
+    fn derive_trust_context(
+        &self,
+        raw_inputs: &[ferrum_proto::IntentInputRef],
+        taint_inputs: &[String],
+    ) -> ferrum_proto::TrustContextSummary {
+        // Collect explicit labels from inputs
+        let mut input_labels: Vec<TrustLabel> = Vec::new();
+        let mut sensitivity_labels: Vec<SensitivityLabel> = Vec::new();
+
+        for input in raw_inputs {
+            input_labels.extend(input.trust_labels.clone());
+            sensitivity_labels.extend(input.sensitivity_labels.clone());
+
+            // Infer additional labels from content
+            let inferred = self.label_input(&input.summary, &input.trust_labels);
+            input_labels.extend(inferred);
+        }
+
+        // Deduplicate
+        let unique_labels: HashSet<TrustLabel> = input_labels.into_iter().collect();
+        let unique_sensitivity: HashSet<SensitivityLabel> =
+            sensitivity_labels.into_iter().collect();
+
+        // Compute flags
+        let contains_external_metadata = unique_labels
+            .iter()
+            .any(|l| matches!(l, TrustLabel::ExternalToolMetadata));
+        let contains_tool_output = unique_labels
+            .iter()
+            .any(|l| matches!(l, TrustLabel::ExternalToolOutput));
+        let contains_untrusted_text = unique_labels
+            .iter()
+            .any(|l| matches!(l, TrustLabel::Untrusted | TrustLabel::ExternalWeb));
+
+        ferrum_proto::TrustContextSummary {
+            input_labels: unique_labels.into_iter().collect(),
+            sensitivity_labels: unique_sensitivity.into_iter().collect(),
+            taint_score: self.compute_taint_score(taint_inputs),
+            contains_external_metadata,
+            contains_tool_output,
+            contains_untrusted_text,
+        }
+    }
+
+    fn enforce_execution_payload(
+        &self,
+        bindings: &[ResourceBinding],
+        payload: &serde_json::Value,
+    ) -> Result<(), EnforcementError> {
+        // Try to parse as HTTP payload first (HTTP has priority)
+        if let Some(http_payload) = self.try_parse_http_payload(payload) {
+            return self.enforce_http_payload(bindings, &http_payload);
+        }
+
+        // Try to parse as File payload
+        if let Some(file_payload) = self.try_parse_file_payload(payload) {
+            return self.enforce_file_payload(bindings, &file_payload);
+        }
+
+        // Try to parse as SQLite payload
+        if let Some(sqlite_payload) = self.try_parse_sqlite_payload(payload) {
+            return self.enforce_sqlite_payload(bindings, &sqlite_payload);
+        }
+
+        // Try to parse as Git payload
+        if let Some(git_payload) = self.try_parse_git_payload(payload) {
+            return self.enforce_git_payload(bindings, &git_payload);
+        }
+
+        // Try to parse as EmailDraft payload
+        if let Some(email_payload) = self.try_parse_email_payload(payload) {
+            return self.enforce_email_payload(bindings, &email_payload);
+        }
+
+        // Not a recognized execution attempt - pass through for other flows
+        Ok(())
+    }
+}
+
+impl DefaultFirewall {
+    /// Enforce HTTP payload against HTTP bindings.
+    fn enforce_http_payload(
+        &self,
+        bindings: &[ResourceBinding],
+        http_payload: &HttpExecutionPayload,
+    ) -> Result<(), EnforcementError> {
+        // Find Http bindings from the capability
+        let http_bindings: Vec<_> = bindings
+            .iter()
+            .filter_map(|b| match b {
+                ResourceBinding::Http {
+                    method,
+                    base_url,
+                    path_prefix,
+                    header_allowlist,
+                    mode,
+                } => Some((method, base_url, path_prefix, header_allowlist, mode)),
+                _ => None,
+            })
+            .collect();
+
+        // If no HTTP bindings exist but we have an HTTP payload, deny
+        if http_bindings.is_empty() {
+            return Err(EnforcementError {
+                code: EnforcementErrorCode::MissingBinding,
+                message: "HTTP execution attempted but no Http binding in capability".to_string(),
+            });
+        }
+
+        // Parse the request URL
+        let parsed_url = match self.parse_url(&http_payload.url) {
+            Some(u) => u,
+            None => {
+                return Err(EnforcementError {
+                    code: EnforcementErrorCode::MalformedPayload,
+                    message: format!("Invalid URL in payload: {}", http_payload.url),
+                });
+            }
+        };
+
+        // Try to match against any Http binding (allow if any matches)
+        for (binding_method, binding_base_url, binding_path_prefix, binding_allowlist, mode) in
+            &http_bindings
+        {
+            if self.http_binding_matches(
+                http_payload,
+                &parsed_url,
+                binding_method,
+                binding_base_url,
+                binding_path_prefix,
+                binding_allowlist,
+                mode,
+            ) {
+                return Ok(());
+            }
+        }
+
+        // No binding matched - fail closed
+        Err(EnforcementError {
+            code: EnforcementErrorCode::MissingBinding,
+            message: format!(
+                "HTTP request {} {} does not match any capability binding",
+                format_method(&http_payload.method),
+                http_payload.url
+            ),
+        })
+    }
+
+    /// Try to parse a payload as a File execution attempt.
+    /// Returns Some(FileExecutionPayload) if it looks like File operation, None otherwise.
+    fn try_parse_file_payload(&self, payload: &serde_json::Value) -> Option<FileExecutionPayload> {
+        let obj = payload.as_object()?;
+
+        // Must have a "path" string field to be considered a file operation
+        let path = obj.get("path")?.as_str()?.to_string();
+
+        // Infer write intent from explicit mode/content presence
+        // Conservative: if mode starts with 'w' or content/data is present, treat as write
+        let is_write = if let Some(mode) = obj.get("mode").and_then(|m| m.as_str()) {
+            let mode = mode.to_lowercase();
+            mode.starts_with('w') || mode == "append"
+        } else {
+            // Check for content/data fields which suggest a write operation
+            obj.contains_key("content") || obj.contains_key("data") || obj.contains_key("write")
+        };
+
+        Some(FileExecutionPayload { path, is_write })
+    }
+
+    /// Enforce File payload against File bindings.
+    fn enforce_file_payload(
+        &self,
+        bindings: &[ResourceBinding],
+        file_payload: &FileExecutionPayload,
+    ) -> Result<(), EnforcementError> {
+        // Find File bindings from the capability
+        let file_bindings: Vec<_> = bindings
+            .iter()
+            .filter_map(|b| match b {
+                ResourceBinding::File {
+                    path,
+                    mode,
+                    required_hash: _,
+                } => Some((path, mode)),
+                _ => None,
+            })
+            .collect();
+
+        // If no File bindings exist but we have a File payload, deny (fail-closed)
+        if file_bindings.is_empty() {
+            return Err(EnforcementError {
+                code: EnforcementErrorCode::MissingBinding,
+                message: "File execution attempted but no File binding in capability".to_string(),
+            });
+        }
+
+        // Check for path traversal/suspicious patterns (conservative - reject anything suspicious)
+        if self.contains_file_path_traversal(&file_payload.path) {
+            return Err(EnforcementError {
+                code: EnforcementErrorCode::PathViolation,
+                message: format!(
+                    "File path contains traversal or suspicious pattern: {}",
+                    file_payload.path
+                ),
+            });
+        }
+
+        // Normalize the request path for comparison
+        let normalized_request_path = self.normalize_file_path(&file_payload.path);
+
+        // Try to match against any File binding (allow if any matches)
+        for (binding_path, binding_mode) in &file_bindings {
+            let normalized_binding_path = self.normalize_file_path(binding_path);
+
+            // Check exact path match (bindings are exact path grants)
+            if normalized_request_path == normalized_binding_path {
+                // Check mode allows this operation
+                match binding_mode {
+                    ResourceMode::Read => {
+                        // Read mode only allows read operations
+                        if file_payload.is_write {
+                            return Err(EnforcementError {
+                                code: EnforcementErrorCode::ModeViolation,
+                                message: format!(
+                                    "Write attempted on read-only binding for path: {}",
+                                    file_payload.path
+                                ),
+                            });
+                        }
+                        return Ok(());
+                    }
+                    ResourceMode::Write | ResourceMode::ReadWrite => {
+                        // Write/ReadWrite modes allow both read and write
+                        return Ok(());
+                    }
+                    _ => {
+                        // Other modes are more restrictive - continue to check other bindings
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // No binding matched - fail closed
+        Err(EnforcementError {
+            code: EnforcementErrorCode::MissingBinding,
+            message: format!(
+                "File path {} does not match any capability binding",
+                file_payload.path
+            ),
+        })
+    }
+
+    /// Try to parse a payload as a SQLite execution attempt.
+    fn try_parse_sqlite_payload(
+        &self,
+        payload: &serde_json::Value,
+    ) -> Option<SqliteExecutionPayload> {
+        let obj = payload.as_object()?;
+
+        // Must have a "db_path" string field to be considered SQLite
+        let db_path = obj.get("db_path")?.as_str()?.to_string();
+
+        // Get SQL/query if present
+        let sql = obj
+            .get("sql")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let query = obj
+            .get("query")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        let statement = sql.as_deref().or(query.as_deref());
+
+        // Infer tables from query if present
+        let mut tables = Vec::new();
+        if let Some(sql_str) = statement {
+            tables = self.extract_tables_from_sql(sql_str);
+        }
+
+        // Infer write intent from SQL keywords or explicit flags
+        let is_write = if let Some(sql_str) = statement {
+            let lower = sql_str.to_lowercase();
+            lower.contains("insert")
+                || lower.contains("update")
+                || lower.contains("delete")
+                || lower.contains("drop")
+                || lower.contains("create")
+                || lower.contains("alter")
+        } else {
+            obj.contains_key("write")
+                || obj
+                    .get("write_mode")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+        };
+
+        Some(SqliteExecutionPayload {
+            db_path,
+            sql,
+            query,
+            tables,
+            is_write,
+        })
+    }
+
+    /// Extract table names from SQL (basic conservative extraction).
+    fn extract_tables_from_sql(&self, sql: &str) -> Vec<String> {
+        let lower = sql.to_lowercase();
+        let mut tables = Vec::new();
+
+        // Extract FROM clause tables
+        if let Some(from_pos) = lower.find(" from ") {
+            let after_from = &lower[from_pos + 6..];
+            let table_part = after_from
+                .split(|c: char| c.is_whitespace() || c == ',' || c == ';')
+                .next()
+                .unwrap_or("");
+            if !table_part.is_empty() && !table_part.starts_with('(') {
+                tables.push(table_part.to_string());
+            }
+        }
+
+        // Extract INTO clause tables (INSERT INTO)
+        if let Some(into_pos) = lower.find("insert into ") {
+            let after_into = &lower[into_pos + 12..];
+            let table_part = after_into
+                .split(|c: char| c.is_whitespace() || c == '(' || c == ';')
+                .next()
+                .unwrap_or("");
+            if !table_part.is_empty() {
+                tables.push(table_part.to_string());
+            }
+        }
+
+        // Extract UPDATE clause tables
+        if let Some(update_pos) = lower.find("update ") {
+            let after_update = &lower[update_pos + 7..];
+            let table_part = after_update
+                .split(|c: char| c.is_whitespace() || c == ',' || c == ';')
+                .next()
+                .unwrap_or("");
+            if !table_part.is_empty() {
+                tables.push(table_part.to_string());
+            }
+        }
+
+        tables
+    }
+
+    /// Enforce SQLite payload against SQLite bindings.
+    fn enforce_sqlite_payload(
+        &self,
+        bindings: &[ResourceBinding],
+        sqlite_payload: &SqliteExecutionPayload,
+    ) -> Result<(), EnforcementError> {
+        // Find SQLite bindings from the capability
+        let sqlite_bindings: Vec<_> = bindings
+            .iter()
+            .filter_map(|b| match b {
+                ResourceBinding::Sqlite {
+                    db_path,
+                    tables,
+                    mode,
+                } => Some((db_path, tables, mode)),
+                _ => None,
+            })
+            .collect();
+
+        // If no SQLite bindings exist but we have a SQLite payload, deny (fail-closed)
+        if sqlite_bindings.is_empty() {
+            return Err(EnforcementError {
+                code: EnforcementErrorCode::MissingBinding,
+                message: "SQLite execution attempted but no Sqlite binding in capability"
+                    .to_string(),
+            });
+        }
+
+        // Check for path traversal in db_path
+        if self.contains_file_path_traversal(&sqlite_payload.db_path) {
+            return Err(EnforcementError {
+                code: EnforcementErrorCode::PathViolation,
+                message: format!(
+                    "SQLite db_path contains traversal pattern: {}",
+                    sqlite_payload.db_path
+                ),
+            });
+        }
+
+        // Try to match against any SQLite binding (allow if any matches)
+        for (binding_db_path, binding_tables, binding_mode) in &sqlite_bindings {
+            // Check exact db_path match (bindings are exact grants)
+            if sqlite_payload.db_path != **binding_db_path {
+                continue;
+            }
+
+            // If binding specifies tables, check that all accessed tables are allowed
+            if !binding_tables.is_empty() {
+                if sqlite_payload.tables.is_empty() {
+                    return Err(EnforcementError {
+                        code: EnforcementErrorCode::MalformedPayload,
+                        message: format!(
+                            "SQLite payload for {} did not expose table scope for validation",
+                            sqlite_payload.db_path
+                        ),
+                    });
+                }
+
+                for table in &sqlite_payload.tables {
+                    if !binding_tables.contains(table) {
+                        return Err(EnforcementError {
+                            code: EnforcementErrorCode::MissingBinding,
+                            message: format!("SQLite table '{}' not in binding allowlist", table),
+                        });
+                    }
+                }
+            }
+
+            // Check mode allows this operation
+            match binding_mode {
+                ResourceMode::Read => {
+                    if sqlite_payload.is_write {
+                        return Err(EnforcementError {
+                            code: EnforcementErrorCode::ModeViolation,
+                            message: format!(
+                                "SQLite write attempted on read-only binding for db: {}",
+                                sqlite_payload.db_path
+                            ),
+                        });
+                    }
+                    return Ok(());
+                }
+                ResourceMode::Write | ResourceMode::ReadWrite => {
+                    return Ok(());
+                }
+                _ => {
+                    continue;
+                }
+            }
+        }
+
+        // No binding matched - fail closed
+        Err(EnforcementError {
+            code: EnforcementErrorCode::MissingBinding,
+            message: format!(
+                "SQLite db_path {} does not match any capability binding",
+                sqlite_payload.db_path
+            ),
+        })
+    }
+
+    /// Try to parse a payload as a Git execution attempt.
+    fn try_parse_git_payload(&self, payload: &serde_json::Value) -> Option<GitExecutionPayload> {
+        let obj = payload.as_object()?;
+
+        // Must have a "repo_path" string field to be considered Git
+        let repo_path = obj.get("repo_path")?.as_str()?.to_string();
+
+        // Get ref/branch/operation if present
+        let target_ref = obj
+            .get("ref")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let branch = obj
+            .get("branch")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let operation = obj
+            .get("operation")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        // Infer write intent from operation type or explicit flags
+        let is_write = if let Some(ref op) = operation {
+            let lower = op.to_lowercase();
+            lower.contains("push")
+                || lower.contains("commit")
+                || lower.contains("merge")
+                || lower.contains("rebase")
+                || lower.contains("checkout")
+                || lower.contains("reset")
+                || lower.contains("tag")
+        } else {
+            obj.get("write_mode")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        };
+
+        Some(GitExecutionPayload {
+            repo_path,
+            target_ref,
+            branch,
+            operation,
+            is_write,
+        })
+    }
+
+    /// Enforce Git payload against Git bindings.
+    fn enforce_git_payload(
+        &self,
+        bindings: &[ResourceBinding],
+        git_payload: &GitExecutionPayload,
+    ) -> Result<(), EnforcementError> {
+        // Find Git bindings from the capability
+        let git_bindings: Vec<_> = bindings
+            .iter()
+            .filter_map(|b| match b {
+                ResourceBinding::Git {
+                    repo_path,
+                    allowed_refs,
+                    mode,
+                } => Some((repo_path, allowed_refs, mode)),
+                _ => None,
+            })
+            .collect();
+
+        // If no Git bindings exist but we have a Git payload, deny (fail-closed)
+        if git_bindings.is_empty() {
+            return Err(EnforcementError {
+                code: EnforcementErrorCode::MissingBinding,
+                message: "Git execution attempted but no Git binding in capability".to_string(),
+            });
+        }
+
+        // Check for path traversal in repo_path
+        if self.contains_file_path_traversal(&git_payload.repo_path) {
+            return Err(EnforcementError {
+                code: EnforcementErrorCode::PathViolation,
+                message: format!(
+                    "Git repo_path contains traversal pattern: {}",
+                    git_payload.repo_path
+                ),
+            });
+        }
+
+        // Try to match against any Git binding (allow if any matches)
+        for (binding_repo_path, binding_allowed_refs, binding_mode) in &git_bindings {
+            // Check exact repo_path match (bindings are exact grants)
+            if git_payload.repo_path != **binding_repo_path {
+                continue;
+            }
+
+            // If binding specifies allowed refs, check that the target ref is allowed
+            if !binding_allowed_refs.is_empty() {
+                let ref_to_check = git_payload
+                    .target_ref
+                    .as_deref()
+                    .or(git_payload.branch.as_deref());
+
+                if let Some(ref_name) = ref_to_check {
+                    if !binding_allowed_refs.contains(&ref_name.to_string()) {
+                        return Err(EnforcementError {
+                            code: EnforcementErrorCode::MissingBinding,
+                            message: format!("Git ref '{}' not in binding allowlist", ref_name),
+                        });
+                    }
+                } else {
+                    return Err(EnforcementError {
+                        code: EnforcementErrorCode::MalformedPayload,
+                        message: "Git payload omitted ref/branch required by binding allowlist"
+                            .to_string(),
+                    });
+                }
+            }
+
+            // Check mode allows this operation
+            match binding_mode {
+                ResourceMode::Read => {
+                    if git_payload.is_write {
+                        return Err(EnforcementError {
+                            code: EnforcementErrorCode::ModeViolation,
+                            message: format!(
+                                "Git write operation attempted on read-only binding for repo: {}",
+                                git_payload.repo_path
+                            ),
+                        });
+                    }
+                    return Ok(());
+                }
+                ResourceMode::Write | ResourceMode::ReadWrite => {
+                    return Ok(());
+                }
+                _ => {
+                    continue;
+                }
+            }
+        }
+
+        // No binding matched - fail closed
+        Err(EnforcementError {
+            code: EnforcementErrorCode::MissingBinding,
+            message: format!(
+                "Git repo_path {} does not match any capability binding",
+                git_payload.repo_path
+            ),
+        })
+    }
+
+    /// Try to parse a payload as an EmailDraft execution attempt.
+    fn try_parse_email_payload(
+        &self,
+        payload: &serde_json::Value,
+    ) -> Option<EmailDraftExecutionPayload> {
+        let obj = payload.as_object()?;
+
+        // Must have "to" or "recipients" to be considered an email draft operation
+        let to: Vec<String> = obj
+            .get("to")
+            .map(Self::parse_string_or_array_field)
+            .unwrap_or_default();
+
+        let recipients: Vec<String> = obj
+            .get("recipients")
+            .map(Self::parse_string_or_array_field)
+            .unwrap_or_default();
+
+        // If neither "to" nor "recipients" present, not an email payload
+        if to.is_empty() && recipients.is_empty() {
+            return None;
+        }
+
+        // Merge to and recipients
+        let all_recipients: Vec<String> = to
+            .into_iter()
+            .chain(recipients)
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+
+        let subject = obj
+            .get("subject")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        // Infer send intent from explicit send flag or "send" operation
+        let is_send = obj.get("send").and_then(|v| v.as_bool()).unwrap_or(false)
+            || obj
+                .get("operation")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_lowercase() == "send")
+                .unwrap_or(false);
+
+        Some(EmailDraftExecutionPayload {
+            to: all_recipients.clone(),
+            recipients: all_recipients,
+            subject,
+            is_send,
+        })
+    }
+
+    /// Enforce EmailDraft payload against EmailDraft bindings.
+    fn enforce_email_payload(
+        &self,
+        bindings: &[ResourceBinding],
+        email_payload: &EmailDraftExecutionPayload,
+    ) -> Result<(), EnforcementError> {
+        // Find EmailDraft bindings from the capability
+        let email_bindings: Vec<_> = bindings
+            .iter()
+            .filter_map(|b| match b {
+                ResourceBinding::EmailDraft {
+                    recipients,
+                    allow_send,
+                    mode,
+                } => Some((recipients, *allow_send, mode)),
+                _ => None,
+            })
+            .collect();
+
+        // If no EmailDraft bindings exist but we have an email payload, deny (fail-closed)
+        if email_bindings.is_empty() {
+            return Err(EnforcementError {
+                code: EnforcementErrorCode::MissingBinding,
+                message: "Email execution attempted but no EmailDraft binding in capability"
+                    .to_string(),
+            });
+        }
+
+        // Try to match against any EmailDraft binding (allow if any matches)
+        for (binding_recipients, binding_allow_send, binding_mode) in &email_bindings {
+            // Check all recipients are in the allowlist
+            for recipient in &email_payload.to {
+                if !binding_recipients.contains(recipient) {
+                    return Err(EnforcementError {
+                        code: EnforcementErrorCode::MissingBinding,
+                        message: format!(
+                            "Email recipient '{}' not in binding allowlist",
+                            recipient
+                        ),
+                    });
+                }
+            }
+
+            // Check send is allowed if this is a send operation
+            if email_payload.is_send && !binding_allow_send {
+                return Err(EnforcementError {
+                    code: EnforcementErrorCode::ModeViolation,
+                    message: "Email send attempted but binding has allow_send=false".to_string(),
+                });
+            }
+
+            // Check mode allows this operation
+            match binding_mode {
+                ResourceMode::Read | ResourceMode::Draft => {
+                    // Read/Draft mode only allows draft operations (no send)
+                    if email_payload.is_send {
+                        return Err(EnforcementError {
+                            code: EnforcementErrorCode::ModeViolation,
+                            message: "Email send attempted on draft-only binding".to_string(),
+                        });
+                    }
+                    return Ok(());
+                }
+                ResourceMode::Write | ResourceMode::ReadWrite => {
+                    return Ok(());
+                }
+                _ => {
+                    continue;
+                }
+            }
+        }
+
+        // No binding matched - fail closed
+        Err(EnforcementError {
+            code: EnforcementErrorCode::MissingBinding,
+            message: "Email recipients do not match any capability binding".to_string(),
+        })
+    }
+
+    /// Normalize file path for comparison (remove redundant separators, etc.)
+    fn normalize_file_path(&self, path: &str) -> String {
+        // Simple normalization: collapse multiple slashes, remove trailing slash
+        let mut result = path.replace("//", "/");
+        while result.contains("//") {
+            result = result.replace("//", "/");
+        }
+        // Remove trailing slash except for root "/"
+        if result.len() > 1 && result.ends_with('/') {
+            result.pop();
+        }
+        result
+    }
+
+    /// Check for file path traversal patterns (conservative - rejects anything suspicious).
+    fn contains_file_path_traversal(&self, path: &str) -> bool {
+        let decoded = path.to_lowercase();
+
+        // Check for explicit traversal patterns on path segments.
+        if decoded == ".."
+            || decoded.starts_with("../")
+            || decoded.ends_with("/..")
+            || decoded.contains("/../")
+            || decoded.contains("\\..\\")
+            || decoded.starts_with("..\\")
+            || decoded.ends_with("\\..")
+        {
+            return true;
+        }
+
+        // Check for encoded traversal attempts
+        if decoded.contains("%2e%2e") || decoded.contains("%2e.") || decoded.contains(".%2e") {
+            return true;
+        }
+
+        // Check for null byte injection
+        if decoded.contains('\0') || decoded.contains("%00") {
+            return true;
+        }
+
+        false
+    }
+
+    fn parse_string_or_array_field(value: &serde_json::Value) -> Vec<String> {
+        if let Some(single) = value.as_str() {
+            return vec![single.to_string()];
+        }
+
+        value
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Infer effect type from expected effect description.
+    /// Uses word-boundary matching to avoid substring bugs (e.g., matching "get" inside "target").
+    /// Biases toward mutating/high-risk for unknown effects (fail-closed).
+    fn infer_effect_type(&self, effect: &str) -> EffectType {
+        let lower = effect.to_lowercase();
+        let words: Vec<&str> = lower
+            .split(|c: char| !c.is_alphanumeric() && c != '_')
+            .filter(|w| !w.is_empty())
+            .collect();
+
+        // Helper to check if any word exactly matches a read-only keyword
+        let has_read_word = words.iter().any(|w| {
+            *w == "read"
+                || *w == "inspect"
+                || *w == "view"
+                || *w == "get"
+                || *w == "fetch"
+                || *w == "list"
+                || *w == "search"
+                || *w == "query"
+                || *w == "analyze"
+                || *w == "check"
+        });
+
+        // Helper to check if any word exactly matches a mutating keyword
+        let has_mutate_word = words.iter().any(|w| {
+            *w == "write"
+                || *w == "create"
+                || *w == "delete"
+                || *w == "remove"
+                || *w == "modify"
+                || *w == "update"
+                || *w == "insert"
+                || *w == "drop"
+                || *w == "alter"
+                || *w == "mutate"
+        });
+
+        let has_git_word = words
+            .iter()
+            .any(|w| *w == "git" || *w == "commit" || *w == "push" || *w == "merge");
+        let has_db_word = words
+            .iter()
+            .any(|w| *w == "sql" || *w == "database" || *w == "db");
+        let has_api_word = words.iter().any(|w| *w == "api" || *w == "http");
+        let has_comm_word = words
+            .iter()
+            .any(|w| *w == "email" || *w == "send" || *w == "message" || *w == "notify");
+        let has_schedule_word = words
+            .iter()
+            .any(|w| *w == "schedule" || *w == "cron" || *w == "timer" || *w == "delay");
+        let has_admin_word = words
+            .iter()
+            .any(|w| *w == "admin" || *w == "config" || *w == "setting" || *w == "permission");
+
+        // Priority: mutating > read-only > unknown (treat unknown as mutating for fail-closed)
+        if has_mutate_word {
+            EffectType::FileMutation
+        } else if has_git_word {
+            EffectType::GitMutation
+        } else if has_db_word {
+            EffectType::DatabaseMutation
+        } else if has_api_word {
+            EffectType::ExternalApiCall
+        } else if has_comm_word {
+            EffectType::ExternalCommunication
+        } else if has_schedule_word {
+            EffectType::Scheduling
+        } else if has_admin_word {
+            EffectType::AdministrativeChange
+        } else if has_read_word {
+            EffectType::ReadOnlyAnalysis
+        } else {
+            // Unknown effect - bias toward mutating (fail-closed)
+            EffectType::FileMutation
+        }
+    }
+}
+
+/// Convert risk tier to numeric value for comparison.
+fn risk_tier_value(tier: &ferrum_proto::RiskTier) -> u8 {
+    match tier {
+        ferrum_proto::RiskTier::Low => 1,
+        ferrum_proto::RiskTier::Medium => 2,
+        ferrum_proto::RiskTier::High => 3,
+        ferrum_proto::RiskTier::Critical => 4,
+    }
+}
+
+/// Error type for execution-time HTTP egress enforcement failures.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnforcementError {
+    pub code: EnforcementErrorCode,
+    pub message: String,
+}
+
+/// Specific error codes for enforcement failures.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EnforcementErrorCode {
+    /// No matching binding found for the attempted execution
+    MissingBinding,
+    /// Method mismatch between request and binding
+    MethodMismatch,
+    /// Scheme/host/port mismatch
+    HostMismatch,
+    /// Path escapes outside allowed prefix
+    PathViolation,
+    /// Header not in allowlist
+    HeaderViolation,
+    /// Payload is malformed for HTTP execution
+    MalformedPayload,
+    /// Mode violation (e.g., write attempted on read-only binding)
+    ModeViolation,
+}
+
+impl std::fmt::Display for EnforcementError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}: {}", self.code, self.message)
+    }
+}
+
+impl std::error::Error for EnforcementError {}
+
+/// HTTP execution payload extracted from JSON.
+#[derive(Debug, Clone)]
+struct HttpExecutionPayload {
+    url: String,
+    method: HttpMethod,
+    headers: HashMap<String, String>,
+    /// Indicates if auth (bearer or basic) was present in the payload.
+    /// When true, this is treated like having an "authorization" header for allowlist checking.
+    auth_present: bool,
+    /// If api_key auth is present, this stores the specific header name (e.g., "X-API-Key").
+    /// When present, this specific header must be in the allowlist.
+    api_key_header: Option<String>,
+}
+
+/// File execution payload extracted from JSON.
+#[derive(Debug, Clone)]
+struct FileExecutionPayload {
+    path: String,
+    is_write: bool,
+}
+
+/// SQLite execution payload extracted from JSON.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+struct SqliteExecutionPayload {
+    db_path: String,
+    sql: Option<String>,
+    query: Option<String>,
+    tables: Vec<String>,
+    is_write: bool,
+}
+
+/// Git execution payload extracted from JSON.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+struct GitExecutionPayload {
+    repo_path: String,
+    target_ref: Option<String>,
+    branch: Option<String>,
+    operation: Option<String>,
+    is_write: bool,
+}
+
+/// EmailDraft execution payload extracted from JSON.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+struct EmailDraftExecutionPayload {
+    to: Vec<String>,
+    recipients: Vec<String>,
+    subject: Option<String>,
+    is_send: bool,
+}
+
+/// Parsed URL components for comparison.
+#[derive(Debug, Clone)]
+struct ParsedUrl {
+    scheme: String,
+    host: String,
+    port: Option<u16>,
+    path: String,
+}
+
+/// Parse HTTP method string to enum.
+fn parse_http_method(s: &str) -> Option<HttpMethod> {
+    match s.to_uppercase().as_str() {
+        "GET" => Some(HttpMethod::Get),
+        "POST" => Some(HttpMethod::Post),
+        "PUT" => Some(HttpMethod::Put),
+        "PATCH" => Some(HttpMethod::Patch),
+        "DELETE" => Some(HttpMethod::Delete),
+        _ => None,
+    }
+}
+
+/// Format HTTP method for display.
+fn format_method(m: &HttpMethod) -> &'static str {
+    match m {
+        HttpMethod::Get => "GET",
+        HttpMethod::Post => "POST",
+        HttpMethod::Put => "PUT",
+        HttpMethod::Patch => "PATCH",
+        HttpMethod::Delete => "DELETE",
+    }
+}
+
+impl DefaultFirewall {
+    /// Try to parse a payload as an HTTP execution attempt.
+    /// Returns Some(HttpExecutionPayload) if it looks like HTTP, None otherwise.
+    fn try_parse_http_payload(&self, payload: &serde_json::Value) -> Option<HttpExecutionPayload> {
+        let obj = payload.as_object()?;
+
+        // Must have a "url" string field to be considered HTTP
+        let url = obj.get("url")?.as_str()?.to_string();
+
+        // Must have a "method" string field
+        let method_str = obj.get("method")?.as_str()?;
+        let method = parse_http_method(method_str)?;
+
+        // Optional headers object
+        let headers = if let Some(headers_obj) = obj.get("headers").and_then(|h| h.as_object()) {
+            headers_obj
+                .iter()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.to_lowercase(), s.to_string())))
+                .collect()
+        } else {
+            HashMap::new()
+        };
+
+        // Check for dedicated auth field (bearer or basic)
+        let auth_present = self.payload_has_http_auth(payload);
+
+        // Extract api_key header if api_key auth is present
+        let api_key_header = self.extract_api_key_header(payload);
+
+        Some(HttpExecutionPayload {
+            url,
+            method,
+            headers,
+            auth_present,
+            api_key_header,
+        })
+    }
+
+    /// Check if the payload contains an HTTP auth object (bearer, basic, or api_key).
+    /// Expected shapes:
+    /// - Bearer: {"auth": {"type": "bearer", "token": "..."}}
+    /// - Basic: {"auth": {"type": "basic", "username": "...", "password": "..."}}
+    /// - ApiKey: {"auth": {"type": "api_key", "header": "X-API-Key", "key": "..."}}
+    fn payload_has_http_auth(&self, payload: &serde_json::Value) -> bool {
+        let obj = match payload.as_object() {
+            Some(o) => o,
+            None => return false,
+        };
+        let auth = match obj.get("auth") {
+            Some(a) => match a.as_object() {
+                Some(auth_obj) => auth_obj,
+                None => return false,
+            },
+            None => return false,
+        };
+        let auth_type = match auth.get("type").and_then(|t| t.as_str()) {
+            Some(t) => t.to_lowercase(),
+            None => return false,
+        };
+        match auth_type.as_str() {
+            "bearer" => {
+                // Bearer auth requires a token
+                auth.get("token").and_then(|t| t.as_str()).is_some()
+            }
+            "basic" => {
+                // Basic auth requires username and password
+                auth.get("username")
+                    .and_then(|u| u.as_str())
+                    .map(|u| !u.is_empty())
+                    .unwrap_or(false)
+                    && auth
+                        .get("password")
+                        .and_then(|p| p.as_str())
+                        .map(|p| !p.is_empty())
+                        .unwrap_or(false)
+            }
+            "api_key" => {
+                // API key auth requires header and key
+                auth.get("header")
+                    .and_then(|h| h.as_str())
+                    .map(|h| !h.is_empty())
+                    .unwrap_or(false)
+                    && auth.get("key").and_then(|k| k.as_str()).is_some()
+            }
+            _ => false,
+        }
+    }
+
+    /// Extract the API key header name from the payload if api_key auth is present.
+    /// Returns Some(header_name) if api_key auth is present, None otherwise.
+    fn extract_api_key_header(&self, payload: &serde_json::Value) -> Option<String> {
+        let obj = payload.as_object()?;
+        let auth = obj.get("auth")?.as_object()?;
+        let auth_type = auth.get("type")?.as_str()?.to_lowercase();
+        if auth_type == "api_key" {
+            auth.get("header")
+                .and_then(|h| h.as_str())
+                .map(|h| h.to_lowercase())
+        } else {
+            None
+        }
+    }
+
+    /// Parse URL into components for comparison.
+    fn parse_url(&self, url: &str) -> Option<ParsedUrl> {
+        // Simple URL parsing - handle http:// and https://
+        let url_lower = url.to_lowercase();
+
+        let (scheme, rest) = if url_lower.starts_with("https://") {
+            ("https", &url[8..])
+        } else if url_lower.starts_with("http://") {
+            ("http", &url[7..])
+        } else {
+            return None;
+        };
+
+        // Split host:port from path
+        let (host_port, path) = match rest.find('/') {
+            Some(idx) => (&rest[..idx], &rest[idx..]),
+            None => (rest, "/"),
+        };
+
+        // Parse host and port
+        let (host, port) = match host_port.rfind(':') {
+            Some(idx) => {
+                let host_part = &host_port[..idx];
+                let port_part = &host_port[idx + 1..];
+                match port_part.parse::<u16>() {
+                    Ok(p) => (host_part, Some(p)),
+                    Err(_) => (host_port, None),
+                }
+            }
+            None => (host_port, None),
+        };
+
+        Some(ParsedUrl {
+            scheme: scheme.to_string(),
+            host: host.to_lowercase(),
+            port,
+            path: path.to_string(),
+        })
+    }
+
+    /// Check if an HTTP payload matches a specific binding.
+    #[allow(clippy::too_many_arguments)]
+    fn http_binding_matches(
+        &self,
+        payload: &HttpExecutionPayload,
+        parsed_url: &ParsedUrl,
+        binding_method: &HttpMethod,
+        binding_base_url: &str,
+        binding_path_prefix: &str,
+        binding_allowlist: &[String],
+        mode: &ResourceMode,
+    ) -> bool {
+        // Check method match
+        if payload.method != *binding_method {
+            return false;
+        }
+
+        // Parse binding base URL
+        let binding_parsed = match self.parse_url(binding_base_url) {
+            Some(u) => u,
+            None => return false,
+        };
+
+        // Check scheme match
+        if parsed_url.scheme != binding_parsed.scheme {
+            return false;
+        }
+
+        // Check host match (exact match required)
+        if parsed_url.host != binding_parsed.host {
+            return false;
+        }
+
+        // Check port match (binding port must match request port)
+        // If binding has no explicit port, use default for its scheme
+        let binding_port = binding_parsed.port.unwrap_or_else(|| {
+            if binding_parsed.scheme == "https" {
+                443
+            } else {
+                80
+            }
+        });
+        let request_port = parsed_url.port.unwrap_or_else(|| {
+            if parsed_url.scheme == "https" {
+                443
+            } else {
+                80
+            }
+        });
+        if request_port != binding_port {
+            return false;
+        }
+
+        // Check path prefix (request path must start with binding prefix)
+        // Conservative: reject suspicious path patterns before matching
+        if self.contains_path_traversal(&parsed_url.path) {
+            return false;
+        }
+        if !parsed_url.path.starts_with(binding_path_prefix) {
+            return false;
+        }
+
+        // Check mode allows this operation
+        match mode {
+            ResourceMode::Read => {
+                // Read mode only allows GET
+                if !matches!(payload.method, HttpMethod::Get) {
+                    return false;
+                }
+            }
+            ResourceMode::Write => {
+                // Write mode allows POST, PUT, PATCH, DELETE
+                if matches!(payload.method, HttpMethod::Get) {
+                    return false;
+                }
+            }
+            ResourceMode::ReadWrite => {
+                // ReadWrite allows all methods
+            }
+            _ => {
+                // Other modes are more restrictive - deny for safety
+                return false;
+            }
+        }
+
+        // Check headers against allowlist
+        let allowlist_lower: HashSet<String> =
+            binding_allowlist.iter().map(|h| h.to_lowercase()).collect();
+
+        for header_name in payload.headers.keys() {
+            if !allowlist_lower.contains(header_name) {
+                return false;
+            }
+        }
+
+        // If auth (bearer or basic) is present (NOT api_key), treat it like having the authorization header
+        // for allowlist checking purposes. Api_key is handled separately via api_key_header.
+        if payload.auth_present
+            && payload.api_key_header.is_none()
+            && !allowlist_lower.contains("authorization")
+        {
+            return false;
+        }
+
+        // If api_key auth is present, the specific API key header must be in the allowlist
+        if let Some(ref api_key_header) = payload.api_key_header {
+            if !allowlist_lower.contains(api_key_header) {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    /// Check for path traversal patterns (conservative - rejects anything suspicious).
+    fn contains_path_traversal(&self, path: &str) -> bool {
+        let decoded = path.to_lowercase();
+
+        // Check for explicit traversal patterns
+        if decoded.contains("/..") || decoded.contains("/../") {
+            return true;
+        }
+
+        // Check for encoded traversal attempts
+        if decoded.contains("%2e%2e") || decoded.contains("%2e.") || decoded.contains(".%2e") {
+            return true;
+        }
+
+        // Check for double slashes (could indicate path confusion)
+        if decoded.contains("//") {
+            return true;
+        }
+
+        // Check for null byte injection
+        if decoded.contains('\0') || decoded.contains("%00") {
+            return true;
+        }
+
+        false
+    }
+}
+
+/// Noop firewall for testing and backward compatibility.
+pub struct NoopFirewall;
+
+impl SemanticFirewall for NoopFirewall {
+    fn label_input(&self, _content: &str, existing: &[TrustLabel]) -> Vec<TrustLabel> {
+        existing.to_vec()
+    }
+
     fn contradiction_check(
         &self,
         _intent: &IntentEnvelope,
         _proposal: &ActionProposal,
-    ) -> Vec<String> {
+    ) -> Vec<Contradiction> {
         vec![]
     }
 

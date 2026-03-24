@@ -47,3 +47,4 @@ petgraph = "0.7"
 clap = { version = "4", features = ["derive"] }
 indexmap = { version = "1", features = ["serde"] }
 tempfile = "3"
+regex = "1"

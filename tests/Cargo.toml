@@ -1,29 +1,50 @@
 [package]
-name = "ferrum-gateway-integration-tests"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-
-[dependencies]
-anyhow.workspace = true
-async-trait.workspace = true
-axum.workspace = true
-chrono.workspace = true
-ferrum-cap = { path = "../crates/ferrum-cap" }
-ferrum-gateway = { path = "../crates/ferrum-gateway" }
-ferrum-pdp = { path = "../crates/ferrum-pdp" }
-ferrum-proto = { path = "../crates/ferrum-proto" }
-ferrum-rollback = { path = "../crates/ferrum-rollback" }
-ferrum-store = { path = "../crates/ferrum-store" }
-http-body-util = "0.1"
-hyper = "1"
-serde.workspace = true
-serde_json.workspace = true
-tempfile.workspace = true
-tokio.workspace = true
-tower.workspace = true
-uuid.workspace = true
+name = "integration-tests"
+version = "0.1.0"
+edition = "2024"
 
 [[test]]
 name = "integration_gateway_flow"
 path = "integration_gateway_flow.rs"
+
+[[test]]
+name = "integration_contracts"
+path = "integration_contracts.rs"
+
+[[test]]
+name = "integration_poisoned_context"
+path = "integration_poisoned_context.rs"
+
+[[test]]
+name = "integration_lineage_chain"
+path = "integration_lineage_chain.rs"
+
+[[test]]
+name = "integration_provenance_query"
+path = "integration_provenance_query.rs"
+
+[[test]]
+name = "integration_capability_restart"
+path = "integration_capability_restart.rs"
+
+[dependencies]
+ferrum-gateway = { path = "../crates/ferrum-gateway" }
+ferrum-proto = { path = "../crates/ferrum-proto" }
+ferrum-store = { path = "../crates/ferrum-store" }
+ferrum-rollback = { path = "../crates/ferrum-rollback" }
+ferrum-adapter-fs = { path = "../crates/ferrum-adapter-fs" }
+ferrum-adapter-sqlite = { path = "../crates/ferrum-adapter-sqlite" }
+ferrum-adapter-maildraft = { path = "../crates/ferrum-adapter-maildraft" }
+ferrum-adapter-git = { path = "../crates/ferrum-adapter-git" }
+ferrum-adapter-http = { path = "../crates/ferrum-adapter-http" }
+ferrum-pdp = { path = "../crates/ferrum-pdp" }
+ferrum-cap = { path = "../crates/ferrum-cap" }
+ferrum-firewall = { path = "../crates/ferrum-firewall" }
+sqlx = { workspace = true }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tempfile = "3"
+axum = "0.8"
+futures = "0.3"
+chrono = { version = "0.4", features = ["serde"] }
+tower = "0.5"

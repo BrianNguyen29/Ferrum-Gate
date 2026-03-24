@@ -12,8 +12,8 @@ pub enum StoreError {
     NotFound { entity: &'static str, id: String },
     #[error("invalid state transition: {0}")]
     InvalidState(String),
-    #[error("{0}")]
-    Other(String),
+    #[error("internal error: {0}")]
+    Internal(String),
 }
 
 impl StoreError {

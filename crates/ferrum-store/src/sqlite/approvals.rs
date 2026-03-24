@@ -181,7 +181,7 @@ impl ApprovalRepo for SqliteApprovalRepo {
                 .fetch_all(&self.pool)
                 .await?
         } else {
-            return Err(StoreError::Other(format!(
+            return Err(StoreError::Internal(format!(
                 "unexpected bind args count: {}",
                 bind_args.len()
             )));
@@ -266,7 +266,7 @@ impl ApprovalRepo for SqliteApprovalRepo {
                     .await?
             }
             _ => {
-                return Err(StoreError::Other(format!(
+                return Err(StoreError::Internal(format!(
                     "unexpected bind args count: {}",
                     bind_args.len()
                 )));
@@ -371,7 +371,7 @@ impl ApprovalRepo for SqliteApprovalRepo {
                     .await?
             }
             _ => {
-                return Err(StoreError::Other(format!(
+                return Err(StoreError::Internal(format!(
                     "unexpected bind args count: {}",
                     bind_args.len()
                 )));
@@ -483,7 +483,7 @@ impl ApprovalRepo for SqliteApprovalRepo {
                     .await?
             }
             _ => {
-                return Err(StoreError::Other(format!(
+                return Err(StoreError::Internal(format!(
                     "unexpected bind args count: {}",
                     bind_args.len()
                 )));
@@ -538,11 +538,11 @@ fn encode_cursor(created_at: DateTime<Utc>, approval_id: ApprovalId) -> String {
 /// Fails closed on invalid/malformed cursors.
 fn decode_cursor(cursor: &str) -> Result<ApprovalCursor> {
     let bytes = base64_decode(cursor)
-        .map_err(|e| StoreError::Other(format!("cursor decode failed: {}", e)))?;
+        .map_err(|e| StoreError::Internal(format!("cursor decode failed: {}", e)))?;
     let json = String::from_utf8(bytes)
-        .map_err(|e| StoreError::Other(format!("cursor invalid (not UTF-8): {}", e)))?;
+        .map_err(|e| StoreError::Internal(format!("cursor invalid (not UTF-8): {}", e)))?;
     let decoded: ApprovalCursor = serde_json::from_str(&json)
-        .map_err(|e| StoreError::Other(format!("cursor parse failed: {}", e)))?;
+        .map_err(|e| StoreError::Internal(format!("cursor parse failed: {}", e)))?;
     Ok(decoded)
 }
 
@@ -579,7 +579,7 @@ fn base64_decode(input: &str) -> Result<Vec<u8>> {
             '0'..='9' => Ok(c as u8 - b'0' + 52),
             '-' => Ok(62),
             '_' => Ok(63),
-            _ => Err(StoreError::Other("invalid base64 character".to_string())),
+            _ => Err(StoreError::Internal("invalid base64 character".to_string())),
         }
     }
 
@@ -591,7 +591,7 @@ fn base64_decode(input: &str) -> Result<Vec<u8>> {
         let b = if i + 1 < chars.len() {
             decode_char(chars[i + 1])?
         } else {
-            return Err(StoreError::Other("incomplete cursor".to_string()));
+            return Err(StoreError::Internal("incomplete cursor".to_string()));
         };
         let c = if i + 2 < chars.len() && chars[i + 2] != '=' {
             decode_char(chars[i + 2])?

@@ -27,6 +27,7 @@ impl GatewayRuntime {
             cap,
             rollback,
             store,
+            firewall,
         }
     }
 }
