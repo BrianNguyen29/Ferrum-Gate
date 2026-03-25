@@ -117,6 +117,18 @@ cargo run -p ferrumctl -- server inspect-provenance \
   --execution-id <execution_id> \
   --terminal-only
 
+# Query provenance events with pagination
+cargo run -p ferrumctl -- server inspect-provenance \
+  --limit 100
+
+# Resume a paginated query using a cursor
+cargo run -p ferrumctl -- server inspect-provenance \
+  --cursor <next_cursor>
+
+# Export all provenance events across all pages (JSONL, one event per line)
+cargo run -p ferrumctl -- server inspect-provenance \
+  --all-pages
+
 # Inspect a single provenance event by ID
 cargo run -p ferrumctl -- server inspect-event <event_id>
 

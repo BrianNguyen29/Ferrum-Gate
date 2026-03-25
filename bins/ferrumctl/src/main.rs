@@ -234,11 +234,17 @@ struct ProvenanceQueryRequest {
     since: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     until: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    limit: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cursor: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct ProvenanceQueryResponse {
     events: Vec<ProvenanceEvent>,
+    #[serde(default)]
+    next_cursor: Option<String>,
 }
 
 // =============================================================================
@@ -271,6 +277,7 @@ struct InspectProvenanceOptions {
     url: Option<String>,
     token: Option<String>,
     as_json: bool,
+    all_pages: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -612,6 +619,19 @@ enum ServerCommand {
         /// Filter events until timestamp (ISO 8601).
         #[arg(long)]
         until: Option<String>,
+
+        /// Maximum number of events to return per page (1-1000).
+        #[arg(long)]
+        limit: Option<u32>,
+
+        /// Cursor from a previous query's next_cursor to fetch the next page.
+        #[arg(long)]
+        cursor: Option<String>,
+
+        /// Export all pages by following cursors until exhaustion.
+        /// Automatically sets --json output.
+        #[arg(long)]
+        all_pages: bool,
 
         /// Server base URL (e.g. http://127.0.0.1:8080).
         #[arg(long, env = "FERRUMCTL_SERVER_URL")]
@@ -976,20 +996,37 @@ fn parse_metadata_json(s: &str) -> Result<serde_json::Map<String, serde_json::Va
 
 async fn run_inspect_provenance(options: InspectProvenanceOptions) -> Result<()> {
     let InspectProvenanceOptions {
-        query,
+        mut query,
         url,
         token,
         as_json,
+        all_pages,
     } = options;
 
     let url = resolve_server_url(url)?;
     let client = ServerClient::new(&url, token);
 
-    let response = client.query_provenance(&query).await?;
-
-    if as_json {
+    if all_pages {
+        // Export mode: follow cursors until exhaustion, emit JSONL to stdout.
+        // Each line is one event as a separate JSON object.
+        loop {
+            let response = client.query_provenance(&query).await?;
+            let next_cursor = response.next_cursor.clone();
+            for event in response.events {
+                println!("{}", serde_json::to_string(&event)?);
+            }
+            match next_cursor {
+                Some(cursor) => {
+                    query.cursor = Some(cursor);
+                }
+                None => break,
+            }
+        }
+    } else if as_json {
+        let response = client.query_provenance(&query).await?;
         println!("{}", serde_json::to_string_pretty(&response)?);
     } else {
+        let response = client.query_provenance(&query).await?;
         if response.events.is_empty() {
             println!("No events found.");
             return Ok(());
@@ -1000,6 +1037,9 @@ async fn run_inspect_provenance(options: InspectProvenanceOptions) -> Result<()>
                 "  [{}] {}  {}",
                 event.occurred_at, event.kind, event.event_id
             );
+        }
+        if let Some(next_cursor) = response.next_cursor {
+            println!("Next cursor: {}", next_cursor);
         }
     }
     Ok(())
@@ -1169,6 +1209,9 @@ async fn main() -> Result<()> {
                 terminal_only,
                 since,
                 until,
+                limit,
+                cursor,
+                all_pages,
                 server_url,
                 bearer_token,
                 json,
@@ -1182,12 +1225,15 @@ async fn main() -> Result<()> {
                     terminal_only: terminal_only.then_some(true),
                     since,
                     until,
+                    limit,
+                    cursor,
                 };
                 run_inspect_provenance(InspectProvenanceOptions {
                     query,
                     url: server_url,
                     token: bearer_token,
                     as_json: json,
+                    all_pages,
                 })
                 .await?;
             }
