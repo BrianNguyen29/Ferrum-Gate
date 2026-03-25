@@ -5,6 +5,7 @@ Operational playbooks for day-to-day and incident response.
 ## Available runbooks
 
 - [TLS / Ingress (nginx)](ops-tls-ingress-runbook.md) — production TLS termination in front of ferrumd
+- [Approval workflow](ops-approval-workflow-runbook.md) — discovering, reviewing, and resolving pending R3 approvals
 
 ## When to use these
 

@@ -76,3 +76,32 @@ HTTP rollback is a **no-op by design**. If an HTTP adapter mutates remote state 
 - Verify the intent scope matches a policy rule.
 - Check that the agent's manifest is present and pinned correctly.
 - Verify the PDP engine has not been misconfigured (currently `StaticPdpEngine`).
+
+## Approval issues
+
+### Approval not found (404)
+- Verify the approval ID is correct (UUID format).
+- The approval may have already been resolved; use `ferrumctl server inspect-approvals` to check current pending approvals.
+- If the approval expired (>15 minutes), it must be re-created by re-authorizing the execution.
+
+### Approval resolves but execution does not advance (409 Conflict)
+- Only `Pending` approvals can be resolved. If the approval is already `Granted`, `Denied`, or `Expired`, the server returns a 409 Conflict.
+- The linked execution must be in `AwaitingApproval` state. If it has already transitioned (e.g., execution was cancelled or timed out), resolution fails.
+- Check `ferrumctl server inspect-approval <id>` to see the current state.
+
+### Resolution returns 401 Unauthorized
+- All non-health routes require `Authorization: Bearer <token>` when `auth.mode = "bearer"`.
+- Verify the server's `FERRUMD_BEARER_TOKEN` matches the client's `--bearer-token` or `FERRUMCTL_BEARER_TOKEN`.
+
+### Approval expired (already past expires_at)
+- Pending approvals expire after 15 minutes. Expired approvals cannot be resolved.
+- Re-authorize the execution to create a new pending approval with a fresh `expires_at`.
+
+### Execution in AwaitingApproval but no approval found
+- Use `ferrumctl server inspect-approvals --execution-id <id>` to look up approvals linked to the specific execution.
+- If no approval exists, the capability may have been consumed by another execution or the proposal was never in a state requiring approval.
+
+### R3 (IrreversibleHighConsequence) execution stuck in AwaitingApproval
+- These executions require explicit approval before the capability is consumed.
+- Operators must actively poll for pending R3 approvals using `ferrumctl server inspect-approvals`.
+- Set up monitoring or alerting on the pending-approval queue to avoid approvals expiring unnoticed.

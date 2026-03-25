@@ -351,6 +351,46 @@ impl ServerClient {
         self.decode_json(resp).await
     }
 
+    async fn resolve_approval(
+        &self,
+        approval_id: &str,
+        actor_type: &str,
+        actor_id: &str,
+        actor_display_name: Option<&str>,
+        approve: bool,
+        reason: Option<&str>,
+    ) -> Result<ApprovalRequest> {
+        let path = format!("/v1/approvals/{}/resolve", approval_id);
+        #[derive(Serialize)]
+        struct ResolveRequest<'a> {
+            actor: ActorRef<'a>,
+            approve: bool,
+            reason: Option<&'a str>,
+        }
+        #[derive(Serialize)]
+        struct ActorRef<'a> {
+            actor_type: &'a str,
+            actor_id: &'a str,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            display_name: Option<&'a str>,
+        }
+        let req = ResolveRequest {
+            actor: ActorRef {
+                actor_type,
+                actor_id,
+                display_name: actor_display_name,
+            },
+            approve,
+            reason,
+        };
+        let resp = self
+            .request(reqwest::Method::POST, &path)
+            .json(&req)
+            .send()
+            .await?;
+        self.decode_json(resp).await
+    }
+
     async fn get_lineage(&self, execution_id: &str) -> Result<LineageResponse> {
         let path = format!("/v1/provenance/lineage/{}", execution_id);
         let resp = self.request(reqwest::Method::GET, &path).send().await?;
@@ -441,6 +481,38 @@ enum LineageFormat {
     Json,
     /// Graphviz DOT format for visualization.
     Dot,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum ActorType {
+    /// Human user.
+    User,
+    /// Autonomous agent.
+    Agent,
+    /// Policy evaluation engine.
+    PolicyEngine,
+    /// Gateway orchestrator.
+    Gateway,
+    /// Resource adapter.
+    Adapter,
+    /// Human operator.
+    Operator,
+    /// System-level process.
+    System,
+}
+
+impl ActorType {
+    fn as_str(&self) -> &'static str {
+        match self {
+            ActorType::User => "User",
+            ActorType::Agent => "Agent",
+            ActorType::PolicyEngine => "PolicyEngine",
+            ActorType::Gateway => "Gateway",
+            ActorType::Adapter => "Adapter",
+            ActorType::Operator => "Operator",
+            ActorType::System => "System",
+        }
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -554,6 +626,43 @@ enum ServerCommand {
         bearer_token: Option<String>,
 
         /// Output as JSON instead of human-readable.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Resolve a pending approval (approve or deny).
+    ResolveApproval {
+        /// Approval ID (UUID).
+        approval_id: String,
+
+        /// Grant the approval. Omit this flag to deny.
+        #[arg(long)]
+        approve: bool,
+
+        /// Actor type of the resolver (default: Operator).
+        #[arg(long, value_enum, default_value = "Operator")]
+        actor_type: ActorType,
+
+        /// Identifier for the resolving actor (required).
+        #[arg(long)]
+        actor_id: String,
+
+        /// Human-readable display name for the actor (optional).
+        #[arg(long)]
+        actor_display_name: Option<String>,
+
+        /// Reason for the resolution (optional).
+        #[arg(long)]
+        reason: Option<String>,
+
+        /// Server base URL (e.g. http://127.0.0.1:8080).
+        #[arg(long, env = "FERRUMCTL_SERVER_URL")]
+        server_url: Option<String>,
+
+        /// Bearer token for authentication.
+        #[arg(long, env = "FERRUMCTL_BEARER_TOKEN")]
+        bearer_token: Option<String>,
+
+        /// Output the resolved approval as JSON instead of human-readable.
         #[arg(long)]
         json: bool,
     },
@@ -862,6 +971,51 @@ async fn run_inspect_approval(
     Ok(())
 }
 
+async fn run_resolve_approval(
+    approval_id: &str,
+    approve: bool,
+    actor_type: ActorType,
+    actor_id: &str,
+    actor_display_name: Option<String>,
+    reason: Option<String>,
+    url: Option<String>,
+    token: Option<String>,
+    as_json: bool,
+) -> Result<()> {
+    let url = resolve_server_url(url)?;
+    let client = ServerClient::new(&url, token);
+    let approval = client
+        .resolve_approval(
+            approval_id,
+            actor_type.as_str(),
+            actor_id,
+            actor_display_name.as_deref(),
+            approve,
+            reason.as_deref(),
+        )
+        .await?;
+
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&approval)?);
+    } else {
+        let verdict = if approval.state == "Granted" {
+            "APPROVED"
+        } else {
+            "DENIED"
+        };
+        println!("Approval {} ({})", approval.approval_id, verdict);
+        println!("  State:    {}", approval.state);
+        println!("  Intent:   {}", approval.intent_id);
+        println!("  Proposal: {}", approval.proposal_id);
+        if let Some(eid) = approval.execution_id {
+            println!("  Execution:{}", eid);
+        }
+        println!("  Created:  {}", approval.created_at);
+        println!("  Expires:  {}", approval.expires_at);
+    }
+    Ok(())
+}
+
 async fn run_inspect_lineage(
     execution_id: &str,
     url: Option<String>,
@@ -1149,6 +1303,30 @@ async fn main() -> Result<()> {
                 json,
             } => {
                 run_inspect_approval(&approval_id, server_url, bearer_token, json).await?;
+            }
+            ServerCommand::ResolveApproval {
+                approval_id,
+                approve,
+                actor_type,
+                actor_id,
+                actor_display_name,
+                reason,
+                server_url,
+                bearer_token,
+                json,
+            } => {
+                run_resolve_approval(
+                    &approval_id,
+                    approve,
+                    actor_type,
+                    &actor_id,
+                    actor_display_name,
+                    reason,
+                    server_url,
+                    bearer_token,
+                    json,
+                )
+                .await?;
             }
             ServerCommand::InspectLineage {
                 execution_id,
