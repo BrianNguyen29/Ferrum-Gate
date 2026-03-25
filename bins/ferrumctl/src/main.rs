@@ -176,6 +176,13 @@ struct ApprovalRequest {
     created_at: String,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct ApprovalListEnvelope {
+    items: Vec<ApprovalRequest>,
+    #[serde(default)]
+    next_cursor: Option<String>,
+}
+
 /// Edge from a parent event to this event.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct ProvenanceEdge {
@@ -266,6 +273,18 @@ struct InspectProvenanceOptions {
     as_json: bool,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct ListApprovalsQuery {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    limit: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cursor: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    proposal_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    execution_id: Option<String>,
+}
+
 // =============================================================================
 // Server client
 // =============================================================================
@@ -317,9 +336,10 @@ impl ServerClient {
         self.decode_json(resp).await
     }
 
-    async fn list_approvals(&self) -> Result<Vec<ApprovalRequest>> {
+    async fn list_approvals(&self, query: &ListApprovalsQuery) -> Result<ApprovalListEnvelope> {
         let resp = self
             .request(reqwest::Method::GET, "/v1/approvals")
+            .query(query)
             .send()
             .await?;
         self.decode_json(resp).await
@@ -492,6 +512,22 @@ enum ServerCommand {
     },
     /// List pending approvals.
     InspectApprovals {
+        /// Maximum approvals to return.
+        #[arg(long)]
+        limit: Option<u32>,
+
+        /// Cursor returned by a previous approval listing.
+        #[arg(long)]
+        cursor: Option<String>,
+
+        /// Filter by proposal ID (UUID).
+        #[arg(long)]
+        proposal_id: Option<String>,
+
+        /// Filter by execution ID (UUID).
+        #[arg(long)]
+        execution_id: Option<String>,
+
         /// Server base URL (e.g. http://127.0.0.1:8080).
         #[arg(long, env = "FERRUMCTL_SERVER_URL")]
         server_url: Option<String>,
@@ -751,30 +787,48 @@ async fn run_inspect_execution(
 }
 
 async fn run_inspect_approvals(
+    limit: Option<u32>,
+    cursor: Option<String>,
+    proposal_id: Option<String>,
+    execution_id: Option<String>,
     url: Option<String>,
     token: Option<String>,
     as_json: bool,
 ) -> Result<()> {
     let url = resolve_server_url(url)?;
     let client = ServerClient::new(&url, token);
-    let approvals = client.list_approvals().await?;
+    let approvals = client
+        .list_approvals(&ListApprovalsQuery {
+            limit,
+            cursor,
+            proposal_id,
+            execution_id,
+        })
+        .await?;
 
     if as_json {
         println!("{}", serde_json::to_string_pretty(&approvals)?);
     } else {
-        if approvals.is_empty() {
+        if approvals.items.is_empty() {
             println!("No pending approvals.");
             return Ok(());
         }
-        for approval in approvals {
+        for approval in approvals.items {
             println!("Approval: {}", approval.approval_id);
             println!("  State:    {}", approval.state);
             println!("  Intent:   {}", approval.intent_id);
+            println!("  Proposal: {}", approval.proposal_id);
+            if let Some(execution_id) = approval.execution_id {
+                println!("  Execution:{}", execution_id);
+            }
             println!("  Reason:   {}", approval.reason);
             println!("  Action:   {}", approval.action_digest);
             println!("  Created:  {}", approval.created_at);
             println!("  Expires:  {}", approval.expires_at);
             println!();
+        }
+        if let Some(next_cursor) = approvals.next_cursor {
+            println!("Next cursor: {}", next_cursor);
         }
     }
     Ok(())
@@ -1069,11 +1123,24 @@ async fn main() -> Result<()> {
                 run_inspect_execution(&execution_id, server_url, bearer_token, json).await?;
             }
             ServerCommand::InspectApprovals {
+                limit,
+                cursor,
+                proposal_id,
+                execution_id,
                 server_url,
                 bearer_token,
                 json,
             } => {
-                run_inspect_approvals(server_url, bearer_token, json).await?;
+                run_inspect_approvals(
+                    limit,
+                    cursor,
+                    proposal_id,
+                    execution_id,
+                    server_url,
+                    bearer_token,
+                    json,
+                )
+                .await?;
             }
             ServerCommand::InspectApproval {
                 approval_id,

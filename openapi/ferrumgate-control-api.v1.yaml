@@ -398,25 +398,6 @@ paths:
           $ref: '#/components/responses/ApiError'
         '500':
           $ref: '#/components/responses/ApiError'
-    post:
-      summary: Create approval request
-      operationId: createApproval
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ApprovalRequest'
-      responses:
-        '200':
-          description: Pending approvals
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/ApprovalRequest'
-
   /v1/approvals/{approval_id}:
     get:
       summary: Get approval
