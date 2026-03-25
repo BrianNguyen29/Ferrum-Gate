@@ -6,7 +6,7 @@ use sqlx::SqlitePool;
 
 use crate::{ApprovalRepo, Result, StoreError};
 
-use super::helpers::{enum_text, fetch_entities, fetch_entity_by_id, from_json, to_json};
+use super::helpers::{enum_text, fetch_entity_by_id, from_json, to_json};
 use sqlx::Row;
 
 #[derive(Clone)]
@@ -82,53 +82,6 @@ impl ApprovalRepo for SqliteApprovalRepo {
         };
         approval.state = state;
         self.update(&approval).await
-    }
-
-    async fn list_pending(&self) -> Result<Vec<ApprovalRequest>> {
-        fetch_entities(
-            &self.pool,
-            "SELECT raw_json FROM approvals WHERE state = ?1 ORDER BY created_at DESC",
-            enum_text(&ApprovalState::Pending)?,
-        )
-        .await
-    }
-
-    async fn list_pending_paginated(
-        &self,
-        limit: u32,
-        offset: u32,
-    ) -> Result<Vec<ApprovalRequest>> {
-        let rows = sqlx::query(
-            "SELECT raw_json FROM approvals WHERE state = ?1 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3",
-        )
-        .bind(enum_text(&ApprovalState::Pending)?)
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(&self.pool)
-        .await?;
-        rows.into_iter()
-            .map(|row| from_json(&row.try_get::<String, _>("raw_json")?))
-            .collect()
-    }
-
-    async fn list_pending_by_proposal_paginated(
-        &self,
-        proposal_id: ProposalId,
-        limit: u32,
-        offset: u32,
-    ) -> Result<Vec<ApprovalRequest>> {
-        let rows = sqlx::query(
-            "SELECT raw_json FROM approvals WHERE state = ?1 AND proposal_id = ?2 ORDER BY created_at DESC LIMIT ?3 OFFSET ?4",
-        )
-        .bind(enum_text(&ApprovalState::Pending)?)
-        .bind(proposal_id.to_string())
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(&self.pool)
-        .await?;
-        rows.into_iter()
-            .map(|row| from_json(&row.try_get::<String, _>("raw_json")?))
-            .collect()
     }
 
     async fn list_pending_cursor(
@@ -291,26 +244,6 @@ impl ApprovalRepo for SqliteApprovalRepo {
         Ok((items, next_cursor))
     }
 
-    async fn list_pending_by_execution_id_paginated(
-        &self,
-        execution_id: ExecutionId,
-        limit: u32,
-        offset: u32,
-    ) -> Result<Vec<ApprovalRequest>> {
-        let rows = sqlx::query(
-            "SELECT raw_json FROM approvals WHERE state = ?1 AND execution_id = ?2 ORDER BY created_at DESC LIMIT ?3 OFFSET ?4",
-        )
-        .bind(enum_text(&ApprovalState::Pending)?)
-        .bind(execution_id.to_string())
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(&self.pool)
-        .await?;
-        rows.into_iter()
-            .map(|row| from_json(&row.try_get::<String, _>("raw_json")?))
-            .collect()
-    }
-
     async fn list_pending_by_execution_id_cursor(
         &self,
         execution_id: ExecutionId,
@@ -394,28 +327,6 @@ impl ApprovalRepo for SqliteApprovalRepo {
         };
 
         Ok((items, next_cursor))
-    }
-
-    async fn list_pending_by_proposal_and_execution_id_paginated(
-        &self,
-        proposal_id: ProposalId,
-        execution_id: ExecutionId,
-        limit: u32,
-        offset: u32,
-    ) -> Result<Vec<ApprovalRequest>> {
-        let rows = sqlx::query(
-            "SELECT raw_json FROM approvals WHERE state = ?1 AND proposal_id = ?2 AND execution_id = ?3 ORDER BY created_at DESC LIMIT ?4 OFFSET ?5",
-        )
-        .bind(enum_text(&ApprovalState::Pending)?)
-        .bind(proposal_id.to_string())
-        .bind(execution_id.to_string())
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(&self.pool)
-        .await?;
-        rows.into_iter()
-            .map(|row| from_json(&row.try_get::<String, _>("raw_json")?))
-            .collect()
     }
 
     async fn list_pending_by_proposal_and_execution_id_cursor(
@@ -530,8 +441,7 @@ fn encode_cursor(created_at: DateTime<Utc>, approval_id: ApprovalId) -> String {
     };
     let json = serde_json::to_string(&payload).expect("cursor serialization must not fail");
     // Use URL-safe base64 encoding
-    let encoded = base64_encode(json.as_bytes());
-    encoded
+    base64_encode(json.as_bytes())
 }
 
 /// Decodes a cursor string back to its components.

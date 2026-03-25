@@ -106,22 +106,13 @@ Returns a response envelope:
 - `items`: pending approvals, most recent first
 - `next_cursor`: cursor for the next page, or `null` when there is no next page
 
-Cursor pagination is preferred for operator workflows because it stays stable while the pending set changes.
-
-`offset` pagination is deprecated and retained only as a temporary compatibility path while operators and clients move to cursor-based paging.
+Cursor pagination is stable for operator workflows while the pending set changes.
+Ordering: created_at DESC, approval_id DESC (stable tiebreaker).
 
 - `limit` defaults to 50, maximum 100
 - `cursor` selects the next page
 - `proposal_id` narrows the list to a single proposal
 - `execution_id` narrows the list to approvals linked to a specific execution
-
-Deprecated offset mode is retained temporarily for compatibility:
-
-```
-GET /v1/approvals[?limit=N][&offset=M][&proposal_id=UUID][&execution_id=UUID]
-```
-
-When using offset mode, the endpoint still returns the same envelope shape, with `next_cursor: null`. New integrations should use `cursor`, and existing offset-based consumers should plan to migrate before offset support is removed.
 
 Filter by proposal_id: when `proposal_id` is provided, returns only pending approvals for that specific proposal.
 
