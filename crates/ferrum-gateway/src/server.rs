@@ -14,12 +14,13 @@ use ferrum_proto::{
     CompensateRequest, CompensateResponse, Decision, EvaluateProposalResponse, EventId,
     ExecuteRequest, ExecuteResponse, ExecutionId, ExecutionRecord, ExecutionState,
     ExternalEventIngestRequest, ExternalEventIngestResponse, HashChainRef, HealthResponse,
-    IntentCompileRequest, IntentCompileResponse, IntentEnvelope, IntentStatus, ObjectRef,
-    ObjectType, OutcomeClause, ProposalId, ProvenanceEdge, ProvenanceEdgeType, ProvenanceEvent,
-    ProvenanceEventKind, ProvenanceEventResponse, ProvenanceQueryRequest, ProvenanceQueryResponse,
-    ResourceBinding, ResourceMode, ResourceSelector, RiskTier, RollbackClass, RollbackRequest,
-    RollbackResponse, RollbackState, RollbackTarget, TimeBudget, TrustContextSummary, TrustLabel,
-    VerifyRequest, VerifyResponse,
+    IntentCompileRequest, IntentCompileResponse, IntentEnvelope, IntentStatus, LineageEdge,
+    LineageQueryRequest, LineageQueryResponse, ObjectRef, ObjectType, OutcomeClause, ProposalId,
+    ProvenanceEdge, ProvenanceEdgeType, ProvenanceEvent, ProvenanceEventKind,
+    ProvenanceEventResponse, ProvenanceQueryRequest, ProvenanceQueryResponse, ResourceBinding,
+    ResourceMode, ResourceSelector, RiskTier, RollbackClass, RollbackRequest, RollbackResponse,
+    RollbackState, RollbackTarget, TimeBudget, TrustContextSummary, TrustLabel, VerifyRequest,
+    VerifyResponse,
 };
 use ferrum_store::{
     ApprovalRepo, ExecutionRepo, IntentRepo, LedgerRepo, ProposalRepo, ProvenanceRepo, RollbackRepo,
@@ -157,6 +158,7 @@ fn build_router_inner(runtime: GatewayRuntime, auth_config: Option<ServerConfig>
             "/v1/provenance/lineage/{execution_id}",
             get(get_execution_lineage),
         )
+        .route("/v1/provenance/lineage", post(lineage_query))
         .route("/v1/provenance/query", post(query_provenance))
         .route(
             "/v1/provenance/events/external",
@@ -2227,6 +2229,184 @@ async fn query_provenance(
     Ok(Json(ProvenanceQueryResponse {
         events,
         next_cursor,
+    }))
+}
+
+const MAX_LINEAGE_HOPS: u32 = 32;
+
+async fn lineage_query(
+    State(runtime): State<Arc<GatewayRuntime>>,
+    Json(request): Json<LineageQueryRequest>,
+) -> Result<Json<LineageQueryResponse>, ApiProblem> {
+    // Validate: at least one direction must be enabled
+    if !request.ancestry && !request.descendants {
+        return Err(ApiProblem::new(
+            StatusCode::BAD_REQUEST,
+            ApiErrorCode::ValidationError,
+            "at least one of ancestry or descendants must be true".to_string(),
+        ));
+    }
+
+    // Hard cap max_hops at 32
+    let max_hops = request.max_hops.unwrap_or(8).min(MAX_LINEAGE_HOPS);
+
+    // Fetch the seed event to verify it exists
+    let _seed_event = runtime
+        .store
+        .provenance()
+        .get_event(request.event_id)
+        .await
+        .map_err(|err| ApiProblem::internal(err.into()))?
+        .ok_or_else(|| {
+            ApiProblem::new(
+                StatusCode::NOT_FOUND,
+                ApiErrorCode::NotFound,
+                format!("seed event {} not found", request.event_id),
+            )
+        })?;
+
+    // BFS traversal
+    let mut visited: std::collections::HashSet<EventId> = std::collections::HashSet::new();
+    let mut frontier: Vec<EventId> = vec![request.event_id];
+    let mut discovered_edges: Vec<LineageEdge> = Vec::new();
+    let mut hop_count: std::collections::HashMap<EventId, u32> = std::collections::HashMap::new();
+    hop_count.insert(request.event_id, 0);
+
+    while let Some(current_id) = frontier.pop() {
+        let current_hop = hop_count.get(&current_id).copied().unwrap_or(0);
+
+        // Already at max depth?
+        if current_hop >= max_hops {
+            continue;
+        }
+
+        if !visited.insert(current_id) {
+            continue;
+        }
+
+        // Collect edges based on direction
+        let (parent_edges, child_edges) = if request.ancestry || request.descendants {
+            let parent_edges = if request.ancestry {
+                runtime
+                    .store
+                    .provenance()
+                    .get_edges_to(current_id)
+                    .await
+                    .map_err(|err| ApiProblem::internal(err.into()))?
+            } else {
+                vec![]
+            };
+
+            let child_edges = if request.descendants {
+                runtime
+                    .store
+                    .provenance()
+                    .get_edges_from(current_id)
+                    .await
+                    .map_err(|err| ApiProblem::internal(err.into()))?
+            } else {
+                vec![]
+            };
+
+            (parent_edges, child_edges)
+        } else {
+            (vec![], vec![])
+        };
+
+        // Process parent edges (for ancestry walk)
+        for edge in &parent_edges {
+            discovered_edges.push(LineageEdge {
+                edge_type: edge.edge_type.clone(),
+                from_event_id: edge.from_event_id,
+                to_event_id: current_id,
+                summary: edge.summary.clone(),
+            });
+
+            // Execution fence: skip if from_event has execution_id that doesn't match
+            if let Some(from_event) = runtime
+                .store
+                .provenance()
+                .get_event(edge.from_event_id)
+                .await
+                .map_err(|err| ApiProblem::internal(err.into()))?
+            {
+                if let Some(exec_id) = from_event.execution_id {
+                    if exec_id != request.execution_id {
+                        continue;
+                    }
+                }
+                if !visited.contains(&edge.from_event_id) {
+                    frontier.push(edge.from_event_id);
+                    hop_count.insert(edge.from_event_id, current_hop + 1);
+                }
+            }
+        }
+
+        // Process child edges (for descendants walk)
+        for edge in &child_edges {
+            // Note: get_edges_from returns edges where from_event_id is the CHILD in our schema
+            // So edge.from_event_id is actually the child (descendant)
+            discovered_edges.push(LineageEdge {
+                edge_type: edge.edge_type.clone(),
+                from_event_id: current_id,
+                to_event_id: edge.from_event_id,
+                summary: edge.summary.clone(),
+            });
+
+            // Execution fence: skip if to_event has execution_id that doesn't match
+            if let Some(to_event) = runtime
+                .store
+                .provenance()
+                .get_event(edge.from_event_id)
+                .await
+                .map_err(|err| ApiProblem::internal(err.into()))?
+            {
+                if let Some(exec_id) = to_event.execution_id {
+                    if exec_id != request.execution_id {
+                        continue;
+                    }
+                }
+                if !visited.contains(&edge.from_event_id) {
+                    frontier.push(edge.from_event_id);
+                    hop_count.insert(edge.from_event_id, current_hop + 1);
+                }
+            }
+        }
+    }
+
+    // Fetch all discovered events
+    let mut events: Vec<ProvenanceEvent> = Vec::with_capacity(visited.len());
+    for &event_id in &visited {
+        if let Some(event) = runtime
+            .store
+            .provenance()
+            .get_event(event_id)
+            .await
+            .map_err(|err| ApiProblem::internal(err.into()))?
+        {
+            // Apply execution fence to seed event too
+            if let Some(exec_id) = event.execution_id {
+                if exec_id != request.execution_id {
+                    continue;
+                }
+            }
+            events.push(event);
+        }
+    }
+
+    // Deterministic ordering: occurred_at ASC, event_id ASC (string)
+    events.sort_by(|a, b| {
+        let time_cmp = a.occurred_at.cmp(&b.occurred_at);
+        if time_cmp == std::cmp::Ordering::Equal {
+            a.event_id.to_string().cmp(&b.event_id.to_string())
+        } else {
+            time_cmp
+        }
+    });
+
+    Ok(Json(LineageQueryResponse {
+        events,
+        edges: discovered_edges,
     }))
 }
 

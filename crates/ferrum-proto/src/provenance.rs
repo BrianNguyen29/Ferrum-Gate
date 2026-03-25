@@ -184,3 +184,50 @@ pub struct ExternalEventIngestResponse {
     /// The newly created provenance event that anchors the external observation.
     pub event: ProvenanceEvent,
 }
+
+/// Request for multi-hop provenance lineage traversal.
+/// Uses BFS to walk ancestry (backwards via parent edges) and/or descendants (forwards via child edges).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LineageQueryRequest {
+    /// The execution_id to fence traversed events against.
+    /// All events with execution_id=Some(x) must match this value.
+    pub execution_id: ExecutionId,
+    /// The seed event_id to start traversal from.
+    pub event_id: EventId,
+    /// When true, walk ancestry backwards via parent edges.
+    #[serde(default = "default_true")]
+    pub ancestry: bool,
+    /// When true, walk descendants forwards via child edges.
+    #[serde(default)]
+    pub descendants: bool,
+    /// Maximum hops for BFS traversal. Hard-capped at 32 by the server.
+    #[serde(default = "default_max_hops")]
+    pub max_hops: Option<u32>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_max_hops() -> Option<u32> {
+    Some(8)
+}
+
+/// Response for multi-hop lineage query.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct LineageQueryResponse {
+    /// All events discovered during traversal, including the seed event.
+    pub events: Vec<ProvenanceEvent>,
+    /// Edges discovered during traversal.
+    pub edges: Vec<LineageEdge>,
+}
+
+/// A compact edge representation for lineage traversal results.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct LineageEdge {
+    pub edge_type: ProvenanceEdgeType,
+    pub from_event_id: EventId,
+    pub to_event_id: EventId,
+    pub summary: Option<String>,
+}
