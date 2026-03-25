@@ -2210,21 +2210,24 @@ async fn query_provenance(
     State(runtime): State<Arc<GatewayRuntime>>,
     Json(request): Json<ProvenanceQueryRequest>,
 ) -> Result<Json<ProvenanceQueryResponse>, ApiProblem> {
-    let events = runtime
+    let (events, next_cursor) = runtime
         .store
         .provenance()
-        .query(&request)
+        .query_paginated(&request)
         .await
         .map_err(|err| ApiProblem::internal(err.into()))?;
 
-    let graph = LineageGraph::from_events(events);
+    let graph = LineageGraph::from_events(events.clone());
     let events = if request.terminal_only.unwrap_or(false) {
         graph.terminal_events()
     } else {
-        graph.into_events()
+        events
     };
 
-    Ok(Json(ProvenanceQueryResponse { events }))
+    Ok(Json(ProvenanceQueryResponse {
+        events,
+        next_cursor,
+    }))
 }
 
 #[derive(Debug, Deserialize)]

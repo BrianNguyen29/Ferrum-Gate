@@ -135,73 +135,133 @@ impl ProvenanceRepo for SqliteProvenanceRepo {
     }
 
     async fn query(&self, request: &ProvenanceQueryRequest) -> Result<Vec<ProvenanceEvent>> {
-        let rows = sqlx::query(
-            "SELECT raw_json, kind, intent_id, proposal_id, execution_id, capability_id
+        let (events, _) = self.query_paginated(request).await?;
+        Ok(events)
+    }
+
+    async fn query_paginated(
+        &self,
+        request: &ProvenanceQueryRequest,
+    ) -> Result<(Vec<ProvenanceEvent>, Option<String>)> {
+        let limit = request.limit.unwrap_or(100).min(1000).max(1);
+
+        // Build dynamic WHERE clause using positional params ($1, $2, etc.)
+        let mut conditions = Vec::new();
+        let mut sql_params: Vec<String> = Vec::new();
+
+        if let Some(ref intent_id) = request.intent_id {
+            conditions.push(format!("intent_id = ${}", sql_params.len() + 1));
+            sql_params.push(intent_id.to_string());
+        }
+
+        if let Some(ref proposal_id) = request.proposal_id {
+            conditions.push(format!("proposal_id = ${}", sql_params.len() + 1));
+            sql_params.push(proposal_id.to_string());
+        }
+
+        if let Some(ref execution_id) = request.execution_id {
+            conditions.push(format!("execution_id = ${}", sql_params.len() + 1));
+            sql_params.push(execution_id.to_string());
+        }
+
+        if let Some(ref capability_id) = request.capability_id {
+            conditions.push(format!("capability_id = ${}", sql_params.len() + 1));
+            sql_params.push(capability_id.to_string());
+        }
+
+        if let Some(ref event_kind) = request.event_kind {
+            let kind_text = enum_text(event_kind)?;
+            conditions.push(format!("kind = ${}", sql_params.len() + 1));
+            sql_params.push(kind_text);
+        }
+
+        if let Some(since) = request.since {
+            conditions.push(format!("occurred_at >= ${}", sql_params.len() + 1));
+            sql_params.push(since.to_string());
+        }
+
+        if let Some(until) = request.until {
+            conditions.push(format!("occurred_at <= ${}", sql_params.len() + 1));
+            sql_params.push(until.to_string());
+        }
+
+        // Cursor decode: format is "occurred_at|event_id"
+        // We need (occurred_at, event_id) > cursor for keyset pagination
+        if let Some(ref cursor) = request.cursor {
+            if let Some((cursor_ts, cursor_eid)) = cursor.split_once('|') {
+                // Add cursor condition: (occurred_at > cursor_ts) OR (occurred_at = cursor_ts AND event_id > cursor_eid)
+                let idx = sql_params.len() + 1;
+                conditions.push(format!(
+                    "(occurred_at > ${} OR (occurred_at = ${} AND event_id > ${}))",
+                    idx,
+                    idx,
+                    idx + 1
+                ));
+                sql_params.push(cursor_ts.to_string());
+                sql_params.push(cursor_eid.to_string());
+            }
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
+
+        // Fetch limit+1 to detect if there's a next page
+        let fetch_limit = limit + 1;
+
+        let sql = format!(
+            "SELECT raw_json, occurred_at, event_id
              FROM provenance_events
-             ORDER BY occurred_at ASC",
-        )
-        .fetch_all(&self.pool)
-        .await?;
+             {}
+             ORDER BY occurred_at ASC, event_id ASC
+             LIMIT ${}",
+            where_clause,
+            sql_params.len() + 1
+        );
 
-        let requested_kind = request.event_kind.as_ref().map(enum_text).transpose()?;
-        let mut events = Vec::with_capacity(rows.len());
+        let mut query = sqlx::query(&sql);
+        for param in &sql_params {
+            query = query.bind(param);
+        }
+        query = query.bind(fetch_limit);
 
-        for row in rows {
-            let kind: String = row.try_get("kind")?;
-            let intent_id: Option<String> = row.try_get("intent_id")?;
-            let proposal_id: Option<String> = row.try_get("proposal_id")?;
-            let execution_id: Option<String> = row.try_get("execution_id")?;
-            let capability_id: Option<String> = row.try_get("capability_id")?;
+        let rows = query.fetch_all(&self.pool).await?;
 
-            if let Some(filter_intent) = request.intent_id {
-                if intent_id.as_deref() != Some(&filter_intent.to_string()) {
-                    continue;
-                }
-            }
+        let has_next_page = rows.len() > limit as usize;
+        let rows_to_return = if has_next_page {
+            &rows[..limit as usize]
+        } else {
+            &rows
+        };
 
-            if let Some(filter_execution) = request.execution_id {
-                if execution_id.as_deref() != Some(&filter_execution.to_string()) {
-                    continue;
-                }
-            }
+        let mut events = Vec::with_capacity(rows_to_return.len());
+        let mut next_cursor = None;
 
-            if let Some(filter_proposal) = request.proposal_id {
-                if proposal_id.as_deref() != Some(&filter_proposal.to_string()) {
-                    continue;
-                }
-            }
-
-            if let Some(filter_capability) = request.capability_id {
-                if capability_id.as_deref() != Some(&filter_capability.to_string()) {
-                    continue;
-                }
-            }
-
-            if let Some(filter_kind) = requested_kind.as_deref() {
-                if kind != filter_kind {
-                    continue;
-                }
-            }
-
+        for row in rows_to_return {
             let raw_json: String = row.try_get("raw_json")?;
-            let event: ProvenanceEvent = serde_json::from_str(&raw_json)?;
+            let occurred_at: chrono::DateTime<chrono::Utc> = row.try_get("occurred_at")?;
+            let event_id_str: String = row.try_get("event_id")?;
 
-            if let Some(since) = request.since {
-                if event.occurred_at < since {
-                    continue;
-                }
-            }
+            let event: ProvenanceEvent = serde_json::from_str(&raw_json).map_err(|e| {
+                crate::StoreError::Internal(format!("failed to deserialize event: {}", e))
+            })?;
 
-            if let Some(until) = request.until {
-                if event.occurred_at > until {
-                    continue;
-                }
-            }
+            // Set next_cursor from the last event
+            // Use | as separator since UUIDs only contain hex and hyphens, and timestamps use colons/dots
+            next_cursor = Some(format!("{}|{}", occurred_at.to_rfc3339(), event_id_str));
 
             events.push(event);
         }
 
-        Ok(events)
+        // If there's a next page, we already have the cursor from the last item
+        // If no next page, clear the cursor
+        if !has_next_page {
+            next_cursor = None;
+        }
+
+        Ok((events, next_cursor))
     }
 
     async fn get_edges_to(&self, event_id: EventId) -> Result<Vec<ProvenanceEdge>> {

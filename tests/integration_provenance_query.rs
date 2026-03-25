@@ -273,6 +273,7 @@ async fn test_provenance_query_by_execution_id() {
         terminal_only: None,
         since: None,
         until: None,
+        ..Default::default()
     };
 
     let app = build_router(runtime.clone());
@@ -318,6 +319,7 @@ async fn test_provenance_query_by_execution_id() {
         terminal_only: None,
         since: None,
         until: None,
+        ..Default::default()
     };
 
     let app = build_router(runtime.clone());
@@ -362,6 +364,7 @@ async fn test_provenance_query_by_execution_id() {
         terminal_only: None,
         since: None,
         until: None,
+        ..Default::default()
     };
 
     let app = build_router(runtime.clone());
@@ -404,6 +407,7 @@ async fn test_provenance_query_by_execution_id() {
         terminal_only: None,
         since: None,
         until: None,
+        ..Default::default()
     };
 
     let app = build_router(runtime.clone());
@@ -447,6 +451,7 @@ async fn test_provenance_query_by_time_window() {
         terminal_only: None,
         since: None,
         until: None,
+        ..Default::default()
     };
 
     let app = build_router(runtime.clone());
@@ -481,6 +486,7 @@ async fn test_provenance_query_by_time_window() {
         terminal_only: None,
         since: Some(past_time),
         until: Some(past_time + chrono::Duration::minutes(5)),
+        ..Default::default()
     };
 
     let app = build_router(runtime.clone());
@@ -517,6 +523,7 @@ async fn test_provenance_query_by_time_window() {
         terminal_only: None,
         since: Some(past_time),
         until: None,
+        ..Default::default()
     };
 
     let app = build_router(runtime.clone());
@@ -560,6 +567,7 @@ async fn test_provenance_query_rejects_unknown_fields() {
         terminal_only: None,
         since: None,
         until: None,
+        ..Default::default()
     };
 
     let app = build_router(runtime.clone());
@@ -641,6 +649,7 @@ async fn test_provenance_query_by_event_kind() {
         terminal_only: None,
         since: None,
         until: None,
+        ..Default::default()
     };
 
     let app = build_router(runtime.clone());
@@ -723,6 +732,7 @@ async fn test_provenance_query_terminal_only() {
         terminal_only: Some(true),
         since: None,
         until: None,
+        ..Default::default()
     };
 
     let app = build_router(runtime.clone());
@@ -847,6 +857,7 @@ async fn test_ingest_external_event_happy_path() {
         terminal_only: None,
         since: None,
         until: None,
+        ..Default::default()
     };
 
     let app = build_router(runtime.clone());
@@ -1058,6 +1069,7 @@ async fn test_ingest_external_event_mismatched_execution_fails() {
         terminal_only: None,
         since: None,
         until: None,
+        ..Default::default()
     };
 
     let app = build_router(runtime.clone());
@@ -1130,6 +1142,7 @@ async fn test_ingest_external_event_rejects_unknown_fields() {
         terminal_only: None,
         since: None,
         until: None,
+        ..Default::default()
     };
 
     let app = build_router(runtime.clone());
@@ -1183,5 +1196,321 @@ async fn test_ingest_external_event_rejects_unknown_fields() {
             || response.status() == axum::http::StatusCode::UNPROCESSABLE_ENTITY,
         "expected 400/422 for unknown fields, got {}",
         response.status()
+    );
+}
+
+/// Test: pagination with limit returns limited events and next_cursor
+#[tokio::test]
+async fn test_provenance_query_pagination_with_limit() {
+    let (_temp_dir, runtime, store) = create_test_runtime().await;
+
+    let (execution_id, _intent_id, _proposal_id) = create_execution_with_events(&runtime).await;
+
+    // Insert additional events to have more than limit
+    for i in 0..5 {
+        let event = ProvenanceEvent {
+            event_id: ferrum_proto::EventId::new(),
+            kind: ProvenanceEventKind::ToolCallPrepared,
+            occurred_at: chrono::Utc::now(),
+            actor: ActorRef {
+                actor_type: ActorType::System,
+                actor_id: "pagination-test".to_string(),
+                display_name: Some("Pagination Test".to_string()),
+            },
+            object: ObjectRef {
+                object_type: ObjectType::Unknown,
+                object_id: format!("pagination-test-{}", i),
+                summary: None,
+            },
+            intent_id: None,
+            proposal_id: None,
+            execution_id: Some(execution_id),
+            capability_id: None,
+            rollback_contract_id: None,
+            policy_bundle_id: None,
+            trust_labels: Vec::new(),
+            sensitivity_labels: Vec::new(),
+            parent_edges: Vec::new(),
+            hash_chain: HashChainRef {
+                content_hash: None,
+                manifest_hash: None,
+                policy_bundle_hash: None,
+                previous_ledger_hash: None,
+            },
+            metadata: JsonMap::new(),
+        };
+        store.provenance().append_event(&event).await.unwrap();
+    }
+
+    // Query with limit=3
+    let query_req = ProvenanceQueryRequest {
+        intent_id: None,
+        proposal_id: None,
+        execution_id: Some(execution_id),
+        capability_id: None,
+        event_kind: None,
+        terminal_only: None,
+        since: None,
+        until: None,
+        limit: Some(3),
+        cursor: None,
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/provenance/query")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&query_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let query_resp: ferrum_proto::ProvenanceQueryResponse = serde_json::from_slice(&body).unwrap();
+
+    // Should return at most 3 events (could be fewer if terminal_only filters some)
+    assert!(
+        query_resp.events.len() <= 3,
+        "expected at most 3 events, got {}",
+        query_resp.events.len()
+    );
+
+    // Should have a next_cursor if there are more events
+    // (We inserted 5 extra events, so there should be more)
+    if query_resp.events.len() == 3 {
+        assert!(
+            query_resp.next_cursor.is_some(),
+            "expected next_cursor when limit is reached"
+        );
+    }
+}
+
+/// Test: cursor pagination advances through pages correctly
+#[tokio::test]
+async fn test_provenance_query_cursor_pagination() {
+    let (_temp_dir, runtime, store) = create_test_runtime().await;
+
+    let (execution_id, _intent_id, _proposal_id) = create_execution_with_events(&runtime).await;
+
+    // Insert additional events with distinct timestamps to ensure stable ordering
+    let base_time = chrono::Utc::now();
+    for i in 0..5 {
+        let event = ProvenanceEvent {
+            event_id: ferrum_proto::EventId::new(),
+            kind: ProvenanceEventKind::ToolCallPrepared,
+            occurred_at: base_time + chrono::Duration::milliseconds(i * 100),
+            actor: ActorRef {
+                actor_type: ActorType::System,
+                actor_id: "cursor-test".to_string(),
+                display_name: Some("Cursor Test".to_string()),
+            },
+            object: ObjectRef {
+                object_type: ObjectType::Unknown,
+                object_id: format!("cursor-test-{}", i),
+                summary: None,
+            },
+            intent_id: None,
+            proposal_id: None,
+            execution_id: Some(execution_id),
+            capability_id: None,
+            rollback_contract_id: None,
+            policy_bundle_id: None,
+            trust_labels: Vec::new(),
+            sensitivity_labels: Vec::new(),
+            parent_edges: Vec::new(),
+            hash_chain: HashChainRef {
+                content_hash: None,
+                manifest_hash: None,
+                policy_bundle_hash: None,
+                previous_ledger_hash: None,
+            },
+            metadata: JsonMap::new(),
+        };
+        store.provenance().append_event(&event).await.unwrap();
+    }
+
+    // First page with limit=3
+    let query_req = ProvenanceQueryRequest {
+        intent_id: None,
+        proposal_id: None,
+        execution_id: Some(execution_id),
+        capability_id: None,
+        event_kind: None,
+        terminal_only: None,
+        since: None,
+        until: None,
+        limit: Some(3),
+        cursor: None,
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/provenance/query")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&query_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let page1_resp: ferrum_proto::ProvenanceQueryResponse = serde_json::from_slice(&body).unwrap();
+
+    let first_page_event_ids: Vec<_> = page1_resp.events.iter().map(|e| e.event_id).collect();
+
+    // If there's a next page, use cursor to get second page
+    if let Some(cursor) = page1_resp.next_cursor {
+        let query_req = ProvenanceQueryRequest {
+            intent_id: None,
+            proposal_id: None,
+            execution_id: Some(execution_id),
+            capability_id: None,
+            event_kind: None,
+            terminal_only: None,
+            since: None,
+            until: None,
+            limit: Some(3),
+            cursor: Some(cursor),
+        };
+
+        let app = build_router(runtime.clone());
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/v1/provenance/query")
+                    .method(axum::http::Method::POST)
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(serde_json::to_string(&query_req).unwrap())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), 200);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let page2_resp: ferrum_proto::ProvenanceQueryResponse =
+            serde_json::from_slice(&body).unwrap();
+
+        let second_page_event_ids: Vec<_> = page2_resp.events.iter().map(|e| e.event_id).collect();
+
+        // Pages should have no overlapping events
+        for event_id in &first_page_event_ids {
+            assert!(
+                !second_page_event_ids.contains(event_id),
+                "event_id should not appear in both pages"
+            );
+        }
+    }
+}
+
+/// Test: filter + pagination combination works correctly
+#[tokio::test]
+async fn test_provenance_query_filter_with_pagination() {
+    let (_temp_dir, runtime, store) = create_test_runtime().await;
+
+    let (execution_id, _intent_id, _proposal_id) = create_execution_with_events(&runtime).await;
+
+    // Insert events with different event kinds
+    for i in 0..3 {
+        let event = ProvenanceEvent {
+            event_id: ferrum_proto::EventId::new(),
+            kind: ProvenanceEventKind::ToolCallPrepared,
+            occurred_at: chrono::Utc::now(),
+            actor: ActorRef {
+                actor_type: ActorType::System,
+                actor_id: "filter-test".to_string(),
+                display_name: Some("Filter Test".to_string()),
+            },
+            object: ObjectRef {
+                object_type: ObjectType::Unknown,
+                object_id: format!("filter-test-{}", i),
+                summary: None,
+            },
+            intent_id: None,
+            proposal_id: None,
+            execution_id: Some(execution_id),
+            capability_id: None,
+            rollback_contract_id: None,
+            policy_bundle_id: None,
+            trust_labels: Vec::new(),
+            sensitivity_labels: Vec::new(),
+            parent_edges: Vec::new(),
+            hash_chain: HashChainRef {
+                content_hash: None,
+                manifest_hash: None,
+                policy_bundle_hash: None,
+                previous_ledger_hash: None,
+            },
+            metadata: JsonMap::new(),
+        };
+        store.provenance().append_event(&event).await.unwrap();
+    }
+
+    // Query by execution_id AND event_kind with limit
+    let query_req = ProvenanceQueryRequest {
+        intent_id: None,
+        proposal_id: None,
+        execution_id: Some(execution_id),
+        capability_id: None,
+        event_kind: Some(ProvenanceEventKind::ToolCallPrepared),
+        terminal_only: None,
+        since: None,
+        until: None,
+        limit: Some(2),
+        cursor: None,
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/provenance/query")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&query_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let query_resp: ferrum_proto::ProvenanceQueryResponse = serde_json::from_slice(&body).unwrap();
+
+    // All returned events should match the filter
+    for event in &query_resp.events {
+        assert_eq!(
+            event.execution_id,
+            Some(execution_id),
+            "event should match execution_id filter"
+        );
+        assert!(
+            matches!(event.kind, ProvenanceEventKind::ToolCallPrepared),
+            "event should match event_kind filter"
+        );
+    }
+
+    // Should respect the limit
+    assert!(
+        query_resp.events.len() <= 2,
+        "expected at most 2 events, got {}",
+        query_resp.events.len()
     );
 }

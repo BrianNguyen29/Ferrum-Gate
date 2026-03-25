@@ -92,11 +92,42 @@ pub struct ProvenanceQueryRequest {
     pub terminal_only: Option<bool>,
     pub since: Option<Timestamp>,
     pub until: Option<Timestamp>,
+    /// Maximum number of events to return (1-1000). Defaults to 100.
+    #[serde(default = "default_query_limit")]
+    pub limit: Option<u32>,
+    /// Cursor for keyset pagination. Use the returned next_cursor to advance.
+    /// The cursor encodes the (occurred_at, event_id) of the last item in the previous page.
+    #[serde(default)]
+    pub cursor: Option<String>,
+}
+
+impl Default for ProvenanceQueryRequest {
+    fn default() -> Self {
+        Self {
+            intent_id: None,
+            proposal_id: None,
+            execution_id: None,
+            capability_id: None,
+            event_kind: None,
+            terminal_only: None,
+            since: None,
+            until: None,
+            limit: Some(100),
+            cursor: None,
+        }
+    }
+}
+
+fn default_query_limit() -> Option<u32> {
+    Some(100)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ProvenanceQueryResponse {
     pub events: Vec<ProvenanceEvent>,
+    /// Cursor for the next page. None if this is the last page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
 }
 
 /// Response for a single provenance event lookup.

@@ -130,6 +130,13 @@ pub trait ProvenanceRepo: Send + Sync {
     async fn get_event(&self, event_id: EventId) -> Result<Option<ProvenanceEvent>>;
     async fn append_edges(&self, to_event_id: EventId, edges: &[ProvenanceEdge]) -> Result<()>;
     async fn query(&self, request: &ProvenanceQueryRequest) -> Result<Vec<ProvenanceEvent>>;
+    /// Query events with cursor-based pagination and DB-level filtering.
+    /// Returns (events, next_cursor) where next_cursor is None if this is the last page.
+    /// Ordering: occurred_at ASC, event_id ASC (stable ascending).
+    async fn query_paginated(
+        &self,
+        request: &ProvenanceQueryRequest,
+    ) -> Result<(Vec<ProvenanceEvent>, Option<String>)>;
     /// Query edges where the given event is the target (incoming edges / ancestry)
     async fn get_edges_to(&self, event_id: EventId) -> Result<Vec<ProvenanceEdge>>;
     /// Query edges where the given event is the source (outgoing edges / descendants)
