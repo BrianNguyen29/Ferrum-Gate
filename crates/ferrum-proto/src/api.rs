@@ -61,6 +61,14 @@ pub enum ApiErrorCode {
     Internal,
 }
 
+/// Response envelope for paginated approval lists.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ApprovalListEnvelope {
+    pub items: Vec<crate::approval::ApprovalRequest>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+}
+
 // Execute request/response types
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ExecuteRequest {

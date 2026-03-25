@@ -2407,7 +2407,12 @@ async fn test_full_approval_flow_approve_then_prepare_succeeds() {
     assert_eq!(auth_resp.execution.decision, Decision::RequireApproval);
 
     // Verify approval request was created
-    let pending_approvals = runtime.store.approvals().list_pending().await.unwrap();
+    let (pending_approvals, _) = runtime
+        .store
+        .approvals()
+        .list_pending_cursor(100, None)
+        .await
+        .unwrap();
     assert!(
         !pending_approvals.is_empty(),
         "Approval request should be created"
@@ -2690,7 +2695,12 @@ async fn test_approval_denial_flow_blocks_execution() {
     ));
 
     // Get approval ID
-    let pending_approvals = runtime.store.approvals().list_pending().await.unwrap();
+    let (pending_approvals, _) = runtime
+        .store
+        .approvals()
+        .list_pending_cursor(100, None)
+        .await
+        .unwrap();
     assert!(!pending_approvals.is_empty());
     let approval_id = pending_approvals[0].approval_id;
 
@@ -2913,7 +2923,12 @@ async fn test_get_approval_by_id() {
     assert_eq!(response.status(), 200);
 
     // Get approval ID
-    let pending_approvals = runtime.store.approvals().list_pending().await.unwrap();
+    let (pending_approvals, _) = runtime
+        .store
+        .approvals()
+        .list_pending_cursor(100, None)
+        .await
+        .unwrap();
     assert!(!pending_approvals.is_empty());
     let approval_id = pending_approvals[0].approval_id;
 
@@ -7355,7 +7370,12 @@ async fn test_r3_no_auto_commit_after_approval_requires_explicit_commit() {
     ));
 
     // Step 5: Get approval_id and approve
-    let pending_approvals = runtime.store.approvals().list_pending().await.unwrap();
+    let (pending_approvals, _) = runtime
+        .store
+        .approvals()
+        .list_pending_cursor(100, None)
+        .await
+        .unwrap();
     assert!(
         !pending_approvals.is_empty(),
         "Approval request should be created"
@@ -9985,7 +10005,12 @@ async fn test_http_post_execute_and_verify_through_gateway_after_approval() {
     ));
 
     // Step 5: Resolve approval.
-    let pending_approvals = runtime.store.approvals().list_pending().await.unwrap();
+    let (pending_approvals, _) = runtime
+        .store
+        .approvals()
+        .list_pending_cursor(100, None)
+        .await
+        .unwrap();
     assert!(!pending_approvals.is_empty());
     let approval_id = pending_approvals[0].approval_id;
 
@@ -10291,7 +10316,12 @@ async fn test_http_post_execute_and_verify_with_bearer_auth_through_gateway_afte
         ExecutionState::AwaitingApproval
     ));
 
-    let pending_approvals = runtime.store.approvals().list_pending().await.unwrap();
+    let (pending_approvals, _) = runtime
+        .store
+        .approvals()
+        .list_pending_cursor(100, None)
+        .await
+        .unwrap();
     assert!(!pending_approvals.is_empty());
     let approval_id = pending_approvals[0].approval_id;
 
@@ -10595,7 +10625,12 @@ async fn test_http_execute_denied_when_bearer_auth_missing_from_header_allowlist
     let execution_id = auth_resp.execution.execution_id;
 
     // Step 5: Resolve approval
-    let pending_approvals = runtime.store.approvals().list_pending().await.unwrap();
+    let (pending_approvals, _) = runtime
+        .store
+        .approvals()
+        .list_pending_cursor(100, None)
+        .await
+        .unwrap();
     assert!(!pending_approvals.is_empty());
     let approval_id = pending_approvals[0].approval_id;
 
@@ -11349,7 +11384,12 @@ async fn test_http_execute_succeeds_with_basic_auth_through_full_flow() {
     ));
 
     // Step 5: Resolve approval (grant)
-    let pending_approvals = runtime.store.approvals().list_pending().await.unwrap();
+    let (pending_approvals, _) = runtime
+        .store
+        .approvals()
+        .list_pending_cursor(100, None)
+        .await
+        .unwrap();
     assert!(!pending_approvals.is_empty());
     let approval_id = pending_approvals[0].approval_id;
 
@@ -11659,7 +11699,12 @@ async fn test_http_execute_denied_when_basic_auth_missing_from_header_allowlist(
         serde_json::from_slice(&body).unwrap();
 
     // Step 5: Resolve approval
-    let pending_approvals = runtime.store.approvals().list_pending().await.unwrap();
+    let (pending_approvals, _) = runtime
+        .store
+        .approvals()
+        .list_pending_cursor(100, None)
+        .await
+        .unwrap();
     assert!(!pending_approvals.is_empty());
     let approval_id = pending_approvals[0].approval_id;
 
@@ -11931,7 +11976,12 @@ async fn test_http_execute_succeeds_with_api_key_auth_through_full_flow() {
     ));
 
     // Step 5: Resolve approval (grant)
-    let pending_approvals = runtime.store.approvals().list_pending().await.unwrap();
+    let (pending_approvals, _) = runtime
+        .store
+        .approvals()
+        .list_pending_cursor(100, None)
+        .await
+        .unwrap();
     assert!(!pending_approvals.is_empty());
     let approval_id = pending_approvals[0].approval_id;
 
@@ -12294,7 +12344,12 @@ async fn test_http_execute_denied_when_api_key_auth_missing_from_header_allowlis
     let execution_id = auth_resp.execution.execution_id;
 
     // Step 5: Resolve approval
-    let pending_approvals = runtime.store.approvals().list_pending().await.unwrap();
+    let (pending_approvals, _) = runtime
+        .store
+        .approvals()
+        .list_pending_cursor(100, None)
+        .await
+        .unwrap();
     assert!(!pending_approvals.is_empty());
     let approval_id = pending_approvals[0].approval_id;
 

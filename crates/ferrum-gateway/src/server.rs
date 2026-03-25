@@ -8,14 +8,14 @@ use axum::{
 use chrono::{Duration, Utc};
 use ferrum_graph::LineageGraph;
 use ferrum_proto::{
-    ActorRef, ActorType, ApiError, ApiErrorCode, ApprovalId, ApprovalRequest,
+    ActorRef, ActorType, ApiError, ApiErrorCode, ApprovalId, ApprovalListEnvelope, ApprovalRequest,
     ApprovalResolveRequest, ApprovalState, AuthorizeExecutionRequest, AuthorizeExecutionResponse,
     CapabilityId, CapabilityMintRequest, CapabilityMintResponse, CommitRequest, CommitResponse,
     CompensateRequest, CompensateResponse, Decision, EvaluateProposalResponse, EventId,
     ExecuteRequest, ExecuteResponse, ExecutionId, ExecutionRecord, ExecutionState,
     ExternalEventIngestRequest, ExternalEventIngestResponse, HashChainRef, HealthResponse,
     IntentCompileRequest, IntentCompileResponse, IntentEnvelope, IntentStatus, ObjectRef,
-    ObjectType, OutcomeClause, ProvenanceEdge, ProvenanceEdgeType, ProvenanceEvent,
+    ObjectType, OutcomeClause, ProposalId, ProvenanceEdge, ProvenanceEdgeType, ProvenanceEvent,
     ProvenanceEventKind, ProvenanceEventResponse, ProvenanceQueryRequest, ProvenanceQueryResponse,
     ResourceBinding, ResourceMode, ResourceSelector, RiskTier, RollbackClass, RollbackRequest,
     RollbackResponse, RollbackState, RollbackTarget, TimeBudget, TrustContextSummary, TrustLabel,
@@ -1945,17 +1945,101 @@ async fn get_approval(
     Ok(Json(approval))
 }
 
+/// Query parameters for list_pending_approvals.
+#[derive(Debug, Deserialize)]
+pub(crate) struct ListApprovalsQuery {
+    /// Maximum number of approvals to return (1-100). Defaults to 50.
+    #[serde(default = "default_limit")]
+    pub limit: u32,
+    /// Cursor for keyset pagination. Use the returned next_cursor to advance.
+    #[serde(default)]
+    pub cursor: Option<String>,
+    /// Optional proposal_id filter.
+    #[serde(default)]
+    pub proposal_id: Option<String>,
+    /// Optional execution_id filter.
+    #[serde(default)]
+    pub execution_id: Option<String>,
+}
+
+fn default_limit() -> u32 {
+    50
+}
+
 async fn list_pending_approvals(
     State(runtime): State<Arc<GatewayRuntime>>,
-) -> Result<Json<Vec<ApprovalRequest>>, ApiProblem> {
-    let pending = runtime
-        .store
-        .approvals()
-        .list_pending()
-        .await
-        .map_err(|err| ApiProblem::internal(err.into()))?;
+    Query(params): Query<ListApprovalsQuery>,
+) -> Result<Json<ApprovalListEnvelope>, ApiProblem> {
+    // Clamp limit to 1-100 range
+    let limit = params.limit.clamp(1, 100);
+    let cursor = params.cursor.filter(|c| !c.is_empty());
+    let approvals_repo = runtime.store.approvals();
 
-    Ok(Json(pending))
+    let (items, next_cursor) = match (&params.proposal_id, &params.execution_id) {
+        (Some(p), Some(e)) => {
+            // Both filters: AND semantics
+            let proposal_id = ProposalId(p.parse::<uuid::Uuid>().map_err(|_| {
+                ApiProblem::new(
+                    StatusCode::BAD_REQUEST,
+                    ApiErrorCode::ValidationError,
+                    "proposal_id is not a valid UUID",
+                )
+            })?);
+            let execution_id = ExecutionId(e.parse::<uuid::Uuid>().map_err(|_| {
+                ApiProblem::new(
+                    StatusCode::BAD_REQUEST,
+                    ApiErrorCode::ValidationError,
+                    "execution_id is not a valid UUID",
+                )
+            })?);
+            approvals_repo
+                .list_pending_by_proposal_and_execution_id_cursor(
+                    proposal_id,
+                    execution_id,
+                    limit,
+                    cursor.as_deref(),
+                )
+                .await
+                .map_err(|err| ApiProblem::internal(err.into()))?
+        }
+        (Some(p), None) => {
+            // Filter by proposal_id only
+            let proposal_id = ProposalId(p.parse::<uuid::Uuid>().map_err(|_| {
+                ApiProblem::new(
+                    StatusCode::BAD_REQUEST,
+                    ApiErrorCode::ValidationError,
+                    "proposal_id is not a valid UUID",
+                )
+            })?);
+            approvals_repo
+                .list_pending_by_proposal_cursor(proposal_id, limit, cursor.as_deref())
+                .await
+                .map_err(|err| ApiProblem::internal(err.into()))?
+        }
+        (None, Some(e)) => {
+            // Filter by execution_id only
+            let execution_id = ExecutionId(e.parse::<uuid::Uuid>().map_err(|_| {
+                ApiProblem::new(
+                    StatusCode::BAD_REQUEST,
+                    ApiErrorCode::ValidationError,
+                    "execution_id is not a valid UUID",
+                )
+            })?);
+            approvals_repo
+                .list_pending_by_execution_id_cursor(execution_id, limit, cursor.as_deref())
+                .await
+                .map_err(|err| ApiProblem::internal(err.into()))?
+        }
+        (None, None) => {
+            // No filters: list all pending with cursor pagination
+            approvals_repo
+                .list_pending_cursor(limit, cursor.as_deref())
+                .await
+                .map_err(|err| ApiProblem::internal(err.into()))?
+        }
+    };
+
+    Ok(Json(ApprovalListEnvelope { items, next_cursor }))
 }
 
 async fn resolve_approval(

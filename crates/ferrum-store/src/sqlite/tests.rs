@@ -626,9 +626,9 @@ async fn approval_resolution_round_trip() {
         .await
         .expect("insert approval");
 
-    let pending = store
+    let (pending, _) = store
         .approvals()
-        .list_pending()
+        .list_pending_cursor(100, None)
         .await
         .expect("list pending");
     assert_eq!(pending.len(), 1);

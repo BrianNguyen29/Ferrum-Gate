@@ -347,12 +347,11 @@ paths:
         discover approvals that require operator action before they can be
         resolved via POST /v1/approvals/{approval_id}/resolve.
 
-        Supports pagination via `limit` plus either `cursor` or `offset`.
-        Defaults: limit=50, offset=0. Maximum limit: 100 (conservatively clamped).
+        Supports cursor-based pagination via `limit` and `cursor`.
+        Defaults: limit=50. Maximum limit: 100 (conservatively clamped).
 
-        Cursor pagination is preferred for stable operator paging while the
-        pending approvals set is changing. Offset pagination is deprecated,
-        retained temporarily for compatibility, and returns `next_cursor: null`.
+        Cursor pagination is stable for operator workflows while the pending
+        set changes. Ordering: created_at DESC, approval_id DESC (stable tiebreaker).
 
         Optionally filter by `proposal_id` to return only pending approvals
         for a specific proposal. Optionally filter by `execution_id` to return
@@ -368,14 +367,6 @@ paths:
             minimum: 1
             maximum: 100
             default: 50
-        - name: offset
-          in: query
-          description: Deprecated compatibility pagination parameter. Number of approvals to skip before returning results. Defaults to 0. Ignored when cursor is provided. New integrations should use cursor-based pagination.
-          required: false
-          schema:
-            type: integer
-            minimum: 0
-            default: 0
         - name: cursor
           in: query
           description: Cursor for keyset pagination. Use an empty value to request the first cursor-based page, then pass the returned next_cursor to advance.
@@ -1284,7 +1275,7 @@ components:
         next_cursor:
           type: string
           nullable: true
-          description: Cursor for the next page. Null when no further page exists or when using offset mode.
+          description: Cursor for the next page. Null when there is no next page.
 
     ApprovalResolveRequest:
       type: object
