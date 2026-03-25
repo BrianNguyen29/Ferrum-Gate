@@ -125,6 +125,32 @@ Combined filters: when both `proposal_id` and `execution_id` are provided, both 
 POST /v1/approvals/{approval_id}/resolve
 {"actor": {...}, "approve": true, "reason": "..."}
 ```
-Granting (approve=true) consumes the capability and advances the execution to Prepared. Denying (approve=false) leaves the execution in AwaitingApproval and does NOT consume the capability.
+Granting (approve=true) consumes the capability and transitions the execution to `Authorized`. Denying (approve=false) transitions the execution to `Denied` and does NOT consume the capability.
 
 Pending approvals expire after 15 minutes (expires_at). Expired approvals must be re-created by re-authorizing the execution.
+
+**CLI examples:**
+
+```sh
+# List pending approvals (most recent first)
+cargo run -p ferrumctl -- server inspect-approvals
+
+# Limit to 10, use cursor for pagination
+cargo run -p ferrumctl -- server inspect-approvals --limit 10
+
+# Filter by proposal or execution
+cargo run -p ferrumctl -- server inspect-approvals --proposal-id <uuid>
+cargo run -p ferrumctl -- server inspect-approvals --execution-id <uuid>
+
+# Resolve (approve) a pending approval
+cargo run -p ferrumctl -- server resolve-approval <approval_id> \
+  --approve --actor-id operator1 --actor-type Operator \
+  --reason "approved after security review"
+
+# Resolve (deny) a pending approval
+cargo run -p ferrumctl -- server resolve-approval <approval_id> \
+  --actor-id operator1 --actor-type Operator \
+  --reason "outside policy scope"
+```
+
+For a step-by-step operator procedure, see `docs/runbooks/ops-approval-workflow-runbook.md`.

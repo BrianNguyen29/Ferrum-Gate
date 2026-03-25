@@ -15,10 +15,11 @@
 - P1: durable capability persistence + startup reconciliation + restart integration coverage
 
 ## P2
-- provenance query/read model:
+- provenance query/read model (next feature expansion):
   - mo rong `POST /v1/provenance/query` tu minimal fail-closed endpoint thanh query surface co filter thuc dung theo `intent_id`, `proposal_id`, `execution_id`, event kind, va terminal state
   - them read-model helpers trong `ferrum-graph` cho multi-hop lineage/event-edge traversal tren du lieu da persist
   - them integration coverage cho provenance query va terminal recovery lineage vuot qua minimum chain
+  - current surface: `GET /v1/provenance/lineage/{execution_id}` and `POST /v1/provenance/query` (minimal fail-closed); expansion builds on these existing endpoints
 - operator/runtime hardening:
   - ghi ro prod-style ingress/TLS deployment story thanh runbook thao tac duoc
   - them diagnostics cho effective config/startup guard/readiness de giam "why did ferrumd refuse to start" debugging time
