@@ -1335,6 +1335,14 @@ components:
           type: string
           format: date-time
           nullable: true
+        limit:
+          type: integer
+          nullable: true
+          description: Maximum number of events to return (1-1000). Defaults to 100.
+        cursor:
+          type: string
+          nullable: true
+          description: Cursor for keyset pagination. Use the returned next_cursor to advance. The cursor encodes the (occurred_at, event_id) of the last item in the previous page.
 
     ProvenanceQueryResponse:
       type: object
@@ -1344,6 +1352,10 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ProvenanceEvent'
+        next_cursor:
+          type: string
+          nullable: true
+          description: Cursor for the next page. None if this is the last page.
 
     ProvenanceEventResponse:
       type: object
