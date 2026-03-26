@@ -226,7 +226,7 @@ fn compute_entry_hash(entry: &LedgerEntry, prev_hash: Option<&str>) -> String {
 }
 
 /// Variant that works on a fully-constructed entry (uses entry.prev_hash).
-fn compute_entry_hash_raw(entry: &LedgerEntry) -> String {
+pub fn compute_entry_hash_raw(entry: &LedgerEntry) -> String {
     compute_entry_hash(entry, entry.prev_hash.as_deref())
 }
 
