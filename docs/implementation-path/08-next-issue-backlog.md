@@ -32,6 +32,6 @@
   - Observation-only MCP bridge (`McpBridge`) with explicit anchor ingest; no auto-correlation, no retries, no per-call source_system override per `crates/ferrum-integrations-mcp/src/bridge.rs`
   - E2e lineage proof: internal + external events share same execution chain per `tests/integration_mcp_bridge.rs:253` (`test_mcp_bridge_ingest_creates_linked_external_event`) and `tests/integration_mcp_bridge.rs:399` (`test_mcp_bridge_ingest_multiple_event_types`)
   - Future P3: full MCP transport loop, auto anchor resolution, persistent dedupe, background replay worker, multiple simultaneous vendor bridges
-- recovery/hardening follow-up:
-  - neu mo rong HTTP mutation recovery, lam ro boundary/an toan truoc; khong duoc silently claim rollback parity cho remote side effects
-  - danh gia xem `EmailSend` co can tro thanh supported governed path hay tiep tuc explicit out-of-scope cho v1
+- recovery/hardening follow-up: **PLANNED**
+  - HTTP mutation recovery boundary analysis + EmailSend governed-path evaluation
+  - Plan: `16-recovery-hardening-follow-up-execution-plan.md`
