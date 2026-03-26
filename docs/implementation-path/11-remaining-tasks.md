@@ -30,13 +30,13 @@ Do not invent scope; all items cite source docs.
   - Src: `08-next-issue-backlog.md` P1
   - Plan: `12-ledger-hash-chain-execution-plan.md` (Commits 1-4 complete; evidence at `18-phase-f-evidence-pack.md` line 159)
   - Future: live hash verification, ledger read-model, cross-node sync remain open per `12-ledger-hash-chain-execution-plan.md` line 130
-  - **Recommended next slice: runtime integration boundary** (see `08-next-issue-backlog.md` P3)
+  - **Recommended next slice: runtime integration boundary** -> DONE per `08-next-issue-backlog.md` P3; see `ferrumctl more useful` below
 
 - [x] provenance query/read-model enhancement (core surface DONE)
   - Src: `08-next-issue-backlog.md` P2 lines 19-22
   - `POST /v1/provenance/query` expanded with filters on `intent_id`, `proposal_id`, `execution_id`, `capability_id`, event kind, terminal state, time range; `ferrum-graph` read-model helpers implemented (`terminal_events`, `walk_backwards_from`, `walk_forwards_from`); integration tests at `tests/integration_provenance_query.rs`
   - Future P2: advanced replay/fabric tooling, cross-node ledger sync
-  - **Recommended next slice: runtime integration boundary** (see `08-next-issue-backlog.md` P3)
+  - **Recommended next slice: runtime integration boundary** -> DONE per `08-next-issue-backlog.md` P3; see `ferrumctl more useful` below
 
 - [x] operator/runtime hardening (DONE - Commit 2 complete)
   - Src: `08-next-issue-backlog.md` P2 lines 23-27
@@ -46,6 +46,7 @@ Do not invent scope; all items cite source docs.
 
 - [ ] ferrumctl more useful (beyond health/inspect)
   - Src: `08-next-issue-backlog.md` P2
+  - **Recommended next slice** for post-MCP-bridge work (grounded in existing P2 backlog)
 
 - [x] git adapter
   - Evidence added end-to-end per `91-phase-success-criteria-and-kpis.md` line 18

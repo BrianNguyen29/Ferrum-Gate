@@ -73,7 +73,7 @@ entry and marking the backlog item done.
 ## Slice Status: COMPLETE
 
 Both commits are done. This plan is a historical execution record.
-Next slice: **Runtime integration boundary** (see Recommended Next Slice below).
+Next slice: **ferrumctl more useful** (see Recommended Next Slice below).
 
 ---
 
@@ -87,14 +87,11 @@ Next slice: **Runtime integration boundary** (see Recommended Next Slice below).
 
 ## Recommended Next Slice
 
-**Runtime integration boundary** (P2 priority).
+**ferrumctl more useful** (beyond health/inspect), grounded in `08-next-issue-backlog.md` P2.
+Operator/runtime hardening is complete; ferrumctl is the next open P2 item
+and does not require runtime integration boundary work to proceed.
 
-Define the model for mapping external runtime/tool events into FerrumGate
-provenance graph without leaking vendor assumptions into core crates.
-Select one first integration (e.g., MCP/runtime event bridge) and prove
-internal + external events share an execution lineage.
-
-Source: `docs/implementation-path/08-next-issue-backlog.md` P3 lines 29-31.
+Source: `docs/implementation-path/11-remaining-tasks.md` line 47.
 
 ---
 

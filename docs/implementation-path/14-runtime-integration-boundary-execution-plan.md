@@ -136,9 +136,14 @@ pub async fn ingest(
 
 ---
 
-## Slice Status: IN PROGRESS
+## Slice Status: COMPLETE
 
-Work in progress. This plan is the living record for this slice.
+ All commits implemented and verified:
+ - Commit 1: Doc added (this file)
+ - Commit 2: Crate scaffold (`ferrum-integrations-mcp`) compiles with zero warnings
+ - Commit 3: Public API (`McpBridge::ingest`) with explicit anchor ingest and unit tests
+ - Commit 4: `reqwest` and `url` added to workspace.dependencies
+ - E2e lineage proof: `tests/integration_mcp_bridge.rs:253` and `tests/integration_mcp_bridge.rs:399`
 
 ---
 
@@ -169,7 +174,8 @@ Work in progress. This plan is the living record for this slice.
 
 ## Recommended Next Slice
 
-Prove end-to-end: spin up a local ferrumd, send an MCP runtime event through
-the bridge, and verify the event appears in the provenance graph via the query API.
+ `ferrumctl more useful` (beyond health/inspect), grounded in `08-next-issue-backlog.md` P2.
+ Current MCP bridge proof slice is complete; ferrumctl is the next open P2 item
+ and does not require runtime integration boundary work to proceed.
 
-Source: this doc, Future Backlog section above.
+ Source: `docs/implementation-path/11-remaining-tasks.md` line 47
