@@ -26,8 +26,10 @@ Do not invent scope; all items cite source docs.
 
 ## P2 — Future work (not MVP scope)
 
-- [ ] ledger hash chain
-  - Src: `08-next-issue-backlog.md` P2
+- [x] ledger hash chain (initial integration slice DONE)
+  - Src: `08-next-issue-backlog.md` P1
+  - Plan: `12-ledger-hash-chain-execution-plan.md` (Commits 1-4 complete)
+  - Future: live hash verification, ledger read-model, cross-node sync remain open per `12-ledger-hash-chain-execution-plan.md` line 130
 
 - [ ] ferrumctl more useful (beyond health/inspect)
   - Src: `08-next-issue-backlog.md` P2

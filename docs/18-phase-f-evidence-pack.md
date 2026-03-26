@@ -157,8 +157,9 @@ SideEffectPrepared -> SideEffectVerified -> terminal event
    - Source: `docs/15-deployment-and-operations.md` line 15, 55
 
 6. **Ledger hash chain**
-   - Status: Not implemented
-   - Source: `docs/implementation-path/11-remaining-tasks.md` line 26
+   - Status: Initial integration slice DONE (store atomic append, gateway commit wiring, startup verify, Slice 3 tests passing at `tests/integration_gateway_flow.rs:9251,9377`)
+   - Future: live hash verification during append, ledger read-model, cross-node sync remain open
+   - Source: `docs/implementation-path/12-ledger-hash-chain-execution-plan.md` Commits 1-4; `docs/implementation-path/11-remaining-tasks.md` line 26
 
 7. **ferrumctl expanded utility**
    - Status: Minimal health/inspect commands exist

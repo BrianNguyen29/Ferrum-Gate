@@ -155,8 +155,12 @@ pub trait ProvenanceRepo: Send + Sync {
 #[async_trait]
 pub trait LedgerRepo: Send + Sync {
     async fn append(&self, entry: &LedgerEntry) -> Result<()>;
+    async fn append_event(&self, event: &ProvenanceEvent) -> Result<LedgerEntry>;
     async fn get_by_event(&self, event_id: EventId) -> Result<Option<LedgerEntry>>;
     async fn list_recent(&self, limit: u32) -> Result<Vec<LedgerEntry>>;
     /// Returns the most recent ledger entry, if any.
     async fn get_latest(&self) -> Result<Option<LedgerEntry>>;
+    /// Lists all ledger entries ordered by entry_id ASC (chronological order).
+    /// Used for chain verification after loading from persistence.
+    async fn list_all(&self) -> Result<Vec<LedgerEntry>>;
 }

@@ -188,6 +188,7 @@ async fn test_compile_intent_persists_and_emits_provenance() {
             terminal_only: None,
             since: None,
             until: None,
+            ..Default::default()
         })
         .await
         .unwrap();
@@ -273,6 +274,7 @@ async fn test_evaluate_proposal_loads_real_intent_and_persists() {
             terminal_only: None,
             since: None,
             until: None,
+            ..Default::default()
         })
         .await
         .unwrap();
@@ -295,6 +297,7 @@ async fn test_evaluate_proposal_loads_real_intent_and_persists() {
             terminal_only: None,
             since: None,
             until: None,
+            ..Default::default()
         })
         .await
         .unwrap();
@@ -357,6 +360,7 @@ async fn test_evaluate_proposal_rejects_missing_intent_fail_closed() {
             terminal_only: None,
             since: None,
             until: None,
+            ..Default::default()
         })
         .await
         .unwrap();
@@ -378,6 +382,7 @@ async fn test_evaluate_proposal_rejects_missing_intent_fail_closed() {
             terminal_only: None,
             since: None,
             until: None,
+            ..Default::default()
         })
         .await
         .unwrap();
@@ -714,6 +719,7 @@ async fn test_evaluate_proposal_id_mismatch_returns_400_and_no_events() {
             terminal_only: None,
             since: None,
             until: None,
+            ..Default::default()
         })
         .await
         .unwrap();
@@ -735,6 +741,7 @@ async fn test_evaluate_proposal_id_mismatch_returns_400_and_no_events() {
             terminal_only: None,
             since: None,
             until: None,
+            ..Default::default()
         })
         .await
         .unwrap();
@@ -948,6 +955,7 @@ async fn test_full_happy_path_flow_compile_evaluate_mint_authorize_prepare() {
             terminal_only: None,
             since: None,
             until: None,
+            ..Default::default()
         })
         .await
         .unwrap();
@@ -1234,6 +1242,7 @@ async fn test_full_happy_path_execute_verify_auto_commit() {
             terminal_only: None,
             since: None,
             until: None,
+            ..Default::default()
         })
         .await
         .unwrap();
@@ -1381,6 +1390,7 @@ async fn test_r2_no_auto_commit_verify_then_explicit_commit() {
             terminal_only: None,
             since: None,
             until: None,
+            ..Default::default()
         })
         .await
         .unwrap();
@@ -1569,6 +1579,7 @@ async fn test_quarantine_path_blocks_execution_advance() {
             terminal_only: None,
             since: None,
             until: None,
+            ..Default::default()
         })
         .await
         .unwrap();
@@ -1692,6 +1703,7 @@ async fn test_rollback_path_recovers_execution() {
             terminal_only: None,
             since: None,
             until: None,
+            ..Default::default()
         })
         .await
         .unwrap();
@@ -1815,6 +1827,7 @@ async fn test_compensate_path_recovers_execution() {
             terminal_only: None,
             since: None,
             until: None,
+            ..Default::default()
         })
         .await
         .unwrap();
@@ -2532,6 +2545,7 @@ async fn test_full_approval_flow_approve_then_prepare_succeeds() {
             terminal_only: None,
             since: None,
             until: None,
+            ..Default::default()
         })
         .await
         .unwrap();
@@ -2780,6 +2794,7 @@ async fn test_approval_denial_flow_blocks_execution() {
             terminal_only: None,
             since: None,
             until: None,
+            ..Default::default()
         })
         .await
         .unwrap();
@@ -6305,6 +6320,7 @@ async fn test_git_verify_succeeds_after_execute() {
             terminal_only: None,
             since: None,
             until: None,
+            ..Default::default()
         })
         .await
         .unwrap();
@@ -6459,6 +6475,7 @@ async fn test_git_rollback_restores_repo_head_to_before_ref() {
             terminal_only: None,
             since: None,
             until: None,
+            ..Default::default()
         })
         .await
         .unwrap();
@@ -7569,6 +7586,7 @@ async fn test_r3_no_auto_commit_after_approval_requires_explicit_commit() {
             terminal_only: None,
             since: None,
             until: None,
+            ..Default::default()
         })
         .await
         .unwrap();
@@ -8259,6 +8277,7 @@ async fn test_adapter_backed_rollback_deletes_created_file() {
             terminal_only: None,
             since: None,
             until: None,
+            ..Default::default()
         })
         .await
         .unwrap();
@@ -8545,6 +8564,7 @@ async fn test_adapter_backed_compensate_restores_overwritten_file() {
             terminal_only: None,
             since: None,
             until: None,
+            ..Default::default()
         })
         .await
         .unwrap();
@@ -8799,6 +8819,7 @@ async fn test_adapter_backed_sqlite_compensate_restores_updated_row() {
             terminal_only: None,
             since: None,
             until: None,
+            ..Default::default()
         })
         .await
         .unwrap();
@@ -9283,6 +9304,7 @@ async fn test_commit_flow_writes_ledger_entry_linked_to_provenance_event() {
             terminal_only: None,
             since: None,
             until: None,
+            ..Default::default()
         })
         .await
         .unwrap();
