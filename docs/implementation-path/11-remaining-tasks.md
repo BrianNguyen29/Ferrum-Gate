@@ -44,9 +44,9 @@ Do not invent scope; all items cite source docs.
   - Plan: `docs/implementation-path/13-operator-runtime-hardening-execution-plan.md`
   - Evidence: `docs/17-troubleshooting.md` startup-failure section exists per `13-operator-runtime-hardening-execution-plan.md` Commit 1
 
-- [ ] ferrumctl more useful (beyond health/inspect)
+- [x] ferrumctl more useful (beyond health/inspect)
   - Src: `08-next-issue-backlog.md` P2
-  - **Recommended next slice** for post-MCP-bridge work (grounded in existing P2 backlog)
+  - watch-execution (bounded polling, --json, --require-terminal) and execution-control (compensate, rollback) wrappers merged per PR #40; plan doc shows both slices complete at `docs/implementation-path/15-ferrumctl-more-useful-execution-plan.md` lines 281, 472
 
 - [x] git adapter
   - Evidence added end-to-end per `91-phase-success-criteria-and-kpis.md` line 18

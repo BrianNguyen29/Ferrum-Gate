@@ -162,8 +162,8 @@ SideEffectPrepared -> SideEffectVerified -> terminal event
    - Source: `docs/implementation-path/12-ledger-hash-chain-execution-plan.md` Commits 1-4; `docs/implementation-path/11-remaining-tasks.md` line 26
 
  7. **ferrumctl expanded utility**
-    - Status: Minimal health/inspect commands exist
-    - Source: `docs/implementation-path/11-remaining-tasks.md` line 29
+     - Status: watch-execution and execution-control (compensate, rollback) commands merged per PR #40; both slices marked complete at `docs/implementation-path/15-ferrumctl-more-useful-execution-plan.md` lines 281, 472
+     - Source: `docs/implementation-path/11-remaining-tasks.md` line 47
 
  8. **Runtime integration boundary (proof slice DONE)**
     - Status: Observation-only MCP bridge (`McpBridge`) with explicit anchor ingest; e2e lineage test proves internal + external events share same execution chain
