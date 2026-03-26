@@ -16,14 +16,16 @@
 - P1: durable capability persistence + startup reconciliation + restart integration coverage
 
 ## P2
-- provenance query/read model:
-  - mo rong `POST /v1/provenance/query` tu minimal fail-closed endpoint thanh query surface co filter thuc dung theo `intent_id`, `proposal_id`, `execution_id`, event kind, va terminal state
-  - them read-model helpers trong `ferrum-graph` cho multi-hop lineage/event-edge traversal tren du lieu da persist
-  - them integration coverage cho provenance query va terminal recovery lineage vuot qua minimum chain
-- operator/runtime hardening:
+- provenance query/read model: **DONE (core surface implemented)**
+  - `POST /v1/provenance/query` expanded with filters on `intent_id`, `proposal_id`, `execution_id`, `capability_id`, event kind, terminal state, time range, cursor pagination
+  - `ferrum-graph` read-model helpers implemented: `terminal_events`, `walk_backwards_from`, `walk_forwards_from`
+  - Evidence: `crates/ferrum-proto/src/provenance.rs:86`, `crates/ferrum-store/src/sqlite/provenance.rs:142`, `crates/ferrum-gateway/src/server.rs:2192`, `crates/ferrum-graph/src/lib.rs:52`, `tests/integration_provenance_query.rs`
+  - Future P2: advanced replay/fabric tooling, cross-node sync
+- operator/runtime hardening: **DONE**
   - ghi ro prod-style ingress/TLS deployment story thanh runbook thao tac duoc
   - them diagnostics cho effective config/startup guard/readiness de giam "why did ferrumd refuse to start" debugging time
   - doi chieu lai quickstart + troubleshooting + deployment docs voi production-like bearer-auth rollout
+  - Evidence: `13-operator-runtime-hardening-execution-plan.md` (all items complete)
 
 ## P3
 - runtime integration boundary:

@@ -18,10 +18,12 @@ ASCII only.
 | Component | Status |
 |-----------|--------|
 | `ferrum-ledger` in-memory logic | DONE (hash chain, verify_chain, LedgerEntry::from_event, unit tests) |
-| `ferrum-store` LedgerRepo | Partial (append, get_by_event, get_latest, list_recent exist; no get_by_sequence) |
-| Gateway -> ledger wiring on commit | Partial (Slice 3 tests written at line 9226) |
-| Store persistence reload on startup | NOT YET DONE |
-| End-to-end hash chain verification | NOT YET DONE |
+| `ferrum-store` LedgerRepo | DONE (atomic append, get_by_event, get_latest, list_recent; Commit 1 complete) |
+| Gateway -> ledger wiring on commit | DONE (Commit 2 complete; Slice 3 tests at line 9226) |
+| Store persistence reload on startup | DONE (Commit 3 complete; verify_chain called after reload) |
+| End-to-end hash chain verification | DONE (Commit 4 complete; `ledger_hash_chain` and `commit_flow_writes_ledger_entry` tests pass) |
+
+**Initial ledger integration slice is complete.** Commits 1-4 are done per `docs/18-phase-f-evidence-pack.md` line 159.
 
 ---
 
@@ -133,7 +135,19 @@ ASCII only.
 - Ledger pruning or compaction
 - Cross-node ledger sync / distributed ledger
 - Ledger replay for recovery (beyond chain verification)
-- Full provenance query surface backed by ledger read model
+
+---
+
+## Recommended Next Slice
+
+**Runtime integration boundary** (P2 priority).
+
+Define the model for mapping external runtime/tool events into FerrumGate
+provenance graph without leaking vendor assumptions into core crates.
+Select one first integration (e.g., MCP/runtime event bridge) and prove
+internal + external events share an execution lineage.
+
+Source: `docs/implementation-path/08-next-issue-backlog.md` P3 lines 29-31.
 
 ---
 

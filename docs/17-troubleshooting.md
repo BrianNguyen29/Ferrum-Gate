@@ -36,24 +36,40 @@ Kiểm tra:
 - If state is still resetting, check whether `ferrumd` actually found a config file or fell back to `sqlite::memory:?cache=shared`.
 - Capabilities are now persisted in SQLite via `SqliteCapabilityService`. On startup, `ferrumd` reconciles legacy active capabilities with execution history. Active capability leases survive process restart when the SQLite store is persistent.
 
-### ferrumd not reachable
-- Check the effective bind address from CLI/env/config (`--bind`, `FERRUMD_BIND_ADDR`, config file).
-- Check that no other process is using the configured port.
-- If startup fails on a non-loopback bind, verify that bearer auth is enabled or that `allow_insecure_nonlocal` was explicitly set.
-- Run `cargo run -p ferrumd -- --print-effective-config` to confirm which config source won for bind/store/auth and whether the startup guard would pass.
-- Run `cargo run -p ferrumd -- --check-startup-guard` when you want a preflight verdict without starting the listener.
+### Startup failures
+
+`ferrumd` has a fail-closed **startup guard** that rejects two classes of misconfiguration:
+
+**Failure mode 1 — non-loopback bind with auth disabled**
+- `ferrumd` refuses to bind non-loopback (e.g. `0.0.0.0:8080`) when `auth.mode` is not `"bearer"` and `allow_insecure_nonlocal` is not set.
+- Fix: enable bearer auth, or set `allow_insecure_nonlocal = true` in the config file.
+- For TLS-terminated deployments (nginx/cloud LB in front of `ferrumd`), the TLS ingress runbook at [runbooks/ops-tls-ingress-runbook.md](runbooks/ops-tls-ingress-runbook.md) covers the correct bearer-auth + non-loopback bind combination.
+
+**Failure mode 2 — missing bearer token when bearer auth is enabled**
+- `configs/ferrumgate.prod.toml` sets `auth.mode = "bearer"`. Startup fails if no bearer token is supplied via `FERRUMD_BEARER_TOKEN` env var or `auth.bearer_token` in the config file.
+- Fix: supply a non-empty bearer token through the env var or config.
+
+**Config precedence** (highest to lowest): CLI flags → env vars (`FERRUMD_*`) → config file → built-in defaults. The effective-config output labels which source won for each field but never exposes the raw bearer token value (only its presence/absence).
+
+**Diagnostic commands**
+
+```sh
+# Print resolved effective config and startup guard verdict, then exit
+cargo run -p ferrumd -- --print-effective-config
+
+# Check startup guard only (preflight), exits 0 if guard passes
+cargo run -p ferrumd -- --check-startup-guard
+```
+
+If `ferrumd` is not yet reachable after startup, also verify:
+- The bind address is correct: check `--bind`, `FERRUMD_BIND_ADDR`, and the config file (precedence above).
+- No other process is using the same port.
 
 ### bearer auth returns 401
 - All non-health routes require `Authorization: Bearer <token>` when `auth.mode = "bearer"`.
 - Verify that `FERRUMD_BEARER_TOKEN` or `auth.bearer_token` is set on the server side.
 - Verify that the client (`ferrumctl` or curl) is sending the same token.
 - `ferrumctl` accepts `--bearer-token` or `FERRUMCTL_BEARER_TOKEN`.
-
-### prod config fails at startup
-- `configs/ferrumgate.prod.toml` enables `auth.mode = "bearer"`.
-- Startup will fail until a bearer token is supplied via config or `FERRUMD_BEARER_TOKEN`.
-- Startup also fails if a non-loopback bind is requested while auth is disabled and `allow_insecure_nonlocal` is not enabled.
-- The effective-config output shows whether the bearer token came from CLI, env, or file, but only exposes presence/absence, not the raw token.
 
 ### readiness is unclear after startup
 - Run `cargo run -p ferrumctl -- server ready` to hit `/v1/readyz` directly.
