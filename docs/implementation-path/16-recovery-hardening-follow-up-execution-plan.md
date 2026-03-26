@@ -41,11 +41,16 @@ Two distinct concerns need to be evaluated and scoped before any implementation:
 
 ## Status
 
-**Not started.** This plan exists to document the two evaluation items
-so they are not forgotten and so future agents have a clear entry point.
+**Ratified via Slice 16-A.** See `docs/implementation-path/16a-slice-16-a-boundary-ratification.md`.
 
-When either item is ready to implement, a dedicated execution-plan doc
-(or an amendment to this doc) should be created with concrete commits.
+Both evaluation items have been resolved by ratifying the current conservative
+boundaries rather than implementing new capabilities:
+
+1. HTTP mutation recovery: R3/manual no-op boundary ratified
+2. EmailSend governed-path: Deny-at-prepare-time boundary ratified
+
+No implementation work was performed. Future expansion requires new Slice
+proposals with boundary analysis per the entry criteria in Slice 16-A.
 
 ---
 

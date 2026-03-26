@@ -78,6 +78,8 @@ If `ferrumd` is not yet reachable after startup, also verify:
 ### HTTP adapter mutation has no automatic rollback
 HTTP rollback is a **no-op by design**. If an HTTP adapter mutates remote state (e.g., a PUT or DELETE to an external API), the rollback adapter will not undo that mutation. Operators must manually compensate in this case. See `15-deployment-and-operations.md` for the open gap.
 
+**Ratified boundary (Slice 16-A)**: POST/PUT/PATCH/DELETE HTTP endpoints are inferred as `R3IrreversibleHighConsequence` at intent compile time (`crates/ferrum-gateway/src/server.rs:2660`). Automatic HTTP mutation recovery requires a new boundary analysis before any implementation. See `docs/implementation-path/16a-slice-16-a-boundary-ratification.md` for entry criteria.
+
 ### HTTP auth / header allowlist mismatch
 - HTTP adapter respects a configured header allowlist. Requests with headers not in the allowlist are rejected at the adapter layer.
 - If an agent's proposal includes headers that are not in the allowlist, the action will fail at the adapter level before reaching the remote service.

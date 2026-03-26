@@ -142,15 +142,17 @@ SideEffectPrepared -> SideEffectVerified -> terminal event
    - Future P2: advanced replay/fabric tooling, cross-node ledger sync, live hash verification during append
    - Source: `crates/ferrum-proto/src/provenance.rs:86`, `crates/ferrum-store/src/sqlite/provenance.rs:142`, `crates/ferrum-gateway/src/server.rs:2192`, `crates/ferrum-graph/src/lib.rs:52`
 
-3. **EmailSend recovery parity**
-   - Status: EmailDraft allow_send=true explicitly denied at gateway prepare-time
-   - EmailSend mutation recovery NOT yet parity-adapter-backed
-   - Source: `docs/implementation-path/11-phase-f-evidence.md` section 4
+ 3. **EmailSend recovery parity** (Slice 16-A ratified boundary)
+    - Status: EmailDraft allow_send=true explicitly denied at gateway prepare-time
+    - EmailSend mutation recovery NOT in scope for v1; deny boundary ratified
+    - Source: `crates/ferrum-gateway/src/server.rs:1149`, `crates/ferrum-adapter-maildraft/src/lib.rs:161`
+    - Entry criteria for future governed-path evaluation: see `docs/implementation-path/16a-slice-16-a-boundary-ratification.md`
 
-4. **HTTP rollback/compensate is no-op**
-   - Status: HTTP adapter rollback is conservative no-op by design
-   - Remote mutation rollback requires manual operator compensation
-   - Source: `docs/17-troubleshooting.md` line 63
+ 4. **HTTP rollback/compensate is no-op** (Slice 16-A ratified boundary)
+    - Status: HTTP adapter rollback is conservative no-op by design
+    - Remote mutation rollback requires manual operator R3 compensation
+    - Source: `crates/ferrum-adapter-http/src/lib.rs:1079`, `crates/ferrum-gateway/src/server.rs:2660`
+    - Entry criteria for future recovery implementation: see `docs/implementation-path/16a-slice-16-a-boundary-ratification.md`
 
 5. **TLS termination story**
    - Status: No in-process TLS listener; external termination required
