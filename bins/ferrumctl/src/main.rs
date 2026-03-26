@@ -248,6 +248,240 @@ struct ProvenanceQueryResponse {
 }
 
 // =============================================================================
+// Provenance stats aggregation types
+// =============================================================================
+
+/// Terminal event kinds that represent completed execution outcomes.
+const TERMINAL_KINDS: &[&str] = &[
+    "SideEffectCommitted",
+    "SideEffectCompensated",
+    "SideEffectRolledBack",
+    "ApprovalDenied",
+    "Quarantined",
+    "ErrorRaised",
+];
+
+/// Event kinds that indicate a problem condition worth flagging.
+const ISSUE_KINDS: &[&str] = &[
+    "ErrorRaised",
+    "Quarantined",
+    "ApprovalDenied",
+    "SideEffectRolledBack",
+];
+
+/// Aggregated provenance statistics over a set of events.
+#[derive(Debug, Clone, Default)]
+struct ProvenanceStats {
+    total_events: usize,
+    kinds: std::collections::HashMap<String, usize>,
+    terminal_count: usize,
+    issue_count: usize,
+    events_without_execution_id: usize,
+    events_by_intent: std::collections::HashMap<String, usize>,
+    events_by_proposal: std::collections::HashMap<String, usize>,
+    events_by_execution: std::collections::HashMap<String, usize>,
+    /// Events flagged by checks (event_id -> reason)
+    flagged_events: Vec<FlaggedEvent>,
+}
+
+/// A single event flagged by a consistency check.
+#[derive(Debug, Clone)]
+struct FlaggedEvent {
+    event_id: String,
+    kind: String,
+    reason: String,
+}
+
+/// JSON-serializable view of ProvenanceStats for --json output.
+#[derive(Debug, Clone, Serialize)]
+struct ProvenanceStatsJson {
+    total_events: usize,
+    kinds: std::collections::HashMap<String, usize>,
+    terminal_count: usize,
+    issue_count: usize,
+    events_without_execution_id: usize,
+    events_by_intent_count: usize,
+    events_by_proposal_count: usize,
+    events_by_execution_count: usize,
+    flagged_events: Vec<FlaggedEventJson>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct FlaggedEventJson {
+    event_id: String,
+    kind: String,
+    reason: String,
+}
+
+impl From<ProvenanceStats> for ProvenanceStatsJson {
+    fn from(s: ProvenanceStats) -> Self {
+        Self {
+            total_events: s.total_events,
+            kinds: s.kinds,
+            terminal_count: s.terminal_count,
+            issue_count: s.issue_count,
+            events_without_execution_id: s.events_without_execution_id,
+            events_by_intent_count: s.events_by_intent.len(),
+            events_by_proposal_count: s.events_by_proposal.len(),
+            events_by_execution_count: s.events_by_execution.len(),
+            flagged_events: s
+                .flagged_events
+                .into_iter()
+                .map(|f| FlaggedEventJson {
+                    event_id: f.event_id,
+                    kind: f.kind,
+                    reason: f.reason,
+                })
+                .collect(),
+        }
+    }
+}
+
+/// Collects aggregate statistics from a list of provenance events.
+fn aggregate_provenance_stats(events: &[ProvenanceEvent]) -> ProvenanceStats {
+    let mut stats = ProvenanceStats::default();
+    stats.total_events = events.len();
+
+    // Build lookup sets for checks
+    let mut event_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut execution_events: std::collections::HashMap<String, Vec<&ProvenanceEvent>> =
+        std::collections::HashMap::new();
+
+    for event in events {
+        // Count by kind
+        *stats.kinds.entry(event.kind.clone()).or_insert(0) += 1;
+
+        // Check if terminal
+        if TERMINAL_KINDS.contains(&event.kind.as_str()) {
+            stats.terminal_count += 1;
+        }
+
+        // Check if issue
+        if ISSUE_KINDS.contains(&event.kind.as_str()) {
+            stats.issue_count += 1;
+        }
+
+        // Track events without execution_id
+        if event.execution_id.is_none() {
+            stats.events_without_execution_id += 1;
+        }
+
+        // Track by intent/proposal/execution
+        if let Some(ref intent_id) = event.intent_id {
+            *stats.events_by_intent.entry(intent_id.clone()).or_insert(0) += 1;
+        }
+        if let Some(ref proposal_id) = event.proposal_id {
+            *stats
+                .events_by_proposal
+                .entry(proposal_id.clone())
+                .or_insert(0) += 1;
+        }
+        if let Some(ref execution_id) = event.execution_id {
+            *stats
+                .events_by_execution
+                .entry(execution_id.clone())
+                .or_insert(0) += 1;
+            execution_events
+                .entry(execution_id.clone())
+                .or_insert_with(Vec::new)
+                .push(event);
+        }
+
+        event_ids.insert(event.event_id.clone());
+    }
+
+    // Check: terminal events without execution_id (data inconsistency)
+    for event in events {
+        if TERMINAL_KINDS.contains(&event.kind.as_str()) && event.execution_id.is_none() {
+            stats.flagged_events.push(FlaggedEvent {
+                event_id: event.event_id.clone(),
+                kind: event.kind.clone(),
+                reason: "terminal event missing execution_id".to_string(),
+            });
+        }
+    }
+
+    // Check: orphan terminal events - terminal events whose execution has no non-terminal ancestors
+    // An execution is considered "complete" if it has any terminal events
+    for (exec_id, exec_events) in &execution_events {
+        let has_terminal = exec_events
+            .iter()
+            .any(|e| TERMINAL_KINDS.contains(&e.kind.as_str()));
+        if !has_terminal && !exec_events.is_empty() {
+            // Non-terminal-only execution - flag if no parent_edges (potential gap)
+            for event in exec_events {
+                if event.parent_edges.is_empty() && exec_events.len() > 1 {
+                    stats.flagged_events.push(FlaggedEvent {
+                        event_id: event.event_id.clone(),
+                        kind: event.kind.clone(),
+                        reason: format!(
+                            "execution {} has {} events but root has no parent_edges",
+                            exec_id,
+                            exec_events.len()
+                        ),
+                    });
+                    break; // Only flag one per execution
+                }
+            }
+        }
+    }
+
+    // Limit flagged events to avoid overwhelming output
+    if stats.flagged_events.len() > 100 {
+        stats.flagged_events.truncate(100);
+    }
+
+    stats
+}
+
+/// Formats provenance stats as human-readable text.
+fn format_provenance_stats_text(stats: &ProvenanceStats) -> String {
+    let mut lines = Vec::new();
+    lines.push(format!("Total events: {}", stats.total_events));
+    lines.push(format!("Terminal events: {}", stats.terminal_count));
+    lines.push(format!(
+        "Issue events (error/denied/quarantined/rolledback): {}",
+        stats.issue_count
+    ));
+    lines.push(format!(
+        "Events missing execution_id: {}",
+        stats.events_without_execution_id
+    ));
+    lines.push(format!(
+        "Unique intents: {}, proposals: {}, executions: {}",
+        stats.events_by_intent.len(),
+        stats.events_by_proposal.len(),
+        stats.events_by_execution.len()
+    ));
+
+    // Sort kinds by count descending for readability
+    let mut kinds: Vec<(String, usize)> =
+        stats.kinds.iter().map(|(k, v)| (k.clone(), *v)).collect();
+    kinds.sort_by(|a, b| b.1.cmp(&a.1));
+    lines.push("\nEvents by kind:".to_string());
+    for (kind, count) in kinds {
+        lines.push(format!("  {}: {}", kind, count));
+    }
+
+    if !stats.flagged_events.is_empty() {
+        lines.push(format!(
+            "\nFlagged events ({}):",
+            stats.flagged_events.len()
+        ));
+        for flagged in &stats.flagged_events {
+            lines.push(format!(
+                "  [{}] {}  {}",
+                flagged.kind, flagged.event_id, flagged.reason
+            ));
+        }
+    } else {
+        lines.push("\nNo flagged events.".to_string());
+    }
+
+    lines.join("\n")
+}
+
+// =============================================================================
 // External event ingest types
 // =============================================================================
 
@@ -585,6 +819,53 @@ enum ServerCommand {
         /// Required for dot format when redirecting to a file.
         #[arg(long)]
         output: Option<PathBuf>,
+    },
+    /// Aggregate provenance statistics and run consistency checks over queried events.
+    InspectProvenanceStats {
+        /// Filter by intent ID.
+        #[arg(long)]
+        intent_id: Option<String>,
+
+        /// Filter by proposal ID.
+        #[arg(long)]
+        proposal_id: Option<String>,
+
+        /// Filter by execution ID.
+        #[arg(long)]
+        execution_id: Option<String>,
+
+        /// Filter by capability ID.
+        #[arg(long)]
+        capability_id: Option<String>,
+
+        /// Filter by event kind.
+        #[arg(long)]
+        event_kind: Option<String>,
+
+        /// Filter events since timestamp (ISO 8601).
+        #[arg(long)]
+        since: Option<String>,
+
+        /// Filter events until timestamp (ISO 8601).
+        #[arg(long)]
+        until: Option<String>,
+
+        /// Maximum total events to collect across all pages (1-100000).
+        /// Default is 10000. Use a lower value for faster, bounded output.
+        #[arg(long)]
+        max_events: Option<u32>,
+
+        /// Server base URL (e.g. http://127.0.0.1:8080).
+        #[arg(long, env = "FERRUMCTL_SERVER_URL")]
+        server_url: Option<String>,
+
+        /// Bearer token for authentication.
+        #[arg(long, env = "FERRUMCTL_BEARER_TOKEN")]
+        bearer_token: Option<String>,
+
+        /// Output as JSON instead of human-readable.
+        #[arg(long)]
+        json: bool,
     },
     /// Query provenance events with filters.
     InspectProvenance {
@@ -1088,6 +1369,75 @@ async fn run_inspect_event(
     Ok(())
 }
 
+async fn run_inspect_provenance_stats(
+    intent_id: Option<String>,
+    proposal_id: Option<String>,
+    execution_id: Option<String>,
+    capability_id: Option<String>,
+    event_kind: Option<String>,
+    since: Option<String>,
+    until: Option<String>,
+    max_events: Option<u32>,
+    url: Option<String>,
+    token: Option<String>,
+    as_json: bool,
+) -> Result<()> {
+    let url = resolve_server_url(url)?;
+    let client = ServerClient::new(&url, token);
+
+    let max_events = max_events.unwrap_or(10_000).min(100_000);
+    let page_limit = std::cmp::min(max_events, 1000);
+
+    let mut all_events: Vec<ProvenanceEvent> = Vec::new();
+    let mut cursor: Option<String> = None;
+
+    loop {
+        let query = ProvenanceQueryRequest {
+            intent_id: intent_id.clone(),
+            proposal_id: proposal_id.clone(),
+            execution_id: execution_id.clone(),
+            capability_id: capability_id.clone(),
+            event_kind: event_kind.clone(),
+            terminal_only: None,
+            since: since.clone(),
+            until: until.clone(),
+            limit: Some(page_limit),
+            cursor: cursor.clone(),
+        };
+
+        let response = client.query_provenance(&query).await?;
+
+        for event in response.events {
+            if all_events.len() >= max_events as usize {
+                break;
+            }
+            all_events.push(event);
+        }
+
+        if all_events.len() >= max_events as usize {
+            break;
+        }
+
+        match response.next_cursor {
+            Some(next_cursor) => {
+                cursor = Some(next_cursor);
+            }
+            None => break,
+        }
+    }
+
+    let stats = aggregate_provenance_stats(&all_events);
+
+    if as_json {
+        let json_stats: ProvenanceStatsJson = stats.into();
+        println!("{}", serde_json::to_string_pretty(&json_stats)?);
+    } else {
+        println!("{}", format_provenance_stats_text(&stats));
+    }
+
+    Ok(())
+}
+
 async fn run_ingest_external_event(
     execution_id: String,
     parent_event_id: String,
@@ -1199,6 +1549,34 @@ async fn main() -> Result<()> {
             } => {
                 run_inspect_lineage(&execution_id, server_url, bearer_token, format, output)
                     .await?;
+            }
+            ServerCommand::InspectProvenanceStats {
+                intent_id,
+                proposal_id,
+                execution_id,
+                capability_id,
+                event_kind,
+                since,
+                until,
+                max_events,
+                server_url,
+                bearer_token,
+                json,
+            } => {
+                run_inspect_provenance_stats(
+                    intent_id,
+                    proposal_id,
+                    execution_id,
+                    capability_id,
+                    event_kind,
+                    since,
+                    until,
+                    max_events,
+                    server_url,
+                    bearer_token,
+                    json,
+                )
+                .await?;
             }
             ServerCommand::InspectProvenance {
                 intent_id,
@@ -1785,5 +2163,198 @@ mod tests {
         let result = parse_metadata_json(input);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "metadata must be a JSON object");
+    }
+
+    // -------------------------------------------------------------------------
+    // Provenance stats aggregation tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_aggregate_provenance_stats_empty() {
+        let events: Vec<ProvenanceEvent> = vec![];
+        let stats = aggregate_provenance_stats(&events);
+        assert_eq!(stats.total_events, 0);
+        assert_eq!(stats.terminal_count, 0);
+        assert_eq!(stats.issue_count, 0);
+        assert!(stats.flagged_events.is_empty());
+    }
+
+    #[test]
+    fn test_aggregate_provenance_stats_counts_terminal() {
+        let events = vec![
+            ProvenanceEvent {
+                event_id: "evt-1".to_string(),
+                kind: "IntentCompiled".to_string(),
+                occurred_at: "2024-01-01T00:00:00Z".to_string(),
+                intent_id: Some("intent-1".to_string()),
+                proposal_id: None,
+                execution_id: Some("exec-1".to_string()),
+                parent_edges: vec![],
+            },
+            ProvenanceEvent {
+                event_id: "evt-2".to_string(),
+                kind: "SideEffectCommitted".to_string(),
+                occurred_at: "2024-01-01T00:00:01Z".to_string(),
+                intent_id: Some("intent-1".to_string()),
+                proposal_id: None,
+                execution_id: Some("exec-1".to_string()),
+                parent_edges: vec![ProvenanceEdge {
+                    from_event_id: "evt-1".to_string(),
+                }],
+            },
+        ];
+        let stats = aggregate_provenance_stats(&events);
+        assert_eq!(stats.total_events, 2);
+        assert_eq!(stats.terminal_count, 1); // SideEffectCommitted is terminal
+        assert_eq!(stats.issue_count, 0);
+        assert_eq!(stats.kinds.get("IntentCompiled"), Some(&1));
+        assert_eq!(stats.kinds.get("SideEffectCommitted"), Some(&1));
+    }
+
+    #[test]
+    fn test_aggregate_provenance_stats_flags_terminal_without_execution_id() {
+        let events = vec![ProvenanceEvent {
+            event_id: "evt-1".to_string(),
+            kind: "SideEffectCommitted".to_string(),
+            occurred_at: "2024-01-01T00:00:00Z".to_string(),
+            intent_id: None,
+            proposal_id: None,
+            execution_id: None, // missing execution_id
+            parent_edges: vec![],
+        }];
+        let stats = aggregate_provenance_stats(&events);
+        assert_eq!(stats.terminal_count, 1);
+        assert_eq!(stats.events_without_execution_id, 1);
+        assert_eq!(stats.flagged_events.len(), 1);
+        assert_eq!(
+            stats.flagged_events[0].reason,
+            "terminal event missing execution_id"
+        );
+    }
+
+    #[test]
+    fn test_aggregate_provenance_stats_issues() {
+        let events = vec![
+            ProvenanceEvent {
+                event_id: "evt-1".to_string(),
+                kind: "ErrorRaised".to_string(),
+                occurred_at: "2024-01-01T00:00:00Z".to_string(),
+                intent_id: None,
+                proposal_id: None,
+                execution_id: Some("exec-1".to_string()),
+                parent_edges: vec![],
+            },
+            ProvenanceEvent {
+                event_id: "evt-2".to_string(),
+                kind: "ApprovalDenied".to_string(),
+                occurred_at: "2024-01-01T00:00:01Z".to_string(),
+                intent_id: None,
+                proposal_id: None,
+                execution_id: Some("exec-1".to_string()),
+                parent_edges: vec![],
+            },
+            ProvenanceEvent {
+                event_id: "evt-3".to_string(),
+                kind: "Quarantined".to_string(),
+                occurred_at: "2024-01-01T00:00:02Z".to_string(),
+                intent_id: None,
+                proposal_id: None,
+                execution_id: Some("exec-1".to_string()),
+                parent_edges: vec![],
+            },
+            ProvenanceEvent {
+                event_id: "evt-4".to_string(),
+                kind: "SideEffectRolledBack".to_string(),
+                occurred_at: "2024-01-01T00:00:03Z".to_string(),
+                intent_id: None,
+                proposal_id: None,
+                execution_id: Some("exec-1".to_string()),
+                parent_edges: vec![],
+            },
+        ];
+        let stats = aggregate_provenance_stats(&events);
+        assert_eq!(stats.issue_count, 4);
+        assert_eq!(stats.terminal_count, 4); // all are terminal
+    }
+
+    #[test]
+    fn test_aggregate_provenance_stats_tracks_unique_entities() {
+        let events = vec![
+            ProvenanceEvent {
+                event_id: "evt-1".to_string(),
+                kind: "IntentCompiled".to_string(),
+                occurred_at: "2024-01-01T00:00:00Z".to_string(),
+                intent_id: Some("intent-1".to_string()),
+                proposal_id: Some("prop-1".to_string()),
+                execution_id: Some("exec-1".to_string()),
+                parent_edges: vec![],
+            },
+            ProvenanceEvent {
+                event_id: "evt-2".to_string(),
+                kind: "IntentCompiled".to_string(),
+                occurred_at: "2024-01-01T00:00:01Z".to_string(),
+                intent_id: Some("intent-1".to_string()), // same intent
+                proposal_id: Some("prop-1".to_string()), // same proposal
+                execution_id: Some("exec-2".to_string()), // different exec
+                parent_edges: vec![],
+            },
+        ];
+        let stats = aggregate_provenance_stats(&events);
+        assert_eq!(stats.events_by_intent.len(), 1); // 1 unique intent
+        assert_eq!(stats.events_by_proposal.len(), 1); // 1 unique proposal
+        assert_eq!(stats.events_by_execution.len(), 2); // 2 unique executions
+        assert_eq!(stats.events_by_intent.get("intent-1"), Some(&2));
+    }
+
+    #[test]
+    fn test_format_provenance_stats_text_empty() {
+        let stats = ProvenanceStats::default();
+        let output = format_provenance_stats_text(&stats);
+        assert!(output.contains("Total events: 0"));
+        assert!(output.contains("No flagged events"));
+    }
+
+    #[test]
+    fn test_format_provenance_stats_text_with_data() {
+        let mut stats = ProvenanceStats::default();
+        stats.total_events = 5;
+        stats.terminal_count = 2;
+        stats.issue_count = 1;
+        stats.events_without_execution_id = 0;
+        stats.kinds.insert("IntentCompiled".to_string(), 3);
+        stats.kinds.insert("SideEffectCommitted".to_string(), 2);
+        stats.flagged_events.push(FlaggedEvent {
+            event_id: "evt-flagged".to_string(),
+            kind: "ErrorRaised".to_string(),
+            reason: "terminal event missing execution_id".to_string(),
+        });
+
+        let output = format_provenance_stats_text(&stats);
+        assert!(output.contains("Total events: 5"));
+        assert!(output.contains("Terminal events: 2"));
+        assert!(output.contains("Issue events (error/denied/quarantined/rolledback): 1"));
+        assert!(output.contains("IntentCompiled: 3"));
+        assert!(output.contains("SideEffectCommitted: 2"));
+        assert!(output.contains("Flagged events (1)"));
+        assert!(output.contains("evt-flagged"));
+    }
+
+    #[test]
+    fn test_provenance_stats_json_conversion() {
+        let mut stats = ProvenanceStats::default();
+        stats.total_events = 10;
+        stats.terminal_count = 5;
+        stats.issue_count = 2;
+        stats.events_by_intent.insert("intent-x".to_string(), 3);
+        stats.events_by_proposal.insert("prop-y".to_string(), 4);
+        stats.events_by_execution.insert("exec-z".to_string(), 5);
+
+        let json: ProvenanceStatsJson = stats.into();
+        assert_eq!(json.total_events, 10);
+        assert_eq!(json.terminal_count, 5);
+        assert_eq!(json.issue_count, 2);
+        assert_eq!(json.events_by_intent_count, 1);
+        assert_eq!(json.events_by_proposal_count, 1);
+        assert_eq!(json.events_by_execution_count, 1);
     }
 }
