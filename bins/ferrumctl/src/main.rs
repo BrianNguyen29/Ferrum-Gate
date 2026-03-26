@@ -1,5 +1,7 @@
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
+use ferrum_proto::approval::ApprovalResolveRequest;
+use ferrum_proto::common::{ActorRef, ActorType};
 use reqwest::Client;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -592,6 +594,20 @@ impl ServerClient {
         self.decode_json(resp).await
     }
 
+    async fn resolve_approval(
+        &self,
+        approval_id: &str,
+        req: &ApprovalResolveRequest,
+    ) -> Result<ApprovalRequest> {
+        let path = format!("/v1/approvals/{}/resolve", approval_id);
+        let resp = self
+            .request(reqwest::Method::POST, &path)
+            .json(req)
+            .send()
+            .await?;
+        self.decode_json(resp).await
+    }
+
     async fn get_lineage(&self, execution_id: &str) -> Result<LineageResponse> {
         let path = format!("/v1/provenance/lineage/{}", execution_id);
         let resp = self.request(reqwest::Method::GET, &path).send().await?;
@@ -682,6 +698,39 @@ enum LineageFormat {
     Json,
     /// Graphviz DOT format for visualization.
     Dot,
+}
+
+/// CLI actor type enum — mirrors `ferrum_proto::common::ActorType` as a clap ValueEnum.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum ActorTypeCli {
+    /// Human actor (user).
+    User,
+    /// Autonomous agent.
+    Agent,
+    /// Automated policy engine.
+    PolicyEngine,
+    /// Gateway system actor.
+    Gateway,
+    /// External adapter actor.
+    Adapter,
+    /// Human operator.
+    Operator,
+    /// System-level actor.
+    System,
+}
+
+impl From<ActorTypeCli> for ActorType {
+    fn from(value: ActorTypeCli) -> Self {
+        match value {
+            ActorTypeCli::User => ActorType::User,
+            ActorTypeCli::Agent => ActorType::Agent,
+            ActorTypeCli::PolicyEngine => ActorType::PolicyEngine,
+            ActorTypeCli::Gateway => ActorType::Gateway,
+            ActorTypeCli::Adapter => ActorType::Adapter,
+            ActorTypeCli::Operator => ActorType::Operator,
+            ActorTypeCli::System => ActorType::System,
+        }
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -998,6 +1047,47 @@ enum ServerCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Resolve a pending approval (approve or deny).
+    ResolveApproval {
+        /// Approval ID (UUID) to resolve.
+        approval_id: String,
+
+        /// Approve the pending approval.
+        #[arg(long, conflicts_with = "deny")]
+        approve: bool,
+
+        /// Deny the pending approval.
+        #[arg(long, conflicts_with = "approve")]
+        deny: bool,
+
+        /// Actor type resolving this approval.
+        #[arg(long, value_enum, default_value = "Operator")]
+        actor_type: ActorTypeCli,
+
+        /// Actor ID (username, agent name, etc.).
+        #[arg(long, default_value = "ferrumctl")]
+        actor_id: String,
+
+        /// Optional display name for the actor.
+        #[arg(long)]
+        actor_display_name: Option<String>,
+
+        /// Reason for the decision. Required when --deny is set.
+        #[arg(long, requires = "deny")]
+        reason: Option<String>,
+
+        /// Server base URL (e.g. http://127.0.0.1:8080).
+        #[arg(long, env = "FERRUMCTL_SERVER_URL")]
+        server_url: Option<String>,
+
+        /// Bearer token for authentication.
+        #[arg(long, env = "FERRUMCTL_BEARER_TOKEN")]
+        bearer_token: Option<String>,
+
+        /// Output the returned approval as JSON instead of human-readable.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -1144,6 +1234,65 @@ async fn run_inspect_approval(
     let url = resolve_server_url(url)?;
     let client = ServerClient::new(&url, token);
     let approval = client.get_approval(approval_id).await?;
+
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&approval)?);
+    } else {
+        println!("Approval: {}", approval.approval_id);
+        println!("  State:    {}", approval.state);
+        println!("  Intent:   {}", approval.intent_id);
+        println!("  Proposal: {}", approval.proposal_id);
+        if let Some(eid) = approval.execution_id {
+            println!("  Execution:{}", eid);
+        }
+        println!("  Reason:   {}", approval.reason);
+        println!("  Action:   {}", approval.action_digest);
+        println!("  Created:  {}", approval.created_at);
+        println!("  Expires:  {}", approval.expires_at);
+    }
+    Ok(())
+}
+
+async fn run_resolve_approval(
+    approval_id: &str,
+    approve: bool,
+    deny: bool,
+    actor_type: ActorTypeCli,
+    actor_id: &str,
+    actor_display_name: Option<String>,
+    reason: Option<String>,
+    url: Option<String>,
+    token: Option<String>,
+    as_json: bool,
+) -> Result<()> {
+    // Fail-closed: require explicit approve xor deny
+    if !approve && !deny {
+        bail!("must specify either --approve or --deny");
+    }
+    if approve && deny {
+        bail!("cannot specify both --approve and --deny");
+    }
+
+    // Reason is required when denying
+    if deny && reason.is_none() {
+        bail!("--reason is required when --deny is set");
+    }
+
+    let actor = ActorRef {
+        actor_type: actor_type.into(),
+        actor_id: actor_id.to_string(),
+        display_name: actor_display_name,
+    };
+
+    let req = ApprovalResolveRequest {
+        actor,
+        approve,
+        reason,
+    };
+
+    let url = resolve_server_url(url)?;
+    let client = ServerClient::new(&url, token);
+    let approval = client.resolve_approval(approval_id, &req).await?;
 
     if as_json {
         println!("{}", serde_json::to_string_pretty(&approval)?);
@@ -1655,6 +1804,32 @@ async fn main() -> Result<()> {
                     summary,
                     payload_digest,
                     metadata_json,
+                    server_url,
+                    bearer_token,
+                    json,
+                )
+                .await?;
+            }
+            ServerCommand::ResolveApproval {
+                approval_id,
+                approve,
+                deny,
+                actor_type,
+                actor_id,
+                actor_display_name,
+                reason,
+                server_url,
+                bearer_token,
+                json,
+            } => {
+                run_resolve_approval(
+                    &approval_id,
+                    approve,
+                    deny,
+                    actor_type,
+                    &actor_id,
+                    actor_display_name,
+                    reason,
                     server_url,
                     bearer_token,
                     json,
@@ -2356,5 +2531,56 @@ mod tests {
         assert_eq!(json.events_by_intent_count, 1);
         assert_eq!(json.events_by_proposal_count, 1);
         assert_eq!(json.events_by_execution_count, 1);
+    }
+
+    // =============================================================================
+    // ResolveApproval tests
+    // =============================================================================
+
+    #[test]
+    fn test_actor_type_all_variants() {
+        // Verify all ActorType variants exist and can be constructed
+        let _ = ActorType::User;
+        let _ = ActorType::Agent;
+        let _ = ActorType::PolicyEngine;
+        let _ = ActorType::Gateway;
+        let _ = ActorType::Adapter;
+        let _ = ActorType::Operator;
+        let _ = ActorType::System;
+    }
+
+    #[test]
+    fn test_approval_resolve_request_serialization() {
+        let actor = ActorRef {
+            actor_type: ActorType::Operator,
+            actor_id: "test-op".to_string(),
+            display_name: None,
+        };
+        let req = ApprovalResolveRequest {
+            actor,
+            approve: true,
+            reason: None,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"approve\":true"));
+        assert!(json.contains("\"actor_id\":\"test-op\""));
+        assert!(json.contains("\"actor_type\":\"Operator\""));
+    }
+
+    #[test]
+    fn test_approval_resolve_request_deny_with_reason() {
+        let actor = ActorRef {
+            actor_type: ActorType::User,
+            actor_id: "alice".to_string(),
+            display_name: Some("Alice".to_string()),
+        };
+        let req = ApprovalResolveRequest {
+            actor,
+            approve: false,
+            reason: Some("Not authorized for this action".to_string()),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"approve\":false"));
+        assert!(json.contains("\"reason\":\"Not authorized for this action\""));
     }
 }
