@@ -5,21 +5,24 @@ Do not invent scope; all items cite source docs.
 
 ## P0 — Firewall validation (Phase C residual)
 
-- [ ] poisoned context test suite (>= 80% on curated fixtures)
+- [x] poisoned context test suite (>= 80% on curated fixtures)
   - Src: `91-phase-success-criteria-and-kpis.md` F.3 "Poisoned-context test suite pass rate: >= 80% target", `91-phase-success-criteria-and-kpis.md` 7.5 evidence "poisoned-context tests"
-  - Note: Phase F residual — Phase C firewall logic exists (trust labels, taint, sanitize, contradiction checks confirmed via `test_high_taint_triggers_quarantine`) but curated regression fixtures still needed
+  - Done: 5/5 pass (curated poisoned-context regression suite) per `91-phase-success-criteria-and-kpis.md` line 28. P1 backlog: expanding fixture breadth.
+  - Note: Phase C firewall logic exists (trust labels, taint, sanitize, contradiction checks confirmed via tests). Fixture breadth expansion is P1.
 
 ## P1 — Phase F evidence pack
 
-- [ ] final docs pack for Phase F
+- [x] final docs pack for Phase F
   - Src: `91-phase-success-criteria-and-kpis.md` 7.5 evidence "final docs pack"
-  - Note: Phase F partial; integration tests and provenance evidence stronger, but final docs pack not yet done
+  - Done: `docs/18-phase-f-evidence-pack.md` exists and covers all sections
 
-- [ ] supported flows list (Phase F evidence)
+- [x] supported flows list (Phase F evidence)
   - Src: `91-phase-success-criteria-and-kpis.md` 7.5 evidence "supported flows list"
+  - Done: Section 2 of `docs/18-phase-f-evidence-pack.md` has full table
 
-- [ ] open gaps list (Phase F evidence)
+- [x] open gaps list (Phase F evidence)
   - Src: `91-phase-success-criteria-and-kpis.md` 7.5 evidence "open gaps list"
+  - Done: Section 3 of `docs/18-phase-f-evidence-pack.md` has P0/P1/P2 gaps
 
 ## P2 — Future work (not MVP scope)
 
@@ -29,11 +32,11 @@ Do not invent scope; all items cite source docs.
 - [ ] ferrumctl more useful (beyond health/inspect)
   - Src: `08-next-issue-backlog.md` P2
 
-- [ ] git adapter
-  - Src: `08-next-issue-backlog.md` P2, `04-crate-by-crate-tasks.md` "adapters: ... -> git/http"
+- [x] git adapter
+  - Evidence added end-to-end per `91-phase-success-criteria-and-kpis.md` line 18
 
-- [ ] http adapter
-  - Src: `08-next-issue-backlog.md` P2, `04-crate-by-crate-tasks.md` "adapters: ... -> git/http"
+- [x] http adapter (full-parity)
+  - Evidence added end-to-end per `91-phase-success-criteria-and-kpis.md` line 18
 
 ## Documented drift / cleanup tasks
 

@@ -31,6 +31,7 @@ Sau đó mới đọc:
 - `15-deployment-and-operations.md`
 - `16-release-checklist.md`
 - `17-troubleshooting.md`
+- `18-phase-f-evidence-pack.md` — consolidated Phase F evidence pack (supported flows, poisoned-context status, open gaps, handoff readiness)
 - `runbooks/` — operator runbooks for specific production scenarios
 
 ## Thư mục con
