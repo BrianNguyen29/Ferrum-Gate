@@ -31,6 +31,10 @@ path = "integration_capability_restart.rs"
 name = "integration_mcp_bridge"
 path = "integration_mcp_bridge.rs"
 
+[[test]]
+name = "integration_ferrumctl_approval"
+path = "integration_ferrumctl_approval.rs"
+
 [dependencies]
 ferrum-gateway = { path = "../crates/ferrum-gateway" }
 ferrum-integrations-mcp = { path = "../crates/ferrum-integrations-mcp" }
