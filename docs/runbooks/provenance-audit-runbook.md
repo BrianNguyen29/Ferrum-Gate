@@ -278,6 +278,7 @@ Before sharing evidence outside the core operations boundary:
 | Task | Command |
 |------|---------|
 | Inspect execution state | `ferrumctl server inspect-execution <execution_id>` |
+| Watch execution until terminal | `ferrumctl server watch-execution <execution_id> [--iterations N] [--require-terminal]` |
 | Export full provenance stream | `ferrumctl server inspect-provenance --execution-id <id> --all-pages > provenance.jsonl` |
 | Inspect one event with context | `ferrumctl server inspect-event <event_id> --ancestry --descendants --json` |
 | Export execution lineage graph | `ferrumctl server inspect-lineage <execution_id> --format dot --output lineage.dot` |

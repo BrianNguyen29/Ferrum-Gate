@@ -1240,6 +1240,38 @@ enum ServerCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Watch an execution by polling until a terminal state is reached.
+    WatchExecution {
+        /// Execution ID (UUID) to watch.
+        execution_id: String,
+
+        /// Polling interval in milliseconds. Default is 2000ms.
+        /// Must be between 100ms and 300000ms (5 minutes).
+        #[arg(long)]
+        poll_interval_ms: Option<u64>,
+
+        /// Maximum number of polling iterations. Default is 60 (~2 minutes at 2000ms interval).
+        /// Use this to bound watch loops in tests and scripting.
+        #[arg(long)]
+        iterations: Option<u32>,
+
+        /// Server base URL (e.g. http://127.0.0.1:8080).
+        #[arg(long, env = "FERRUMCTL_SERVER_URL")]
+        server_url: Option<String>,
+
+        /// Bearer token for authentication.
+        #[arg(long, env = "FERRUMCTL_BEARER_TOKEN")]
+        bearer_token: Option<String>,
+
+        /// Output raw JSON per iteration instead of human-readable summary.
+        #[arg(long)]
+        json: bool,
+
+        /// Exit non-zero if the iteration cap is reached without a terminal state.
+        /// Without this flag, the command exits 0 after max iterations regardless of state.
+        #[arg(long)]
+        require_terminal: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -1462,6 +1494,33 @@ fn format_watch_iteration_text(envelope: &ApprovalListEnvelope, iteration: u32) 
     lines.join("\n")
 }
 
+/// Formats an execution record as a deterministic human-readable summary
+/// for a single watch iteration.
+fn format_execution_record_text(record: &ExecutionRecord, iteration: u32) -> String {
+    let terminal = is_execution_terminal_state(&record.state);
+    let terminal_marker = if terminal { " [TERMINAL]" } else { "" };
+    let mut lines = Vec::new();
+    lines.push(format!(
+        "--- iteration {} (execution_id={}, state={}{}) ---",
+        iteration, record.execution_id, record.state, terminal_marker
+    ));
+    lines.push(format!("  Decision:  {}", record.decision));
+    lines.push(format!("  Intent:    {}", record.intent_id));
+    lines.push(format!("  Proposal:  {}", record.proposal_id));
+    lines.push(format!("  Capability:{}", record.capability_id));
+    if let Some(ref cid) = record.rollback_contract_id {
+        lines.push(format!("  Rollback:  {}", cid));
+    }
+    if let Some(ref digest) = record.result_digest {
+        lines.push(format!("  Digest:    {}", digest));
+    }
+    lines.push(format!("  Started:   {}", record.started_at));
+    if let Some(ref finished) = record.finished_at {
+        lines.push(format!("  Finished:  {}", finished));
+    }
+    lines.join("\n")
+}
+
 async fn run_watch_approvals(
     proposal_id: Option<String>,
     execution_id: Option<String>,
@@ -1524,6 +1583,80 @@ async fn run_watch_approvals(
     }
 
     Ok(())
+}
+
+/// Default polling interval for watch-execution: 2000ms.
+const WATCH_EXECUTION_DEFAULT_INTERVAL_MS: u64 = 2_000;
+
+/// Default maximum iterations for watch-execution: 60 (~2 minutes at 2000ms interval).
+const WATCH_EXECUTION_DEFAULT_ITERATIONS: u32 = 60;
+
+async fn run_watch_execution(
+    execution_id: &str,
+    poll_interval_ms: Option<u64>,
+    iterations: Option<u32>,
+    url: Option<String>,
+    token: Option<String>,
+    as_json: bool,
+    require_terminal: bool,
+) -> Result<()> {
+    // Validate poll interval before any network call (use 2000ms default for watch-execution)
+    let poll_interval_ms = match poll_interval_ms {
+        None => WATCH_EXECUTION_DEFAULT_INTERVAL_MS,
+        Some(v) if v >= 100 && v <= 300_000 => v,
+        Some(v) => {
+            bail!(
+                "--poll-interval-ms must be between 100 and 300000, got {}",
+                v
+            );
+        }
+    };
+
+    // Default to 60 iterations (~2 minutes at default interval)
+    let max_iterations = iterations.unwrap_or(WATCH_EXECUTION_DEFAULT_ITERATIONS);
+    if max_iterations == 0 {
+        bail!("--iterations must be at least 1, got 0");
+    }
+
+    let url = resolve_server_url(url)?;
+    let client = ServerClient::new(&url, token);
+
+    let mut iteration = 0u32;
+
+    loop {
+        iteration += 1;
+
+        let record = client.get_execution(execution_id).await?;
+
+        if as_json {
+            println!("{}", serde_json::to_string(&record)?);
+        } else {
+            println!("{}", format_execution_record_text(&record, iteration));
+        }
+
+        // Check if we've reached a terminal state and stop early
+        if is_execution_terminal_state(&record.state) {
+            // Reached terminal state before hitting iteration cap
+            return Ok(());
+        }
+
+        // Check if we've reached max iterations
+        if iteration >= max_iterations {
+            if require_terminal {
+                bail!(
+                    "iteration cap ({}) reached without a terminal state (current state: {}); \
+                     use --require-terminal to make this an error",
+                    max_iterations,
+                    record.state
+                );
+            }
+            // Not require_terminal: exit 0 after max iterations
+            return Ok(());
+        }
+
+        // Wait before next poll
+        tokio::time::sleep(std::time::Duration::from_millis(poll_interval_ms)).await;
+    }
 }
 
 async fn run_resolve_approval(
@@ -1660,6 +1793,24 @@ async fn classify_resolve_outcome(
 /// eligible for resolution.
 fn is_pending_state(state: &str) -> bool {
     state == "Pending"
+}
+
+/// Returns true if the given execution state is considered terminal (complete).
+/// Terminal states are those where the execution has reached a final outcome and
+/// will not transition to any other state.
+fn is_execution_terminal_state(state: &str) -> bool {
+    matches!(
+        state,
+        "Completed"
+            | "Committed"
+            | "Approved"
+            | "Denied"
+            | "RolledBack"
+            | "Error"
+            | "Quarantined"
+            | "Cancelled"
+            | "TimedOut"
+    )
 }
 
 /// Formats a single bulk resolution outcome for human-readable output.
@@ -2699,6 +2850,26 @@ async fn main() -> Result<()> {
                     server_url,
                     bearer_token,
                     json,
+                )
+                .await?;
+            }
+            ServerCommand::WatchExecution {
+                execution_id,
+                poll_interval_ms,
+                iterations,
+                server_url,
+                bearer_token,
+                json,
+                require_terminal,
+            } => {
+                run_watch_execution(
+                    &execution_id,
+                    poll_interval_ms,
+                    iterations,
+                    server_url,
+                    bearer_token,
+                    json,
+                    require_terminal,
                 )
                 .await?;
             }
@@ -3868,5 +4039,123 @@ mod tests {
         };
         let text_no_cursor = format_watch_iteration_text(&envelope_no_cursor, 5);
         assert!(text_no_cursor.contains("next_cursor=none"));
+    }
+
+    // -------------------------------------------------------------------------
+    // WatchExecution terminal state and formatting tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_is_execution_terminal_state_terminal() {
+        for state in &[
+            "Completed",
+            "Committed",
+            "Approved",
+            "Denied",
+            "RolledBack",
+            "Error",
+            "Quarantined",
+            "Cancelled",
+            "TimedOut",
+        ] {
+            assert!(
+                is_execution_terminal_state(state),
+                "state '{}' should be terminal",
+                state
+            );
+        }
+    }
+
+    #[test]
+    fn test_is_execution_terminal_state_non_terminal() {
+        for state in &[
+            "Pending",
+            "Running",
+            "Executing",
+            "AwaitingApproval",
+            "Paused",
+        ] {
+            assert!(
+                !is_execution_terminal_state(state),
+                "state '{}' should not be terminal",
+                state
+            );
+        }
+    }
+
+    #[test]
+    fn test_format_execution_record_text_non_terminal() {
+        let record = ExecutionRecord {
+            execution_id: "exec-123".to_string(),
+            proposal_id: "proposal-456".to_string(),
+            intent_id: "intent-789".to_string(),
+            capability_id: "cap-abc".to_string(),
+            rollback_contract_id: None,
+            decision: "Pending".to_string(),
+            state: "Running".to_string(),
+            started_at: "2024-01-01T12:00:00Z".to_string(),
+            finished_at: None,
+            result_digest: None,
+        };
+        let text = format_execution_record_text(&record, 3);
+        assert!(text.contains("--- iteration 3 (execution_id=exec-123, state=Running) ---"));
+        assert!(text.contains("  Decision:  Pending"));
+        assert!(text.contains("  Intent:    intent-789"));
+        assert!(text.contains("  Proposal:  proposal-456"));
+        assert!(text.contains("  Capability:cap-abc"));
+        assert!(text.contains("  Started:   2024-01-01T12:00:00Z"));
+        // No [TERMINAL] marker for non-terminal state
+        assert!(!text.contains("[TERMINAL]"));
+    }
+
+    #[test]
+    fn test_format_execution_record_text_terminal() {
+        let record = ExecutionRecord {
+            execution_id: "exec-abc".to_string(),
+            proposal_id: "proposal-def".to_string(),
+            intent_id: "intent-ghi".to_string(),
+            capability_id: "cap-xyz".to_string(),
+            rollback_contract_id: Some("rollback-123".to_string()),
+            decision: "Approved".to_string(),
+            state: "Completed".to_string(),
+            started_at: "2024-01-01T12:00:00Z".to_string(),
+            finished_at: Some("2024-01-01T12:05:00Z".to_string()),
+            result_digest: Some("sha256:abc123".to_string()),
+        };
+        let text = format_execution_record_text(&record, 1);
+        assert!(
+            text.contains(
+                "--- iteration 1 (execution_id=exec-abc, state=Completed [TERMINAL]) ---"
+            )
+        );
+        assert!(text.contains("  Decision:  Approved"));
+        assert!(text.contains("  Rollback:  rollback-123"));
+        assert!(text.contains("  Digest:    sha256:abc123"));
+        assert!(text.contains("  Finished:  2024-01-01T12:05:00Z"));
+    }
+
+    #[test]
+    fn test_format_execution_record_text_shows_all_fields() {
+        let record = ExecutionRecord {
+            execution_id: "exec-full".to_string(),
+            proposal_id: "prop-full".to_string(),
+            intent_id: "intent-full".to_string(),
+            capability_id: "cap-full".to_string(),
+            rollback_contract_id: None,
+            decision: "Approved".to_string(),
+            state: "Committed".to_string(),
+            started_at: "2024-06-15T10:30:00Z".to_string(),
+            finished_at: None,
+            result_digest: None,
+        };
+        let text = format_execution_record_text(&record, 5);
+        // Verify all standard fields are present
+        assert!(text.contains("execution_id=exec-full"));
+        assert!(text.contains("state=Committed"));
+        assert!(text.contains("Decision:"));
+        assert!(text.contains("Intent:"));
+        assert!(text.contains("Proposal:"));
+        assert!(text.contains("Capability:"));
+        assert!(text.contains("Started:"));
     }
 }

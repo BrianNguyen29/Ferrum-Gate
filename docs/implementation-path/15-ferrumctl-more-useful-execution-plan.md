@@ -231,6 +231,64 @@ ferrumctl server resolve-approval-bulk \
 
 ---
 
+## Slice 15e: `ferrumctl server watch-execution` (Read-Only Bounded Polling)
+
+**File:**
+- `bins/ferrumctl/src/main.rs`
+
+**Scope:**
+- Add a read-only bounded-polling watch command over the existing `get_execution` API.
+- No gateway changes; only CLI plumbing reusing existing `ServerClient::get_execution`.
+
+**CLI Design:**
+```
+ferrumctl server watch-execution <execution_id> \
+  [--poll-interval-ms MS] \
+  [--iterations N] \
+  [--json] \
+  [--require-terminal]
+```
+
+**Validation rules enforced locally before any network call:**
+- `--poll-interval-ms` must be in range 100..=300_000 if provided (default: 2000).
+- `--iterations` must be >= 1 if provided (default: 60, ~2 minutes at default interval).
+- `execution_id` is required (no implicit selection).
+
+**Terminal state detection:**
+- `is_execution_terminal_state()` returns true for: `Completed`, `Committed`, `Approved`, `Denied`, `RolledBack`, `Error`, `Quarantined`, `Cancelled`, `TimedOut`.
+
+**Output modes:**
+- Default: deterministic human-readable summary per iteration with `[TERMINAL]` marker when state is terminal.
+- `--json`: raw `ExecutionRecord` JSON per iteration.
+
+**Key Implementation Details:**
+- `format_execution_record_text()` produces deterministic output with iteration number, execution_id, state, and all record fields.
+- Bounded loop via `--iterations` (prevents infinite loops in tests/scripts).
+- Stops early when terminal state is reached.
+- `--require-terminal`: exit non-zero if iteration cap reached without terminal state.
+
+**Unit Tests Added:**
+- `test_is_execution_terminal_state_terminal` — all 9 terminal states return true.
+- `test_is_execution_terminal_state_non_terminal` — non-terminal states return false.
+- `test_format_execution_record_text_non_terminal` — non-terminal iteration shows no [TERMINAL] marker.
+- `test_format_execution_record_text_terminal` — terminal iteration shows [TERMINAL] marker.
+- `test_format_execution_record_text_shows_all_fields` — all standard fields are present.
+
+**Validation:**
+- `cargo check -p ferrumctl` passes (zero warnings).
+- `cargo test -p ferrumctl` passes (77+ tests).
+
+**Slice Status: COMPLETE**
+- [x] `WatchExecution` CLI variant with bounded polling
+- [x] Handler `run_watch_execution`
+- [x] `--json` raw record output + deterministic human-readable summary
+- [x] `--require-terminal` for fail-closed iteration-cap enforcement
+- [x] Local `poll_interval_ms` validation (100..=300_000, default 2000)
+- [x] Unit tests for terminal detection and formatting
+- [x] Plan doc updated
+
+---
+
 ## Future Backlog (Out of Scope for This Slice)
 
 - Interactive TUI for approval workflow
