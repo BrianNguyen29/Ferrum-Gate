@@ -27,9 +27,15 @@ path = "integration_provenance_query.rs"
 name = "integration_capability_restart"
 path = "integration_capability_restart.rs"
 
+[[test]]
+name = "integration_mcp_bridge"
+path = "integration_mcp_bridge.rs"
+
 [dependencies]
 ferrum-gateway = { path = "../crates/ferrum-gateway" }
+ferrum-integrations-mcp = { path = "../crates/ferrum-integrations-mcp" }
 ferrum-proto = { path = "../crates/ferrum-proto" }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 ferrum-store = { path = "../crates/ferrum-store" }
 ferrum-rollback = { path = "../crates/ferrum-rollback" }
 ferrum-adapter-fs = { path = "../crates/ferrum-adapter-fs" }
