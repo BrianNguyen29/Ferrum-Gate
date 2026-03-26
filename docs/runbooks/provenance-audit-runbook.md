@@ -67,16 +67,13 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   }' | jq .
 
 # Multi-hop lineage from a suspicious event
-curl -s -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -X POST "http://localhost:8080/v1/provenance/lineage" \
-  -d '{
-    "execution_id": "<execution_id>",
-    "event_id": "<event_id>",
-    "ancestry": true,
-    "descendants": true,
-    "max_hops": 8
-  }' | jq .
+# (requires --ancestry and/or --descendants; max-hops validated 1-32)
+ferrumctl server inspect-lineage-query \
+  --execution-id "<execution_id>" \
+  --event-id "<event_id>" \
+  --ancestry --descendants \
+  --max-hops 8 \
+  --json
 ```
 
 ### What to check

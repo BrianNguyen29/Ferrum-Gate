@@ -2,6 +2,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 use ferrum_proto::approval::ApprovalResolveRequest;
 use ferrum_proto::common::{ActorRef, ActorType};
+use ferrum_proto::provenance::{LineageQueryRequest, LineageQueryResponse};
 use reqwest::Client;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -644,6 +645,15 @@ impl ServerClient {
         self.decode_json(resp).await
     }
 
+    async fn lineage_query(&self, req: &LineageQueryRequest) -> Result<LineageQueryResponse> {
+        let resp = self
+            .request(reqwest::Method::POST, "/v1/provenance/lineage")
+            .json(req)
+            .send()
+            .await?;
+        self.decode_json(resp).await
+    }
+
     async fn post_external_event(
         &self,
         req: &ExternalEventIngestRequest,
@@ -868,6 +878,40 @@ enum ServerCommand {
         /// Required for dot format when redirecting to a file.
         #[arg(long)]
         output: Option<PathBuf>,
+    },
+    /// Multi-hop lineage traversal from a seed event via ancestry and/or descendant edges.
+    InspectLineageQuery {
+        /// Execution ID (UUID) — all traversed events must belong to this execution.
+        #[arg(long)]
+        execution_id: String,
+
+        /// Seed event ID (UUID) to start traversal from.
+        #[arg(long)]
+        event_id: String,
+
+        /// Walk ancestry backwards via parent edges.
+        #[arg(long)]
+        ancestry: bool,
+
+        /// Walk descendants forwards via child edges.
+        #[arg(long)]
+        descendants: bool,
+
+        /// Maximum BFS hops (1–32). Defaults to 8. Hard-capped at 32 by the server.
+        #[arg(long)]
+        max_hops: Option<u32>,
+
+        /// Server base URL (e.g. http://127.0.0.1:8080).
+        #[arg(long, env = "FERRUMCTL_SERVER_URL")]
+        server_url: Option<String>,
+
+        /// Bearer token for authentication.
+        #[arg(long, env = "FERRUMCTL_BEARER_TOKEN")]
+        bearer_token: Option<String>,
+
+        /// Output raw JSON instead of human-readable summary.
+        #[arg(long)]
+        json: bool,
     },
     /// Aggregate provenance statistics and run consistency checks over queried events.
     InspectProvenanceStats {
@@ -1777,6 +1821,51 @@ async fn run_inspect_lineage(
     Ok(())
 }
 
+async fn run_inspect_lineage_query(
+    execution_id: String,
+    event_id: String,
+    ancestry: bool,
+    descendants: bool,
+    max_hops: Option<u32>,
+    url: Option<String>,
+    token: Option<String>,
+    as_json: bool,
+) -> Result<()> {
+    // Fail-closed: require at least one direction
+    if !ancestry && !descendants {
+        bail!("at least one of --ancestry or --descendants must be set");
+    }
+
+    // Validate max_hops locally before making any network call
+    let max_hops = validate_max_hops(max_hops)?;
+
+    let req = LineageQueryRequest {
+        execution_id: ferrum_proto::ExecutionId(
+            uuid::Uuid::parse_str(&execution_id)
+                .map_err(|e| anyhow::anyhow!("invalid execution_id: {}", e))?,
+        ),
+        event_id: ferrum_proto::EventId(
+            uuid::Uuid::parse_str(&event_id)
+                .map_err(|e| anyhow::anyhow!("invalid event_id: {}", e))?,
+        ),
+        ancestry,
+        descendants,
+        max_hops,
+    };
+
+    let url = resolve_server_url(url)?;
+    let client = ServerClient::new(&url, token);
+    let resp = client.lineage_query(&req).await?;
+
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&resp)?);
+    } else {
+        println!("{}", format_lineage_query_text(&resp));
+    }
+
+    Ok(())
+}
+
 /// Renders a `LineageResponse` as a deterministic Graphviz DOT graph.
 /// The graph is named after the execution ID and lists all events as nodes
 /// with directed edges representing parent→child relationships via parent_edges.
@@ -1830,6 +1919,121 @@ fn dot_escape(s: &str) -> String {
         .replace('\n', "\\n")
         .replace('\r', "\\r")
         .replace('\t', "\\t")
+}
+
+/// Validates max_hops locally, returning an error if outside the 1..32 range.
+fn validate_max_hops(max_hops: Option<u32>) -> Result<Option<u32>> {
+    match max_hops {
+        None => Ok(None),
+        Some(v) if v >= 1 && v <= 32 => Ok(Some(v)),
+        Some(v) => bail!("--max-hops must be between 1 and 32, got {}", v),
+    }
+}
+
+/// Formats a `LineageQueryResponse` as a deterministic human-readable summary.
+fn format_lineage_query_text(resp: &ferrum_proto::LineageQueryResponse) -> String {
+    let mut lines = Vec::new();
+    lines.push(format!(
+        "LineageQuery: {} event(s), {} edge(s)",
+        resp.events.len(),
+        resp.edges.len()
+    ));
+
+    // Build event lookup for edge rendering (keyed by event_id string)
+    let event_map: std::collections::HashMap<String, &ferrum_proto::ProvenanceEvent> = resp
+        .events
+        .iter()
+        .map(|e| (e.event_id.0.to_string(), e))
+        .collect();
+
+    // Sort edges deterministically by (from_event_id, to_event_id, edge_type)
+    let mut edges: Vec<(String, String, String)> = resp
+        .edges
+        .iter()
+        .map(|e| {
+            (
+                e.from_event_id.0.to_string(),
+                e.to_event_id.0.to_string(),
+                format!("{:?}", e.edge_type),
+            )
+        })
+        .collect();
+    edges.sort_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then_with(|| a.1.cmp(&b.1))
+            .then_with(|| a.2.cmp(&b.2))
+    });
+
+    if !edges.is_empty() {
+        lines.push("\nEdges:".to_string());
+        for (from, to, edge_type) in &edges {
+            let from_kind = event_map
+                .get(from)
+                .map(|e| kind_label(&e.kind))
+                .unwrap_or_else(|| "?".to_string());
+            let to_kind = event_map
+                .get(to)
+                .map(|e| kind_label(&e.kind))
+                .unwrap_or_else(|| "?".to_string());
+            lines.push(format!("  {} --[{}]--> {}", from_kind, edge_type, to_kind));
+        }
+    }
+
+    // Sort events deterministically by (occurred_at, event_id)
+    let mut events: Vec<&ferrum_proto::ProvenanceEvent> = resp.events.iter().collect();
+    events.sort_by(|a, b| {
+        a.occurred_at
+            .to_rfc3339()
+            .cmp(&b.occurred_at.to_rfc3339())
+            .then_with(|| a.event_id.0.to_string().cmp(&b.event_id.0.to_string()))
+    });
+
+    lines.push("\nEvents:".to_string());
+    for event in &events {
+        let kind_str = kind_label(&event.kind);
+        lines.push(format!(
+            "  [{}] {}  {}",
+            event.occurred_at.to_rfc3339(),
+            kind_str,
+            event.event_id.0
+        ));
+        if let Some(ref eid) = event.execution_id {
+            lines.push(format!("    execution: {}", eid.0));
+        }
+    }
+
+    lines.join("\n")
+}
+
+/// Returns a human-readable label for a ProvenanceEventKind.
+fn kind_label(kind: &ferrum_proto::ProvenanceEventKind) -> String {
+    use ferrum_proto::ProvenanceEventKind as PK;
+    match kind {
+        PK::UserGoalReceived => "UserGoalReceived".to_string(),
+        PK::IntentCompiled => "IntentCompiled".to_string(),
+        PK::IntentRevoked => "IntentRevoked".to_string(),
+        PK::ActionProposalSubmitted => "ActionProposalSubmitted".to_string(),
+        PK::PolicyEvaluated => "PolicyEvaluated".to_string(),
+        PK::CapabilityMinted => "CapabilityMinted".to_string(),
+        PK::CapabilityRevoked => "CapabilityRevoked".to_string(),
+        PK::ApprovalRequested => "ApprovalRequested".to_string(),
+        PK::ApprovalGranted => "ApprovalGranted".to_string(),
+        PK::ApprovalDenied => "ApprovalDenied".to_string(),
+        PK::ToolCallPrepared => "ToolCallPrepared".to_string(),
+        PK::ToolCallIntercepted => "ToolCallIntercepted".to_string(),
+        PK::ToolCallExecuted => "ToolCallExecuted".to_string(),
+        PK::ToolOutputReceived => "ToolOutputReceived".to_string(),
+        PK::ToolOutputSanitized => "ToolOutputSanitized".to_string(),
+        PK::DlpBlocked => "DlpBlocked".to_string(),
+        PK::SideEffectPrepared => "SideEffectPrepared".to_string(),
+        PK::SideEffectVerified => "SideEffectVerified".to_string(),
+        PK::SideEffectCommitted => "SideEffectCommitted".to_string(),
+        PK::SideEffectCompensated => "SideEffectCompensated".to_string(),
+        PK::SideEffectRolledBack => "SideEffectRolledBack".to_string(),
+        PK::Quarantined => "Quarantined".to_string(),
+        PK::ErrorRaised => "ErrorRaised".to_string(),
+        PK::ExternalEventObserved => "ExternalEventObserved".to_string(),
+    }
 }
 
 /// Parses a JSON string into a Map<String, JsonValue>.
@@ -2117,6 +2321,28 @@ async fn main() -> Result<()> {
             } => {
                 run_inspect_lineage(&execution_id, server_url, bearer_token, format, output)
                     .await?;
+            }
+            ServerCommand::InspectLineageQuery {
+                execution_id,
+                event_id,
+                ancestry,
+                descendants,
+                max_hops,
+                server_url,
+                bearer_token,
+                json,
+            } => {
+                run_inspect_lineage_query(
+                    execution_id,
+                    event_id,
+                    ancestry,
+                    descendants,
+                    max_hops,
+                    server_url,
+                    bearer_token,
+                    json,
+                )
+                .await?;
             }
             ServerCommand::InspectProvenanceStats {
                 intent_id,
@@ -3166,5 +3392,165 @@ mod tests {
         let err = anyhow::Error::msg("some other error");
         let status = extract_http_status(&err);
         assert_eq!(status, 0);
+    }
+
+    // -------------------------------------------------------------------------
+    // Lineage query validation and formatting tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_validate_max_hops_none() {
+        let result = validate_max_hops(None);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), None);
+    }
+
+    #[test]
+    fn test_validate_max_hops_valid_values() {
+        for v in [1u32, 8, 16, 32] {
+            let result = validate_max_hops(Some(v));
+            assert!(result.is_ok(), "max_hops={} should be valid", v);
+            assert_eq!(result.unwrap(), Some(v));
+        }
+    }
+
+    #[test]
+    fn test_validate_max_hops_too_low() {
+        let result = validate_max_hops(Some(0));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("between 1 and 32"));
+    }
+
+    #[test]
+    fn test_validate_max_hops_too_high() {
+        let result = validate_max_hops(Some(33));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("between 1 and 32"));
+    }
+
+    #[test]
+    fn test_kind_label_all_variants() {
+        use ferrum_proto::ProvenanceEventKind as PK;
+        let variants: Vec<(PK, &str)> = vec![
+            (PK::UserGoalReceived, "UserGoalReceived"),
+            (PK::IntentCompiled, "IntentCompiled"),
+            (PK::IntentRevoked, "IntentRevoked"),
+            (PK::ActionProposalSubmitted, "ActionProposalSubmitted"),
+            (PK::PolicyEvaluated, "PolicyEvaluated"),
+            (PK::CapabilityMinted, "CapabilityMinted"),
+            (PK::CapabilityRevoked, "CapabilityRevoked"),
+            (PK::ApprovalRequested, "ApprovalRequested"),
+            (PK::ApprovalGranted, "ApprovalGranted"),
+            (PK::ApprovalDenied, "ApprovalDenied"),
+            (PK::ToolCallPrepared, "ToolCallPrepared"),
+            (PK::ToolCallIntercepted, "ToolCallIntercepted"),
+            (PK::ToolCallExecuted, "ToolCallExecuted"),
+            (PK::ToolOutputReceived, "ToolOutputReceived"),
+            (PK::ToolOutputSanitized, "ToolOutputSanitized"),
+            (PK::DlpBlocked, "DlpBlocked"),
+            (PK::SideEffectPrepared, "SideEffectPrepared"),
+            (PK::SideEffectVerified, "SideEffectVerified"),
+            (PK::SideEffectCommitted, "SideEffectCommitted"),
+            (PK::SideEffectCompensated, "SideEffectCompensated"),
+            (PK::SideEffectRolledBack, "SideEffectRolledBack"),
+            (PK::Quarantined, "Quarantined"),
+            (PK::ErrorRaised, "ErrorRaised"),
+            (PK::ExternalEventObserved, "ExternalEventObserved"),
+        ];
+        for (kind, expected) in variants {
+            let label = kind_label(&kind);
+            assert_eq!(
+                label,
+                expected,
+                "variant {:?}",
+                std::mem::discriminant(&kind)
+            );
+        }
+    }
+
+    #[test]
+    fn test_format_lineage_query_text_empty() {
+        let resp = ferrum_proto::LineageQueryResponse {
+            events: vec![],
+            edges: vec![],
+        };
+        let text = format_lineage_query_text(&resp);
+        assert!(text.contains("LineageQuery: 0 event(s), 0 edge(s)"));
+        assert!(text.contains("Events:"));
+    }
+
+    #[test]
+    fn test_format_lineage_query_text_edge_rendering() {
+        // Build a minimal LineageQueryResponse by deserializing from JSON
+        // to avoid constructing full ProvenanceEvent with all nested types.
+        let json = r#"{
+            "events": [
+                {
+                    "event_id": "00000000-0000-0000-0000-000000000001",
+                    "kind": "IntentCompiled",
+                    "occurred_at": "2024-01-01T00:00:00Z",
+                    "actor": {"actor_type": "System", "actor_id": "sys"},
+                    "object": {"object_type": "Intent", "object_id": "obj1"},
+                    "intent_id": null,
+                    "proposal_id": null,
+                    "execution_id": null,
+                    "capability_id": null,
+                    "rollback_contract_id": null,
+                    "policy_bundle_id": null,
+                    "trust_labels": [],
+                    "sensitivity_labels": [],
+                    "parent_edges": [],
+                    "hash_chain": {"content_hash": ""},
+                    "metadata": {}
+                }
+            ],
+            "edges": []
+        }"#;
+        let resp: ferrum_proto::LineageQueryResponse =
+            serde_json::from_str(json).expect("valid test fixture");
+        let text = format_lineage_query_text(&resp);
+        assert!(text.contains("LineageQuery: 1 event(s), 0 edge(s)"));
+        assert!(text.contains("IntentCompiled"));
+    }
+
+    #[test]
+    fn test_lineage_query_request_serialization() {
+        let req = LineageQueryRequest {
+            execution_id: ferrum_proto::ExecutionId(
+                uuid::Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap(),
+            ),
+            event_id: ferrum_proto::EventId(
+                uuid::Uuid::parse_str("22222222-2222-2222-2222-222222222222").unwrap(),
+            ),
+            ancestry: true,
+            descendants: false,
+            max_hops: Some(8),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"execution_id\":\"11111111-1111-1111-1111-111111111111\""));
+        assert!(json.contains("\"event_id\":\"22222222-2222-2222-2222-222222222222\""));
+        assert!(json.contains("\"ancestry\":true"));
+        assert!(json.contains("\"descendants\":false"));
+        assert!(json.contains("\"max_hops\":8"));
+    }
+
+    #[test]
+    fn test_lineage_query_request_minimal() {
+        // Only required fields
+        let req = LineageQueryRequest {
+            execution_id: ferrum_proto::ExecutionId(
+                uuid::Uuid::parse_str("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa").unwrap(),
+            ),
+            event_id: ferrum_proto::EventId(
+                uuid::Uuid::parse_str("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb").unwrap(),
+            ),
+            ancestry: false,
+            descendants: true,
+            max_hops: None,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"ancestry\":false"));
+        assert!(json.contains("\"descendants\":true"));
+        assert!(json.contains("\"max_hops\":null"));
     }
 }

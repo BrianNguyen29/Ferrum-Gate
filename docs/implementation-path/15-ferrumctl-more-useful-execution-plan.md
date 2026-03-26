@@ -258,3 +258,66 @@ ferrumctl server resolve-approval-bulk \
 
 Interactive TUI for approval workflow or `ferrumctl server cancel-execution`.
 Both are independent of the approval plumbing added in slices 15 and 15b.
+
+---
+
+## Slice 15c: `server inspect-lineage-query` (Read-Only Multi-Hop Lineage Traversal)
+
+**File:**
+- `bins/ferrumctl/src/main.rs`
+- `bins/ferrumctl/Cargo.toml`
+
+**Scope:**
+- Add a thin read-only wrapper over `POST /v1/provenance/lineage` from the control API.
+- No gateway changes; only CLI plumbing.
+
+**CLI Design (fail-closed):**
+```
+ferrumctl server inspect-lineage-query \
+  --execution-id UUID \
+  --event-id UUID \
+  --ancestry \
+  [--descendants] \
+  [--max-hops 1-32] \
+  [--json]
+```
+
+**Validation rules enforced locally before any network call:**
+- `--execution-id` and `--event-id` are required (no implicit selection).
+- At least one of `--ancestry` or `--descendants` must be set (fail-closed: no silent default).
+- `--max-hops` must be in range 1..32 if provided (server hard-caps at 32).
+
+**Output modes:**
+- `--json` — raw `LineageQueryResponse` JSON (events + edges, no transformation).
+- Human-readable summary (default) — event count, edge list with provenance kinds, event list sorted deterministically by (occurred_at, event_id).
+
+**Key Implementation Details:**
+- `ServerClient::lineage_query(req: &LineageQueryRequest) -> Result<LineageQueryResponse>` POSTs to `/v1/provenance/lineage`.
+- `LineageQueryRequest` and `LineageQueryResponse` re-used from `ferrum_proto::provenance`.
+- UUID parsing via `uuid::Uuid::parse_str` with user-facing error messages.
+- `validate_max_hops()` rejects values outside 1..32.
+- `format_lineage_query_text()` produces deterministic output using RFC3339 timestamps and sorted event IDs.
+
+**Validation:**
+- `cargo check -p ferrumctl` passes (zero warnings).
+- `cargo test -p ferrumctl` passes (64+ tests).
+
+**Unit Tests Added:**
+- `test_validate_max_hops_none` — None passes through.
+- `test_validate_max_hops_valid_values` — 1, 8, 16, 32 accepted.
+- `test_validate_max_hops_too_low` — 0 rejected with message.
+- `test_validate_max_hops_too_high` — 33 rejected with message.
+- `test_kind_label_all_variants` — all 24 ProvenanceEventKind variants return expected labels.
+- `test_format_lineage_query_text_empty` — empty response formats correctly.
+- `test_format_lineage_query_text_edge_rendering` — JSON fixture round-trips.
+- `test_lineage_query_request_serialization` — full request with all fields.
+- `test_lineage_query_request_minimal` — request with only direction set.
+
+**Slice Status: COMPLETE**
+- [x] `ServerClient::lineage_query` method
+- [x] `InspectLineageQuery` CLI variant with fail-closed validation
+- [x] Handler `run_inspect_lineage_query`
+- [x] `--json` raw output + deterministic human-readable summary
+- [x] Local `max_hops` validation (1..32)
+- [x] Unit tests for validation, formatting, and request serialization
+- [x] Plan doc updated
