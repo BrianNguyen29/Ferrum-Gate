@@ -9,7 +9,8 @@
 - P1: git adapter local rollback + gateway wiring
 - P1: git after_ref verify handoff fix
 - P1: gateway happy path
-- P1: ledger hash chain
+- P1: ledger hash chain (in-memory done; integration slice 3 pending)
+  - See `12-ledger-hash-chain-execution-plan.md`
 - P1: ferrumctl debug/inspect/validate slices
 - P1: http adapter full parity (GET/POST/PUT/PATCH/DELETE + body/header/query binding + auth) + gateway wiring
 - P1: durable capability persistence + startup reconciliation + restart integration coverage

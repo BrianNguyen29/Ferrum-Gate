@@ -157,7 +157,7 @@ SideEffectPrepared -> SideEffectVerified -> terminal event
    - Source: `docs/15-deployment-and-operations.md` line 15, 55
 
 6. **Ledger hash chain**
-   - Status: Not implemented
+   - Status: In-memory logic done; integration pending per `docs/implementation-path/12-ledger-hash-chain-execution-plan.md`
    - Source: `docs/implementation-path/11-remaining-tasks.md` line 26
 
 7. **ferrumctl expanded utility**
