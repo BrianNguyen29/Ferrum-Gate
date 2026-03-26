@@ -1618,40 +1618,21 @@ async fn perform_commit(
         Some(contract_id),
         None,
     );
-    if let Err(e) = runtime.store.provenance().append_event(&event).await {
-        tracing::warn!("failed to persist provenance event: {}", e);
-    } else {
-        // Provenance event persisted successfully — now append a ledger entry
-        // that wraps this event and links it into the hash chain.
-        let next_entry = match runtime.store.ledger().get_latest().await {
-            Ok(Some(last)) => Some(ferrum_ledger::LedgerEntry::from_event(
-                event.clone(),
-                last.sequence.saturating_add(1),
-                Some(last.entry_hash.clone()),
-            )),
-            Ok(None) => {
-                tracing::debug!("ledger is empty, next entry will be genesis");
-                Some(ferrum_ledger::LedgerEntry::from_event(
-                    event.clone(),
-                    0,
-                    None,
-                ))
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "failed to read ledger tip, proceeding without ledger append: {}",
-                    e
-                );
-                None
-            }
-        };
-
-        if let Some(entry) = next_entry {
-            if let Err(e) = runtime.store.ledger().append(&entry).await {
-                tracing::warn!("failed to append ledger entry: {}", e);
-            }
-        }
-    }
+    // Atomically persist event and ledger entry via the store's ledger append API.
+    // This inserts the provenance event into provenance_events and creates a
+    // LedgerEntry with correct sequence and hash-chain linkage in one transaction.
+    let _entry = runtime
+        .store
+        .ledger()
+        .append_event(&event)
+        .await
+        .map_err(|e| {
+            tracing::error!(
+                "fatal: ledger append failed, consistency compromised: {}",
+                e
+            );
+            ApiProblem::internal(e.into())
+        })?;
     Ok(Json(CommitResponse {
         execution_id,
         committed: true,
