@@ -1,5 +1,8 @@
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
+use ferrum_proto::approval::ApprovalResolveRequest;
+use ferrum_proto::common::{ActorRef, ActorType};
+use ferrum_proto::provenance::{LineageQueryRequest, LineageQueryResponse};
 use reqwest::Client;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -592,6 +595,20 @@ impl ServerClient {
         self.decode_json(resp).await
     }
 
+    async fn resolve_approval(
+        &self,
+        approval_id: &str,
+        req: &ApprovalResolveRequest,
+    ) -> Result<ApprovalRequest> {
+        let path = format!("/v1/approvals/{}/resolve", approval_id);
+        let resp = self
+            .request(reqwest::Method::POST, &path)
+            .json(req)
+            .send()
+            .await?;
+        self.decode_json(resp).await
+    }
+
     async fn get_lineage(&self, execution_id: &str) -> Result<LineageResponse> {
         let path = format!("/v1/provenance/lineage/{}", execution_id);
         let resp = self.request(reqwest::Method::GET, &path).send().await?;
@@ -623,6 +640,15 @@ impl ServerClient {
                 ("ancestry", ancestry.to_string()),
                 ("descendants", descendants.to_string()),
             ])
+            .send()
+            .await?;
+        self.decode_json(resp).await
+    }
+
+    async fn lineage_query(&self, req: &LineageQueryRequest) -> Result<LineageQueryResponse> {
+        let resp = self
+            .request(reqwest::Method::POST, "/v1/provenance/lineage")
+            .json(req)
             .send()
             .await?;
         self.decode_json(resp).await
@@ -682,6 +708,39 @@ enum LineageFormat {
     Json,
     /// Graphviz DOT format for visualization.
     Dot,
+}
+
+/// CLI actor type enum — mirrors `ferrum_proto::common::ActorType` as a clap ValueEnum.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum ActorTypeCli {
+    /// Human actor (user).
+    User,
+    /// Autonomous agent.
+    Agent,
+    /// Automated policy engine.
+    PolicyEngine,
+    /// Gateway system actor.
+    Gateway,
+    /// External adapter actor.
+    Adapter,
+    /// Human operator.
+    Operator,
+    /// System-level actor.
+    System,
+}
+
+impl From<ActorTypeCli> for ActorType {
+    fn from(value: ActorTypeCli) -> Self {
+        match value {
+            ActorTypeCli::User => ActorType::User,
+            ActorTypeCli::Agent => ActorType::Agent,
+            ActorTypeCli::PolicyEngine => ActorType::PolicyEngine,
+            ActorTypeCli::Gateway => ActorType::Gateway,
+            ActorTypeCli::Adapter => ActorType::Adapter,
+            ActorTypeCli::Operator => ActorType::Operator,
+            ActorTypeCli::System => ActorType::System,
+        }
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -819,6 +878,40 @@ enum ServerCommand {
         /// Required for dot format when redirecting to a file.
         #[arg(long)]
         output: Option<PathBuf>,
+    },
+    /// Multi-hop lineage traversal from a seed event via ancestry and/or descendant edges.
+    InspectLineageQuery {
+        /// Execution ID (UUID) — all traversed events must belong to this execution.
+        #[arg(long)]
+        execution_id: String,
+
+        /// Seed event ID (UUID) to start traversal from.
+        #[arg(long)]
+        event_id: String,
+
+        /// Walk ancestry backwards via parent edges.
+        #[arg(long)]
+        ancestry: bool,
+
+        /// Walk descendants forwards via child edges.
+        #[arg(long)]
+        descendants: bool,
+
+        /// Maximum BFS hops (1–32). Defaults to 8. Hard-capped at 32 by the server.
+        #[arg(long)]
+        max_hops: Option<u32>,
+
+        /// Server base URL (e.g. http://127.0.0.1:8080).
+        #[arg(long, env = "FERRUMCTL_SERVER_URL")]
+        server_url: Option<String>,
+
+        /// Bearer token for authentication.
+        #[arg(long, env = "FERRUMCTL_BEARER_TOKEN")]
+        bearer_token: Option<String>,
+
+        /// Output raw JSON instead of human-readable summary.
+        #[arg(long)]
+        json: bool,
     },
     /// Aggregate provenance statistics and run consistency checks over queried events.
     InspectProvenanceStats {
@@ -998,6 +1091,115 @@ enum ServerCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Resolve a pending approval (approve or deny).
+    ResolveApproval {
+        /// Approval ID (UUID) to resolve.
+        approval_id: String,
+
+        /// Approve the pending approval.
+        #[arg(long, conflicts_with = "deny")]
+        approve: bool,
+
+        /// Deny the pending approval.
+        #[arg(long, conflicts_with = "approve")]
+        deny: bool,
+
+        /// Actor type resolving this approval.
+        #[arg(long, value_enum, default_value = "Operator")]
+        actor_type: ActorTypeCli,
+
+        /// Actor ID (username, agent name, etc.).
+        #[arg(long, default_value = "ferrumctl")]
+        actor_id: String,
+
+        /// Optional display name for the actor.
+        #[arg(long)]
+        actor_display_name: Option<String>,
+
+        /// Reason for the decision. Required when --deny is set.
+        #[arg(long, requires = "deny")]
+        reason: Option<String>,
+
+        /// Server base URL (e.g. http://127.0.0.1:8080).
+        #[arg(long, env = "FERRUMCTL_SERVER_URL")]
+        server_url: Option<String>,
+
+        /// Bearer token for authentication.
+        #[arg(long, env = "FERRUMCTL_BEARER_TOKEN")]
+        bearer_token: Option<String>,
+
+        /// Output the returned approval as JSON instead of human-readable.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Resolve multiple pending approvals in bulk (single-page, confirm-gated).
+    ResolveApprovalBulk {
+        /// Activate bulk mode and resolve all pending approvals matching the filter.
+        /// Bulk mode requires: --proposal-id or --execution-id, --limit, --yes, --expect-count.
+        #[arg(long)]
+        all_pending: bool,
+
+        /// Filter by proposal ID (UUID). At least one of --proposal-id or --execution-id
+        /// is required in bulk mode.
+        #[arg(long)]
+        proposal_id: Option<String>,
+
+        /// Filter by execution ID (UUID). At least one of --proposal-id or --execution-id
+        /// is required in bulk mode.
+        #[arg(long)]
+        execution_id: Option<String>,
+
+        /// Maximum number of approvals to resolve in this bulk operation.
+        /// Required in bulk mode to bound the mutation.
+        #[arg(long)]
+        limit: Option<u32>,
+
+        /// Confirm the bulk operation. Required in bulk mode to prevent accidental mutations.
+        #[arg(long)]
+        yes: bool,
+
+        /// Expected count of pending approvals. The bulk operation will fail if the
+        /// actual count of pending approvals does not match this number, preventing
+        /// accidental resolution of an unexpected set.
+        #[arg(long)]
+        expect_count: Option<u32>,
+
+        /// Approve all the pending approvals.
+        #[arg(long, conflicts_with = "deny")]
+        approve: bool,
+
+        /// Deny all the pending approvals.
+        #[arg(long, conflicts_with = "approve")]
+        deny: bool,
+
+        /// Actor type resolving these approvals.
+        #[arg(long, value_enum, default_value = "Operator")]
+        actor_type: ActorTypeCli,
+
+        /// Actor ID (username, agent name, etc.).
+        #[arg(long, default_value = "ferrumctl")]
+        actor_id: String,
+
+        /// Optional display name for the actor.
+        #[arg(long)]
+        actor_display_name: Option<String>,
+
+        /// Reason for the decision. Required when --deny is set.
+        #[arg(long, requires = "deny")]
+        reason: Option<String>,
+
+        /// Server base URL (e.g. http://127.0.0.1:8080).
+        #[arg(long, env = "FERRUMCTL_SERVER_URL")]
+        server_url: Option<String>,
+
+        /// Bearer token for authentication.
+        #[arg(long, env = "FERRUMCTL_BEARER_TOKEN")]
+        bearer_token: Option<String>,
+
+        /// Output as JSON instead of human-readable.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -1163,6 +1365,416 @@ async fn run_inspect_approval(
     Ok(())
 }
 
+async fn run_resolve_approval(
+    approval_id: &str,
+    approve: bool,
+    deny: bool,
+    actor_type: ActorTypeCli,
+    actor_id: &str,
+    actor_display_name: Option<String>,
+    reason: Option<String>,
+    url: Option<String>,
+    token: Option<String>,
+    as_json: bool,
+) -> Result<()> {
+    // Fail-closed: require explicit approve xor deny
+    if !approve && !deny {
+        bail!("must specify either --approve or --deny");
+    }
+    if approve && deny {
+        bail!("cannot specify both --approve and --deny");
+    }
+
+    // Reason is required when denying
+    if deny && reason.is_none() {
+        bail!("--reason is required when --deny is set");
+    }
+
+    let actor = ActorRef {
+        actor_type: actor_type.into(),
+        actor_id: actor_id.to_string(),
+        display_name: actor_display_name,
+    };
+
+    let req = ApprovalResolveRequest {
+        actor,
+        approve,
+        reason,
+    };
+
+    let url = resolve_server_url(url)?;
+    let client = ServerClient::new(&url, token);
+    let approval = client.resolve_approval(approval_id, &req).await?;
+
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&approval)?);
+    } else {
+        println!("Approval: {}", approval.approval_id);
+        println!("  State:    {}", approval.state);
+        println!("  Intent:   {}", approval.intent_id);
+        println!("  Proposal: {}", approval.proposal_id);
+        if let Some(eid) = approval.execution_id {
+            println!("  Execution:{}", eid);
+        }
+        println!("  Reason:   {}", approval.reason);
+        println!("  Action:   {}", approval.action_digest);
+        println!("  Created:  {}", approval.created_at);
+        println!("  Expires:  {}", approval.expires_at);
+    }
+    Ok(())
+}
+
+/// Result of attempting to resolve a single approval in a bulk operation.
+/// Classification is determined by the final observed state after reconciliation.
+#[derive(Debug, Clone, serde::Serialize)]
+enum BulkResolutionOutcome {
+    /// Mutation was accepted (2xx from resolve endpoint) and the approval reached
+    /// a terminal decided state (Approved or Denied).
+    Resolved {
+        approval_id: String,
+        decision: String,
+        state: String,
+    },
+    /// Mutation request returned a non-2xx HTTP status. Follow-up read showed the
+    /// approval is still pending — the mutation was not applied.
+    MutationRejected {
+        approval_id: String,
+        http_status: u16,
+        state: String,
+    },
+    /// Mutation request returned a non-2xx HTTP status. Follow-up read showed the
+    /// approval reached a terminal decided state despite the error — the mutation
+    /// may have been applied despite the error response.
+    MutationConflicted {
+        approval_id: String,
+        http_status: u16,
+        decision: String,
+        state: String,
+    },
+    /// Mutation request returned a non-2xx HTTP status. Follow-up read failed —
+    /// the final state is unreadable. This is a hard failure.
+    Unreadable {
+        approval_id: String,
+        http_status: u16,
+        read_error: String,
+    },
+}
+
+/// Classifies the outcome of a bulk-resolve attempt for a single approval.
+/// On non-2xx, fetches the final approval state to determine whether the mutation
+/// was applied despite the error, or rejected, or unreadable.
+async fn classify_resolve_outcome(
+    client: &ServerClient,
+    approval_id: &str,
+    http_status: u16,
+) -> BulkResolutionOutcome {
+    match client.get_approval(approval_id).await {
+        Ok(approval) => {
+            let state = approval.state.clone();
+            // Check if it reached a terminal decided state
+            if state == "Approved" || state == "Denied" {
+                BulkResolutionOutcome::MutationConflicted {
+                    approval_id: approval_id.to_string(),
+                    http_status,
+                    decision: approval.state.clone(),
+                    state,
+                }
+            } else {
+                BulkResolutionOutcome::MutationRejected {
+                    approval_id: approval_id.to_string(),
+                    http_status,
+                    state,
+                }
+            }
+        }
+        Err(read_err) => BulkResolutionOutcome::Unreadable {
+            approval_id: approval_id.to_string(),
+            http_status,
+            read_error: read_err.to_string(),
+        },
+    }
+}
+
+/// Returns true if the given approval state is considered "pending" and therefore
+/// eligible for resolution.
+fn is_pending_state(state: &str) -> bool {
+    state == "Pending"
+}
+
+/// Formats a single bulk resolution outcome for human-readable output.
+fn format_bulk_outcome(outcome: &BulkResolutionOutcome) -> String {
+    match outcome {
+        BulkResolutionOutcome::Resolved {
+            approval_id,
+            decision,
+            state,
+        } => {
+            format!(
+                "RESOLVED  {}  decision={} state={}",
+                approval_id, decision, state
+            )
+        }
+        BulkResolutionOutcome::MutationRejected {
+            approval_id,
+            http_status,
+            state,
+        } => {
+            format!(
+                "REJECTED  {}  HTTP {}  state={}",
+                approval_id, http_status, state
+            )
+        }
+        BulkResolutionOutcome::MutationConflicted {
+            approval_id,
+            http_status,
+            decision,
+            state,
+        } => {
+            format!(
+                "CONFLICT  {}  HTTP {}  decision={} state={}",
+                approval_id, http_status, decision, state
+            )
+        }
+        BulkResolutionOutcome::Unreadable {
+            approval_id,
+            http_status,
+            read_error,
+        } => {
+            format!(
+                "UNREADABLE  {}  HTTP {}  read failed: {}",
+                approval_id, http_status, read_error
+            )
+        }
+    }
+}
+
+async fn run_resolve_approval_bulk(
+    all_pending: bool,
+    proposal_id: Option<String>,
+    execution_id: Option<String>,
+    limit: Option<u32>,
+    yes: bool,
+    expect_count: Option<u32>,
+    approve: bool,
+    deny: bool,
+    actor_type: ActorTypeCli,
+    actor_id: &str,
+    actor_display_name: Option<String>,
+    reason: Option<String>,
+    url: Option<String>,
+    token: Option<String>,
+    as_json: bool,
+) -> Result<()> {
+    // Determine if bulk mode is active based on any bulk-mode flag being set.
+    // Bulk mode is triggered by --all-pending, scope filters, or --limit.
+    let bulk_mode = all_pending
+        || proposal_id.is_some()
+        || execution_id.is_some()
+        || limit.is_some()
+        || yes
+        || expect_count.is_some();
+
+    if bulk_mode {
+        // --- Bulk mode guardrails ---
+        // Fail-closed: require explicit approve xor deny
+        if !approve && !deny {
+            bail!("bulk mode: must specify either --approve or --deny");
+        }
+        if approve && deny {
+            bail!("bulk mode: cannot specify both --approve and --deny");
+        }
+
+        // Reason is required when denying
+        if deny && reason.is_none() {
+            bail!("bulk mode: --reason is required when --deny is set");
+        }
+
+        // Require at least one scope filter
+        if proposal_id.is_none() && execution_id.is_none() {
+            bail!(
+                "bulk mode: at least one scope filter is required \
+                 (--proposal-id or --execution-id)"
+            );
+        }
+
+        // Require explicit limit
+        let limit = limit.context("bulk mode: --limit is required")?;
+
+        // Require explicit confirmation
+        if !yes {
+            bail!("bulk mode: --yes is required to confirm the bulk mutation");
+        }
+        let expect_count = expect_count.context("bulk mode: --expect-count is required")?;
+
+        // Build actor and request
+        let actor = ActorRef {
+            actor_type: actor_type.into(),
+            actor_id: actor_id.to_string(),
+            display_name: actor_display_name,
+        };
+
+        let req = ApprovalResolveRequest {
+            actor,
+            approve,
+            reason,
+        };
+
+        let url = resolve_server_url(url)?;
+        let client = ServerClient::new(&url, token);
+
+        // Fetch one page of pending approvals matching the scope filter
+        let pending = client
+            .list_approvals(&ListApprovalsQuery {
+                limit: Some(limit),
+                cursor: None,
+                proposal_id: proposal_id.clone(),
+                execution_id: execution_id.clone(),
+            })
+            .await?;
+
+        // Filter to only Pending approvals (API may return non-pending on the page)
+        let pending: Vec<_> = pending
+            .items
+            .into_iter()
+            .filter(|a| is_pending_state(&a.state))
+            .collect();
+
+        // Fail if count doesn't match expectation
+        let actual_count = pending.len() as u32;
+        if actual_count != expect_count {
+            bail!(
+                "bulk mode: expected {} pending approvals but found {} \
+                 (use --expect-count to match the actual count or re-list with --limit to adjust)",
+                expect_count,
+                actual_count
+            );
+        }
+
+        if pending.is_empty() {
+            println!("Bulk resolve: no pending approvals match the filter. Nothing to do.");
+            return Ok(());
+        }
+
+        println!(
+            "Bulk resolve: {} approval(s) (limit={}, expect_count={})\n",
+            pending.len(),
+            limit,
+            expect_count
+        );
+
+        // Resolve each approval and classify the outcome
+        let mut outcomes: Vec<BulkResolutionOutcome> = Vec::new();
+        let mut hard_failure_count = 0u32;
+
+        for approval in &pending {
+            let approval_id = &approval.approval_id;
+
+            // Attempt resolve — let any panics propagate; handle error classification below
+            let outcome = match client.resolve_approval(approval_id, &req).await {
+                Ok(updated) => {
+                    // 2xx: classify as Resolved if terminal state, else MutationConflicted
+                    let state = updated.state.clone();
+                    if state == "Approved" || state == "Denied" {
+                        BulkResolutionOutcome::Resolved {
+                            approval_id: approval_id.clone(),
+                            decision: updated.state.clone(),
+                            state,
+                        }
+                    } else {
+                        // Should not happen on 2xx with a valid response, but guard anyway
+                        BulkResolutionOutcome::Resolved {
+                            approval_id: approval_id.clone(),
+                            decision: updated.state.clone(),
+                            state,
+                        }
+                    }
+                }
+                Err(err) => {
+                    // Non-2xx or network error — classify via follow-up read
+                    let http_status = extract_http_status(&err);
+                    classify_resolve_outcome(&client, approval_id, http_status).await
+                }
+            };
+
+            // Check for hard failures that should cause non-zero exit
+            let is_hard_failure = matches!(
+                outcome,
+                BulkResolutionOutcome::MutationRejected { .. }
+                    | BulkResolutionOutcome::Unreadable { .. }
+            );
+            if is_hard_failure {
+                hard_failure_count += 1;
+            }
+
+            outcomes.push(outcome);
+        }
+
+        // Output per-item results
+        if as_json {
+            println!("{}", serde_json::to_string_pretty(&outcomes)?);
+        } else {
+            println!("Bulk resolution results:");
+            for outcome in &outcomes {
+                println!("  {}", format_bulk_outcome(outcome));
+            }
+            println!();
+        }
+
+        // Summary
+        let resolved_count = outcomes
+            .iter()
+            .filter(|o| matches!(o, BulkResolutionOutcome::Resolved { .. }))
+            .count() as u32;
+        let conflicted_count = outcomes
+            .iter()
+            .filter(|o| matches!(o, BulkResolutionOutcome::MutationConflicted { .. }))
+            .count() as u32;
+        let rejected_count = outcomes
+            .iter()
+            .filter(|o| matches!(o, BulkResolutionOutcome::MutationRejected { .. }))
+            .count() as u32;
+        let unreadable_count = outcomes
+            .iter()
+            .filter(|o| matches!(o, BulkResolutionOutcome::Unreadable { .. }))
+            .count() as u32;
+
+        println!(
+            "Summary: {} resolved, {} conflicted, {} rejected, {} unreadable",
+            resolved_count, conflicted_count, rejected_count, unreadable_count
+        );
+
+        // Exit non-zero if any hard failures remain (rejected, unreadable)
+        if hard_failure_count > 0 {
+            bail!(
+                "{} hard failure(s) (rejected/unreadable); \
+                 review output above and retry individual approvals",
+                hard_failure_count
+            );
+        }
+
+        Ok(())
+    } else {
+        // Fallback: single-approval mode — delegate to the existing handler
+        // This path should not be reached via CLI because ResolveApprovalBulk
+        // always has at least one bulk flag set. But kept for safety.
+        bail!(
+            "bulk mode: missing required flags (--proposal-id, --execution-id, \
+             --limit, --yes, --expect-count)"
+        );
+    }
+}
+
+/// Extracts the HTTP status code from an anyhow error that wraps a reqwest error.
+fn extract_http_status(err: &anyhow::Error) -> u16 {
+    err.chain()
+        .find_map(|e| {
+            e.downcast_ref::<reqwest::Error>()
+                .and_then(|re| re.status())
+                .map(|s| s.as_u16())
+        })
+        .unwrap_or(0)
+}
+
 async fn run_inspect_lineage(
     execution_id: &str,
     url: Option<String>,
@@ -1204,6 +1816,51 @@ async fn run_inspect_lineage(
             .with_context(|| format!("failed to write to {}", path.display()))?;
     } else {
         println!("{}", rendered);
+    }
+
+    Ok(())
+}
+
+async fn run_inspect_lineage_query(
+    execution_id: String,
+    event_id: String,
+    ancestry: bool,
+    descendants: bool,
+    max_hops: Option<u32>,
+    url: Option<String>,
+    token: Option<String>,
+    as_json: bool,
+) -> Result<()> {
+    // Fail-closed: require at least one direction
+    if !ancestry && !descendants {
+        bail!("at least one of --ancestry or --descendants must be set");
+    }
+
+    // Validate max_hops locally before making any network call
+    let max_hops = validate_max_hops(max_hops)?;
+
+    let req = LineageQueryRequest {
+        execution_id: ferrum_proto::ExecutionId(
+            uuid::Uuid::parse_str(&execution_id)
+                .map_err(|e| anyhow::anyhow!("invalid execution_id: {}", e))?,
+        ),
+        event_id: ferrum_proto::EventId(
+            uuid::Uuid::parse_str(&event_id)
+                .map_err(|e| anyhow::anyhow!("invalid event_id: {}", e))?,
+        ),
+        ancestry,
+        descendants,
+        max_hops,
+    };
+
+    let url = resolve_server_url(url)?;
+    let client = ServerClient::new(&url, token);
+    let resp = client.lineage_query(&req).await?;
+
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&resp)?);
+    } else {
+        println!("{}", format_lineage_query_text(&resp));
     }
 
     Ok(())
@@ -1262,6 +1919,121 @@ fn dot_escape(s: &str) -> String {
         .replace('\n', "\\n")
         .replace('\r', "\\r")
         .replace('\t', "\\t")
+}
+
+/// Validates max_hops locally, returning an error if outside the 1..32 range.
+fn validate_max_hops(max_hops: Option<u32>) -> Result<Option<u32>> {
+    match max_hops {
+        None => Ok(None),
+        Some(v) if v >= 1 && v <= 32 => Ok(Some(v)),
+        Some(v) => bail!("--max-hops must be between 1 and 32, got {}", v),
+    }
+}
+
+/// Formats a `LineageQueryResponse` as a deterministic human-readable summary.
+fn format_lineage_query_text(resp: &ferrum_proto::LineageQueryResponse) -> String {
+    let mut lines = Vec::new();
+    lines.push(format!(
+        "LineageQuery: {} event(s), {} edge(s)",
+        resp.events.len(),
+        resp.edges.len()
+    ));
+
+    // Build event lookup for edge rendering (keyed by event_id string)
+    let event_map: std::collections::HashMap<String, &ferrum_proto::ProvenanceEvent> = resp
+        .events
+        .iter()
+        .map(|e| (e.event_id.0.to_string(), e))
+        .collect();
+
+    // Sort edges deterministically by (from_event_id, to_event_id, edge_type)
+    let mut edges: Vec<(String, String, String)> = resp
+        .edges
+        .iter()
+        .map(|e| {
+            (
+                e.from_event_id.0.to_string(),
+                e.to_event_id.0.to_string(),
+                format!("{:?}", e.edge_type),
+            )
+        })
+        .collect();
+    edges.sort_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then_with(|| a.1.cmp(&b.1))
+            .then_with(|| a.2.cmp(&b.2))
+    });
+
+    if !edges.is_empty() {
+        lines.push("\nEdges:".to_string());
+        for (from, to, edge_type) in &edges {
+            let from_kind = event_map
+                .get(from)
+                .map(|e| kind_label(&e.kind))
+                .unwrap_or_else(|| "?".to_string());
+            let to_kind = event_map
+                .get(to)
+                .map(|e| kind_label(&e.kind))
+                .unwrap_or_else(|| "?".to_string());
+            lines.push(format!("  {} --[{}]--> {}", from_kind, edge_type, to_kind));
+        }
+    }
+
+    // Sort events deterministically by (occurred_at, event_id)
+    let mut events: Vec<&ferrum_proto::ProvenanceEvent> = resp.events.iter().collect();
+    events.sort_by(|a, b| {
+        a.occurred_at
+            .to_rfc3339()
+            .cmp(&b.occurred_at.to_rfc3339())
+            .then_with(|| a.event_id.0.to_string().cmp(&b.event_id.0.to_string()))
+    });
+
+    lines.push("\nEvents:".to_string());
+    for event in &events {
+        let kind_str = kind_label(&event.kind);
+        lines.push(format!(
+            "  [{}] {}  {}",
+            event.occurred_at.to_rfc3339(),
+            kind_str,
+            event.event_id.0
+        ));
+        if let Some(ref eid) = event.execution_id {
+            lines.push(format!("    execution: {}", eid.0));
+        }
+    }
+
+    lines.join("\n")
+}
+
+/// Returns a human-readable label for a ProvenanceEventKind.
+fn kind_label(kind: &ferrum_proto::ProvenanceEventKind) -> String {
+    use ferrum_proto::ProvenanceEventKind as PK;
+    match kind {
+        PK::UserGoalReceived => "UserGoalReceived".to_string(),
+        PK::IntentCompiled => "IntentCompiled".to_string(),
+        PK::IntentRevoked => "IntentRevoked".to_string(),
+        PK::ActionProposalSubmitted => "ActionProposalSubmitted".to_string(),
+        PK::PolicyEvaluated => "PolicyEvaluated".to_string(),
+        PK::CapabilityMinted => "CapabilityMinted".to_string(),
+        PK::CapabilityRevoked => "CapabilityRevoked".to_string(),
+        PK::ApprovalRequested => "ApprovalRequested".to_string(),
+        PK::ApprovalGranted => "ApprovalGranted".to_string(),
+        PK::ApprovalDenied => "ApprovalDenied".to_string(),
+        PK::ToolCallPrepared => "ToolCallPrepared".to_string(),
+        PK::ToolCallIntercepted => "ToolCallIntercepted".to_string(),
+        PK::ToolCallExecuted => "ToolCallExecuted".to_string(),
+        PK::ToolOutputReceived => "ToolOutputReceived".to_string(),
+        PK::ToolOutputSanitized => "ToolOutputSanitized".to_string(),
+        PK::DlpBlocked => "DlpBlocked".to_string(),
+        PK::SideEffectPrepared => "SideEffectPrepared".to_string(),
+        PK::SideEffectVerified => "SideEffectVerified".to_string(),
+        PK::SideEffectCommitted => "SideEffectCommitted".to_string(),
+        PK::SideEffectCompensated => "SideEffectCompensated".to_string(),
+        PK::SideEffectRolledBack => "SideEffectRolledBack".to_string(),
+        PK::Quarantined => "Quarantined".to_string(),
+        PK::ErrorRaised => "ErrorRaised".to_string(),
+        PK::ExternalEventObserved => "ExternalEventObserved".to_string(),
+    }
 }
 
 /// Parses a JSON string into a Map<String, JsonValue>.
@@ -1550,6 +2322,28 @@ async fn main() -> Result<()> {
                 run_inspect_lineage(&execution_id, server_url, bearer_token, format, output)
                     .await?;
             }
+            ServerCommand::InspectLineageQuery {
+                execution_id,
+                event_id,
+                ancestry,
+                descendants,
+                max_hops,
+                server_url,
+                bearer_token,
+                json,
+            } => {
+                run_inspect_lineage_query(
+                    execution_id,
+                    event_id,
+                    ancestry,
+                    descendants,
+                    max_hops,
+                    server_url,
+                    bearer_token,
+                    json,
+                )
+                .await?;
+            }
             ServerCommand::InspectProvenanceStats {
                 intent_id,
                 proposal_id,
@@ -1655,6 +2449,68 @@ async fn main() -> Result<()> {
                     summary,
                     payload_digest,
                     metadata_json,
+                    server_url,
+                    bearer_token,
+                    json,
+                )
+                .await?;
+            }
+            ServerCommand::ResolveApproval {
+                approval_id,
+                approve,
+                deny,
+                actor_type,
+                actor_id,
+                actor_display_name,
+                reason,
+                server_url,
+                bearer_token,
+                json,
+            } => {
+                run_resolve_approval(
+                    &approval_id,
+                    approve,
+                    deny,
+                    actor_type,
+                    &actor_id,
+                    actor_display_name,
+                    reason,
+                    server_url,
+                    bearer_token,
+                    json,
+                )
+                .await?;
+            }
+            ServerCommand::ResolveApprovalBulk {
+                all_pending,
+                proposal_id,
+                execution_id,
+                limit,
+                yes,
+                expect_count,
+                approve,
+                deny,
+                actor_type,
+                actor_id,
+                actor_display_name,
+                reason,
+                server_url,
+                bearer_token,
+                json,
+            } => {
+                run_resolve_approval_bulk(
+                    all_pending,
+                    proposal_id,
+                    execution_id,
+                    limit,
+                    yes,
+                    expect_count,
+                    approve,
+                    deny,
+                    actor_type,
+                    &actor_id,
+                    actor_display_name,
+                    reason,
                     server_url,
                     bearer_token,
                     json,
@@ -2356,5 +3212,345 @@ mod tests {
         assert_eq!(json.events_by_intent_count, 1);
         assert_eq!(json.events_by_proposal_count, 1);
         assert_eq!(json.events_by_execution_count, 1);
+    }
+
+    // =============================================================================
+    // ResolveApproval tests
+    // =============================================================================
+
+    #[test]
+    fn test_actor_type_all_variants() {
+        // Verify all ActorType variants exist and can be constructed
+        let _ = ActorType::User;
+        let _ = ActorType::Agent;
+        let _ = ActorType::PolicyEngine;
+        let _ = ActorType::Gateway;
+        let _ = ActorType::Adapter;
+        let _ = ActorType::Operator;
+        let _ = ActorType::System;
+    }
+
+    #[test]
+    fn test_approval_resolve_request_serialization() {
+        let actor = ActorRef {
+            actor_type: ActorType::Operator,
+            actor_id: "test-op".to_string(),
+            display_name: None,
+        };
+        let req = ApprovalResolveRequest {
+            actor,
+            approve: true,
+            reason: None,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"approve\":true"));
+        assert!(json.contains("\"actor_id\":\"test-op\""));
+        assert!(json.contains("\"actor_type\":\"Operator\""));
+    }
+
+    #[test]
+    fn test_approval_resolve_request_deny_with_reason() {
+        let actor = ActorRef {
+            actor_type: ActorType::User,
+            actor_id: "alice".to_string(),
+            display_name: Some("Alice".to_string()),
+        };
+        let req = ApprovalResolveRequest {
+            actor,
+            approve: false,
+            reason: Some("Not authorized for this action".to_string()),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"approve\":false"));
+        assert!(json.contains("\"reason\":\"Not authorized for this action\""));
+    }
+
+    // -------------------------------------------------------------------------
+    // Bulk approval resolution tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_is_pending_state() {
+        assert!(is_pending_state("Pending"));
+        assert!(!is_pending_state("Approved"));
+        assert!(!is_pending_state("Denied"));
+        assert!(!is_pending_state("Expired"));
+        assert!(!is_pending_state("Cancelled"));
+    }
+
+    #[test]
+    fn test_format_bulk_outcome_resolved() {
+        let outcome = BulkResolutionOutcome::Resolved {
+            approval_id: "approval-abc".to_string(),
+            decision: "Approved".to_string(),
+            state: "Approved".to_string(),
+        };
+        let formatted = format_bulk_outcome(&outcome);
+        assert!(formatted.contains("RESOLVED"));
+        assert!(formatted.contains("approval-abc"));
+        assert!(formatted.contains("decision=Approved"));
+        assert!(formatted.contains("state=Approved"));
+    }
+
+    #[test]
+    fn test_format_bulk_outcome_rejected() {
+        let outcome = BulkResolutionOutcome::MutationRejected {
+            approval_id: "approval-xyz".to_string(),
+            http_status: 409,
+            state: "Pending".to_string(),
+        };
+        let formatted = format_bulk_outcome(&outcome);
+        assert!(formatted.contains("REJECTED"));
+        assert!(formatted.contains("approval-xyz"));
+        assert!(formatted.contains("HTTP 409"));
+        assert!(formatted.contains("state=Pending"));
+    }
+
+    #[test]
+    fn test_format_bulk_outcome_conflicted() {
+        let outcome = BulkResolutionOutcome::MutationConflicted {
+            approval_id: "approval-conf".to_string(),
+            http_status: 500,
+            decision: "Approved".to_string(),
+            state: "Approved".to_string(),
+        };
+        let formatted = format_bulk_outcome(&outcome);
+        assert!(formatted.contains("CONFLICT"));
+        assert!(formatted.contains("approval-conf"));
+        assert!(formatted.contains("HTTP 500"));
+        assert!(formatted.contains("decision=Approved"));
+    }
+
+    #[test]
+    fn test_format_bulk_outcome_unreadable() {
+        let outcome = BulkResolutionOutcome::Unreadable {
+            approval_id: "approval-unr".to_string(),
+            http_status: 503,
+            read_error: "connection refused".to_string(),
+        };
+        let formatted = format_bulk_outcome(&outcome);
+        assert!(formatted.contains("UNREADABLE"));
+        assert!(formatted.contains("approval-unr"));
+        assert!(formatted.contains("HTTP 503"));
+        assert!(formatted.contains("connection refused"));
+    }
+
+    #[test]
+    fn test_bulk_resolution_outcome_serialize_resolved() {
+        let outcome = BulkResolutionOutcome::Resolved {
+            approval_id: "approval-s".to_string(),
+            decision: "Approved".to_string(),
+            state: "Approved".to_string(),
+        };
+        let json = serde_json::to_string(&outcome).unwrap();
+        assert!(json.contains("\"Resolved\""));
+        assert!(json.contains("\"approval_id\":\"approval-s\""));
+        assert!(json.contains("\"decision\":\"Approved\""));
+    }
+
+    #[test]
+    fn test_bulk_resolution_outcome_serialize_rejected() {
+        let outcome = BulkResolutionOutcome::MutationRejected {
+            approval_id: "approval-r".to_string(),
+            http_status: 409,
+            state: "Pending".to_string(),
+        };
+        let json = serde_json::to_string(&outcome).unwrap();
+        assert!(json.contains("\"MutationRejected\""));
+        assert!(json.contains("\"approval_id\":\"approval-r\""));
+        assert!(json.contains("\"http_status\":409"));
+    }
+
+    #[test]
+    fn test_bulk_resolution_outcome_serialize_conflicted() {
+        let outcome = BulkResolutionOutcome::MutationConflicted {
+            approval_id: "approval-c".to_string(),
+            http_status: 500,
+            decision: "Denied".to_string(),
+            state: "Denied".to_string(),
+        };
+        let json = serde_json::to_string(&outcome).unwrap();
+        assert!(json.contains("\"MutationConflicted\""));
+        assert!(json.contains("\"http_status\":500"));
+    }
+
+    #[test]
+    fn test_bulk_resolution_outcome_serialize_unreadable() {
+        let outcome = BulkResolutionOutcome::Unreadable {
+            approval_id: "approval-u".to_string(),
+            http_status: 503,
+            read_error: "timeout".to_string(),
+        };
+        let json = serde_json::to_string(&outcome).unwrap();
+        assert!(json.contains("\"Unreadable\""));
+        assert!(json.contains("\"read_error\":\"timeout\""));
+    }
+
+    #[test]
+    fn test_extract_http_status_from_non_reqwest_error() {
+        // A regular anyhow error with no reqwest in the chain
+        let err = anyhow::Error::msg("some other error");
+        let status = extract_http_status(&err);
+        assert_eq!(status, 0);
+    }
+
+    // -------------------------------------------------------------------------
+    // Lineage query validation and formatting tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_validate_max_hops_none() {
+        let result = validate_max_hops(None);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), None);
+    }
+
+    #[test]
+    fn test_validate_max_hops_valid_values() {
+        for v in [1u32, 8, 16, 32] {
+            let result = validate_max_hops(Some(v));
+            assert!(result.is_ok(), "max_hops={} should be valid", v);
+            assert_eq!(result.unwrap(), Some(v));
+        }
+    }
+
+    #[test]
+    fn test_validate_max_hops_too_low() {
+        let result = validate_max_hops(Some(0));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("between 1 and 32"));
+    }
+
+    #[test]
+    fn test_validate_max_hops_too_high() {
+        let result = validate_max_hops(Some(33));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("between 1 and 32"));
+    }
+
+    #[test]
+    fn test_kind_label_all_variants() {
+        use ferrum_proto::ProvenanceEventKind as PK;
+        let variants: Vec<(PK, &str)> = vec![
+            (PK::UserGoalReceived, "UserGoalReceived"),
+            (PK::IntentCompiled, "IntentCompiled"),
+            (PK::IntentRevoked, "IntentRevoked"),
+            (PK::ActionProposalSubmitted, "ActionProposalSubmitted"),
+            (PK::PolicyEvaluated, "PolicyEvaluated"),
+            (PK::CapabilityMinted, "CapabilityMinted"),
+            (PK::CapabilityRevoked, "CapabilityRevoked"),
+            (PK::ApprovalRequested, "ApprovalRequested"),
+            (PK::ApprovalGranted, "ApprovalGranted"),
+            (PK::ApprovalDenied, "ApprovalDenied"),
+            (PK::ToolCallPrepared, "ToolCallPrepared"),
+            (PK::ToolCallIntercepted, "ToolCallIntercepted"),
+            (PK::ToolCallExecuted, "ToolCallExecuted"),
+            (PK::ToolOutputReceived, "ToolOutputReceived"),
+            (PK::ToolOutputSanitized, "ToolOutputSanitized"),
+            (PK::DlpBlocked, "DlpBlocked"),
+            (PK::SideEffectPrepared, "SideEffectPrepared"),
+            (PK::SideEffectVerified, "SideEffectVerified"),
+            (PK::SideEffectCommitted, "SideEffectCommitted"),
+            (PK::SideEffectCompensated, "SideEffectCompensated"),
+            (PK::SideEffectRolledBack, "SideEffectRolledBack"),
+            (PK::Quarantined, "Quarantined"),
+            (PK::ErrorRaised, "ErrorRaised"),
+            (PK::ExternalEventObserved, "ExternalEventObserved"),
+        ];
+        for (kind, expected) in variants {
+            let label = kind_label(&kind);
+            assert_eq!(
+                label,
+                expected,
+                "variant {:?}",
+                std::mem::discriminant(&kind)
+            );
+        }
+    }
+
+    #[test]
+    fn test_format_lineage_query_text_empty() {
+        let resp = ferrum_proto::LineageQueryResponse {
+            events: vec![],
+            edges: vec![],
+        };
+        let text = format_lineage_query_text(&resp);
+        assert!(text.contains("LineageQuery: 0 event(s), 0 edge(s)"));
+        assert!(text.contains("Events:"));
+    }
+
+    #[test]
+    fn test_format_lineage_query_text_edge_rendering() {
+        // Build a minimal LineageQueryResponse by deserializing from JSON
+        // to avoid constructing full ProvenanceEvent with all nested types.
+        let json = r#"{
+            "events": [
+                {
+                    "event_id": "00000000-0000-0000-0000-000000000001",
+                    "kind": "IntentCompiled",
+                    "occurred_at": "2024-01-01T00:00:00Z",
+                    "actor": {"actor_type": "System", "actor_id": "sys"},
+                    "object": {"object_type": "Intent", "object_id": "obj1"},
+                    "intent_id": null,
+                    "proposal_id": null,
+                    "execution_id": null,
+                    "capability_id": null,
+                    "rollback_contract_id": null,
+                    "policy_bundle_id": null,
+                    "trust_labels": [],
+                    "sensitivity_labels": [],
+                    "parent_edges": [],
+                    "hash_chain": {"content_hash": ""},
+                    "metadata": {}
+                }
+            ],
+            "edges": []
+        }"#;
+        let resp: ferrum_proto::LineageQueryResponse =
+            serde_json::from_str(json).expect("valid test fixture");
+        let text = format_lineage_query_text(&resp);
+        assert!(text.contains("LineageQuery: 1 event(s), 0 edge(s)"));
+        assert!(text.contains("IntentCompiled"));
+    }
+
+    #[test]
+    fn test_lineage_query_request_serialization() {
+        let req = LineageQueryRequest {
+            execution_id: ferrum_proto::ExecutionId(
+                uuid::Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap(),
+            ),
+            event_id: ferrum_proto::EventId(
+                uuid::Uuid::parse_str("22222222-2222-2222-2222-222222222222").unwrap(),
+            ),
+            ancestry: true,
+            descendants: false,
+            max_hops: Some(8),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"execution_id\":\"11111111-1111-1111-1111-111111111111\""));
+        assert!(json.contains("\"event_id\":\"22222222-2222-2222-2222-222222222222\""));
+        assert!(json.contains("\"ancestry\":true"));
+        assert!(json.contains("\"descendants\":false"));
+        assert!(json.contains("\"max_hops\":8"));
+    }
+
+    #[test]
+    fn test_lineage_query_request_minimal() {
+        // Only required fields
+        let req = LineageQueryRequest {
+            execution_id: ferrum_proto::ExecutionId(
+                uuid::Uuid::parse_str("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa").unwrap(),
+            ),
+            event_id: ferrum_proto::EventId(
+                uuid::Uuid::parse_str("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb").unwrap(),
+            ),
+            ancestry: false,
+            descendants: true,
+            max_hops: None,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"ancestry\":false"));
+        assert!(json.contains("\"descendants\":true"));
+        assert!(json.contains("\"max_hops\":null"));
     }
 }

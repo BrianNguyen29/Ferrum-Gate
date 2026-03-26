@@ -137,10 +137,10 @@ SideEffectPrepared -> SideEffectVerified -> terminal event
    - P1 backlog: expand fixture library to cover more real-world attack patterns
    - Source: `docs/implementation-path/11-remaining-tasks.md` (updated)
 
-2. **Generic provenance query/replay fabric**
-   - Status: Minimal fail-closed endpoint exists at `POST /v1/provenance/query`
-   - Full query/replay/graph tooling is future work
-   - Source: `docs/implementation-path/11-phase-f-evidence.md` section 4
+ 2. **Generic provenance query/replay fabric**
+   - Status: Core query surface DONE; `POST /v1/provenance/query` expanded with filters on `intent_id`, `proposal_id`, `execution_id`, `capability_id`, event kind, terminal state, time range, cursor pagination; `ferrum-graph` read-model helpers implemented (`terminal_events`, `walk_backwards_from`, `walk_forwards_from`); integration tests at `tests/integration_provenance_query.rs`
+   - Future P2: advanced replay/fabric tooling, cross-node ledger sync, live hash verification during append
+   - Source: `crates/ferrum-proto/src/provenance.rs:86`, `crates/ferrum-store/src/sqlite/provenance.rs:142`, `crates/ferrum-gateway/src/server.rs:2192`, `crates/ferrum-graph/src/lib.rs:52`
 
 3. **EmailSend recovery parity**
    - Status: EmailDraft allow_send=true explicitly denied at gateway prepare-time
@@ -161,9 +161,15 @@ SideEffectPrepared -> SideEffectVerified -> terminal event
    - Future: live hash verification during append, ledger read-model, cross-node sync remain open
    - Source: `docs/implementation-path/12-ledger-hash-chain-execution-plan.md` Commits 1-4; `docs/implementation-path/11-remaining-tasks.md` line 26
 
-7. **ferrumctl expanded utility**
-   - Status: Minimal health/inspect commands exist
-   - Source: `docs/implementation-path/11-remaining-tasks.md` line 29
+ 7. **ferrumctl expanded utility**
+    - Status: Minimal health/inspect commands exist
+    - Source: `docs/implementation-path/11-remaining-tasks.md` line 29
+
+ 8. **Runtime integration boundary (proof slice DONE)**
+    - Status: Observation-only MCP bridge (`McpBridge`) with explicit anchor ingest; e2e lineage test proves internal + external events share same execution chain
+    - Evidence: `crates/ferrum-integrations-mcp/src/bridge.rs` (Commit 3 public API); `tests/integration_mcp_bridge.rs:253` (`test_mcp_bridge_ingest_creates_linked_external_event`); `tests/integration_mcp_bridge.rs:399` (`test_mcp_bridge_ingest_multiple_event_types`)
+    - Future P3: full MCP transport loop, auto anchor resolution, persistent dedupe, background replay worker, multiple simultaneous vendor bridges
+    - Source: `docs/implementation-path/14-runtime-integration-boundary-execution-plan.md`
 
 ---
 

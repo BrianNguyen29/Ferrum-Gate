@@ -130,6 +130,30 @@ Combined filters: when both `proposal_id` and `execution_id` are provided, both 
 POST /v1/approvals/{approval_id}/resolve
 {"actor": {...}, "approve": true, "reason": "..."}
 ```
-Granting (approve=true) consumes the capability and advances the execution to Prepared. Denying (approve=false) leaves the execution in AwaitingApproval and does NOT consume the capability.
+Granting (approve=true) consumes the capability and advances the execution to Prepared. Denying (approve=false) transitions the execution to terminal Denied state and does NOT consume the capability.
 
 Pending approvals expire after 15 minutes (expires_at). Expired approvals must be re-created by re-authorizing the execution.
+
+**CLI equivalents (ferrumctl):**
+```sh
+# List pending approvals for a proposal
+ferrumctl server inspect-approvals --proposal-id UUID --limit 10
+
+# Bulk-approve (confirm-gated: --yes + --expect-count must match actual count)
+ferrumctl server resolve-approval-bulk \
+  --proposal-id UUID \
+  --limit 10 \
+  --yes \
+  --expect-count 3 \
+  --approve
+
+# Bulk-deny with reason
+ferrumctl server resolve-approval-bulk \
+  --execution-id UUID \
+  --limit 5 \
+  --yes \
+  --expect-count 2 \
+  --deny \
+  --reason "Not authorized for this execution"
+```
+Bulk mode requires at least one scope filter (`--proposal-id` or `--execution-id`), an explicit `--limit`, and explicit confirmation (`--yes` + `--expect-count`).

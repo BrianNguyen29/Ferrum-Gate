@@ -10,3 +10,5 @@ clap = { version = "4", features = ["derive", "env"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+ferrum-proto = { path = "../../crates/ferrum-proto" }
+uuid.workspace = true
