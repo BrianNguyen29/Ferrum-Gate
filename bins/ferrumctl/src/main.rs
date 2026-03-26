@@ -1105,7 +1105,7 @@ enum ServerCommand {
         deny: bool,
 
         /// Actor type resolving this approval.
-        #[arg(long, value_enum, default_value = "Operator")]
+        #[arg(long, value_enum, default_value = "operator")]
         actor_type: ActorTypeCli,
 
         /// Actor ID (username, agent name, etc.).
@@ -1173,7 +1173,7 @@ enum ServerCommand {
         deny: bool,
 
         /// Actor type resolving these approvals.
-        #[arg(long, value_enum, default_value = "Operator")]
+        #[arg(long, value_enum, default_value = "operator")]
         actor_type: ActorTypeCli,
 
         /// Actor ID (username, agent name, etc.).

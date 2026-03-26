@@ -157,3 +157,16 @@ ferrumctl server resolve-approval-bulk \
   --reason "Not authorized for this execution"
 ```
 Bulk mode requires at least one scope filter (`--proposal-id` or `--execution-id`), an explicit `--limit`, and explicit confirmation (`--yes` + `--expect-count`).
+
+**Watch pending approvals continuously:**
+```sh
+# Poll every 5 seconds (default), single iteration — useful in scripts/terminal loops
+ferrumctl server watch-approvals --iterations 1
+
+# Stream approvals, 2-second poll interval, JSON per iteration (for jq processing)
+ferrumctl server watch-approvals --poll-interval-ms 2000 --json
+
+# Watch approvals for a specific execution
+ferrumctl server watch-approvals --execution-id UUID --iterations 1
+```
+The `--iterations` flag bounds the watch loop (defaults to 1 for a single shot). Omit it for a continuous watch in long-running operator workflows.
