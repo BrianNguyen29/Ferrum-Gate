@@ -85,6 +85,7 @@ cargo run -p ferrumd -- --check-startup-guard
 - `cargo run -p ferrumctl -- server inspect-provenance --limit <n>` limits results per page (server default is 100, max 1000).
 - `cargo run -p ferrumctl -- server inspect-provenance --cursor <token>` resumes from a previous page's `next_cursor`.
 - `cargo run -p ferrumctl -- server inspect-provenance --all-pages` exports all events across all pages as JSONL (newline-delimited JSON), one event per line. Follows cursors automatically until exhaustion.
+- `cargo run -p ferrumctl -- server inspect-provenance-stats` aggregates provenance statistics and runs consistency checks over queried events. Use `--max-events <n>` to bound collection (default 10000, max 100000). Use `--json` for JSON output.
 - `cargo run -p ferrumctl -- server inspect-event <event_id> [--ancestry] [--descendants]` inspects a single provenance event, optionally including its ancestor chain and/or descendant chain.
 - `cargo run -p ferrumctl -- server inspect-lineage <id> --format dot --output <path>` exports the event lineage as a Graphviz DOT file for visualization.
 - `POST /v1/provenance/events/external` is the first P3 runtime boundary: it records a vendor-neutral externally observed event against an existing execution lineage and fails closed if the execution or parent event is missing/mismatched. Available as `ferrumctl server ingest-external-event`.
