@@ -130,7 +130,7 @@ Combined filters: when both `proposal_id` and `execution_id` are provided, both 
 POST /v1/approvals/{approval_id}/resolve
 {"actor": {...}, "approve": true, "reason": "..."}
 ```
-Granting (approve=true) consumes the capability and advances the execution to Prepared. Denying (approve=false) leaves the execution in AwaitingApproval and does NOT consume the capability.
+Granting (approve=true) consumes the capability and advances the execution to Prepared. Denying (approve=false) transitions the execution to terminal Denied state and does NOT consume the capability.
 
 Pending approvals expire after 15 minutes (expires_at). Expired approvals must be re-created by re-authorizing the execution.
 
