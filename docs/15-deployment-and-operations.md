@@ -91,6 +91,24 @@ cargo run -p ferrumd -- --check-startup-guard
 - `POST /v1/provenance/events/external` is the first P3 runtime boundary: it records a vendor-neutral externally observed event against an existing execution lineage and fails closed if the execution or parent event is missing/mismatched. Available as `ferrumctl server ingest-external-event`.
 - For full provenance audit workflows including compliance evidence export, see the [Provenance Audit Runbook](runbooks/provenance-audit-runbook.md).
 
+## Execution control
+
+Operators can request compensation or rollback via the control API while an execution is still in a non-terminal state. Both operations require the execution to have a rollback contract and will fail if the execution is already in a terminal state (Compensated, RolledBack, Denied, Failed, Quarantined). Committed state is accepted since it allows post-commit undo.
+
+**Compensate an execution:**
+```
+POST /v1/executions/{execution_id}/compensate
+```
+Available as `ferrumctl server compensate-execution <execution_id> [--json]`.
+
+**Rollback an execution:**
+```
+POST /v1/executions/{execution_id}/rollback
+```
+Available as `ferrumctl server rollback-execution <execution_id> [--json]`.
+
+Both commands require explicit `execution_id` and return immediately on acknowledgment. Use `ferrumctl server watch-execution <execution_id>` to monitor state transitions until a terminal state is reached.
+
 ## Operations checklist
 - policy bundle đúng environment
 - rollback không bị tắt

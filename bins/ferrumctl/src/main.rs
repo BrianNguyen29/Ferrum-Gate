@@ -1,5 +1,7 @@
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
+use ferrum_proto::ExecutionId;
+use ferrum_proto::api::{CompensateRequest, CompensateResponse, RollbackRequest, RollbackResponse};
 use ferrum_proto::approval::ApprovalResolveRequest;
 use ferrum_proto::common::{ActorRef, ActorType};
 use ferrum_proto::provenance::{LineageQueryRequest, LineageQueryResponse};
@@ -601,6 +603,34 @@ impl ServerClient {
         req: &ApprovalResolveRequest,
     ) -> Result<ApprovalRequest> {
         let path = format!("/v1/approvals/{}/resolve", approval_id);
+        let resp = self
+            .request(reqwest::Method::POST, &path)
+            .json(req)
+            .send()
+            .await?;
+        self.decode_json(resp).await
+    }
+
+    async fn compensate_execution(
+        &self,
+        execution_id: &str,
+        req: &CompensateRequest,
+    ) -> Result<CompensateResponse> {
+        let path = format!("/v1/executions/{}/compensate", execution_id);
+        let resp = self
+            .request(reqwest::Method::POST, &path)
+            .json(req)
+            .send()
+            .await?;
+        self.decode_json(resp).await
+    }
+
+    async fn rollback_execution(
+        &self,
+        execution_id: &str,
+        req: &RollbackRequest,
+    ) -> Result<RollbackResponse> {
+        let path = format!("/v1/executions/{}/rollback", execution_id);
         let resp = self
             .request(reqwest::Method::POST, &path)
             .json(req)
@@ -1272,6 +1302,40 @@ enum ServerCommand {
         #[arg(long)]
         require_terminal: bool,
     },
+    /// Request compensation for an execution.
+    CompensateExecution {
+        /// Execution ID (UUID).
+        execution_id: String,
+
+        /// Server base URL (e.g. http://127.0.0.1:8080).
+        #[arg(long, env = "FERRUMCTL_SERVER_URL")]
+        server_url: Option<String>,
+
+        /// Bearer token for authentication.
+        #[arg(long, env = "FERRUMCTL_BEARER_TOKEN")]
+        bearer_token: Option<String>,
+
+        /// Output as JSON instead of human-readable.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Request rollback for an execution.
+    RollbackExecution {
+        /// Execution ID (UUID).
+        execution_id: String,
+
+        /// Server base URL (e.g. http://127.0.0.1:8080).
+        #[arg(long, env = "FERRUMCTL_SERVER_URL")]
+        server_url: Option<String>,
+
+        /// Bearer token for authentication.
+        #[arg(long, env = "FERRUMCTL_BEARER_TOKEN")]
+        bearer_token: Option<String>,
+
+        /// Output as JSON instead of human-readable.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -1657,6 +1721,63 @@ async fn run_watch_execution(
         // Wait before next poll
         tokio::time::sleep(std::time::Duration::from_millis(poll_interval_ms)).await;
     }
+}
+
+async fn run_compensate_execution(
+    execution_id: &str,
+    url: Option<String>,
+    token: Option<String>,
+    as_json: bool,
+) -> Result<()> {
+    let exec_id = ExecutionId(execution_id.parse().context("invalid execution_id UUID")?);
+    let req = CompensateRequest {
+        execution_id: exec_id,
+    };
+
+    let url = resolve_server_url(url)?;
+    let client = ServerClient::new(&url, token);
+    let resp = client.compensate_execution(execution_id, &req).await?;
+
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&resp)?);
+    } else {
+        println!(
+            "Compensation requested for execution: {}",
+            resp.execution_id
+        );
+        println!("  Compensated: {}", resp.compensated);
+        if let Some(ts) = resp.compensated_at {
+            println!("  Compensated at: {}", ts);
+        }
+    }
+    Ok(())
+}
+
+async fn run_rollback_execution(
+    execution_id: &str,
+    url: Option<String>,
+    token: Option<String>,
+    as_json: bool,
+) -> Result<()> {
+    let exec_id = ExecutionId(execution_id.parse().context("invalid execution_id UUID")?);
+    let req = RollbackRequest {
+        execution_id: exec_id,
+    };
+
+    let url = resolve_server_url(url)?;
+    let client = ServerClient::new(&url, token);
+    let resp = client.rollback_execution(execution_id, &req).await?;
+
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&resp)?);
+    } else {
+        println!("Rollback requested for execution: {}", resp.execution_id);
+        println!("  Rolled back: {}", resp.rolled_back);
+        if let Some(ts) = resp.rolled_back_at {
+            println!("  Rolled back at: {}", ts);
+        }
+    }
+    Ok(())
 }
 
 async fn run_resolve_approval(
@@ -2872,6 +2993,22 @@ async fn main() -> Result<()> {
                     require_terminal,
                 )
                 .await?;
+            }
+            ServerCommand::CompensateExecution {
+                execution_id,
+                server_url,
+                bearer_token,
+                json,
+            } => {
+                run_compensate_execution(&execution_id, server_url, bearer_token, json).await?;
+            }
+            ServerCommand::RollbackExecution {
+                execution_id,
+                server_url,
+                bearer_token,
+                json,
+            } => {
+                run_rollback_execution(&execution_id, server_url, bearer_token, json).await?;
             }
         },
         Command::Debug { sub } => match sub {

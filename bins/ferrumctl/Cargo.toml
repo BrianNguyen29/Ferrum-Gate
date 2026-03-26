@@ -22,6 +22,7 @@ ferrum-rollback = { path = "../../crates/ferrum-rollback" }
 ferrum-pdp = { path = "../../crates/ferrum-pdp" }
 ferrum-cap = { path = "../../crates/ferrum-cap" }
 ferrum-firewall = { path = "../../crates/ferrum-firewall" }
+ferrum-adapter-fs = { path = "../../crates/ferrum-adapter-fs" }
 # Web framework for local test server
 axum.workspace = true
 # Async runtime + temp dirs — tokio, chrono, tempfile all declared as workspace deps

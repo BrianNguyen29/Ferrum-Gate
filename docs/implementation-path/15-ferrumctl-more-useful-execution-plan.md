@@ -439,3 +439,38 @@ ferrumctl server watch-approvals \
 - [x] Local `poll_interval_ms` validation (100..=300_000)
 - [x] Unit tests for validation and formatting
 - [x] Plan doc updated
+
+---
+
+## Slice 4: compensate-execution and rollback-execution wrappers
+
+**Files:**
+- `bins/ferrumctl/src/main.rs`
+- `docs/15-deployment-and-operations.md`
+
+**Scope:**
+- Add `CompensateExecution` and `RollbackExecution` CLI variants under `ferrumctl server`.
+- Add `compensate_execution` and `rollback_execution` client methods to `ServerClient`.
+- Both POST to existing gateway endpoints (`/v1/executions/{execution_id}/compensate` and `/v1/executions/{execution_id}/rollback`).
+- Require explicit `execution_id`; support `--json` for JSON output.
+- No new server-side behavior; gateway enforces terminal-state guards and rollback-contract precondition.
+
+**Key gateway semantics (not changed, only documented):**
+- Both endpoints reject if execution is already in a terminal state (Compensated, RolledBack, Denied, Failed, Quarantined).
+- Committed state is accepted (can undo after commit).
+- Both require the execution to have a rollback contract (`rollback_contract_id` must be present).
+
+**Docs updated:**
+- `docs/15-deployment-and-operations.md` now includes an "Execution control" section describing both commands and their semantics.
+
+**Validation:**
+- `cargo check -p ferrumctl` passes.
+- `cargo test -p ferrumctl` passes (77 unit + 7 integration).
+- `cargo run -p ferrumctl -- server compensate-execution --help` shows help.
+- `cargo run -p ferrumctl -- server rollback-execution --help` shows help.
+
+**Slice Status: COMPLETE**
+- [x] `CompensateExecution` and `RollbackExecution` CLI variants
+- [x] Client methods `compensate_execution` and `rollback_execution`
+- [x] `--json` support
+- [x] Documentation updated with correct semantics
