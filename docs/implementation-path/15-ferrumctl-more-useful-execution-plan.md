@@ -164,9 +164,75 @@ ResolveApproval {
 
 ---
 
+## Slice 15b: Bulk Approval Mutation (Single-Page, Confirm-Gated)
+
+**File:**
+- `bins/ferrumctl/src/main.rs`
+
+**Scope:**
+- Add `ResolveApprovalBulk` CLI variant (`ferrumctl server resolve-approval-bulk`).
+- List one page of approvals using existing `list_approvals` API with filters and limit.
+- Resolve each approval using the existing `resolve_approval` API.
+- Reconcile non-2xx outcomes via follow-up `get_approval` read.
+- Classify outcomes: `Resolved`, `MutationRejected`, `MutationConflicted`, `Unreadable`.
+- Output per-item results clearly; exit non-zero on hard failures.
+
+**Bulk Mode Guardrails:**
+- At least one scope filter required: `--proposal-id` or `--execution-id`.
+- Explicit `--limit` required (bound the mutation).
+- Explicit confirmation required: `--yes` and `--expect-count` (must match actual count).
+- Decision flags explicit and mutually exclusive: `--approve` xor `--deny`.
+- `--reason` required when `--deny`.
+- Single-page only — no all-pages automation.
+
+**CLI Usage:**
+```sh
+# List pending approvals for a proposal
+ferrumctl server inspect-approvals --proposal-id UUID --limit 10
+
+# Bulk-approve all pending approvals for a proposal (exact count match required)
+ferrumctl server resolve-approval-bulk \
+  --proposal-id UUID \
+  --limit 10 \
+  --yes \
+  --expect-count 3 \
+  --approve
+
+# Bulk-deny with reason
+ferrumctl server resolve-approval-bulk \
+  --execution-id UUID \
+  --limit 5 \
+  --yes \
+  --expect-count 2 \
+  --deny \
+  --reason "Not authorized for this execution"
+```
+
+**Key Implementation Details:**
+- `BulkResolutionOutcome` enum classifies each per-item result.
+- `classify_resolve_outcome()` fetches final state on non-2xx to determine if mutation was applied.
+- `is_pending_state()` helper filters the listing to only Pending approvals.
+- `format_bulk_outcome()` renders human-readable per-item output.
+- `extract_http_status()` walks the anyhow error chain for reqwest status codes.
+- Exit is non-zero if any `MutationRejected` or `Unreadable` outcomes exist.
+
+**Validation:**
+- `cargo check -p ferrumctl` passes.
+- `cargo test -p ferrumctl` passes (57 tests).
+- Unit tests cover: `is_pending_state`, `format_bulk_outcome`, `BulkResolutionOutcome` JSON serialization, `extract_http_status`.
+
+**Slice Status: COMPLETE**
+- [x] `ResolveApprovalBulk` CLI variant and handler
+- [x] Per-item outcome classification and output
+- [x] Non-2xx reconciliation via follow-up read
+- [x] Fail-closed guardrails (scope filter, limit, confirmation)
+- [x] Unit tests for helpers and classification
+- [x] Plan doc updated
+
+---
+
 ## Future Backlog (Out of Scope for This Slice)
 
-- Bulk approval mutation (`--all-pending`)
 - Interactive TUI for approval workflow
 - `ferrumctl server cancel-execution <execution_id>`
 - `ferrumctl server pause-execution <execution_id>`
@@ -182,12 +248,13 @@ ResolveApproval {
 | `crates/ferrum-proto/src/approval.rs:28-32` | `ApprovalResolveRequest` proto |
 | `crates/ferrum-proto/src/common.rs:105-120` | `ActorRef` and `ActorType` types |
 | `bins/ferrumctl/src/main.rs:533-663` | `ServerClient` struct |
+| `bins/ferrumctl/src/main.rs:1383-1675` | Bulk approval resolution (`ResolveApprovalBulk`, handlers, helpers) |
+| `bins/ferrumctl/src/main.rs:3080-3201` | Bulk resolution unit tests |
 | `openapi/ferrumgate-control-api.v1.yaml:415-433` | Resolve approval API spec |
 
 ---
 
 ## Recommended Next Slice
 
-Bulk approval mutation (`ferrumctl server resolve-approval --all-pending`) grounded in
-the same execution plan. The single-approval CLI plumbing from this slice provides the
-foundation for bulk operations.
+Interactive TUI for approval workflow or `ferrumctl server cancel-execution`.
+Both are independent of the approval plumbing added in slices 15 and 15b.

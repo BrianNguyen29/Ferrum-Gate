@@ -1088,6 +1088,74 @@ enum ServerCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Resolve multiple pending approvals in bulk (single-page, confirm-gated).
+    ResolveApprovalBulk {
+        /// Activate bulk mode and resolve all pending approvals matching the filter.
+        /// Bulk mode requires: --proposal-id or --execution-id, --limit, --yes, --expect-count.
+        #[arg(long)]
+        all_pending: bool,
+
+        /// Filter by proposal ID (UUID). At least one of --proposal-id or --execution-id
+        /// is required in bulk mode.
+        #[arg(long)]
+        proposal_id: Option<String>,
+
+        /// Filter by execution ID (UUID). At least one of --proposal-id or --execution-id
+        /// is required in bulk mode.
+        #[arg(long)]
+        execution_id: Option<String>,
+
+        /// Maximum number of approvals to resolve in this bulk operation.
+        /// Required in bulk mode to bound the mutation.
+        #[arg(long)]
+        limit: Option<u32>,
+
+        /// Confirm the bulk operation. Required in bulk mode to prevent accidental mutations.
+        #[arg(long)]
+        yes: bool,
+
+        /// Expected count of pending approvals. The bulk operation will fail if the
+        /// actual count of pending approvals does not match this number, preventing
+        /// accidental resolution of an unexpected set.
+        #[arg(long)]
+        expect_count: Option<u32>,
+
+        /// Approve all the pending approvals.
+        #[arg(long, conflicts_with = "deny")]
+        approve: bool,
+
+        /// Deny all the pending approvals.
+        #[arg(long, conflicts_with = "approve")]
+        deny: bool,
+
+        /// Actor type resolving these approvals.
+        #[arg(long, value_enum, default_value = "Operator")]
+        actor_type: ActorTypeCli,
+
+        /// Actor ID (username, agent name, etc.).
+        #[arg(long, default_value = "ferrumctl")]
+        actor_id: String,
+
+        /// Optional display name for the actor.
+        #[arg(long)]
+        actor_display_name: Option<String>,
+
+        /// Reason for the decision. Required when --deny is set.
+        #[arg(long, requires = "deny")]
+        reason: Option<String>,
+
+        /// Server base URL (e.g. http://127.0.0.1:8080).
+        #[arg(long, env = "FERRUMCTL_SERVER_URL")]
+        server_url: Option<String>,
+
+        /// Bearer token for authentication.
+        #[arg(long, env = "FERRUMCTL_BEARER_TOKEN")]
+        bearer_token: Option<String>,
+
+        /// Output as JSON instead of human-readable.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -1310,6 +1378,357 @@ async fn run_resolve_approval(
         println!("  Expires:  {}", approval.expires_at);
     }
     Ok(())
+}
+
+/// Result of attempting to resolve a single approval in a bulk operation.
+/// Classification is determined by the final observed state after reconciliation.
+#[derive(Debug, Clone, serde::Serialize)]
+enum BulkResolutionOutcome {
+    /// Mutation was accepted (2xx from resolve endpoint) and the approval reached
+    /// a terminal decided state (Approved or Denied).
+    Resolved {
+        approval_id: String,
+        decision: String,
+        state: String,
+    },
+    /// Mutation request returned a non-2xx HTTP status. Follow-up read showed the
+    /// approval is still pending — the mutation was not applied.
+    MutationRejected {
+        approval_id: String,
+        http_status: u16,
+        state: String,
+    },
+    /// Mutation request returned a non-2xx HTTP status. Follow-up read showed the
+    /// approval reached a terminal decided state despite the error — the mutation
+    /// may have been applied despite the error response.
+    MutationConflicted {
+        approval_id: String,
+        http_status: u16,
+        decision: String,
+        state: String,
+    },
+    /// Mutation request returned a non-2xx HTTP status. Follow-up read failed —
+    /// the final state is unreadable. This is a hard failure.
+    Unreadable {
+        approval_id: String,
+        http_status: u16,
+        read_error: String,
+    },
+}
+
+/// Classifies the outcome of a bulk-resolve attempt for a single approval.
+/// On non-2xx, fetches the final approval state to determine whether the mutation
+/// was applied despite the error, or rejected, or unreadable.
+async fn classify_resolve_outcome(
+    client: &ServerClient,
+    approval_id: &str,
+    http_status: u16,
+) -> BulkResolutionOutcome {
+    match client.get_approval(approval_id).await {
+        Ok(approval) => {
+            let state = approval.state.clone();
+            // Check if it reached a terminal decided state
+            if state == "Approved" || state == "Denied" {
+                BulkResolutionOutcome::MutationConflicted {
+                    approval_id: approval_id.to_string(),
+                    http_status,
+                    decision: approval.state.clone(),
+                    state,
+                }
+            } else {
+                BulkResolutionOutcome::MutationRejected {
+                    approval_id: approval_id.to_string(),
+                    http_status,
+                    state,
+                }
+            }
+        }
+        Err(read_err) => BulkResolutionOutcome::Unreadable {
+            approval_id: approval_id.to_string(),
+            http_status,
+            read_error: read_err.to_string(),
+        },
+    }
+}
+
+/// Returns true if the given approval state is considered "pending" and therefore
+/// eligible for resolution.
+fn is_pending_state(state: &str) -> bool {
+    state == "Pending"
+}
+
+/// Formats a single bulk resolution outcome for human-readable output.
+fn format_bulk_outcome(outcome: &BulkResolutionOutcome) -> String {
+    match outcome {
+        BulkResolutionOutcome::Resolved {
+            approval_id,
+            decision,
+            state,
+        } => {
+            format!(
+                "RESOLVED  {}  decision={} state={}",
+                approval_id, decision, state
+            )
+        }
+        BulkResolutionOutcome::MutationRejected {
+            approval_id,
+            http_status,
+            state,
+        } => {
+            format!(
+                "REJECTED  {}  HTTP {}  state={}",
+                approval_id, http_status, state
+            )
+        }
+        BulkResolutionOutcome::MutationConflicted {
+            approval_id,
+            http_status,
+            decision,
+            state,
+        } => {
+            format!(
+                "CONFLICT  {}  HTTP {}  decision={} state={}",
+                approval_id, http_status, decision, state
+            )
+        }
+        BulkResolutionOutcome::Unreadable {
+            approval_id,
+            http_status,
+            read_error,
+        } => {
+            format!(
+                "UNREADABLE  {}  HTTP {}  read failed: {}",
+                approval_id, http_status, read_error
+            )
+        }
+    }
+}
+
+async fn run_resolve_approval_bulk(
+    all_pending: bool,
+    proposal_id: Option<String>,
+    execution_id: Option<String>,
+    limit: Option<u32>,
+    yes: bool,
+    expect_count: Option<u32>,
+    approve: bool,
+    deny: bool,
+    actor_type: ActorTypeCli,
+    actor_id: &str,
+    actor_display_name: Option<String>,
+    reason: Option<String>,
+    url: Option<String>,
+    token: Option<String>,
+    as_json: bool,
+) -> Result<()> {
+    // Determine if bulk mode is active based on any bulk-mode flag being set.
+    // Bulk mode is triggered by --all-pending, scope filters, or --limit.
+    let bulk_mode = all_pending
+        || proposal_id.is_some()
+        || execution_id.is_some()
+        || limit.is_some()
+        || yes
+        || expect_count.is_some();
+
+    if bulk_mode {
+        // --- Bulk mode guardrails ---
+        // Fail-closed: require explicit approve xor deny
+        if !approve && !deny {
+            bail!("bulk mode: must specify either --approve or --deny");
+        }
+        if approve && deny {
+            bail!("bulk mode: cannot specify both --approve and --deny");
+        }
+
+        // Reason is required when denying
+        if deny && reason.is_none() {
+            bail!("bulk mode: --reason is required when --deny is set");
+        }
+
+        // Require at least one scope filter
+        if proposal_id.is_none() && execution_id.is_none() {
+            bail!(
+                "bulk mode: at least one scope filter is required \
+                 (--proposal-id or --execution-id)"
+            );
+        }
+
+        // Require explicit limit
+        let limit = limit.context("bulk mode: --limit is required")?;
+
+        // Require explicit confirmation
+        if !yes {
+            bail!("bulk mode: --yes is required to confirm the bulk mutation");
+        }
+        let expect_count = expect_count.context("bulk mode: --expect-count is required")?;
+
+        // Build actor and request
+        let actor = ActorRef {
+            actor_type: actor_type.into(),
+            actor_id: actor_id.to_string(),
+            display_name: actor_display_name,
+        };
+
+        let req = ApprovalResolveRequest {
+            actor,
+            approve,
+            reason,
+        };
+
+        let url = resolve_server_url(url)?;
+        let client = ServerClient::new(&url, token);
+
+        // Fetch one page of pending approvals matching the scope filter
+        let pending = client
+            .list_approvals(&ListApprovalsQuery {
+                limit: Some(limit),
+                cursor: None,
+                proposal_id: proposal_id.clone(),
+                execution_id: execution_id.clone(),
+            })
+            .await?;
+
+        // Filter to only Pending approvals (API may return non-pending on the page)
+        let pending: Vec<_> = pending
+            .items
+            .into_iter()
+            .filter(|a| is_pending_state(&a.state))
+            .collect();
+
+        // Fail if count doesn't match expectation
+        let actual_count = pending.len() as u32;
+        if actual_count != expect_count {
+            bail!(
+                "bulk mode: expected {} pending approvals but found {} \
+                 (use --expect-count to match the actual count or re-list with --limit to adjust)",
+                expect_count,
+                actual_count
+            );
+        }
+
+        if pending.is_empty() {
+            println!("Bulk resolve: no pending approvals match the filter. Nothing to do.");
+            return Ok(());
+        }
+
+        println!(
+            "Bulk resolve: {} approval(s) (limit={}, expect_count={})\n",
+            pending.len(),
+            limit,
+            expect_count
+        );
+
+        // Resolve each approval and classify the outcome
+        let mut outcomes: Vec<BulkResolutionOutcome> = Vec::new();
+        let mut hard_failure_count = 0u32;
+
+        for approval in &pending {
+            let approval_id = &approval.approval_id;
+
+            // Attempt resolve — let any panics propagate; handle error classification below
+            let outcome = match client.resolve_approval(approval_id, &req).await {
+                Ok(updated) => {
+                    // 2xx: classify as Resolved if terminal state, else MutationConflicted
+                    let state = updated.state.clone();
+                    if state == "Approved" || state == "Denied" {
+                        BulkResolutionOutcome::Resolved {
+                            approval_id: approval_id.clone(),
+                            decision: updated.state.clone(),
+                            state,
+                        }
+                    } else {
+                        // Should not happen on 2xx with a valid response, but guard anyway
+                        BulkResolutionOutcome::Resolved {
+                            approval_id: approval_id.clone(),
+                            decision: updated.state.clone(),
+                            state,
+                        }
+                    }
+                }
+                Err(err) => {
+                    // Non-2xx or network error — classify via follow-up read
+                    let http_status = extract_http_status(&err);
+                    classify_resolve_outcome(&client, approval_id, http_status).await
+                }
+            };
+
+            // Check for hard failures that should cause non-zero exit
+            let is_hard_failure = matches!(
+                outcome,
+                BulkResolutionOutcome::MutationRejected { .. }
+                    | BulkResolutionOutcome::Unreadable { .. }
+            );
+            if is_hard_failure {
+                hard_failure_count += 1;
+            }
+
+            outcomes.push(outcome);
+        }
+
+        // Output per-item results
+        if as_json {
+            println!("{}", serde_json::to_string_pretty(&outcomes)?);
+        } else {
+            println!("Bulk resolution results:");
+            for outcome in &outcomes {
+                println!("  {}", format_bulk_outcome(outcome));
+            }
+            println!();
+        }
+
+        // Summary
+        let resolved_count = outcomes
+            .iter()
+            .filter(|o| matches!(o, BulkResolutionOutcome::Resolved { .. }))
+            .count() as u32;
+        let conflicted_count = outcomes
+            .iter()
+            .filter(|o| matches!(o, BulkResolutionOutcome::MutationConflicted { .. }))
+            .count() as u32;
+        let rejected_count = outcomes
+            .iter()
+            .filter(|o| matches!(o, BulkResolutionOutcome::MutationRejected { .. }))
+            .count() as u32;
+        let unreadable_count = outcomes
+            .iter()
+            .filter(|o| matches!(o, BulkResolutionOutcome::Unreadable { .. }))
+            .count() as u32;
+
+        println!(
+            "Summary: {} resolved, {} conflicted, {} rejected, {} unreadable",
+            resolved_count, conflicted_count, rejected_count, unreadable_count
+        );
+
+        // Exit non-zero if any hard failures remain (rejected, unreadable)
+        if hard_failure_count > 0 {
+            bail!(
+                "{} hard failure(s) (rejected/unreadable); \
+                 review output above and retry individual approvals",
+                hard_failure_count
+            );
+        }
+
+        Ok(())
+    } else {
+        // Fallback: single-approval mode — delegate to the existing handler
+        // This path should not be reached via CLI because ResolveApprovalBulk
+        // always has at least one bulk flag set. But kept for safety.
+        bail!(
+            "bulk mode: missing required flags (--proposal-id, --execution-id, \
+             --limit, --yes, --expect-count)"
+        );
+    }
+}
+
+/// Extracts the HTTP status code from an anyhow error that wraps a reqwest error.
+fn extract_http_status(err: &anyhow::Error) -> u16 {
+    err.chain()
+        .find_map(|e| {
+            e.downcast_ref::<reqwest::Error>()
+                .and_then(|re| re.status())
+                .map(|s| s.as_u16())
+        })
+        .unwrap_or(0)
 }
 
 async fn run_inspect_lineage(
@@ -1824,6 +2243,42 @@ async fn main() -> Result<()> {
             } => {
                 run_resolve_approval(
                     &approval_id,
+                    approve,
+                    deny,
+                    actor_type,
+                    &actor_id,
+                    actor_display_name,
+                    reason,
+                    server_url,
+                    bearer_token,
+                    json,
+                )
+                .await?;
+            }
+            ServerCommand::ResolveApprovalBulk {
+                all_pending,
+                proposal_id,
+                execution_id,
+                limit,
+                yes,
+                expect_count,
+                approve,
+                deny,
+                actor_type,
+                actor_id,
+                actor_display_name,
+                reason,
+                server_url,
+                bearer_token,
+                json,
+            } => {
+                run_resolve_approval_bulk(
+                    all_pending,
+                    proposal_id,
+                    execution_id,
+                    limit,
+                    yes,
+                    expect_count,
                     approve,
                     deny,
                     actor_type,
@@ -2582,5 +3037,134 @@ mod tests {
         let json = serde_json::to_string(&req).unwrap();
         assert!(json.contains("\"approve\":false"));
         assert!(json.contains("\"reason\":\"Not authorized for this action\""));
+    }
+
+    // -------------------------------------------------------------------------
+    // Bulk approval resolution tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_is_pending_state() {
+        assert!(is_pending_state("Pending"));
+        assert!(!is_pending_state("Approved"));
+        assert!(!is_pending_state("Denied"));
+        assert!(!is_pending_state("Expired"));
+        assert!(!is_pending_state("Cancelled"));
+    }
+
+    #[test]
+    fn test_format_bulk_outcome_resolved() {
+        let outcome = BulkResolutionOutcome::Resolved {
+            approval_id: "approval-abc".to_string(),
+            decision: "Approved".to_string(),
+            state: "Approved".to_string(),
+        };
+        let formatted = format_bulk_outcome(&outcome);
+        assert!(formatted.contains("RESOLVED"));
+        assert!(formatted.contains("approval-abc"));
+        assert!(formatted.contains("decision=Approved"));
+        assert!(formatted.contains("state=Approved"));
+    }
+
+    #[test]
+    fn test_format_bulk_outcome_rejected() {
+        let outcome = BulkResolutionOutcome::MutationRejected {
+            approval_id: "approval-xyz".to_string(),
+            http_status: 409,
+            state: "Pending".to_string(),
+        };
+        let formatted = format_bulk_outcome(&outcome);
+        assert!(formatted.contains("REJECTED"));
+        assert!(formatted.contains("approval-xyz"));
+        assert!(formatted.contains("HTTP 409"));
+        assert!(formatted.contains("state=Pending"));
+    }
+
+    #[test]
+    fn test_format_bulk_outcome_conflicted() {
+        let outcome = BulkResolutionOutcome::MutationConflicted {
+            approval_id: "approval-conf".to_string(),
+            http_status: 500,
+            decision: "Approved".to_string(),
+            state: "Approved".to_string(),
+        };
+        let formatted = format_bulk_outcome(&outcome);
+        assert!(formatted.contains("CONFLICT"));
+        assert!(formatted.contains("approval-conf"));
+        assert!(formatted.contains("HTTP 500"));
+        assert!(formatted.contains("decision=Approved"));
+    }
+
+    #[test]
+    fn test_format_bulk_outcome_unreadable() {
+        let outcome = BulkResolutionOutcome::Unreadable {
+            approval_id: "approval-unr".to_string(),
+            http_status: 503,
+            read_error: "connection refused".to_string(),
+        };
+        let formatted = format_bulk_outcome(&outcome);
+        assert!(formatted.contains("UNREADABLE"));
+        assert!(formatted.contains("approval-unr"));
+        assert!(formatted.contains("HTTP 503"));
+        assert!(formatted.contains("connection refused"));
+    }
+
+    #[test]
+    fn test_bulk_resolution_outcome_serialize_resolved() {
+        let outcome = BulkResolutionOutcome::Resolved {
+            approval_id: "approval-s".to_string(),
+            decision: "Approved".to_string(),
+            state: "Approved".to_string(),
+        };
+        let json = serde_json::to_string(&outcome).unwrap();
+        assert!(json.contains("\"Resolved\""));
+        assert!(json.contains("\"approval_id\":\"approval-s\""));
+        assert!(json.contains("\"decision\":\"Approved\""));
+    }
+
+    #[test]
+    fn test_bulk_resolution_outcome_serialize_rejected() {
+        let outcome = BulkResolutionOutcome::MutationRejected {
+            approval_id: "approval-r".to_string(),
+            http_status: 409,
+            state: "Pending".to_string(),
+        };
+        let json = serde_json::to_string(&outcome).unwrap();
+        assert!(json.contains("\"MutationRejected\""));
+        assert!(json.contains("\"approval_id\":\"approval-r\""));
+        assert!(json.contains("\"http_status\":409"));
+    }
+
+    #[test]
+    fn test_bulk_resolution_outcome_serialize_conflicted() {
+        let outcome = BulkResolutionOutcome::MutationConflicted {
+            approval_id: "approval-c".to_string(),
+            http_status: 500,
+            decision: "Denied".to_string(),
+            state: "Denied".to_string(),
+        };
+        let json = serde_json::to_string(&outcome).unwrap();
+        assert!(json.contains("\"MutationConflicted\""));
+        assert!(json.contains("\"http_status\":500"));
+    }
+
+    #[test]
+    fn test_bulk_resolution_outcome_serialize_unreadable() {
+        let outcome = BulkResolutionOutcome::Unreadable {
+            approval_id: "approval-u".to_string(),
+            http_status: 503,
+            read_error: "timeout".to_string(),
+        };
+        let json = serde_json::to_string(&outcome).unwrap();
+        assert!(json.contains("\"Unreadable\""));
+        assert!(json.contains("\"read_error\":\"timeout\""));
+    }
+
+    #[test]
+    fn test_extract_http_status_from_non_reqwest_error() {
+        // A regular anyhow error with no reqwest in the chain
+        let err = anyhow::Error::msg("some other error");
+        let status = extract_http_status(&err);
+        assert_eq!(status, 0);
     }
 }
