@@ -1200,6 +1200,46 @@ enum ServerCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Watch pending approvals by polling the list API at a fixed interval.
+    WatchApprovals {
+        /// Filter by proposal ID (UUID).
+        #[arg(long)]
+        proposal_id: Option<String>,
+
+        /// Filter by execution ID (UUID).
+        #[arg(long)]
+        execution_id: Option<String>,
+
+        /// Maximum approvals to return per iteration.
+        #[arg(long)]
+        limit: Option<u32>,
+
+        /// Cursor from a previous listing to resume from.
+        #[arg(long)]
+        cursor: Option<String>,
+
+        /// Polling interval in milliseconds. Default is 5000ms.
+        /// Must be between 100ms and 300000ms (5 minutes).
+        #[arg(long)]
+        poll_interval_ms: Option<u64>,
+
+        /// Maximum number of polling iterations. Default is 1 (single shot).
+        /// Use this to bound watch loops in tests and scripting.
+        #[arg(long)]
+        iterations: Option<u32>,
+
+        /// Server base URL (e.g. http://127.0.0.1:8080).
+        #[arg(long, env = "FERRUMCTL_SERVER_URL")]
+        server_url: Option<String>,
+
+        /// Bearer token for authentication.
+        #[arg(long, env = "FERRUMCTL_BEARER_TOKEN")]
+        bearer_token: Option<String>,
+
+        /// Output raw JSON envelope per iteration instead of human-readable summary.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -1362,6 +1402,127 @@ async fn run_inspect_approval(
         println!("  Created:  {}", approval.created_at);
         println!("  Expires:  {}", approval.expires_at);
     }
+    Ok(())
+}
+
+/// Validates poll_interval_ms locally, returning an error if outside the 100..=300_000 range.
+fn validate_poll_interval_ms(interval_ms: Option<u64>) -> Result<u64> {
+    const MIN_MS: u64 = 100;
+    const MAX_MS: u64 = 300_000;
+    const DEFAULT_MS: u64 = 5_000;
+
+    match interval_ms {
+        None => Ok(DEFAULT_MS),
+        Some(v) if v >= MIN_MS && v <= MAX_MS => Ok(v),
+        Some(v) => bail!(
+            "--poll-interval-ms must be between {} and {}, got {}",
+            MIN_MS,
+            MAX_MS,
+            v
+        ),
+    }
+}
+
+/// Formats an approval list envelope as a deterministic human-readable summary
+/// for a single watch iteration.
+fn format_watch_iteration_text(envelope: &ApprovalListEnvelope, iteration: u32) -> String {
+    let mut lines = Vec::new();
+    lines.push(format!(
+        "--- iteration {} ({} approval(s), next_cursor={}) ---",
+        iteration,
+        envelope.items.len(),
+        envelope.next_cursor.as_deref().unwrap_or("none")
+    ));
+
+    // Sort approvals deterministically: first by state (Pending first), then by created_at desc
+    let mut sorted: Vec<&ApprovalRequest> = envelope.items.iter().collect();
+    sorted.sort_by(|a, b| {
+        // Pending state sorts before others
+        let a_pending = if a.state == "Pending" { 0 } else { 1 };
+        let b_pending = if b.state == "Pending" { 0 } else { 1 };
+        a_pending
+            .cmp(&b_pending)
+            .then_with(|| b.created_at.cmp(&a.created_at))
+            .then_with(|| a.approval_id.cmp(&b.approval_id))
+    });
+
+    for approval in sorted {
+        lines.push(format!("Approval: {}", approval.approval_id));
+        lines.push(format!("  State:    {}", approval.state));
+        lines.push(format!("  Intent:   {}", approval.intent_id));
+        lines.push(format!("  Proposal: {}", approval.proposal_id));
+        if let Some(ref eid) = approval.execution_id {
+            lines.push(format!("  Execution:{}", eid));
+        }
+        lines.push(format!("  Reason:   {}", approval.reason));
+        lines.push(format!("  Created:  {}", approval.created_at));
+        lines.push(format!("  Expires:  {}", approval.expires_at));
+    }
+
+    lines.join("\n")
+}
+
+async fn run_watch_approvals(
+    proposal_id: Option<String>,
+    execution_id: Option<String>,
+    limit: Option<u32>,
+    cursor: Option<String>,
+    poll_interval_ms: Option<u64>,
+    iterations: Option<u32>,
+    url: Option<String>,
+    token: Option<String>,
+    as_json: bool,
+) -> Result<()> {
+    // Validate poll interval before any network call
+    let poll_interval_ms = validate_poll_interval_ms(poll_interval_ms)?;
+
+    // Default to 1 iteration if not specified (single-shot watch)
+    let max_iterations = iterations.unwrap_or(1);
+    if max_iterations == 0 {
+        bail!("--iterations must be at least 1, got 0");
+    }
+
+    let url = resolve_server_url(url)?;
+    let client = ServerClient::new(&url, token);
+
+    let mut current_cursor = cursor;
+    let mut iteration = 0u32;
+
+    loop {
+        iteration += 1;
+
+        let envelope = client
+            .list_approvals(&ListApprovalsQuery {
+                limit,
+                cursor: current_cursor.clone(),
+                proposal_id: proposal_id.clone(),
+                execution_id: execution_id.clone(),
+            })
+            .await?;
+
+        if as_json {
+            // Raw JSON output per iteration
+            println!("{}", serde_json::to_string(&envelope)?);
+        } else {
+            // Human-readable summary per iteration
+            println!("{}", format_watch_iteration_text(&envelope, iteration));
+        }
+
+        // Check if we've reached max iterations
+        if iteration >= max_iterations {
+            break;
+        }
+
+        // If there's no next cursor, we've exhausted the listing
+        if envelope.next_cursor.is_none() {
+            break;
+        }
+
+        // Wait before next poll
+        tokio::time::sleep(std::time::Duration::from_millis(poll_interval_ms)).await;
+        current_cursor = envelope.next_cursor;
+    }
+
     Ok(())
 }
 
@@ -2517,6 +2678,30 @@ async fn main() -> Result<()> {
                 )
                 .await?;
             }
+            ServerCommand::WatchApprovals {
+                proposal_id,
+                execution_id,
+                limit,
+                cursor,
+                poll_interval_ms,
+                iterations,
+                server_url,
+                bearer_token,
+                json,
+            } => {
+                run_watch_approvals(
+                    proposal_id,
+                    execution_id,
+                    limit,
+                    cursor,
+                    poll_interval_ms,
+                    iterations,
+                    server_url,
+                    bearer_token,
+                    json,
+                )
+                .await?;
+            }
         },
         Command::Debug { sub } => match sub {
             DebugCommand::RepoRoot => {
@@ -3552,5 +3737,136 @@ mod tests {
         assert!(json.contains("\"ancestry\":false"));
         assert!(json.contains("\"descendants\":true"));
         assert!(json.contains("\"max_hops\":null"));
+    }
+
+    // -------------------------------------------------------------------------
+    // WatchApprovals validation and formatting tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_validate_poll_interval_ms_none() {
+        // None should return default
+        let result = validate_poll_interval_ms(None);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 5_000);
+    }
+
+    #[test]
+    fn test_validate_poll_interval_ms_valid_values() {
+        for v in [100u64, 1_000, 5_000, 60_000, 300_000] {
+            let result = validate_poll_interval_ms(Some(v));
+            assert!(result.is_ok(), "poll_interval_ms={} should be valid", v);
+            assert_eq!(result.unwrap(), v);
+        }
+    }
+
+    #[test]
+    fn test_validate_poll_interval_ms_too_low() {
+        let result = validate_poll_interval_ms(Some(99));
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("between 100 and 300000"));
+    }
+
+    #[test]
+    fn test_validate_poll_interval_ms_too_high() {
+        let result = validate_poll_interval_ms(Some(300_001));
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("between 100 and 300000"));
+    }
+
+    #[test]
+    fn test_format_watch_iteration_text_empty() {
+        let envelope = ApprovalListEnvelope {
+            items: vec![],
+            next_cursor: None,
+        };
+        let text = format_watch_iteration_text(&envelope, 1);
+        assert!(text.contains("--- iteration 1 (0 approval(s), next_cursor=none) ---"));
+    }
+
+    #[test]
+    fn test_format_watch_iteration_text_single_approval() {
+        let envelope = ApprovalListEnvelope {
+            items: vec![ApprovalRequest {
+                approval_id: "approval-1".to_string(),
+                intent_id: "intent-1".to_string(),
+                proposal_id: "proposal-1".to_string(),
+                execution_id: Some("exec-1".to_string()),
+                reason: "test reason".to_string(),
+                action_digest: "action-digest-1".to_string(),
+                expires_at: "2024-01-01T00:15:00Z".to_string(),
+                state: "Pending".to_string(),
+                created_at: "2024-01-01T00:00:00Z".to_string(),
+            }],
+            next_cursor: Some("cursor-abc".to_string()),
+        };
+        let text = format_watch_iteration_text(&envelope, 3);
+        assert!(text.contains("--- iteration 3 (1 approval(s), next_cursor=cursor-abc) ---"));
+        assert!(text.contains("Approval: approval-1"));
+        assert!(text.contains("State:    Pending"));
+        assert!(text.contains("Intent:   intent-1"));
+        assert!(text.contains("Proposal: proposal-1"));
+        assert!(text.contains("Execution:exec-1"));
+        assert!(text.contains("Reason:   test reason"));
+    }
+
+    #[test]
+    fn test_format_watch_iteration_text_deterministic_order() {
+        // Two approvals with different states - Pending should sort first
+        let envelope = ApprovalListEnvelope {
+            items: vec![
+                ApprovalRequest {
+                    approval_id: "approval-2".to_string(),
+                    intent_id: "intent-x".to_string(),
+                    proposal_id: "proposal-x".to_string(),
+                    execution_id: None,
+                    reason: "second".to_string(),
+                    action_digest: "digest-2".to_string(),
+                    expires_at: "2024-01-01T00:15:00Z".to_string(),
+                    state: "Approved".to_string(),
+                    created_at: "2024-01-01T00:00:01Z".to_string(),
+                },
+                ApprovalRequest {
+                    approval_id: "approval-1".to_string(),
+                    intent_id: "intent-x".to_string(),
+                    proposal_id: "proposal-x".to_string(),
+                    execution_id: None,
+                    reason: "first".to_string(),
+                    action_digest: "digest-1".to_string(),
+                    expires_at: "2024-01-01T00:15:00Z".to_string(),
+                    state: "Pending".to_string(),
+                    created_at: "2024-01-01T00:00:00Z".to_string(),
+                },
+            ],
+            next_cursor: None,
+        };
+        let text = format_watch_iteration_text(&envelope, 1);
+        // Pending approval should appear first despite being created earlier
+        let lines: Vec<&str> = text.lines().collect();
+        let pending_pos = lines.iter().position(|l| l.contains("approval-1")).unwrap();
+        let approved_pos = lines.iter().position(|l| l.contains("approval-2")).unwrap();
+        assert!(
+            pending_pos < approved_pos,
+            "Pending approval should sort before Approved"
+        );
+    }
+
+    #[test]
+    fn test_format_watch_iteration_text_next_cursor_display() {
+        let envelope_with_cursor = ApprovalListEnvelope {
+            items: vec![],
+            next_cursor: Some("cursor-xyz".to_string()),
+        };
+        let text = format_watch_iteration_text(&envelope_with_cursor, 5);
+        assert!(text.contains("next_cursor=cursor-xyz"));
+
+        let envelope_no_cursor = ApprovalListEnvelope {
+            items: vec![],
+            next_cursor: None,
+        };
+        let text_no_cursor = format_watch_iteration_text(&envelope_no_cursor, 5);
+        assert!(text_no_cursor.contains("next_cursor=none"));
     }
 }

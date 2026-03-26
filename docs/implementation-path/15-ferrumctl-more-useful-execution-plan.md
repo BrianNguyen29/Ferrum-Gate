@@ -321,3 +321,63 @@ ferrumctl server inspect-lineage-query \
 - [x] Local `max_hops` validation (1..32)
 - [x] Unit tests for validation, formatting, and request serialization
 - [x] Plan doc updated
+
+---
+
+## Slice 15d: `ferrumctl server watch-approvals` (Read-Only Bounded Polling)
+
+**File:**
+- `bins/ferrumctl/src/main.rs`
+
+**Scope:**
+- Add a read-only bounded-polling watch command over the existing `list_approvals` API.
+- No gateway changes; only CLI plumbing reusing existing `ServerClient::list_approvals`.
+
+**CLI Design:**
+```
+ferrumctl server watch-approvals \
+  [--proposal-id UUID] \
+  [--execution-id UUID] \
+  [--limit N] \
+  [--cursor CURSOR] \
+  [--poll-interval-ms MS] \
+  [--iterations N] \
+  [--json]
+```
+
+**Validation rules enforced locally before any network call:**
+- `--poll-interval-ms` must be in range 100..=300_000 if provided (default: 5000).
+- `--iterations` must be >= 1 if provided (default: 1 for single-shot).
+
+**Output modes:**
+- Default: deterministic human-readable summary per iteration with approval count and next_cursor.
+- `--json`: raw `ApprovalListEnvelope` JSON per iteration.
+
+**Key Implementation Details:**
+- `validate_poll_interval_ms()` rejects values outside 100..=300_000 range.
+- `format_watch_iteration_text()` produces deterministic output: Pending first, then created_at desc, then approval_id asc.
+- Bounded loop via `--iterations` (prevents infinite loops in tests/scripts).
+- Cursor is carried forward from `next_cursor` in each response envelope.
+- Loop terminates when: iteration limit reached, or next_cursor is None.
+
+**Unit Tests Added:**
+- `test_validate_poll_interval_ms_none` — None returns default 5000.
+- `test_validate_poll_interval_ms_valid_values` — 100, 1000, 5000, 60000, 300000 accepted.
+- `test_validate_poll_interval_ms_too_low` — 99 rejected with message.
+- `test_validate_poll_interval_ms_too_high` — 300001 rejected with message.
+- `test_format_watch_iteration_text_empty` — empty envelope formats correctly.
+- `test_format_watch_iteration_text_single_approval` — single approval shows all fields.
+- `test_format_watch_iteration_text_deterministic_order` — Pending sorts before Approved.
+- `test_format_watch_iteration_text_next_cursor_display` — cursor shown correctly.
+
+**Validation:**
+- `cargo check -p ferrumctl` passes (zero warnings).
+- `cargo test -p ferrumctl` passes.
+
+**Slice Status: COMPLETE**
+- [x] `WatchApprovals` CLI variant with bounded polling
+- [x] Handler `run_watch_approvals`
+- [x] `--json` raw envelope output + deterministic human-readable summary
+- [x] Local `poll_interval_ms` validation (100..=300_000)
+- [x] Unit tests for validation and formatting
+- [x] Plan doc updated
