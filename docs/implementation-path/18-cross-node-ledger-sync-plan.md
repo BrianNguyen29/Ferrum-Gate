@@ -231,10 +231,10 @@ These must be resolved before Sync-1 (protocol sketch):
 
 ## Recommended Next Slice After Sync-0
 
-**Sync-1: Protocol sketch** (not in this doc). After the safety contract
-is ratified, the next slice would sketch a minimal protocol that
-preserves the invariants defined here, without committing to
-implementation details.
+**Sync-1: Protocol sketch** — see `docs/implementation-path/19-sync-1-protocol-sketch.md`.
+After the safety contract is ratified, Sync-1 sketches a minimal
+one-way fast-forward protocol that preserves the invariants defined here,
+without committing to transport, consensus, or implementation details.
 
 ---
 
