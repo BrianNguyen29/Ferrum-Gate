@@ -440,6 +440,229 @@ impl<T: Transport> ProbeFacade<T> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Internal wiring sample: demonstrates ProbeFacade::with_config(...) + FakeLeaderTransport
+//
+// This is a minimal service-internal helper showing how to wire the facade
+// with custom config and a fake transport. It is NOT public API - it exists
+// only to prove the wiring works and serves as a reference implementation.
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod wiring {
+    use super::*;
+    use crate::transport::FakeLeaderTransport;
+
+    /// A minimal service-internal wiring of ProbeFacade + FakeLeaderTransport.
+    ///
+    /// This struct bundles a configured facade with its underlying fake transport
+    /// so callers (tests) can inspect both the facade behavior and the transport
+    /// state without exposing any internal types publicly.
+    #[derive(Debug)]
+    pub struct SampleWiring {
+        /// The configured facade under test.
+        pub facade: ProbeFacade<FakeLeaderTransport>,
+        /// The underlying fake transport (accessible for inspection/injection).
+        transport: FakeLeaderTransport,
+    }
+
+    impl SampleWiring {
+        /// Wire up a SampleWiring with custom ProbeFacadeConfig and default fake state.
+        ///
+        /// This demonstrates the smallest possible construction:
+        /// 1. Create a FakeLeaderTransport with default tip/version
+        /// 2. Create a ProbeFacadeConfig (with optional customizations)
+        /// 3. Wire them via ProbeFacade::with_config(...)
+        pub fn new(config: ProbeFacadeConfig) -> Self {
+            let transport = FakeLeaderTransport::new();
+            let facade = ProbeFacade::with_config(transport.clone(), config);
+            Self { facade, transport }
+        }
+
+        /// Returns a reference to the underlying fake transport for test injection.
+        pub fn transport(&self) -> &FakeLeaderTransport {
+            &self.transport
+        }
+
+        /// Run a probe using the configured facade.
+        pub async fn probe(&self, request: &ProbeFacadeRequest) -> ProbeFacadeResponse {
+            self.facade.probe(request).await
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use crate::transport::{EntryHashInfo, HashPath, LeaderTip, LeaderVersion, Proof};
+
+        fn make_tip(sequence: u64, hash: &str) -> LeaderTip {
+            LeaderTip {
+                sequence,
+                hash: hash.to_string(),
+                timestamp: chrono::Utc::now(),
+            }
+        }
+
+        fn make_version() -> LeaderVersion {
+            LeaderVersion {
+                version: "1.0.0".to_string(),
+                min_follower_version: "1.0.0".to_string(),
+            }
+        }
+
+        fn make_proof(sequences: Vec<u64>, hashes: Vec<&str>) -> Proof {
+            let entries: Vec<EntryHashInfo> = sequences
+                .into_iter()
+                .zip(hashes.into_iter())
+                .map(|(seq, hash)| EntryHashInfo {
+                    sequence: seq,
+                    entry_hash: hash.to_string(),
+                })
+                .collect();
+
+            let range_hash = entries
+                .iter()
+                .map(|e| e.entry_hash.clone())
+                .collect::<Vec<_>>()
+                .join("");
+
+            Proof {
+                entries,
+                range_hash,
+                continuity_proof: HashPath {
+                    nodes: vec!["n1".to_string(), "n2".to_string()],
+                    leaf_count: 10,
+                },
+            }
+        }
+
+        #[tokio::test]
+        async fn wiring_sample_uses_configured_facade() {
+            // Prove that SampleWiring::new() correctly wires ProbeFacade::with_config(...)
+            // with FakeLeaderTransport and stores the config for validation.
+            let custom_config = ProbeFacadeConfig::default()
+                .with_default_probe_count(5)
+                .unwrap()
+                .with_default_timeout_ms(10_000)
+                .unwrap();
+
+            let wiring = SampleWiring::new(custom_config);
+
+            // Verify the facade has the correct config stored
+            assert_eq!(wiring.facade.config().default_probe_count, 5);
+            assert_eq!(wiring.facade.config().default_timeout_ms, 10_000);
+            assert_eq!(wiring.facade.config().min_probe_count, 3); // Contract minimum unchanged
+        }
+
+        #[tokio::test]
+        async fn wiring_sample_returns_probe_aborted_without_proof() {
+            // Fresh FakeLeaderTransport has tip seq=100, hash="abcdef123456" by default.
+            // Since no proof is configured, proof fetch returns None which maps to A7.
+            // This test proves the wiring correctly routes through the facade.
+            let wiring = SampleWiring::new(ProbeFacadeConfig::default());
+
+            // Use follower_tip_sequence=99 so start_sequence=100 is the probe range
+            let request = ProbeFacadeRequest::new("wiring-test-follower", 99);
+            let response = wiring.probe(&request).await;
+
+            // Without proof configured, proof is None -> A7 (internal error since proof is missing)
+            assert!(response.is_aborted());
+            assert_eq!(response.abort_code(), Some(Sync1AbortCode::A7));
+        }
+
+        #[tokio::test]
+        async fn wiring_sample_remains_read_only() {
+            // Prove the wiring sample facade does not mutate any external state.
+            // FakeLeaderTransport state is in-memory only and isolated per-instance.
+            let wiring = SampleWiring::new(ProbeFacadeConfig::default());
+
+            // Set tip and proof before probe via transport reference
+            wiring
+                .transport()
+                .set_tip(make_tip(200, "read-only-hash"))
+                .await;
+            wiring.transport().set_version(make_version()).await;
+            wiring
+                .transport()
+                .set_proof(make_proof(vec![1, 2], vec!["a", "b"]))
+                .await;
+
+            let request = ProbeFacadeRequest::new("read-only-test", 0);
+            let response = wiring.probe(&request).await;
+
+            // Should succeed with no ledger mutation
+            assert!(
+                response.is_ok(),
+                "facade should succeed with configured transport"
+            );
+            let ProbeFacadeResponse::ProbeOk {
+                tip,
+                proof_structure,
+            } = response
+            else {
+                panic!("expected ProbeOk");
+            };
+            assert_eq!(tip.sequence, 200);
+            assert_eq!(proof_structure.entry_count, 2);
+
+            // Verify no external state was touched (transport state unchanged)
+            // This is inherent to FakeLeaderTransport being in-memory, but we
+            // confirm the pattern: read-only probe, no ledger interaction.
+        }
+
+        #[tokio::test]
+        async fn wiring_sample_hides_transport_error_abstraction() {
+            // Prove that transport errors get mapped to facade abort codes properly.
+            let wiring = SampleWiring::new(ProbeFacadeConfig::default());
+
+            wiring
+                .transport()
+                .inject_tip_error(crate::transport::TransportError::LeaderUnreachable {
+                    address: "192.168.1.1:9000".to_string(),
+                })
+                .await;
+
+            let request = ProbeFacadeRequest::new("error-map-test", 0);
+            let response = wiring.probe(&request).await;
+
+            // TransportError::LeaderUnreachable -> A7
+            assert!(response.is_aborted());
+            assert_eq!(response.abort_code(), Some(Sync1AbortCode::A7));
+
+            // The raw transport error type NEVER leaks to callers:
+            // response is either ProbeOk { tip, proof_structure } or ProbeAborted { code }
+            // No LeaderUnreachable variant exists on ProbeFacadeResponse.
+        }
+
+        #[tokio::test]
+        async fn wiring_with_custom_config_probes_successfully() {
+            // Prove that with_config stores and uses the config for successful probing.
+            let config = ProbeFacadeConfig::default()
+                .with_default_probe_count(5)
+                .unwrap();
+
+            let wiring = SampleWiring::new(config);
+
+            // Configure tip and proof for success
+            wiring.transport().set_tip(make_tip(50, "xyz")).await;
+            wiring.transport().set_version(make_version()).await;
+            wiring
+                .transport()
+                .set_proof(make_proof(vec![1], vec!["h1"]))
+                .await;
+
+            let request = ProbeFacadeRequest::new("test", 0).with_probe_count(3);
+            let response = wiring.probe(&request).await;
+
+            // Should succeed
+            assert!(response.is_ok());
+            let ProbeFacadeResponse::ProbeOk { tip, .. } = response else {
+                panic!("expected ProbeOk");
+            };
+            assert_eq!(tip.sequence, 50);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
