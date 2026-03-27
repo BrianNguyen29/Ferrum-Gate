@@ -60,3 +60,8 @@ Do not invent scope; all items cite source docs.
 
 - scope mismatch deny is already complete in current docs/code; keep it out of remaining work (`16-release-checklist.md` line 16, `tests/integration_gateway_flow.rs:6983`)
 - all other Phase A/B/E items treated as complete per `91-phase-success-criteria-and-kpis.md` lines 13-15
+
+## Production Readiness Assessment
+
+For a consolidated view of what is and is not production-ready, including
+phased hardening guidance, see `23-production-readiness-assessment.md`.

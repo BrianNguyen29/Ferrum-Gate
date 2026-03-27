@@ -6,7 +6,7 @@
 >
 > Tai lieu nay **khong thay the** `09-implementation-path.md`, ma la lop do luong cu the hon de ra quyet dinh "phase da xong chua".
 
-## Current progress snapshot (2026-03-19)
+## Current progress snapshot (2026-03-27)
 
 ### Phase status now
 
@@ -15,7 +15,8 @@
 - **Phase C**: da co firewall MVP co y nghia trong branch hien tai; trust labeling, taint scoring, contradiction checks, output sanitization, basic DLP, va execution-time HTTP/File/Sqlite/Git/EmailDraft resource enforcement da duoc wire vao gateway. Tat ca 5 resource binding types (File, Http, Sqlite, Git, EmailDraft) gio day deu co execution-time enforcement.
 - **Phase D**: da co adapter-backed rollback evidence toi thieu cho filesystem, sqlite, maildraft draft-only, git local-ref, va HTTP full-parity path (GET/POST/PUT/PATCH/DELETE + body/header/query binding + auth); gateway prepare flow gio co the route sang fs/sqlite/maildraft/git/http adapter va integration tests da chung minh file create/delete, file overwrite/restore, sqlite row restore, maildraft draft create/delete recovery, git ref restore, va HTTP GET/POST verify/rollback no-op path. Co the xem la dat release gate Phase D cho supported adapter set hien tai; `EmailSend` va HTTP remote mutation recovery parity van ngoai scope adapter-backed recovery trong v1; HTTP rollback/compensate van conservative no-op.
 - **Phase E**: coi nhu dat cho supported flow hien tai; gateway da di qua `evaluate -> mint -> authorize -> prepare -> execute -> verify -> commit`, cung negative/recovery paths va approval/draft-only governance.
-- **Phase F**: da co poisoned-context suite, provenance minimum-chain evidence, provenance query fail-closed endpoint, va docs handoff ro rang cho supported flows + open gaps. Git gateway path va HTTP full-parity adapter gio da co them evidence end-to-end; phan con lai cua phase nay chu yeu la operator/runtime hardening tiep theo, khong con la mo ho evidence/docs.
+- **Phase F**: da co poisoned-context suite, provenance minimum-chain evidence, provenance query fail-closed endpoint, va docs handoff ro rang cho supported flows + open gaps. Git gateway path va HTTP full-parity adapter gio da co them evidence end-to-end. Operator/runtime hardening co ban da hoan thanh (troubleshooting, diagnostics, deployment docs); P1 observability baseline (tracing + Prometheus) va TLS/ingress runbook con lai. Sync groundwork hoan thanh: Sync-3a probe crate (`ferrum-sync`) da co, cac slice tiep theo sang P2.
+
 
 ### Latest evidence snapshot
 

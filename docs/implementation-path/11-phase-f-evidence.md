@@ -70,7 +70,7 @@ Nhung muc duoi day van la open gap hoac gioi han evidence, khong nen bi hieu nha
 - supported flow evidence hien tap trung vao gateway + store + firewall path duoc test trong repo; chua phai tuyen bo parity cho moi adapter/runtime ben ngoai
 - lineage query da co muc toi thieu o muc execution lineage endpoint va provenance query fail-closed endpoint; generic provenance query, replay/query fabric, va graph tooling rong hon van la backlog
 - adapter-backed rollback/compensate evidence hien da co truc tiep cho filesystem, sqlite, maildraft draft-only, git local-ref, va HTTP full-parity path (GET/POST/PUT/PATCH/DELETE execute/verify, body/header/query digest binding, dedicated auth); `EmailSend` va HTTP remote mutation recovery parity van chua duoc tuyen bo parity; LUU Y: `allow_send=true` EmailDraft bindings bay gio duoc explicitly denied tai gateway prepare-time (PolicyDenied 403), thay vi silently fall-through to noop nhu truoc do - day la improvement ve fail-closed semantics; HTTP rollback/compensate van conservative no-op.
-- runtime config docs va CLI/debug flow toi thieu da co them mot nhip thuc dung; TLS termination va mot so release-checklist items khac van con mo; capability persistence bay gio da duoc durable qua SQLite
+- runtime config docs va CLI/debug flow toi thieu da co them mot nhip thuc dung; TLS termination van can external terminator (P1); capability persistence bay gio da duoc durable qua SQLite
 - docs nay khong thay the backlog; cac nang cap tiep theo van nen tiep tuc track o `docs/implementation-path/08-next-issue-backlog.md`
 
 ## 5. Cach doc repo sau handoff nay
@@ -86,6 +86,7 @@ Neu can tiep tuc Phase F/C theo nhung gap con lai, thu tu doc nhanh nen la:
 
 ## 6. Recommended next slices
 
-- Phase C: execution-time enforcement cho ca 5 loai da hoan tat; neu can harden tiep thi uu tien scope-subset edge cases
-- Phase F: mo rong lineage query/replay tooling va event linkage cho nhieu hop hon
-- Operator readiness: harden them TLS/ingress story cho rollout beyond single-process dev/prod-like use
+See `23-production-readiness-assessment.md` for the full phased hardening plan. In brief:
+- P1: Observability baseline (tracing + Prometheus), TLS/ingress runbook, operational runbook (backup/restore, capacity)
+- P2: Advanced provenance replay/fabric tooling; complete Sync-3a.1 probe API boundary, begin Sync-1 implementation
+- P3: Full MCP transport loop (future)
