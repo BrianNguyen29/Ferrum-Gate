@@ -30,8 +30,8 @@ Do not invent scope; all items cite source docs.
   - Src: `08-next-issue-backlog.md` P1
   - Plan: `12-ledger-hash-chain-execution-plan.md` (Commits 1-4 complete; evidence at `18-phase-f-evidence-pack.md` line 159)
   - Live append-time verification DONE per `17-ledger-live-hash-verification-execution-plan.md` (Commits A-C complete); evidence: `ferrum-ledger/src/lib.rs:229`, `ferrum-store/src/sqlite/ledger.rs:22`, `ferrum-store/src/sqlite/ledger.rs:77`, `ferrum-gateway/src/server.rs:1602`, `ferrum-store/src/sqlite/tests.rs:1423`
-  - Future: ledger read-model, cross-node sync remain open; Sync-0 safety-contract discovery/plan started per `18-cross-node-ledger-sync-plan.md`; Sync-1 protocol-sketch per `19-sync-1-protocol-sketch.md`
-  - Note: Sync-0 does NOT include protocol design, consensus, or implementation; Sync-1 does NOT include transport, consensus, or write-path implementation
+  - Future: ledger read-model, cross-node sync remain open; Sync-0 safety-contract discovery/plan started per `18-cross-node-ledger-sync-plan.md`; Sync-1 protocol-sketch per `19-sync-1-protocol-sketch.md`; Sync-2 read-only preflight + diff classifier planned per `20-sync-2-read-only-preflight-diff-classifier.md`
+  - Note: Sync-0 does NOT include protocol design, consensus, or implementation; Sync-1 does NOT include transport, consensus, or write-path implementation; Sync-2 does NOT include transport, consensus, or write-path implementation
   - **Recommended next slice: runtime integration boundary** -> DONE per `08-next-issue-backlog.md` P3; see `ferrumctl more useful` below
 
 - [x] provenance query/read-model enhancement (core surface DONE)

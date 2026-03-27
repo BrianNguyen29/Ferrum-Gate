@@ -161,8 +161,8 @@ SideEffectPrepared -> SideEffectVerified -> terminal event
 6. **Ledger hash chain**
    - Status: Initial integration slice DONE (store atomic append, gateway commit wiring, startup verify, Slice 3 tests passing at `tests/integration_gateway_flow.rs:9251,9377`)
    - Live append-time verification DONE per `docs/implementation-path/17-ledger-live-hash-verification-execution-plan.md` (Commits A-C complete); evidence: `ferrum-ledger/src/lib.rs:229`, `ferrum-store/src/sqlite/ledger.rs:22`, `ferrum-store/src/sqlite/ledger.rs:77`, `ferrum-gateway/src/server.rs:1602`, `ferrum-store/src/sqlite/tests.rs:1423`
-   - Cross-node sync: Sync-0 safety-contract discovery/plan started per `docs/implementation-path/18-cross-node-ledger-sync-plan.md` (no sync implementation exists; this is invariants/failure-modes/entry-criteria only); Sync-1 protocol-sketch started per `docs/implementation-path/19-sync-1-protocol-sketch.md` (one-way fast-forward model only; transport, consensus, write-path not included)
-   - Future: ledger read-model, cross-node sync (beyond Sync-1) remain open
+   - Cross-node sync: Sync-0 safety-contract discovery/plan started per `docs/implementation-path/18-cross-node-ledger-sync-plan.md` (no sync implementation exists; this is invariants/failure-modes/entry-criteria only); Sync-1 protocol-sketch per `docs/implementation-path/19-sync-1-protocol-sketch.md` (one-way fast-forward model only; transport, consensus, write-path not included); Sync-2 read-only preflight + diff classifier planned per `docs/implementation-path/20-sync-2-read-only-preflight-diff-classifier.md` (read-only, fail-closed, transport-free)
+   - Future: ledger read-model, cross-node sync (beyond Sync-2) remain open
    - Source: `docs/implementation-path/12-ledger-hash-chain-execution-plan.md` Commits 1-4; `docs/implementation-path/11-remaining-tasks.md` line 26
 
  7. **ferrumctl expanded utility**

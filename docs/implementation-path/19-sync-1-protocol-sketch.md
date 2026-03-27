@@ -265,10 +265,14 @@ SyncError:
 
 ## Recommended Next Slice After Sync-1
 
-**Sync-2: Transport sketch** (not in this doc). After the protocol sketch
-is ratified, the next slice would define minimal transport requirements
-that preserve the one-way fast-forward model, without implementing
-consensus or peer discovery.
+**Sync-2: Read-only preflight + diff classifier** — see
+`docs/implementation-path/20-sync-2-read-only-preflight-diff-classifier.md`.
+After the protocol sketch is ratified, the next slice defines a read-only
+diff classifier and extended preflight checks that operate purely on
+local state (no network calls), feeding the Sync-1 decision table with
+fail-closed Unknown handling.
+
+Transport design is deferred to Sync-3+.
 
 ---
 
