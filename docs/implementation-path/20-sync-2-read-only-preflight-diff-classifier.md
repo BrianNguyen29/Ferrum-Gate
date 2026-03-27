@@ -210,11 +210,12 @@ the pre-conditions and provides a named classifier for the decision logic.
 
 ## Recommended Next Slice After Sync-2
 
-**Sync-3: Transport sketch** (not in this doc). After the read-only
-preflight + diff classifier is ratified, the next slice would define
-minimal transport requirements that preserve the one-way fast-forward model
-and enable the hash-path fetch needed to distinguish LeaderAhead from
-Divergent. Consensus and peer discovery remain excluded.
+**Sync-3: Transport sketch** — see
+`docs/implementation-path/21-sync-3-transport-sketch.md`.
+After the read-only preflight + diff classifier is ratified, the next
+slice defines minimal transport requirements that preserve the one-way
+fast-forward model and enable the hash-path fetch needed to distinguish
+LeaderAhead from Divergent. Consensus and peer discovery remain excluded.
 
 Note: Sync-3 does not yet include write-path implementation.
 

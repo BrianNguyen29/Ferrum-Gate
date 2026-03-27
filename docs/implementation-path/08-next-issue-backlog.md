@@ -11,8 +11,8 @@
 - P1: gateway happy path
 - P1: ledger hash chain (DONE - initial integration slice complete per `12-ledger-hash-chain-execution-plan.md`)
   - Live append-time verification DONE per `17-ledger-live-hash-verification-execution-plan.md` (Commits A-C)
-  - Cross-node sync: Sync-0 safety-contract discovery/plan started per `18-cross-node-ledger-sync-plan.md`; Sync-1 protocol-sketch started per `19-sync-1-protocol-sketch.md`; Sync-2 read-only preflight + diff classifier planned per `20-sync-2-read-only-preflight-diff-classifier.md`
-  - Future: ledger read-model, cross-node sync (beyond Sync-2) remain P2
+  - Cross-node sync: Sync-0 safety-contract discovery/plan started per `18-cross-node-ledger-sync-plan.md`; Sync-1 protocol-sketch per `19-sync-1-protocol-sketch.md`; Sync-2 read-only preflight + diff classifier per `20-sync-2-read-only-preflight-diff-classifier.md`; Sync-3 transport-sketch started per `21-sync-3-transport-sketch.md`
+  - Future: ledger read-model, cross-node sync (beyond Sync-3) remain P2
 - P1: ferrumctl debug/inspect/validate slices
 - P1: http adapter full parity (GET/POST/PUT/PATCH/DELETE + body/header/query binding + auth) + gateway wiring
 - P1: durable capability persistence + startup reconciliation + restart integration coverage
