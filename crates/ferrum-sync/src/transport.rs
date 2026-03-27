@@ -207,6 +207,8 @@ struct FakeTransportState {
     tip_error: Option<TransportError>,
     /// Error to return on proof fetch, if any.
     proof_error: Option<TransportError>,
+    /// (Call number, error) to return on the Nth tip fetch call (cleared after use).
+    tip_error_on_call: Option<(usize, TransportError)>,
     /// Call count for tip fetch.
     tip_fetch_count: usize,
     /// Call count for proof fetch.
@@ -228,6 +230,7 @@ impl Default for FakeTransportState {
             proof: None,
             tip_error: None,
             proof_error: None,
+            tip_error_on_call: None,
             tip_fetch_count: 0,
             proof_fetch_count: 0,
         }
@@ -283,6 +286,17 @@ impl FakeLeaderTransport {
         state.proof_error = Some(err);
     }
 
+    /// Inject an error on the Nth tip fetch call (cleared after use).
+    ///
+    /// This is used to verify that probe_count actually affects call count.
+    /// For example, inject an error on call 3, then request probe_count=3.
+    /// If probe_count is honored, the error will be hit and probe will abort.
+    /// If probe_count is NOT honored (always using default 3), the same applies.
+    pub async fn inject_tip_error_on_call(&self, call_number: usize, err: TransportError) {
+        let mut state = self.state.write().await;
+        state.tip_error_on_call = Some((call_number, err));
+    }
+
     /// Get the number of tip fetch calls.
     pub async fn tip_fetch_count(&self) -> usize {
         let state = self.state.read().await;
@@ -319,6 +333,22 @@ impl Transport for FakeLeaderTransport {
     ) -> Result<LeaderTipResponse, TransportError> {
         let mut state = self.state.write().await;
         state.tip_fetch_count += 1;
+
+        // Check per-call error first
+        let err_to_return = if state
+            .tip_error_on_call
+            .as_ref()
+            .map(|(call_num, _)| state.tip_fetch_count == *call_num)
+            .unwrap_or(false)
+        {
+            state.tip_error_on_call.take().map(|(_, err)| err)
+        } else {
+            None
+        };
+
+        if let Some(err) = err_to_return {
+            return Err(err);
+        }
 
         if let Some(ref err) = state.tip_error {
             return Err(err.clone());
@@ -399,7 +429,9 @@ impl<T: Transport> TransportProbe<T> {
         start_sequence: u64,
     ) -> ProbeResult {
         // Step 1: Multi-probe tip consistency check
-        let (tip, version) = self.multi_probe_tip_consistency(follower_identity).await?;
+        let (tip, version) = self
+            .multi_probe_tip_consistency_with_count(follower_identity, self.consistency_probe_count)
+            .await?;
 
         // Step 2: Fetch proof for the range
         let proof = self
@@ -413,18 +445,49 @@ impl<T: Transport> TransportProbe<T> {
         })
     }
 
-    /// Perform multi-probe tip consistency check.
+    /// Run the diagnostic probe overriding the consistency probe count.
+    ///
+    /// This is the same as `run` but allows per-request probe count override
+    /// instead of the construction-time `consistency_probe_count`.
+    ///
+    /// Returns `ProbeSuccess` on full validation, or a `Sync1AbortCode` on any failure.
+    /// No local state is modified regardless of outcome.
+    pub async fn run_with_probe_count(
+        &self,
+        follower_identity: &str,
+        follower_tip_sequence: u64,
+        probe_count: usize,
+    ) -> ProbeResult {
+        // Step 1: Multi-probe tip consistency check with override count
+        let (tip, version) = self
+            .multi_probe_tip_consistency_with_count(follower_identity, probe_count)
+            .await?;
+
+        // Step 2: Fetch proof for the range
+        let proof = self
+            .fetch_and_verify_proof(follower_identity, follower_tip_sequence, tip.sequence)
+            .await?;
+
+        Ok(ProbeSuccess {
+            tip,
+            version,
+            proof,
+        })
+    }
+
+    /// Perform multi-probe tip consistency check with a specific probe count.
     ///
     /// Fetches the leader tip N times and verifies all responses are identical.
     /// If any probe returns a different tip, returns `Sync1AbortCode::A7`.
-    async fn multi_probe_tip_consistency(
+    async fn multi_probe_tip_consistency_with_count(
         &self,
         follower_identity: &str,
+        probe_count: usize,
     ) -> Result<(LeaderTip, LeaderVersion), Sync1AbortCode> {
-        let mut tips: Vec<LeaderTip> = Vec::with_capacity(self.consistency_probe_count);
+        let mut tips: Vec<LeaderTip> = Vec::with_capacity(probe_count);
         let mut version: Option<LeaderVersion> = None;
 
-        for i in 0..self.consistency_probe_count {
+        for i in 0..probe_count {
             let request = LeaderTipRequest {
                 request_id: ProbeRequestId::new(),
                 follower_identity: follower_identity.to_string(),

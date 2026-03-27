@@ -22,10 +22,14 @@
 //! - Peer discovery or address management
 
 pub mod error;
+pub mod facade;
 pub mod proof;
 pub mod transport;
 
 pub use error::{ProbeError, Sync1AbortCode, map_transport_error_to_abort};
+pub use facade::{
+    ContinuityProofShape, ProbeFacade, ProbeFacadeRequest, ProbeFacadeResponse, ProofStructureInfo,
+};
 pub use proof::{verify_entry_hashes, verify_proof_structure};
 pub use transport::{
     FakeLeaderTransport, LeaderTip, LeaderTipRequest, LeaderTipResponse, ProbeResult, Proof,
