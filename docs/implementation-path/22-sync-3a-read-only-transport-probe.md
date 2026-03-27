@@ -196,13 +196,18 @@ before write-path work begins.
 
 ## Recommended Next Slice After Sync-3a
 
-**Sync-3b: Write-path apply sketch** (not in this doc). After the
-read-only diagnostic probe is ratified, the next slice defines how the
-follower applies fetched entries atomically to the local ledger, bounded
-to the one-way fast-forward model and the apply-or-abort semantics from
-Sync-1.
+**Sync-3a.1: Probe API boundary** (not in this doc). After the
+read-only diagnostic probe is ratified, the next slice establishes a
+clean facade/boundary for callers: explicit inputs, explicit outputs,
+abort-code-only failures, and read-only guarantee. The boundary
+explicitly keeps transport DTOs and internal error taxonomy as
+non-contractual internals behind the facade. Write-path apply is
+deferred to a post-boundary slice.
 
-Sync-3b does NOT include consensus, two-way merge, or peer discovery.
+Sync-3a.1 does NOT include adapter implementation, write-path,
+consensus, two-way merge, or peer discovery.
+
+See `docs/implementation-path/22a-sync-3a1-probe-api-boundary.md`.
 
 ---
 
