@@ -279,12 +279,15 @@ only retrieves and verifies transport-layer data.
 
 ## Recommended Next Slice After Sync-3
 
-**Sync-3a: Write-path apply sketch** (not in this doc). After the
-transport sketch is ratified, the next slice defines how the follower
-applies fetched entries atomically to the local ledger, bounded to the
-one-way fast-forward model and the apply-or-abort semantics from Sync-1.
+**Sync-3a: Read-only transport probe** -- see
+`docs/implementation-path/22-sync-3a-read-only-transport-probe.md`.
+After the transport sketch is ratified, the next slice adds a
+diagnostic layer that validates transport behavior (multi-probe tip
+consistency, proof structure verification) before any write-path work
+begins. Sync-3a is explicitly read-only: no entries are applied.
 
-Sync-3a does NOT include consensus, two-way merge, or peer discovery.
+Write-path implementation, consensus, two-way merge, and peer discovery
+are not in scope for Sync-3a.
 
 ---
 
