@@ -1355,4 +1355,88 @@ mod tests {
         let custom_config = config1.with_default_probe_count(5).unwrap();
         assert_ne!(config1, custom_config);
     }
+
+    // =============================================================================
+    // Cross-module SampleWiring reuse test
+    // Proves that pub(crate) helper from facade::wiring is accessible and functional
+    // from a different test module (facade::tests vs facade::wiring::tests).
+    // =============================================================================
+
+    #[tokio::test]
+    async fn cross_module_wiring_sample_is_reusable_from_facade_tests() {
+        // Import SampleWiring from the sibling wiring module.
+        // From facade::tests, the path to facade::wiring is crate::facade::wiring
+        use crate::facade::wiring::SampleWiring;
+
+        // Create a custom config to prove SampleWiring stores it correctly
+        let custom_config = ProbeFacadeConfig::default()
+            .with_default_probe_count(7)
+            .unwrap()
+            .with_default_timeout_ms(20_000)
+            .unwrap();
+
+        // Wire up SampleWiring from outside the wiring module
+        let wiring = SampleWiring::new(custom_config);
+
+        // Verify config is stored correctly (proves builder chain works cross-module)
+        assert_eq!(wiring.facade.config().default_probe_count, 7);
+        assert_eq!(wiring.facade.config().default_timeout_ms, 20_000);
+
+        // Configure the transport via the pub(crate) accessor
+        wiring
+            .transport()
+            .set_tip(LeaderTip {
+                sequence: 250,
+                hash: "cross-module-hash".to_string(),
+                timestamp: chrono::Utc::now(),
+            })
+            .await;
+        wiring.transport().set_version(make_version()).await;
+        wiring
+            .transport()
+            .set_proof(make_proof(vec![10, 11], vec!["x", "y"]))
+            .await;
+
+        // Probe using the facade from cross-module context
+        let request = ProbeFacadeRequest::new("cross-module-follower", 200);
+        let response = wiring.probe(&request).await;
+
+        // Verify the probe succeeded - proves the wiring is fully functional cross-module
+        assert!(
+            response.is_ok(),
+            "SampleWiring should probe successfully from cross-module test"
+        );
+        let ProbeFacadeResponse::ProbeOk {
+            tip,
+            proof_structure,
+        } = response
+        else {
+            panic!("expected ProbeOk");
+        };
+        assert_eq!(tip.sequence, 250);
+        assert_eq!(proof_structure.entry_count, 2);
+    }
+
+    #[tokio::test]
+    async fn cross_module_wiring_transport_inspection_works() {
+        // Prove that the transport() accessor is usable from cross-module context
+        use crate::facade::wiring::SampleWiring;
+
+        let wiring = SampleWiring::new(ProbeFacadeConfig::default());
+
+        // Inject an error via the transport accessor - proves abstraction is leaky-free
+        wiring
+            .transport()
+            .inject_tip_error(crate::transport::TransportError::LeaderUnreachable {
+                address: "10.0.0.1:9000".to_string(),
+            })
+            .await;
+
+        let request = ProbeFacadeRequest::new("error-inspection-test", 0);
+        let response = wiring.probe(&request).await;
+
+        // Transport error should be properly mapped to A7 abort
+        assert!(response.is_aborted());
+        assert_eq!(response.abort_code(), Some(Sync1AbortCode::A7));
+    }
 }
