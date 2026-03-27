@@ -11,8 +11,26 @@ consensus, two-way merge, or peer discovery.
 
 ## Status
 
-**This is Sync-3a.1 (probe API boundary / clean facade) work only.**
-No sync implementation exists or is planned in this slice.
+**Sync-3a.1 (probe API boundary / clean facade) is partially implemented.**
+
+The `ProbeFacade`, `ProbeFacadeRequest`, `ProbeFacadeResponse`, and
+`ProbeFacadeConfig` types in `crates/ferrum-sync/src/facade.rs` implement most
+of the Sync-3a.1 facade boundary, but this slice is not fully closed yet. The
+current facade:
+
+- Accepts `ProbeFacadeRequest` with explicit caller inputs
+- Returns only `ProbeOk { tip, proof_structure }` or `ProbeAborted { code }`
+- Hides all transport DTOs and internal error taxonomy
+- Enforces read-only guarantee (no local ledger mutation)
+- Maps all internal failures to `Sync1AbortCode` in fail-closed fashion
+
+Remaining gaps before Sync-3a.1 can be marked fully complete:
+
+- `ProbeFacadeRequest` does not yet carry the explicit `leader_address` field
+  described in this contract.
+- `timeout_per_probe_ms` is validated but not yet used in probe execution.
+- Transport DTOs are still publicly re-exported from the crate root, so the
+  facade boundary is not yet fully isolated.
 
 Successor to Sync-3a (read-only diagnostic transport probe). Write-path
 implementation, consensus, and peer discovery are not in scope.

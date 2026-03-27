@@ -3,7 +3,8 @@
 Single authoritative tracking document for FerrumGate implementation order.
 Grounded in current repo reality (tracing exists; metrics do not; TLS ingress
 runbook exists but production posture needs consolidation; Sync-3a probe exists
-in `ferrum-sync` crate; Sync-3a.1 status needs reconciliation; write-path and
+in `ferrum-sync` crate; Sync-3a.1 facade boundary is partially implemented but
+not fully closed; Sync-1 decision kernel is implemented; write-path and
 consensus not implemented).
 
 ASCII only. Docs-only changes; no Rust/code edits.
@@ -118,9 +119,9 @@ ASCII only. Docs-only changes; no Rust/code edits.
 
 | Slice | Description | Status | Verification |
 |-------|-------------|--------|--------------|
-| P2.2a | Assess `ferrum-sync` crate: does it satisfy Sync-3a, Sync-3a.1, or neither? | **TODO** | `crates/ferrum-sync/README.md` accurately reflects what is implemented |
-| P2.2b | Update `22a-sync-3a1-probe-api-boundary.md` status to reflect actual implementation | **TODO** | Doc status line reflects "Implemented in ferrum-sync crate" or "Plan only" accurately |
-| P2.2c | If gaps exist, complete Sync-3a.1 implementation | **TODO** | `ProbeFacade` satisfies all facade contract items in `22a-sync-3a1-probe-api-boundary.md` |
+| P2.2a | Assess `ferrum-sync` crate: does it satisfy Sync-3a, Sync-3a.1, or neither? | **DONE** | Assessment recorded: Sync-3a is done; Sync-3a.1 is partial and has explicit remaining gaps |
+| P2.2b | Update `22a-sync-3a1-probe-api-boundary.md` status to reflect actual implementation | **DONE** | Doc status line reflects partial implementation plus remaining gaps |
+| P2.2c | If gaps exist, complete Sync-3a.1 implementation | **TODO** | Add `leader_address`, use timeout in execution path, and fully isolate transport DTOs from public boundary |
 
 **Dependencies:** None (can run in parallel with other P2 work).
 
@@ -139,7 +140,7 @@ ASCII only. Docs-only changes; no Rust/code edits.
 | P2.3b | Sync-1 protocol sketch exists | DONE | `19-sync-1-protocol-sketch.md` defines one-way fast-forward protocol |
 | P2.3c | Sync-2 read-only preflight + diff classifier sketch exists | DONE | `20-sync-2-read-only-preflight-diff-classifier.md` defines DiffClass enum + decision table |
 | P2.3d | Identify gaps between Sync-1 sketch and implementable protocol | **TODO** | List of open questions from Sync-1, Sync-2, Sync-3 marked "deferred" with owner/time estimates |
-| P2.3e | Begin Sync-1 protocol implementation | **TODO** | `ferrum-sync` gains `Sync1Protocol` type; unit tests for preflight + decision table |
+| P2.3e | Begin Sync-1 protocol implementation (decision kernel) | **DONE** | `ferrum-sync` has `decide()` function in `decision.rs`; exhaustive unit tests for DONE / SYNC / FAST_FORWARD / ABORT rows |
 
 **Dependencies:** P2.2 (Sync-3a.1 reconciliation) should complete before P2.3e begins.
 
@@ -249,9 +250,9 @@ P2 (2-8 weeks, after P1)
   P2.1 provenance tooling
     P2.1a DONE -> P2.1b
   P2.2 Sync-3a.1 reconciliation
-    P2.2a -> P2.2b -> P2.2c
+    P2.2a DONE -> P2.2b DONE -> P2.2c TODO
   P2.3 Sync-1 prep
-    P2.3a-c DONE -> P2.3d -> P2.3e
+    P2.3a-c DONE -> P2.3d -> P2.3e DONE (decision kernel)
   P2.4 HA analysis (parallel)
 
 P3 (8+ weeks, after P2)
@@ -275,7 +276,8 @@ P3 (8+ weeks, after P2)
 | Prometheus metrics (P1.1b done) | `crates/ferrum-gateway/src/server.rs:112` | `GET /metrics` returns Prometheus text format; bearer-auth protected like other non-health endpoints |
 | TLS ingress runbook (P1.2 done) | `docs/runbooks/ops-tls-ingress-runbook.md` | nginx termination; cert rollover and external terminator requirements documented; consistent with `ferrumgate.prod.toml` |
 | Sync-3a probe (done) | `crates/ferrum-sync/src/facade.rs` | `ProbeFacade` implemented |
-| Sync-3a.1 boundary (needs reconciliation) | `crates/ferrum-sync/README.md` vs `22a-sync-3a1-probe-api-boundary.md` | Doc says "no implementation"; code has `ProbeFacade` |
+| Sync-3a.1 boundary (partial) | `crates/ferrum-sync/src/facade.rs` | Facade exists, but `leader_address`, timeout usage, and full DTO isolation remain open |
+| Sync-1 decision kernel (done) | `crates/ferrum-sync/src/decision.rs` | Pure `decide()` function; exhaustive unit tests |
 | Write-path (not started) | None | Out of scope for v1 |
 | Consensus (not started) | None | Out of scope for v1 |
 

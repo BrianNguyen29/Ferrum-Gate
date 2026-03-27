@@ -123,12 +123,16 @@ The following are **planning documents only**; no implementation exists:
 | Sync-2 read-only preflight + diff classifier | `20-sync-2-read-only-preflight-diff-classifier.md` | Plan only |
 | Sync-3 transport sketch | `21-sync-3-transport-sketch.md` | Plan only |
 | Sync-3a read-only transport probe | `22-sync-3a-read-only-transport-probe.md` | **Implemented in `ferrum-sync` crate** |
-| Sync-3a.1 probe API boundary | `22a-sync-3a1-probe-api-boundary.md` | Plan only |
+| Sync-3a.1 probe API boundary | `22a-sync-3a1-probe-api-boundary.md` | **Partially implemented in `ferrum-sync` crate** (`ProbeFacade` plus remaining contract gaps) |
+| Sync-1 decision kernel | `19-sync-1-protocol-sketch.md` | **Implemented in `ferrum-sync` crate** (`decide()`) |
 
 The `ferrum-sync` crate provides the Sync-3a read-only transport probe
-(`ProbeFacade`, `TransportProbe`, `FakeLeaderTransport`). This is a
-**diagnostic-only** tool; it does not implement the write-path, consensus,
-or two-way merge.
+(`ProbeFacade`, `TransportProbe`, `FakeLeaderTransport`), a **partial**
+Sync-3a.1 facade boundary (`ProbeFacadeRequest`/`ProbeFacadeResponse` with
+abort-code-only failures, but remaining contract gaps), and a pure Sync-1
+decision kernel (`decide()`) implementing the one-way fast-forward decision
+table. These are **diagnostic/decision-only** tools; they do not implement the
+write-path, consensus, or two-way merge.
 
 ### 2.6 Generic Provenance Query / Replay Fabric (P2 — Core Done, Advanced TBD)
 
