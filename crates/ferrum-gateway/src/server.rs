@@ -25,6 +25,7 @@ use ferrum_proto::{
 use ferrum_store::{
     ApprovalRepo, ExecutionRepo, IntentRepo, LedgerRepo, ProposalRepo, ProvenanceRepo, RollbackRepo,
 };
+use prometheus::Encoder;
 use serde::Deserialize;
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
@@ -108,6 +109,7 @@ fn build_router_inner(runtime: GatewayRuntime, auth_config: Option<ServerConfig>
     let router = Router::new()
         .route("/v1/healthz", get(healthz))
         .route("/v1/readyz", get(readyz))
+        .route("/metrics", get(metrics_handler))
         .route("/v1/intents/compile", post(compile_intent))
         .route(
             "/v1/proposals/{proposal_id}/evaluate",
@@ -230,6 +232,50 @@ async fn readyz() -> Json<HealthResponse> {
     Json(HealthResponse {
         status: "ready".to_string(),
     })
+}
+
+/// Prometheus metrics endpoint.
+/// Exposes all registered metrics in Prometheus text format.
+/// Requires bearer authentication like other non-health endpoints.
+async fn metrics_handler() -> Response {
+    let encoder = prometheus::TextEncoder::new();
+    let metric_families = prometheus::gather();
+    let mut buffer = Vec::new();
+
+    let result = encoder.encode(&metric_families, &mut buffer);
+    if let Err(e) = result {
+        tracing::error!("failed to encode Prometheus metrics: {}", e);
+        return ApiProblem::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            ApiErrorCode::Internal,
+            "failed to encode metrics",
+        )
+        .into_response();
+    }
+
+    // Encode succeeded; convert buffer to string
+    let text = match String::from_utf8(buffer) {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!("metrics buffer is not valid UTF-8: {}", e);
+            return ApiProblem::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                ApiErrorCode::Internal,
+                "failed to encode metrics",
+            )
+            .into_response();
+        }
+    };
+
+    (
+        StatusCode::OK,
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; charset=utf-8",
+        )],
+        text,
+    )
+        .into_response()
 }
 
 async fn compile_intent(
@@ -3040,7 +3086,7 @@ mod tests {
     use std::sync::Arc;
     use tower::util::ServiceExt;
 
-    use crate::{AuthMode, GatewayRuntime, ServerConfig};
+    use crate::{AuthMode, GatewayRuntime, ServerConfig, build_router};
 
     async fn create_test_runtime() -> GatewayRuntime {
         let pdp: Arc<dyn ferrum_pdp::PdpEngine> = Arc::new(StaticPdpEngine);
@@ -3376,5 +3422,77 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn authenticated_router_rejects_metrics_without_bearer_token() {
+        let app = build_authenticated_router(
+            create_test_runtime().await,
+            ServerConfig {
+                auth_mode: AuthMode::Bearer,
+                bearer_token: Some("test-token".to_string()),
+            },
+        );
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn authenticated_router_allows_metrics_with_valid_bearer_token() {
+        let app = build_authenticated_router(
+            create_test_runtime().await,
+            ServerConfig {
+                auth_mode: AuthMode::Bearer,
+                bearer_token: Some("test-token".to_string()),
+            },
+        );
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/metrics")
+                    .header(AUTHORIZATION, "Bearer test-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let content_type = response.headers().get("content-type");
+        assert!(content_type.is_some());
+        let ct = content_type.unwrap().to_str().unwrap();
+        assert!(ct.contains("text/plain"));
+    }
+
+    #[tokio::test]
+    async fn metrics_endpoint_returns_prometheus_text_format() {
+        let app = build_router(create_test_runtime().await);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let content_type = response.headers().get("content-type");
+        assert!(content_type.is_some());
+        let ct = content_type.unwrap().to_str().unwrap();
+        assert!(ct.contains("text/plain"));
     }
 }

@@ -31,9 +31,9 @@ ASCII only. Docs-only changes; no Rust/code edits.
 | Slice | Description | Status | Verification |
 |-------|-------------|--------|--------------|
 | P1.1a | Confirm `tracing` exists on gateway hot paths | DONE | `crates/ferrum-gateway/src/server.rs` has tracing spans |
-| P1.1b | Add Prometheus metrics endpoint | **TODO** | `GET /metrics` returns Prometheus text format |
+| P1.1b | Prometheus metrics endpoint exists | DONE | `GET /metrics` returns Prometheus text format; defined at `server.rs:112`, auth-protected via bearer middleware |
 | P1.1c | Add request-count, latency-histogram, error-rate metrics | **TODO** | Metrics endpoint exposes `ferrum_gateway_http_requests_total`, `ferrum_gateway_http_request_duration_seconds`, `ferrum_gateway_errors_total` |
-| P1.1d | Add capacity planning notes to ops runbook | **TODO** | `docs/runbooks/ops-tls-ingress-runbook.md` or new runbook covers DB size, connection limits |
+| P1.1d | Capacity planning notes exist in ops runbook | DONE | `docs/runbooks/ops-sqlite-backup-runbook.md` covers DB growth, disk headroom, and concurrency guidance |
 
 **Dependencies:** P1.1a is already done; P1.1b must precede P1.1c.
 
@@ -48,11 +48,11 @@ ASCII only. Docs-only changes; no Rust/code edits.
 | Slice | Description | Status | Verification |
 |-------|-------------|--------|--------------|
 | P1.2a | TLS ingress runbook exists | DONE | `docs/runbooks/ops-tls-ingress-runbook.md` covers nginx TLS termination |
-| P1.2b | Confirm runbook is consistent with current `configs/ferrumgate.prod.toml` | **TODO** | Runbook commands match actual config keys and CLI flags |
-| P1.2c | Add cert rollover + verification steps to runbook | **TODO** | Runbook section covers `openssl s_client` verification after reload |
-| P1.2d | Document external terminator requirements in `15-deployment-and-operations.md` | **TODO** | Section 2 of `15-deployment-and-operations.md` explicitly states "no in-process TLS listener" |
+| P1.2b | Confirm runbook is consistent with current `configs/ferrumgate.prod.toml` | DONE | Runbook prerequisites reference `configs/ferrumgate.prod.toml`; all CLI flags and config keys match actual prod config |
+| P1.2c | Cert rollover + verification steps in runbook | DONE | Runbook Certificate rollover section (lines 156-160) covers `openssl s_client` verification after reload |
+| P1.2d | External terminator requirements documented | DONE | `docs/15-deployment-and-operations.md` lines 15, 55 explicitly state "no in-process TLS listener"; TLS ingress runbook line 5 confirms |
 
-**Dependencies:** P1.2a is done; all other P1.2 slices are P1 backlog.
+**Dependencies:** P1.2a through P1.2d are all DONE (2026-03-27 doc reconciliation).
 
 **Touchpoints:**
 - `docs/runbooks/ops-tls-ingress-runbook.md`
@@ -66,10 +66,10 @@ ASCII only. Docs-only changes; no Rust/code edits.
 | Slice | Description | Status | Verification |
 |-------|-------------|--------|--------------|
 | P1.3a | Startup failure diagnostics exist | DONE | `docs/17-troubleshooting.md` has startup-failure section |
-| P1.3b | Add backup/restore procedures for SQLite persistence layer | **TODO** | Runbook covers `sqlite3 .backup` and restore procedure |
-| P1.3c | Add capacity planning notes (DB size, connection limits) | **TODO** | Runbook covers expected DB growth, `max_connections` config |
+| P1.3b | SQLite backup/restore runbook | DONE | `ops-sqlite-backup-runbook.md` covers `sqlite3 .backup`, restore, and verification steps |
+| P1.3c | Capacity planning notes | DONE | `ops-sqlite-backup-runbook.md` covers expected DB growth, disk headroom, and concurrency guidance |
 
-**Dependencies:** P1.3a is done; P1.3b and P1.3c are P1 backlog.
+**Dependencies:** P1.3a through P1.3c are all DONE (2026-03-27 docs update).
 
 **Touchpoints:**
 - `docs/17-troubleshooting.md`
@@ -272,8 +272,8 @@ P3 (8+ weeks, after P2)
 | Topic | File | Notes |
 |-------|------|-------|
 | Tracing (P1 done) | `crates/ferrum-gateway/src/server.rs` | Structured logging exists |
-| Prometheus metrics (P1 todo) | None | No metrics endpoint yet |
-| TLS ingress runbook (P1 done) | `docs/runbooks/ops-tls-ingress-runbook.md` | nginx termination; needs consolidation |
+| Prometheus metrics (P1.1b done) | `crates/ferrum-gateway/src/server.rs:112` | `GET /metrics` returns Prometheus text format; bearer-auth protected like other non-health endpoints |
+| TLS ingress runbook (P1.2 done) | `docs/runbooks/ops-tls-ingress-runbook.md` | nginx termination; cert rollover and external terminator requirements documented; consistent with `ferrumgate.prod.toml` |
 | Sync-3a probe (done) | `crates/ferrum-sync/src/facade.rs` | `ProbeFacade` implemented |
 | Sync-3a.1 boundary (needs reconciliation) | `crates/ferrum-sync/README.md` vs `22a-sync-3a1-probe-api-boundary.md` | Doc says "no implementation"; code has `ProbeFacade` |
 | Write-path (not started) | None | Out of scope for v1 |

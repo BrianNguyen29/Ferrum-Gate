@@ -51,6 +51,7 @@ Repo-shipped examples:
 - `auth.mode = "disabled"` is intended for loopback-only local development.
 - all non-health routes require `Authorization: Bearer <token>` when `auth.mode = "bearer"`.
 - `/v1/healthz` and `/v1/readyz` remain unauthenticated for liveness/readiness checks.
+- `/metrics` is auth-protected like other non-health routes (returns 401 without a valid bearer token).
 - fail-closed startup guard: non-loopback bind with auth disabled is rejected unless `allow_insecure_nonlocal = true` is set explicitly.
 - there is still **no in-process TLS**; if the control plane leaves loopback, terminate TLS and restrict network exposure at an external proxy/load balancer.
 

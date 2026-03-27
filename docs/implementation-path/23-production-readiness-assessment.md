@@ -160,26 +160,28 @@ Immediate items to close before single-node production deployment:
 
 1. **Observability baseline**
    - `tracing` structured logging exists on gateway hot paths (DONE)
-   - Add Prometheus metrics endpoint (request counts, latency histograms, error rates) (TODO)
+   - Prometheus metrics endpoint exists at `/metrics` (DONE)
+   - Add request counts, latency histograms, and error-rate metrics (TODO)
    - No distributed trace context needed yet (single-node)
 
 2. **TLS / Ingress story**
    - TLS ingress runbook exists at `docs/runbooks/ops-tls-ingress-runbook.md` (DONE)
-   - Confirm runbook is consistent with `configs/ferrumgate.prod.toml` (TODO)
-   - Document external terminator requirements explicitly in `15-deployment-and-operations.md` (TODO)
+   - Runbook is consistent with `configs/ferrumgate.prod.toml` (DONE)
+   - External terminator requirements are documented in `15-deployment-and-operations.md` (DONE)
 
 3. **Operational runbook**
    - Startup failure diagnostics (already in `17-troubleshooting.md`) (DONE)
-   - Add backup/restore procedures for SQLite persistence layer (TODO)
-   - Add capacity planning notes (DB size, connection limits) (TODO)
+   - SQLite backup/restore procedures exist in `docs/runbooks/ops-sqlite-backup-runbook.md` (DONE)
+   - Capacity planning notes exist in `docs/runbooks/ops-sqlite-backup-runbook.md` (DONE)
 
 4. **Poisoned-context fixture breadth** (P1 backlog)
    - 5/5 pass on curated regression suite (DONE)
    - Expand fixture library beyond 5 curated scenarios (TODO)
    - Target: >= 80% catch rate on expanded fixture set
 
-**Exit criteria**: Observability is added; TLS/ingress runbook is documented;
-pilot deployment is repeatable without bespoke debugging.
+**Exit criteria**: Metrics instrumentation is useful beyond an empty endpoint;
+TLS/ingress and SQLite ops runbooks stay aligned with code/config reality; pilot
+deployment is repeatable without bespoke debugging.
 
 ### Phase P2 — Multi-Node Preparation (2-8 weeks)
 
