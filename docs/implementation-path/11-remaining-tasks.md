@@ -65,3 +65,5 @@ Do not invent scope; all items cite source docs.
 
 For a consolidated view of what is and is not production-ready, including
 phased hardening guidance, see `23-production-readiness-assessment.md`.
+For the authoritative ordered execution plan (P1/P2/P3 slices, dependencies,
+verification), see `24-p1-p2-p3-execution-plan.md`.

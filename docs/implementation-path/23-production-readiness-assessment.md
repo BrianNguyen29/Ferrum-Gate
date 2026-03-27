@@ -150,26 +150,32 @@ deployment model.
 
 ## 3. Phased Hardening Plan
 
+For detailed ordered slices, status checkboxes, dependencies, and verification
+expectations, see `24-p1-p2-p3-execution-plan.md`. The summary below is
+grounded in current repo reality.
+
 ### Phase P1 — Single-Node Production Hardening (0-2 weeks)
 
 Immediate items to close before single-node production deployment:
 
 1. **Observability baseline**
-   - Add `tracing` structured logging to gateway hot paths
-   - Add Prometheus metrics endpoint (request counts, latency histograms, error rates)
+   - `tracing` structured logging exists on gateway hot paths (DONE)
+   - Add Prometheus metrics endpoint (request counts, latency histograms, error rates) (TODO)
    - No distributed trace context needed yet (single-node)
 
 2. **TLS / Ingress story**
-   - Document external terminator requirements explicitly in `15-deployment-and-operations.md`
-   - Add nginx/caddy/docker-compose TLS example to docs
+   - TLS ingress runbook exists at `docs/runbooks/ops-tls-ingress-runbook.md` (DONE)
+   - Confirm runbook is consistent with `configs/ferrumgate.prod.toml` (TODO)
+   - Document external terminator requirements explicitly in `15-deployment-and-operations.md` (TODO)
 
 3. **Operational runbook**
-   - Startup failure diagnostics (already in `17-troubleshooting.md`)
-   - Add backup/restore procedures for SQLite persistence layer
-   - Add capacity planning notes (DB size, connection limits)
+   - Startup failure diagnostics (already in `17-troubleshooting.md`) (DONE)
+   - Add backup/restore procedures for SQLite persistence layer (TODO)
+   - Add capacity planning notes (DB size, connection limits) (TODO)
 
 4. **Poisoned-context fixture breadth** (P1 backlog)
-   - Expand fixture library beyond current 5 curated scenarios
+   - 5/5 pass on curated regression suite (DONE)
+   - Expand fixture library beyond 5 curated scenarios (TODO)
    - Target: >= 80% catch rate on expanded fixture set
 
 **Exit criteria**: Observability is added; TLS/ingress runbook is documented;
@@ -179,17 +185,18 @@ pilot deployment is repeatable without bespoke debugging.
 
 Items to prepare for multi-node deployment without implementing full sync:
 
-1. **Sync-3a implementation** (partially done in `ferrum-sync` crate)
-   - Complete remaining Sync-3a.1 probe API boundary work
-   - Add integration tests with real transport (HTTP/gRPC mock)
+1. **Sync-3a/Sync-3a.1 reconciliation**
+   - `ferrum-sync` crate implements Sync-3a probe (DONE)
+   - Sync-3a.1 boundary status needs reconciliation between doc and code (TODO)
+   - Complete remaining Sync-3a.1 probe API boundary work (TODO)
 
 2. **Observability for multi-node**
-   - Distributed trace context (W3C TraceContext)
-   - Node identity + topology discovery docs
+   - Distributed trace context (W3C TraceContext) (future)
+   - Node identity + topology discovery docs (future)
 
 3. **HA readiness analysis**
-   - Document SQLite read-replica use cases
-   - Analyze leader election requirements for future implementation
+   - Document SQLite read-replica use cases (TODO)
+   - Analyze leader election requirements for future implementation (TODO)
 
 **Exit criteria**: Multi-node architecture is documented; sync implementation can begin.
 
@@ -237,5 +244,6 @@ open defects.
 | Remaining tasks | `docs/implementation-path/11-remaining-tasks.md` |
 | Next issue backlog | `docs/implementation-path/08-next-issue-backlog.md` |
 | Sync plan documents | `docs/implementation-path/18-cross-node-ledger-sync-plan.md` through `22a-sync-3a1-probe-api-boundary.md` |
+| P1/P2/P3 execution plan | `docs/implementation-path/24-p1-p2-p3-execution-plan.md` |
 | Slice 16-A boundary ratification | `docs/implementation-path/16a-slice-16-a-boundary-ratification.md` |
 | ferrum-sync crate | `crates/ferrum-sync/README.md` |

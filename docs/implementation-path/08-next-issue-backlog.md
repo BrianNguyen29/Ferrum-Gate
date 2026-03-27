@@ -42,5 +42,5 @@
 ## Production Readiness
 
 See `23-production-readiness-assessment.md` for an honest assessment of what
-is and is not production-ready, including the phased hardening plan for closing
-observability, TLS, and multi-node sync gaps.
+is and is not production-ready. For the authoritative ordered execution plan,
+see `24-p1-p2-p3-execution-plan.md`.
