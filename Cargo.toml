@@ -11,6 +11,7 @@ members = [
   "crates/ferrum-store",
   "crates/ferrum-graph",
   "crates/ferrum-ledger",
+  "crates/ferrum-sync",
   "crates/ferrum-adapter-fs",
   "crates/ferrum-adapter-git",
   "crates/ferrum-adapter-sqlite",
