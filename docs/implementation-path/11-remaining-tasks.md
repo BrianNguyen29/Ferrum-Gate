@@ -30,13 +30,14 @@ Do not invent scope; all items cite source docs.
   - Src: `08-next-issue-backlog.md` P1
   - Plan: `12-ledger-hash-chain-execution-plan.md` (Commits 1-4 complete; evidence at `18-phase-f-evidence-pack.md` line 159)
   - Live append-time verification DONE per `17-ledger-live-hash-verification-execution-plan.md` (Commits A-C complete); evidence: `ferrum-ledger/src/lib.rs:229`, `ferrum-store/src/sqlite/ledger.rs:22`, `ferrum-store/src/sqlite/ledger.rs:77`, `ferrum-gateway/src/server.rs:1602`, `ferrum-store/src/sqlite/tests.rs:1423`
-  - Future: ledger read-model, cross-node sync remain open per `12-ledger-hash-chain-execution-plan.md` line 130
+  - Future: ledger read-model, cross-node sync remain open; Sync-0 safety-contract discovery/plan started per `18-cross-node-ledger-sync-plan.md`
+  - Note: Sync-0 does NOT include protocol design, consensus, or implementation
   - **Recommended next slice: runtime integration boundary** -> DONE per `08-next-issue-backlog.md` P3; see `ferrumctl more useful` below
 
 - [x] provenance query/read-model enhancement (core surface DONE)
   - Src: `08-next-issue-backlog.md` P2 lines 19-22
   - `POST /v1/provenance/query` expanded with filters on `intent_id`, `proposal_id`, `execution_id`, `capability_id`, event kind, terminal state, time range; `ferrum-graph` read-model helpers implemented (`terminal_events`, `walk_backwards_from`, `walk_forwards_from`); integration tests at `tests/integration_provenance_query.rs`
-  - Future P2: advanced replay/fabric tooling, cross-node ledger sync
+  - Future P2: advanced replay/fabric tooling, cross-node ledger sync (Sync-0 discovery/plan started per `18-cross-node-ledger-sync-plan.md`)
   - **Recommended next slice: runtime integration boundary** -> DONE per `08-next-issue-backlog.md` P3; see `ferrumctl more useful` below
 
 - [x] operator/runtime hardening (DONE - Commit 2 complete)
