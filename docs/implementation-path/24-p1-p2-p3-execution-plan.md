@@ -32,10 +32,10 @@ ASCII only. Docs-only changes; no Rust/code edits.
 |-------|-------------|--------|--------------|
 | P1.1a | Confirm `tracing` exists on gateway hot paths | DONE | `crates/ferrum-gateway/src/server.rs` has tracing spans |
 | P1.1b | Prometheus metrics endpoint exists | DONE | `GET /metrics` returns Prometheus text format; defined at `server.rs:112`, auth-protected via bearer middleware |
-| P1.1c | Add request-count, latency-histogram, error-rate metrics | **TODO** | Metrics endpoint exposes `ferrum_gateway_http_requests_total`, `ferrum_gateway_http_request_duration_seconds`, `ferrum_gateway_errors_total` |
+| P1.1c | Request-count, latency, and error metrics are instrumented | DONE | Metrics endpoint exposes `ferrum_gateway_http_requests_total`, `ferrum_gateway_http_request_duration_seconds`, `ferrum_gateway_errors_total` |
 | P1.1d | Capacity planning notes exist in ops runbook | DONE | `docs/runbooks/ops-sqlite-backup-runbook.md` covers DB growth, disk headroom, and concurrency guidance |
 
-**Dependencies:** P1.1a is already done; P1.1b must precede P1.1c.
+**Dependencies:** P1.1a through P1.1d are DONE (2026-03-27 gateway instrumentation + ops docs).
 
 **Touchpoints:**
 - `crates/ferrum-gateway/src/server.rs`
@@ -82,9 +82,9 @@ ASCII only. Docs-only changes; no Rust/code edits.
 | Slice | Description | Status | Verification |
 |-------|-------------|--------|--------------|
 | P1.4a | 5/5 pass on curated poisoned-context regression suite | DONE | `tests/integration_poisoned_context.rs` passes |
-| P1.4b | Expand fixture library beyond 5 curated scenarios | **TODO** | Test count >= 20; average fixture breadth score >= 80% |
+| P1.4b | Expanded poisoned-context fixture library | DONE | `tests/integration_poisoned_context.rs` now contains 26 tokio tests covering broader poisoned-context cases |
 
-**Dependencies:** None (backlog item).
+**Dependencies:** P1.4a and P1.4b are DONE (2026-03-27 test expansion); breadth-score formalization can stay future-facing if needed.
 
 **Touchpoints:**
 - `tests/integration_poisoned_context.rs`

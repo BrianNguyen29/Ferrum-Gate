@@ -17,6 +17,7 @@ tower.workspace = true
 tower-http.workspace = true
 tracing.workspace = true
 prometheus = "0.13"
+regex = "1"
 
 ferrum-proto = { path = "../ferrum-proto" }
 ferrum-pdp = { path = "../ferrum-pdp" }

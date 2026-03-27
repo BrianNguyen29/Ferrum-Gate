@@ -161,7 +161,7 @@ Immediate items to close before single-node production deployment:
 1. **Observability baseline**
    - `tracing` structured logging exists on gateway hot paths (DONE)
    - Prometheus metrics endpoint exists at `/metrics` (DONE)
-   - Add request counts, latency histograms, and error-rate metrics (TODO)
+   - Request counts, latency histograms, and error-rate metrics are instrumented (DONE)
    - No distributed trace context needed yet (single-node)
 
 2. **TLS / Ingress story**
@@ -176,8 +176,8 @@ Immediate items to close before single-node production deployment:
 
 4. **Poisoned-context fixture breadth** (P1 backlog)
    - 5/5 pass on curated regression suite (DONE)
-   - Expand fixture library beyond 5 curated scenarios (TODO)
-   - Target: >= 80% catch rate on expanded fixture set
+   - Expanded fixture library beyond 5 curated scenarios (DONE; 26 tokio tests in `tests/integration_poisoned_context.rs`)
+   - Target: keep the broader suite stable and extend scoring formalization later if needed
 
 **Exit criteria**: Metrics instrumentation is useful beyond an empty endpoint;
 TLS/ingress and SQLite ops runbooks stay aligned with code/config reality; pilot

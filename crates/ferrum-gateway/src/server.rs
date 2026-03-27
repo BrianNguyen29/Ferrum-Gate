@@ -1,5 +1,5 @@
 use axum::{
-    Json, Router,
+    Extension, Json, Router,
     extract::{Path, Query, State},
     http::{StatusCode, header::AUTHORIZATION},
     response::{IntoResponse, Response},
@@ -30,7 +30,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
 
-use crate::{AuthMode, GatewayConfig, GatewayRuntime, ServerConfig};
+use crate::{AuthMode, GatewayConfig, GatewayMetrics, GatewayRuntime, MetricsLayer, ServerConfig};
 
 fn create_provenance_event(
     kind: ProvenanceEventKind,
@@ -106,6 +106,10 @@ pub fn build_authenticated_router(runtime: GatewayRuntime, server_config: Server
 }
 
 fn build_router_inner(runtime: GatewayRuntime, auth_config: Option<ServerConfig>) -> Router {
+    // Create metrics instruments for this router instance.
+    let metrics = Arc::new(GatewayMetrics::new());
+    let metrics_layer = MetricsLayer::new((*metrics).clone());
+
     let router = Router::new()
         .route("/v1/healthz", get(healthz))
         .route("/v1/readyz", get(readyz))
@@ -167,6 +171,8 @@ fn build_router_inner(runtime: GatewayRuntime, auth_config: Option<ServerConfig>
             post(ingest_external_event),
         )
         .with_state(Arc::new(runtime))
+        .layer(Extension(metrics))
+        .layer(metrics_layer)
         .layer(TraceLayer::new_for_http());
 
     if let Some(server_config) = auth_config {
@@ -237,9 +243,9 @@ async fn readyz() -> Json<HealthResponse> {
 /// Prometheus metrics endpoint.
 /// Exposes all registered metrics in Prometheus text format.
 /// Requires bearer authentication like other non-health endpoints.
-async fn metrics_handler() -> Response {
+async fn metrics_handler(Extension(metrics): Extension<Arc<GatewayMetrics>>) -> Response {
     let encoder = prometheus::TextEncoder::new();
-    let metric_families = prometheus::gather();
+    let metric_families = metrics.gather();
     let mut buffer = Vec::new();
 
     let result = encoder.encode(&metric_families, &mut buffer);
@@ -3494,5 +3500,224 @@ mod tests {
         assert!(content_type.is_some());
         let ct = content_type.unwrap().to_str().unwrap();
         assert!(ct.contains("text/plain"));
+    }
+
+    #[tokio::test]
+    async fn metrics_endpoint_includes_request_count_after_request() {
+        let app = build_router(create_test_runtime().await);
+
+        // Make a health check request to increment the request counter
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/healthz")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Fetch metrics from the same router instance (shares the same registry)
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let metrics_text = String::from_utf8(body.into()).unwrap();
+
+        // Verify request count metric is present
+        assert!(
+            metrics_text.contains("ferrum_gateway_http_requests_total"),
+            "Expected ferrum_gateway_http_requests_total metric in output"
+        );
+        // Verify method and path labels are present for healthz
+        assert!(
+            metrics_text.contains("method=\"GET\"")
+                && metrics_text.contains("path=\"/v1/healthz\""),
+            "Expected method and path labels in request count metric, got: {metrics_text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn metrics_endpoint_includes_request_duration_after_request() {
+        let app = build_router(create_test_runtime().await);
+
+        // Make a health check request
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/healthz")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Fetch metrics from the same router instance
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let metrics_text = String::from_utf8(body.into()).unwrap();
+
+        // Verify duration histogram is present
+        assert!(
+            metrics_text.contains("ferrum_gateway_http_request_duration_seconds"),
+            "Expected ferrum_gateway_http_request_duration_seconds metric in output, got: {metrics_text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn metrics_endpoint_includes_error_count_for_not_found() {
+        let app = build_router(create_test_runtime().await);
+
+        // Make a request to a non-existent endpoint (should return 404)
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/nonexistent")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // Router returns 404 for unknown routes
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        // Fetch metrics from the same router instance
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let metrics_text = String::from_utf8(body.into()).unwrap();
+
+        // Verify request count metric is present (404 is recorded)
+        assert!(
+            metrics_text.contains("ferrum_gateway_http_requests_total"),
+            "Expected ferrum_gateway_http_requests_total metric in output"
+        );
+    }
+
+    #[tokio::test]
+    async fn metrics_endpoint_tracks_healthz_endpoint() {
+        let app = build_router(create_test_runtime().await);
+
+        // Make health check request
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/healthz")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Fetch metrics from the same router instance
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let metrics_text = String::from_utf8(body.into()).unwrap();
+
+        // Verify healthz endpoint appears in metrics
+        assert!(
+            metrics_text.contains("/v1/healthz"),
+            "Expected /v1/healthz in metrics"
+        );
+    }
+
+    #[tokio::test]
+    async fn metrics_normalize_uuid_paths_to_placeholder() {
+        let app = build_router(create_test_runtime().await);
+
+        // Make a request to an endpoint with a UUID path parameter
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/executions/550e8400-e29b-41d4-a716-446655440000")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // Should return 404 since execution doesn't exist, but path should be normalized
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        // Fetch metrics from the same router instance
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let metrics_text = String::from_utf8(body.into()).unwrap();
+
+        // Verify UUID path is normalized to {id} placeholder
+        assert!(
+            metrics_text.contains("/{id}"),
+            "Expected normalized path with {{id}} placeholder in metrics, got: {}",
+            metrics_text
+        );
+        // Should NOT contain the raw UUID
+        assert!(
+            !metrics_text.contains("550e8400-e29b-41d4-a716-446655440000"),
+            "Raw UUID should not appear in metrics"
+        );
     }
 }
