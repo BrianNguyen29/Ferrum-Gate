@@ -81,9 +81,20 @@ pub struct ProbeFacadeRequest {
     pub follower_identity: String,
     /// Follower's current tip sequence (start of range to probe).
     pub follower_tip_sequence: u64,
-    /// Number of consistency probes to perform (default 3).
+    /// Number of consistency probes to perform (default 3, minimum 3).
     pub probe_count: usize,
+    /// Per-probe timeout in milliseconds.
+    pub timeout_per_probe_ms: u64,
 }
+
+/// Minimum allowed probe count per contract (Sync-3a.1).
+const MIN_PROBE_COUNT: usize = 3;
+
+/// Minimum sane timeout per probe (1ms).
+const MIN_TIMEOUT_MS: u64 = 1;
+
+/// Maximum reasonable timeout per probe (30 seconds).
+const MAX_TIMEOUT_MS: u64 = 30_000;
 
 impl ProbeFacadeRequest {
     /// Create a new probe request with default settings.
@@ -91,14 +102,44 @@ impl ProbeFacadeRequest {
         Self {
             follower_identity: follower_identity.into(),
             follower_tip_sequence,
-            probe_count: 3,
+            probe_count: MIN_PROBE_COUNT,
+            timeout_per_probe_ms: 5000, // reasonable default 5s
         }
     }
 
     /// Set the probe count (for custom consistency requirements).
+    /// Note: probe_count must be >= 3 per facade contract; invalid values
+    /// will cause the probe to fail with A0.
     pub fn with_probe_count(mut self, count: usize) -> Self {
         self.probe_count = count;
         self
+    }
+
+    /// Set the per-probe timeout in milliseconds.
+    /// Note: timeout must be in range [1, 30000] per facade contract;
+    /// invalid values will cause the probe to fail with A0.
+    pub fn with_timeout_ms(mut self, timeout_ms: u64) -> Self {
+        self.timeout_per_probe_ms = timeout_ms;
+        self
+    }
+
+    /// Validate this request's preconditions.
+    ///
+    /// Returns `Some(Sync1AbortCode::A0)` if invalid (fail-closed).
+    /// Returns `None` if the request is valid.
+    fn validate(&self) -> Option<Sync1AbortCode> {
+        // probe_count must be >= 3 per contract
+        if self.probe_count < MIN_PROBE_COUNT {
+            return Some(Sync1AbortCode::A0);
+        }
+
+        // timeout must be in sane range
+        if self.timeout_per_probe_ms < MIN_TIMEOUT_MS || self.timeout_per_probe_ms > MAX_TIMEOUT_MS
+        {
+            return Some(Sync1AbortCode::A0);
+        }
+
+        None
     }
 }
 
@@ -188,6 +229,11 @@ impl<T: Transport> ProbeFacade<T> {
     /// - `ProbeFacadeResponse::ProbeOk { tip, proof_structure }` on success
     /// - `ProbeFacadeResponse::ProbeAborted { code }` on any failure
     pub async fn probe(&self, request: &ProbeFacadeRequest) -> ProbeFacadeResponse {
+        // Fail-closed validation of caller preconditions (A0 on invalid config)
+        if let Some(code) = request.validate() {
+            return ProbeFacadeResponse::ProbeAborted { code };
+        }
+
         let result = self
             .inner
             .run_with_probe_count(
@@ -217,6 +263,22 @@ impl<T: Transport> ProbeFacade<T> {
         }
     }
 
+    /// Validate parameters for probe_with_start_sequence.
+    ///
+    /// Returns `Some(Sync1AbortCode::A0)` if invalid (fail-closed).
+    /// Returns `None` if the parameters are valid.
+    fn validate_probe_params(
+        follower_identity: &str,
+        _start_sequence: u64,
+    ) -> Option<Sync1AbortCode> {
+        // follower_identity must not be empty
+        if follower_identity.is_empty() {
+            return Some(Sync1AbortCode::A0);
+        }
+
+        None
+    }
+
     /// Run the probe with explicit start sequence.
     ///
     /// This variant allows callers to specify the exact start sequence,
@@ -226,6 +288,11 @@ impl<T: Transport> ProbeFacade<T> {
         follower_identity: &str,
         start_sequence: u64,
     ) -> ProbeFacadeResponse {
+        // Fail-closed validation of caller preconditions (A0 on invalid params)
+        if let Some(code) = Self::validate_probe_params(follower_identity, start_sequence) {
+            return ProbeFacadeResponse::ProbeAborted { code };
+        }
+
         let result = self
             .inner
             .run_with_start_sequence(follower_identity, start_sequence)
@@ -467,44 +534,44 @@ mod tests {
     #[tokio::test]
     async fn facade_probe_count_is_honored_via_error_on_nth_call() {
         // Verify that request.probe_count actually affects how many tip fetches
-        // are made. Inject an error on call 3 — if probe_count=3, we abort.
+        // are made. Inject an error on call 4 — if probe_count=4, we abort.
         // If probe_count is NOT honored (always uses default 3), same result.
-        // We verify by checking that probe_count=2 SUCCEEDS (doesn't hit the error
-        // on call 3) and probe_count=3 FAILS (hits the error on call 3).
+        // We verify by checking that probe_count=3 SUCCEEDS (doesn't hit the error
+        // on call 4) and probe_count=4 FAILS (hits the error on call 4).
         let tip = make_tip(100, "abc");
         let transport = FakeLeaderTransport::new();
         transport.set_tip(tip).await;
         transport.set_version(make_version()).await;
         transport.set_proof(make_proof(vec![1], vec!["h1"])).await;
 
-        // Inject error on the 3rd tip fetch call
+        // Inject error on the 4th tip fetch call
         transport
             .inject_tip_error_on_call(
-                3,
+                4,
                 crate::transport::TransportError::LeaderUnreachable {
                     address: "127.0.0.1:8080".to_string(),
                 },
             )
             .await;
 
-        // Probe with probe_count=2 should succeed (only 2 tip fetches, doesn't hit call 3)
+        // Probe with probe_count=3 should succeed (only 3 tip fetches, doesn't hit call 4)
         let facade = ProbeFacade::new(transport.clone());
-        let request_2 = ProbeFacadeRequest::new("follower", 0).with_probe_count(2);
-        let response_2 = facade.probe(&request_2).await;
+        let request_3 = ProbeFacadeRequest::new("follower", 0).with_probe_count(3);
+        let response_3 = facade.probe(&request_3).await;
         assert!(
-            response_2.is_ok(),
-            "probe_count=2 should not hit error on call 3"
+            response_3.is_ok(),
+            "probe_count=3 should not hit error on call 4"
         );
 
-        // Probe with probe_count=3 should abort (hits error on call 3)
-        let facade3 = ProbeFacade::new(transport.clone());
-        let request_3 = ProbeFacadeRequest::new("follower", 0).with_probe_count(3);
-        let response_3 = facade3.probe(&request_3).await;
+        // Probe with probe_count=4 should abort (hits error on call 4)
+        let facade4 = ProbeFacade::new(transport.clone());
+        let request_4 = ProbeFacadeRequest::new("follower", 0).with_probe_count(4);
+        let response_4 = facade4.probe(&request_4).await;
         assert!(
-            response_3.is_aborted(),
-            "probe_count=3 should hit error on call 3"
+            response_4.is_aborted(),
+            "probe_count=4 should hit error on call 4"
         );
-        assert_eq!(response_3.abort_code(), Some(Sync1AbortCode::A7));
+        assert_eq!(response_4.abort_code(), Some(Sync1AbortCode::A7));
     }
 
     #[tokio::test]
@@ -535,5 +602,160 @@ mod tests {
         // Full entry content is NOT available (caller cannot access entries)
         // This is enforced by ProofStructureInfo not having an `entries` field.
         // If we got here, the test passes - shape-only info escaped correctly.
+    }
+
+    #[tokio::test]
+    async fn facade_rejects_probe_count_below_minimum() {
+        // probe_count < 3 is invalid per facade contract; must fail with A0
+        let transport = FakeLeaderTransport::new();
+        let facade = ProbeFacade::new(transport);
+
+        // probe_count = 2 should fail
+        let request = ProbeFacadeRequest::new("follower", 0).with_probe_count(2);
+        let response = facade.probe(&request).await;
+        assert!(response.is_aborted());
+        assert_eq!(response.abort_code(), Some(Sync1AbortCode::A0));
+
+        // probe_count = 1 should fail
+        let request_1 = ProbeFacadeRequest::new("follower", 0).with_probe_count(1);
+        let response_1 = facade.probe(&request_1).await;
+        assert!(response_1.is_aborted());
+        assert_eq!(response_1.abort_code(), Some(Sync1AbortCode::A0));
+
+        // probe_count = 0 should fail
+        let request_0 = ProbeFacadeRequest::new("follower", 0).with_probe_count(0);
+        let response_0 = facade.probe(&request_0).await;
+        assert!(response_0.is_aborted());
+        assert_eq!(response_0.abort_code(), Some(Sync1AbortCode::A0));
+    }
+
+    #[tokio::test]
+    async fn facade_rejects_timeout_too_low() {
+        // timeout < 1ms is invalid per facade contract; must fail with A0
+        let transport = FakeLeaderTransport::new();
+        let facade = ProbeFacade::new(transport);
+
+        let request = ProbeFacadeRequest::new("follower", 0).with_timeout_ms(0);
+        let response = facade.probe(&request).await;
+        assert!(response.is_aborted());
+        assert_eq!(response.abort_code(), Some(Sync1AbortCode::A0));
+    }
+
+    #[tokio::test]
+    async fn facade_rejects_timeout_too_high() {
+        // timeout > 30000ms is invalid per facade contract; must fail with A0
+        let transport = FakeLeaderTransport::new();
+        let facade = ProbeFacade::new(transport);
+
+        let request = ProbeFacadeRequest::new("follower", 0).with_timeout_ms(60_000);
+        let response = facade.probe(&request).await;
+        assert!(response.is_aborted());
+        assert_eq!(response.abort_code(), Some(Sync1AbortCode::A0));
+    }
+
+    #[tokio::test]
+    async fn facade_accepts_valid_probe_count_at_minimum() {
+        // probe_count = 3 is the minimum valid value
+        let tip = make_tip(100, "abc");
+        let transport = FakeLeaderTransport::new();
+        transport.set_tip(tip).await;
+        transport.set_version(make_version()).await;
+        transport.set_proof(make_proof(vec![1], vec!["h1"])).await;
+
+        let facade = ProbeFacade::new(transport);
+        let request = ProbeFacadeRequest::new("follower", 0).with_probe_count(3);
+        let response = facade.probe(&request).await;
+        // Should succeed (not A0), actual result depends on transport
+        // but A0 means validation failure, not transport failure
+        assert_ne!(response.abort_code(), Some(Sync1AbortCode::A0));
+    }
+
+    #[tokio::test]
+    async fn facade_accepts_valid_timeout_boundaries() {
+        let tip = make_tip(100, "abc");
+
+        // timeout = 1ms (minimum valid)
+        let transport1 = FakeLeaderTransport::new();
+        transport1.set_tip(tip.clone()).await;
+        transport1.set_version(make_version()).await;
+        transport1.set_proof(make_proof(vec![1], vec!["h1"])).await;
+        let facade1 = ProbeFacade::new(transport1);
+        let request_min = ProbeFacadeRequest::new("follower", 0).with_timeout_ms(1);
+        let response_min = facade1.probe(&request_min).await;
+        assert_ne!(response_min.abort_code(), Some(Sync1AbortCode::A0));
+
+        // timeout = 30000ms (maximum valid)
+        let transport2 = FakeLeaderTransport::new();
+        transport2.set_tip(tip).await;
+        transport2.set_version(make_version()).await;
+        transport2.set_proof(make_proof(vec![1], vec!["h1"])).await;
+        let facade2 = ProbeFacade::new(transport2);
+        let request_max = ProbeFacadeRequest::new("follower", 0).with_timeout_ms(30_000);
+        let response_max = facade2.probe(&request_max).await;
+        assert_ne!(response_max.abort_code(), Some(Sync1AbortCode::A0));
+    }
+
+    #[tokio::test]
+    async fn facade_fails_closed_on_invalid_config_a0() {
+        // Comprehensive test: any invalid config returns A0, never A7 or other codes
+        // This proves fail-closed behavior for config/precondition failures
+        let transport = FakeLeaderTransport::new();
+        let facade = ProbeFacade::new(transport);
+
+        // Invalid: probe_count = 0
+        let response = facade
+            .probe(&ProbeFacadeRequest::new("f", 0).with_probe_count(0))
+            .await;
+        assert_eq!(response.abort_code(), Some(Sync1AbortCode::A0));
+
+        // Invalid: probe_count = 1
+        let response = facade
+            .probe(&ProbeFacadeRequest::new("f", 0).with_probe_count(1))
+            .await;
+        assert_eq!(response.abort_code(), Some(Sync1AbortCode::A0));
+
+        // Invalid: probe_count = 2
+        let response = facade
+            .probe(&ProbeFacadeRequest::new("f", 0).with_probe_count(2))
+            .await;
+        assert_eq!(response.abort_code(), Some(Sync1AbortCode::A0));
+
+        // Invalid: timeout = 0
+        let response = facade
+            .probe(&ProbeFacadeRequest::new("f", 0).with_timeout_ms(0))
+            .await;
+        assert_eq!(response.abort_code(), Some(Sync1AbortCode::A0));
+
+        // Invalid: timeout > 30000
+        let response = facade
+            .probe(&ProbeFacadeRequest::new("f", 0).with_timeout_ms(u64::MAX))
+            .await;
+        assert_eq!(response.abort_code(), Some(Sync1AbortCode::A0));
+    }
+
+    #[tokio::test]
+    async fn facade_probe_with_start_sequence_rejects_empty_identity() {
+        // Empty follower_identity must fail with A0 (fail-closed)
+        let transport = FakeLeaderTransport::new();
+        let facade = ProbeFacade::new(transport);
+
+        let response = facade.probe_with_start_sequence("", 0).await;
+        assert!(response.is_aborted());
+        assert_eq!(response.abort_code(), Some(Sync1AbortCode::A0));
+    }
+
+    #[tokio::test]
+    async fn facade_probe_with_start_sequence_accepts_valid_identity() {
+        // Non-empty follower_identity should be accepted and not return A0
+        let tip = make_tip(100, "abc");
+        let transport = FakeLeaderTransport::new();
+        transport.set_tip(tip).await;
+        transport.set_version(make_version()).await;
+        transport.set_proof(make_proof(vec![1], vec!["h1"])).await;
+
+        let facade = ProbeFacade::new(transport);
+        let response = facade.probe_with_start_sequence("valid-follower", 0).await;
+        // A0 means validation failure - we should NOT get A0 for valid params
+        assert_ne!(response.abort_code(), Some(Sync1AbortCode::A0));
     }
 }
