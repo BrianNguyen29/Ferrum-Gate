@@ -28,7 +28,8 @@ pub mod transport;
 
 pub use error::{ProbeError, Sync1AbortCode, map_transport_error_to_abort};
 pub use facade::{
-    ContinuityProofShape, ProbeFacade, ProbeFacadeRequest, ProbeFacadeResponse, ProofStructureInfo,
+    ContinuityProofShape, ProbeFacade, ProbeFacadeConfig, ProbeFacadeRequest, ProbeFacadeResponse,
+    ProofStructureInfo,
 };
 pub use proof::{verify_entry_hashes, verify_proof_structure};
 pub use transport::{

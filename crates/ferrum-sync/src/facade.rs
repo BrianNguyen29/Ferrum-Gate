@@ -87,24 +87,115 @@ pub struct ProbeFacadeRequest {
     pub timeout_per_probe_ms: u64,
 }
 
-/// Minimum allowed probe count per contract (Sync-3a.1).
-const MIN_PROBE_COUNT: usize = 3;
+/// Configuration for ProbeFacade defaults and policy.
+///
+/// This struct centralizes all magic numbers and policy defaults
+/// that were previously scattered as magic constants in the codebase.
+/// All validation thresholds are enforced here to ensure consistency.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProbeFacadeConfig {
+    /// Default probe count for consistency checking.
+    pub default_probe_count: usize,
+    /// Default per-probe timeout in milliseconds.
+    pub default_timeout_ms: u64,
+    /// Minimum allowed probe count per contract (always 3 for Sync-3a.1).
+    pub min_probe_count: usize,
+    /// Minimum sane timeout per probe (1ms).
+    pub min_timeout_ms: u64,
+    /// Maximum reasonable timeout per probe (30 seconds).
+    pub max_timeout_ms: u64,
+}
 
-/// Minimum sane timeout per probe (1ms).
-const MIN_TIMEOUT_MS: u64 = 1;
-
-/// Maximum reasonable timeout per probe (30 seconds).
-const MAX_TIMEOUT_MS: u64 = 30_000;
-
-impl ProbeFacadeRequest {
-    /// Create a new probe request with default settings.
-    pub fn new(follower_identity: impl Into<String>, follower_tip_sequence: u64) -> Self {
+impl Default for ProbeFacadeConfig {
+    fn default() -> Self {
         Self {
+            default_probe_count: 3,
+            default_timeout_ms: 5000,
+            min_probe_count: 3,
+            min_timeout_ms: 1,
+            max_timeout_ms: 30_000,
+        }
+    }
+}
+
+impl ProbeFacadeConfig {
+    /// Create a new config with default values.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create a config with a custom default probe count.
+    ///
+    /// The probe_count must be >= min_probe_count (3).
+    /// Returns None if the provided count is invalid.
+    pub fn with_default_probe_count(mut self, count: usize) -> Option<Self> {
+        if count < self.min_probe_count {
+            return None;
+        }
+        self.default_probe_count = count;
+        Some(self)
+    }
+
+    /// Create a config with a custom default timeout.
+    ///
+    /// The timeout must be in range [min_timeout_ms, max_timeout_ms].
+    /// Returns None if the provided timeout is invalid.
+    pub fn with_default_timeout_ms(mut self, timeout_ms: u64) -> Option<Self> {
+        if timeout_ms < self.min_timeout_ms || timeout_ms > self.max_timeout_ms {
+            return None;
+        }
+        self.default_timeout_ms = timeout_ms;
+        Some(self)
+    }
+
+    /// Validate a probe count against contract constraints.
+    ///
+    /// Returns true if valid (>= min_probe_count).
+    pub fn is_valid_probe_count(&self, count: usize) -> bool {
+        count >= self.min_probe_count
+    }
+
+    /// Validate a timeout against contract constraints.
+    ///
+    /// Returns true if valid (in range [min_timeout_ms, max_timeout_ms]).
+    pub fn is_valid_timeout(&self, timeout_ms: u64) -> bool {
+        timeout_ms >= self.min_timeout_ms && timeout_ms <= self.max_timeout_ms
+    }
+
+    /// Build a ProbeFacadeRequest with this config's defaults.
+    ///
+    /// This is the primary factory method for creating requests
+    /// with centralized default values.
+    pub fn new_request(
+        &self,
+        follower_identity: impl Into<String>,
+        follower_tip_sequence: u64,
+    ) -> ProbeFacadeRequest {
+        ProbeFacadeRequest {
             follower_identity: follower_identity.into(),
             follower_tip_sequence,
-            probe_count: MIN_PROBE_COUNT,
-            timeout_per_probe_ms: 5000, // reasonable default 5s
+            probe_count: self.default_probe_count,
+            timeout_per_probe_ms: self.default_timeout_ms,
         }
+    }
+}
+
+impl ProbeFacadeRequest {
+    /// Create a new probe request with default settings from ProbeFacadeConfig.
+    pub fn new(follower_identity: impl Into<String>, follower_tip_sequence: u64) -> Self {
+        ProbeFacadeConfig::default().new_request(follower_identity, follower_tip_sequence)
+    }
+
+    /// Create a new probe request using explicit config values.
+    ///
+    /// This is the factory method that uses the centralized config.
+    /// Prefer this over the individual with_* methods for bulk construction.
+    pub fn from_config(
+        config: &ProbeFacadeConfig,
+        follower_identity: impl Into<String>,
+        follower_tip_sequence: u64,
+    ) -> Self {
+        config.new_request(follower_identity, follower_tip_sequence)
     }
 
     /// Set the probe count (for custom consistency requirements).
@@ -123,19 +214,30 @@ impl ProbeFacadeRequest {
         self
     }
 
-    /// Validate this request's preconditions.
+    /// Validate this request's preconditions using default config bounds.
     ///
     /// Returns `Some(Sync1AbortCode::A0)` if invalid (fail-closed).
     /// Returns `None` if the request is valid.
+    ///
+    /// Uses `ProbeFacadeConfig::default()` for validation bounds to ensure
+    /// centralized contract enforcement.
+    #[allow(dead_code)]
     fn validate(&self) -> Option<Sync1AbortCode> {
-        // probe_count must be >= 3 per contract
-        if self.probe_count < MIN_PROBE_COUNT {
+        self.validate_with_config(&ProbeFacadeConfig::default())
+    }
+
+    /// Validate this request's preconditions using explicit config bounds.
+    ///
+    /// Returns `Some(Sync1AbortCode::A0)` if invalid (fail-closed).
+    /// Returns `None` if the request is valid.
+    ///
+    /// Use this variant when you need to validate against a custom config.
+    fn validate_with_config(&self, config: &ProbeFacadeConfig) -> Option<Sync1AbortCode> {
+        if !config.is_valid_probe_count(self.probe_count) {
             return Some(Sync1AbortCode::A0);
         }
 
-        // timeout must be in sane range
-        if self.timeout_per_probe_ms < MIN_TIMEOUT_MS || self.timeout_per_probe_ms > MAX_TIMEOUT_MS
-        {
+        if !config.is_valid_timeout(self.timeout_per_probe_ms) {
             return Some(Sync1AbortCode::A0);
         }
 
@@ -198,21 +300,43 @@ impl ProbeFacadeResponse {
 #[derive(Debug)]
 pub struct ProbeFacade<T: Transport> {
     inner: TransportProbe<T>,
+    config: ProbeFacadeConfig,
 }
 
 impl<T: Transport> ProbeFacade<T> {
     /// Create a new probe facade wrapping the given transport.
+    ///
+    /// Uses `ProbeFacadeConfig::default()` for validation bounds.
     pub fn new(transport: T) -> Self {
         Self {
             inner: TransportProbe::new(transport),
+            config: ProbeFacadeConfig::default(),
         }
     }
 
     /// Create a new probe facade with custom probe count.
+    ///
+    /// Uses `ProbeFacadeConfig::default()` for validation bounds.
     pub fn with_probes(transport: T, probe_count: usize) -> Self {
         Self {
             inner: TransportProbe::with_probes(transport, probe_count),
+            config: ProbeFacadeConfig::default(),
         }
+    }
+
+    /// Create a new probe facade with explicit configuration.
+    ///
+    /// The config is stored and used for request validation bounds.
+    pub fn with_config(transport: T, config: ProbeFacadeConfig) -> Self {
+        Self {
+            inner: TransportProbe::new(transport),
+            config,
+        }
+    }
+
+    /// Returns a reference to the facade's configuration.
+    pub fn config(&self) -> &ProbeFacadeConfig {
+        &self.config
     }
 
     /// Run the diagnostic probe and return only facade-visible results.
@@ -230,7 +354,7 @@ impl<T: Transport> ProbeFacade<T> {
     /// - `ProbeFacadeResponse::ProbeAborted { code }` on any failure
     pub async fn probe(&self, request: &ProbeFacadeRequest) -> ProbeFacadeResponse {
         // Fail-closed validation of caller preconditions (A0 on invalid config)
-        if let Some(code) = request.validate() {
+        if let Some(code) = request.validate_with_config(&self.config) {
             return ProbeFacadeResponse::ProbeAborted { code };
         }
 
@@ -757,5 +881,255 @@ mod tests {
         let response = facade.probe_with_start_sequence("valid-follower", 0).await;
         // A0 means validation failure - we should NOT get A0 for valid params
         assert_ne!(response.abort_code(), Some(Sync1AbortCode::A0));
+    }
+
+    // =============================================================================
+    // ProbeFacadeConfig tests
+    // =============================================================================
+
+    #[test]
+    fn config_default_values() {
+        let config = ProbeFacadeConfig::default();
+
+        assert_eq!(config.default_probe_count, 3);
+        assert_eq!(config.default_timeout_ms, 5000);
+        assert_eq!(config.min_probe_count, 3);
+        assert_eq!(config.min_timeout_ms, 1);
+        assert_eq!(config.max_timeout_ms, 30_000);
+    }
+
+    #[test]
+    fn config_new_is_same_as_default() {
+        let config = ProbeFacadeConfig::new();
+        assert_eq!(config, ProbeFacadeConfig::default());
+    }
+
+    #[test]
+    fn config_is_valid_probe_count_accepts_valid_values() {
+        let config = ProbeFacadeConfig::default();
+
+        assert!(config.is_valid_probe_count(3)); // minimum
+        assert!(config.is_valid_probe_count(4));
+        assert!(config.is_valid_probe_count(100));
+    }
+
+    #[test]
+    fn config_is_valid_probe_count_rejects_invalid_values() {
+        let config = ProbeFacadeConfig::default();
+
+        assert!(!config.is_valid_probe_count(0));
+        assert!(!config.is_valid_probe_count(1));
+        assert!(!config.is_valid_probe_count(2));
+    }
+
+    #[test]
+    fn config_is_valid_timeout_accepts_valid_values() {
+        let config = ProbeFacadeConfig::default();
+
+        assert!(config.is_valid_timeout(1)); // minimum
+        assert!(config.is_valid_timeout(5000)); // default
+        assert!(config.is_valid_timeout(30_000)); // maximum
+    }
+
+    #[test]
+    fn config_is_valid_timeout_rejects_invalid_values() {
+        let config = ProbeFacadeConfig::default();
+
+        assert!(!config.is_valid_timeout(0)); // below minimum
+        assert!(!config.is_valid_timeout(u64::MAX)); // above maximum
+    }
+
+    #[test]
+    fn config_with_default_probe_count_accepts_valid_values() {
+        let config = ProbeFacadeConfig::default();
+
+        let config_with_5 = config.with_default_probe_count(5);
+        assert!(config_with_5.is_some());
+        assert_eq!(config_with_5.unwrap().default_probe_count, 5);
+    }
+
+    #[test]
+    fn config_with_default_probe_count_rejects_invalid_values() {
+        let config = ProbeFacadeConfig::default();
+
+        assert!(config.with_default_probe_count(0).is_none());
+        assert!(config.with_default_probe_count(1).is_none());
+        assert!(config.with_default_probe_count(2).is_none());
+    }
+
+    #[test]
+    fn config_with_default_timeout_ms_accepts_valid_values() {
+        let config = ProbeFacadeConfig::default();
+
+        let config_with_10s = config.with_default_timeout_ms(10_000);
+        assert!(config_with_10s.is_some());
+        assert_eq!(config_with_10s.unwrap().default_timeout_ms, 10_000);
+    }
+
+    #[test]
+    fn config_with_default_timeout_ms_rejects_invalid_values() {
+        let config = ProbeFacadeConfig::default();
+
+        assert!(config.with_default_timeout_ms(0).is_none()); // below min
+        assert!(config.with_default_timeout_ms(u64::MAX).is_none()); // above max
+    }
+
+    #[test]
+    fn config_new_request_uses_config_defaults() {
+        let config = ProbeFacadeConfig::default();
+        let request = config.new_request("node-1", 100);
+
+        assert_eq!(request.follower_identity, "node-1");
+        assert_eq!(request.follower_tip_sequence, 100);
+        assert_eq!(request.probe_count, config.default_probe_count);
+        assert_eq!(request.timeout_per_probe_ms, config.default_timeout_ms);
+    }
+
+    #[test]
+    fn config_new_request_with_custom_config() {
+        let config = ProbeFacadeConfig::default()
+            .with_default_probe_count(5)
+            .unwrap();
+        let request = config.new_request("node-2", 200);
+
+        assert_eq!(request.follower_identity, "node-2");
+        assert_eq!(request.follower_tip_sequence, 200);
+        assert_eq!(request.probe_count, 5);
+        assert_eq!(request.timeout_per_probe_ms, config.default_timeout_ms);
+    }
+
+    #[test]
+    fn probe_facade_request_from_config_matches_new_request() {
+        let config = ProbeFacadeConfig::default();
+        let request1 = ProbeFacadeRequest::new("test-node", 50);
+        let request2 = ProbeFacadeRequest::from_config(&config, "test-node", 50);
+
+        assert_eq!(request1.follower_identity, request2.follower_identity);
+        assert_eq!(
+            request1.follower_tip_sequence,
+            request2.follower_tip_sequence
+        );
+        assert_eq!(request1.probe_count, request2.probe_count);
+        assert_eq!(request1.timeout_per_probe_ms, request2.timeout_per_probe_ms);
+    }
+
+    #[test]
+    fn probe_facade_request_validate_uses_default_config_bounds() {
+        // Valid request should pass validation
+        let valid_request = ProbeFacadeRequest::new("node", 0);
+        assert!(valid_request.validate().is_none());
+
+        // Invalid probe_count (below min) should fail
+        let invalid_count_request = ProbeFacadeRequest::new("node", 0).with_probe_count(2);
+        assert_eq!(invalid_count_request.validate(), Some(Sync1AbortCode::A0));
+
+        // Invalid timeout (above max) should fail
+        let invalid_timeout_request = ProbeFacadeRequest::new("node", 0).with_timeout_ms(60_000);
+        assert_eq!(invalid_timeout_request.validate(), Some(Sync1AbortCode::A0));
+    }
+
+    #[test]
+    fn probe_facade_request_validate_with_custom_config() {
+        // Test that validate_with_config uses the config's bounds correctly
+        // Default config has min_probe_count=3, so probe_count=2 should fail
+        let default_config = ProbeFacadeConfig::default();
+
+        let request_below_min = ProbeFacadeRequest::new("node", 0).with_probe_count(2);
+        assert_eq!(
+            request_below_min.validate_with_config(&default_config),
+            Some(Sync1AbortCode::A0)
+        );
+
+        // But probe_count=3 (equal to min) should pass
+        let request_at_min = ProbeFacadeRequest::new("node", 0).with_probe_count(3);
+        assert!(
+            request_at_min
+                .validate_with_config(&default_config)
+                .is_none()
+        );
+
+        // Custom default doesn't change validation bounds (min_probe_count stays 3)
+        let custom_default_config = ProbeFacadeConfig::default()
+            .with_default_probe_count(10)
+            .unwrap();
+        let request_with_custom_default = ProbeFacadeRequest::new("node", 0).with_probe_count(5);
+        // probe_count=5 >= min_probe_count=3, so validation passes
+        assert!(
+            request_with_custom_default
+                .validate_with_config(&custom_default_config)
+                .is_none()
+        );
+
+        // Request with custom timeout that exceeds default max should fail validation
+        let request_high_timeout = ProbeFacadeRequest::new("node", 0).with_timeout_ms(100_000);
+        assert_eq!(
+            request_high_timeout.validate_with_config(&default_config),
+            Some(Sync1AbortCode::A0)
+        );
+    }
+
+    #[tokio::test]
+    async fn facade_request_created_via_config_produces_valid_response() {
+        let tip = make_tip(100, "abc");
+        let transport = FakeLeaderTransport::new();
+        transport.set_tip(tip.clone()).await;
+        transport.set_version(make_version()).await;
+        transport.set_proof(make_proof(vec![1], vec!["h1"])).await;
+
+        let facade = ProbeFacade::new(transport);
+        let config = ProbeFacadeConfig::default();
+        let request = config.new_request("follower-config-test", 0);
+
+        let response = facade.probe(&request).await;
+        assert!(response.is_ok());
+    }
+
+    #[tokio::test]
+    async fn facade_with_config_stores_and_uses_config() {
+        // Verify that with_config stores the config and uses it for validation
+        let custom_config = ProbeFacadeConfig::default()
+            .with_default_probe_count(5)
+            .unwrap();
+
+        let tip = make_tip(100, "abc");
+        let transport = FakeLeaderTransport::new();
+        transport.set_tip(tip.clone()).await;
+        transport.set_version(make_version()).await;
+        transport.set_proof(make_proof(vec![1], vec!["h1"])).await;
+
+        let facade = ProbeFacade::with_config(transport, custom_config);
+
+        // Verify config() returns the stored config
+        assert_eq!(facade.config().default_probe_count, 5);
+        assert_eq!(facade.config().default_timeout_ms, 5000);
+
+        // Verify the facade uses the stored config (probe_count=5 is valid with stored config)
+        let request = ProbeFacadeRequest::new("follower", 0).with_probe_count(5);
+        let response = facade.probe(&request).await;
+        // Should NOT be A0 (validation error) since probe_count=5 >= min_probe_count=3
+        assert_ne!(response.abort_code(), Some(Sync1AbortCode::A0));
+    }
+
+    #[test]
+    fn config_chain_validators() {
+        // Verify that with_default_probe_count chains correctly
+        let config = ProbeFacadeConfig::default()
+            .with_default_probe_count(7)
+            .unwrap()
+            .with_default_timeout_ms(15_000)
+            .unwrap();
+
+        assert_eq!(config.default_probe_count, 7);
+        assert_eq!(config.default_timeout_ms, 15_000);
+    }
+
+    #[test]
+    fn config_equality() {
+        let config1 = ProbeFacadeConfig::default();
+        let config2 = ProbeFacadeConfig::default();
+        assert_eq!(config1, config2);
+
+        let custom_config = config1.with_default_probe_count(5).unwrap();
+        assert_ne!(config1, custom_config);
     }
 }
