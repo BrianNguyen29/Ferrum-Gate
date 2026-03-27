@@ -448,7 +448,7 @@ impl<T: Transport> ProbeFacade<T> {
 // only to prove the wiring works and serves as a reference implementation.
 // ---------------------------------------------------------------------------
 #[cfg(test)]
-mod wiring {
+pub mod wiring {
     use super::*;
     use crate::transport::FakeLeaderTransport;
 
@@ -458,11 +458,11 @@ mod wiring {
     /// so callers (tests) can inspect both the facade behavior and the transport
     /// state without exposing any internal types publicly.
     #[derive(Debug)]
-    pub struct SampleWiring {
+    pub(crate) struct SampleWiring {
         /// The configured facade under test.
-        pub facade: ProbeFacade<FakeLeaderTransport>,
+        pub(crate) facade: ProbeFacade<FakeLeaderTransport>,
         /// The underlying fake transport (accessible for inspection/injection).
-        transport: FakeLeaderTransport,
+        pub(crate) transport: FakeLeaderTransport,
     }
 
     impl SampleWiring {
@@ -472,19 +472,19 @@ mod wiring {
         /// 1. Create a FakeLeaderTransport with default tip/version
         /// 2. Create a ProbeFacadeConfig (with optional customizations)
         /// 3. Wire them via ProbeFacade::with_config(...)
-        pub fn new(config: ProbeFacadeConfig) -> Self {
+        pub(crate) fn new(config: ProbeFacadeConfig) -> Self {
             let transport = FakeLeaderTransport::new();
             let facade = ProbeFacade::with_config(transport.clone(), config);
             Self { facade, transport }
         }
 
         /// Returns a reference to the underlying fake transport for test injection.
-        pub fn transport(&self) -> &FakeLeaderTransport {
+        pub(crate) fn transport(&self) -> &FakeLeaderTransport {
             &self.transport
         }
 
         /// Run a probe using the configured facade.
-        pub async fn probe(&self, request: &ProbeFacadeRequest) -> ProbeFacadeResponse {
+        pub(crate) async fn probe(&self, request: &ProbeFacadeRequest) -> ProbeFacadeResponse {
             self.facade.probe(request).await
         }
     }
