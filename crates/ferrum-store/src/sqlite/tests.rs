@@ -726,6 +726,57 @@ async fn ledger_append_and_load_single_entry() {
 }
 
 #[tokio::test]
+async fn ledger_append_hash_mismatch_rejected() {
+    // Verify that append rejects an entry whose prev_hash does not match the chain tip.
+    let (_temp_dir, store) = create_test_store().await;
+
+    // Build and persist a genesis entry using append_event (handles FK requirement)
+    let genesis = store
+        .ledger()
+        .append_event(&make_test_provenance_event(0))
+        .await
+        .expect("append genesis");
+
+    // Craft a rogue entry that claims to follow the genesis but has a wrong prev_hash
+    let rogue_prev = "wrong_hash___________________________________".into();
+    let rogue_entry = LedgerEntry {
+        sequence: 1,
+        prev_hash: Some(rogue_prev),
+        entry_hash: "rogue_hash_________________________________".into(),
+        event: make_test_provenance_event(1),
+    };
+
+    // The rogue entry must NOT be accepted (FK requires event in provenance_events first)
+    store
+        .provenance()
+        .append_event(&rogue_entry.event)
+        .await
+        .expect("persist rogue event");
+
+    // Append must fail due to hash verification
+    let result = store.ledger().append(&rogue_entry).await;
+    assert!(
+        result.is_err(),
+        "append with wrong prev_hash should be rejected"
+    );
+    let err_msg = format!("{}", result.unwrap_err());
+    assert!(
+        err_msg.contains("append hash verification failed") || err_msg.contains("chain broken"),
+        "error should mention hash verification failure: {}",
+        err_msg
+    );
+
+    // Verify genesis is still intact and no rogue entry was persisted
+    let loaded = store
+        .ledger()
+        .get_by_event(genesis.event.event_id)
+        .await
+        .expect("load genesis")
+        .expect("genesis should still exist");
+    assert_eq!(loaded.entry_hash.as_str(), genesis.entry_hash.as_str());
+}
+
+#[tokio::test]
 async fn ledger_append_load_and_verify_chain() {
     let (_temp_dir, store) = create_test_store().await;
 
@@ -1365,6 +1416,41 @@ async fn verify_ledger_chain_detects_tampered_previous_ledger_hash_column() {
     assert!(
         format!("{}", err).contains("previous_ledger_hash column"),
         "error should mention previous_ledger_hash column tamper: {}",
+        err
+    );
+}
+
+#[tokio::test]
+async fn append_event_rejects_tampered_tip_content_hash() {
+    // Test that append_event verifies tip integrity before using tip hash as prev_hash.
+    // If the tip's content_hash column is tampered after verify_ledger_chain passes,
+    // the next append must reject the tampered tip rather than building a wrong chain.
+    let (_temp_dir, store) = create_test_store().await;
+
+    // Append genesis entry
+    store
+        .ledger()
+        .append_event(&make_test_provenance_event(0))
+        .await
+        .expect("append genesis");
+
+    // Tamper the tip's content_hash column directly (simulates live DB tamper)
+    let pool = store.pool();
+    sqlx::query("UPDATE ledger_entries SET content_hash = 'tampered_tip_content_hash____' WHERE entry_id = 1")
+        .execute(pool)
+        .await
+        .expect("tamper content_hash should succeed");
+
+    // Attempt to append another event - this must fail because the tip is invalid
+    let err = store
+        .ledger()
+        .append_event(&make_test_provenance_event(1))
+        .await
+        .expect_err("append with tampered tip should fail");
+
+    assert!(
+        format!("{}", err).contains("append rejected: tip content_hash"),
+        "error should mention append rejected and tip content_hash: {}",
         err
     );
 }

@@ -1588,7 +1588,38 @@ async fn perform_commit(
     let proposal_id = existing.proposal_id;
     let contract_id = contract.contract_id;
 
-    // Update execution state to Committed
+    // Emit SideEffectCommitted provenance event
+    let event = create_provenance_event(
+        ProvenanceEventKind::SideEffectCommitted,
+        now,
+        Some(intent_id),
+        Some(proposal_id),
+        Some(execution_id),
+        None,
+        Some(contract_id),
+        None,
+    );
+    // Atomically persist event and ledger entry via the store's ledger append API.
+    // This inserts the provenance event into provenance_events and creates a
+    // LedgerEntry with correct sequence and hash-chain linkage in one transaction.
+    // COMMIT C: Ledger append MUST succeed before we update execution/contract state.
+    // If append fails (hash mismatch / chain verification failure), we treat it as
+    // fatal and do NOT proceed with the commit - the execution remains in its
+    // prior state rather than being incorrectly marked as Committed.
+    let _entry = runtime
+        .store
+        .ledger()
+        .append_event(&event)
+        .await
+        .map_err(|e| {
+            tracing::error!(
+                "fatal: ledger append failed, consistency compromised: {}",
+                e
+            );
+            ApiProblem::internal(e.into())
+        })?;
+
+    // Only update execution state to Committed after ledger append succeeds
     let mut updated_execution = existing.clone();
     updated_execution.state = ExecutionState::Committed;
     updated_execution.finished_at = Some(now);
@@ -1607,32 +1638,6 @@ async fn perform_commit(
         tracing::warn!("failed to update rollback contract state: {}", e);
     }
 
-    // Emit SideEffectCommitted provenance event
-    let event = create_provenance_event(
-        ProvenanceEventKind::SideEffectCommitted,
-        now,
-        Some(intent_id),
-        Some(proposal_id),
-        Some(execution_id),
-        None,
-        Some(contract_id),
-        None,
-    );
-    // Atomically persist event and ledger entry via the store's ledger append API.
-    // This inserts the provenance event into provenance_events and creates a
-    // LedgerEntry with correct sequence and hash-chain linkage in one transaction.
-    let _entry = runtime
-        .store
-        .ledger()
-        .append_event(&event)
-        .await
-        .map_err(|e| {
-            tracing::error!(
-                "fatal: ledger append failed, consistency compromised: {}",
-                e
-            );
-            ApiProblem::internal(e.into())
-        })?;
     Ok(Json(CommitResponse {
         execution_id,
         committed: true,

@@ -29,7 +29,8 @@ Do not invent scope; all items cite source docs.
 - [x] ledger hash chain (initial integration slice DONE)
   - Src: `08-next-issue-backlog.md` P1
   - Plan: `12-ledger-hash-chain-execution-plan.md` (Commits 1-4 complete; evidence at `18-phase-f-evidence-pack.md` line 159)
-  - Future: live hash verification, ledger read-model, cross-node sync remain open per `12-ledger-hash-chain-execution-plan.md` line 130
+  - Live append-time verification DONE per `17-ledger-live-hash-verification-execution-plan.md` (Commits A-C complete); evidence: `ferrum-ledger/src/lib.rs:229`, `ferrum-store/src/sqlite/ledger.rs:22`, `ferrum-store/src/sqlite/ledger.rs:77`, `ferrum-gateway/src/server.rs:1602`, `ferrum-store/src/sqlite/tests.rs:1423`
+  - Future: ledger read-model, cross-node sync remain open per `12-ledger-hash-chain-execution-plan.md` line 130
   - **Recommended next slice: runtime integration boundary** -> DONE per `08-next-issue-backlog.md` P3; see `ferrumctl more useful` below
 
 - [x] provenance query/read-model enhancement (core surface DONE)

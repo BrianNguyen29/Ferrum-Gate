@@ -211,6 +211,57 @@ impl InMemoryLedger {
     }
 }
 
+/// Verifies a single entry against an expected previous hash.
+///
+/// This is the core append-time verification primitive: before inserting a new
+/// entry into the ledger, call this to confirm its `prev_hash` matches the
+/// tip of the chain.
+///
+/// # Arguments
+/// * `entry` - The ledger entry to verify
+/// * `expected_prev_hash` - The hash of the previous entry (None for genesis)
+///
+/// # Errors
+///
+/// Returns [`LedgerError::BrokenChain`] if the entry's `prev_hash` does not
+/// match `expected_prev_hash`. Genesis entries (sequence 0) require both
+/// `expected_prev_hash` and `entry.prev_hash` to be `None`.
+pub fn verify_entry(
+    entry: &LedgerEntry,
+    expected_prev_hash: Option<&str>,
+) -> Result<(), LedgerError> {
+    // Genesis entry (sequence 0) must have no prev_hash
+    if entry.sequence == 0 {
+        if entry.prev_hash.is_some() {
+            return Err(LedgerError::BrokenChain {
+                expected: "None (genesis)".to_string(),
+                actual: entry.prev_hash.clone().unwrap_or_default(),
+            });
+        }
+        if expected_prev_hash.is_some() {
+            return Err(LedgerError::BrokenChain {
+                expected: expected_prev_hash.unwrap().to_string(),
+                actual: "None (genesis)".to_string(),
+            });
+        }
+        return Ok(());
+    }
+
+    // Non-genesis: prev_hash must match expected
+    let actual = entry.prev_hash.as_deref();
+    if actual != expected_prev_hash {
+        return Err(LedgerError::BrokenChain {
+            expected: expected_prev_hash.unwrap_or("None").to_string(),
+            actual: entry
+                .prev_hash
+                .clone()
+                .unwrap_or_else(|| "None".to_string()),
+        });
+    }
+
+    Ok(())
+}
+
 /// Compute the deterministic hash for a ledger entry.
 ///
 /// The hash is SHA-256 over the concatenation of:
@@ -468,5 +519,95 @@ mod tests {
 
         ledger.append(make_test_event(1)).expect("append");
         assert_eq!(ledger.genesis().unwrap().sequence, 0);
+    }
+
+    // --- verify_entry tests ---
+
+    #[test]
+    fn test_verify_entry_genesis_succeeds() {
+        let event = make_test_event(0);
+        let entry = LedgerEntry::from_event(event, 0, None);
+
+        // Genesis: expected_prev_hash = None, entry.prev_hash = None
+        verify_entry(&entry, None).expect("genesis entry should verify");
+    }
+
+    #[test]
+    fn test_verify_entry_genesis_rejects_non_null_prev_hash() {
+        let event = make_test_event(0);
+        // Manually create a genesis entry with a bogus prev_hash
+        let entry = LedgerEntry {
+            sequence: 0,
+            prev_hash: Some("bad".to_string()),
+            entry_hash: "ignored".to_string(),
+            event,
+        };
+
+        let err = verify_entry(&entry, None).expect_err("genesis with prev_hash should fail");
+        assert!(matches!(err, LedgerError::BrokenChain { .. }));
+    }
+
+    #[test]
+    fn test_verify_entry_valid_chain_succeeds() {
+        // Build a 2-entry ledger
+        let event0 = make_test_event(0);
+        let entry0 = LedgerEntry::from_event(event0, 0, None);
+        let hash0 = entry0.entry_hash.clone();
+
+        let event1 = make_test_event(1);
+        let entry1 = LedgerEntry::from_event(event1, 1, Some(hash0.clone()));
+
+        // Verify genesis
+        verify_entry(&entry0, None).expect("genesis should verify");
+        // Verify second entry linking to genesis
+        verify_entry(&entry1, Some(&hash0)).expect("valid chain should verify");
+    }
+
+    #[test]
+    fn test_verify_entry_broken_prev_hash_fails() {
+        // Build a genesis entry
+        let event0 = make_test_event(0);
+        let entry0 = LedgerEntry::from_event(event0, 0, None);
+        let hash0 = entry0.entry_hash.clone();
+
+        // Build a second entry that claims to link to hash0
+        let event1 = make_test_event(1);
+        let entry1 = LedgerEntry::from_event(event1, 1, Some(hash0.clone()));
+
+        // Corrupt the prev_hash (doesn't match the actual hash0)
+        let bad_entry = LedgerEntry {
+            sequence: 1,
+            prev_hash: Some("not-the-expected-hash".to_string()),
+            entry_hash: entry1.entry_hash.clone(),
+            event: entry1.event,
+        };
+
+        let err = verify_entry(&bad_entry, Some(&hash0)).expect_err("broken chain should fail");
+        assert!(matches!(err, LedgerError::BrokenChain { expected, .. } if expected == hash0));
+    }
+
+    #[test]
+    fn test_verify_entry_wrong_expected_hash_fails() {
+        let event0 = make_test_event(0);
+        let entry0 = LedgerEntry::from_event(event0, 0, None);
+
+        let event1 = make_test_event(1);
+        let entry1 = LedgerEntry::from_event(event1, 1, Some(entry0.entry_hash.clone()));
+
+        // Verify with a different expected hash
+        let err = verify_entry(&entry1, Some("wrong-expected-hash"))
+            .expect_err("wrong expected hash should fail");
+        assert!(matches!(err, LedgerError::BrokenChain { .. }));
+    }
+
+    #[test]
+    fn test_verify_entry_genesis_with_expected_hash_fails() {
+        let event = make_test_event(0);
+        let entry = LedgerEntry::from_event(event, 0, None);
+
+        // Genesis but we incorrectly pass an expected hash
+        let err = verify_entry(&entry, Some("any-hash"))
+            .expect_err("genesis with expected hash should fail");
+        assert!(matches!(err, LedgerError::BrokenChain { .. }));
     }
 }

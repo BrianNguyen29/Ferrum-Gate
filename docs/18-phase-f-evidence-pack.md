@@ -139,7 +139,7 @@ SideEffectPrepared -> SideEffectVerified -> terminal event
 
  2. **Generic provenance query/replay fabric**
    - Status: Core query surface DONE; `POST /v1/provenance/query` expanded with filters on `intent_id`, `proposal_id`, `execution_id`, `capability_id`, event kind, terminal state, time range, cursor pagination; `ferrum-graph` read-model helpers implemented (`terminal_events`, `walk_backwards_from`, `walk_forwards_from`); integration tests at `tests/integration_provenance_query.rs`
-   - Future P2: advanced replay/fabric tooling, cross-node ledger sync, live hash verification during append
+   - Future P2: advanced replay/fabric tooling, cross-node ledger sync
    - Source: `crates/ferrum-proto/src/provenance.rs:86`, `crates/ferrum-store/src/sqlite/provenance.rs:142`, `crates/ferrum-gateway/src/server.rs:2192`, `crates/ferrum-graph/src/lib.rs:52`
 
  3. **EmailSend recovery parity** (Slice 16-A ratified boundary)
@@ -160,7 +160,8 @@ SideEffectPrepared -> SideEffectVerified -> terminal event
 
 6. **Ledger hash chain**
    - Status: Initial integration slice DONE (store atomic append, gateway commit wiring, startup verify, Slice 3 tests passing at `tests/integration_gateway_flow.rs:9251,9377`)
-   - Future: live hash verification during append, ledger read-model, cross-node sync remain open
+   - Live append-time verification DONE per `docs/implementation-path/17-ledger-live-hash-verification-execution-plan.md` (Commits A-C complete); evidence: `ferrum-ledger/src/lib.rs:229`, `ferrum-store/src/sqlite/ledger.rs:22`, `ferrum-store/src/sqlite/ledger.rs:77`, `ferrum-gateway/src/server.rs:1602`, `ferrum-store/src/sqlite/tests.rs:1423`
+   - Future: ledger read-model, cross-node sync remain open
    - Source: `docs/implementation-path/12-ledger-hash-chain-execution-plan.md` Commits 1-4; `docs/implementation-path/11-remaining-tasks.md` line 26
 
  7. **ferrumctl expanded utility**
