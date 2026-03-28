@@ -247,6 +247,22 @@ pub trait SyncPreflightRepo: Send + Sync {
     /// Returns `Ok(Some(tip))` if a leader tip is available, `Ok(None)` if
     /// no tip is known yet. Returns `Err` for repo-level failures.
     fn read_leader_tip(&self, leader_address: &str) -> Result<Option<TipId>, SyncRepoError>;
+
+    /// Compute `hash_path_valid` for Sync-1 decision by verifying local chain integrity.
+    ///
+    /// This is an interim local chain verification wiring: it verifies that the
+    /// local ledger chain is internally consistent (PF1/PF5). A passing result means
+    /// the local chain is sound and `hash_path_valid = true`.
+    ///
+    /// **This is NOT full remote proof continuity.** Full `hash_path_valid` requires
+    /// verifying the hash path from follower tip to leader tip using a remote proof
+    /// from the leader. That is deferred to a future slice.
+    ///
+    /// Fail-closed: returns `false` on any repo error (chain integrity failure,
+    /// ledger not readable, internal error). Callers map this to `hash_path_valid = false`
+    /// in `DecisionInput`, which causes `decide()` to return `Abort(A3)` when
+    /// leader is ahead.
+    fn verify_local_chain_for_hash_path_valid(&self) -> bool;
 }
 
 // ---------------------------------------------------------------------------
@@ -286,6 +302,8 @@ pub struct InMemorySyncPreflightRepo {
     is_leader_authorized_result: Result<bool, SyncRepoError>,
     /// Pre-configured result for `read_leader_tip()`.
     read_leader_tip_result: Result<Option<TipId>, SyncRepoError>,
+    /// Pre-configured result for `verify_local_chain_for_hash_path_valid()`.
+    hash_path_valid_result: bool,
 }
 
 impl InMemorySyncPreflightRepo {
@@ -308,6 +326,8 @@ impl InMemorySyncPreflightRepo {
             read_leader_tip_result: Err(SyncRepoError::InternalError {
                 reason: "InMemorySyncPreflightRepo: read_leader_tip not configured".to_string(),
             }),
+            // Fail-closed default: hash_path_valid = false unless explicitly configured
+            hash_path_valid_result: false,
         }
     }
 
@@ -337,6 +357,15 @@ impl InMemorySyncPreflightRepo {
         self.read_leader_tip_result = result;
         self
     }
+
+    /// Configure the result for `verify_local_chain_for_hash_path_valid()`.
+    ///
+    /// By default, this returns `false` (fail-closed). Set to `true` to simulate
+    /// a passing local chain verification.
+    pub fn with_hash_path_valid(mut self, result: bool) -> Self {
+        self.hash_path_valid_result = result;
+        self
+    }
 }
 
 impl Default for InMemorySyncPreflightRepo {
@@ -360,6 +389,10 @@ impl SyncPreflightRepo for InMemorySyncPreflightRepo {
 
     fn read_leader_tip(&self, _leader_address: &str) -> Result<Option<TipId>, SyncRepoError> {
         self.read_leader_tip_result.clone()
+    }
+
+    fn verify_local_chain_for_hash_path_valid(&self) -> bool {
+        self.hash_path_valid_result
     }
 }
 
@@ -821,5 +854,168 @@ mod tests {
         // Both should fail on every method
         assert!(a.verify_local_chain().is_err());
         assert!(b.verify_local_chain().is_err());
+    }
+
+    // =========================================================================
+    // verify_local_chain_for_hash_path_valid — test double behavior
+    // =========================================================================
+
+    #[test]
+    fn hash_path_valid_defaults_to_false() {
+        // Fail-closed default: without explicit configuration, hash_path_valid = false
+        let repo = InMemorySyncPreflightRepo::new();
+        assert!(!repo.verify_local_chain_for_hash_path_valid());
+    }
+
+    #[test]
+    fn hash_path_valid_can_be_set_to_true() {
+        let repo = InMemorySyncPreflightRepo::new().with_hash_path_valid(true);
+        assert!(repo.verify_local_chain_for_hash_path_valid());
+    }
+
+    #[test]
+    fn hash_path_valid_can_be_set_to_false() {
+        let repo = InMemorySyncPreflightRepo::new().with_hash_path_valid(false);
+        assert!(!repo.verify_local_chain_for_hash_path_valid());
+    }
+
+    #[test]
+    fn hash_path_valid_independent_of_verify_local_chain() {
+        // hash_path_valid is independent of verify_local_chain result.
+        // A repo can have verify_local_chain succeed but hash_path_valid be false,
+        // and vice versa. They measure different things.
+        let repo = InMemorySyncPreflightRepo::new()
+            .with_verify_local_chain(Ok(())) // chain is valid
+            .with_hash_path_valid(false); // but we explicitly set hash_path_valid = false
+        assert!(repo.verify_local_chain().is_ok());
+        assert!(!repo.verify_local_chain_for_hash_path_valid());
+    }
+
+    // =========================================================================
+    // hash_path_valid wiring to DecisionInput — integration
+    // =========================================================================
+
+    #[test]
+    fn hash_path_valid_wiring_success_case() {
+        // Leader ahead + hash_path_valid=true -> SYNC decision
+        use crate::decision::{DecisionInput, TipId, decide};
+
+        let follower_tip = TipId {
+            sequence: 50,
+            hash: "follower_hash".to_string(),
+        };
+        let leader_tip = TipId {
+            sequence: 100,
+            hash: "leader_hash".to_string(),
+        };
+
+        // Simulate: local chain verified (hash_path_valid = true)
+        let repo = InMemorySyncPreflightRepo::new().with_hash_path_valid(true);
+
+        let hash_path_valid = repo.verify_local_chain_for_hash_path_valid();
+        assert!(
+            hash_path_valid,
+            "hash_path_valid should be true when chain passes"
+        );
+
+        let input = DecisionInput {
+            follower_tip: Some(follower_tip.clone()),
+            leader_tip: Some(leader_tip.clone()),
+            hash_path_valid,
+        };
+
+        let decision = decide(&input);
+        assert_eq!(
+            decision,
+            crate::decision::Sync1Decision::Sync,
+            "leader ahead + hash_path_valid=true -> SYNC"
+        );
+    }
+
+    #[test]
+    fn hash_path_valid_wiring_fail_closed_case() {
+        // Leader ahead + hash_path_valid=false -> Abort(A3)
+        use crate::decision::{DecisionInput, TipId, decide};
+
+        let follower_tip = TipId {
+            sequence: 50,
+            hash: "follower_hash".to_string(),
+        };
+        let leader_tip = TipId {
+            sequence: 100,
+            hash: "leader_hash".to_string(),
+        };
+
+        // Simulate: local chain verification failed (hash_path_valid = false)
+        let repo = InMemorySyncPreflightRepo::new().with_hash_path_valid(false);
+
+        let hash_path_valid = repo.verify_local_chain_for_hash_path_valid();
+        assert!(
+            !hash_path_valid,
+            "hash_path_valid should be false when chain fails"
+        );
+
+        let input = DecisionInput {
+            follower_tip: Some(follower_tip.clone()),
+            leader_tip: Some(leader_tip.clone()),
+            hash_path_valid,
+        };
+
+        let decision = decide(&input);
+        assert!(
+            decision.is_abort(),
+            "leader ahead + hash_path_valid=false -> abort"
+        );
+        assert_eq!(
+            decision.abort_code(),
+            Some(crate::error::Sync1AbortCode::A3),
+            "should abort with A3 (C2 violation / hash path invalid)"
+        );
+    }
+
+    #[test]
+    fn hash_path_valid_wiring_repo_error_fail_closed() {
+        // Repo error -> hash_path_valid=false -> Abort(A3)
+        use crate::decision::{DecisionInput, TipId, decide};
+
+        let follower_tip = TipId {
+            sequence: 50,
+            hash: "follower_hash".to_string(),
+        };
+        let leader_tip = TipId {
+            sequence: 100,
+            hash: "leader_hash".to_string(),
+        };
+
+        // Simulate: repo error during chain verification
+        let repo = InMemorySyncPreflightRepo::new().with_verify_local_chain(Err(
+            SyncRepoError::ChainIntegrityFailed {
+                reason: "broken chain".to_string(),
+            },
+        ));
+        // hash_path_valid defaults to false (fail-closed)
+
+        let hash_path_valid = repo.verify_local_chain_for_hash_path_valid();
+        assert!(
+            !hash_path_valid,
+            "repo error -> hash_path_valid=false (fail-closed)"
+        );
+
+        let input = DecisionInput {
+            follower_tip: Some(follower_tip.clone()),
+            leader_tip: Some(leader_tip.clone()),
+            hash_path_valid,
+        };
+
+        let decision = decide(&input);
+        assert!(
+            decision.is_abort(),
+            "leader ahead + hash_path_valid=false -> abort"
+        );
+        assert_eq!(
+            decision.abort_code(),
+            Some(crate::error::Sync1AbortCode::A3),
+            "should abort with A3"
+        );
     }
 }

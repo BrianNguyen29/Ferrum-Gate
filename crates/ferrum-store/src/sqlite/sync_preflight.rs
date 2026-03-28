@@ -101,6 +101,16 @@ impl SqliteSyncPreflightRepo {
         Ok(())
     }
 
+    /// Internal async implementation of `verify_local_chain_for_hash_path_valid`.
+    ///
+    /// Exposed for direct testing without needing a multi-threaded runtime.
+    /// Production callers should use the sync trait method.
+    ///
+    /// Fail-closed: returns `false` on any error.
+    pub async fn verify_local_chain_for_hash_path_valid_async(&self) -> bool {
+        self.verify_local_chain_async().await.is_ok()
+    }
+
     /// Internal async implementation of `read_local_state`.
     ///
     /// Reads PF2/PF6/PF7 booleans from `sync_state` (migration 003) and the
@@ -299,6 +309,12 @@ impl SyncPreflightRepo for SqliteSyncPreflightRepo {
         .map_err(|e| SyncRepoError::InternalError {
             reason: format!("leader_tip_cache read failed: {}", e),
         })
+    }
+
+    fn verify_local_chain_for_hash_path_valid(&self) -> bool {
+        // Fail-closed: any error means hash_path_valid = false.
+        // This includes chain integrity failures (PF1) and ledger unreadable (PF5).
+        self.verify_local_chain().is_ok()
     }
 }
 
@@ -1056,5 +1072,294 @@ mod tests {
                 "PF4 should fail when leader is not authorized"
             );
         });
+    }
+
+    // =========================================================================
+    // verify_local_chain_for_hash_path_valid — real SQLite backend
+    // =========================================================================
+
+    #[tokio::test]
+    async fn hash_path_valid_true_on_empty_ledger() {
+        // An empty ledger has a valid (trivially empty) chain
+        let store = make_store().await;
+        let repo = SqliteSyncPreflightRepo::new(store);
+        let result = repo.verify_local_chain_for_hash_path_valid_async().await;
+        assert!(result, "empty ledger should have hash_path_valid=true");
+    }
+
+    #[tokio::test]
+    async fn hash_path_valid_true_on_valid_single_entry_ledger() {
+        use ferrum_proto::{ActorRef, ActorType, HashChainRef, ObjectRef, ObjectType};
+
+        let store = make_store().await;
+
+        // Append a genesis entry to create a non-empty valid ledger
+        let event = ferrum_proto::ProvenanceEvent {
+            event_id: ferrum_proto::EventId::new(),
+            kind: ferrum_proto::ProvenanceEventKind::UserGoalReceived,
+            occurred_at: chrono::Utc::now(),
+            actor: ActorRef {
+                actor_type: ActorType::System,
+                actor_id: "test".to_string(),
+                display_name: None,
+            },
+            object: ObjectRef {
+                object_type: ObjectType::Intent,
+                object_id: "test-intent".to_string(),
+                summary: None,
+            },
+            intent_id: Some(ferrum_proto::IntentId::new()),
+            proposal_id: None,
+            execution_id: None,
+            capability_id: None,
+            rollback_contract_id: None,
+            policy_bundle_id: None,
+            trust_labels: vec![],
+            sensitivity_labels: vec![],
+            parent_edges: vec![],
+            hash_chain: HashChainRef {
+                content_hash: None,
+                manifest_hash: None,
+                policy_bundle_hash: None,
+                previous_ledger_hash: None,
+            },
+            metadata: ferrum_proto::JsonMap::new(),
+        };
+        store.ledger().append_event(&event).await.unwrap();
+
+        let repo = SqliteSyncPreflightRepo::new(store);
+        let result = repo.verify_local_chain_for_hash_path_valid_async().await;
+        assert!(
+            result,
+            "valid single-entry ledger should have hash_path_valid=true"
+        );
+    }
+
+    #[tokio::test]
+    async fn hash_path_valid_false_on_tampered_ledger() {
+        use ferrum_proto::{ActorRef, ActorType, HashChainRef, ObjectRef, ObjectType};
+
+        let store = make_store().await;
+
+        // Append a genesis entry
+        let event = ferrum_proto::ProvenanceEvent {
+            event_id: ferrum_proto::EventId::new(),
+            kind: ferrum_proto::ProvenanceEventKind::UserGoalReceived,
+            occurred_at: chrono::Utc::now(),
+            actor: ActorRef {
+                actor_type: ActorType::System,
+                actor_id: "test".to_string(),
+                display_name: None,
+            },
+            object: ObjectRef {
+                object_type: ObjectType::Intent,
+                object_id: "test-intent".to_string(),
+                summary: None,
+            },
+            intent_id: Some(ferrum_proto::IntentId::new()),
+            proposal_id: None,
+            execution_id: None,
+            capability_id: None,
+            rollback_contract_id: None,
+            policy_bundle_id: None,
+            trust_labels: vec![],
+            sensitivity_labels: vec![],
+            parent_edges: vec![],
+            hash_chain: HashChainRef {
+                content_hash: None,
+                manifest_hash: None,
+                policy_bundle_hash: None,
+                previous_ledger_hash: None,
+            },
+            metadata: ferrum_proto::JsonMap::new(),
+        };
+        store.ledger().append_event(&event).await.unwrap();
+
+        // Tamper with the entry's hash column directly in the database
+        let pool = store.pool();
+        sqlx::query("UPDATE ledger_entries SET content_hash = 'tampered_hash' WHERE entry_id = 1")
+            .execute(pool)
+            .await
+            .expect("tamper update should succeed");
+
+        let repo = SqliteSyncPreflightRepo::new(store);
+        let result = repo.verify_local_chain_for_hash_path_valid_async().await;
+        assert!(
+            !result,
+            "tampered ledger should have hash_path_valid=false (fail-closed)"
+        );
+    }
+
+    // =========================================================================
+    // hash_path_valid wiring to DecisionInput — real backend integration
+    // =========================================================================
+
+    #[tokio::test]
+    async fn hash_path_valid_wiring_real_repo_success() {
+        // Leader ahead + real local chain valid -> SYNC
+        use ferrum_proto::{ActorRef, ActorType, HashChainRef, ObjectRef, ObjectType};
+        use ferrum_sync::decision::{DecisionInput, Sync1Decision, TipId, decide};
+
+        let store = make_store().await;
+
+        // Create a valid ledger with genesis entry
+        let event = ferrum_proto::ProvenanceEvent {
+            event_id: ferrum_proto::EventId::new(),
+            kind: ferrum_proto::ProvenanceEventKind::UserGoalReceived,
+            occurred_at: chrono::Utc::now(),
+            actor: ActorRef {
+                actor_type: ActorType::System,
+                actor_id: "test".to_string(),
+                display_name: None,
+            },
+            object: ObjectRef {
+                object_type: ObjectType::Intent,
+                object_id: "test-intent".to_string(),
+                summary: None,
+            },
+            intent_id: Some(ferrum_proto::IntentId::new()),
+            proposal_id: None,
+            execution_id: None,
+            capability_id: None,
+            rollback_contract_id: None,
+            policy_bundle_id: None,
+            trust_labels: vec![],
+            sensitivity_labels: vec![],
+            parent_edges: vec![],
+            hash_chain: HashChainRef {
+                content_hash: None,
+                manifest_hash: None,
+                policy_bundle_hash: None,
+                previous_ledger_hash: None,
+            },
+            metadata: ferrum_proto::JsonMap::new(),
+        };
+        store.ledger().append_event(&event).await.unwrap();
+
+        let repo = SqliteSyncPreflightRepo::new(store);
+
+        // Get follower tip
+        let follower_tip = repo
+            .read_local_state_async()
+            .await
+            .expect("read_local_state")
+            .follower_tip
+            .expect("follower should have tip after append");
+
+        // Leader is ahead
+        let leader_tip = TipId {
+            sequence: follower_tip.sequence + 50,
+            hash: "leader_hash_ahead".to_string(),
+        };
+
+        // Compute hash_path_valid from real local chain verification
+        let hash_path_valid = repo.verify_local_chain_for_hash_path_valid_async().await;
+        assert!(
+            hash_path_valid,
+            "valid chain should give hash_path_valid=true"
+        );
+
+        let input = DecisionInput {
+            follower_tip: Some(follower_tip),
+            leader_tip: Some(leader_tip),
+            hash_path_valid,
+        };
+
+        let decision = decide(&input);
+        assert_eq!(
+            decision,
+            Sync1Decision::Sync,
+            "leader ahead + hash_path_valid=true -> SYNC"
+        );
+    }
+
+    #[tokio::test]
+    async fn hash_path_valid_wiring_real_repo_fail_closed() {
+        // Leader ahead + tampered local chain -> Abort(A3)
+        use ferrum_proto::{ActorRef, ActorType, HashChainRef, ObjectRef, ObjectType};
+        use ferrum_sync::decision::{DecisionInput, TipId, decide};
+        use ferrum_sync::error::Sync1AbortCode;
+
+        let store = make_store().await;
+
+        // Create a valid ledger then tamper with it
+        let event = ferrum_proto::ProvenanceEvent {
+            event_id: ferrum_proto::EventId::new(),
+            kind: ferrum_proto::ProvenanceEventKind::UserGoalReceived,
+            occurred_at: chrono::Utc::now(),
+            actor: ActorRef {
+                actor_type: ActorType::System,
+                actor_id: "test".to_string(),
+                display_name: None,
+            },
+            object: ObjectRef {
+                object_type: ObjectType::Intent,
+                object_id: "test-intent".to_string(),
+                summary: None,
+            },
+            intent_id: Some(ferrum_proto::IntentId::new()),
+            proposal_id: None,
+            execution_id: None,
+            capability_id: None,
+            rollback_contract_id: None,
+            policy_bundle_id: None,
+            trust_labels: vec![],
+            sensitivity_labels: vec![],
+            parent_edges: vec![],
+            hash_chain: HashChainRef {
+                content_hash: None,
+                manifest_hash: None,
+                policy_bundle_hash: None,
+                previous_ledger_hash: None,
+            },
+            metadata: ferrum_proto::JsonMap::new(),
+        };
+        store.ledger().append_event(&event).await.unwrap();
+
+        // Tamper with the ledger
+        let pool = store.pool();
+        sqlx::query("UPDATE ledger_entries SET content_hash = 'tampered_hash' WHERE entry_id = 1")
+            .execute(pool)
+            .await
+            .expect("tamper update should succeed");
+
+        let repo = SqliteSyncPreflightRepo::new(store);
+
+        // Get follower tip (still readable even if tampered)
+        let follower_tip = repo
+            .read_local_state_async()
+            .await
+            .expect("read_local_state")
+            .follower_tip
+            .expect("follower should have tip");
+
+        let leader_tip = TipId {
+            sequence: follower_tip.sequence + 50,
+            hash: "leader_hash_ahead".to_string(),
+        };
+
+        // hash_path_valid from real query should be false (fail-closed)
+        let hash_path_valid = repo.verify_local_chain_for_hash_path_valid_async().await;
+        assert!(
+            !hash_path_valid,
+            "tampered chain should give hash_path_valid=false"
+        );
+
+        let input = DecisionInput {
+            follower_tip: Some(follower_tip),
+            leader_tip: Some(leader_tip),
+            hash_path_valid,
+        };
+
+        let decision = decide(&input);
+        assert!(
+            decision.is_abort(),
+            "leader ahead + hash_path_valid=false -> abort"
+        );
+        assert_eq!(
+            decision.abort_code(),
+            Some(Sync1AbortCode::A3),
+            "should abort with A3 (C2 violation)"
+        );
     }
 }

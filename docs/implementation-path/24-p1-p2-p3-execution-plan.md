@@ -152,7 +152,7 @@ rough next-step estimate:
 
 | Gap | Owner | Phase | Estimate | Next Step |
 |-----|-------|-------|----------|-----------|
-| Sync-1: hash-path continuity check requires actual ledger query | P3 | Sync-1 impl | 1-2 days | Wire `hash_path_valid` field to `verify_chain()` result from `ferrum-ledger` |
+| Sync-1: hash-path continuity check requires actual ledger query | P3 | Sync-1 impl | **DONE (interim)** | Interim local chain verification wiring complete: `verify_local_chain_for_hash_path_valid()` in `SyncPreflightRepo` trait; full remote proof continuity still deferred |
 | Sync-2: PF1/PF5 wired via `SqliteSyncPreflightRepo` in ferrum-store | P2 | Sync-2 impl | DONE | `verify_local_chain()` implemented |
 | Sync-2: PF2/PF6/PF7 state wired via `SqliteSyncPreflightRepo` in ferrum-store | P3 | Sync-2 impl | DONE | `sync_state` table (migration 003) added; `read_local_state()` now returns real `LocalPreflightState`; `set_sync_flags_test_only()` provided for test scenarios |
 | Sync-2: PF8 leader tip cache | P2 | Sync-2 impl | DONE | `leader_tips` table (migration 002) added; `SqliteSyncPreflightRepo::read_leader_tip()` wired; cache write path provided for transport layer |
@@ -301,7 +301,7 @@ P3 (8+ weeks, after P2)
 | Sync-3a.1 boundary (complete) | `crates/ferrum-sync/src/facade.rs` | Facade complete: `leader_address`, per-call timeout enforcement, and narrower crate-root transport surface are in place |
 | Sync-1 decision kernel (done) | `crates/ferrum-sync/src/decision.rs` | Pure `decide()` function; exhaustive unit tests |
 | Sync-2 groundwork (done) | `crates/ferrum-sync/src/preflight.rs` | `classify()`, `run_preflight()`, `diff_class_to_decision()` with unit and roundtrip tests |
-| Sync-2 repo port | `crates/ferrum-sync/src/repo.rs` + `crates/ferrum-store/src/sqlite/sync_preflight.rs` | `SyncPreflightRepo` trait, `LocalPreflightState`, `SyncRepoError`, `InMemorySyncPreflightRepo` (test double) in ferrum-sync; `SqliteSyncPreflightRepo` (PF1+PF5+PF2+PF6+PF7+PF8+PF4 real) in ferrum-store |
+| Sync-2 repo port | `crates/ferrum-sync/src/repo.rs` + `crates/ferrum-store/src/sqlite/sync_preflight.rs` | `SyncPreflightRepo` trait, `LocalPreflightState`, `SyncRepoError`, `InMemorySyncPreflightRepo` (test double) in ferrum-sync; `SqliteSyncPreflightRepo` (PF1+PF5+PF2+PF6+PF7+PF8+PF4 real) in ferrum-store; `verify_local_chain_for_hash_path_valid()` added for Sync-1 `hash_path_valid` wiring (interim local chain verification; full remote proof continuity deferred) |
 | Sync-2 PF3/PF8 transport-boundary helpers | `crates/ferrum-sync/src/transport.rs` | `PreflightTransportInput`, `PreflightTransportFlags`, `PreflightTransportInput::evaluate()` — pure, fail-closed helpers for converting leader address + cached tip into PF3/PF8 booleans |
 | Sync-2 PF8 leader tip cache | `crates/ferrum-store/src/sqlite/leader_tip_cache.rs` + `migrations/002_add_leader_tips.sql` | `LeaderTipCache` struct; `leader_tips` table (leader_address PK, sequence, hash, fetched_at); `read()`, `write()`, `delete()` methods |
 | Sync-2 PF2/PF6/PF7 sync state | `crates/ferrum-store/src/sqlite/sync_preflight.rs` + `migrations/003_add_sync_state.sql` | `sync_state` table (id=1, has_inflight_commits, has_uncommitted_entries, sync_in_progress); `read_local_state_async()` and `set_sync_flags_test_only()` in `SqliteSyncPreflightRepo` |
