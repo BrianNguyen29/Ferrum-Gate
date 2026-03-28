@@ -103,6 +103,10 @@ cargo run -p ferrumctl -- server inspect-execution <execution_id>
 # List pending approvals
 cargo run -p ferrumctl -- server inspect-approvals
 
+# List pending approvals with cursor/filter options
+cargo run -p ferrumctl -- server inspect-approvals --limit 10
+cargo run -p ferrumctl -- server inspect-approvals --execution-id <execution_id>
+
 # Inspect lineage (text)
 cargo run -p ferrumctl -- server inspect-lineage <execution_id>
 
@@ -134,6 +138,13 @@ cargo run -p ferrumctl -- server inspect-event <event_id>
 
 # Inspect event with ancestry and descendants
 cargo run -p ferrumctl -- server inspect-event <event_id> --ancestry --descendants
+
+# Resolve a pending approval
+cargo run -p ferrumctl -- server resolve-approval <approval_id> \
+  --approve \
+  --actor-id <operator_id> \
+  --actor-type Operator \
+  --reason "approved after review"
 
 # Ingest an external runtime event into provenance lineage
 # (operator boundary: records vendor-neutral external observations)

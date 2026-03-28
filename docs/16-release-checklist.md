@@ -23,5 +23,11 @@
 - [x] config docs đúng (config precedence, auth mode, startup guard documented)
 - [x] CLI hữu dụng tối thiểu (`ferrumctl server health/inspect-*` documented and implemented)
 - [x] lineage usable
-- [x] approval flow documented
-- [x] runbooks updated (`runbooks/ops-tls-ingress-runbook.md` — TLS/ingress production runbook)
+- [x] approval flow documented (state transitions, CLI examples, and resolve-approval command)
+- [x] runbooks updated (`runbooks/ops-tls-ingress-runbook.md` — TLS/ingress production runbook, `runbooks/ops-approval-workflow-runbook.md` — approval workflow)
+
+## CLI / docs parity
+- [x] every `ferrumctl server` subcommand is documented in the relevant docs section
+- [x] every documented `ferrumctl server` flag matches the actual flag in `--help`
+- [x] approval state transitions in docs match runtime (`Authorized` on approve, `Denied` on deny)
+- [x] new runbooks are referenced from `runbooks/README.md`
