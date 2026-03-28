@@ -1,7 +1,7 @@
 # ferrum-sync
 
 Cross-node ledger sync crate: transport probe + Sync-1 decision kernel +
-Sync-2 groundwork.
+Sync-2 groundwork (including trait-only repo port).
 
 ## Current Scope
 
@@ -35,6 +35,22 @@ mutation. This is groundwork aligned with
 - Sync session tracking (PF7)
 - Capability model enforcement (PF4)
 
+### Sync-2 Trait-Only Repo Port (Groundwork)
+
+A read-only trait (`SyncPreflightRepo`) that defines the minimal repo interface
+for Sync-2 preflight queries. This is **trait-only groundwork**; no SQLite/store
+implementations live here.
+
+- `SyncPreflightRepo` trait: `verify_local_chain()`, `read_local_state()`,
+  `is_leader_authorized()`, `read_leader_tip()`
+- `LocalPreflightState`: snapshot carrying follower tip + PF2/PF6/PF7 booleans
+- `SyncRepoError`: error type for repo operations
+- `build_preflight_input()`: pure adapter that converts `LocalPreflightState`
+  + externally supplied PF3/PF4/PF8 flags into `PreflightInput`
+- **PF3 is explicitly excluded** from the trait (it is a transport/config concern)
+
+Concrete implementations (SQLite, in-memory test doubles) are deferred to P3.
+
 ### What Is In Scope
 
 - **Diagnostic tip fetch**: verify leader is reachable and returning consistent tip data
@@ -47,6 +63,8 @@ mutation. This is groundwork aligned with
   (DONE / SYNC / FAST_FORWARD / ABORT)
 - **Sync-2 groundwork**: pure preflight checker (PF1-PF8) + diff classifier (`DiffClass`)
   + bridge to Sync-1 decision kernel
+- **Sync-2 repo port**: trait-only read-only preflight port (`SyncPreflightRepo`) +
+  `LocalPreflightState` + `build_preflight_input()` adapter
 
 ### What Is Out of Scope
 
@@ -56,6 +74,7 @@ mutation. This is groundwork aligned with
 - Peer discovery or address management
 - Full Sync-2 implementation (repo queries, transport-based tip acquisition,
   sync session tracking, capability model enforcement)
+- Concrete `SyncPreflightRepo` implementations (SQLite, in-memory; deferred to P3)
 
 ## Key Types
 
@@ -71,6 +90,10 @@ mutation. This is groundwork aligned with
 | `PreflightInput` | 8 boolean fields for PF1-PF8 preflight checks |
 | `PreflightResult` | Pass / Fail(PreflightCheckCode) |
 | `diff_class_to_decision()` | Bridge: DiffClass -> Sync1Decision |
+| `build_preflight_input()` | Pure adapter: LocalPreflightState + external flags -> PreflightInput |
+| `SyncPreflightRepo` | Trait: read-only repo port for preflight queries |
+| `LocalPreflightState` | Snapshot: follower tip + PF2/PF6/PF7 booleans |
+| `SyncRepoError` | Error type for SyncPreflightRepo operations |
 | `ProbeFacade` | Caller-facing boundary over `TransportProbe` |
 | `ProbeFacadeRequest` | Follower identity + tip sequence + probe params |
 | `ProbeFacadeResponse` | Either `ProbeOk { tip, proof_structure }` or `ProbeAborted { code }` |
@@ -118,7 +141,8 @@ This crate corresponds to multiple sync slices in the implementation-path:
 
 - `src/lib.rs`: crate overview + public re-exports
 - `src/decision.rs`: Sync-1 decision kernel (`decide`, `DecisionInput`, `Sync1Decision`)
-- `src/preflight.rs`: Sync-2 groundwork (`classify`, `run_preflight`, `diff_class_to_decision`, `DiffClass`, `PreflightInput`)
+- `src/preflight.rs`: Sync-2 groundwork (`classify`, `run_preflight`, `diff_class_to_decision`, `DiffClass`, `PreflightInput`, `build_preflight_input`)
+- `src/repo.rs`: Sync-2 trait-only repo port (`SyncPreflightRepo`, `LocalPreflightState`, `SyncRepoError`)
 - `src/facade.rs`: `ProbeFacade`, `ProbeFacadeRequest`, `ProbeFacadeResponse`, `ProbeFacadeConfig`
 - `src/transport.rs`: `Transport` trait, `TransportProbe`, `FakeLeaderTransport`, DTOs
 - `src/proof.rs`: proof structure verification

@@ -367,6 +367,69 @@ pub fn diff_class_to_decision(class: DiffClass) -> crate::decision::Sync1Decisio
 }
 
 // ---------------------------------------------------------------------------
+// Pure adapter: LocalPreflightState -> PreflightInput
+// ---------------------------------------------------------------------------
+
+/// Build a `PreflightInput` from repo-backed state and externally supplied flags.
+///
+/// This is a **pure function** that converts a `LocalPreflightState` (obtained
+/// from `SyncPreflightRepo::read_local_state()`) plus externally supplied
+/// PF3/PF4/PF8 flags into the `PreflightInput` struct that `run_preflight()`
+/// expects.
+///
+/// ## PF3 Is Excluded From the Repo Trait
+///
+/// PF3 (leader identity known) is not a repo query; it comes from transport
+/// or config. The caller supplies it via `leader_identity_known`.
+///
+/// ## PF4/PF8 Can Come From Repo or Externally
+///
+/// For simplicity in this trait-only slice, PF4 (leader authorized) and PF8
+/// (leader tip available) are supplied as external booleans. When a concrete
+/// `SyncPreflightRepo` implementation exists, the caller can query
+/// `is_leader_authorized()` and `read_leader_tip()` to populate these.
+///
+/// ## PF1 Is Derived From `chain_verified`
+///
+/// PF1 (chain integrity) is not in `LocalPreflightState` because it comes
+/// from `SyncPreflightRepo::verify_local_chain()`. The caller passes the
+/// result as `chain_verified`.
+///
+/// ## Fail-Closed Note
+///
+/// If any parameter is `false`, the resulting `PreflightInput` will cause
+/// `run_preflight()` to fail on the corresponding check. The caller is
+/// responsible for supplying correct values; this adapter does not guess.
+pub fn build_preflight_input(
+    local_state: &crate::repo::LocalPreflightState,
+    chain_verified: bool,
+    leader_identity_known: bool,
+    leader_authorized: bool,
+    leader_tip_available: bool,
+) -> PreflightInput {
+    PreflightInput {
+        // PF1: chain integrity from verify_local_chain()
+        chain_integrity_ok: chain_verified,
+        // PF2: no in-flight commits (inverted from has_inflight_commits)
+        no_inflight_commits: !local_state.has_inflight_commits,
+        // PF3: leader identity known (external, not repo)
+        leader_identity_known,
+        // PF4: leader authorized (external or from is_leader_authorized())
+        leader_authorized,
+        // PF5: ledger readable. If local_state was obtained successfully,
+        // the ledger was readable. If the caller reaches this point,
+        // PF5 is implicitly true.
+        ledger_readable: true,
+        // PF6: no uncommitted entries (inverted from has_uncommitted_entries)
+        no_uncommitted_entries: !local_state.has_uncommitted_entries,
+        // PF7: not currently syncing (inverted from sync_in_progress)
+        not_currently_syncing: !local_state.sync_in_progress,
+        // PF8: leader tip available (external or from read_leader_tip())
+        leader_tip_available,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -912,5 +975,121 @@ mod tests {
             d1, d2,
             "Sync-2 classify->bridge must agree with Sync-1 decide for follower ahead"
         );
+    }
+
+    // =========================================================================
+    // build_preflight_input() — pure adapter
+    // =========================================================================
+
+    #[test]
+    fn build_preflight_input_all_passing() {
+        let state = crate::repo::LocalPreflightState::clean_empty();
+        let input = build_preflight_input(&state, true, true, true, true);
+        assert_eq!(input, PreflightInput::all_pass());
+        assert_eq!(run_preflight(&input), PreflightResult::Pass);
+    }
+
+    #[test]
+    fn build_preflight_input_chain_not_verified_fails_pf1() {
+        let state = crate::repo::LocalPreflightState::clean_empty();
+        let input = build_preflight_input(&state, false, true, true, true);
+        assert_eq!(
+            run_preflight(&input),
+            PreflightResult::Fail(PreflightCheckCode::PF1)
+        );
+    }
+
+    #[test]
+    fn build_preflight_input_inflight_commits_fails_pf2() {
+        let state = crate::repo::LocalPreflightState {
+            has_inflight_commits: true,
+            ..crate::repo::LocalPreflightState::clean_empty()
+        };
+        let input = build_preflight_input(&state, true, true, true, true);
+        assert_eq!(
+            run_preflight(&input),
+            PreflightResult::Fail(PreflightCheckCode::PF2)
+        );
+    }
+
+    #[test]
+    fn build_preflight_input_leader_identity_unknown_fails_pf3() {
+        let state = crate::repo::LocalPreflightState::clean_empty();
+        let input = build_preflight_input(&state, true, false, true, true);
+        assert_eq!(
+            run_preflight(&input),
+            PreflightResult::Fail(PreflightCheckCode::PF3)
+        );
+    }
+
+    #[test]
+    fn build_preflight_input_leader_not_authorized_fails_pf4() {
+        let state = crate::repo::LocalPreflightState::clean_empty();
+        let input = build_preflight_input(&state, true, true, false, true);
+        assert_eq!(
+            run_preflight(&input),
+            PreflightResult::Fail(PreflightCheckCode::PF4)
+        );
+    }
+
+    #[test]
+    fn build_preflight_input_uncommitted_entries_fails_pf6() {
+        let state = crate::repo::LocalPreflightState {
+            has_uncommitted_entries: true,
+            ..crate::repo::LocalPreflightState::clean_empty()
+        };
+        let input = build_preflight_input(&state, true, true, true, true);
+        assert_eq!(
+            run_preflight(&input),
+            PreflightResult::Fail(PreflightCheckCode::PF6)
+        );
+    }
+
+    #[test]
+    fn build_preflight_input_sync_in_progress_fails_pf7() {
+        let state = crate::repo::LocalPreflightState {
+            sync_in_progress: true,
+            ..crate::repo::LocalPreflightState::clean_empty()
+        };
+        let input = build_preflight_input(&state, true, true, true, true);
+        assert_eq!(
+            run_preflight(&input),
+            PreflightResult::Fail(PreflightCheckCode::PF7)
+        );
+    }
+
+    #[test]
+    fn build_preflight_input_no_leader_tip_fails_pf8() {
+        let state = crate::repo::LocalPreflightState::clean_empty();
+        let input = build_preflight_input(&state, true, true, true, false);
+        assert_eq!(
+            run_preflight(&input),
+            PreflightResult::Fail(PreflightCheckCode::PF8)
+        );
+    }
+
+    #[test]
+    fn build_preflight_input_first_failure_wins() {
+        // chain not verified + uncommitted entries -> PF1 wins (first-fail)
+        let state = crate::repo::LocalPreflightState {
+            has_uncommitted_entries: true,
+            ..crate::repo::LocalPreflightState::clean_empty()
+        };
+        let input = build_preflight_input(&state, false, true, true, true);
+        assert_eq!(
+            run_preflight(&input),
+            PreflightResult::Fail(PreflightCheckCode::PF1)
+        );
+    }
+
+    #[test]
+    fn build_preflight_input_with_tip_preserves_ledger_readable() {
+        // ledger_readable is always true when build_preflight_input is called
+        // (because reaching it implies the repo query succeeded)
+        let t = tip(100, "abc");
+        let state = crate::repo::LocalPreflightState::clean_with_tip(t);
+        let input = build_preflight_input(&state, true, true, true, true);
+        assert!(input.ledger_readable);
+        assert_eq!(run_preflight(&input), PreflightResult::Pass);
     }
 }

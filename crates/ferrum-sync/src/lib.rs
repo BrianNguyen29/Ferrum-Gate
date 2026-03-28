@@ -17,6 +17,11 @@
 //!    no repo queries, no mutation. This is groundwork aligned with
 //!    `docs/implementation-path/20-sync-2-read-only-preflight-diff-classifier.md`.
 //!
+//!    Also includes a **trait-only read-only repo port** (`SyncPreflightRepo`) and
+//!    supporting types (`LocalPreflightState`, `SyncRepoError`) for repo-backed
+//!    preflight reads. This is trait-only groundwork; no SQLite/store implementations
+//!    live here. Concrete implementations are deferred to P3.
+//!
 //! ## What Is In Scope
 //!
 //! - Diagnostic tip fetch: verify leader is reachable and returning consistent tip data
@@ -28,6 +33,9 @@
 //! - Sync-1 decision kernel: pure decision table for one-way fast-forward sync
 //! - Sync-2 groundwork: pure preflight checker (PF1-PF8) + diff classifier (`DiffClass`)
 //!   + bridge to Sync-1 decision kernel
+//! - Sync-2 repo port: trait-only read-only preflight port (`SyncPreflightRepo`) for
+//!   repo-backed queries, plus pure adapter (`build_preflight_input`) to bridge
+//!   `LocalPreflightState` into `PreflightInput`
 //!
 //! ## What Is Out of Scope
 //!
@@ -37,12 +45,14 @@
 //! - Peer discovery or address management
 //! - Full Sync-2 implementation (repo queries, transport-based tip acquisition,
 //!   sync session tracking, capability model enforcement)
+//! - Concrete `SyncPreflightRepo` implementations (SQLite, in-memory; deferred to P3)
 
 pub mod decision;
 pub mod error;
 pub mod facade;
 pub mod preflight;
 pub mod proof;
+pub mod repo;
 pub mod transport;
 
 pub use decision::{DecisionInput, Sync1Decision, TipId, decide};
@@ -52,10 +62,11 @@ pub use facade::{
     ProofStructureInfo,
 };
 pub use preflight::{
-    DiffClass, PreflightCheckCode, PreflightInput, PreflightResult, classify,
-    diff_class_to_decision, run_preflight,
+    DiffClass, PreflightCheckCode, PreflightInput, PreflightResult, build_preflight_input,
+    classify, diff_class_to_decision, run_preflight,
 };
 pub use proof::{verify_entry_hashes, verify_proof_structure};
+pub use repo::{LocalPreflightState, SyncPreflightRepo, SyncRepoError};
 // Only LeaderTip is re-exported at crate root because it appears in
 // ProbeFacadeResponse::ProbeOk { tip: LeaderTip }.  All other transport
 // DTOs (requests, responses, TransportError, TransportProbe, etc.) are

@@ -153,7 +153,7 @@ rough next-step estimate:
 | Gap | Owner | Phase | Estimate | Next Step |
 |-----|-------|-------|----------|-----------|
 | Sync-1: hash-path continuity check requires actual ledger query | P3 | Sync-1 impl | 1-2 days | Wire `hash_path_valid` field to `verify_chain()` result from `ferrum-ledger` |
-| Sync-2: PF1/PF5/PF6 require repo access (currently caller-provided booleans) | P3 | Sync-2 impl | 2-3 days | Create `SyncRepository` trait; implement with `ferrum-store` SQLite backend |
+| Sync-2: wire `SyncPreflightRepo` to real repo queries for PF1/PF2/PF4/PF5/PF6/PF7/PF8 | P3 | Sync-2 impl | 2-3 days | Implement `SyncPreflightRepo` with `ferrum-store` SQLite backend |
 | Sync-2: PF3/PF8 require transport-based leader tip acquisition | P3 | Sync-3 impl | 5-8 days | Implement HTTP/gRPC transport adapter; wire through `Transport` trait |
 | Sync-2: PF7 sync session tracking (stateful, not read-only) | P3 | Sync-1 impl | 1-2 days | Add in-memory `AtomicBool` or DB-backed session flag |
 | Sync-2: PF4 capability model enforcement | P3 | Sync-1 impl | 2-3 days | Wire to `ferrum-capability` store; check leader authorization |
@@ -298,6 +298,7 @@ P3 (8+ weeks, after P2)
 | Sync-3a.1 boundary (complete) | `crates/ferrum-sync/src/facade.rs` | Facade complete: `leader_address`, per-call timeout enforcement, and narrower crate-root transport surface are in place |
 | Sync-1 decision kernel (done) | `crates/ferrum-sync/src/decision.rs` | Pure `decide()` function; exhaustive unit tests |
 | Sync-2 groundwork (done) | `crates/ferrum-sync/src/preflight.rs` | `classify()`, `run_preflight()`, `diff_class_to_decision()` with unit and roundtrip tests |
+| Sync-2 repo port (trait-only groundwork) | `crates/ferrum-sync/src/repo.rs` | `SyncPreflightRepo` trait, `LocalPreflightState`, `SyncRepoError`; no SQLite/store impls; PF3 excluded; `build_preflight_input()` adapter in `preflight.rs` |
 | Write-path (not started) | None | Out of scope for v1 |
 | Consensus (not started) | None | Out of scope for v1 |
 
