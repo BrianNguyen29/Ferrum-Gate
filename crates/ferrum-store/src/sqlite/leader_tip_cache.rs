@@ -135,13 +135,10 @@ impl LeaderTipCache {
                 let sequence: i64 = r.get("sequence");
                 let hash: String = r.get("hash");
                 let sequence = u64::try_from(sequence).map_err(|_| {
-                    sqlx::Error::Protocol(
-                        format!(
-                            "leader_tips.sequence value {} is negative or overflows u64",
-                            sequence
-                        )
-                        .into(),
-                    )
+                    sqlx::Error::Protocol(format!(
+                        "leader_tips.sequence value {} is negative or overflows u64",
+                        sequence
+                    ))
                 })?;
                 Ok(Some(TipId { sequence, hash }))
             }
@@ -192,7 +189,7 @@ impl LeaderTipCache {
             .bind(leader_address)
             .fetch_optional(&mut *tx)
             .await
-            .map_err(|e| CacheWriteError::from(e))?;
+            .map_err(CacheWriteError::from)?;
 
         // Check monotonicity guards
         if let Some(r) = row {
@@ -244,7 +241,7 @@ impl LeaderTipCache {
         .bind(&fetched_at)
         .execute(&mut *tx)
         .await
-        .map_err(|e| CacheWriteError::from(e))?;
+        .map_err(CacheWriteError::from)?;
 
         // Commit the transaction
         tx.commit().await.map_err(|e| {

@@ -344,8 +344,10 @@ impl From<ProvenanceStats> for ProvenanceStatsJson {
 
 /// Collects aggregate statistics from a list of provenance events.
 fn aggregate_provenance_stats(events: &[ProvenanceEvent]) -> ProvenanceStats {
-    let mut stats = ProvenanceStats::default();
-    stats.total_events = events.len();
+    let mut stats = ProvenanceStats {
+        total_events: events.len(),
+        ..Default::default()
+    };
 
     // Build lookup sets for checks
     let mut event_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -388,7 +390,7 @@ fn aggregate_provenance_stats(events: &[ProvenanceEvent]) -> ProvenanceStats {
                 .or_insert(0) += 1;
             execution_events
                 .entry(execution_id.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(event);
         }
 
@@ -1509,7 +1511,7 @@ fn validate_poll_interval_ms(interval_ms: Option<u64>) -> Result<u64> {
 
     match interval_ms {
         None => Ok(DEFAULT_MS),
-        Some(v) if v >= MIN_MS && v <= MAX_MS => Ok(v),
+        Some(v) if (MIN_MS..=MAX_MS).contains(&v) => Ok(v),
         Some(v) => bail!(
             "--poll-interval-ms must be between {} and {}, got {}",
             MIN_MS,
@@ -1585,7 +1587,8 @@ fn format_execution_record_text(record: &ExecutionRecord, iteration: u32) -> Str
     lines.join("\n")
 }
 
-async fn run_watch_approvals(
+/// Configuration for watch approvals operations.
+struct WatchApprovalsConfig {
     proposal_id: Option<String>,
     execution_id: Option<String>,
     limit: Option<u32>,
@@ -1595,7 +1598,20 @@ async fn run_watch_approvals(
     url: Option<String>,
     token: Option<String>,
     as_json: bool,
-) -> Result<()> {
+}
+
+async fn run_watch_approvals(config: WatchApprovalsConfig) -> Result<()> {
+    let WatchApprovalsConfig {
+        proposal_id,
+        execution_id,
+        limit,
+        cursor,
+        poll_interval_ms,
+        iterations,
+        url,
+        token,
+        as_json,
+    } = config;
     // Validate poll interval before any network call
     let poll_interval_ms = validate_poll_interval_ms(poll_interval_ms)?;
 
@@ -1667,7 +1683,7 @@ async fn run_watch_execution(
     // Validate poll interval before any network call (use 2000ms default for watch-execution)
     let poll_interval_ms = match poll_interval_ms {
         None => WATCH_EXECUTION_DEFAULT_INTERVAL_MS,
-        Some(v) if v >= 100 && v <= 300_000 => v,
+        Some(v) if (100..=300_000).contains(&v) => v,
         Some(v) => {
             bail!(
                 "--poll-interval-ms must be between 100 and 300000, got {}",
@@ -1780,18 +1796,33 @@ async fn run_rollback_execution(
     Ok(())
 }
 
-async fn run_resolve_approval(
-    approval_id: &str,
+/// Configuration for single approval resolution.
+struct ResolveApprovalConfig<'a> {
+    approval_id: &'a str,
     approve: bool,
     deny: bool,
     actor_type: ActorTypeCli,
-    actor_id: &str,
+    actor_id: &'a str,
     actor_display_name: Option<String>,
     reason: Option<String>,
     url: Option<String>,
     token: Option<String>,
     as_json: bool,
-) -> Result<()> {
+}
+
+async fn run_resolve_approval(config: ResolveApprovalConfig<'_>) -> Result<()> {
+    let ResolveApprovalConfig {
+        approval_id,
+        approve,
+        deny,
+        actor_type,
+        actor_id,
+        actor_display_name,
+        reason,
+        url,
+        token,
+        as_json,
+    } = config;
     // Fail-closed: require explicit approve xor deny
     if !approve && !deny {
         bail!("must specify either --approve or --deny");
@@ -1981,7 +2012,8 @@ fn format_bulk_outcome(outcome: &BulkResolutionOutcome) -> String {
     }
 }
 
-async fn run_resolve_approval_bulk(
+/// Configuration for bulk approval resolution.
+struct ResolveApprovalBulkConfig<'a> {
     all_pending: bool,
     proposal_id: Option<String>,
     execution_id: Option<String>,
@@ -1991,13 +2023,32 @@ async fn run_resolve_approval_bulk(
     approve: bool,
     deny: bool,
     actor_type: ActorTypeCli,
-    actor_id: &str,
+    actor_id: &'a str,
     actor_display_name: Option<String>,
     reason: Option<String>,
     url: Option<String>,
     token: Option<String>,
     as_json: bool,
-) -> Result<()> {
+}
+
+async fn run_resolve_approval_bulk(config: ResolveApprovalBulkConfig<'_>) -> Result<()> {
+    let ResolveApprovalBulkConfig {
+        all_pending,
+        proposal_id,
+        execution_id,
+        limit,
+        yes,
+        expect_count,
+        approve,
+        deny,
+        actor_type,
+        actor_id,
+        actor_display_name,
+        reason,
+        url,
+        token,
+        as_json,
+    } = config;
     // Determine if bulk mode is active based on any bulk-mode flag being set.
     // Bulk mode is triggered by --all-pending, scope filters, or --limit.
     let bulk_mode = all_pending
@@ -2358,7 +2409,7 @@ fn dot_escape(s: &str) -> String {
 fn validate_max_hops(max_hops: Option<u32>) -> Result<Option<u32>> {
     match max_hops {
         None => Ok(None),
-        Some(v) if v >= 1 && v <= 32 => Ok(Some(v)),
+        Some(v) if (1..=32).contains(&v) => Ok(Some(v)),
         Some(v) => bail!("--max-hops must be between 1 and 32, got {}", v),
     }
 }
@@ -2574,7 +2625,8 @@ async fn run_inspect_event(
     Ok(())
 }
 
-async fn run_inspect_provenance_stats(
+/// Configuration for provenance stats inspection.
+struct InspectProvenanceStatsConfig {
     intent_id: Option<String>,
     proposal_id: Option<String>,
     execution_id: Option<String>,
@@ -2586,7 +2638,22 @@ async fn run_inspect_provenance_stats(
     url: Option<String>,
     token: Option<String>,
     as_json: bool,
-) -> Result<()> {
+}
+
+async fn run_inspect_provenance_stats(config: InspectProvenanceStatsConfig) -> Result<()> {
+    let InspectProvenanceStatsConfig {
+        intent_id,
+        proposal_id,
+        execution_id,
+        capability_id,
+        event_kind,
+        since,
+        until,
+        max_events,
+        url,
+        token,
+        as_json,
+    } = config;
     let url = resolve_server_url(url)?;
     let client = ServerClient::new(&url, token);
 
@@ -2643,7 +2710,8 @@ async fn run_inspect_provenance_stats(
     Ok(())
 }
 
-async fn run_ingest_external_event(
+/// Configuration for external event ingestion.
+struct IngestExternalEventConfig {
     execution_id: String,
     parent_event_id: String,
     source_system: String,
@@ -2655,7 +2723,22 @@ async fn run_ingest_external_event(
     url: Option<String>,
     token: Option<String>,
     as_json: bool,
-) -> Result<()> {
+}
+
+async fn run_ingest_external_event(config: IngestExternalEventConfig) -> Result<()> {
+    let IngestExternalEventConfig {
+        execution_id,
+        parent_event_id,
+        source_system,
+        source_event_id,
+        observed_at,
+        summary,
+        payload_digest,
+        metadata_json,
+        url,
+        token,
+        as_json,
+    } = config;
     let url = resolve_server_url(url)?;
     let client = ServerClient::new(&url, token);
 
@@ -2790,7 +2873,7 @@ async fn main() -> Result<()> {
                 bearer_token,
                 json,
             } => {
-                run_inspect_provenance_stats(
+                run_inspect_provenance_stats(InspectProvenanceStatsConfig {
                     intent_id,
                     proposal_id,
                     execution_id,
@@ -2799,10 +2882,10 @@ async fn main() -> Result<()> {
                     since,
                     until,
                     max_events,
-                    server_url,
-                    bearer_token,
-                    json,
-                )
+                    url: server_url,
+                    token: bearer_token,
+                    as_json: json,
+                })
                 .await?;
             }
             ServerCommand::InspectProvenance {
@@ -2873,7 +2956,7 @@ async fn main() -> Result<()> {
                 bearer_token,
                 json,
             } => {
-                run_ingest_external_event(
+                run_ingest_external_event(IngestExternalEventConfig {
                     execution_id,
                     parent_event_id,
                     source_system,
@@ -2882,10 +2965,10 @@ async fn main() -> Result<()> {
                     summary,
                     payload_digest,
                     metadata_json,
-                    server_url,
-                    bearer_token,
-                    json,
-                )
+                    url: server_url,
+                    token: bearer_token,
+                    as_json: json,
+                })
                 .await?;
             }
             ServerCommand::ResolveApproval {
@@ -2900,18 +2983,18 @@ async fn main() -> Result<()> {
                 bearer_token,
                 json,
             } => {
-                run_resolve_approval(
-                    &approval_id,
+                run_resolve_approval(ResolveApprovalConfig {
+                    approval_id: &approval_id,
                     approve,
                     deny,
                     actor_type,
-                    &actor_id,
+                    actor_id: &actor_id,
                     actor_display_name,
                     reason,
-                    server_url,
-                    bearer_token,
-                    json,
-                )
+                    url: server_url,
+                    token: bearer_token,
+                    as_json: json,
+                })
                 .await?;
             }
             ServerCommand::ResolveApprovalBulk {
@@ -2931,7 +3014,7 @@ async fn main() -> Result<()> {
                 bearer_token,
                 json,
             } => {
-                run_resolve_approval_bulk(
+                run_resolve_approval_bulk(ResolveApprovalBulkConfig {
                     all_pending,
                     proposal_id,
                     execution_id,
@@ -2941,13 +3024,13 @@ async fn main() -> Result<()> {
                     approve,
                     deny,
                     actor_type,
-                    &actor_id,
+                    actor_id: &actor_id,
                     actor_display_name,
                     reason,
-                    server_url,
-                    bearer_token,
-                    json,
-                )
+                    url: server_url,
+                    token: bearer_token,
+                    as_json: json,
+                })
                 .await?;
             }
             ServerCommand::WatchApprovals {
@@ -2961,17 +3044,17 @@ async fn main() -> Result<()> {
                 bearer_token,
                 json,
             } => {
-                run_watch_approvals(
+                run_watch_approvals(WatchApprovalsConfig {
                     proposal_id,
                     execution_id,
                     limit,
                     cursor,
                     poll_interval_ms,
                     iterations,
-                    server_url,
-                    bearer_token,
-                    json,
-                )
+                    url: server_url,
+                    token: bearer_token,
+                    as_json: json,
+                })
                 .await?;
             }
             ServerCommand::WatchExecution {

@@ -88,7 +88,7 @@ impl LedgerRepo for SqliteLedgerRepo {
                     // This is the same cross-check done in verify_ledger_chain, but at append time
                     // to catch live tampering of the tip entry's hash column.
                     let tip_entry: LedgerEntry = serde_json::from_str(&raw_json)
-                        .map_err(|e| crate::StoreError::Serialization(e))?;
+                        .map_err(crate::StoreError::Serialization)?;
                     let recomputed_hash = ferrum_ledger::compute_entry_hash_raw(&tip_entry);
                     if content_hash != recomputed_hash {
                         return Err(crate::StoreError::Other(anyhow::anyhow!(

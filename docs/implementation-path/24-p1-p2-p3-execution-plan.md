@@ -9,6 +9,10 @@ write-path and consensus not implemented).
 
 ASCII only.
 
+**v1 Scope Freeze — Single-Node Only.** FerrumGate v1 is explicitly scoped to
+single-node deployment. P2 and P3 items are post-v1 non-goals and do not
+block v1 RC sign-off. See Section 6 for the complete v1 scope-freeze list.
+
 ---
 
 ## Status Summary
@@ -289,6 +293,27 @@ P3 (8+ weeks, after P2)
   P3.4 write-path (v2 / future)
     P3.3 -> P3.4
 ```
+
+---
+
+## 6. v1 Scope Freeze — Post-v1 Non-Goals
+
+The following are **explicitly out of scope for v1** and are not blockers for
+v1 RC sign-off:
+
+| Item | Phase | Status | Notes |
+|------|-------|--------|-------|
+| Multi-node sync write-path | P3 | Not started | Sync-3a probe done; apply-path, two-way merge deferred |
+| Consensus / leader election | Beyond P3 | Not planned | Requires Raft or equivalent; no design doc yet |
+| HA / multi-leader replication | P2 | Analysis TODO | SQLite read-replica use cases, leader-election analysis P2 backlog |
+| In-process TLS termination | N/A | Out of scope | External terminator (nginx/cloud LB) required; see TLS ingress runbook |
+| Distributed trace context | P2 | Not started | W3C TraceContext; single-node v1 does not need it |
+| Alerting rules | P2 | Not started | Exploratory/analysis only |
+| Generic provenance replay/fabric tooling | P2 | Core DONE | Advanced replay tooling P2 backlog |
+| Write-path (follower side) | P3 | Not started | Design doc TODO; explicitly deferred beyond v1 |
+
+All P2 and P3 items above are post-v1 work. v1 RC evidence pass covers only
+the single-node supported surface documented in Section 1 / P1.
 
 ---
 

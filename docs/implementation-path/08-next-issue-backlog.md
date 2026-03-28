@@ -1,5 +1,10 @@
 # 08 — Next issue backlog
 
+**v1 Scope Freeze — Single-Node Only.** FerrumGate v1 is scoped to single-node
+deployment only. Items listed as P2/P3 below are post-v1 non-goals and are
+not blockers for v1 RC sign-off. See `23-production-readiness-assessment.md`
+Section 4 for the complete v1 scope-freeze list.
+
 ## Completed foundation
 - P0: workspace compile sạch
 - P0: store sqlite MVP
