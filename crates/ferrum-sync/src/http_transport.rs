@@ -19,6 +19,18 @@
 //! - HTTP 401/403 -> `LeaderCapabilityDenied`
 //! - HTTP 400/500 -> `InternalError`
 //!
+//! ## Retry Policy (Bounded)
+//!
+//! This transport implements a minimal retry policy for transient failures:
+//! - **Retryable errors:** `LeaderTimeout`, `LeaderUnreachable`
+//! - **Non-retryable errors:** `LeaderCapabilityDenied`, `RangeNotAvailable`,
+//!   `LeaderVersionIncompatible`, `InternalError`
+//! - **Max attempts:** 2 total (1 retry after 100ms backoff)
+//! - **Scope:** Applies to both tip and proof GETs via a shared helper
+//!
+//! This is a bounded first step; richer retry policy (exponential backoff,
+//! jitter, configurable retry count) is deferred to a future slice.
+//!
 //! ## Read-Only Guarantee
 //!
 //! Both endpoints (`/v1/sync/leader/tip` and `/v1/sync/leader/tip/proof`) are
@@ -34,6 +46,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use tokio::time::sleep;
 
 use crate::transport::{
     LeaderTip, LeaderTipRequest, LeaderTipResponse, LeaderVersion, Proof, ProofRequest,
@@ -138,6 +151,46 @@ impl<C> HttpLeaderTransport<C> {
     pub fn bearer_token(&self) -> Option<&str> {
         self.bearer_token.as_deref()
     }
+}
+
+// ---------------------------------------------------------------------------
+// Retry helpers (private, bounded)
+// ---------------------------------------------------------------------------
+
+/// Returns true if the error is transient and retryable.
+///
+/// Retryable: `LeaderTimeout`, `LeaderUnreachable`.
+/// Non-retryable: `LeaderCapabilityDenied`, `RangeNotAvailable`,
+/// `LeaderVersionIncompatible`, `InternalError`.
+fn is_transient_error(err: &TransportError) -> bool {
+    matches!(
+        err,
+        TransportError::LeaderTimeout { .. } | TransportError::LeaderUnreachable { .. }
+    )
+}
+
+/// Execute a fallible async operation with at most one retry on transient errors.
+///
+/// - First attempt is always made.
+/// - On transient error (`LeaderTimeout` or `LeaderUnreachable`), waits `backoff_ms`
+///   then retries once.
+/// - On non-transient error, returns immediately.
+/// - Max total attempts: 2.
+async fn with_retry<F, Fut, T>(mut f: F, backoff_ms: u64) -> Result<T, TransportError>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, TransportError>>,
+{
+    // First attempt
+    match f().await {
+        Ok(result) => return Ok(result),
+        Err(err) if is_transient_error(&err) => { /* fall through to retry */ }
+        Err(err) => return Err(err),
+    }
+
+    // Retry after backoff (only for transient errors)
+    sleep(Duration::from_millis(backoff_ms)).await;
+    f().await
 }
 
 impl HttpLeaderTransport<reqwest::Client> {
@@ -269,11 +322,23 @@ impl<T: HttpClient + Clone> Transport for HttpLeaderTransport<T> {
         request: &LeaderTipRequest,
     ) -> Result<LeaderTipResponse, TransportError> {
         let url = format!("{}/v1/sync/leader/tip", self.base_url);
+        let client = self.client.clone();
+        let bearer_token = self.bearer_token.clone();
 
-        let response: HttpLeaderTipResponse = self
-            .client
-            .get_json_with_auth(&url, request.timeout_ms, self.bearer_token.as_deref())
-            .await?;
+        let response: HttpLeaderTipResponse = with_retry(
+            || {
+                let url = url.clone();
+                let client = client.clone();
+                let bearer_token = bearer_token.clone();
+                async move {
+                    client
+                        .get_json_with_auth(&url, request.timeout_ms, bearer_token.as_deref())
+                        .await
+                }
+            },
+            100, // 100ms backoff before retry
+        )
+        .await?;
 
         // Convert HTTP DTO to transport DTO
         Ok(LeaderTipResponse {
@@ -287,11 +352,23 @@ impl<T: HttpClient + Clone> Transport for HttpLeaderTransport<T> {
             "{}/v1/sync/leader/tip/proof?start={}&end={}",
             self.base_url, request.start_sequence, request.end_sequence
         );
+        let client = self.client.clone();
+        let bearer_token = self.bearer_token.clone();
 
-        let response: HttpProofResponse = self
-            .client
-            .get_json_with_auth(&url, request.timeout_ms, self.bearer_token.as_deref())
-            .await?;
+        let response: HttpProofResponse = with_retry(
+            || {
+                let url = url.clone();
+                let client = client.clone();
+                let bearer_token = bearer_token.clone();
+                async move {
+                    client
+                        .get_json_with_auth(&url, request.timeout_ms, bearer_token.as_deref())
+                        .await
+                }
+            },
+            100, // 100ms backoff before retry
+        )
+        .await?;
 
         // Map None proof to RangeNotAvailable per Sync-3 contract (A3).
         // A missing proof is a range problem, not an internal error (A7).
@@ -517,7 +594,12 @@ mod tests {
 
     #[tokio::test]
     async fn http_transport_maps_unreachable_to_leader_unreachable() {
+        // Queue two errors so retry also fails with the same transient error.
         let mock = MockHttpClient::new();
+        mock.queue_error(TransportError::LeaderUnreachable {
+            address: "http://leader:8080".to_string(),
+        })
+        .await;
         mock.queue_error(TransportError::LeaderUnreachable {
             address: "http://leader:8080".to_string(),
         })
@@ -538,7 +620,13 @@ mod tests {
 
     #[tokio::test]
     async fn http_transport_maps_timeout_to_leader_timeout() {
+        // Queue two errors so retry also fails with the same transient error.
         let mock = MockHttpClient::new();
+        mock.queue_error(TransportError::LeaderTimeout {
+            address: "http://leader:8080".to_string(),
+            duration_ms: 5000,
+        })
+        .await;
         mock.queue_error(TransportError::LeaderTimeout {
             address: "http://leader:8080".to_string(),
             duration_ms: 5000,
@@ -774,5 +862,278 @@ mod tests {
         for token in &tokens {
             assert!(token.is_none());
         }
+    }
+
+    // =========================================================================
+    // Retry tests
+    // =========================================================================
+
+    /// A mock HTTP client that records call count for retry testing.
+    #[derive(Clone)]
+    struct RetryTestClient {
+        responses:
+            std::sync::Arc<tokio::sync::Mutex<VecDeque<Result<serde_json::Value, TransportError>>>>,
+        call_count: std::sync::Arc<std::sync::Mutex<usize>>,
+    }
+
+    impl RetryTestClient {
+        fn new() -> Self {
+            Self {
+                responses: std::sync::Arc::new(tokio::sync::Mutex::new(VecDeque::new())),
+                call_count: std::sync::Arc::new(std::sync::Mutex::new(0)),
+            }
+        }
+
+        async fn queue_response(&self, response: impl Serialize) {
+            let json = serde_json::to_value(response).unwrap();
+            self.responses.lock().await.push_back(Ok(json));
+        }
+
+        async fn queue_error(&self, error: TransportError) {
+            self.responses.lock().await.push_back(Err(error));
+        }
+
+        fn call_count(&self) -> usize {
+            *self.call_count.lock().unwrap()
+        }
+    }
+
+    #[async_trait]
+    impl HttpClient for RetryTestClient {
+        async fn get_json<T: for<'de> Deserialize<'de>>(
+            &self,
+            url: &str,
+            timeout_ms: u64,
+        ) -> Result<T, TransportError> {
+            self.get_json_with_auth(url, timeout_ms, None).await
+        }
+
+        async fn get_json_with_auth<T: for<'de> Deserialize<'de>>(
+            &self,
+            _url: &str,
+            _timeout_ms: u64,
+            _bearer_token: Option<&str>,
+        ) -> Result<T, TransportError> {
+            *self.call_count.lock().unwrap() += 1;
+            let response = self.responses.lock().await.pop_front();
+            match response {
+                Some(Ok(json)) => {
+                    let deserialized: T = serde_json::from_value(json).map_err(|e| {
+                        TransportError::InternalError {
+                            details: format!("mock deserialization error: {}", e),
+                        }
+                    })?;
+                    Ok(deserialized)
+                }
+                Some(Err(e)) => Err(e),
+                None => Err(TransportError::InternalError {
+                    details: "mock client: no more queued responses".to_string(),
+                }),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn http_transport_retry_on_transient_error_succeeds() {
+        // First call returns transient error (LeaderTimeout), second call succeeds.
+        // Total calls should be 2.
+        let mock = RetryTestClient::new();
+        mock.queue_error(TransportError::LeaderTimeout {
+            address: "http://leader:8080".to_string(),
+            duration_ms: 5000,
+        })
+        .await;
+        mock.queue_response(HttpLeaderTipResponse {
+            leader_tip: Some(make_tip(100, "abc123")),
+            leader_version: Some(make_version()),
+        })
+        .await;
+
+        let transport = HttpLeaderTransport::with_client("http://leader:8080", mock.clone());
+        let request = LeaderTipRequest {
+            request_id: ProbeRequestId::new(),
+            follower_identity: "follower-1".to_string(),
+            timeout_ms: 5000,
+        };
+
+        let response = transport.fetch_leader_tip(&request).await.unwrap();
+
+        assert!(response.leader_tip.is_some());
+        assert_eq!(
+            mock.call_count(),
+            2,
+            "transient error should trigger exactly one retry"
+        );
+    }
+
+    #[tokio::test]
+    async fn http_transport_no_retry_on_non_transient_error() {
+        // LeaderCapabilityDenied is non-retryable; should return immediately with 1 call.
+        let mock = RetryTestClient::new();
+        mock.queue_error(TransportError::LeaderCapabilityDenied {
+            leader: "http://leader:8080".to_string(),
+            required_capability: "sync".to_string(),
+        })
+        .await;
+        // Queue a success as well (should never be used)
+        mock.queue_response(HttpLeaderTipResponse {
+            leader_tip: Some(make_tip(100, "abc123")),
+            leader_version: Some(make_version()),
+        })
+        .await;
+
+        let transport = HttpLeaderTransport::with_client("http://leader:8080", mock.clone());
+        let request = LeaderTipRequest {
+            request_id: ProbeRequestId::new(),
+            follower_identity: "follower-1".to_string(),
+            timeout_ms: 5000,
+        };
+
+        let result = transport.fetch_leader_tip(&request).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, TransportError::LeaderCapabilityDenied { .. }));
+        assert_eq!(mock.call_count(), 1, "non-transient error should not retry");
+    }
+
+    #[tokio::test]
+    async fn http_transport_no_retry_on_range_not_available() {
+        // RangeNotAvailable is non-retryable; should return immediately with 1 call.
+        let mock = RetryTestClient::new();
+        mock.queue_error(TransportError::RangeNotAvailable { start: 5, end: 10 })
+            .await;
+        mock.queue_response(HttpProofResponse {
+            proof: Some(make_proof(vec![5, 6, 7], vec!["hash1", "hash2", "hash3"])),
+        })
+        .await;
+
+        let transport = HttpLeaderTransport::with_client("http://leader:8080", mock.clone());
+        let request = ProofRequest {
+            request_id: ProbeRequestId::new(),
+            follower_identity: "follower-1".to_string(),
+            start_sequence: 5,
+            end_sequence: 10,
+            timeout_ms: 5000,
+        };
+
+        let result = transport.fetch_proof(&request).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, TransportError::RangeNotAvailable { .. }));
+        assert_eq!(mock.call_count(), 1, "non-transient error should not retry");
+    }
+
+    #[tokio::test]
+    async fn http_transport_retry_capped_at_one() {
+        // Both calls return transient error; should make exactly 2 calls and return error.
+        let mock = RetryTestClient::new();
+        mock.queue_error(TransportError::LeaderUnreachable {
+            address: "http://leader:8080".to_string(),
+        })
+        .await;
+        mock.queue_error(TransportError::LeaderUnreachable {
+            address: "http://leader:8080".to_string(),
+        })
+        .await;
+
+        let transport = HttpLeaderTransport::with_client("http://leader:8080", mock.clone());
+        let request = LeaderTipRequest {
+            request_id: ProbeRequestId::new(),
+            follower_identity: "follower-1".to_string(),
+            timeout_ms: 5000,
+        };
+
+        let result = transport.fetch_leader_tip(&request).await;
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            TransportError::LeaderUnreachable { .. }
+        ));
+        assert_eq!(
+            mock.call_count(),
+            2,
+            "retry should be capped at exactly one retry (2 attempts total)"
+        );
+    }
+
+    #[tokio::test]
+    async fn http_transport_retry_on_proof_fetch_transient_error() {
+        // First call returns transient error on proof, second succeeds.
+        let mock = RetryTestClient::new();
+        mock.queue_error(TransportError::LeaderTimeout {
+            address: "http://leader:8080".to_string(),
+            duration_ms: 5000,
+        })
+        .await;
+        mock.queue_response(HttpProofResponse {
+            proof: Some(make_proof(vec![5, 6, 7], vec!["hash1", "hash2", "hash3"])),
+        })
+        .await;
+
+        let transport = HttpLeaderTransport::with_client("http://leader:8080", mock.clone());
+        let request = ProofRequest {
+            request_id: ProbeRequestId::new(),
+            follower_identity: "follower-1".to_string(),
+            start_sequence: 5,
+            end_sequence: 7,
+            timeout_ms: 5000,
+        };
+
+        let response = transport.fetch_proof(&request).await.unwrap();
+        assert!(response.proof.is_some());
+        assert_eq!(
+            mock.call_count(),
+            2,
+            "proof fetch should also retry on transient error"
+        );
+    }
+
+    #[tokio::test]
+    async fn is_transient_error_returns_true_for_timeout() {
+        let err = TransportError::LeaderTimeout {
+            address: "http://leader:8080".to_string(),
+            duration_ms: 5000,
+        };
+        assert!(is_transient_error(&err));
+    }
+
+    #[tokio::test]
+    async fn is_transient_error_returns_true_for_unreachable() {
+        let err = TransportError::LeaderUnreachable {
+            address: "http://leader:8080".to_string(),
+        };
+        assert!(is_transient_error(&err));
+    }
+
+    #[tokio::test]
+    async fn is_transient_error_returns_false_for_capability_denied() {
+        let err = TransportError::LeaderCapabilityDenied {
+            leader: "http://leader:8080".to_string(),
+            required_capability: "sync".to_string(),
+        };
+        assert!(!is_transient_error(&err));
+    }
+
+    #[tokio::test]
+    async fn is_transient_error_returns_false_for_range_not_available() {
+        let err = TransportError::RangeNotAvailable { start: 5, end: 10 };
+        assert!(!is_transient_error(&err));
+    }
+
+    #[tokio::test]
+    async fn is_transient_error_returns_false_for_version_incompatible() {
+        let err = TransportError::LeaderVersionIncompatible {
+            leader_version: "2.0.0".to_string(),
+            follower_min_version: "1.0.0".to_string(),
+        };
+        assert!(!is_transient_error(&err));
+    }
+
+    #[tokio::test]
+    async fn is_transient_error_returns_false_for_internal_error() {
+        let err = TransportError::InternalError {
+            details: "something went wrong".to_string(),
+        };
+        assert!(!is_transient_error(&err));
     }
 }

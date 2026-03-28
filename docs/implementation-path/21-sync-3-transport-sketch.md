@@ -33,8 +33,14 @@ implemented in `crates/ferrum-store/src/sync_service.rs`. It performs:
 2. HTTP probe via `HttpLeaderTransport` + `ProbeFacade`
 3. Cache write only on full probe success
 
+**Retry policy (bounded):** `HttpLeaderTransport` now retries once on transient
+errors (`LeaderTimeout`, `LeaderUnreachable`) with 100ms backoff. Non-retryable
+errors (`LeaderCapabilityDenied`, `RangeNotAvailable`, `LeaderVersionIncompatible`,
+`InternalError`) fail immediately. Max attempts: 2 total. This is a bounded
+first step; richer retry policy (exponential backoff, jitter, configurable retry
+count) remains deferred.
+
 Still deferred:
-- Retry/backoff on transient probe failure
 - Write/apply path
 - Consensus, two-way merge, peer discovery
 
