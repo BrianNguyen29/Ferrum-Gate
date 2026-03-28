@@ -50,6 +50,25 @@ PF8 cache population is implemented via the real probe-to-cache path
 which performs PF4 authorization check + HTTP probe + cache write
 (Sync-3a territory).
 
+A **live-readiness orchestration helper** is also available:
+`run_live_sync_readiness_once()` in `ferrum-store/src/sync_service.rs`.
+This is an internal helper (not a public sync API) that composes:
+
+- PF7 acquire (via `SyncSessionGuard::acquire`)
+- Live probe-to-cache (via `probe_and_cache_leader_tip`)
+- Read-only readiness verdict (via `evaluate_sync_readiness_from_cache`)
+- Guaranteed release attempt
+
+Fail-closed: if acquire fails, probe fails, readiness eval fails (repo error),
+or release fails, an explicit error is returned. Release is always attempted
+when acquire succeeded. If release fails after earlier success, the error
+includes the original verdict so callers can reason about what succeeded
+before the release failure.
+
+This helper is **read-only in its verdict step**: `evaluate_sync_readiness_from_cache`
+makes no network calls, no cache writes, and no session mutation. The live
+probe step populates the cache (PF8) before the read-only verdict is run.
+
 The **read-only, local+cached readiness composition path** is also available:
 `evaluate_sync_readiness_from_cache()` in `ferrum-store/src/sync_service.rs`
 (added with `SyncReadinessVerdict` / `SyncReadinessError`). This composes all
