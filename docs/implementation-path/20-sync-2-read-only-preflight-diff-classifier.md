@@ -50,6 +50,36 @@ PF8 cache population is implemented via the real probe-to-cache path
 which performs PF4 authorization check + HTTP probe + cache write
 (Sync-3a territory).
 
+A **live-readiness orchestration helper** is also available:
+`run_live_sync_readiness_once()` in `ferrum-store/src/sync_service.rs`.
+This is an internal helper (not a public sync API) that composes:
+
+- PF7 acquire (via `SyncSessionGuard::acquire`)
+- Live probe-to-cache (via `probe_and_cache_leader_tip`)
+- Read-only readiness verdict (via `evaluate_sync_readiness_from_cache`)
+- Guaranteed release attempt
+
+Fail-closed: if acquire fails, probe fails, readiness eval fails (repo error),
+or release fails, an explicit error is returned. Release is always attempted
+when acquire succeeded. If release fails after earlier success, the error
+includes the original verdict so callers can reason about what succeeded
+before the release failure.
+
+This helper is **read-only in its verdict step**: `evaluate_sync_readiness_from_cache`
+makes no network calls, no cache writes, and no session mutation. The live
+probe step populates the cache (PF8) before the read-only verdict is run.
+
+The **read-only, local+cached readiness composition path** is also available:
+`evaluate_sync_readiness_from_cache()` in `ferrum-store/src/sync_service.rs`
+(added with `SyncReadinessVerdict` / `SyncReadinessError`). This composes all
+PF1-PF8 checks using only local state and the cached leader tip. It:
+
+- Is read-only: no network calls; leader tip comes from local cache only
+- No cache writes; no session mutation; no write/apply path
+- Is NOT a live remote sync guarantee: PF8 reflects cached state, not live probe
+- Fail-closed: any repo error returns `Err(SyncReadinessError)`; preflight
+  failures return `SyncReadinessVerdict::PreflightFailed` without a decision
+
 What remains deferred: retry/backoff on transient probe failure,
 write/apply path, consensus, and two-way merge.
 
@@ -239,9 +269,13 @@ the pre-conditions and provides a named classifier for the decision logic.
    tip without a transport? (Static config? Operator input? DNS? Sync-3+.)
 3. **Retry backoff:** On transient failure, when and how to retry? (Not
    relevant for read-only Sync-2; relevant for Sync-3+ execution.)
-4. **Sync session tracking:** Does the follower record that a sync is
-   in-progress to prevent concurrent sync attempts? (State management,
-   not read-only.)
+4. **Sync session tracking:** The follower records that a sync is in-progress
+   to prevent concurrent sync attempts. PF7 now has DB-backed session tracking
+   via `SqliteSyncPreflightRepo::acquire_sync_session_async()` /
+   `release_sync_session_async()` over `sync_state(id=1).sync_in_progress`.
+   A `SyncSessionGuard` explicit-release helper is available in `ferrum-store/src/sync_service.rs`
+   (explicit `release().await` required; does NOT auto-release on drop).
+   Richer distributed session coordination remains deferred.
 5. **Acknowledgment semantics:** Does the leader record follower progress?
    (Leader-side concern, not follower read-only.)
 
@@ -268,6 +302,7 @@ Note: Sync-3 does not yet include write-path implementation.
 | `crates/ferrum-ledger/src/lib.rs:260` | `verify_chain` — full chain verification |
 | `crates/ferrum-store/src/repos.rs:155` | LedgerRepo trait shape |
 | `crates/ferrum-store/src/sqlite/mod.rs:155` | SQLite ledger repo implementation |
+| `crates/ferrum-store/src/sync_service.rs` | Read-only `evaluate_sync_readiness_from_cache()` — local+cached PF1-PF8 composition; `SyncReadinessVerdict`, `SyncReadinessError` |
 | `docs/implementation-path/18-cross-node-ledger-sync-plan.md` | Sync-0 safety contract (predecessor) |
 | `docs/implementation-path/19-sync-1-protocol-sketch.md` | Sync-1 protocol sketch (predecessor) |
 

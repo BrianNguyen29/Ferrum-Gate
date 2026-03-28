@@ -266,6 +266,101 @@ impl SqliteSyncPreflightRepo {
     ) -> Result<(), sqlx::Error> {
         self.leader_allowlist.deauthorize(leader_address).await
     }
+
+    // ---------------------------------------------------------------------------
+    // PF7: sync session tracking (atomic acquire/release over sync_in_progress)
+    // ---------------------------------------------------------------------------
+
+    /// Atomically acquire a sync session by setting `sync_state(id=1).sync_in_progress = 1`.
+    ///
+    /// Uses compare-and-set style: only sets the flag to 1 when it is currently 0.
+    /// This prevents concurrent sync attempts from both acquiring the session.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(true)` if the session was successfully acquired (flag was 0, now 1).
+    /// - `Ok(false)` if a session is already active (flag was 1, unchanged).
+    /// - `Err` if a database error occurred (fail-closed).
+    ///
+    /// # Fail-Closed Semantics
+    ///
+    /// A database error returns `Err`, NOT `false`. The caller must treat
+    /// `Err` as a failure to acquire the session, not as "session already active".
+    pub async fn acquire_sync_session_async(&self) -> Result<bool, SyncRepoError> {
+        // Compare-and-set style: UPDATE ... SET sync_in_progress = 1 WHERE sync_in_progress = 0
+        // rows_affected = 1 means we won the race (flag was 0)
+        // rows_affected = 0 means another session is already active (flag was 1)
+        let result = sqlx::query(
+            "UPDATE sync_state SET sync_in_progress = 1 WHERE id = 1 AND sync_in_progress = 0",
+        )
+        .execute(self.store.pool())
+        .await
+        .map_err(|e| SyncRepoError::InternalError {
+            reason: format!("acquire_sync_session failed: {}", e),
+        })?;
+
+        Ok(result.rows_affected() == 1)
+    }
+
+    /// Release the sync session by clearing `sync_state(id=1).sync_in_progress = 0`.
+    ///
+    /// This is safe to call for cleanup, even if no session was acquired.
+    /// Idempotent: calling when no session is active is a no-op.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(true)` if the session was released (flag was 1, now 0).
+    /// - `Ok(false)` if no session was active (flag was 0, unchanged).
+    /// - `Err` if a database error occurred (fail-closed).
+    ///
+    /// # No-Commit Constraint
+    ///
+    /// This method does NOT commit. The caller is responsible for transaction
+    /// management if atomicity with other operations is required.
+    pub async fn release_sync_session_async(&self) -> Result<bool, SyncRepoError> {
+        // Clear the flag: UPDATE ... SET sync_in_progress = 0 WHERE sync_in_progress = 1
+        // rows_affected = 1 means we held the session and released it
+        // rows_affected = 0 means we did not hold the session (already released or never acquired)
+        let result = sqlx::query(
+            "UPDATE sync_state SET sync_in_progress = 0 WHERE id = 1 AND sync_in_progress = 1",
+        )
+        .execute(self.store.pool())
+        .await
+        .map_err(|e| SyncRepoError::InternalError {
+            reason: format!("release_sync_session failed: {}", e),
+        })?;
+
+        Ok(result.rows_affected() == 1)
+    }
+
+    /// Force-set the sync_in_progress flag directly (for test scenarios only).
+    ///
+    /// This bypasses the compare-and-set semantics of `acquire_sync_session_async`.
+    /// Use only in tests to simulate a stuck or active session.
+    #[cfg(test)]
+    pub async fn set_sync_in_progress_test_only(&self, value: bool) -> Result<(), sqlx::Error> {
+        sqlx::query("UPDATE sync_state SET sync_in_progress = ? WHERE id = 1")
+            .bind(if value { 1 } else { 0 })
+            .execute(self.store.pool())
+            .await?;
+        Ok(())
+    }
+
+    /// Synchronous release_sync_session using block_in_place.
+    ///
+    /// Exposed for `SyncSessionGuard` Drop cleanup. This is a sync wrapper
+    /// around `release_sync_session_async` using `tokio::task::block_in_place`.
+    ///
+    /// Requires a multi-threaded Tokio runtime (not single-threaded test).
+    pub fn release_sync_session(&self) -> Result<bool, SyncRepoError> {
+        tokio::task::block_in_place(|| {
+            let rt = tokio::runtime::Handle::current();
+            rt.block_on(self.release_sync_session_async())
+        })
+        .map_err(|e| SyncRepoError::InternalError {
+            reason: format!("release_sync_session failed: {}", e),
+        })
+    }
 }
 
 impl SyncPreflightRepo for SqliteSyncPreflightRepo {
