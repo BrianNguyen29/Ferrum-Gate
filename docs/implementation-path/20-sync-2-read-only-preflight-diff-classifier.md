@@ -250,9 +250,13 @@ the pre-conditions and provides a named classifier for the decision logic.
    tip without a transport? (Static config? Operator input? DNS? Sync-3+.)
 3. **Retry backoff:** On transient failure, when and how to retry? (Not
    relevant for read-only Sync-2; relevant for Sync-3+ execution.)
-4. **Sync session tracking:** Does the follower record that a sync is
-   in-progress to prevent concurrent sync attempts? (State management,
-   not read-only.)
+4. **Sync session tracking:** The follower records that a sync is in-progress
+   to prevent concurrent sync attempts. PF7 now has DB-backed session tracking
+   via `SqliteSyncPreflightRepo::acquire_sync_session_async()` /
+   `release_sync_session_async()` over `sync_state(id=1).sync_in_progress`.
+   A `SyncSessionGuard` explicit-release helper is available in `ferrum-store/src/sync_service.rs`
+   (explicit `release().await` required; does NOT auto-release on drop).
+   Richer distributed session coordination remains deferred.
 5. **Acknowledgment semantics:** Does the leader record follower progress?
    (Leader-side concern, not follower read-only.)
 

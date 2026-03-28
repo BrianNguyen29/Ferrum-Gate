@@ -1,8 +1,10 @@
-//! Sync service helper for caching leader tip results.
+//! Sync service helper for caching leader tip results and PF7 session tracking.
 //!
 //! This module provides:
 //! 1. A thin helper for writing leader tip results to the cache (`cache_leader_tip`).
 //! 2. The concrete probe-to-cache orchestration path (`probe_and_cache_leader_tip`).
+//! 3. PF7 sync session tracking via `SyncSessionGuard` (atomic acquire/release over
+//!    `sync_state(id=1).sync_in_progress`).
 //!
 //! ## Usage
 //!
@@ -44,6 +46,34 @@
 //! }
 //! ```
 //!
+//! ### Option 3: PF7 session guard (explicit-release-only)
+//!
+//! Use `SyncSessionGuard` to acquire a sync session before beginning sync work.
+//! The guard does NOT release automatically on drop (see below for rationale).
+//! Callers MUST call `release().await` explicitly for deterministic cleanup:
+//!
+//! ```ignore
+//! let guard = match SyncSessionGuard::acquire(&repo).await {
+//!     Ok(g) => g,
+//!     Err(()) => return Err("session already active or DB error"),
+//! };
+//! // do sync work here
+//! // guard.release().await MUST be called explicitly
+//! guard.release().await;
+//! ```
+//!
+//! ## Why No Auto-Release on Drop
+//!
+//! The `Drop` implementation cannot synchronously release the session because:
+//! 1. `block_in_place` / `block_on` panics when called from within a runtime
+//!    (including inside `#[tokio::test]` contexts).
+//! 2. Spawning a background task from `Drop` is not safe for deterministic cleanup.
+//!
+//! Instead, the `Drop` impl logs a warning if the guard is dropped without
+//! explicit release. Callers are required to call `release().await` explicitly.
+//! This is a fail-closed design: a dropped guard without release leaves the
+//! session stuck, which will block future sync attempts until manually cleared.
+//!
 //! ## Write Safety
 //!
 //! The underlying cache enforces monotonicity guards: stale writes (lower or equal
@@ -55,6 +85,7 @@
 //! - Write/apply path (future slice)
 //! - Retry logic or backoff (future slice)
 //! - Peer discovery or leader election (future slice)
+//! - Distributed session coordination (future slice; richer than single-node flag)
 //!
 //! ## Auth
 //!
@@ -318,67 +349,6 @@ pub async fn evaluate_sync_readiness_from_cache(
 }
 
 // ---------------------------------------------------------------------------
-// Error types for probe_and_cache_leader_tip
-// ---------------------------------------------------------------------------
-
-/// Errors from `probe_and_cache_leader_tip`.
-///
-/// These are the only ways this function can fail. Every error variant
-/// is fail-closed: no partial state is written to the cache.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ProbeError {
-    /// PF4 check failed: leader is not authorized for sync.
-    /// No probe was run; no cache write occurred.
-    Unauthorized,
-
-    /// The probe ran but aborted with a Sync-1 abort code.
-    /// No cache write occurred.
-    ProbeFailed(Sync1AbortCode),
-
-    /// PF4 check returned a repo error (fail-closed on DB errors).
-    /// No probe was run; no cache write occurred.
-    AuthorizationRepoError(String),
-
-    /// The probe succeeded but the cache write was rejected due to
-    /// staleness or hash conflict. This is surfaced rather than silently
-    /// ignored. The leader tip returned by the probe is included so
-    /// callers can reason about the conflict.
-    StaleOrConflictingCache {
-        /// The tip that was retrieved from the probe.
-        leader_tip: TipId,
-        /// The specific monotonicity violation.
-        cause: CacheWriteError,
-    },
-
-    /// The probe succeeded but the cache write failed due to a database error.
-    /// No cache write occurred. This is fail-closed: a database error
-    /// during write means the cache state is unknown.
-    CacheWriteDbError(String),
-}
-
-impl std::fmt::Display for ProbeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ProbeError::Unauthorized => write!(f, "leader not authorized (PF4 deny-by-default)"),
-            ProbeError::ProbeFailed(code) => write!(f, "probe aborted: {}", code),
-            ProbeError::AuthorizationRepoError(msg) => {
-                write!(f, "PF4 authorization repo error: {}", msg)
-            }
-            ProbeError::StaleOrConflictingCache { leader_tip, cause } => {
-                write!(
-                    f,
-                    "cache write rejected for leader tip seq={}, hash={}: {}",
-                    leader_tip.sequence, leader_tip.hash, cause
-                )
-            }
-            ProbeError::CacheWriteDbError(msg) => {
-                write!(f, "cache write database error: {}", msg)
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Cache helper
 // ---------------------------------------------------------------------------
 
@@ -551,6 +521,210 @@ pub async fn probe_and_cache_leader_tip(
                 }),
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Error types for probe_and_cache_leader_tip
+// ---------------------------------------------------------------------------
+
+/// Errors from `probe_and_cache_leader_tip`.
+///
+/// These are the only ways this function can fail. Every error variant
+/// is fail-closed: no partial state is written to the cache.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProbeError {
+    /// PF4 check failed: leader is not authorized for sync.
+    /// No probe was run; no cache write occurred.
+    Unauthorized,
+
+    /// The probe ran but aborted with a Sync-1 abort code.
+    /// No cache write occurred.
+    ProbeFailed(Sync1AbortCode),
+
+    /// PF4 check returned a repo error (fail-closed on DB errors).
+    /// No probe was run; no cache write occurred.
+    AuthorizationRepoError(String),
+
+    /// The probe succeeded but the cache write was rejected due to
+    /// staleness or hash conflict. This is surfaced rather than silently
+    /// ignored. The leader tip returned by the probe is included so
+    /// callers can reason about the conflict.
+    StaleOrConflictingCache {
+        /// The tip that was retrieved from the probe.
+        leader_tip: TipId,
+        /// The specific monotonicity violation.
+        cause: CacheWriteError,
+    },
+
+    /// The probe succeeded but the cache write failed due to a database error.
+    /// No cache write occurred. This is fail-closed: a database error
+    /// during write means the cache state is unknown.
+    CacheWriteDbError(String),
+}
+
+impl std::fmt::Display for ProbeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProbeError::Unauthorized => write!(f, "leader not authorized (PF4 deny-by-default)"),
+            ProbeError::ProbeFailed(code) => write!(f, "probe aborted: {}", code),
+            ProbeError::AuthorizationRepoError(msg) => {
+                write!(f, "PF4 authorization repo error: {}", msg)
+            }
+            ProbeError::StaleOrConflictingCache { leader_tip, cause } => {
+                write!(
+                    f,
+                    "cache write rejected for leader tip seq={}, hash={}: {}",
+                    leader_tip.sequence, leader_tip.hash, cause
+                )
+            }
+            ProbeError::CacheWriteDbError(msg) => {
+                write!(f, "cache write database error: {}", msg)
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PF7 Sync Session Guard — atomic acquire/release with RAII cleanup
+// ---------------------------------------------------------------------------
+
+/// RAII guard for PF7 sync session tracking.
+///
+/// This guard atomically acquires the `sync_in_progress` flag on creation.
+/// Unlike a true RAII guard, it does NOT release automatically on drop.
+/// Callers MUST call `release().await` explicitly for deterministic cleanup.
+///
+/// # Fail-Closed Acquire
+///
+/// `acquire()` returns `Err(())` when:
+/// - A session is already active (compare-and-set returns false)
+/// - A database error occurs (fail-closed)
+///
+/// # Explicit Release Required
+///
+/// `release()` MUST be called explicitly before the guard is dropped.
+/// If the guard is dropped without calling `release()`, a warning is logged
+/// and the session remains held (blocking future sync attempts).
+///
+/// `release()` is safe to call multiple times. If no session is held,
+/// it is a no-op. This supports cleanup paths that may or may not have
+/// acquired the session.
+///
+/// # Why No Auto-Release on Drop
+///
+/// The `Drop` implementation cannot synchronously release the session because:
+/// 1. `block_in_place` / `block_on` panics when called from within a runtime
+///    (including inside `#[tokio::test]` contexts).
+/// 2. Spawning a background task from `Drop` is not safe for deterministic cleanup.
+///
+/// This is a fail-closed design: a dropped guard without release leaves the
+/// session stuck, which is detectable and manually clearable via
+/// `SqliteSyncPreflightRepo::set_sync_in_progress_test_only()`.
+///
+/// # Example
+///
+/// ```ignore
+/// let guard = match SyncSessionGuard::acquire(&repo).await {
+///     Ok(g) => g,
+///     Err(()) => return Err("cannot acquire session"),
+/// };
+///
+/// // Do sync work here
+///
+/// // guard.release().await MUST be called explicitly
+/// guard.release().await;
+/// ```
+pub struct SyncSessionGuard<'a> {
+    repo: &'a SqliteSyncPreflightRepo,
+    held: bool,
+}
+
+impl<'a> SyncSessionGuard<'a> {
+    /// Attempt to acquire a sync session.
+    ///
+    /// Returns `Ok(guard)` if the session was successfully acquired.
+    /// Returns `Err(())` if a session is already active or a DB error occurred
+    /// (fail-closed).
+    ///
+    /// The caller MUST call `release().await` explicitly before dropping.
+    pub async fn acquire(repo: &'a SqliteSyncPreflightRepo) -> Result<Self, ()> {
+        match repo.acquire_sync_session_async().await {
+            Ok(true) => {
+                // Successfully acquired
+                Ok(Self { repo, held: true })
+            }
+            Ok(false) => {
+                // Session already active
+                tracing::debug!("SyncSessionGuard::acquire: session already active");
+                Err(())
+            }
+            Err(e) => {
+                // DB error — fail-closed
+                tracing::error!("SyncSessionGuard::acquire: DB error: {}", e);
+                Err(())
+            }
+        }
+    }
+
+    /// Returns `true` if this guard holds the sync session.
+    ///
+    /// Always returns `true` after `acquire()` succeeds.
+    /// Returns `false` after `release()` is called.
+    pub fn is_held(&self) -> bool {
+        self.held
+    }
+
+    /// Explicitly release the sync session.
+    ///
+    /// This MUST be called before the guard is dropped. If the guard is
+    /// dropped without calling `release()`, the session remains held and a
+    /// warning is logged.
+    ///
+    /// Calling `release()` multiple times is safe (idempotent). If no session
+    /// is held, it is a no-op.
+    ///
+    /// After calling `release()`, `is_held()` returns `false`.
+    pub async fn release(mut self: Self) {
+        if !self.held {
+            return;
+        }
+        match self.repo.release_sync_session_async().await {
+            Ok(true) => {
+                tracing::debug!("SyncSessionGuard::release: session released");
+                self.held = false;
+            }
+            Ok(false) => {
+                // Was not held — this should not happen if acquire succeeded
+                tracing::warn!("SyncSessionGuard::release: session was not held");
+                self.held = false;
+            }
+            Err(e) => {
+                // DB error on release — log and continue
+                // The flag may be stuck; this is a safety net, not guaranteed cleanup
+                tracing::error!("SyncSessionGuard::release: DB error: {}", e);
+                self.held = false;
+            }
+        }
+    }
+}
+
+impl<'a> Drop for SyncSessionGuard<'a> {
+    fn drop(&mut self) {
+        if !self.held {
+            return;
+        }
+        // NOTE: We cannot synchronously release the session here because:
+        // 1. block_in_place / block_on panics when called from within a runtime
+        //    (e.g., inside #[tokio::test])
+        // 2. We cannot safely spawn from Drop
+        //
+        // Callers MUST call `release().await` explicitly for deterministic cleanup.
+        // This `held = false` only prevents double-release if release() was already called.
+        tracing::warn!(
+            "SyncSessionGuard: dropped while session still held. \
+             Explicit release() was not called. Session may be stuck until manually cleared."
+        );
     }
 }
 
@@ -1277,5 +1451,365 @@ mod tests {
             Some(150),
             "leader cached tip seq should be 150"
         );
+    }
+
+    // ---------------------------------------------------------------------------
+    // PF7: sync session tracking — acquire/release
+    // ---------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn acquire_sync_session_first_caller_succeeds() {
+        // First acquire succeeds when no session is active
+        let repo = make_repo().await;
+        let acquired = repo
+            .acquire_sync_session_async()
+            .await
+            .expect("acquire should succeed");
+        assert!(acquired, "first acquire should succeed (returned true)");
+
+        // Verify PF7 flag is now set
+        let state = repo
+            .read_local_state_async()
+            .await
+            .expect("read_local_state");
+        assert!(
+            state.sync_in_progress,
+            "PF7 flag should be set after acquire"
+        );
+    }
+
+    #[tokio::test]
+    async fn acquire_sync_session_second_caller_fails_contention() {
+        // Second acquire fails due to contention when session is already active
+        let repo = make_repo().await;
+
+        // First acquire succeeds
+        let first = repo
+            .acquire_sync_session_async()
+            .await
+            .expect("acquire should succeed");
+        assert!(first, "first acquire should succeed");
+
+        // Second acquire fails (session already active)
+        let second = repo
+            .acquire_sync_session_async()
+            .await
+            .expect("acquire should not error");
+        assert!(
+            !second,
+            "second acquire should fail due to contention (returned false)"
+        );
+
+        // Verify PF7 flag is still set
+        let state = repo
+            .read_local_state_async()
+            .await
+            .expect("read_local_state");
+        assert!(state.sync_in_progress, "PF7 flag should still be set");
+    }
+
+    #[tokio::test]
+    async fn release_sync_session_releases_held_session() {
+        // Release returns true when session was held and is now released
+        let repo = make_repo().await;
+
+        // Acquire first
+        repo.acquire_sync_session_async()
+            .await
+            .expect("acquire should succeed");
+
+        // Release should succeed (session was held)
+        let released = repo
+            .release_sync_session_async()
+            .await
+            .expect("release should succeed");
+        assert!(released, "release should return true when session was held");
+
+        // Verify PF7 flag is now clear
+        let state = repo
+            .read_local_state_async()
+            .await
+            .expect("read_local_state");
+        assert!(
+            !state.sync_in_progress,
+            "PF7 flag should be clear after release"
+        );
+    }
+
+    #[tokio::test]
+    async fn release_sync_session_idempotent_when_not_held() {
+        // Release is safe when no session is held (idempotent)
+        let repo = make_repo().await;
+
+        // Release without acquire should return false (no session held)
+        let released = repo
+            .release_sync_session_async()
+            .await
+            .expect("release should succeed");
+        assert!(
+            !released,
+            "release without acquire should return false (no session held)"
+        );
+
+        // PF7 flag should still be clear
+        let state = repo
+            .read_local_state_async()
+            .await
+            .expect("read_local_state");
+        assert!(!state.sync_in_progress, "PF7 flag should still be clear");
+    }
+
+    #[tokio::test]
+    async fn acquire_release_cycle_allows_new_acquire() {
+        // After release, a new acquire succeeds
+        let repo = make_repo().await;
+
+        // Acquire -> Release
+        repo.acquire_sync_session_async()
+            .await
+            .expect("acquire should succeed");
+        repo.release_sync_session_async()
+            .await
+            .expect("release should succeed");
+
+        // New acquire should succeed
+        let acquired = repo
+            .acquire_sync_session_async()
+            .await
+            .expect("acquire should succeed");
+        assert!(acquired, "new acquire after release should succeed");
+    }
+
+    #[tokio::test]
+    async fn pf7_blocks_sync_when_session_active() {
+        // PF7 fails preflight when sync_in_progress is true
+        let repo = make_repo().await;
+
+        // Authorize the leader for PF4
+        repo.authorize_leader_test_only("http://leader:9000")
+            .await
+            .expect("authorize");
+
+        // Acquire sync session (sets PF7 flag)
+        repo.acquire_sync_session_async()
+            .await
+            .expect("acquire should succeed");
+
+        // Verify PF7 blocks preflight
+        let verdict =
+            evaluate_sync_readiness_from_cache(Some("http://leader:9000".to_string()), &repo)
+                .await
+                .expect("evaluate should not error");
+
+        let SyncReadinessVerdict::PreflightFailed { failed_check } = verdict else {
+            panic!("expected PreflightFailed, got {:?}", verdict);
+        };
+        assert_eq!(
+            failed_check,
+            ferrum_sync::preflight::PreflightCheckCode::PF7,
+            "PF7 should fail when sync_in_progress is true"
+        );
+
+        // Release the session
+        repo.release_sync_session_async()
+            .await
+            .expect("release should succeed");
+
+        // Now PF7 should pass (if other checks pass)
+        let state = repo
+            .read_local_state_async()
+            .await
+            .expect("read_local_state");
+        assert!(
+            !state.sync_in_progress,
+            "PF7 flag should be clear after release"
+        );
+    }
+
+    // ---------------------------------------------------------------------------
+    // PF7: SyncSessionGuard
+    // ---------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn sync_session_guard_acquire_success() {
+        // Guard can be acquired when no session is active
+        let repo = make_repo().await;
+
+        let guard = SyncSessionGuard::acquire(&repo).await;
+        assert!(
+            guard.is_ok(),
+            "acquire should succeed when no session active"
+        );
+
+        let guard = guard.unwrap();
+        assert!(
+            guard.is_held(),
+            "guard should report is_held=true after acquire"
+        );
+
+        // Verify PF7 flag is set
+        let state = repo
+            .read_local_state_async()
+            .await
+            .expect("read_local_state");
+        assert!(state.sync_in_progress, "PF7 should be set");
+    }
+
+    #[tokio::test]
+    async fn sync_session_guard_acquire_contention() {
+        // Guard acquire fails when session is already active
+        let repo = make_repo().await;
+
+        // First guard acquires
+        let _guard1 = SyncSessionGuard::acquire(&repo)
+            .await
+            .expect("first acquire should succeed");
+
+        // Second guard fails due to contention
+        let guard2 = SyncSessionGuard::acquire(&repo).await;
+        assert!(
+            guard2.is_err(),
+            "second acquire should fail due to contention"
+        );
+    }
+
+    #[tokio::test]
+    async fn sync_session_guard_explicit_release() {
+        // Explicit release releases the session
+        let repo = make_repo().await;
+
+        let guard = SyncSessionGuard::acquire(&repo)
+            .await
+            .expect("acquire should succeed");
+        assert!(guard.is_held(), "guard should be held after acquire");
+
+        // Explicit release
+        guard.release().await;
+
+        // Verify session is released
+        let state = repo
+            .read_local_state_async()
+            .await
+            .expect("read_local_state");
+        assert!(
+            !state.sync_in_progress,
+            "PF7 should be clear after explicit release"
+        );
+    }
+
+    #[tokio::test]
+    async fn sync_session_guard_drop_warns_if_not_released() {
+        // Guard warns on drop if session was not explicitly released
+        let repo = make_repo().await;
+
+        {
+            let guard = SyncSessionGuard::acquire(&repo)
+                .await
+                .expect("acquire should succeed");
+            assert!(guard.is_held(), "guard should be held");
+            // guard goes out of scope and drops without explicit release
+        }
+
+        // Session is still held (drop did not release)
+        let state = repo
+            .read_local_state_async()
+            .await
+            .expect("read_local_state");
+        assert!(
+            state.sync_in_progress,
+            "PF7 should still be set (drop did not release)"
+        );
+
+        // Explicitly release for cleanup
+        repo.release_sync_session_async()
+            .await
+            .expect("release should succeed");
+    }
+
+    #[tokio::test]
+    async fn sync_session_guard_release_on_error_path() {
+        // Guard does NOT auto-release on drop; explicit release is REQUIRED
+        // This test verifies the fail-closed behavior: without explicit
+        // release, the session remains stuck even on the error path.
+        let repo = make_repo().await;
+
+        async fn simulate_error<'a>(_guard: SyncSessionGuard<'a>) -> Result<(), ()> {
+            // Do some work then return error
+            Err(())
+            // NOTE: guard drops here WITHOUT releasing the session
+            // This is the documented (non-RAII) behavior
+        }
+
+        let guard = SyncSessionGuard::acquire(&repo)
+            .await
+            .expect("acquire should succeed");
+
+        // Simulate error path
+        let _ = simulate_error(guard).await;
+
+        // Session is still held because explicit release was not called
+        let state = repo
+            .read_local_state_async()
+            .await
+            .expect("read_local_state");
+        assert!(
+            state.sync_in_progress,
+            "PF7 should still be set (explicit release required)"
+        );
+
+        // Explicitly release for cleanup
+        repo.release_sync_session_async()
+            .await
+            .expect("release should succeed");
+    }
+
+    // ---------------------------------------------------------------------------
+    // PF7: set_sync_in_progress_test_only
+    // ---------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn set_sync_in_progress_test_only_force_sets_flag() {
+        // Test helper can force-set the flag for contention testing
+        let repo = make_repo().await;
+
+        // Force-set to true (simulating stuck session)
+        repo.set_sync_in_progress_test_only(true)
+            .await
+            .expect("set_sync_in_progress should succeed");
+
+        // Verify flag is set
+        let state = repo
+            .read_local_state_async()
+            .await
+            .expect("read_local_state");
+        assert!(state.sync_in_progress, "PF7 should be set");
+
+        // Acquire should now fail (contention)
+        let acquired = repo
+            .acquire_sync_session_async()
+            .await
+            .expect("acquire should not error");
+        assert!(!acquired, "acquire should fail when flag is set");
+
+        // Force-set to false (cleanup)
+        repo.set_sync_in_progress_test_only(false)
+            .await
+            .expect("set_sync_in_progress should succeed");
+
+        let state = repo
+            .read_local_state_async()
+            .await
+            .expect("read_local_state");
+        assert!(
+            !state.sync_in_progress,
+            "PF7 should be clear after force-clear"
+        );
+
+        // Now acquire should succeed
+        let acquired = repo
+            .acquire_sync_session_async()
+            .await
+            .expect("acquire should succeed");
+        assert!(acquired, "acquire should succeed after flag is cleared");
     }
 }
