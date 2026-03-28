@@ -28,28 +28,34 @@ operates purely on caller-provided inputs. No transport, no repo queries, no
 mutation. This is groundwork aligned with
 `docs/implementation-path/20-sync-2-read-only-preflight-diff-classifier.md`.
 
-**This is NOT the full Sync-2 implementation.** The following are deferred to P3:
+**This is NOT the full Sync-2 implementation.** PF1 and PF5 have a real
+SQLite-backed implementation via `SqliteSyncPreflightRepo` in `ferrum-store`.
+The following remain deferred to P3:
 
-- Actual ledger queries (PF1/PF5/PF6 require repo access)
+- Actual ledger queries (PF2/PF6 require schema additions)
 - Transport-based leader tip acquisition (PF3/PF8)
 - Sync session tracking (PF7)
 - Capability model enforcement (PF4)
 
-### Sync-2 Trait-Only Repo Port (Groundwork)
+### Sync-2 Repo Port
 
 A read-only trait (`SyncPreflightRepo`) that defines the minimal repo interface
-for Sync-2 preflight queries. This is **trait-only groundwork**; no SQLite/store
-implementations live here.
+for Sync-2 preflight queries. Lives in `ferrum-sync` because sync owns the
+preflight contract; `ferrum-store` provides concrete backends.
 
 - `SyncPreflightRepo` trait: `verify_local_chain()`, `read_local_state()`,
   `is_leader_authorized()`, `read_leader_tip()`
 - `LocalPreflightState`: snapshot carrying follower tip + PF2/PF6/PF7 booleans
 - `SyncRepoError`: error type for repo operations
+- `InMemorySyncPreflightRepo`: in-memory test double (tests only)
 - `build_preflight_input()`: pure adapter that converts `LocalPreflightState`
   + externally supplied PF3/PF4/PF8 flags into `PreflightInput`
 - **PF3 is explicitly excluded** from the trait (it is a transport/config concern)
 
-Concrete implementations (SQLite, in-memory test doubles) are deferred to P3.
+**Concrete implementations:**
+- `InMemorySyncPreflightRepo` (ferrum-sync): test double
+- `SqliteSyncPreflightRepo` (ferrum-store): supports PF1 + PF5 via
+  `verify_local_chain()`; other methods return `Err` fail-closed
 
 ### What Is In Scope
 
@@ -63,8 +69,9 @@ Concrete implementations (SQLite, in-memory test doubles) are deferred to P3.
   (DONE / SYNC / FAST_FORWARD / ABORT)
 - **Sync-2 groundwork**: pure preflight checker (PF1-PF8) + diff classifier (`DiffClass`)
   + bridge to Sync-1 decision kernel
-- **Sync-2 repo port**: trait-only read-only preflight port (`SyncPreflightRepo`) +
-  `LocalPreflightState` + `build_preflight_input()` adapter
+- **Sync-2 repo port**: read-only preflight port (`SyncPreflightRepo`) +
+  `LocalPreflightState` + `InMemorySyncPreflightRepo` test double +
+  `build_preflight_input()` adapter + `SqliteSyncPreflightRepo` (in ferrum-store)
 
 ### What Is Out of Scope
 
@@ -72,9 +79,8 @@ Concrete implementations (SQLite, in-memory test doubles) are deferred to P3.
 - Consensus algorithm or leader election
 - Two-way merge or bidirectional sync
 - Peer discovery or address management
-- Full Sync-2 implementation (repo queries, transport-based tip acquisition,
+- Full Sync-2 implementation (PF2/PF6/PF7 state, transport-based tip acquisition,
   sync session tracking, capability model enforcement)
-- Concrete `SyncPreflightRepo` implementations (SQLite, in-memory; deferred to P3)
 
 ## Key Types
 

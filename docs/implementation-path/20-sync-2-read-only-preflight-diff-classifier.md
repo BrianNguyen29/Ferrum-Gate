@@ -20,10 +20,16 @@ sync session tracking (PF7), and capability model enforcement (PF4).
 A **trait-only repo port** (`SyncPreflightRepo`) and supporting types
 (`LocalPreflightState`, `SyncRepoError`) have been added in
 `crates/ferrum-sync/src/repo.rs`. This defines the read-only repo interface
-that Sync-2 preflight will use, but no concrete implementations (SQLite,
-in-memory) exist yet. A pure adapter `build_preflight_input()` in
-`preflight.rs` bridges `LocalPreflightState` + externally supplied flags
-into `PreflightInput`. PF3 is explicitly excluded from the trait.
+that Sync-2 preflight will use.
+
+Concrete implementations exist:
+- `InMemorySyncPreflightRepo` in `ferrum-sync`: in-memory test double for tests
+- `SqliteSyncPreflightRepo` in `ferrum-store`: supports PF1 + PF5 via
+  `verify_local_chain()`; other trait methods return `Err` (fail-closed)
+
+A pure adapter `build_preflight_input()` in `preflight.rs` bridges
+`LocalPreflightState` + externally supplied flags into `PreflightInput`.
+PF3 is explicitly excluded from the trait.
 
 Successor to Sync-1 (one-way fast-forward protocol sketch). Transport,
 consensus, and write-path implementation are not in scope.

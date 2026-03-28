@@ -8,6 +8,7 @@ mod migrations;
 mod proposals;
 mod provenance;
 mod rollback;
+mod sync_preflight;
 
 #[cfg(test)]
 mod tests;
@@ -20,6 +21,7 @@ pub use ledger::SqliteLedgerRepo;
 pub use proposals::SqliteProposalRepo;
 pub use provenance::SqliteProvenanceRepo;
 pub use rollback::SqliteRollbackRepo;
+pub use sync_preflight::SqliteSyncPreflightRepo;
 
 use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
 
@@ -100,6 +102,15 @@ impl SqliteStore {
 
     pub fn ledger(&self) -> SqliteLedgerRepo {
         SqliteLedgerRepo::new(self.pool.clone())
+    }
+
+    /// Create a `SqliteSyncPreflightRepo` backed by this store.
+    ///
+    /// The returned repo implements `ferrum_sync::SyncPreflightRepo`.
+    /// See `sync_preflight` module docs for which methods are real vs
+    /// currently unsupported.
+    pub fn sync_preflight(&self) -> sync_preflight::SqliteSyncPreflightRepo {
+        sync_preflight::SqliteSyncPreflightRepo::new(self.clone())
     }
 
     /// Reconcile legacy split-brain state: for any capability that is Active in SQLite

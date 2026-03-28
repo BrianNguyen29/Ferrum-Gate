@@ -1,8 +1,9 @@
-//! Sync-owned read-only preflight port (trait-only slice).
+//! Sync-owned read-only preflight port (trait + test double).
 //!
 //! This module defines the `SyncPreflightRepo` trait and supporting types for
-//! repo-backed preflight reads in Sync-2. It is the **trait-only groundwork**
-//! for P3 repo integration; no SQLite/store implementations live here.
+//! repo-backed preflight reads in Sync-2. It lives in `ferrum-sync` (not
+//! `ferrum-store`) because the sync crate owns the preflight contract; the store
+//! provides concrete implementations.
 //!
 //! ## What Is Here
 //!
@@ -12,13 +13,20 @@
 //! - `LocalPreflightState`: a local-state snapshot carrying the follower tip
 //!   and PF2/PF6/PF7 booleans.
 //! - `SyncRepoError`: error type for repo operations.
+//! - `InMemorySyncPreflightRepo`: an in-memory test double (only for tests).
 //!
-//! ## What Is NOT Here (Explicitly Deferred)
+//! ## Concrete Implementations
+//!
+//! | Implementation | Location | Supported Checks |
+//! |----------------|----------|-------------------|
+//! | `InMemorySyncPreflightRepo` | `ferrum-sync` (here) | All (manual stub for tests) |
+//! | `SqliteSyncPreflightRepo` | `ferrum-store` | PF1, PF5 only; others return Err (fail-closed) |
+//!
+//! ## What Is NOT Here
 //!
 //! - **PF3 (leader identity)**: leader address/identity discovery is a transport
 //!   or config concern, not a repo query. It stays outside this trait. Callers
 //!   supply it via the `leader_identity_known` parameter of `build_preflight_input()`.
-//! - **SQLite/store wiring**: deferred to P3.
 //! - **Write/apply path**: out of scope.
 //! - **Network/transport code**: out of scope.
 //! - **Session state implementation**: out of scope.
@@ -186,9 +194,16 @@ impl LocalPreflightState {
 ///
 /// ## Concrete Implementations
 ///
-/// This is a **trait-only slice**. Concrete implementations (SQLite, in-memory
-/// test doubles) are deferred to P3. For now, test code can use a manual stub
-/// or the `build_preflight_input()` helper with hand-crafted `LocalPreflightState`.
+/// The trait is implemented by two types:
+///
+/// - **`InMemorySyncPreflightRepo`** (in `ferrum-sync`): an in-memory test double
+///   for unit tests. All methods return errors by default; configure with builder
+///   methods before use.
+/// - **`SqliteSyncPreflightRepo`** (in `ferrum-store`): the real SQLite backend.
+///   Currently supports `verify_local_chain()` (PF1 + PF5) only. All other
+///   methods return `Err` (fail-closed) because the schema does not yet contain
+///   tables for PF2/PF6/PF7 (inflight commits, uncommitted entries, sync sessions)
+///   or PF4/PF8 (leader authorization, leader tip cache).
 ///
 /// ## Fail-Closed Contract
 ///
@@ -228,6 +243,120 @@ pub trait SyncPreflightRepo: Send + Sync {
     /// Returns `Ok(Some(tip))` if a leader tip is available, `Ok(None)` if
     /// no tip is known yet. Returns `Err` for repo-level failures.
     fn read_leader_tip(&self, leader_identity: &str) -> Result<Option<TipId>, SyncRepoError>;
+}
+
+// ---------------------------------------------------------------------------
+// InMemorySyncPreflightRepo — test double
+// ---------------------------------------------------------------------------
+
+/// In-memory test double for `SyncPreflightRepo`.
+///
+/// This is intended **only** for tests. It holds pre-configured results for
+/// each trait method, allowing test code to drive `build_preflight_input()`
+/// and `run_preflight()` without a real database.
+///
+/// ## Fail-Closed Defaults
+///
+/// By default, all methods return errors. You must explicitly configure the
+/// results you want. This ensures tests are intentional about what they assert
+/// and prevents accidentally passing tests on permissive defaults.
+///
+/// ## Usage
+///
+/// ```ignore
+/// use ferrum_sync::repo::{InMemorySyncPreflightRepo, LocalPreflightState, SyncRepoError};
+///
+/// let repo = InMemorySyncPreflightRepo::new()
+///     .with_verify_local_chain(Ok(()))
+///     .with_read_local_state(Ok(LocalPreflightState::clean_empty()));
+///
+/// assert!(repo.verify_local_chain().is_ok());
+/// ```
+#[derive(Debug, Clone)]
+pub struct InMemorySyncPreflightRepo {
+    /// Pre-configured result for `verify_local_chain()`.
+    verify_local_chain_result: Result<(), SyncRepoError>,
+    /// Pre-configured result for `read_local_state()`.
+    read_local_state_result: Result<LocalPreflightState, SyncRepoError>,
+    /// Pre-configured result for `is_leader_authorized()`.
+    is_leader_authorized_result: Result<bool, SyncRepoError>,
+    /// Pre-configured result for `read_leader_tip()`.
+    read_leader_tip_result: Result<Option<TipId>, SyncRepoError>,
+}
+
+impl InMemorySyncPreflightRepo {
+    /// Create a new test double with all methods returning
+    /// `Err(SyncRepoError::InternalError)` (fail-closed default).
+    ///
+    /// Use the `with_*` builder methods to configure each method's result.
+    pub fn new() -> Self {
+        Self {
+            verify_local_chain_result: Err(SyncRepoError::InternalError {
+                reason: "InMemorySyncPreflightRepo: verify_local_chain not configured".to_string(),
+            }),
+            read_local_state_result: Err(SyncRepoError::InternalError {
+                reason: "InMemorySyncPreflightRepo: read_local_state not configured".to_string(),
+            }),
+            is_leader_authorized_result: Err(SyncRepoError::InternalError {
+                reason: "InMemorySyncPreflightRepo: is_leader_authorized not configured"
+                    .to_string(),
+            }),
+            read_leader_tip_result: Err(SyncRepoError::InternalError {
+                reason: "InMemorySyncPreflightRepo: read_leader_tip not configured".to_string(),
+            }),
+        }
+    }
+
+    /// Configure the result for `verify_local_chain()`.
+    pub fn with_verify_local_chain(mut self, result: Result<(), SyncRepoError>) -> Self {
+        self.verify_local_chain_result = result;
+        self
+    }
+
+    /// Configure the result for `read_local_state()`.
+    pub fn with_read_local_state(
+        mut self,
+        result: Result<LocalPreflightState, SyncRepoError>,
+    ) -> Self {
+        self.read_local_state_result = result;
+        self
+    }
+
+    /// Configure the result for `is_leader_authorized()`.
+    pub fn with_is_leader_authorized(mut self, result: Result<bool, SyncRepoError>) -> Self {
+        self.is_leader_authorized_result = result;
+        self
+    }
+
+    /// Configure the result for `read_leader_tip()`.
+    pub fn with_read_leader_tip(mut self, result: Result<Option<TipId>, SyncRepoError>) -> Self {
+        self.read_leader_tip_result = result;
+        self
+    }
+}
+
+impl Default for InMemorySyncPreflightRepo {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SyncPreflightRepo for InMemorySyncPreflightRepo {
+    fn verify_local_chain(&self) -> Result<(), SyncRepoError> {
+        self.verify_local_chain_result.clone()
+    }
+
+    fn read_local_state(&self) -> Result<LocalPreflightState, SyncRepoError> {
+        self.read_local_state_result.clone()
+    }
+
+    fn is_leader_authorized(&self, _leader_identity: &str) -> Result<bool, SyncRepoError> {
+        self.is_leader_authorized_result.clone()
+    }
+
+    fn read_leader_tip(&self, _leader_identity: &str) -> Result<Option<TipId>, SyncRepoError> {
+        self.read_leader_tip_result.clone()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -387,5 +516,306 @@ mod tests {
         fn _accepts_dyn(_: &dyn SyncPreflightRepo) {}
         // We cannot call it without a concrete impl, but compilation is enough.
         assert!(true, "SyncPreflightRepo is object-safe");
+    }
+
+    // =========================================================================
+    // InMemorySyncPreflightRepo — fail-closed defaults
+    // =========================================================================
+
+    #[test]
+    fn in_memory_default_verify_local_chain_returns_err() {
+        let repo = InMemorySyncPreflightRepo::new();
+        let result = repo.verify_local_chain();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(format!("{err}").contains("not configured"));
+    }
+
+    #[test]
+    fn in_memory_default_read_local_state_returns_err() {
+        let repo = InMemorySyncPreflightRepo::new();
+        let result = repo.read_local_state();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn in_memory_default_is_leader_authorized_returns_err() {
+        let repo = InMemorySyncPreflightRepo::new();
+        let result = repo.is_leader_authorized("leader-1");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn in_memory_default_read_leader_tip_returns_err() {
+        let repo = InMemorySyncPreflightRepo::new();
+        let result = repo.read_leader_tip("leader-1");
+        assert!(result.is_err());
+    }
+
+    // =========================================================================
+    // InMemorySyncPreflightRepo — configured values
+    // =========================================================================
+
+    #[test]
+    fn in_memory_configured_verify_ok() {
+        let repo = InMemorySyncPreflightRepo::new().with_verify_local_chain(Ok(()));
+        assert!(repo.verify_local_chain().is_ok());
+    }
+
+    #[test]
+    fn in_memory_configured_verify_chain_integrity_failed() {
+        let repo = InMemorySyncPreflightRepo::new().with_verify_local_chain(Err(
+            SyncRepoError::ChainIntegrityFailed {
+                reason: "test: broken chain".to_string(),
+            },
+        ));
+        let result = repo.verify_local_chain();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().is_chain_integrity_failure());
+    }
+
+    #[test]
+    fn in_memory_configured_read_local_state_clean() {
+        let repo = InMemorySyncPreflightRepo::new()
+            .with_read_local_state(Ok(LocalPreflightState::clean_empty()));
+        let state = repo.read_local_state().unwrap();
+        assert!(state.is_local_state_clean());
+        assert!(state.follower_tip.is_none());
+    }
+
+    #[test]
+    fn in_memory_configured_read_local_state_with_tip() {
+        let t = tip(99, "abc");
+        let repo = InMemorySyncPreflightRepo::new()
+            .with_read_local_state(Ok(LocalPreflightState::clean_with_tip(t.clone())));
+        let state = repo.read_local_state().unwrap();
+        assert_eq!(state.follower_tip, Some(t));
+    }
+
+    #[test]
+    fn in_memory_configured_is_leader_authorized_true() {
+        let repo = InMemorySyncPreflightRepo::new().with_is_leader_authorized(Ok(true));
+        assert!(repo.is_leader_authorized("leader-1").unwrap());
+    }
+
+    #[test]
+    fn in_memory_configured_is_leader_authorized_false() {
+        let repo = InMemorySyncPreflightRepo::new().with_is_leader_authorized(Ok(false));
+        assert!(!repo.is_leader_authorized("unknown").unwrap());
+    }
+
+    #[test]
+    fn in_memory_configured_read_leader_tip_some() {
+        let t = tip(10, "leaderhash");
+        let repo = InMemorySyncPreflightRepo::new().with_read_leader_tip(Ok(Some(t.clone())));
+        assert_eq!(repo.read_leader_tip("leader-1").unwrap(), Some(t));
+    }
+
+    #[test]
+    fn in_memory_configured_read_leader_tip_none() {
+        let repo = InMemorySyncPreflightRepo::new().with_read_leader_tip(Ok(None));
+        assert_eq!(repo.read_leader_tip("leader-1").unwrap(), None);
+    }
+
+    // =========================================================================
+    // Contract wiring: InMemorySyncPreflightRepo -> build_preflight_input -> run_preflight
+    // =========================================================================
+
+    /// Helper: fully-wired test double that simulates a clean, passing repo.
+    fn clean_passing_repo() -> InMemorySyncPreflightRepo {
+        InMemorySyncPreflightRepo::new()
+            .with_verify_local_chain(Ok(()))
+            .with_read_local_state(Ok(LocalPreflightState::clean_empty()))
+            .with_is_leader_authorized(Ok(true))
+            .with_read_leader_tip(Ok(None)) // no leader tip known yet
+    }
+
+    #[test]
+    fn contract_wiring_all_passing_repo_produces_passing_preflight() {
+        let repo = clean_passing_repo();
+
+        // Step 1: verify chain
+        let chain_ok = repo.verify_local_chain().is_ok();
+        assert!(chain_ok);
+
+        // Step 2: read local state
+        let local_state = repo.read_local_state().unwrap();
+        assert!(local_state.is_local_state_clean());
+
+        // Step 3: query leader authorization
+        let leader_authorized = repo.is_leader_authorized("leader-1").unwrap();
+
+        // Step 4: query leader tip
+        let leader_tip = repo.read_leader_tip("leader-1").unwrap();
+        let leader_tip_available = leader_tip.is_some();
+
+        // Step 5: build preflight input (PF3 is external, supply true)
+        let input = crate::preflight::build_preflight_input(
+            &local_state,
+            chain_ok,
+            true, // leader_identity_known (external)
+            leader_authorized,
+            leader_tip_available,
+        );
+
+        // Step 6: run preflight -- should pass because we configured
+        // clean state with a known leader. PF8 fails because no tip,
+        // so we need to provide a tip for PF8 to pass.
+        let result = crate::preflight::run_preflight(&input);
+        // PF8 fails because leader_tip is None -> leader_tip_available = false
+        assert_eq!(
+            result,
+            crate::preflight::PreflightResult::Fail(crate::preflight::PreflightCheckCode::PF8)
+        );
+    }
+
+    #[test]
+    fn contract_wiring_all_passing_with_leader_tip_produces_pass() {
+        let t = tip(50, "leaderhash");
+        let repo = InMemorySyncPreflightRepo::new()
+            .with_verify_local_chain(Ok(()))
+            .with_read_local_state(Ok(LocalPreflightState::clean_empty()))
+            .with_is_leader_authorized(Ok(true))
+            .with_read_leader_tip(Ok(Some(t)));
+
+        let chain_ok = repo.verify_local_chain().is_ok();
+        let local_state = repo.read_local_state().unwrap();
+        let leader_authorized = repo.is_leader_authorized("leader-1").unwrap();
+        let leader_tip = repo.read_leader_tip("leader-1").unwrap();
+        let leader_tip_available = leader_tip.is_some();
+
+        let input = crate::preflight::build_preflight_input(
+            &local_state,
+            chain_ok,
+            true,
+            leader_authorized,
+            leader_tip_available,
+        );
+
+        let result = crate::preflight::run_preflight(&input);
+        assert_eq!(result, crate::preflight::PreflightResult::Pass);
+    }
+
+    #[test]
+    fn contract_wiring_chain_failure_fails_pf1() {
+        let repo = InMemorySyncPreflightRepo::new()
+            .with_verify_local_chain(Err(SyncRepoError::ChainIntegrityFailed {
+                reason: "broken".to_string(),
+            }))
+            .with_read_local_state(Ok(LocalPreflightState::clean_empty()))
+            .with_is_leader_authorized(Ok(true))
+            .with_read_leader_tip(Ok(Some(tip(1, "h"))));
+
+        // Caller maps verify error -> chain_ok = false
+        let chain_ok = repo.verify_local_chain().is_ok();
+        assert!(!chain_ok);
+
+        let local_state = repo.read_local_state().unwrap();
+        let leader_authorized = repo.is_leader_authorized("leader-1").unwrap();
+        let leader_tip = repo.read_leader_tip("leader-1").unwrap();
+
+        let input = crate::preflight::build_preflight_input(
+            &local_state,
+            chain_ok, // false
+            true,
+            leader_authorized,
+            leader_tip.is_some(),
+        );
+
+        let result = crate::preflight::run_preflight(&input);
+        assert_eq!(
+            result,
+            crate::preflight::PreflightResult::Fail(crate::preflight::PreflightCheckCode::PF1)
+        );
+    }
+
+    #[test]
+    fn contract_wiring_inflight_commits_fails_pf2() {
+        let repo = InMemorySyncPreflightRepo::new()
+            .with_verify_local_chain(Ok(()))
+            .with_read_local_state(Ok(LocalPreflightState {
+                follower_tip: None,
+                has_inflight_commits: true,
+                has_uncommitted_entries: false,
+                sync_in_progress: false,
+            }))
+            .with_is_leader_authorized(Ok(true))
+            .with_read_leader_tip(Ok(Some(tip(1, "h"))));
+
+        let chain_ok = repo.verify_local_chain().is_ok();
+        let local_state = repo.read_local_state().unwrap();
+        assert!(local_state.has_inflight_commits);
+
+        let input = crate::preflight::build_preflight_input(
+            &local_state,
+            chain_ok,
+            true,
+            repo.is_leader_authorized("leader-1").unwrap(),
+            repo.read_leader_tip("leader-1").unwrap().is_some(),
+        );
+
+        let result = crate::preflight::run_preflight(&input);
+        assert_eq!(
+            result,
+            crate::preflight::PreflightResult::Fail(crate::preflight::PreflightCheckCode::PF2)
+        );
+    }
+
+    #[test]
+    fn contract_wiring_unsupported_read_local_state_propagates_err() {
+        let repo = InMemorySyncPreflightRepo::new()
+            .with_verify_local_chain(Ok(()))
+            .with_read_local_state(Err(SyncRepoError::InternalError {
+                reason: "unsupported: no PF2/PF6/PF7 tables".to_string(),
+            }));
+
+        let chain_ok = repo.verify_local_chain().is_ok();
+        assert!(chain_ok);
+
+        let state_result = repo.read_local_state();
+        assert!(state_result.is_err());
+        // Cannot build preflight input without local state.
+        // Caller must treat this as a preflight failure.
+    }
+
+    #[test]
+    fn contract_wiring_unsupported_is_leader_authorized_propagates_err() {
+        let repo = InMemorySyncPreflightRepo::new()
+            .with_verify_local_chain(Ok(()))
+            .with_read_local_state(Ok(LocalPreflightState::clean_empty()))
+            .with_is_leader_authorized(Err(SyncRepoError::InternalError {
+                reason: "unsupported: no capability model".to_string(),
+            }));
+
+        // Cannot determine leader authorization.
+        // Caller must treat this as a preflight failure (PF4).
+        let auth_result = repo.is_leader_authorized("leader-1");
+        assert!(auth_result.is_err());
+    }
+
+    #[test]
+    fn contract_wiring_dyn_dispatch_works() {
+        // Prove that InMemorySyncPreflightRepo can be used through dyn trait.
+        let repo: Box<dyn SyncPreflightRepo> = Box::new(
+            InMemorySyncPreflightRepo::new()
+                .with_verify_local_chain(Ok(()))
+                .with_read_local_state(Ok(LocalPreflightState::clean_empty())),
+        );
+
+        assert!(repo.verify_local_chain().is_ok());
+        assert!(repo.read_local_state().unwrap().is_local_state_clean());
+    }
+
+    // =========================================================================
+    // InMemorySyncPreflightRepo — default trait
+    // =========================================================================
+
+    #[test]
+    fn in_memory_default_trait_matches_new() {
+        let a = InMemorySyncPreflightRepo::new();
+        let b = InMemorySyncPreflightRepo::default();
+        // Both should fail on every method
+        assert!(a.verify_local_chain().is_err());
+        assert!(b.verify_local_chain().is_err());
     }
 }

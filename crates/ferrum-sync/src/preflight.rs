@@ -384,10 +384,10 @@ pub fn diff_class_to_decision(class: DiffClass) -> crate::decision::Sync1Decisio
 ///
 /// ## PF4/PF8 Can Come From Repo or Externally
 ///
-/// For simplicity in this trait-only slice, PF4 (leader authorized) and PF8
-/// (leader tip available) are supplied as external booleans. When a concrete
-/// `SyncPreflightRepo` implementation exists, the caller can query
-/// `is_leader_authorized()` and `read_leader_tip()` to populate these.
+/// PF4 (leader authorized) and PF8 (leader tip available) are supplied as
+/// external booleans here. Callers with a concrete `SyncPreflightRepo`
+/// implementation can query `is_leader_authorized()` and `read_leader_tip()`
+/// to populate these.
 ///
 /// ## PF1 Is Derived From `chain_verified`
 ///
