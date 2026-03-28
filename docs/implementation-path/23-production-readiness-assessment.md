@@ -8,20 +8,20 @@ current repo state only.
 
 **Supported single-node flow has solid automated-test evidence.** The SQLite-backed
 gateway flow, firewall enforcement, adapter-backed recovery, and provenance chain
-have passing integration tests. Without observability and TLS, the posture is
-best described as **pilot-ready / solid-evidence** rather than defensibly
-production-ready.
+have passing integration tests. With the P1 observability baseline and TLS
+ingress runbook in place, the posture is best described as **pilot-ready /
+single-node production-candidate** rather than broadly production-ready.
 
 **Broader production posture (HA, multi-node sync, observability) remains
 incomplete.** The gaps below are honestly documented.
 
 ---
 
-## 1. What Is Production-Ready (Supported Single-Node)
+## 1. What Is Supported for Single-Node v1
 
-The following have automated-test evidence. They represent a solid foundation;
-they do not constitute a defensibly production-ready deployment without the
-P1 observability and TLS items in Section 2 being addressed first:
+The following have automated-test evidence. They represent the supported
+single-node v1 surface. They do not constitute a broadly production-ready or
+multi-node-ready deployment; the remaining gaps are documented in Section 2.
 
 ### 1.1 Core Gateway Flow
 
@@ -76,25 +76,31 @@ P1 observability and TLS items in Section 2 being addressed first:
 
 The following are NOT in production-ready state for single-node deployment:
 
-### 2.1 TLS / Ingress (P1 — Unresolved)
+### 2.1 TLS / Ingress (P1 — Runbook Complete, In-Process TLS Out of Scope)
 
-| Gap | Impact | Workaround |
-|-----|--------|------------|
-| No in-process TLS listener | No TLS termination inside process | External terminator (nginx, cloud LB) required |
+P1.2a through P1.2d are DONE (2026-03-27 TLS ingress runbook + ops docs).
+
+| Gap | Status | Notes |
+|-----|--------|-------|
+| No in-process TLS listener | No TLS termination inside process | External terminator (nginx, cloud LB) required; runbook documents this |
 | No mTLS story | No mutual-auth between nodes | N/A — cross-node not implemented yet |
 
 **Source**: `docs/15-deployment-and-operations.md` lines 15, 55
 
-### 2.2 Observability / Telemetry (P1 — Unresolved)
+### 2.2 Observability / Telemetry (P1 — Baseline Complete)
 
-| Gap | Impact |
-|-----|--------|
-| No structured logging (tracing) | Hard to debug in production |
-| No metrics / Prometheus endpoint | No visibility into gateway behavior |
-| No distributed trace context | Cannot correlate cross-node operations |
-| No alerting rules | No automated failure notification |
+P1.1a through P1.1d are DONE (2026-03-27 gateway instrumentation + ops docs).
+Distributed trace context and alerting rules are P2 future work (not needed for single-node).
 
-**Source**: derived from current `server.rs` observability surface
+| Gap | Status | Notes |
+|-----|--------|-------|
+| Structured logging (tracing) on gateway hot paths | **DONE** | `server.rs` has tracing spans on all gateway endpoints |
+| Prometheus metrics endpoint at `/metrics` | **DONE** | Bearer-auth protected; exposes request count, latency histogram, error rate metrics |
+| Distributed trace context (W3C TraceContext) | **Future (P2)** | Single-node; not needed for v1 |
+| Alerting rules | **Future (P2)** | Exploratory/analysis only |
+| Capacity planning notes in ops runbook | **DONE** | `ops-sqlite-backup-runbook.md` covers DB growth, disk headroom, concurrency |
+
+**Source**: `crates/ferrum-gateway/src/server.rs:112` (metrics endpoint), `crates/ferrum-gateway/src/server.rs` (tracing spans)
 
 ### 2.3 HTTP Rollback / Compensation (Ratified Boundary — No-Op)
 
@@ -231,19 +237,20 @@ Only after Phase P2 is complete:
 
 | Dimension | Status | Notes |
 |-----------|--------|-------|
-| Single-node core flow | **Pilot-ready** | Solid automated-test evidence; needs observability before production |
-| Single-node observability | **Gap** | No structured logging or metrics (P1) |
-| Single-node TLS | **Gap** | External terminator required; in-process TLS not planned |
+| Single-node core flow | **Pilot-ready** | Solid automated-test evidence; supported v1 scope is single-node only |
+| Single-node observability | **P1 baseline complete** | Tracing + Prometheus DONE (P1); distributed trace + alerting P2 |
+| Single-node TLS | **Gap (runbook done)** | External terminator required; in-process TLS out of scope for v1 |
 | Adapter coverage | **Evidence complete** | fs/sqlite/maildraft/git/http all have recovery evidence |
 | Multi-node sync | **Gap** | Sync-3a probe done; write-path, consensus not started |
 | HA / multi-leader | **Gap** | Not planned |
 | Generic provenance tooling | **Core done, advanced TBD** | Query surface exists; replay fabric P2 |
 
 **Bottom line**: The supported single-node flow has solid automated-test evidence
-and is **pilot-ready**. It is not defensibly production-ready until observability
-(tracing + Prometheus) and TLS/ingress runbook (P1) are closed. The remaining gaps
-(HTTP rollback no-op, EmailSend explicit deny) are ratified boundaries, not
-open defects.
+and is **pilot-ready**. P1 observability baseline (tracing + Prometheus) and
+TLS/ingress runbook are complete. Remaining gaps (distributed trace context,
+alerting rules, in-process TLS, write-path sync) are future P2/P3 work out of
+scope for v1. The ratified boundaries (HTTP rollback no-op, EmailSend explicit
+deny) are confirmed design decisions, not open defects.
 
 ---
 
