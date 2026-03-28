@@ -1,11 +1,11 @@
 # 24 — P1 / P2 / P3 Phased Execution Plan
 
 Single authoritative tracking document for FerrumGate implementation order.
-Grounded in current repo reality (tracing exists; metrics do not; TLS ingress
-runbook exists but production posture needs consolidation; Sync-3a probe exists
-in `ferrum-sync` crate; Sync-3a.1 facade boundary is fully implemented and
-closed; Sync-1 decision kernel is implemented; write-path and
-consensus not implemented).
+Grounded in current repo reality (tracing exists on gateway hot paths;
+Prometheus metrics endpoint instrumented; TLS ingress runbook complete;
+Sync-3a probe exists in `ferrum-sync` crate; Sync-3a.1 facade boundary is
+fully implemented and closed; Sync-1 decision kernel is implemented;
+write-path and consensus not implemented).
 
 ASCII only.
 
@@ -15,7 +15,7 @@ ASCII only.
 
 | Phase | Name | Status |
 |-------|------|--------|
-| P1 | Single-node production hardening | **In progress** |
+| P1 | Single-node production hardening | **Done** (pilot-ready; not production-ready — distributed trace + alerting remain P2) |
 | P2 | Provenance tooling + sync prep | **Planned** |
 | P3 | Sync implementation | **Planned** |
 
