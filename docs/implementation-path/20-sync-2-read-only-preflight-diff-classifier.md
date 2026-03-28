@@ -13,9 +13,9 @@ merge, peer discovery, or write-path implementation.
 **Sync-2 groundwork is partially implemented** in `crates/ferrum-sync/src/preflight.rs`.
 The pure functions `classify()`, `run_preflight()`, and `diff_class_to_decision()`
 are implemented with unit tests, including roundtrip checks proving consistency
-with the Sync-1 decision kernel. What remains deferred to P3: actual ledger
-queries (PF1/PF5/PF6), transport-based leader tip acquisition (PF3/PF8),
-sync session tracking (PF7), and capability model enforcement (PF4).
+with the Sync-1 decision kernel. PF3/PF8 transport-boundary helpers
+(`PreflightTransportInput`, `PreflightTransportFlags`) are implemented in
+`crates/ferrum-sync/src/transport.rs`.
 
 A **trait-only repo port** (`SyncPreflightRepo`) and supporting types
 (`LocalPreflightState`, `SyncRepoError`) have been added in
@@ -25,11 +25,24 @@ that Sync-2 preflight will use.
 Concrete implementations exist:
 - `InMemorySyncPreflightRepo` in `ferrum-sync`: in-memory test double for tests
 - `SqliteSyncPreflightRepo` in `ferrum-store`: supports PF1 + PF5 via
-  `verify_local_chain()`; other trait methods return `Err` (fail-closed)
+  `verify_local_chain()`; supports PF8 via `read_leader_tip()` backed by
+  the `leader_tips` cache table (migration 002); supports PF2/PF6/PF7
+  via `read_local_state()` backed by the `sync_state` table (migration 003).
+  PF4 (capability model) remains unsupported (fail-closed Err).
 
 A pure adapter `build_preflight_input()` in `preflight.rs` bridges
 `LocalPreflightState` + externally supplied flags into `PreflightInput`.
-PF3 is explicitly excluded from the trait.
+PF3 is explicitly excluded from the trait (transport/config concern).
+
+PF3 (leader identity known) remains transport-side: callers supply
+`leader_identity_known` via `PreflightTransportInput::evaluate()` which is
+fail-closed on empty/unknown leader address.
+
+PF2/PF6/PF7 state is now backed by the `sync_state` table (migration 003).
+PF8 (leader tip available) is backed by the `leader_tips` cache table.
+
+What remains deferred: actual transport probe to populate the PF8 cache
+(Sync-3 territory) and PF4 (capability model enforcement).
 
 Successor to Sync-1 (one-way fast-forward protocol sketch). Transport,
 consensus, and write-path implementation are not in scope.

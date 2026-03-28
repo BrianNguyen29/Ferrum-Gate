@@ -74,4 +74,4 @@ pub use repo::{InMemorySyncPreflightRepo, LocalPreflightState, SyncPreflightRepo
 // internal to the crate and must NOT leak through the public facade
 // boundary.  Downstream code that needs the transport layer directly
 // (tests, future adapters) imports crate::transport explicitly.
-pub use transport::LeaderTip;
+pub use transport::{LeaderTip, PreflightTransportFlags, PreflightTransportInput};

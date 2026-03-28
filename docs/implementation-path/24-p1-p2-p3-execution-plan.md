@@ -153,11 +153,12 @@ rough next-step estimate:
 | Gap | Owner | Phase | Estimate | Next Step |
 |-----|-------|-------|----------|-----------|
 | Sync-1: hash-path continuity check requires actual ledger query | P3 | Sync-1 impl | 1-2 days | Wire `hash_path_valid` field to `verify_chain()` result from `ferrum-ledger` |
-| Sync-2: PF1/PF5 wired via `SqliteSyncPreflightRepo` in ferrum-store | P2 | Sync-2 impl | DONE | `verify_local_chain()` implemented; PF2/PF4/PF6/PF7/PF8 remain unsupported (fail-closed Err) until schema adds tables |
-| Sync-2: complete PF2/PF6/PF7 state (inflight commits, uncommitted entries, sync sessions) | P3 | Sync-2 impl | 2-3 days | Add schema tables for PF2/PF6/PF7; wire through `SqliteSyncPreflightRepo` |
+| Sync-2: PF1/PF5 wired via `SqliteSyncPreflightRepo` in ferrum-store | P2 | Sync-2 impl | DONE | `verify_local_chain()` implemented |
+| Sync-2: PF2/PF6/PF7 state wired via `SqliteSyncPreflightRepo` in ferrum-store | P3 | Sync-2 impl | DONE | `sync_state` table (migration 003) added; `read_local_state()` now returns real `LocalPreflightState`; `set_sync_flags_test_only()` provided for test scenarios |
+| Sync-2: PF8 leader tip cache | P2 | Sync-2 impl | DONE | `leader_tips` table (migration 002) added; `SqliteSyncPreflightRepo::read_leader_tip()` wired; cache write path provided for transport layer |
 | Sync-2: PF4 capability model enforcement (leader authorization) | P3 | Sync-2 impl | 2-3 days | Wire to `ferrum-capability` store; check leader authorization |
-| Sync-2: PF8 leader tip cache | P3 | Sync-2 impl | 1-2 days | Add leader tip cache table; wire through `SqliteSyncPreflightRepo` |
-| Sync-2: PF3/PF8 require transport-based leader tip acquisition | P3 | Sync-3 impl | 5-8 days | Implement HTTP/gRPC transport adapter; wire through `Transport` trait |
+| Sync-2: PF3 transport-boundary helper (pure, fail-closed on empty address) | P2 | Sync-2 impl | DONE | `PreflightTransportInput::evaluate()` in `ferrum-sync/src/transport.rs`; actual leader address acquisition still requires transport probe |
+| Sync-2: PF3/PF8 require transport-based leader tip acquisition (actual probe) | P3 | Sync-3 impl | 5-8 days | Implement HTTP/gRPC transport probe; cache result via `LeaderTipCache::write()` |
 | Sync-2: PF7 sync session tracking (stateful, not read-only) | P3 | Sync-1 impl | 1-2 days | Add in-memory `AtomicBool` or DB-backed session flag |
 | Sync-3: real HTTP/gRPC transport (not FakeTransport) | P3 | Sync-3 impl | 5-10 days | Implement `Transport` trait with `reqwest` or `tonic`; integration tests |
 | Sync-1: entry apply/write-path (follower side) | P3 | Write-path | 10+ days | Design doc first; then implement atomic entry application with rollback |
@@ -300,7 +301,10 @@ P3 (8+ weeks, after P2)
 | Sync-3a.1 boundary (complete) | `crates/ferrum-sync/src/facade.rs` | Facade complete: `leader_address`, per-call timeout enforcement, and narrower crate-root transport surface are in place |
 | Sync-1 decision kernel (done) | `crates/ferrum-sync/src/decision.rs` | Pure `decide()` function; exhaustive unit tests |
 | Sync-2 groundwork (done) | `crates/ferrum-sync/src/preflight.rs` | `classify()`, `run_preflight()`, `diff_class_to_decision()` with unit and roundtrip tests |
-| Sync-2 repo port | `crates/ferrum-sync/src/repo.rs` + `crates/ferrum-store/src/sqlite/sync_preflight.rs` | `SyncPreflightRepo` trait, `LocalPreflightState`, `SyncRepoError`, `InMemorySyncPreflightRepo` (test double) in ferrum-sync; `SqliteSyncPreflightRepo` (PF1+PF5 real, others fail-closed) in ferrum-store |
+| Sync-2 repo port | `crates/ferrum-sync/src/repo.rs` + `crates/ferrum-store/src/sqlite/sync_preflight.rs` | `SyncPreflightRepo` trait, `LocalPreflightState`, `SyncRepoError`, `InMemorySyncPreflightRepo` (test double) in ferrum-sync; `SqliteSyncPreflightRepo` (PF1+PF5+PF2+PF6+PF7+PF8 real, PF4 fail-closed) in ferrum-store |
+| Sync-2 PF3/PF8 transport-boundary helpers | `crates/ferrum-sync/src/transport.rs` | `PreflightTransportInput`, `PreflightTransportFlags`, `PreflightTransportInput::evaluate()` — pure, fail-closed helpers for converting leader address + cached tip into PF3/PF8 booleans |
+| Sync-2 PF8 leader tip cache | `crates/ferrum-store/src/sqlite/leader_tip_cache.rs` + `migrations/002_add_leader_tips.sql` | `LeaderTipCache` struct; `leader_tips` table (leader_address PK, sequence, hash, fetched_at); `read()`, `write()`, `delete()` methods |
+| Sync-2 PF2/PF6/PF7 sync state | `crates/ferrum-store/src/sqlite/sync_preflight.rs` + `migrations/003_add_sync_state.sql` | `sync_state` table (id=1, has_inflight_commits, has_uncommitted_entries, sync_in_progress); `read_local_state_async()` and `set_sync_flags_test_only()` in `SqliteSyncPreflightRepo` |
 | Write-path (not started) | None | Out of scope for v1 |
 | Consensus (not started) | None | Out of scope for v1 |
 

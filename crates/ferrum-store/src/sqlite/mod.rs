@@ -3,6 +3,7 @@ mod capabilities;
 mod executions;
 mod helpers;
 mod intents;
+mod leader_tip_cache;
 mod ledger;
 mod migrations;
 mod proposals;

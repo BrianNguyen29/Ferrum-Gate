@@ -238,11 +238,15 @@ pub trait SyncPreflightRepo: Send + Sync {
     /// unreadable), not for "not authorized".
     fn is_leader_authorized(&self, leader_identity: &str) -> Result<bool, SyncRepoError>;
 
-    /// Read the cached/known leader tip for the given leader identity (PF8).
+    /// Read the cached/known leader tip for the given leader address (PF8).
+    ///
+    /// `leader_address` is the stable identifier used at the transport boundary
+    /// (e.g., "leader:9000"). This is the same key used when caching a tip
+    /// via `write_leader_tip_test_only`.
     ///
     /// Returns `Ok(Some(tip))` if a leader tip is available, `Ok(None)` if
     /// no tip is known yet. Returns `Err` for repo-level failures.
-    fn read_leader_tip(&self, leader_identity: &str) -> Result<Option<TipId>, SyncRepoError>;
+    fn read_leader_tip(&self, leader_address: &str) -> Result<Option<TipId>, SyncRepoError>;
 }
 
 // ---------------------------------------------------------------------------
@@ -354,7 +358,7 @@ impl SyncPreflightRepo for InMemorySyncPreflightRepo {
         self.is_leader_authorized_result.clone()
     }
 
-    fn read_leader_tip(&self, _leader_identity: &str) -> Result<Option<TipId>, SyncRepoError> {
+    fn read_leader_tip(&self, _leader_address: &str) -> Result<Option<TipId>, SyncRepoError> {
         self.read_leader_tip_result.clone()
     }
 }

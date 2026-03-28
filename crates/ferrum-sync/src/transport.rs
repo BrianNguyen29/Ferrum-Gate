@@ -688,6 +688,229 @@ impl<T: Transport> TransportProbe<T> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// PF3/PF8 transport-boundary helpers (pure, transport-independent)
+// ---------------------------------------------------------------------------
+
+/// Input for building PF3/PF8 preflight booleans at the transport boundary.
+///
+/// This struct captures the minimum inputs needed to derive the PF3 and PF8
+/// preflight check results. It is transport-independent: callers can obtain
+/// `leader_address` from config, operator input, or discovery; `cached_leader_tip`
+/// comes from the leader tip cache (SqliteSyncPreflightRepo::read_leader_tip).
+///
+/// ## PF3 (Leader Identity Known)
+///
+/// PF3 checks whether the leader address/identity is known. At the transport
+/// boundary, this is fail-closed:
+/// - If `leader_address` is `None` or empty string -> PF3 **FAILS**
+/// - If `leader_address` is non-empty -> PF3 **PASSES**
+///
+/// PF3 does NOT check reachability or authorization; those are PF4 concerns.
+///
+/// ## PF8 (Leader Tip Available)
+///
+/// PF8 checks whether a leader tip has been cached locally. The tip is cached
+/// by the transport layer after a successful probe. PF8 is fail-closed:
+/// - If `cached_leader_tip` is `None` -> PF8 **FAILS** (tip not yet obtained)
+/// - If `cached_leader_tip` is `Some` -> PF8 **PASSES**
+///
+/// ## Why This Helper Is Pure
+///
+/// This function has no side effects, no network calls, no async, and no
+/// mutation. It simply maps two inputs to two booleans. The actual tip
+/// acquisition (via transport probe) and tip caching (via `write_leader_tip`)
+/// happen at a different layer and are not part of this helper.
+///
+/// Callers use the resulting booleans in `PreflightInput` when calling
+/// `run_preflight()`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreflightTransportInput {
+    /// The leader's address/identity, if known.
+    ///
+    /// `None` means the leader address is not yet configured or discovered.
+    /// Empty string is treated the same as None (fail-closed for PF3).
+    pub leader_address: Option<String>,
+    /// The cached leader tip, if one has been retrieved and cached.
+    ///
+    /// `None` means no tip has been cached yet (either no probe has run,
+    /// or the last probe failed). `Some` means a tip is available.
+    pub cached_leader_tip: Option<crate::decision::TipId>,
+}
+
+/// Result of evaluating PF3 and PF8 from transport-boundary inputs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreflightTransportFlags {
+    /// PF3: leader identity/address is known (true) or unknown (false).
+    pub leader_identity_known: bool,
+    /// PF8: leader tip is available (true) or not (false).
+    pub leader_tip_available: bool,
+}
+
+impl PreflightTransportInput {
+    /// Evaluate PF3 and PF8 from transport-boundary inputs.
+    ///
+    /// This is a **pure function** with no side effects.
+    ///
+    /// ## Fail-Closed Semantics
+    ///
+    /// - `leader_address` is None or empty -> `leader_identity_known = false` (PF3 fails)
+    /// - `cached_leader_tip` is None -> `leader_tip_available = false` (PF8 fails)
+    ///
+    /// These semantics ensure that missing configuration or uncached tips
+    /// prevent sync rather than allowing it to proceed on guesswork.
+    pub fn evaluate(&self) -> PreflightTransportFlags {
+        let leader_identity_known = self
+            .leader_address
+            .as_ref()
+            .map(|addr| !addr.trim().is_empty())
+            .unwrap_or(false);
+
+        let leader_tip_available = self.cached_leader_tip.is_some();
+
+        PreflightTransportFlags {
+            leader_identity_known,
+            leader_tip_available,
+        }
+    }
+}
+
+#[cfg(test)]
+mod preflight_transport_tests {
+    use super::*;
+
+    fn tip(seq: u64, hash: &str) -> crate::decision::TipId {
+        crate::decision::TipId {
+            sequence: seq,
+            hash: hash.to_string(),
+        }
+    }
+
+    // =========================================================================
+    // PF3 (leader_identity_known) — fail-closed
+    // =========================================================================
+
+    #[test]
+    fn pf3_fails_when_leader_address_none() {
+        let input = PreflightTransportInput {
+            leader_address: None,
+            cached_leader_tip: None,
+        };
+        let flags = input.evaluate();
+        assert!(
+            !flags.leader_identity_known,
+            "PF3 must fail when leader_address is None"
+        );
+    }
+
+    #[test]
+    fn pf3_fails_when_leader_address_empty() {
+        let input = PreflightTransportInput {
+            leader_address: Some("".to_string()),
+            cached_leader_tip: None,
+        };
+        let flags = input.evaluate();
+        assert!(
+            !flags.leader_identity_known,
+            "PF3 must fail when leader_address is empty"
+        );
+    }
+
+    #[test]
+    fn pf3_fails_when_leader_address_whitespace_only() {
+        let input = PreflightTransportInput {
+            leader_address: Some("   ".to_string()),
+            cached_leader_tip: None,
+        };
+        let flags = input.evaluate();
+        assert!(
+            !flags.leader_identity_known,
+            "PF3 must fail when leader_address is whitespace only"
+        );
+    }
+
+    #[test]
+    fn pf3_passes_when_leader_address_non_empty() {
+        let input = PreflightTransportInput {
+            leader_address: Some("leader:9000".to_string()),
+            cached_leader_tip: None,
+        };
+        let flags = input.evaluate();
+        assert!(
+            flags.leader_identity_known,
+            "PF3 must pass when leader_address is non-empty"
+        );
+    }
+
+    // =========================================================================
+    // PF8 (leader_tip_available) — fail-closed
+    // =========================================================================
+
+    #[test]
+    fn pf8_fails_when_cached_tip_none() {
+        let input = PreflightTransportInput {
+            leader_address: Some("leader:9000".to_string()),
+            cached_leader_tip: None,
+        };
+        let flags = input.evaluate();
+        assert!(
+            !flags.leader_tip_available,
+            "PF8 must fail when cached_leader_tip is None"
+        );
+    }
+
+    #[test]
+    fn pf8_passes_when_cached_tip_some() {
+        let input = PreflightTransportInput {
+            leader_address: Some("leader:9000".to_string()),
+            cached_leader_tip: Some(tip(100, "abc123")),
+        };
+        let flags = input.evaluate();
+        assert!(
+            flags.leader_tip_available,
+            "PF8 must pass when cached_leader_tip is Some"
+        );
+    }
+
+    // =========================================================================
+    // Combined PF3+PF8
+    // =========================================================================
+
+    #[test]
+    fn both_fail_when_nothing_configured() {
+        let input = PreflightTransportInput {
+            leader_address: None,
+            cached_leader_tip: None,
+        };
+        let flags = input.evaluate();
+        assert!(!flags.leader_identity_known);
+        assert!(!flags.leader_tip_available);
+    }
+
+    #[test]
+    fn pf3_passes_but_pf8_still_fails_when_no_tip_cached() {
+        // Common case: leader is configured but no probe has run yet
+        let input = PreflightTransportInput {
+            leader_address: Some("leader:9000".to_string()),
+            cached_leader_tip: None,
+        };
+        let flags = input.evaluate();
+        assert!(flags.leader_identity_known);
+        assert!(!flags.leader_tip_available);
+    }
+
+    #[test]
+    fn both_pass_when_address_configured_and_tip_cached() {
+        let input = PreflightTransportInput {
+            leader_address: Some("leader:9000".to_string()),
+            cached_leader_tip: Some(tip(50, "hashxyz")),
+        };
+        let flags = input.evaluate();
+        assert!(flags.leader_identity_known);
+        assert!(flags.leader_tip_available);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

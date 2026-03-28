@@ -15,6 +15,15 @@ discovery, or write-path implementation.
 proof retrieval / fail-closed error mapping) work only.** No sync
 implementation exists or is planned in this slice.
 
+PF3/PF8 transport-boundary helpers (`PreflightTransportInput`,
+`PreflightTransportFlags`) are implemented in `crates/ferrum-sync/src/transport.rs`.
+These are pure, transport-independent helpers that convert leader address and
+cached tip into PF3/PF8 booleans (fail-closed on empty/unknown address, fail-closed
+on missing cached tip).
+
+The actual transport probe to populate the leader tip cache remains
+Sync-3 implementation territory (not yet implemented).
+
 Successor to Sync-2 (read-only preflight + diff classifier). Write-path
 implementation, consensus, and peer discovery are not in scope.
 
