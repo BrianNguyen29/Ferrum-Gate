@@ -190,7 +190,7 @@ impl SqliteStore {
             let raw_json: String = row.try_get("raw_json")?;
 
             let entry: LedgerEntry =
-                serde_json::from_str(&raw_json).map_err(|e| crate::StoreError::Serialization(e))?;
+                serde_json::from_str(&raw_json).map_err(crate::StoreError::Serialization)?;
 
             // Cross-check: persisted content_hash must match the entry's recomputed entry_hash.
             // We recompute by hashing the event content + prev_hash (same as LedgerEntry::from_event).

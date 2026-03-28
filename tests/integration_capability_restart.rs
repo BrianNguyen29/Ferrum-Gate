@@ -277,6 +277,8 @@ async fn test_mint_persists_across_runtime_restart() {
             terminal_only: None,
             since: None,
             until: None,
+            cursor: None,
+            limit: None,
         })
         .await
         .unwrap();
@@ -513,6 +515,8 @@ async fn test_revoked_capability_fails_across_runtime_restart() {
             terminal_only: None,
             since: None,
             until: None,
+            cursor: None,
+            limit: None,
         })
         .await
         .unwrap();
@@ -889,6 +893,8 @@ async fn test_mint_provenance_emitted_only_on_success() {
             terminal_only: None,
             since: None,
             until: None,
+            cursor: None,
+            limit: None,
         })
         .await
         .unwrap();

@@ -1,5 +1,28 @@
 # 16 — Release checklist
 
+## v1 Scope Freeze — Single-Node Only
+
+**v1 closure is scoped to single-node deployment only.** The following are
+explicitly out of scope for v1 and are not blockers for v1 RC sign-off:
+
+- Multi-node sync (write-path, two-way merge, consensus)
+- HA / multi-leader replication
+- In-process TLS termination (external terminator required)
+- Distributed trace context (W3C TraceContext)
+- Alerting rules
+- Generic provenance replay/fabric tooling
+
+The supported v1 surface is: SQLite-backed single-node gateway flow with
+filesystem, SQLite, maildraft, git, and HTTP adapters; firewall enforcement;
+capability mint/authorize/execute; R0/R2/R3 governance paths; rollback and
+compensation; provenance lineage chain. See
+`docs/implementation-path/23-production-readiness-assessment.md` Section 1 for
+the full supported surface with evidence links.
+
+**RC evidence artifact:** `docs/implementation-path/25-v1-single-node-rc-evidence.md`
+- Current verdict: **READY TO CLOSE** — single-node v1 (all checklist items green: clippy, tests, startup guard, smoke server, readiness endpoint, metrics auth, SQLite backup/integrity)
+- Post-v1 items (multi-node sync, HA, in-process TLS, distributed trace context, alerting rules) remain out of scope and are not v1 blockers.
+
 ## Contract integrity
 - [x] contracts cập nhật (`python3 scripts/check_contract_consistency.py` => `VALIDATION PASSED`)
 - [x] schemas cập nhật

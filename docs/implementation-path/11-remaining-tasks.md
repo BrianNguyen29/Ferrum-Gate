@@ -3,6 +3,13 @@
 Prioritized checklist of incomplete work, grounded in existing docs.
 Do not invent scope; all items cite source docs.
 
+**v1 Scope Freeze — Single-Node Only.** All items in this document are
+post-v1 non-goals except where explicitly marked as v1. FerrumGate v1 is
+closed at single-node only. See `23-production-readiness-assessment.md`
+Section 4 and `24-p1-p2-p3-execution-plan.md` Section 6 for the complete
+v1 scope-freeze list. Do not add multi-node sync, HA, consensus, or
+write-path items as v1 blockers.
+
 ## P0 — Firewall validation (Phase C residual)
 
 - [x] poisoned context test suite (>= 80% on curated fixtures)
