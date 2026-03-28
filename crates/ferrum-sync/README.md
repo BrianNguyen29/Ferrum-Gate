@@ -91,7 +91,7 @@ preflight contract; `ferrum-store` provides concrete backends.
 | `Sync1Decision` | DONE / SYNC / FAST_FORWARD / ABORT(code) |
 | `TipId` | Lightweight tip identity (sequence + hash) |
 | `classify()` | Pure Sync-2 diff classifier (follower_tip x leader_tip -> DiffClass) |
-| `DiffClass` | InSync / FollowerAhead / LeaderAhead / LeaderAheadEmpty / Bootstrap / Divergent / Unknown |
+| `DiffClass` | InSync / FollowerAhead / LeaderAhead / Bootstrap / Divergent / Unknown |
 | `run_preflight()` | Ordered PF1-PF8 preflight checker over caller-provided inputs |
 | `PreflightInput` | 8 boolean fields for PF1-PF8 preflight checks |
 | `PreflightResult` | Pass / Fail(PreflightCheckCode) |

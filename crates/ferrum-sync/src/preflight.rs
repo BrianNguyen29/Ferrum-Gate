@@ -48,14 +48,6 @@ pub enum DiffClass {
     FollowerAhead,
     /// Leader's sequence is ahead of follower's; follower has a non-empty ledger.
     LeaderAhead,
-    /// Leader's sequence is ahead of follower's; follower's ledger is empty.
-    ///
-    /// NOTE: In practice, `classify()` produces `Bootstrap` for this case.
-    /// This variant exists for callers who distinguish the two scenarios
-    /// explicitly (e.g., observability), but the classify logic below
-    /// uses `Bootstrap` when `follower_tip` is `None` and `leader_tip`
-    /// exists, consistent with doc 20's pseudocode.
-    LeaderAheadEmpty,
     /// Follower's ledger is empty and leader has entries; bootstrap required.
     Bootstrap,
     /// Follower and leader are at the same sequence but hashes differ.
@@ -67,15 +59,12 @@ pub enum DiffClass {
 impl DiffClass {
     /// Returns `true` if this classification allows sync to proceed.
     ///
-    /// Only `InSync`, `LeaderAhead`, `LeaderAheadEmpty`, and `Bootstrap`
+    /// Only `InSync`, `LeaderAhead`, and `Bootstrap`
     /// are "proceed" classifications.
     pub fn is_proceed(&self) -> bool {
         matches!(
             self,
-            DiffClass::InSync
-                | DiffClass::LeaderAhead
-                | DiffClass::LeaderAheadEmpty
-                | DiffClass::Bootstrap
+            DiffClass::InSync | DiffClass::LeaderAhead | DiffClass::Bootstrap
         )
     }
 
@@ -96,7 +85,6 @@ impl std::fmt::Display for DiffClass {
             DiffClass::InSync => write!(f, "InSync"),
             DiffClass::FollowerAhead => write!(f, "FollowerAhead"),
             DiffClass::LeaderAhead => write!(f, "LeaderAhead"),
-            DiffClass::LeaderAheadEmpty => write!(f, "LeaderAheadEmpty"),
             DiffClass::Bootstrap => write!(f, "Bootstrap"),
             DiffClass::Divergent => write!(f, "Divergent"),
             DiffClass::Unknown => write!(f, "Unknown"),
@@ -346,7 +334,6 @@ pub fn classify(follower_tip: Option<&TipId>, leader_tip: Option<&TipId>) -> Dif
 /// | InSync           | DONE            |
 /// | FollowerAhead    | ABORT(A4)       |
 /// | LeaderAhead      | SYNC            |
-/// | LeaderAheadEmpty | FAST_FORWARD    |
 /// | Bootstrap        | FAST_FORWARD    |
 /// | Divergent        | ABORT(A3)       |
 /// | Unknown          | ABORT(A0)       |
@@ -359,7 +346,6 @@ pub fn diff_class_to_decision(class: DiffClass) -> crate::decision::Sync1Decisio
         DiffClass::InSync => Sync1Decision::Done,
         DiffClass::FollowerAhead => Sync1Decision::Abort(Sync1AbortCode::A4),
         DiffClass::LeaderAhead => Sync1Decision::Sync,
-        DiffClass::LeaderAheadEmpty => Sync1Decision::FastForward,
         DiffClass::Bootstrap => Sync1Decision::FastForward,
         DiffClass::Divergent => Sync1Decision::Abort(Sync1AbortCode::A3),
         DiffClass::Unknown => Sync1Decision::Abort(Sync1AbortCode::A0),
@@ -565,7 +551,6 @@ mod tests {
     fn diff_class_is_proceed() {
         assert!(DiffClass::InSync.is_proceed());
         assert!(DiffClass::LeaderAhead.is_proceed());
-        assert!(DiffClass::LeaderAheadEmpty.is_proceed());
         assert!(DiffClass::Bootstrap.is_proceed());
     }
 
@@ -582,7 +567,6 @@ mod tests {
             DiffClass::InSync,
             DiffClass::FollowerAhead,
             DiffClass::LeaderAhead,
-            DiffClass::LeaderAheadEmpty,
             DiffClass::Bootstrap,
             DiffClass::Divergent,
             DiffClass::Unknown,
@@ -601,10 +585,6 @@ mod tests {
         assert_eq!(format!("{}", DiffClass::InSync), "InSync");
         assert_eq!(format!("{}", DiffClass::FollowerAhead), "FollowerAhead");
         assert_eq!(format!("{}", DiffClass::LeaderAhead), "LeaderAhead");
-        assert_eq!(
-            format!("{}", DiffClass::LeaderAheadEmpty),
-            "LeaderAheadEmpty"
-        );
         assert_eq!(format!("{}", DiffClass::Bootstrap), "Bootstrap");
         assert_eq!(format!("{}", DiffClass::Divergent), "Divergent");
         assert_eq!(format!("{}", DiffClass::Unknown), "Unknown");
@@ -793,14 +773,6 @@ mod tests {
     }
 
     #[test]
-    fn bridge_leader_ahead_empty_to_fast_forward() {
-        assert_eq!(
-            diff_class_to_decision(DiffClass::LeaderAheadEmpty),
-            Sync1Decision::FastForward
-        );
-    }
-
-    #[test]
     fn bridge_bootstrap_to_fast_forward() {
         assert_eq!(
             diff_class_to_decision(DiffClass::Bootstrap),
@@ -860,8 +832,8 @@ mod tests {
         let l5 = tip(50, "beta");
         seen.insert(classify(Some(&f5), Some(&l5)));
 
-        // Verify all variants except LeaderAheadEmpty and Unknown are produced
-        // (LeaderAheadEmpty is an explicit alias; Unknown is a catch-all for callers)
+        // Verify all variants except Unknown are produced
+        // (Unknown is a catch-all for callers)
         assert!(seen.contains(&DiffClass::InSync), "InSync must be produced");
         assert!(
             seen.contains(&DiffClass::FollowerAhead),

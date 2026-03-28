@@ -66,7 +66,7 @@ Sync-3a Probe Steps (all read-only on follower side):
 2. Sync-2 diff classify: produces DiffClass
 3. If DiffClass is InSync, FollowerAhead, Divergent, Unknown:
    -> DONE or ABORT per Sync-2 decision table; no probe needed
-4. If DiffClass is LeaderAhead or LeaderAheadEmpty or Bootstrap:
+ 4. If DiffClass is LeaderAhead or Bootstrap:
    -> Proceed with Sync-3a diagnostic probe
 
 Step 4 Detail:
