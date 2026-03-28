@@ -159,6 +159,7 @@ rough next-step estimate:
 | Sync-2: PF4 capability model enforcement (leader authorization) | P3 | Sync-2 impl | DONE | `leader_allowlist` table (migration 004) added; `SqliteSyncPreflightRepo::is_leader_authorized()` wired with deny-by-default semantics; `authorize_leader_test_only()` provided for test scenarios |
 | Sync-2: PF3 transport-boundary helper (pure, fail-closed on empty address) | P2 | Sync-2 impl | DONE | `PreflightTransportInput::evaluate()` in `ferrum-sync/src/transport.rs` |
 | Sync-2: PF3/PF8 require transport-based leader tip acquisition (actual probe) | P2 | Sync-3 impl | DONE | `probe_and_cache_leader_tip()` in `ferrum-store/src/sync_service.rs`; performs PF4 check + HTTP probe + cache write |
+| Sync-2: read-only local+cached readiness composition (`evaluate_sync_readiness_from_cache`) | P2 | Sync-2 impl | DONE | `evaluate_sync_readiness_from_cache()` in `ferrum-store/src/sync_service.rs`; composes PF1-PF8 using local state + cached leader tip only; read-only, no network calls, no cache writes, not a live remote sync guarantee |
 | Sync-2: PF7 sync session tracking (stateful, not read-only) | P3 | Sync-1 impl | 1-2 days | Add in-memory `AtomicBool` or DB-backed session flag |
 | Sync-3: real HTTP transport (not FakeTransport) | P2 | Sync-3 impl | DONE | `HttpLeaderTransport` in `ferrum-sync/src/http_transport.rs` using `reqwest`; HTTP/JSON protocol |
 | Sync-1: entry apply/write-path (follower side) | P3 | Write-path | 10+ days | Design doc first; then implement atomic entry application with rollback |

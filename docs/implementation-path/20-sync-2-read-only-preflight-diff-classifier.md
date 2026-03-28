@@ -50,6 +50,17 @@ PF8 cache population is implemented via the real probe-to-cache path
 which performs PF4 authorization check + HTTP probe + cache write
 (Sync-3a territory).
 
+The **read-only, local+cached readiness composition path** is also available:
+`evaluate_sync_readiness_from_cache()` in `ferrum-store/src/sync_service.rs`
+(added with `SyncReadinessVerdict` / `SyncReadinessError`). This composes all
+PF1-PF8 checks using only local state and the cached leader tip. It:
+
+- Is read-only: no network calls; leader tip comes from local cache only
+- No cache writes; no session mutation; no write/apply path
+- Is NOT a live remote sync guarantee: PF8 reflects cached state, not live probe
+- Fail-closed: any repo error returns `Err(SyncReadinessError)`; preflight
+  failures return `SyncReadinessVerdict::PreflightFailed` without a decision
+
 What remains deferred: retry/backoff on transient probe failure,
 write/apply path, consensus, and two-way merge.
 
@@ -268,6 +279,7 @@ Note: Sync-3 does not yet include write-path implementation.
 | `crates/ferrum-ledger/src/lib.rs:260` | `verify_chain` — full chain verification |
 | `crates/ferrum-store/src/repos.rs:155` | LedgerRepo trait shape |
 | `crates/ferrum-store/src/sqlite/mod.rs:155` | SQLite ledger repo implementation |
+| `crates/ferrum-store/src/sync_service.rs` | Read-only `evaluate_sync_readiness_from_cache()` — local+cached PF1-PF8 composition; `SyncReadinessVerdict`, `SyncReadinessError` |
 | `docs/implementation-path/18-cross-node-ledger-sync-plan.md` | Sync-0 safety contract (predecessor) |
 | `docs/implementation-path/19-sync-1-protocol-sketch.md` | Sync-1 protocol sketch (predecessor) |
 
