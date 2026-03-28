@@ -1,4 +1,21 @@
-pub const INIT_MIGRATION: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/migrations/001_initial.sql"
-));
+pub const INIT_MIGRATION: &str = concat!(
+    include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/migrations/001_initial.sql"
+    )),
+    "\n",
+    include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/migrations/002_add_leader_tips.sql"
+    )),
+    "\n",
+    include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/migrations/003_add_sync_state.sql"
+    )),
+    "\n",
+    include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/migrations/004_add_leader_allowlist.sql"
+    ))
+);

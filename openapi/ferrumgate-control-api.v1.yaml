@@ -486,6 +486,38 @@ paths:
         '404':
           $ref: '#/components/responses/ApiError'
 
+  /v1/provenance/lineage:
+    post:
+      summary: Multi-hop provenance lineage traversal
+      description: |
+        Traverses provenance ancestry and/or descendant edges from a seed event_id using BFS.
+
+        Validation rules:
+        - At least one of ancestry or descendants must be true (400 ValidationError otherwise)
+        - max_hops is hard-capped at 32 by the server
+        - All traversed events with execution_id=Some(x) must match the request execution_id (execution fence)
+
+        The seed event is always included in the response. Results are deterministically ordered
+        by (occurred_at ASC, event_id ASC-string).
+      operationId: lineageQuery
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LineageQueryRequest'
+      responses:
+        '200':
+          description: Lineage traversal result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LineageQueryResponse'
+        '400':
+          $ref: '#/components/responses/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
+
   /v1/provenance/events/{event_id}:
     get:
       summary: Get a single provenance event
@@ -1303,6 +1335,14 @@ components:
           type: string
           format: date-time
           nullable: true
+        limit:
+          type: integer
+          nullable: true
+          description: Maximum number of events to return (1-1000). Defaults to 100.
+        cursor:
+          type: string
+          nullable: true
+          description: Cursor for keyset pagination. Use the returned next_cursor to advance. The cursor encodes the (occurred_at, event_id) of the last item in the previous page.
 
     ProvenanceQueryResponse:
       type: object
@@ -1312,6 +1352,10 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ProvenanceEvent'
+        next_cursor:
+          type: string
+          nullable: true
+          description: Cursor for the next page. None if this is the last page.
 
     ProvenanceEventResponse:
       type: object
@@ -1430,3 +1474,66 @@ components:
       properties:
         event:
           $ref: '#/components/schemas/ProvenanceEvent'
+
+    LineageQueryRequest:
+      type: object
+      additionalProperties: false
+      required: [execution_id, event_id]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+          description: The execution_id to fence traversed events against.
+        event_id:
+          type: string
+          format: uuid
+          description: The seed event_id to start traversal from.
+        ancestry:
+          type: boolean
+          default: true
+          description: When true, walk ancestry backwards via parent edges.
+        descendants:
+          type: boolean
+          default: false
+          description: When true, walk descendants forwards via child edges.
+        max_hops:
+          type: integer
+          minimum: 1
+          maximum: 32
+          nullable: true
+          description: Maximum hops for BFS traversal. Hard-capped at 32 by the server. Defaults to 8.
+
+    LineageQueryResponse:
+      type: object
+      required: [events, edges]
+      properties:
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProvenanceEvent'
+          description: All events discovered during traversal, including the seed event.
+        edges:
+          type: array
+          items:
+            $ref: '#/components/schemas/LineageEdge'
+          description: Edges discovered during traversal.
+
+    LineageEdge:
+      type: object
+      required: [edge_type, from_event_id, to_event_id]
+      properties:
+        edge_type:
+          type: string
+          description: The type of the provenance edge.
+        from_event_id:
+          type: string
+          format: uuid
+          description: The source event of the edge.
+        to_event_id:
+          type: string
+          format: uuid
+          description: The target event of the edge.
+        summary:
+          type: string
+          nullable: true
+          description: Optional human-readable summary of the edge.

@@ -11,10 +11,11 @@ use ferrum_gateway::{GatewayRuntime, build_router};
 use ferrum_pdp::StaticPdpEngine;
 use ferrum_proto::{
     ActionProposal, ActorRef, ActorType, AuthorizeExecutionRequest, CapabilityMintRequest,
-    EffectType, ExternalEventIngestRequest, HashChainRef, IntentCompileRequest, JsonMap, ObjectRef,
-    ObjectType, ProvenanceEdge, ProvenanceEdgeType, ProvenanceEvent, ProvenanceEventKind,
-    ProvenanceEventResponse, ProvenanceQueryRequest, ResourceBinding, ResourceMode, RiskTier,
-    RollbackClass, TaintBudget, ToolBinding, TrustLabel,
+    EffectType, ExternalEventIngestRequest, HashChainRef, IntentCompileRequest, JsonMap,
+    LineageQueryRequest, LineageQueryResponse, ObjectRef, ObjectType, ProvenanceEdge,
+    ProvenanceEdgeType, ProvenanceEvent, ProvenanceEventKind, ProvenanceEventResponse,
+    ProvenanceQueryRequest, ResourceBinding, ResourceMode, RiskTier, RollbackClass, TaintBudget,
+    ToolBinding, TrustLabel,
 };
 use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
 use ferrum_store::{ProvenanceRepo, SqliteStore};
@@ -1512,5 +1513,508 @@ async fn test_provenance_query_filter_with_pagination() {
         query_resp.events.len() <= 2,
         "expected at most 2 events, got {}",
         query_resp.events.len()
+    );
+}
+
+// ============================================================
+// Tests for POST /v1/provenance/lineage
+// ============================================================
+
+#[tokio::test]
+async fn test_lineage_query_happy_path_ancestry() {
+    let (temp_dir, runtime, store) = create_test_runtime().await;
+    let file_path = temp_dir.path().join("test.txt");
+    let file_path_str = file_path.to_string_lossy().to_string();
+
+    // Build up some provenance events with an execution
+    let intent_req = sample_intent_request(&file_path_str);
+    let app = build_router(runtime.clone());
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&intent_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: ferrum_proto::IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Submit proposal
+    let proposal = sample_proposal(intent_id, &file_path_str);
+    let proposal_id = proposal.proposal_id;
+
+    let app = build_router(runtime.clone());
+    let _response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Mint capability
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "workspace".to_string(),
+            tool_name: "fs.write".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![ResourceBinding::File {
+            path: file_path_str.clone(),
+            mode: ResourceMode::Write,
+            required_hash: None,
+        }],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    // Authorize execution
+    let auth_req = AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    // Prepare
+    let app = build_router(runtime.clone());
+    let _response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Execute
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({"path": file_path_str, "content": "hello"}),
+    };
+
+    let app = build_router(runtime.clone());
+    let _response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Verify (auto-commits for R0)
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+    let app = build_router(runtime.clone());
+    let _response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Get execution lineage to find an event to use as seed
+    let events = store
+        .provenance()
+        .get_lineage_by_execution(execution_id)
+        .await
+        .unwrap();
+
+    assert!(!events.is_empty(), "should have events in lineage");
+    let seed_event = &events[events.len() / 2]; // Use middle event
+
+    // Query lineage with ancestry=true, descendants=false
+    let lineage_req = LineageQueryRequest {
+        execution_id,
+        event_id: seed_event.event_id,
+        ancestry: true,
+        descendants: false,
+        max_hops: Some(8),
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/provenance/lineage")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&lineage_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let lineage_resp: LineageQueryResponse = serde_json::from_slice(&body).unwrap();
+
+    // Seed event should be included
+    assert!(
+        lineage_resp
+            .events
+            .iter()
+            .any(|e| e.event_id == seed_event.event_id),
+        "seed event should be included"
+    );
+
+    // All events should have execution_id matching the request
+    for event in &lineage_resp.events {
+        if let Some(exec_id) = event.execution_id {
+            assert_eq!(
+                exec_id, execution_id,
+                "event should respect execution fence"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_lineage_query_both_directions_false_returns_400() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Create a dummy event for the request
+    let event_id = ferrum_proto::EventId::new();
+    let execution_id = ferrum_proto::ExecutionId::new();
+
+    let lineage_req = LineageQueryRequest {
+        execution_id,
+        event_id,
+        ancestry: false,
+        descendants: false,
+        max_hops: Some(8),
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/provenance/lineage")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&lineage_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        400,
+        "should return 400 when both ancestry and descendants are false"
+    );
+}
+
+#[tokio::test]
+async fn test_lineage_query_max_hops_respected() {
+    let (temp_dir, runtime, store) = create_test_runtime().await;
+    let file_path = temp_dir.path().join("test.txt");
+    let file_path_str = file_path.to_string_lossy().to_string();
+
+    // Build up lineage with multiple hops
+    let intent_req = sample_intent_request(&file_path_str);
+    let app = build_router(runtime.clone());
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&intent_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: ferrum_proto::IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    let proposal = sample_proposal(intent_id, &file_path_str);
+    let proposal_id = proposal.proposal_id;
+
+    let app = build_router(runtime.clone());
+    let _response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "workspace".to_string(),
+            tool_name: "fs.write".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![ResourceBinding::File {
+            path: file_path_str.clone(),
+            mode: ResourceMode::Write,
+            required_hash: None,
+        }],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    let auth_req = AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    let app = build_router(runtime.clone());
+    let _response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({"path": file_path_str, "content": "hello"}),
+    };
+
+    let app = build_router(runtime.clone());
+    let _response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+    let app = build_router(runtime.clone());
+    let _response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let events = store
+        .provenance()
+        .get_lineage_by_execution(execution_id)
+        .await
+        .unwrap();
+
+    // Start from oldest event (first in the list)
+    let seed_event = events.first().unwrap();
+
+    // Query with max_hops = 1
+    let lineage_req = LineageQueryRequest {
+        execution_id,
+        event_id: seed_event.event_id,
+        ancestry: true,
+        descendants: true,
+        max_hops: Some(1),
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/provenance/lineage")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&lineage_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let lineage_resp: LineageQueryResponse = serde_json::from_slice(&body).unwrap();
+
+    // With max_hops=1, should get at most seed + immediate neighbors
+    // (may be fewer depending on graph structure)
+    assert!(
+        lineage_resp.events.len() <= 3,
+        "max_hops=1 should limit events, got {}",
+        lineage_resp.events.len()
+    );
+}
+
+#[tokio::test]
+async fn test_lineage_query_unknown_event_returns_404() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    let event_id = ferrum_proto::EventId::new(); // Random non-existent event
+    let execution_id = ferrum_proto::ExecutionId::new();
+
+    let lineage_req = LineageQueryRequest {
+        execution_id,
+        event_id,
+        ancestry: true,
+        descendants: false,
+        max_hops: Some(8),
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/provenance/lineage")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&lineage_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        404,
+        "should return 404 for unknown event"
     );
 }

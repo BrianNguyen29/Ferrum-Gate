@@ -9,26 +9,38 @@
 - P1: git adapter local rollback + gateway wiring
 - P1: git after_ref verify handoff fix
 - P1: gateway happy path
-- P1: ledger hash chain
+- P1: ledger hash chain (DONE - initial integration slice complete per `12-ledger-hash-chain-execution-plan.md`)
+  - Live append-time verification DONE per `17-ledger-live-hash-verification-execution-plan.md` (Commits A-C)
+  - Cross-node sync: Sync-0 safety-contract discovery/plan started per `18-cross-node-ledger-sync-plan.md`; Sync-1 protocol-sketch per `19-sync-1-protocol-sketch.md`; Sync-2 read-only preflight + diff classifier per `20-sync-2-read-only-preflight-diff-classifier.md`; Sync-3 transport-sketch per `21-sync-3-transport-sketch.md`; Sync-3a read-only transport-probe per `22-sync-3a-read-only-transport-probe.md`; Sync-3a.1 probe API boundary per `22a-sync-3a1-probe-api-boundary.md`
+  - Future: ledger read-model, cross-node sync (beyond Sync-3a.1) remain P2
 - P1: ferrumctl debug/inspect/validate slices
 - P1: http adapter full parity (GET/POST/PUT/PATCH/DELETE + body/header/query binding + auth) + gateway wiring
 - P1: durable capability persistence + startup reconciliation + restart integration coverage
 
 ## P2
-- provenance query/read model (next feature expansion):
-  - mo rong `POST /v1/provenance/query` tu minimal fail-closed endpoint thanh query surface co filter thuc dung theo `intent_id`, `proposal_id`, `execution_id`, event kind, va terminal state
-  - them read-model helpers trong `ferrum-graph` cho multi-hop lineage/event-edge traversal tren du lieu da persist
-  - them integration coverage cho provenance query va terminal recovery lineage vuot qua minimum chain
-  - current surface: `GET /v1/provenance/lineage/{execution_id}` and `POST /v1/provenance/query` (minimal fail-closed); expansion builds on these existing endpoints
-- operator/runtime hardening:
+- provenance query/read model: **DONE (core surface implemented)**
+  - `POST /v1/provenance/query` expanded with filters on `intent_id`, `proposal_id`, `execution_id`, `capability_id`, event kind, terminal state, time range, cursor pagination
+  - `ferrum-graph` read-model helpers implemented: `terminal_events`, `walk_backwards_from`, `walk_forwards_from`
+  - Evidence: `crates/ferrum-proto/src/provenance.rs:86`, `crates/ferrum-store/src/sqlite/provenance.rs:142`, `crates/ferrum-gateway/src/server.rs:2192`, `crates/ferrum-graph/src/lib.rs:52`, `tests/integration_provenance_query.rs`
+  - Future P2: advanced replay/fabric tooling, cross-node sync
+- operator/runtime hardening: **DONE**
   - ghi ro prod-style ingress/TLS deployment story thanh runbook thao tac duoc
   - them diagnostics cho effective config/startup guard/readiness de giam "why did ferrumd refuse to start" debugging time
   - doi chieu lai quickstart + troubleshooting + deployment docs voi production-like bearer-auth rollout
+  - Evidence: `13-operator-runtime-hardening-execution-plan.md` (all items complete)
 
 ## P3
-- runtime integration boundary:
-  - xac dinh model map external runtime/tool events vao FerrumGate provenance graph ma khong lam leak vendor assumptions vao core crates
-  - chon 1 integration serioius dau tien (vi du MCP/runtime event bridge) va prove duoc internal + external events cung nam tren mot execution lineage
-- recovery/hardening follow-up:
-  - neu mo rong HTTP mutation recovery, lam ro boundary/an toan truoc; khong duoc silently claim rollback parity cho remote side effects
-  - danh gia xem `EmailSend` co can tro thanh supported governed path hay tiep tuc explicit out-of-scope cho v1
+- runtime integration boundary: **DONE (proof slice complete)**
+  - Observation-only MCP bridge (`McpBridge`) with explicit anchor ingest; no auto-correlation, no retries, no per-call source_system override per `crates/ferrum-integrations-mcp/src/bridge.rs`
+  - E2e lineage proof: internal + external events share same execution chain per `tests/integration_mcp_bridge.rs:253` (`test_mcp_bridge_ingest_creates_linked_external_event`) and `tests/integration_mcp_bridge.rs:399` (`test_mcp_bridge_ingest_multiple_event_types`)
+  - Future P3: full MCP transport loop, auto anchor resolution, persistent dedupe, background replay worker, multiple simultaneous vendor bridges
+- recovery/hardening follow-up: **RATIFIED BOUNDARY**
+  - HTTP rollback is intentional no-op (remote mutation requires manual R3 compensation); ratified in `16a-slice-16-a-boundary-ratification.md`
+  - EmailSend governed-path is explicit deny at prepare-time (allow_send=true -> PolicyDenied 403); ratified in `16a-slice-16-a-boundary-ratification.md`
+  - No further analysis needed; these are confirmed design decisions, not open questions
+
+## Production Readiness
+
+See `23-production-readiness-assessment.md` for an honest assessment of what
+is and is not production-ready. For the authoritative ordered execution plan,
+see `24-p1-p2-p3-execution-plan.md`.

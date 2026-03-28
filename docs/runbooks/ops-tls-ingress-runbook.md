@@ -13,6 +13,7 @@ This runbook covers deploying a TLS-terminating nginx reverse proxy in front of 
 | `ferrumd` bind | `0.0.0.0:8080` (config-driven) |
 | `ferrumd` auth | `bearer` mode — app-layer, no TLS requirement |
 | Health endpoints | `/v1/healthz` (liveness), `/v1/readyz` (readiness) — unauthenticated |
+| Metrics endpoint | `/metrics` — auth-protected (requires `Authorization: Bearer <token>`) |
 | Control-plane routes | All other routes require `Authorization: Bearer <token>` |
 | Startup guard | Rejects non-loopback bind with auth disabled unless `allow_insecure_nonlocal = true` |
 
@@ -86,6 +87,21 @@ server {
         proxy_read_timeout    2s;
         access_log off;
     }
+
+    # Metrics endpoint — auth-protected in ferrumd, so the bearer token
+    # must be passed through (or you can restrict access to your monitoring
+    # network segment and drop auth for this location).
+    location /metrics {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_connect_timeout 5s;
+        proxy_read_timeout   10s;
+        # To passthrough bearer token for Prometheus scraping:
+        # proxy_set_header Authorization $http_authorization;
+        # To restrict metrics to internal monitoring only:
+        # allow 10.0.0.0/8;
+        # deny all;
+    }
 }
 
 # Redirect HTTP to HTTPS
@@ -151,6 +167,15 @@ curl -s -o /dev/null -w "%{http_code}" https://ferrumgate.example.com/v1/approva
 curl -s -o /dev/null -w "%{http_code}" \
   -H "Authorization: Bearer YOUR_TOKEN" \
   https://ferrumgate.example.com/v1/approvals
+
+# /metrics endpoint also requires bearer auth:
+curl -s -o /dev/null -w "%{http_code}" https://ferrumgate.example.com/metrics
+# expect 401 without token
+
+curl -s -o /dev/null -w "%{http_code}" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  https://ferrumgate.example.com/metrics
+# expect 200 with Prometheus text output
 ```
 
 ## Certificate rollover

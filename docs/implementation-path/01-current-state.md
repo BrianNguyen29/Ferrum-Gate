@@ -17,15 +17,20 @@
 
 ## Repo chưa có
 - implementation parity day du cho moi adapter/runtime ngoai supported set hien tai
-- HTTP remote mutation recovery parity beyond conservative no-op rollback/compensate
-- generic provenance query/replay/graph tooling rong hon tren persisted event graph
-- serious external runtime integration boundary da duoc prove end-to-end
+- generic provenance query/replay/graph tooling rong hon tren persisted event graph (P2)
 - in-process TLS hoac HA/multi-node control-plane story
 
+## Ratified boundaries (not gaps)
+- HTTP rollback la intentional no-op; remote mutation can yeu cau manual R3 compensation (ratified in `16a-slice-16-a-boundary-ratification.md`)
+- EmailSend governed-path la explicit deny tai prepare-time (allow_send=true -> PolicyDenied 403); ratified in `16a-slice-16-a-boundary-ratification.md`
+- MCP bridge proof slice da hoan thanh (P3 DONE); full MCP transport loop con la P3 backlog
+
 ## Phase hợp lý nhất để tiếp tục
-1. tiep tuc Phase F+/U3: provenance query/read-model/replay tooling tren persisted provenance graph
-2. tiep tuc operator/runtime hardening: ingress/TLS runbook, readiness diagnostics, va prod-like rollout notes
-3. sau do moi mo U4 runtime integrations theo kieu vendor-neutral, dua event ben ngoai vao cung lineage
+
+Theo `23-production-readiness-assessment.md` and `24-p1-p2-p3-execution-plan.md`, uu tien hien tai la:
+1. P1 single-node hardening: observability baseline (tracing + Prometheus metrics), TLS/ingress docs, operational runbook
+2. P2 provenance tooling: advanced replay/fabric tooling tren persisted event graph
+3. P2 sync prep: reconcile Sync-3a.1 probe API boundary status, then begin Sync-1 protocol implementation
 
 ## Nguyen tac tiep tuc
 - khong mo lai cac rollout slice da dong cua capability persistence

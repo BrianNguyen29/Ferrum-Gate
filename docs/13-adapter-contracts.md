@@ -41,3 +41,4 @@
 - `verify` support `HttpStatusExpected`; GET co the re-request, con mutation methods chi verify bang execute-time metadata va khong replay side effect
 - `rollback` / `compensate` la conservative no-op; destructive remote mutation van la explicit R3 boundary cho toi khi co recovery ro rang
 - gateway chi route mutating HTTP bindings sang adapter; HTTP read-only bindings van di qua enforcement path hien tai
+- **Slice 16-A boundary ratification**: HTTP mutation recovery is explicitly R3/manual; EmailSend is denied at prepare-time. See `docs/implementation-path/16a-slice-16-a-boundary-ratification.md` for entry criteria for any future expansion.

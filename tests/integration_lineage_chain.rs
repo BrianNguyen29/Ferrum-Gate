@@ -287,6 +287,8 @@ async fn test_minimum_lineage_chain_events_exist() {
             terminal_only: None,
             since: None,
             until: None,
+            limit: Some(100),
+            cursor: None,
         })
         .await
         .unwrap();
@@ -462,6 +464,8 @@ async fn test_lineage_chain_is_contiguous_no_missing_events() {
             terminal_only: None,
             since: None,
             until: None,
+            limit: Some(100),
+            cursor: None,
         })
         .await
         .unwrap();
@@ -695,6 +699,8 @@ async fn test_rollback_lineage_chain_has_terminal_event() {
             terminal_only: None,
             since: None,
             until: None,
+            limit: Some(100),
+            cursor: None,
         })
         .await
         .unwrap();

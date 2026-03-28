@@ -14,6 +14,8 @@ pub enum StoreError {
     InvalidState(String),
     #[error("internal error: {0}")]
     Internal(String),
+    #[error("{0}")]
+    Other(#[from] anyhow::Error),
 }
 
 impl StoreError {

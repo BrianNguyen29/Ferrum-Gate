@@ -726,6 +726,57 @@ async fn ledger_append_and_load_single_entry() {
 }
 
 #[tokio::test]
+async fn ledger_append_hash_mismatch_rejected() {
+    // Verify that append rejects an entry whose prev_hash does not match the chain tip.
+    let (_temp_dir, store) = create_test_store().await;
+
+    // Build and persist a genesis entry using append_event (handles FK requirement)
+    let genesis = store
+        .ledger()
+        .append_event(&make_test_provenance_event(0))
+        .await
+        .expect("append genesis");
+
+    // Craft a rogue entry that claims to follow the genesis but has a wrong prev_hash
+    let rogue_prev = "wrong_hash___________________________________".into();
+    let rogue_entry = LedgerEntry {
+        sequence: 1,
+        prev_hash: Some(rogue_prev),
+        entry_hash: "rogue_hash_________________________________".into(),
+        event: make_test_provenance_event(1),
+    };
+
+    // The rogue entry must NOT be accepted (FK requires event in provenance_events first)
+    store
+        .provenance()
+        .append_event(&rogue_entry.event)
+        .await
+        .expect("persist rogue event");
+
+    // Append must fail due to hash verification
+    let result = store.ledger().append(&rogue_entry).await;
+    assert!(
+        result.is_err(),
+        "append with wrong prev_hash should be rejected"
+    );
+    let err_msg = format!("{}", result.unwrap_err());
+    assert!(
+        err_msg.contains("append hash verification failed") || err_msg.contains("chain broken"),
+        "error should mention hash verification failure: {}",
+        err_msg
+    );
+
+    // Verify genesis is still intact and no rogue entry was persisted
+    let loaded = store
+        .ledger()
+        .get_by_event(genesis.event.event_id)
+        .await
+        .expect("load genesis")
+        .expect("genesis should still exist");
+    assert_eq!(loaded.entry_hash.as_str(), genesis.entry_hash.as_str());
+}
+
+#[tokio::test]
 async fn ledger_append_load_and_verify_chain() {
     let (_temp_dir, store) = create_test_store().await;
 
@@ -771,6 +822,196 @@ async fn ledger_append_load_and_verify_chain() {
     rebuilt
         .verify_chain()
         .expect("chain should be valid after roundtrip");
+}
+
+// ---------------------------------------------------------------------------
+// Atomic ledger append_event tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn ledger_append_event_genesis_has_null_prev_hash() {
+    let (_temp_dir, store) = create_test_store().await;
+
+    let event = make_test_provenance_event(0);
+    let entry = store
+        .ledger()
+        .append_event(&event)
+        .await
+        .expect("append_event genesis should succeed");
+
+    // Genesis entry must have sequence 0 and null prev_hash
+    assert_eq!(entry.sequence, 0, "genesis sequence should be 0");
+    assert!(
+        entry.prev_hash.is_none(),
+        "genesis prev_hash should be None"
+    );
+
+    // Verify the entry can be loaded back
+    let loaded = store
+        .ledger()
+        .get_by_event(event.event_id)
+        .await
+        .expect("load by event_id")
+        .expect("entry should exist");
+    assert_eq!(loaded.sequence, 0);
+    assert!(loaded.prev_hash.is_none());
+    assert_eq!(loaded.entry_hash.as_str(), entry.entry_hash.as_str());
+}
+
+#[tokio::test]
+async fn ledger_append_event_chain_linkage_correct() {
+    let (_temp_dir, store) = create_test_store().await;
+
+    // Append genesis
+    let e0 = store
+        .ledger()
+        .append_event(&make_test_provenance_event(0))
+        .await
+        .expect("append genesis");
+    let e0_hash = e0.entry_hash.clone();
+
+    // Append second entry
+    let e1 = store
+        .ledger()
+        .append_event(&make_test_provenance_event(1))
+        .await
+        .expect("append second");
+    let e1_hash = e1.entry_hash.clone();
+
+    // Append third entry
+    let e2 = store
+        .ledger()
+        .append_event(&make_test_provenance_event(2))
+        .await
+        .expect("append third");
+
+    // Verify chain linkage
+    assert_eq!(e0.sequence, 0);
+    assert!(e0.prev_hash.is_none());
+
+    assert_eq!(e1.sequence, 1);
+    assert_eq!(
+        e1.prev_hash.as_ref(),
+        Some(&e0_hash),
+        "e1 prev_hash should link to e0"
+    );
+
+    assert_eq!(e2.sequence, 2);
+    assert_eq!(
+        e2.prev_hash.as_ref(),
+        Some(&e1_hash),
+        "e2 prev_hash should link to e1"
+    );
+}
+
+#[tokio::test]
+async fn ledger_append_event_roundtrip_verify_chain() {
+    let (_temp_dir, store) = create_test_store().await;
+
+    // Build a chain of 3 entries using append_event
+    let e0 = store
+        .ledger()
+        .append_event(&make_test_provenance_event(0))
+        .await
+        .expect("append e0");
+    let e1 = store
+        .ledger()
+        .append_event(&make_test_provenance_event(1))
+        .await
+        .expect("append e1");
+    let e2 = store
+        .ledger()
+        .append_event(&make_test_provenance_event(2))
+        .await
+        .expect("append e2");
+
+    // Load all entries
+    let loaded: Vec<LedgerEntry> = store.ledger().list_recent(10).await.expect("load entries");
+    assert_eq!(loaded.len(), 3);
+
+    // Rebuild in-memory ledger from loaded entries (newest-first → reverse to chronological)
+    let by_seq: Vec<LedgerEntry> = {
+        let mut v = loaded;
+        v.reverse();
+        v
+    };
+    let rebuilt = InMemoryLedger::load_entries(by_seq);
+
+    // Verify the chain is valid
+    rebuilt
+        .verify_chain()
+        .expect("chain should be valid after atomic append_event roundtrip");
+
+    // Verify specific entries match what we got from append_event
+    assert_eq!(
+        rebuilt.entries()[0].entry_hash.as_str(),
+        e0.entry_hash.as_str()
+    );
+    assert_eq!(
+        rebuilt.entries()[1].entry_hash.as_str(),
+        e1.entry_hash.as_str()
+    );
+    assert_eq!(
+        rebuilt.entries()[2].entry_hash.as_str(),
+        e2.entry_hash.as_str()
+    );
+}
+
+#[tokio::test]
+async fn ledger_append_event_duplicate_event_rejected() {
+    use ferrum_proto::{ObjectRef, ObjectType};
+
+    let (_temp_dir, store) = create_test_store().await;
+
+    let event = make_test_provenance_event(0);
+    let event_id = event.event_id;
+
+    // First append should succeed
+    store
+        .ledger()
+        .append_event(&event)
+        .await
+        .expect("first append_event should succeed");
+
+    // Creating another event with the same event_id should fail at persistence level
+    // (UNIQUE constraint on event_id in ledger_entries)
+    let dup_event = ferrum_proto::ProvenanceEvent {
+        event_id, // same id
+        kind: ferrum_proto::ProvenanceEventKind::IntentCompiled,
+        occurred_at: ferrum_proto::Timestamp::default(),
+        actor: ActorRef {
+            actor_type: ActorType::User,
+            actor_id: "user-x".to_string(),
+            display_name: None,
+        },
+        object: ObjectRef {
+            object_type: ObjectType::Intent,
+            object_id: "intent-x".to_string(),
+            summary: None,
+        },
+        intent_id: None,
+        proposal_id: None,
+        execution_id: None,
+        capability_id: None,
+        rollback_contract_id: None,
+        policy_bundle_id: None,
+        trust_labels: vec![],
+        sensitivity_labels: vec![],
+        parent_edges: vec![],
+        hash_chain: ferrum_proto::HashChainRef {
+            content_hash: None,
+            manifest_hash: None,
+            policy_bundle_hash: None,
+            previous_ledger_hash: None,
+        },
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let result = store.ledger().append_event(&dup_event).await;
+    assert!(
+        result.is_err(),
+        "duplicate event_id should be rejected by UNIQUE constraint"
+    );
 }
 
 #[tokio::test]
@@ -972,5 +1213,244 @@ async fn reconcile_capabilities_with_executions_handles_mixed_state() {
     assert!(
         matches!(loaded2.status, CapabilityStatus::Active),
         "cap2 should still be Active"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Ledger chain verification on reload tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn verify_ledger_chain_empty_ledger_succeeds() {
+    // An empty ledger is valid (no entries to verify)
+    let (_temp_dir, store) = create_test_store().await;
+
+    store
+        .verify_ledger_chain()
+        .await
+        .expect("empty ledger should pass verification");
+}
+
+#[tokio::test]
+async fn verify_ledger_chain_valid_chain_succeeds() {
+    // Build a valid chain of 3 entries using append_event
+    let (_temp_dir, store) = create_test_store().await;
+
+    store
+        .ledger()
+        .append_event(&make_test_provenance_event(0))
+        .await
+        .expect("append e0");
+    store
+        .ledger()
+        .append_event(&make_test_provenance_event(1))
+        .await
+        .expect("append e1");
+    store
+        .ledger()
+        .append_event(&make_test_provenance_event(2))
+        .await
+        .expect("append e2");
+
+    // Verification should succeed
+    store
+        .verify_ledger_chain()
+        .await
+        .expect("valid chain should pass verification");
+}
+
+#[tokio::test]
+async fn verify_ledger_chain_tampered_entry_fails() {
+    // Build a valid chain, then tamper with the raw_json directly in the DB
+    let (_temp_dir, store) = create_test_store().await;
+
+    store
+        .ledger()
+        .append_event(&make_test_provenance_event(0))
+        .await
+        .expect("append e0");
+    store
+        .ledger()
+        .append_event(&make_test_provenance_event(1))
+        .await
+        .expect("append e1");
+
+    // Load the first entry to get its raw_json
+    let entries = store.ledger().list_all().await.expect("load entries");
+    let mut first_entry: ferrum_ledger::LedgerEntry = entries.into_iter().next().unwrap();
+
+    // Tamper: change the entry_hash to a wrong value (this is what verify_chain checks)
+    first_entry.entry_hash = "wronghash________________________________".into();
+
+    // Write the tampered entry back to raw_json
+    let tampered_json = serde_json::to_string(&first_entry).expect("serialize tampered entry");
+    let pool = store.pool();
+    sqlx::query("UPDATE ledger_entries SET raw_json = ?1 WHERE entry_id = 1")
+        .bind(&tampered_json)
+        .execute(pool)
+        .await
+        .expect("tamper update should succeed");
+
+    let err = store
+        .verify_ledger_chain()
+        .await
+        .expect_err("tampered chain should fail verification");
+
+    assert!(
+        format!("{}", err).contains("ledger chain verification failed"),
+        "error should mention ledger chain verification: {}",
+        err
+    );
+}
+
+#[tokio::test]
+async fn verify_ledger_chain_reload_after_close_and_reconnect() {
+    // Test that a chain persists correctly and verifies after store reconnection
+    use ferrum_ledger::InMemoryLedger;
+
+    let (temp_dir, store1) = create_test_store().await;
+
+    // Build a chain using store1
+    let e0 = store1
+        .ledger()
+        .append_event(&make_test_provenance_event(0))
+        .await
+        .expect("append e0");
+    let e1 = store1
+        .ledger()
+        .append_event(&make_test_provenance_event(1))
+        .await
+        .expect("append e1");
+
+    // Drop store1 to release the DB lock
+    drop(store1);
+
+    // Reconnect to the same DB
+    let db_path = temp_dir.path().join("store.sqlite");
+    let database_url = format!("sqlite://{}", db_path.display());
+    let store2 = SqliteStore::connect(&database_url)
+        .await
+        .expect("reconnect to sqlite");
+
+    // Verify the chain on the reconnected store
+    store2
+        .verify_ledger_chain()
+        .await
+        .expect("chain should verify after reconnect");
+
+    // Also verify the entries match what we originally appended
+    let loaded: Vec<ferrum_ledger::LedgerEntry> =
+        store2.ledger().list_all().await.expect("list all entries");
+    assert_eq!(loaded.len(), 2);
+
+    let rebuilt = InMemoryLedger::load_entries(loaded.clone());
+    rebuilt
+        .verify_chain()
+        .expect("chain should be valid after roundtrip");
+
+    assert_eq!(loaded[0].entry_hash.as_str(), e0.entry_hash.as_str());
+    assert_eq!(loaded[1].entry_hash.as_str(), e1.entry_hash.as_str());
+}
+
+#[tokio::test]
+async fn verify_ledger_chain_detects_tampered_content_hash_column() {
+    // Test that tampering the content_hash column (without modifying raw_json)
+    // is detected by the column cross-check.
+    let (_temp_dir, store) = create_test_store().await;
+
+    store
+        .ledger()
+        .append_event(&make_test_provenance_event(0))
+        .await
+        .expect("append genesis");
+
+    // Tamper the content_hash column directly (simulates DB-level tamper)
+    let pool = store.pool();
+    sqlx::query("UPDATE ledger_entries SET content_hash = 'tampered_content_hash_______' WHERE entry_id = 1")
+        .execute(pool)
+        .await
+        .expect("tamper content_hash should succeed");
+
+    let err = store
+        .verify_ledger_chain()
+        .await
+        .expect_err("tampered content_hash should fail verification");
+
+    assert!(
+        format!("{}", err).contains("content_hash column"),
+        "error should mention content_hash column tamper: {}",
+        err
+    );
+}
+
+#[tokio::test]
+async fn verify_ledger_chain_detects_tampered_previous_ledger_hash_column() {
+    // Test that tampering the previous_ledger_hash column (without modifying raw_json)
+    // is detected by the column cross-check.
+    let (_temp_dir, store) = create_test_store().await;
+
+    let _e0 = store
+        .ledger()
+        .append_event(&make_test_provenance_event(0))
+        .await
+        .expect("append genesis");
+    store
+        .ledger()
+        .append_event(&make_test_provenance_event(1))
+        .await
+        .expect("append second");
+
+    // Tamper the previous_ledger_hash column of entry 2 to point to wrong hash
+    let pool = store.pool();
+    sqlx::query("UPDATE ledger_entries SET previous_ledger_hash = 'wrong_prev_hash_______________' WHERE entry_id = 2")
+        .execute(pool)
+        .await
+        .expect("tamper previous_ledger_hash should succeed");
+
+    // The tamper should be caught by the column cross-check
+    let err = store
+        .verify_ledger_chain()
+        .await
+        .expect_err("tampered previous_ledger_hash should fail verification");
+
+    assert!(
+        format!("{}", err).contains("previous_ledger_hash column"),
+        "error should mention previous_ledger_hash column tamper: {}",
+        err
+    );
+}
+
+#[tokio::test]
+async fn append_event_rejects_tampered_tip_content_hash() {
+    // Test that append_event verifies tip integrity before using tip hash as prev_hash.
+    // If the tip's content_hash column is tampered after verify_ledger_chain passes,
+    // the next append must reject the tampered tip rather than building a wrong chain.
+    let (_temp_dir, store) = create_test_store().await;
+
+    // Append genesis entry
+    store
+        .ledger()
+        .append_event(&make_test_provenance_event(0))
+        .await
+        .expect("append genesis");
+
+    // Tamper the tip's content_hash column directly (simulates live DB tamper)
+    let pool = store.pool();
+    sqlx::query("UPDATE ledger_entries SET content_hash = 'tampered_tip_content_hash____' WHERE entry_id = 1")
+        .execute(pool)
+        .await
+        .expect("tamper content_hash should succeed");
+
+    // Attempt to append another event - this must fail because the tip is invalid
+    let err = store
+        .ledger()
+        .append_event(&make_test_provenance_event(1))
+        .await
+        .expect_err("append with tampered tip should fail");
+
+    assert!(
+        format!("{}", err).contains("append rejected: tip content_hash"),
+        "error should mention append rejected and tip content_hash: {}",
+        err
     );
 }

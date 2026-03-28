@@ -37,7 +37,8 @@
 | `POST /v1/approvals/{approval_id}/resolve` | Approve or deny a pending approval; also available as `ferrumctl server resolve-approval` |
 | `GET /v1/provenance/lineage/{execution_id}` | Inspect the execution lineage chain |
 | `GET /v1/provenance/events/{event_id}` | Inspect a single provenance event, optionally with `?ancestry=true` and/or `?descendants=true` |
-| `POST /v1/provenance/query` | Query provenance events by `intent_id`, `proposal_id`, `execution_id`, `capability_id`, `event_kind`, time window, or `terminal_only` |
+| `POST /v1/provenance/query` | Query provenance events by `intent_id`, `proposal_id`, `execution_id`, `capability_id`, `event_kind`, time window, or `terminal_only`. Supports cursor-based pagination via `limit` (default 100, max 1000) and `cursor` (keyset on `occurred_at, event_id`). Response includes `next_cursor` for advance. |
+| `POST /v1/provenance/lineage` | Multi-hop provenance lineage traversal from a seed event_id using BFS. Fields: `execution_id` (required), `event_id` (required), `ancestry` (default true), `descendants` (default false), `max_hops` (default 8, hard-capped at 32). Execution fence: all traversed events with `execution_id=Some(x)` must match request.execution_id. Returns 400 if both ancestry and descendants are false. |
 | `POST /v1/provenance/events/external` | Ingest an externally-observed runtime event into the provenance lineage (fail-closed: execution_id and parent_event_id must exist and belong to the same execution). Also available as `ferrumctl server ingest-external-event`. |
 
 ## `ferrumctl` lineage and provenance inspection

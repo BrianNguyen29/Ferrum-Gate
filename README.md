@@ -35,11 +35,16 @@ Supported SQLite-backed flow hien tai da co evidence cho:
 - firewall MVP co trust/taint/sanitize/DLP va execution-time enforcement cho `File`/`Http`/`Sqlite`/`Git`/`EmailDraft`
 - adapter-backed recovery evidence cho filesystem, sqlite, maildraft, git, va HTTP full-parity execute/verify
 - docs/release/troubleshooting handoff cho supported flow hien tai
+- ferrum-sync crate (Sync-3a read-only transport probe) cho cross-node ledger sync diagnostics
 
-Repo van con open gaps, nhung chu yeu nam o tang hardening va nang cap tiep theo thay vi core flow MVP:
-- generic provenance query/replay/graph tooling rong hon
-- operator/runtime hardening cho non-loopback production-style rollout
-- runtime integrations ben ngoai ma khong lam ro ri vendor vao core crates
+Repo van con open gaps, nhung chu yeu nam o nhung muc ngoai supported single-node flow:
+- generic provenance query/replay/graph tooling rong hon (P2 backlog)
+- observability baseline: structured logging + Prometheus metrics (P1 backlog)
+- TLS termination: external terminator required; in-process TLS not planned
+- cross-node ledger sync: Sync-3a probe done, write-path/consensus not started (P2)
+- HA/multi-node control-plane: not planned
+
+Xem `docs/implementation-path/23-production-readiness-assessment.md` de biet chi tiet.
 
 ## Core crates da co implementation y nghia
 - `ferrum-proto`
@@ -49,6 +54,7 @@ Repo van con open gaps, nhung chu yeu nam o tang hardening va nang cap tiep theo
 - `ferrum-firewall`
 - `ferrum-rollback`
 - `ferrum-gateway`
+- `ferrum-sync` (Sync-3a read-only transport probe)
 - `ferrumctl`
 - adapter crates cho `fs`, `sqlite`, `maildraft`, `git`, `http`
 

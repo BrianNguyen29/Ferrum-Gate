@@ -51,6 +51,7 @@ Repo-shipped examples:
 - `auth.mode = "disabled"` is intended for loopback-only local development.
 - all non-health routes require `Authorization: Bearer <token>` when `auth.mode = "bearer"`.
 - `/v1/healthz` and `/v1/readyz` remain unauthenticated for liveness/readiness checks.
+- `/metrics` is auth-protected like other non-health routes (returns 401 without a valid bearer token).
 - fail-closed startup guard: non-loopback bind with auth disabled is rejected unless `allow_insecure_nonlocal = true` is set explicitly.
 - there is still **no in-process TLS**; if the control plane leaves loopback, terminate TLS and restrict network exposure at an external proxy/load balancer.
 
@@ -82,9 +83,32 @@ cargo run -p ferrumd -- --check-startup-guard
 - `cargo run -p ferrumd -- --check-startup-guard` is the fastest preflight when operators want to confirm non-loopback/auth settings before rollout.
 - `cargo run -p ferrumctl -- server ready` hits `/v1/readyz` for a lightweight readiness check after startup.
 - `cargo run -p ferrumctl -- server inspect-provenance --execution-id <id> --terminal-only` returns only terminal provenance events for a governed execution.
+- `cargo run -p ferrumctl -- server inspect-provenance --limit <n>` limits results per page (server default is 100, max 1000).
+- `cargo run -p ferrumctl -- server inspect-provenance --cursor <token>` resumes from a previous page's `next_cursor`.
+- `cargo run -p ferrumctl -- server inspect-provenance --all-pages` exports all events across all pages as JSONL (newline-delimited JSON), one event per line. Follows cursors automatically until exhaustion.
+- `cargo run -p ferrumctl -- server inspect-provenance-stats` aggregates provenance statistics and runs consistency checks over queried events. Use `--max-events <n>` to bound collection (default 10000, max 100000). Use `--json` for JSON output.
 - `cargo run -p ferrumctl -- server inspect-event <event_id> [--ancestry] [--descendants]` inspects a single provenance event, optionally including its ancestor chain and/or descendant chain.
 - `cargo run -p ferrumctl -- server inspect-lineage <id> --format dot --output <path>` exports the event lineage as a Graphviz DOT file for visualization.
 - `POST /v1/provenance/events/external` is the first P3 runtime boundary: it records a vendor-neutral externally observed event against an existing execution lineage and fails closed if the execution or parent event is missing/mismatched. Available as `ferrumctl server ingest-external-event`.
+- For full provenance audit workflows including compliance evidence export, see the [Provenance Audit Runbook](runbooks/provenance-audit-runbook.md).
+
+## Execution control
+
+Operators can request compensation or rollback via the control API while an execution is still in a non-terminal state. Both operations require the execution to have a rollback contract and will fail if the execution is already in a terminal state (Compensated, RolledBack, Denied, Failed, Quarantined). Committed state is accepted since it allows post-commit undo.
+
+**Compensate an execution:**
+```
+POST /v1/executions/{execution_id}/compensate
+```
+Available as `ferrumctl server compensate-execution <execution_id> [--json]`.
+
+**Rollback an execution:**
+```
+POST /v1/executions/{execution_id}/rollback
+```
+Available as `ferrumctl server rollback-execution <execution_id> [--json]`.
+
+Both commands require explicit `execution_id` and return immediately on acknowledgment. Use `ferrumctl server watch-execution <execution_id>` to monitor state transitions until a terminal state is reached.
 
 ## Operations checklist
 - policy bundle đúng environment
@@ -125,32 +149,43 @@ Combined filters: when both `proposal_id` and `execution_id` are provided, both 
 POST /v1/approvals/{approval_id}/resolve
 {"actor": {...}, "approve": true, "reason": "..."}
 ```
-Granting (approve=true) consumes the capability and transitions the execution to `Authorized`. Denying (approve=false) transitions the execution to `Denied` and does NOT consume the capability.
+Granting (approve=true) consumes the capability and advances the execution to Prepared. Denying (approve=false) transitions the execution to terminal Denied state and does NOT consume the capability.
 
 Pending approvals expire after 15 minutes (expires_at). Expired approvals must be re-created by re-authorizing the execution.
 
-**CLI examples:**
-
+**CLI equivalents (ferrumctl):**
 ```sh
-# List pending approvals (most recent first)
-cargo run -p ferrumctl -- server inspect-approvals
+# List pending approvals for a proposal
+ferrumctl server inspect-approvals --proposal-id UUID --limit 10
 
-# Limit to 10, use cursor for pagination
-cargo run -p ferrumctl -- server inspect-approvals --limit 10
+# Bulk-approve (confirm-gated: --yes + --expect-count must match actual count)
+ferrumctl server resolve-approval-bulk \
+  --proposal-id UUID \
+  --limit 10 \
+  --yes \
+  --expect-count 3 \
+  --approve
 
-# Filter by proposal or execution
-cargo run -p ferrumctl -- server inspect-approvals --proposal-id <uuid>
-cargo run -p ferrumctl -- server inspect-approvals --execution-id <uuid>
-
-# Resolve (approve) a pending approval
-cargo run -p ferrumctl -- server resolve-approval <approval_id> \
-  --approve --actor-id operator1 --actor-type Operator \
-  --reason "approved after security review"
-
-# Resolve (deny) a pending approval
-cargo run -p ferrumctl -- server resolve-approval <approval_id> \
-  --actor-id operator1 --actor-type Operator \
-  --reason "outside policy scope"
+# Bulk-deny with reason
+ferrumctl server resolve-approval-bulk \
+  --execution-id UUID \
+  --limit 5 \
+  --yes \
+  --expect-count 2 \
+  --deny \
+  --reason "Not authorized for this execution"
 ```
+Bulk mode requires at least one scope filter (`--proposal-id` or `--execution-id`), an explicit `--limit`, and explicit confirmation (`--yes` + `--expect-count`).
 
-For a step-by-step operator procedure, see `docs/runbooks/ops-approval-workflow-runbook.md`.
+**Watch pending approvals continuously:**
+```sh
+# Poll every 5 seconds (default), single iteration — useful in scripts/terminal loops
+ferrumctl server watch-approvals --iterations 1
+
+# Stream approvals, 2-second poll interval, JSON per iteration (for jq processing)
+ferrumctl server watch-approvals --poll-interval-ms 2000 --json
+
+# Watch approvals for a specific execution
+ferrumctl server watch-approvals --execution-id UUID --iterations 1
+```
+The `--iterations` flag bounds the watch loop (defaults to 1 for a single shot). Omit it for a continuous watch in long-running operator workflows.
