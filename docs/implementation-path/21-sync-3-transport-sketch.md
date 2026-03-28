@@ -11,9 +11,10 @@ discovery, or write-path implementation.
 
 ## Status
 
-**This is Sync-3 (read-only transport sketch / leader-tip retrieval /
-proof retrieval / fail-closed error mapping) work only.** No sync
-implementation exists or is planned in this slice.
+**Sync-3 transport/probe pieces are partially implemented.** This slice
+covers the transport sketch + error mapping design. Implementation exists
+for the read-only probe and cache path; write/apply path, retry/backoff,
+consensus, and two-way merge remain out of scope.
 
 PF3/PF8 transport-boundary helpers (`PreflightTransportInput`,
 `PreflightTransportFlags`) are implemented in `crates/ferrum-sync/src/transport.rs`.
@@ -21,8 +22,21 @@ These are pure, transport-independent helpers that convert leader address and
 cached tip into PF3/PF8 booleans (fail-closed on empty/unknown address, fail-closed
 on missing cached tip).
 
-The actual transport probe to populate the leader tip cache remains
-Sync-3 implementation territory (not yet implemented).
+The real HTTP transport (`HttpLeaderTransport`) is implemented in
+`crates/ferrum-sync/src/http_transport.rs` using `reqwest`. It communicates with
+leader nodes over HTTP/JSON and maps all transport errors to Sync-1 abort codes
+per the fail-closed table.
+
+The real probe-to-cache orchestration path (`probe_and_cache_leader_tip`) is
+implemented in `crates/ferrum-store/src/sync_service.rs`. It performs:
+1. PF4 authorization check via SQLite allowlist
+2. HTTP probe via `HttpLeaderTransport` + `ProbeFacade`
+3. Cache write only on full probe success
+
+Still deferred:
+- Retry/backoff on transient probe failure
+- Write/apply path
+- Consensus, two-way merge, peer discovery
 
 Successor to Sync-2 (read-only preflight + diff classifier). Write-path
 implementation, consensus, and peer discovery are not in scope.
@@ -308,6 +322,10 @@ are not in scope for Sync-3a.
 | `crates/ferrum-ledger/src/lib.rs:260` | `verify_chain` — full chain verification |
 | `crates/ferrum-store/src/repos.rs:162` | `LedgerRepo` trait boundary |
 | `crates/ferrum-store/src/sqlite/ledger.rs:188` | SQLite ledger append path |
+| `crates/ferrum-sync/src/http_transport.rs` | Real HTTP/JSON transport (`HttpLeaderTransport`) |
+| `crates/ferrum-store/src/sync_service.rs` | Probe-to-cache orchestration (`probe_and_cache_leader_tip`) |
+| `crates/ferrum-store/src/sqlite/leader_tip_cache.rs` | PF8 leader tip cache (SQLite-backed) |
+| `crates/ferrum-store/src/sqlite/leader_allowlist.rs` | PF4 leader allowlist (SQLite-backed) |
 | `docs/implementation-path/18-cross-node-ledger-sync-plan.md` | Sync-0 safety contract (predecessor) |
 | `docs/implementation-path/19-sync-1-protocol-sketch.md` | Sync-1 protocol sketch (predecessor) |
 | `docs/implementation-path/20-sync-2-read-only-preflight-diff-classifier.md` | Sync-2 read-only preflight (predecessor) |

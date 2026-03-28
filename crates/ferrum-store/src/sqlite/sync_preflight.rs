@@ -19,10 +19,11 @@
 //!   leader address, `Ok(None)` if no tip is known. Returns `Err` only on database
 //!   errors (fail-closed: a DB error is treated as tip unavailable, not "tip unknown").
 //!
-//! ## What Is Unsupported (Returns Explicit Err)
-//!
-//! - **`is_leader_authorized()`** (PF4): No capability or authorization model exists
-//!   for sync leader identity. Returns `Err(SyncRepoError::InternalError)`.
+//! - **`is_leader_authorized()`** (PF4): Queries the `leader_allowlist` table
+//!   (migration 004). Returns `Ok(true)` if the leader is in the allowlist with
+//!   `authorized=1`, `Ok(false)` if not in the allowlist (deny-by-default).
+//!   Returns `Err` only on database errors (fail-closed: a DB error is treated as
+//!   unauthorized, not as an error).
 //!
 //! ## Implementation Note: Sync Trait + Async Store
 //!
@@ -44,7 +45,8 @@ use sqlx::Row;
 
 use crate::repos::LedgerRepo;
 use crate::sqlite::SqliteStore;
-use crate::sqlite::leader_tip_cache::LeaderTipCache;
+use crate::sqlite::leader_allowlist::LeaderAllowlist;
+use crate::sqlite::leader_tip_cache::{CacheWriteError, LeaderTipCache};
 
 /// Convert a `LedgerEntry` to a `TipId`.
 fn ledger_entry_to_tip(entry: &LedgerEntry) -> TipId {
@@ -61,6 +63,7 @@ fn ledger_entry_to_tip(entry: &LedgerEntry) -> TipId {
 pub struct SqliteSyncPreflightRepo {
     store: SqliteStore,
     leader_tip_cache: LeaderTipCache,
+    leader_allowlist: LeaderAllowlist,
 }
 
 impl SqliteSyncPreflightRepo {
@@ -71,6 +74,7 @@ impl SqliteSyncPreflightRepo {
     pub fn new(store: SqliteStore) -> Self {
         Self {
             leader_tip_cache: LeaderTipCache::new(store.pool().clone()),
+            leader_allowlist: LeaderAllowlist::new(store.pool().clone()),
             store,
         }
     }
@@ -187,7 +191,7 @@ impl SqliteSyncPreflightRepo {
         &self,
         leader_address: &str,
         tip: &TipId,
-    ) -> Result<(), sqlx::Error> {
+    ) -> Result<(), CacheWriteError> {
         self.leader_tip_cache.write(leader_address, tip).await
     }
 
@@ -199,6 +203,58 @@ impl SqliteSyncPreflightRepo {
         leader_address: &str,
     ) -> Result<(), sqlx::Error> {
         self.leader_tip_cache.delete(leader_address).await
+    }
+
+    /// Access the leader tip cache for direct cache operations.
+    ///
+    /// This is exposed so that `sync_service` can call `write()` after a
+    /// successful probe without going through the full `SqliteSyncPreflightRepo`
+    /// construction path.
+    pub fn leader_tip_cache(&self) -> &LeaderTipCache {
+        &self.leader_tip_cache
+    }
+
+    /// Internal async implementation of `is_leader_authorized` (PF4).
+    ///
+    /// Reads from the `leader_allowlist` table (migration 004).
+    /// Returns `Ok(true)` if the leader is in the allowlist with `authorized=1`,
+    /// `Ok(false)` if the leader is not in the allowlist (deny-by-default).
+    /// Returns `Err` on database errors (fail-closed).
+    ///
+    /// Exposed for direct testing without needing a multi-threaded runtime.
+    /// Production callers should use the sync trait method.
+    pub async fn is_leader_authorized_async(
+        &self,
+        leader_address: &str,
+    ) -> Result<bool, SyncRepoError> {
+        self.leader_allowlist
+            .is_authorized(leader_address)
+            .await
+            .map_err(|e| SyncRepoError::InternalError {
+                reason: format!("leader_allowlist query failed: {}", e),
+            })
+    }
+
+    /// Authorize a leader address in the allowlist (for test scenarios).
+    ///
+    /// This is a narrow, test-only helper that wraps `LeaderAllowlist::authorize`.
+    /// In tests, call this to seed the allowlist before running preflight checks.
+    /// (The production transport adapter path is a future slice.)
+    pub async fn authorize_leader_test_only(
+        &self,
+        leader_address: &str,
+    ) -> Result<(), sqlx::Error> {
+        self.leader_allowlist.authorize(leader_address).await
+    }
+
+    /// Remove a leader from the allowlist (for test scenarios).
+    ///
+    /// This is a narrow, test-only helper that wraps `LeaderAllowlist::deauthorize`.
+    pub async fn deauthorize_leader_test_only(
+        &self,
+        leader_address: &str,
+    ) -> Result<(), sqlx::Error> {
+        self.leader_allowlist.deauthorize(leader_address).await
     }
 }
 
@@ -224,14 +280,12 @@ impl SyncPreflightRepo for SqliteSyncPreflightRepo {
         })
     }
 
-    fn is_leader_authorized(&self, _leader_identity: &str) -> Result<bool, SyncRepoError> {
-        // UNSUPPORTED: No capability model or authorization table exists for
-        // sync leader identity. The `capabilities` table in the current schema
-        // tracks tool-use capabilities, not sync leader authorization.
-        Err(SyncRepoError::InternalError {
-            reason: "is_leader_authorized unsupported: no capability model or \
-                     authorization table for sync leader identity in current schema."
-                .to_string(),
+    fn is_leader_authorized(&self, leader_address: &str) -> Result<bool, SyncRepoError> {
+        // Bridge sync trait -> async store using block_in_place.
+        // Requires a multi-threaded Tokio runtime (not single-threaded test).
+        tokio::task::block_in_place(|| {
+            let rt = tokio::runtime::Handle::current();
+            rt.block_on(self.is_leader_authorized_async(leader_address))
         })
     }
 
@@ -488,18 +542,122 @@ mod tests {
     }
 
     // =========================================================================
-    // Unsupported methods — fail-closed (sync methods, no runtime needed)
+    // is_leader_authorized — real backend via async helper (PF4 allowlist)
+    // =========================================================================
+
+    #[tokio::test]
+    async fn is_leader_authorized_async_returns_false_for_unknown_leader() {
+        // Deny-by-default: unknown leader => Ok(false), not Err
+        let store = make_store().await;
+        let repo = SqliteSyncPreflightRepo::new(store);
+        let result = repo.is_leader_authorized_async("unknown-leader").await;
+        assert!(
+            result.is_ok(),
+            "is_leader_authorized_async must not return Err for unknown leader"
+        );
+        assert!(!result.unwrap(), "unknown leader must be denied (false)");
+    }
+
+    #[tokio::test]
+    async fn is_leader_authorized_async_returns_true_for_authorized_leader() {
+        let store = make_store().await;
+        let repo = SqliteSyncPreflightRepo::new(store);
+
+        // Authorize a leader via test helper
+        repo.authorize_leader_test_only("leader:9000")
+            .await
+            .expect("authorize_leader");
+
+        let result = repo.is_leader_authorized_async("leader:9000").await;
+        assert!(result.is_ok());
+        assert!(result.unwrap(), "authorized leader must return true");
+    }
+
+    #[tokio::test]
+    async fn is_leader_authorized_async_returns_false_for_deauthorized_leader() {
+        let store = make_store().await;
+        let repo = SqliteSyncPreflightRepo::new(store);
+
+        // Authorize then deauthorize
+        repo.authorize_leader_test_only("leader:9000")
+            .await
+            .expect("authorize_leader");
+        repo.deauthorize_leader_test_only("leader:9000")
+            .await
+            .expect("deauthorize_leader");
+
+        let result = repo.is_leader_authorized_async("leader:9000").await;
+        assert!(result.is_ok());
+        assert!(!result.unwrap(), "deauthorized leader must return false");
+    }
+
+    #[tokio::test]
+    async fn is_leader_authorized_async_returns_false_for_explicitly_unauthorized_entry() {
+        // Even if the leader exists in the table with authorized=0
+        let store = make_store().await;
+        let pool = store.pool().clone();
+        let repo = SqliteSyncPreflightRepo::new(store);
+
+        // Manually insert a row with authorized=0 via raw SQL
+        sqlx::query(
+            "INSERT OR REPLACE INTO leader_allowlist (leader_address, authorized, added_at) VALUES (?, 0, ?)",
+        )
+        .bind("leader:9000")
+        .bind(chrono::Utc::now().to_rfc3339())
+        .execute(&pool)
+        .await
+        .expect("manual insert");
+
+        let result = repo.is_leader_authorized_async("leader:9000").await;
+        assert!(result.is_ok());
+        assert!(
+            !result.unwrap(),
+            "explicitly unauthorized (authorized=0) leader must return false"
+        );
+    }
+
+    // =========================================================================
+    // is_leader_authorized — sync method (uses block_in_place, needs multi-threaded rt)
     // =========================================================================
 
     #[test]
-    fn is_leader_authorized_returns_unsupported_err() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let store = rt.block_on(make_store());
-        let repo = SqliteSyncPreflightRepo::new(store);
-        let result = repo.is_leader_authorized("some-leader");
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(format!("{err}").contains("unsupported"));
+    fn is_leader_authorized_sync_returns_false_for_unknown_leader() {
+        // Uses block_in_place so needs multi-threaded runtime
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let store = make_store().await;
+            let repo = SqliteSyncPreflightRepo::new(store);
+            // Deny-by-default: unknown leader => Ok(false)
+            let result = repo.is_leader_authorized("unknown-leader");
+            assert!(
+                result.is_ok(),
+                "is_leader_authorized must not return Err for unknown leader"
+            );
+            assert!(!result.unwrap(), "unknown leader must be denied");
+        });
+    }
+
+    #[test]
+    fn is_leader_authorized_sync_returns_true_for_authorized_leader() {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let store = make_store().await;
+            let repo = SqliteSyncPreflightRepo::new(store);
+
+            repo.authorize_leader_test_only("leader:9000")
+                .await
+                .expect("authorize_leader");
+
+            let result = repo.is_leader_authorized("leader:9000");
+            assert!(result.is_ok());
+            assert!(result.unwrap(), "authorized leader must return true");
+        });
     }
 
     #[test]
@@ -571,6 +729,11 @@ mod tests {
             let store = make_store().await;
             let repo = SqliteSyncPreflightRepo::new(store);
 
+            // Authorize the leader for PF4
+            repo.authorize_leader_test_only("leader-1")
+                .await
+                .expect("authorize_leader");
+
             // Verify chain passes
             let chain_ok = repo.verify_local_chain_async().await.is_ok();
             assert!(chain_ok, "chain should verify ok on clean ledger");
@@ -585,6 +748,11 @@ mod tests {
                 "clean state should pass local checks"
             );
 
+            // PF4: authorized leader
+            let leader_authorized = repo
+                .is_leader_authorized("leader-1")
+                .expect("is_leader_authorized");
+
             // Cache a leader tip so PF8 passes
             let leader_tip = TipId {
                 sequence: 10,
@@ -593,9 +761,6 @@ mod tests {
             repo.write_leader_tip_test_only("leader-1", &leader_tip)
                 .await
                 .expect("write_leader_tip");
-
-            // PF4 is unsupported (returns Err); bypass with true for this test
-            let leader_authorized = true;
 
             // PF8: cached tip available -> true
             let leader_tip_result = repo.read_leader_tip("leader-1");
@@ -614,7 +779,7 @@ mod tests {
             assert_eq!(
                 result,
                 PreflightResult::Pass,
-                "All preflight checks should pass with clean state and cached leader tip"
+                "All preflight checks should pass with clean state, authorized leader, and cached tip"
             );
         });
     }
@@ -634,6 +799,11 @@ mod tests {
             let store = make_store().await;
             let repo = SqliteSyncPreflightRepo::new(store);
 
+            // Authorize the leader for PF4
+            repo.authorize_leader_test_only("leader-1")
+                .await
+                .expect("authorize_leader");
+
             // Set PF2 flag to true (in-flight commits exist)
             repo.set_sync_flags_test_only(true, false, false)
                 .await
@@ -645,6 +815,11 @@ mod tests {
                 .await
                 .expect("read_local_state");
             assert!(local_state.has_inflight_commits, "PF2 flag should be set");
+
+            // PF4: authorized leader
+            let leader_authorized = repo
+                .is_leader_authorized("leader-1")
+                .expect("is_leader_authorized");
 
             // Cache a leader tip so PF8 passes
             let leader_tip = TipId {
@@ -664,7 +839,7 @@ mod tests {
                 &local_state,
                 chain_ok,
                 true,
-                true, // leader_authorized bypassed
+                leader_authorized,
                 leader_tip_available,
             );
 
@@ -692,6 +867,11 @@ mod tests {
             let store = make_store().await;
             let repo = SqliteSyncPreflightRepo::new(store);
 
+            // Authorize the leader for PF4
+            repo.authorize_leader_test_only("leader-1")
+                .await
+                .expect("authorize_leader");
+
             // Set PF6 flag to true (uncommitted entries exist)
             repo.set_sync_flags_test_only(false, true, false)
                 .await
@@ -706,6 +886,11 @@ mod tests {
                 local_state.has_uncommitted_entries,
                 "PF6 flag should be set"
             );
+
+            // PF4: authorized leader
+            let leader_authorized = repo
+                .is_leader_authorized("leader-1")
+                .expect("is_leader_authorized");
 
             // Cache a leader tip so PF8 passes
             let leader_tip = TipId {
@@ -725,7 +910,7 @@ mod tests {
                 &local_state,
                 chain_ok,
                 true,
-                true, // leader_authorized bypassed
+                leader_authorized,
                 leader_tip_available,
             );
 
@@ -753,6 +938,11 @@ mod tests {
             let store = make_store().await;
             let repo = SqliteSyncPreflightRepo::new(store);
 
+            // Authorize the leader for PF4
+            repo.authorize_leader_test_only("leader-1")
+                .await
+                .expect("authorize_leader");
+
             // Set PF7 flag to true (sync in progress)
             repo.set_sync_flags_test_only(false, false, true)
                 .await
@@ -764,6 +954,11 @@ mod tests {
                 .await
                 .expect("read_local_state");
             assert!(local_state.sync_in_progress, "PF7 flag should be set");
+
+            // PF4: authorized leader
+            let leader_authorized = repo
+                .is_leader_authorized("leader-1")
+                .expect("is_leader_authorized");
 
             // Cache a leader tip so PF8 passes
             let leader_tip = TipId {
@@ -783,7 +978,7 @@ mod tests {
                 &local_state,
                 chain_ok,
                 true,
-                true, // leader_authorized bypassed
+                leader_authorized,
                 leader_tip_available,
             );
 
@@ -792,6 +987,73 @@ mod tests {
                 result,
                 PreflightResult::Fail(PreflightCheckCode::PF7),
                 "PF7 should fail when sync_in_progress is true"
+            );
+        });
+    }
+
+    #[test]
+    fn full_preflight_pf4_fails_when_leader_not_authorized() {
+        use ferrum_sync::decision::TipId;
+        use ferrum_sync::preflight::{
+            PreflightCheckCode, PreflightResult, build_preflight_input, run_preflight,
+        };
+
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let store = make_store().await;
+            let repo = SqliteSyncPreflightRepo::new(store);
+
+            // Do NOT authorize the leader; deny-by-default => PF4 fails
+
+            let chain_ok = repo.verify_local_chain_async().await.is_ok();
+            let local_state = repo
+                .read_local_state_async()
+                .await
+                .expect("read_local_state");
+            assert!(
+                local_state.is_local_state_clean(),
+                "local state should be clean"
+            );
+
+            // PF4: leader NOT authorized (deny-by-default)
+            let leader_authorized = repo
+                .is_leader_authorized("leader-1")
+                .expect("is_leader_authorized");
+            assert!(
+                !leader_authorized,
+                "leader should NOT be authorized by default"
+            );
+
+            // Cache a leader tip so PF8 passes
+            let leader_tip = TipId {
+                sequence: 10,
+                hash: "leaderhash".to_string(),
+            };
+            repo.write_leader_tip_test_only("leader-1", &leader_tip)
+                .await
+                .expect("write_leader_tip");
+
+            let leader_tip_available = repo
+                .read_leader_tip("leader-1")
+                .expect("read_leader_tip")
+                .is_some();
+
+            let input = build_preflight_input(
+                &local_state,
+                chain_ok,
+                true,
+                leader_authorized,
+                leader_tip_available,
+            );
+
+            let result = run_preflight(&input);
+            assert_eq!(
+                result,
+                PreflightResult::Fail(PreflightCheckCode::PF4),
+                "PF4 should fail when leader is not authorized"
             );
         });
     }

@@ -56,6 +56,14 @@ pub mod proof;
 pub mod repo;
 pub mod transport;
 
+// NOTE: http_transport is excluded from the main re-exports above to keep
+// the public API surface aligned with the facade boundary: only types that
+// appear in ProbeFacadeResponse (LeaderTip) are re-exported at crate root.
+// All other transport DTOs and implementations remain internal.
+// The http_transport module IS available for production use; downstream code
+// that needs the HTTP transport explicitly imports crate::http_transport.
+pub mod http_transport;
+
 pub use decision::{DecisionInput, Sync1Decision, TipId, decide};
 pub use error::{ProbeError, Sync1AbortCode, map_transport_error_to_abort};
 pub use facade::{

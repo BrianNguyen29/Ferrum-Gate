@@ -28,7 +28,9 @@ Concrete implementations exist:
   `verify_local_chain()`; supports PF8 via `read_leader_tip()` backed by
   the `leader_tips` cache table (migration 002); supports PF2/PF6/PF7
   via `read_local_state()` backed by the `sync_state` table (migration 003).
-  PF4 (capability model) remains unsupported (fail-closed Err).
+  PF4 is implemented via `is_leader_authorized()` backed by the
+  `leader_allowlist` table (migration 004) with deny-by-default semantics
+  (missing entry => Ok(false), DB error => Err).
 
 A pure adapter `build_preflight_input()` in `preflight.rs` bridges
 `LocalPreflightState` + externally supplied flags into `PreflightInput`.
@@ -40,9 +42,16 @@ fail-closed on empty/unknown leader address.
 
 PF2/PF6/PF7 state is now backed by the `sync_state` table (migration 003).
 PF8 (leader tip available) is backed by the `leader_tips` cache table.
+PF4 (leader authorization) is backed by the `leader_allowlist` table
+(migration 004) with deny-by-default semantics.
 
-What remains deferred: actual transport probe to populate the PF8 cache
-(Sync-3 territory) and PF4 (capability model enforcement).
+PF8 cache population is implemented via the real probe-to-cache path
+(`probe_and_cache_leader_tip` in `ferrum-store/src/sync_service.rs`),
+which performs PF4 authorization check + HTTP probe + cache write
+(Sync-3a territory).
+
+What remains deferred: retry/backoff on transient probe failure,
+write/apply path, consensus, and two-way merge.
 
 Successor to Sync-1 (one-way fast-forward protocol sketch). Transport,
 consensus, and write-path implementation are not in scope.
