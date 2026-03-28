@@ -1,5 +1,10 @@
 # 17 — Troubleshooting
 
+**Single-node deployment only.** FerrumGate v1 is scoped to single-node
+deployment. Multi-node sync, HA, and consensus are post-v1 non-goals.
+See `docs/implementation-path/23-production-readiness-assessment.md`
+Section 4 for the v1 scope-freeze list.
+
 ## Agent bị deny
 Kiểm tra:
 - scope mismatch

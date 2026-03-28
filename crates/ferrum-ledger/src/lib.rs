@@ -238,9 +238,9 @@ pub fn verify_entry(
                 actual: entry.prev_hash.clone().unwrap_or_default(),
             });
         }
-        if expected_prev_hash.is_some() {
+        if let Some(val) = expected_prev_hash {
             return Err(LedgerError::BrokenChain {
-                expected: expected_prev_hash.unwrap().to_string(),
+                expected: val.to_string(),
                 actual: "None (genesis)".to_string(),
             });
         }

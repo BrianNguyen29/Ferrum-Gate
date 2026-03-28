@@ -6,18 +6,27 @@ This document assesses FerrumGate's current production-readiness posture and
 provides a phased plan for closing the remaining gaps. Claims are grounded in
 current repo state only.
 
+**v1 Scope Freeze — Single-Node Only.** FerrumGate v1 is explicitly scoped to
+single-node deployment. Multi-node sync (write-path, two-way merge, consensus),
+HA/multi-leader, distributed trace context, in-process TLS, and alerting rules
+are all post-v1 non-goals. See Section 5 for the complete v1 scope-freeze list.
+
 **Supported single-node flow has solid automated-test evidence.** The SQLite-backed
 gateway flow, firewall enforcement, adapter-backed recovery, and provenance chain
 have passing integration tests. With the P1 observability baseline and TLS
 ingress runbook in place, the posture is best described as **pilot-ready /
 single-node production-candidate** rather than broadly production-ready.
 
-**Broader production posture (HA, multi-node sync, observability) remains
-incomplete.** The gaps below are honestly documented.
+**Broader production posture (HA, multi-node sync, advanced observability)
+remains incomplete.** The gaps below are honestly documented.
 
 ---
 
-## 1. What Is Supported for Single-Node v1
+## 1. What Is Supported for Single-Node v1 (v1 Scope Freeze)
+
+**v1 closure target is single-node only.** The items in Section 1 constitute
+the complete v1 supported surface. Section 2 items are out of scope for v1
+and are not blockers for v1 RC sign-off.
 
 The following have automated-test evidence. They represent the supported
 single-node v1 surface. They do not constitute a broadly production-ready or
@@ -233,7 +242,28 @@ Only after Phase P2 is complete:
 
 ---
 
-## 4. Honest Assessment Summary
+## 4. v1 Scope Freeze — Post-v1 Non-Goals
+
+The following are **explicitly out of scope for v1** and are not blockers for
+v1 RC sign-off:
+
+| Item | Status | Notes |
+|------|--------|-------|
+| Multi-node sync write-path | Post-v1 (P3) | Sync-3a probe done; apply/write-path, two-way merge not started |
+| Two-way merge | Post-v1 | Not designed |
+| Consensus / leader election | Post-v1 | Requires Raft or equivalent; not designed |
+| HA / multi-leader | Post-v1 (P2 analysis) | SQLite read-replica analysis TODO; leader election not designed |
+| In-process TLS termination | Post-v1 | External terminator (nginx/cloud LB) required; documented in runbook |
+| Distributed trace context (W3C TraceContext) | Post-v1 (P2) | Single-node; not needed for v1 |
+| Alerting rules | Post-v1 (P2) | Exploratory/analysis only |
+| Generic provenance replay/fabric tooling | Post-v1 (P2) | Core query surface DONE; advanced replay tooling P2 backlog |
+
+**Bottom line:** v1 closure = single-node only. All items above are P2/P3
+post-v1 work and do not block the single-node RC evidence pass.
+
+---
+
+## 5. Honest Assessment Summary
 
 | Dimension | Status | Notes |
 |-----------|--------|-------|
@@ -254,7 +284,19 @@ deny) are confirmed design decisions, not open defects.
 
 ---
 
-## 5. Key Source Links
+## 5b. v1 Closure Decision
+
+**Single-node v1 is ready to close.** All RC evidence gates are green:
+clippy passes, tests pass, startup guard passes, smoke server responds correctly,
+readiness endpoint returns 200, metrics endpoint enforces auth correctly, and
+SQLite backup/integrity checks pass. Post-v1 items (multi-node sync write-path,
+HA/multi-leader, in-process TLS, distributed trace context, alerting rules,
+generic provenance replay fabric) are explicitly out of scope and do not block
+v1 RC sign-off.
+
+---
+
+## 6. Key Source Links
 
 | Topic | Source |
 |-------|--------|

@@ -907,7 +907,7 @@ impl<'a> SyncSessionGuard<'a> {
     /// deterministic cleanup should propagate this error rather than ignoring it.
     /// The session flag may remain stuck until manually cleared via
     /// `SqliteSyncPreflightRepo::set_sync_in_progress_test_only()`.
-    pub async fn release(mut self: Self) -> Result<(), ferrum_sync::repo::SyncRepoError> {
+    pub async fn release(mut self) -> Result<(), ferrum_sync::repo::SyncRepoError> {
         if !self.held {
             return Ok(());
         }

@@ -143,7 +143,7 @@ impl ProvenanceRepo for SqliteProvenanceRepo {
         &self,
         request: &ProvenanceQueryRequest,
     ) -> Result<(Vec<ProvenanceEvent>, Option<String>)> {
-        let limit = request.limit.unwrap_or(100).min(1000).max(1);
+        let limit = request.limit.unwrap_or(100).clamp(1, 1000);
 
         // Build dynamic WHERE clause using positional params ($1, $2, etc.)
         let mut conditions = Vec::new();
