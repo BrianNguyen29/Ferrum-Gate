@@ -3,11 +3,11 @@
 Single authoritative tracking document for FerrumGate implementation order.
 Grounded in current repo reality (tracing exists; metrics do not; TLS ingress
 runbook exists but production posture needs consolidation; Sync-3a probe exists
-in `ferrum-sync` crate; Sync-3a.1 facade boundary is partially implemented but
-not fully closed; Sync-1 decision kernel is implemented; write-path and
+in `ferrum-sync` crate; Sync-3a.1 facade boundary is fully implemented and
+closed; Sync-1 decision kernel is implemented; write-path and
 consensus not implemented).
 
-ASCII only. Docs-only changes; no Rust/code edits.
+ASCII only.
 
 ---
 
@@ -121,7 +121,7 @@ ASCII only. Docs-only changes; no Rust/code edits.
 |-------|-------------|--------|--------------|
 | P2.2a | Assess `ferrum-sync` crate: does it satisfy Sync-3a, Sync-3a.1, or neither? | **DONE** | Assessment recorded: Sync-3a is done; Sync-3a.1 is partial and has explicit remaining gaps |
 | P2.2b | Update `22a-sync-3a1-probe-api-boundary.md` status to reflect actual implementation | **DONE** | Doc status line reflects partial implementation plus remaining gaps |
-| P2.2c | If gaps exist, complete Sync-3a.1 implementation | **TODO** | Add `leader_address`, use timeout in execution path, and fully isolate transport DTOs from public boundary |
+| P2.2c | Close remaining Sync-3a.1 gaps: add `leader_address`, enforce `timeout_per_probe_ms` per-call via `tokio::time::timeout` wrapping every transport call (maps to A7 on expiry), narrow transport re-exports to facade boundary | **DONE** | `cargo test -p ferrum-sync` passes; `facade_timeout_per_probe_ms_enforced_through_facade` proves timeout fires through the full facade path; `lib.rs` re-exports only `LeaderTip` from transport; docs updated to reflect completion |
 
 **Dependencies:** None (can run in parallel with other P2 work).
 
@@ -139,10 +139,29 @@ ASCII only. Docs-only changes; no Rust/code edits.
 | P2.3a | Sync-0 safety contract plan exists | DONE | `18-cross-node-ledger-sync-plan.md` defines L1-L3, C1-C3, F1-F4, EC1-EC5 |
 | P2.3b | Sync-1 protocol sketch exists | DONE | `19-sync-1-protocol-sketch.md` defines one-way fast-forward protocol |
 | P2.3c | Sync-2 read-only preflight + diff classifier sketch exists | DONE | `20-sync-2-read-only-preflight-diff-classifier.md` defines DiffClass enum + decision table |
-| P2.3d | Identify gaps between Sync-1 sketch and implementable protocol | **TODO** | List of open questions from Sync-1, Sync-2, Sync-3 marked "deferred" with owner/time estimates |
+| P2.3d | Identify gaps between Sync-1 sketch and implementable protocol | **DONE** | Gap inventory added below; Sync-1/Sync-2/Sync-3 open questions marked "deferred" with owner and rough next-step estimates |
 | P2.3e | Begin Sync-1 protocol implementation (decision kernel) | **DONE** | `ferrum-sync` has `decide()` function in `decision.rs`; exhaustive unit tests for DONE / SYNC / FAST_FORWARD / ABORT rows |
+| P2.3f | Sync-2 groundwork: read-only preflight (PF1-PF8) + diff classifier (`DiffClass`) + bridge to Sync-1 | **DONE** | `ferrum-sync` has `preflight.rs` with `classify()`, `run_preflight()`, `diff_class_to_decision()`, `PreflightInput`, and roundtrip tests against `decide()` |
 
 **Dependencies:** P2.2 (Sync-3a.1 reconciliation) should complete before P2.3e begins.
+
+### P2.3 Gap Inventory (Sync-1 / Sync-2 / Sync-3 Deferred Items)
+
+The following gaps remain after P2.3a-P2.3f. Each is tagged with owner and
+rough next-step estimate:
+
+| Gap | Owner | Phase | Estimate | Next Step |
+|-----|-------|-------|----------|-----------|
+| Sync-1: hash-path continuity check requires actual ledger query | P3 | Sync-1 impl | 1-2 days | Wire `hash_path_valid` field to `verify_chain()` result from `ferrum-ledger` |
+| Sync-2: PF1/PF5/PF6 require repo access (currently caller-provided booleans) | P3 | Sync-2 impl | 2-3 days | Create `SyncRepository` trait; implement with `ferrum-store` SQLite backend |
+| Sync-2: PF3/PF8 require transport-based leader tip acquisition | P3 | Sync-3 impl | 5-8 days | Implement HTTP/gRPC transport adapter; wire through `Transport` trait |
+| Sync-2: PF7 sync session tracking (stateful, not read-only) | P3 | Sync-1 impl | 1-2 days | Add in-memory `AtomicBool` or DB-backed session flag |
+| Sync-2: PF4 capability model enforcement | P3 | Sync-1 impl | 2-3 days | Wire to `ferrum-capability` store; check leader authorization |
+| Sync-3: real HTTP/gRPC transport (not FakeTransport) | P3 | Sync-3 impl | 5-10 days | Implement `Transport` trait with `reqwest` or `tonic`; integration tests |
+| Sync-1: entry apply/write-path (follower side) | P3 | Write-path | 10+ days | Design doc first; then implement atomic entry application with rollback |
+| Sync-1: retry/backoff on transient failure | P3 | Sync-3 impl | 2-3 days | Add exponential backoff to transport layer |
+| Sync-2: `LeaderAheadEmpty` variant unused in `classify()` | P3 cleanup | Sync-2 impl | 0.5 days | Either wire into classify or remove; currently `Bootstrap` covers the case |
+| Consensus / leader election | Future | Beyond P3 | Unknown | Requires Raft or similar; full design doc needed first |
 
 **Touchpoints:**
 - `crates/ferrum-sync/src/`
@@ -250,9 +269,9 @@ P2 (2-8 weeks, after P1)
   P2.1 provenance tooling
     P2.1a DONE -> P2.1b
   P2.2 Sync-3a.1 reconciliation
-    P2.2a DONE -> P2.2b DONE -> P2.2c TODO
+    P2.2a DONE -> P2.2b DONE -> P2.2c DONE
   P2.3 Sync-1 prep
-    P2.3a-c DONE -> P2.3d -> P2.3e DONE (decision kernel)
+    P2.3a-c DONE -> P2.3d DONE -> P2.3e DONE (decision kernel) -> P2.3f DONE (Sync-2 groundwork)
   P2.4 HA analysis (parallel)
 
 P3 (8+ weeks, after P2)
@@ -276,8 +295,9 @@ P3 (8+ weeks, after P2)
 | Prometheus metrics (P1.1b done) | `crates/ferrum-gateway/src/server.rs:112` | `GET /metrics` returns Prometheus text format; bearer-auth protected like other non-health endpoints |
 | TLS ingress runbook (P1.2 done) | `docs/runbooks/ops-tls-ingress-runbook.md` | nginx termination; cert rollover and external terminator requirements documented; consistent with `ferrumgate.prod.toml` |
 | Sync-3a probe (done) | `crates/ferrum-sync/src/facade.rs` | `ProbeFacade` implemented |
-| Sync-3a.1 boundary (partial) | `crates/ferrum-sync/src/facade.rs` | Facade exists, but `leader_address`, timeout usage, and full DTO isolation remain open |
+| Sync-3a.1 boundary (complete) | `crates/ferrum-sync/src/facade.rs` | Facade complete: `leader_address`, per-call timeout enforcement, and narrower crate-root transport surface are in place |
 | Sync-1 decision kernel (done) | `crates/ferrum-sync/src/decision.rs` | Pure `decide()` function; exhaustive unit tests |
+| Sync-2 groundwork (done) | `crates/ferrum-sync/src/preflight.rs` | `classify()`, `run_preflight()`, `diff_class_to_decision()` with unit and roundtrip tests |
 | Write-path (not started) | None | Out of scope for v1 |
 | Consensus (not started) | None | Out of scope for v1 |
 

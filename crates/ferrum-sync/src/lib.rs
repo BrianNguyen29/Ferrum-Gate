@@ -1,6 +1,6 @@
-//! # ferrum-sync: Cross-Node Ledger Sync (Transport Probe + Decision Kernel)
+//! # ferrum-sync: Cross-Node Ledger Sync (Transport Probe + Decision Kernel + Sync-2 Groundwork)
 //!
-//! This crate implements two layers:
+//! This crate implements three layers:
 //!
 //! 1. **Sync-3a / Sync-3a.1**: A diagnostic-only transport probe (`ProbeFacade`) that
 //!    exercises Sync-3 transport contracts without committing any state. It validates
@@ -12,6 +12,11 @@
 //!    it returns the correct Sync-1 decision (DONE / SYNC / FAST_FORWARD / ABORT) with
 //!    no side effects, no transport, and no mutation.
 //!
+//! 3. **Sync-2 Groundwork** (partial): A read-only preflight checker (PF1-PF8) and diff
+//!    classifier (`DiffClass`) that operates purely on caller-provided inputs. No transport,
+//!    no repo queries, no mutation. This is groundwork aligned with
+//!    `docs/implementation-path/20-sync-2-read-only-preflight-diff-classifier.md`.
+//!
 //! ## What Is In Scope
 //!
 //! - Diagnostic tip fetch: verify leader is reachable and returning consistent tip data
@@ -21,6 +26,8 @@
 //! - Abort-code mapping validation: confirm all transport error variants map to Sync-1
 //!   abort codes per the fail-closed table
 //! - Sync-1 decision kernel: pure decision table for one-way fast-forward sync
+//! - Sync-2 groundwork: pure preflight checker (PF1-PF8) + diff classifier (`DiffClass`)
+//!   + bridge to Sync-1 decision kernel
 //!
 //! ## What Is Out of Scope
 //!
@@ -28,10 +35,13 @@
 //! - Consensus algorithm or leader election
 //! - Two-way merge or bidirectional sync
 //! - Peer discovery or address management
+//! - Full Sync-2 implementation (repo queries, transport-based tip acquisition,
+//!   sync session tracking, capability model enforcement)
 
 pub mod decision;
 pub mod error;
 pub mod facade;
+pub mod preflight;
 pub mod proof;
 pub mod transport;
 
@@ -41,8 +51,15 @@ pub use facade::{
     ContinuityProofShape, ProbeFacade, ProbeFacadeConfig, ProbeFacadeRequest, ProbeFacadeResponse,
     ProofStructureInfo,
 };
-pub use proof::{verify_entry_hashes, verify_proof_structure};
-pub use transport::{
-    FakeLeaderTransport, LeaderTip, LeaderTipRequest, LeaderTipResponse, ProbeResult, Proof,
-    ProofRequest, ProofResponse, TransportError, TransportProbe,
+pub use preflight::{
+    DiffClass, PreflightCheckCode, PreflightInput, PreflightResult, classify,
+    diff_class_to_decision, run_preflight,
 };
+pub use proof::{verify_entry_hashes, verify_proof_structure};
+// Only LeaderTip is re-exported at crate root because it appears in
+// ProbeFacadeResponse::ProbeOk { tip: LeaderTip }.  All other transport
+// DTOs (requests, responses, TransportError, TransportProbe, etc.) are
+// internal to the crate and must NOT leak through the public facade
+// boundary.  Downstream code that needs the transport layer directly
+// (tests, future adapters) imports crate::transport explicitly.
+pub use transport::LeaderTip;

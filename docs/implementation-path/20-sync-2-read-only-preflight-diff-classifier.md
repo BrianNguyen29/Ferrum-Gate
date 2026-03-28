@@ -10,9 +10,12 @@ merge, peer discovery, or write-path implementation.
 
 ## Status
 
-**This is Sync-2 (read-only preflight + diff classifier spec / decision
-support) work only.** No sync implementation exists or is planned in this
-slice.
+**Sync-2 groundwork is partially implemented** in `crates/ferrum-sync/src/preflight.rs`.
+The pure functions `classify()`, `run_preflight()`, and `diff_class_to_decision()`
+are implemented with unit tests, including roundtrip checks proving consistency
+with the Sync-1 decision kernel. What remains deferred to P3: actual ledger
+queries (PF1/PF5/PF6), transport-based leader tip acquisition (PF3/PF8),
+sync session tracking (PF7), and capability model enforcement (PF4).
 
 Successor to Sync-1 (one-way fast-forward protocol sketch). Transport,
 consensus, and write-path implementation are not in scope.

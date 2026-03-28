@@ -11,26 +11,42 @@ consensus, two-way merge, or peer discovery.
 
 ## Status
 
-**Sync-3a.1 (probe API boundary / clean facade) is partially implemented.**
+**Sync-3a.1 (probe API boundary / clean facade) is complete.**
 
 The `ProbeFacade`, `ProbeFacadeRequest`, `ProbeFacadeResponse`, and
-`ProbeFacadeConfig` types in `crates/ferrum-sync/src/facade.rs` implement most
-of the Sync-3a.1 facade boundary, but this slice is not fully closed yet. The
-current facade:
+`ProbeFacadeConfig` types in `crates/ferrum-sync/src/facade.rs` implement the
+Sync-3a.1 facade boundary. The current facade:
 
-- Accepts `ProbeFacadeRequest` with explicit caller inputs
+- Accepts `ProbeFacadeRequest` with explicit caller inputs including
+  `leader_address` (carried for API-boundary completeness; validated non-empty;
+  not used for network routing by the in-memory fake transport)
 - Returns only `ProbeOk { tip, proof_structure }` or `ProbeAborted { code }`
-- Hides all transport DTOs and internal error taxonomy
+- Narrows the crate-root public transport surface to `LeaderTip`; callers can
+  still opt into `crate::transport` directly, but transport DTOs are no longer
+  re-exported broadly from the crate root
 - Enforces read-only guarantee (no local ledger mutation)
 - Maps all internal failures to `Sync1AbortCode` in fail-closed fashion
+- Enforces `timeout_per_probe_ms` per-call via `tokio::time::timeout` wrapping
+  each transport call in `TransportProbe` (both tip and proof fetch). When a
+  call exceeds the bound it is mapped to `TransportError::LeaderTimeout` -> A7
+  (fail-closed). End-to-end proof: `facade_timeout_per_probe_ms_enforced_through_facade`
+  injects a 200ms delay into `FakeLeaderTransport`, sets timeout=50ms, and
+  confirms `ProbeAborted { A7 }` is returned through the full facade path.
+  The `timeout_ms` value is also carried in transport-level request DTOs for
+  informational use by real adapter implementations.
+- Re-exports only `LeaderTip` from the crate root (needed by
+  `ProbeFacadeResponse::ProbeOk`); other transport DTOs are no longer
+  re-exported from the crate root
 
-Remaining gaps before Sync-3a.1 can be marked fully complete:
+Previously outstanding gaps (now closed by P2.2c):
 
-- `ProbeFacadeRequest` does not yet carry the explicit `leader_address` field
-  described in this contract.
-- `timeout_per_probe_ms` is validated but not yet used in probe execution.
-- Transport DTOs are still publicly re-exported from the crate root, so the
-  facade boundary is not yet fully isolated.
+- `leader_address`: added to `ProbeFacadeRequest`, validated non-empty,
+  documented as boundary-complete placeholder for future adapter routing.
+- `timeout_per_probe_ms`: validated at the facade boundary and enforced per
+  transport call via `tokio::time::timeout` inside `TransportProbe`.
+- Transport DTO isolation: `lib.rs` re-exports narrowed to `LeaderTip` only;
+  `FakeLeaderTransport`, `TransportError`, `TransportProbe`, request/response
+  DTOs are internal to `crate::transport`.
 
 Successor to Sync-3a (read-only diagnostic transport probe). Write-path
 implementation, consensus, and peer discovery are not in scope.

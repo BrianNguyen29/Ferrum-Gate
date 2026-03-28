@@ -112,27 +112,35 @@ This is a ratified boundary per `16a-slice-16-a-boundary-ratification.md`.
 
 **Source**: `crates/ferrum-gateway/src/server.rs:1149`
 
-### 2.5 Cross-Node Sync (P2 — Planned, Not Implemented)
+### 2.5 Cross-Node Sync (P2 — Groundwork Present, Write-Path Not Implemented)
 
-The following are **planning documents only**; no implementation exists:
+Sync planning docs exist for Sync-0 through Sync-3a. Several read-only or
+decision-only slices are now implemented in `ferrum-sync`, but there is still
+no write/apply path, no real transport adapter, no consensus, and no full
+multi-node sync implementation.
 
 | Slice | Document | Status |
 |-------|----------|--------|
 | Sync-0 safety contract discovery | `18-cross-node-ledger-sync-plan.md` | Plan only |
 | Sync-1 protocol sketch | `19-sync-1-protocol-sketch.md` | Plan only |
-| Sync-2 read-only preflight + diff classifier | `20-sync-2-read-only-preflight-diff-classifier.md` | Plan only |
+| Sync-1 decision kernel | `19-sync-1-protocol-sketch.md` | **Implemented in `ferrum-sync` crate** (`decision.rs`: `decide()`) |
+| Sync-2 read-only preflight + diff classifier | `20-sync-2-read-only-preflight-diff-classifier.md` | **Groundwork in `ferrum-sync` crate** (`preflight.rs`: `classify()`, `run_preflight()`, `diff_class_to_decision()`, `DiffClass`, `PreflightInput`, `PreflightResult`) |
 | Sync-3 transport sketch | `21-sync-3-transport-sketch.md` | Plan only |
 | Sync-3a read-only transport probe | `22-sync-3a-read-only-transport-probe.md` | **Implemented in `ferrum-sync` crate** |
-| Sync-3a.1 probe API boundary | `22a-sync-3a1-probe-api-boundary.md` | **Partially implemented in `ferrum-sync` crate** (`ProbeFacade` plus remaining contract gaps) |
-| Sync-1 decision kernel | `19-sync-1-protocol-sketch.md` | **Implemented in `ferrum-sync` crate** (`decide()`) |
+| Sync-3a.1 probe API boundary | `22a-sync-3a1-probe-api-boundary.md` | **Implemented in `ferrum-sync` crate** (`ProbeFacade` with `leader_address`, per-call timeout enforcement, and narrower crate-root transport re-exports) |
 
-The `ferrum-sync` crate provides the Sync-3a read-only transport probe
-(`ProbeFacade`, `TransportProbe`, `FakeLeaderTransport`), a **partial**
-Sync-3a.1 facade boundary (`ProbeFacadeRequest`/`ProbeFacadeResponse` with
-abort-code-only failures, but remaining contract gaps), and a pure Sync-1
-decision kernel (`decide()`) implementing the one-way fast-forward decision
-table. These are **diagnostic/decision-only** tools; they do not implement the
-write-path, consensus, or two-way merge.
+The `ferrum-sync` crate now provides the Sync-3a read-only transport probe
+(`ProbeFacade`, `TransportProbe`, `FakeLeaderTransport`), the Sync-3a.1 facade
+boundary (`ProbeFacadeRequest`/`ProbeFacadeResponse` with `leader_address`,
+per-call timeout enforcement via `tokio::time::timeout`, abort-code-only
+failures, and narrower crate-root transport re-exports), a pure Sync-1
+decision kernel (`decide()`), and partial Sync-2 groundwork
+(`classify()`, `run_preflight()`, `diff_class_to_decision()` in `preflight.rs`).
+These are **diagnostic/decision-only** tools; they do not implement the
+write-path, real transport, consensus, or two-way merge. The Sync-2
+groundwork remains partial: actual repo queries, transport-based tip
+acquisition, sync session tracking, and capability model enforcement are
+deferred to P3.
 
 ### 2.6 Generic Provenance Query / Replay Fabric (P2 — Core Done, Advanced TBD)
 
@@ -192,9 +200,9 @@ deployment is repeatable without bespoke debugging.
 Items to prepare for multi-node deployment without implementing full sync:
 
 1. **Sync-3a/Sync-3a.1 reconciliation**
-   - `ferrum-sync` crate implements Sync-3a probe (DONE)
-   - Sync-3a.1 boundary status needs reconciliation between doc and code (TODO)
-   - Complete remaining Sync-3a.1 probe API boundary work (TODO)
+    - `ferrum-sync` crate implements Sync-3a probe (DONE)
+    - Sync-3a.1 boundary status reconciled between doc and code (DONE)
+    - Sync-3a.1 remaining gaps closed: `leader_address`, timeout threading, transport DTO isolation (DONE)
 
 2. **Observability for multi-node**
    - Distributed trace context (W3C TraceContext) (future)

@@ -12,8 +12,10 @@ use chrono::{DateTime, Utc};
 use ferrum_proto::Sha256Hex;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::time::Duration;
 use thiserror::Error;
 use tokio::sync::RwLock;
+use tokio::time::timeout;
 use uuid::Uuid;
 
 use crate::error::{ProbeError, Sync1AbortCode, map_transport_error_to_abort};
@@ -61,6 +63,10 @@ pub struct LeaderTipRequest {
     pub request_id: ProbeRequestId,
     /// Identity of the requesting follower.
     pub follower_identity: String,
+    /// Per-request timeout in milliseconds.
+    /// Transport implementations SHOULD respect this bound; the fake
+    /// transport ignores it because it has no real network latency.
+    pub timeout_ms: u64,
 }
 
 /// Response for leader tip retrieval.
@@ -83,6 +89,10 @@ pub struct ProofRequest {
     pub start_sequence: u64,
     /// Inclusive end sequence (usually leader tip).
     pub end_sequence: u64,
+    /// Per-request timeout in milliseconds.
+    /// Transport implementations SHOULD respect this bound; the fake
+    /// transport ignores it (no real network latency).
+    pub timeout_ms: u64,
 }
 
 /// Response for proof retrieval.
@@ -213,6 +223,8 @@ struct FakeTransportState {
     tip_fetch_count: usize,
     /// Call count for proof fetch.
     proof_fetch_count: usize,
+    /// Optional artificial delay in ms before returning tip (for timeout testing).
+    tip_delay_ms: Option<u64>,
 }
 
 impl Default for FakeTransportState {
@@ -233,6 +245,7 @@ impl Default for FakeTransportState {
             tip_error_on_call: None,
             tip_fetch_count: 0,
             proof_fetch_count: 0,
+            tip_delay_ms: None,
         }
     }
 }
@@ -317,6 +330,16 @@ impl FakeLeaderTransport {
         // Store all tips; we'll rotate through them
         state.tip = Some(tips.into_iter().next().unwrap());
     }
+
+    /// Inject an artificial delay before returning tip responses.
+    ///
+    /// Used to test that `tokio::time::timeout` actually fires: set a delay
+    /// longer than the caller's `timeout_per_probe_ms` and verify A7 is
+    /// returned.
+    pub async fn set_tip_delay_ms(&self, delay_ms: u64) {
+        let mut state = self.state.write().await;
+        state.tip_delay_ms = Some(delay_ms);
+    }
 }
 
 impl Default for FakeLeaderTransport {
@@ -331,33 +354,47 @@ impl Transport for FakeLeaderTransport {
         &self,
         _request: &LeaderTipRequest,
     ) -> Result<LeaderTipResponse, TransportError> {
-        let mut state = self.state.write().await;
-        state.tip_fetch_count += 1;
+        // 1. Determine what to return and whether to delay.
+        //    We do the bookkeeping under one write lock, then release before
+        //    any artificial sleep so the lock is not held across the delay.
+        let (delay_ms, result) = {
+            let mut state = self.state.write().await;
+            state.tip_fetch_count += 1;
 
-        // Check per-call error first
-        let err_to_return = if state
-            .tip_error_on_call
-            .as_ref()
-            .map(|(call_num, _)| state.tip_fetch_count == *call_num)
-            .unwrap_or(false)
-        {
-            state.tip_error_on_call.take().map(|(_, err)| err)
-        } else {
-            None
+            // Check per-call error first
+            let per_call_err = if state
+                .tip_error_on_call
+                .as_ref()
+                .map(|(call_num, _)| state.tip_fetch_count == *call_num)
+                .unwrap_or(false)
+            {
+                state.tip_error_on_call.take().map(|(_, err)| err)
+            } else {
+                None
+            };
+
+            if let Some(err) = per_call_err {
+                (None, Err(err))
+            } else if let Some(ref err) = state.tip_error {
+                (None, Err(err.clone()))
+            } else {
+                let delay = state.tip_delay_ms;
+                (
+                    delay,
+                    Ok(LeaderTipResponse {
+                        leader_tip: state.tip.clone(),
+                        leader_version: state.version.clone(),
+                    }),
+                )
+            }
         };
 
-        if let Some(err) = err_to_return {
-            return Err(err);
+        // 2. Artificial delay (outside the lock) for timeout testing.
+        if let Some(ms) = delay_ms {
+            tokio::time::sleep(Duration::from_millis(ms)).await;
         }
 
-        if let Some(ref err) = state.tip_error {
-            return Err(err.clone());
-        }
-
-        Ok(LeaderTipResponse {
-            leader_tip: state.tip.clone(),
-            leader_version: state.version.clone(),
-        })
+        result
     }
 
     async fn fetch_proof(&self, _request: &ProofRequest) -> Result<ProofResponse, TransportError> {
@@ -403,39 +440,66 @@ impl<T: Transport> TransportProbe<T> {
         }
     }
 
-    /// Run the diagnostic probe.
+    /// Run the diagnostic probe with default timeout (5 seconds).
     ///
     /// This performs:
     /// 1. Multi-probe tip consistency check (N probes, all must match)
     /// 2. Proof fetch and structure verification
+    ///
+    /// Each transport call is wrapped with `tokio::time::timeout` using the
+    /// configured timeout. If a transport call exceeds the timeout, it is
+    /// mapped to `TransportError::LeaderTimeout` (-> A7).
     ///
     /// Returns `ProbeSuccess` on full validation, or a `Sync1AbortCode` on any failure.
     /// No local state is modified regardless of outcome.
-    pub async fn run(&self, follower_identity: &str, follower_tip_sequence: u64) -> ProbeResult {
-        self.run_with_start_sequence(follower_identity, follower_tip_sequence)
-            .await
+    pub async fn run(
+        &self,
+        follower_identity: &str,
+        follower_tip_sequence: u64,
+        leader_address: &str,
+    ) -> ProbeResult {
+        self.run_with_start_sequence(
+            follower_identity,
+            follower_tip_sequence,
+            5000,
+            leader_address,
+        )
+        .await
     }
 
-    /// Run the diagnostic probe with explicit start sequence.
+    /// Run the diagnostic probe with explicit start sequence and timeout.
     ///
-    /// This performs:
-    /// 1. Multi-probe tip consistency check (N probes, all must match)
-    /// 2. Proof fetch and structure verification
+    /// Each transport call is wrapped with `tokio::time::timeout` using
+    /// `timeout_ms`. On timeout the call is mapped to A7 (fail-closed).
+    /// `leader_address` provides context in timeout/unreachable errors.
     ///
     /// Returns `ProbeSuccess` on full validation, or a `Sync1AbortCode` on any failure.
     pub async fn run_with_start_sequence(
         &self,
         follower_identity: &str,
         start_sequence: u64,
+        timeout_ms: u64,
+        leader_address: &str,
     ) -> ProbeResult {
         // Step 1: Multi-probe tip consistency check
         let (tip, version) = self
-            .multi_probe_tip_consistency_with_count(follower_identity, self.consistency_probe_count)
+            .multi_probe_tip_consistency_with_count(
+                follower_identity,
+                self.consistency_probe_count,
+                timeout_ms,
+                leader_address,
+            )
             .await?;
 
         // Step 2: Fetch proof for the range
         let proof = self
-            .fetch_and_verify_proof(follower_identity, start_sequence, tip.sequence)
+            .fetch_and_verify_proof(
+                follower_identity,
+                start_sequence,
+                tip.sequence,
+                timeout_ms,
+                leader_address,
+            )
             .await?;
 
         Ok(ProbeSuccess {
@@ -449,6 +513,8 @@ impl<T: Transport> TransportProbe<T> {
     ///
     /// This is the same as `run` but allows per-request probe count override
     /// instead of the construction-time `consistency_probe_count`.
+    /// Each transport call is wrapped with `tokio::time::timeout(timeout_ms)`;
+    /// on expiry the call maps to A7.
     ///
     /// Returns `ProbeSuccess` on full validation, or a `Sync1AbortCode` on any failure.
     /// No local state is modified regardless of outcome.
@@ -457,15 +523,28 @@ impl<T: Transport> TransportProbe<T> {
         follower_identity: &str,
         follower_tip_sequence: u64,
         probe_count: usize,
+        timeout_ms: u64,
+        leader_address: &str,
     ) -> ProbeResult {
         // Step 1: Multi-probe tip consistency check with override count
         let (tip, version) = self
-            .multi_probe_tip_consistency_with_count(follower_identity, probe_count)
+            .multi_probe_tip_consistency_with_count(
+                follower_identity,
+                probe_count,
+                timeout_ms,
+                leader_address,
+            )
             .await?;
 
         // Step 2: Fetch proof for the range
         let proof = self
-            .fetch_and_verify_proof(follower_identity, follower_tip_sequence, tip.sequence)
+            .fetch_and_verify_proof(
+                follower_identity,
+                follower_tip_sequence,
+                tip.sequence,
+                timeout_ms,
+                leader_address,
+            )
             .await?;
 
         Ok(ProbeSuccess {
@@ -479,10 +558,16 @@ impl<T: Transport> TransportProbe<T> {
     ///
     /// Fetches the leader tip N times and verifies all responses are identical.
     /// If any probe returns a different tip, returns `Sync1AbortCode::A7`.
+    ///
+    /// Each `fetch_leader_tip` call is wrapped with `tokio::time::timeout`.
+    /// If a call exceeds `timeout_ms`, it is mapped to
+    /// `TransportError::LeaderTimeout` (-> A7) with `leader_address` context.
     async fn multi_probe_tip_consistency_with_count(
         &self,
         follower_identity: &str,
         probe_count: usize,
+        timeout_ms: u64,
+        leader_address: &str,
     ) -> Result<(LeaderTip, LeaderVersion), Sync1AbortCode> {
         let mut tips: Vec<LeaderTip> = Vec::with_capacity(probe_count);
         let mut version: Option<LeaderVersion> = None;
@@ -491,30 +576,47 @@ impl<T: Transport> TransportProbe<T> {
             let request = LeaderTipRequest {
                 request_id: ProbeRequestId::new(),
                 follower_identity: follower_identity.to_string(),
+                timeout_ms,
             };
 
-            match self.transport.fetch_leader_tip(&request).await {
-                Ok(response) => {
-                    let response_tip = response.leader_tip.ok_or(Sync1AbortCode::A7)?;
-                    let response_version = response.leader_version.ok_or(Sync1AbortCode::A7)?;
+            // Enforce per-call timeout around the transport fetch.
+            let fetch_result = timeout(
+                Duration::from_millis(timeout_ms),
+                self.transport.fetch_leader_tip(&request),
+            )
+            .await;
 
-                    if i == 0 {
-                        version = Some(response_version.clone());
-                    }
-
-                    // Verify version compatibility
-                    if response_version.version != version.as_ref().unwrap().version {
-                        // Version changed between probes - treat as inconsistency
-                        return Err(Sync1AbortCode::A7);
-                    }
-
-                    tips.push(response_tip);
-                }
-                Err(e) => {
+            let response = match fetch_result {
+                Ok(Ok(resp)) => resp,
+                Ok(Err(e)) => {
                     // Transport error maps to abort code directly
                     return Err(map_transport_error_to_abort(&e));
                 }
+                Err(_) => {
+                    // Timeout elapsed -- fail-closed A7
+                    return Err(map_transport_error_to_abort(
+                        &TransportError::LeaderTimeout {
+                            address: leader_address.to_string(),
+                            duration_ms: timeout_ms,
+                        },
+                    ));
+                }
+            };
+
+            let response_tip = response.leader_tip.ok_or(Sync1AbortCode::A7)?;
+            let response_version = response.leader_version.ok_or(Sync1AbortCode::A7)?;
+
+            if i == 0 {
+                version = Some(response_version.clone());
             }
+
+            // Verify version compatibility
+            if response_version.version != version.as_ref().unwrap().version {
+                // Version changed between probes - treat as inconsistency
+                return Err(Sync1AbortCode::A7);
+            }
+
+            tips.push(response_tip);
         }
 
         // Verify all tips are consistent
@@ -534,24 +636,48 @@ impl<T: Transport> TransportProbe<T> {
     }
 
     /// Fetch proof and verify its structure.
+    ///
+    /// The `fetch_proof` call is wrapped with `tokio::time::timeout`.
+    /// If the call exceeds `timeout_ms`, it is mapped to
+    /// `TransportError::LeaderTimeout` (-> A7) with `leader_address` context.
     async fn fetch_and_verify_proof(
         &self,
         follower_identity: &str,
         start_sequence: u64,
         end_sequence: u64,
+        timeout_ms: u64,
+        leader_address: &str,
     ) -> Result<Proof, Sync1AbortCode> {
         let request = ProofRequest {
             request_id: ProbeRequestId::new(),
             follower_identity: follower_identity.to_string(),
             start_sequence,
             end_sequence,
+            timeout_ms,
         };
 
-        let response = self
-            .transport
-            .fetch_proof(&request)
-            .await
-            .map_err(|e| map_transport_error_to_abort(&e))?;
+        // Enforce per-call timeout around the proof fetch.
+        let fetch_result = timeout(
+            Duration::from_millis(timeout_ms),
+            self.transport.fetch_proof(&request),
+        )
+        .await;
+
+        let response = match fetch_result {
+            Ok(Ok(resp)) => resp,
+            Ok(Err(e)) => {
+                return Err(map_transport_error_to_abort(&e));
+            }
+            Err(_) => {
+                // Timeout elapsed -- fail-closed A7
+                return Err(map_transport_error_to_abort(
+                    &TransportError::LeaderTimeout {
+                        address: leader_address.to_string(),
+                        duration_ms: timeout_ms,
+                    },
+                ));
+            }
+        };
 
         let proof = response.proof.ok_or(Sync1AbortCode::A7)?;
 
@@ -623,7 +749,7 @@ mod tests {
         transport.set_proof(proof.clone()).await;
 
         let probe = TransportProbe::new(transport);
-        let result = probe.run("follower-1", 4).await;
+        let result = probe.run("follower-1", 4, "leader:9000").await;
 
         assert!(result.is_ok());
         let success = result.unwrap();
@@ -644,7 +770,7 @@ mod tests {
         let probe = TransportProbe::with_probes(transport, 3);
 
         // With consistent tips, probe should succeed
-        let result = probe.run("follower-1", 4).await;
+        let result = probe.run("follower-1", 4, "leader:9000").await;
         assert!(result.is_ok());
     }
 
@@ -658,7 +784,7 @@ mod tests {
             .await;
 
         let probe = TransportProbe::new(transport);
-        let result = probe.run("follower-1", 4).await;
+        let result = probe.run("follower-1", 4, "leader:9000").await;
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), Sync1AbortCode::A7);
@@ -676,7 +802,7 @@ mod tests {
             .await;
 
         let probe = TransportProbe::new(transport);
-        let result = probe.run("follower-1", 4).await;
+        let result = probe.run("follower-1", 4, "leader:9000").await;
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), Sync1AbortCode::A3);
@@ -691,14 +817,54 @@ mod tests {
             .set_proof(make_proof(vec![5], vec!["hash1"]))
             .await;
 
-        // Note: We can't easily clone FakeLeaderTransport since it uses Arc<RwLock>.
-        // We verify tip_fetch_count by creating a new probe with the SAME transport.
-        // This tests that the probe makes multiple tip fetch calls.
         let probe = TransportProbe::with_probes(transport.clone(), 3);
-        probe.run("follower-1", 4).await.unwrap();
+        probe.run("follower-1", 4, "leader:9000").await.unwrap();
 
         // Count should be 3 (one per consistency probe)
         assert_eq!(transport.tip_fetch_count().await, 3);
+    }
+
+    #[tokio::test]
+    async fn probe_aborts_a7_when_transport_exceeds_timeout() {
+        // Prove that `timeout_per_probe_ms` genuinely affects execution.
+        // Inject a 200 ms delay into the fake transport and set timeout=50 ms.
+        // The per-call timeout should fire, mapping to A7.
+        let transport = FakeLeaderTransport::new();
+        transport.set_tip(make_tip(100, "abc")).await;
+        transport.set_version(make_version()).await;
+        transport.set_tip_delay_ms(200).await;
+
+        let probe = TransportProbe::new(transport);
+        let result = probe
+            .run_with_start_sequence("follower-1", 0, 50, "leader:9000")
+            .await;
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), Sync1AbortCode::A7);
+    }
+
+    #[tokio::test]
+    async fn probe_timeout_fires_when_transport_is_slow() {
+        // Prove that timeout_per_probe_ms is genuinely enforced:
+        // inject a delay longer than the timeout and verify A7 is returned.
+        let transport = FakeLeaderTransport::new();
+        transport.set_tip(make_tip(100, "abc")).await;
+        transport.set_version(make_version()).await;
+        // Inject a 200ms delay on every tip fetch
+        transport.set_tip_delay_ms(200).await;
+
+        let probe = TransportProbe::new(transport);
+        // 50ms timeout << 200ms delay -> should fire timeout -> A7
+        let result = probe
+            .run_with_start_sequence("follower-1", 4, 50, "leader:9000")
+            .await;
+
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            Sync1AbortCode::A7,
+            "timeout must map to A7"
+        );
     }
 
     #[tokio::test]
@@ -710,6 +876,7 @@ mod tests {
         let request = LeaderTipRequest {
             request_id: ProbeRequestId::new(),
             follower_identity: "test".to_string(),
+            timeout_ms: 5000,
         };
 
         let response = transport.fetch_leader_tip(&request).await.unwrap();
@@ -728,6 +895,7 @@ mod tests {
             follower_identity: "test".to_string(),
             start_sequence: 1,
             end_sequence: 3,
+            timeout_ms: 5000,
         };
 
         let response = transport.fetch_proof(&request).await.unwrap();

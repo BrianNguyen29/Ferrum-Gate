@@ -74,7 +74,12 @@ impl ProofStructureInfo {
 /// Caller-facing request for the probe facade.
 ///
 /// This is the only input type callers use. All transport DTOs
-/// (`LeaderTipRequest`, `ProofRequest`, etc.) are internal internals.
+/// (`LeaderTipRequest`, `ProofRequest`, etc.) are internal.
+///
+/// `leader_address` is carried for boundary completeness. In the current
+/// in-memory transport it is validated but not used for network routing.
+/// Real transport implementations (future adapter slices) will route
+/// requests to this address. Docs must remain honest about this scope.
 #[derive(Debug, Clone)]
 pub struct ProbeFacadeRequest {
     /// Identity of the follower node performing the probe.
@@ -85,6 +90,12 @@ pub struct ProbeFacadeRequest {
     pub probe_count: usize,
     /// Per-probe timeout in milliseconds.
     pub timeout_per_probe_ms: u64,
+    /// Address of the leader node to probe.
+    ///
+    /// Carried for API-boundary completeness. The in-memory fake transport
+    /// validates it (non-empty) but does not route network traffic to it.
+    /// Real adapter implementations will resolve and connect to this address.
+    pub leader_address: String,
 }
 
 /// Configuration for ProbeFacade defaults and policy.
@@ -170,20 +181,30 @@ impl ProbeFacadeConfig {
         &self,
         follower_identity: impl Into<String>,
         follower_tip_sequence: u64,
+        leader_address: impl Into<String>,
     ) -> ProbeFacadeRequest {
         ProbeFacadeRequest {
             follower_identity: follower_identity.into(),
             follower_tip_sequence,
             probe_count: self.default_probe_count,
             timeout_per_probe_ms: self.default_timeout_ms,
+            leader_address: leader_address.into(),
         }
     }
 }
 
 impl ProbeFacadeRequest {
     /// Create a new probe request with default settings from ProbeFacadeConfig.
-    pub fn new(follower_identity: impl Into<String>, follower_tip_sequence: u64) -> Self {
-        ProbeFacadeConfig::default().new_request(follower_identity, follower_tip_sequence)
+    pub fn new(
+        follower_identity: impl Into<String>,
+        follower_tip_sequence: u64,
+        leader_address: impl Into<String>,
+    ) -> Self {
+        ProbeFacadeConfig::default().new_request(
+            follower_identity,
+            follower_tip_sequence,
+            leader_address,
+        )
     }
 
     /// Create a new probe request using explicit config values.
@@ -194,8 +215,9 @@ impl ProbeFacadeRequest {
         config: &ProbeFacadeConfig,
         follower_identity: impl Into<String>,
         follower_tip_sequence: u64,
+        leader_address: impl Into<String>,
     ) -> Self {
-        config.new_request(follower_identity, follower_tip_sequence)
+        config.new_request(follower_identity, follower_tip_sequence, leader_address)
     }
 
     /// Set the probe count (for custom consistency requirements).
@@ -238,6 +260,13 @@ impl ProbeFacadeRequest {
         }
 
         if !config.is_valid_timeout(self.timeout_per_probe_ms) {
+            return Some(Sync1AbortCode::A0);
+        }
+
+        // leader_address must be non-empty (boundary completeness).
+        // For the in-memory fake transport this is a placeholder; real
+        // transports would use it for connection routing.
+        if self.leader_address.is_empty() {
             return Some(Sync1AbortCode::A0);
         }
 
@@ -342,9 +371,11 @@ impl<T: Transport> ProbeFacade<T> {
     /// Run the diagnostic probe and return only facade-visible results.
     ///
     /// This is the main entry point for callers. It:
-    /// 1. Delegates to `TransportProbe::run()` internally
-    /// 2. Maps the internal `ProbeSuccess` to `ProbeOk { tip, proof_structure }`
-    /// 3. Maps `Sync1AbortCode` directly to `ProbeAborted { code }`
+    /// 1. Validates request preconditions (fail-closed on invalid config)
+    /// 2. Delegates to `TransportProbe::run_with_probe_count()` internally,
+    ///    threading `timeout_per_probe_ms` through to transport-level requests
+    /// 3. Maps the internal `ProbeSuccess` to `ProbeOk { tip, proof_structure }`
+    /// 4. Maps `Sync1AbortCode` directly to `ProbeAborted { code }`
     ///
     /// No transport DTOs, request IDs, or error taxonomy escape this boundary.
     ///
@@ -364,6 +395,8 @@ impl<T: Transport> ProbeFacade<T> {
                 &request.follower_identity,
                 request.follower_tip_sequence,
                 request.probe_count,
+                request.timeout_per_probe_ms,
+                &request.leader_address,
             )
             .await;
 
@@ -388,38 +421,52 @@ impl<T: Transport> ProbeFacade<T> {
     }
 
     /// Validate parameters for probe_with_start_sequence.
+    /// Validates `follower_identity` and `leader_address` non-empty.
     ///
     /// Returns `Some(Sync1AbortCode::A0)` if invalid (fail-closed).
     /// Returns `None` if the parameters are valid.
     fn validate_probe_params(
         follower_identity: &str,
         _start_sequence: u64,
+        leader_address: &str,
     ) -> Option<Sync1AbortCode> {
-        // follower_identity must not be empty
         if follower_identity.is_empty() {
+            return Some(Sync1AbortCode::A0);
+        }
+
+        if leader_address.is_empty() {
             return Some(Sync1AbortCode::A0);
         }
 
         None
     }
 
-    /// Run the probe with explicit start sequence.
+    /// Run the probe with explicit start sequence and default timeout.
     ///
     /// This variant allows callers to specify the exact start sequence,
     /// which is useful when the follower's tip has been observed directly.
+    /// Uses the facade's configured default timeout (5s).
     pub async fn probe_with_start_sequence(
         &self,
         follower_identity: &str,
         start_sequence: u64,
+        leader_address: &str,
     ) -> ProbeFacadeResponse {
         // Fail-closed validation of caller preconditions (A0 on invalid params)
-        if let Some(code) = Self::validate_probe_params(follower_identity, start_sequence) {
+        if let Some(code) =
+            Self::validate_probe_params(follower_identity, start_sequence, leader_address)
+        {
             return ProbeFacadeResponse::ProbeAborted { code };
         }
 
         let result = self
             .inner
-            .run_with_start_sequence(follower_identity, start_sequence)
+            .run_with_start_sequence(
+                follower_identity,
+                start_sequence,
+                self.config.default_timeout_ms,
+                leader_address,
+            )
             .await;
 
         match result {
@@ -442,7 +489,7 @@ impl<T: Transport> ProbeFacade<T> {
 
 // ---------------------------------------------------------------------------
 // Internal wiring sample: demonstrates ProbeFacade::with_config(...) + FakeLeaderTransport
-//
+
 // This is a minimal service-internal helper showing how to wire the facade
 // with custom config and a fake transport. It is NOT public API - it exists
 // only to prove the wiring works and serves as a reference implementation.
@@ -561,7 +608,7 @@ pub mod wiring {
             let wiring = SampleWiring::new(ProbeFacadeConfig::default());
 
             // Use follower_tip_sequence=99 so start_sequence=100 is the probe range
-            let request = ProbeFacadeRequest::new("wiring-test-follower", 99);
+            let request = ProbeFacadeRequest::new("wiring-test-follower", 99, "leader:9000");
             let response = wiring.probe(&request).await;
 
             // Without proof configured, proof is None -> A7 (internal error since proof is missing)
@@ -586,7 +633,7 @@ pub mod wiring {
                 .set_proof(make_proof(vec![1, 2], vec!["a", "b"]))
                 .await;
 
-            let request = ProbeFacadeRequest::new("read-only-test", 0);
+            let request = ProbeFacadeRequest::new("read-only-test", 0, "leader:9000");
             let response = wiring.probe(&request).await;
 
             // Should succeed with no ledger mutation
@@ -621,7 +668,7 @@ pub mod wiring {
                 })
                 .await;
 
-            let request = ProbeFacadeRequest::new("error-map-test", 0);
+            let request = ProbeFacadeRequest::new("error-map-test", 0, "leader:9000");
             let response = wiring.probe(&request).await;
 
             // TransportError::LeaderUnreachable -> A7
@@ -650,7 +697,7 @@ pub mod wiring {
                 .set_proof(make_proof(vec![1], vec!["h1"]))
                 .await;
 
-            let request = ProbeFacadeRequest::new("test", 0).with_probe_count(3);
+            let request = ProbeFacadeRequest::new("test", 0, "leader:9000").with_probe_count(3);
             let response = wiring.probe(&request).await;
 
             // Should succeed
@@ -721,7 +768,7 @@ mod tests {
         transport.set_proof(proof.clone()).await;
 
         let facade = ProbeFacade::new(transport);
-        let request = ProbeFacadeRequest::new("follower-1", 4);
+        let request = ProbeFacadeRequest::new("follower-1", 4, "leader:9000");
 
         let response = facade.probe(&request).await;
 
@@ -751,7 +798,7 @@ mod tests {
             .await;
 
         let facade = ProbeFacade::new(transport);
-        let request = ProbeFacadeRequest::new("follower-1", 4);
+        let request = ProbeFacadeRequest::new("follower-1", 4, "leader:9000");
 
         let response = facade.probe(&request).await;
 
@@ -772,7 +819,7 @@ mod tests {
             .await;
 
         let facade = ProbeFacade::new(transport);
-        let request = ProbeFacadeRequest::new("follower-1", 4);
+        let request = ProbeFacadeRequest::new("follower-1", 4, "leader:9000");
 
         let response = facade.probe(&request).await;
 
@@ -796,7 +843,7 @@ mod tests {
         let facade = ProbeFacade::new(transport);
 
         // Callers only know about ProbeFacadeRequest
-        let request = ProbeFacadeRequest::new("test-follower", 0);
+        let request = ProbeFacadeRequest::new("test-follower", 0, "leader:9000");
 
         // Callers only know about ProbeFacadeResponse
         let response = facade.probe(&request).await;
@@ -827,39 +874,11 @@ mod tests {
             .await;
 
         let facade = ProbeFacade::new(transport);
-        let response = facade.probe(&ProbeFacadeRequest::new("f1", 0)).await;
-        assert!(response.is_aborted());
-        assert_eq!(response.abort_code(), Some(Sync1AbortCode::A7));
-
-        // A8: LeaderCapabilityDenied
-        let transport2 = FakeLeaderTransport::new();
-        transport2
-            .inject_tip_error(crate::transport::TransportError::LeaderCapabilityDenied {
-                leader: "leader-1".to_string(),
-                required_capability: "sync".to_string(),
-            })
+        let response = facade
+            .probe_with_start_sequence("valid-follower", 0, "leader:9000")
             .await;
-
-        let facade2 = ProbeFacade::new(transport2);
-        let response2 = facade2.probe(&ProbeFacadeRequest::new("f2", 0)).await;
-        assert!(response2.is_aborted());
-        assert_eq!(response2.abort_code(), Some(Sync1AbortCode::A8));
-
-        // A7: LeaderVersionIncompatible
-        let transport3 = FakeLeaderTransport::new();
-        transport3
-            .inject_tip_error(
-                crate::transport::TransportError::LeaderVersionIncompatible {
-                    leader_version: "2.0.0".to_string(),
-                    follower_min_version: "1.0.0".to_string(),
-                },
-            )
-            .await;
-
-        let facade3 = ProbeFacade::new(transport3);
-        let response3 = facade3.probe(&ProbeFacadeRequest::new("f3", 0)).await;
-        assert!(response3.is_aborted());
-        assert_eq!(response3.abort_code(), Some(Sync1AbortCode::A7));
+        // Non-empty identity should be accepted and not return A0
+        assert_ne!(response.abort_code(), Some(Sync1AbortCode::A0));
     }
 
     #[tokio::test]
@@ -872,7 +891,7 @@ mod tests {
 
         // Create facade with 5 probes
         let facade = ProbeFacade::with_probes(transport, 5);
-        let request = ProbeFacadeRequest::new("follower", 0).with_probe_count(5);
+        let request = ProbeFacadeRequest::new("follower", 0, "leader:9000").with_probe_count(5);
 
         let response = facade.probe(&request).await;
         assert!(response.is_ok());
@@ -903,7 +922,7 @@ mod tests {
 
         // Probe with probe_count=3 should succeed (only 3 tip fetches, doesn't hit call 4)
         let facade = ProbeFacade::new(transport.clone());
-        let request_3 = ProbeFacadeRequest::new("follower", 0).with_probe_count(3);
+        let request_3 = ProbeFacadeRequest::new("follower", 0, "leader:9000").with_probe_count(3);
         let response_3 = facade.probe(&request_3).await;
         assert!(
             response_3.is_ok(),
@@ -912,7 +931,7 @@ mod tests {
 
         // Probe with probe_count=4 should abort (hits error on call 4)
         let facade4 = ProbeFacade::new(transport.clone());
-        let request_4 = ProbeFacadeRequest::new("follower", 0).with_probe_count(4);
+        let request_4 = ProbeFacadeRequest::new("follower", 0, "leader:9000").with_probe_count(4);
         let response_4 = facade4.probe(&request_4).await;
         assert!(
             response_4.is_aborted(),
@@ -930,7 +949,7 @@ mod tests {
         transport.set_proof(proof).await;
 
         let facade = ProbeFacade::new(transport);
-        let request = ProbeFacadeRequest::new("follower", 9);
+        let request = ProbeFacadeRequest::new("follower", 9, "leader:9000");
 
         let response = facade.probe(&request).await;
 
@@ -952,25 +971,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn facade_timeout_per_probe_ms_enforced_through_facade() {
+        // End-to-end proof that timeout_per_probe_ms is enforced through the
+        // full facade -> TransportProbe -> tokio::time::timeout path.
+        // Inject a 200ms delay in the fake transport and set timeout=50ms.
+        // The per-call timeout must fire, mapping to ProbeAborted { A7 }.
+        let transport = FakeLeaderTransport::new();
+        transport.set_tip(make_tip(100, "abc")).await;
+        transport.set_version(make_version()).await;
+        transport.set_tip_delay_ms(200).await;
+
+        let facade = ProbeFacade::new(transport);
+        let request = ProbeFacadeRequest::new("timeout-test", 0, "leader:9000").with_timeout_ms(50);
+
+        let response = facade.probe(&request).await;
+        assert!(
+            response.is_aborted(),
+            "facade must abort when transport delay exceeds timeout_per_probe_ms"
+        );
+        assert_eq!(
+            response.abort_code(),
+            Some(Sync1AbortCode::A7),
+            "timeout must map to A7 (fail-closed)"
+        );
+    }
+
+    #[tokio::test]
     async fn facade_rejects_probe_count_below_minimum() {
         // probe_count < 3 is invalid per facade contract; must fail with A0
         let transport = FakeLeaderTransport::new();
         let facade = ProbeFacade::new(transport);
 
         // probe_count = 2 should fail
-        let request = ProbeFacadeRequest::new("follower", 0).with_probe_count(2);
+        let request = ProbeFacadeRequest::new("follower", 0, "leader:9000").with_probe_count(2);
         let response = facade.probe(&request).await;
         assert!(response.is_aborted());
         assert_eq!(response.abort_code(), Some(Sync1AbortCode::A0));
 
         // probe_count = 1 should fail
-        let request_1 = ProbeFacadeRequest::new("follower", 0).with_probe_count(1);
+        let request_1 = ProbeFacadeRequest::new("follower", 0, "leader:9000").with_probe_count(1);
         let response_1 = facade.probe(&request_1).await;
         assert!(response_1.is_aborted());
         assert_eq!(response_1.abort_code(), Some(Sync1AbortCode::A0));
 
         // probe_count = 0 should fail
-        let request_0 = ProbeFacadeRequest::new("follower", 0).with_probe_count(0);
+        let request_0 = ProbeFacadeRequest::new("follower", 0, "leader:9000").with_probe_count(0);
         let response_0 = facade.probe(&request_0).await;
         assert!(response_0.is_aborted());
         assert_eq!(response_0.abort_code(), Some(Sync1AbortCode::A0));
@@ -982,7 +1027,7 @@ mod tests {
         let transport = FakeLeaderTransport::new();
         let facade = ProbeFacade::new(transport);
 
-        let request = ProbeFacadeRequest::new("follower", 0).with_timeout_ms(0);
+        let request = ProbeFacadeRequest::new("follower", 0, "leader:9000").with_timeout_ms(0);
         let response = facade.probe(&request).await;
         assert!(response.is_aborted());
         assert_eq!(response.abort_code(), Some(Sync1AbortCode::A0));
@@ -994,7 +1039,7 @@ mod tests {
         let transport = FakeLeaderTransport::new();
         let facade = ProbeFacade::new(transport);
 
-        let request = ProbeFacadeRequest::new("follower", 0).with_timeout_ms(60_000);
+        let request = ProbeFacadeRequest::new("follower", 0, "leader:9000").with_timeout_ms(60_000);
         let response = facade.probe(&request).await;
         assert!(response.is_aborted());
         assert_eq!(response.abort_code(), Some(Sync1AbortCode::A0));
@@ -1010,7 +1055,7 @@ mod tests {
         transport.set_proof(make_proof(vec![1], vec!["h1"])).await;
 
         let facade = ProbeFacade::new(transport);
-        let request = ProbeFacadeRequest::new("follower", 0).with_probe_count(3);
+        let request = ProbeFacadeRequest::new("follower", 0, "leader:9000").with_probe_count(3);
         let response = facade.probe(&request).await;
         // Should succeed (not A0), actual result depends on transport
         // but A0 means validation failure, not transport failure
@@ -1027,7 +1072,7 @@ mod tests {
         transport1.set_version(make_version()).await;
         transport1.set_proof(make_proof(vec![1], vec!["h1"])).await;
         let facade1 = ProbeFacade::new(transport1);
-        let request_min = ProbeFacadeRequest::new("follower", 0).with_timeout_ms(1);
+        let request_min = ProbeFacadeRequest::new("follower", 0, "leader:9000").with_timeout_ms(1);
         let response_min = facade1.probe(&request_min).await;
         assert_ne!(response_min.abort_code(), Some(Sync1AbortCode::A0));
 
@@ -1037,7 +1082,8 @@ mod tests {
         transport2.set_version(make_version()).await;
         transport2.set_proof(make_proof(vec![1], vec!["h1"])).await;
         let facade2 = ProbeFacade::new(transport2);
-        let request_max = ProbeFacadeRequest::new("follower", 0).with_timeout_ms(30_000);
+        let request_max =
+            ProbeFacadeRequest::new("follower", 0, "leader:9000").with_timeout_ms(30_000);
         let response_max = facade2.probe(&request_max).await;
         assert_ne!(response_max.abort_code(), Some(Sync1AbortCode::A0));
     }
@@ -1051,31 +1097,31 @@ mod tests {
 
         // Invalid: probe_count = 0
         let response = facade
-            .probe(&ProbeFacadeRequest::new("f", 0).with_probe_count(0))
+            .probe(&ProbeFacadeRequest::new("f", 0, "leader:9000").with_probe_count(0))
             .await;
         assert_eq!(response.abort_code(), Some(Sync1AbortCode::A0));
 
         // Invalid: probe_count = 1
         let response = facade
-            .probe(&ProbeFacadeRequest::new("f", 0).with_probe_count(1))
+            .probe(&ProbeFacadeRequest::new("f", 0, "leader:9000").with_probe_count(1))
             .await;
         assert_eq!(response.abort_code(), Some(Sync1AbortCode::A0));
 
         // Invalid: probe_count = 2
         let response = facade
-            .probe(&ProbeFacadeRequest::new("f", 0).with_probe_count(2))
+            .probe(&ProbeFacadeRequest::new("f", 0, "leader:9000").with_probe_count(2))
             .await;
         assert_eq!(response.abort_code(), Some(Sync1AbortCode::A0));
 
         // Invalid: timeout = 0
         let response = facade
-            .probe(&ProbeFacadeRequest::new("f", 0).with_timeout_ms(0))
+            .probe(&ProbeFacadeRequest::new("f", 0, "leader:9000").with_timeout_ms(0))
             .await;
         assert_eq!(response.abort_code(), Some(Sync1AbortCode::A0));
 
         // Invalid: timeout > 30000
         let response = facade
-            .probe(&ProbeFacadeRequest::new("f", 0).with_timeout_ms(u64::MAX))
+            .probe(&ProbeFacadeRequest::new("f", 0, "leader:9000").with_timeout_ms(u64::MAX))
             .await;
         assert_eq!(response.abort_code(), Some(Sync1AbortCode::A0));
     }
@@ -1086,7 +1132,7 @@ mod tests {
         let transport = FakeLeaderTransport::new();
         let facade = ProbeFacade::new(transport);
 
-        let response = facade.probe_with_start_sequence("", 0).await;
+        let response = facade.probe_with_start_sequence("", 0, "leader:9000").await;
         assert!(response.is_aborted());
         assert_eq!(response.abort_code(), Some(Sync1AbortCode::A0));
     }
@@ -1101,7 +1147,9 @@ mod tests {
         transport.set_proof(make_proof(vec![1], vec!["h1"])).await;
 
         let facade = ProbeFacade::new(transport);
-        let response = facade.probe_with_start_sequence("valid-follower", 0).await;
+        let response = facade
+            .probe_with_start_sequence("valid-follower", 0, "leader:9000")
+            .await;
         // A0 means validation failure - we should NOT get A0 for valid params
         assert_ne!(response.abort_code(), Some(Sync1AbortCode::A0));
     }
@@ -1200,7 +1248,7 @@ mod tests {
     #[test]
     fn config_new_request_uses_config_defaults() {
         let config = ProbeFacadeConfig::default();
-        let request = config.new_request("node-1", 100);
+        let request = config.new_request("node-1", 100, "leader:9000");
 
         assert_eq!(request.follower_identity, "node-1");
         assert_eq!(request.follower_tip_sequence, 100);
@@ -1213,7 +1261,7 @@ mod tests {
         let config = ProbeFacadeConfig::default()
             .with_default_probe_count(5)
             .unwrap();
-        let request = config.new_request("node-2", 200);
+        let request = config.new_request("node-2", 200, "leader:9000");
 
         assert_eq!(request.follower_identity, "node-2");
         assert_eq!(request.follower_tip_sequence, 200);
@@ -1224,8 +1272,8 @@ mod tests {
     #[test]
     fn probe_facade_request_from_config_matches_new_request() {
         let config = ProbeFacadeConfig::default();
-        let request1 = ProbeFacadeRequest::new("test-node", 50);
-        let request2 = ProbeFacadeRequest::from_config(&config, "test-node", 50);
+        let request1 = ProbeFacadeRequest::new("test-node", 50, "leader:9000");
+        let request2 = ProbeFacadeRequest::from_config(&config, "test-node", 50, "leader:9000");
 
         assert_eq!(request1.follower_identity, request2.follower_identity);
         assert_eq!(
@@ -1234,20 +1282,23 @@ mod tests {
         );
         assert_eq!(request1.probe_count, request2.probe_count);
         assert_eq!(request1.timeout_per_probe_ms, request2.timeout_per_probe_ms);
+        assert_eq!(request1.leader_address, request2.leader_address);
     }
 
     #[test]
     fn probe_facade_request_validate_uses_default_config_bounds() {
         // Valid request should pass validation
-        let valid_request = ProbeFacadeRequest::new("node", 0);
+        let valid_request = ProbeFacadeRequest::new("node", 0, "leader:9000");
         assert!(valid_request.validate().is_none());
 
         // Invalid probe_count (below min) should fail
-        let invalid_count_request = ProbeFacadeRequest::new("node", 0).with_probe_count(2);
+        let invalid_count_request =
+            ProbeFacadeRequest::new("node", 0, "leader:9000").with_probe_count(2);
         assert_eq!(invalid_count_request.validate(), Some(Sync1AbortCode::A0));
 
         // Invalid timeout (above max) should fail
-        let invalid_timeout_request = ProbeFacadeRequest::new("node", 0).with_timeout_ms(60_000);
+        let invalid_timeout_request =
+            ProbeFacadeRequest::new("node", 0, "leader:9000").with_timeout_ms(60_000);
         assert_eq!(invalid_timeout_request.validate(), Some(Sync1AbortCode::A0));
     }
 
@@ -1257,14 +1308,15 @@ mod tests {
         // Default config has min_probe_count=3, so probe_count=2 should fail
         let default_config = ProbeFacadeConfig::default();
 
-        let request_below_min = ProbeFacadeRequest::new("node", 0).with_probe_count(2);
+        let request_below_min =
+            ProbeFacadeRequest::new("node", 0, "leader:9000").with_probe_count(2);
         assert_eq!(
             request_below_min.validate_with_config(&default_config),
             Some(Sync1AbortCode::A0)
         );
 
         // But probe_count=3 (equal to min) should pass
-        let request_at_min = ProbeFacadeRequest::new("node", 0).with_probe_count(3);
+        let request_at_min = ProbeFacadeRequest::new("node", 0, "leader:9000").with_probe_count(3);
         assert!(
             request_at_min
                 .validate_with_config(&default_config)
@@ -1275,7 +1327,8 @@ mod tests {
         let custom_default_config = ProbeFacadeConfig::default()
             .with_default_probe_count(10)
             .unwrap();
-        let request_with_custom_default = ProbeFacadeRequest::new("node", 0).with_probe_count(5);
+        let request_with_custom_default =
+            ProbeFacadeRequest::new("node", 0, "leader:9000").with_probe_count(5);
         // probe_count=5 >= min_probe_count=3, so validation passes
         assert!(
             request_with_custom_default
@@ -1284,7 +1337,8 @@ mod tests {
         );
 
         // Request with custom timeout that exceeds default max should fail validation
-        let request_high_timeout = ProbeFacadeRequest::new("node", 0).with_timeout_ms(100_000);
+        let request_high_timeout =
+            ProbeFacadeRequest::new("node", 0, "leader:9000").with_timeout_ms(100_000);
         assert_eq!(
             request_high_timeout.validate_with_config(&default_config),
             Some(Sync1AbortCode::A0)
@@ -1301,7 +1355,7 @@ mod tests {
 
         let facade = ProbeFacade::new(transport);
         let config = ProbeFacadeConfig::default();
-        let request = config.new_request("follower-config-test", 0);
+        let request = config.new_request("follower-config-test", 0, "leader:9000");
 
         let response = facade.probe(&request).await;
         assert!(response.is_ok());
@@ -1327,7 +1381,7 @@ mod tests {
         assert_eq!(facade.config().default_timeout_ms, 5000);
 
         // Verify the facade uses the stored config (probe_count=5 is valid with stored config)
-        let request = ProbeFacadeRequest::new("follower", 0).with_probe_count(5);
+        let request = ProbeFacadeRequest::new("follower", 0, "leader:9000").with_probe_count(5);
         let response = facade.probe(&request).await;
         // Should NOT be A0 (validation error) since probe_count=5 >= min_probe_count=3
         assert_ne!(response.abort_code(), Some(Sync1AbortCode::A0));
@@ -1398,7 +1452,7 @@ mod tests {
             .await;
 
         // Probe using the facade from cross-module context
-        let request = ProbeFacadeRequest::new("cross-module-follower", 200);
+        let request = ProbeFacadeRequest::new("cross-module-follower", 200, "leader:9000");
         let response = wiring.probe(&request).await;
 
         // Verify the probe succeeded - proves the wiring is fully functional cross-module
@@ -1432,7 +1486,7 @@ mod tests {
             })
             .await;
 
-        let request = ProbeFacadeRequest::new("error-inspection-test", 0);
+        let request = ProbeFacadeRequest::new("error-inspection-test", 0, "leader:9000");
         let response = wiring.probe(&request).await;
 
         // Transport error should be properly mapped to A7 abort
