@@ -168,12 +168,14 @@ Advanced replay/query fabric tooling remains P2 backlog.
 
 **Source**: `crates/ferrum-proto/src/provenance.rs:86`, `crates/ferrum-store/src/sqlite/provenance.rs:142`
 
-### 2.7 HA / Multi-Node Control Plane (P2 — Analysis Started)
+### 2.7 HA / Multi-Node Control Plane (P2 — Analysis Complete)
 
 Single-node SQLite is the only supported deployment model. P2.4a SQLite
 read-replica use-case analysis is complete at
 `26-p2-sqlite-read-replica-use-cases.md` (sanctioned read-only use cases,
-risks, non-goals, done criteria). P2.4b leader-election analysis is pending.
+risks, non-goals, done criteria). P2.4b leader-election analysis is complete at
+`27-p2-leader-election-requirements-analysis.md` (requirements LE1-LE6, NI1-NI3,
+PR1-PR3; option comparison; Raft recommendation; minimal interface contract).
 Full HA implementation is post-P2.
 
 ---
