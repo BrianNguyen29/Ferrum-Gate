@@ -168,10 +168,13 @@ Advanced replay/query fabric tooling remains P2 backlog.
 
 **Source**: `crates/ferrum-proto/src/provenance.rs:86`, `crates/ferrum-store/src/sqlite/provenance.rs:142`
 
-### 2.7 HA / Multi-Node Control Plane (P2 — Not Planned)
+### 2.7 HA / Multi-Node Control Plane (P2 — Analysis Started)
 
-No HA story exists. Single-node SQLite persistence is the only supported
-deployment model.
+Single-node SQLite is the only supported deployment model. P2.4a SQLite
+read-replica use-case analysis is complete at
+`26-p2-sqlite-read-replica-use-cases.md` (sanctioned read-only use cases,
+risks, non-goals, done criteria). P2.4b leader-election analysis is pending.
+Full HA implementation is post-P2.
 
 ---
 
@@ -224,7 +227,7 @@ Items to prepare for multi-node deployment without implementing full sync:
    - Node identity + topology discovery docs (future)
 
 3. **HA readiness analysis**
-   - Document SQLite read-replica use cases (TODO)
+   - Document SQLite read-replica use cases (DONE — `26-p2-sqlite-read-replica-use-cases.md`)
    - Analyze leader election requirements for future implementation (TODO)
 
 **Exit criteria**: Multi-node architecture is documented; sync implementation can begin.

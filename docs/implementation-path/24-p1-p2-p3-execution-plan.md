@@ -184,12 +184,13 @@ rough next-step estimate:
 
 | Slice | Description | Status | Verification |
 |-------|-------------|--------|--------------|
-| P2.4a | Document SQLite read-replica use cases | **TODO** | New section in `docs/implementation-path/` or `docs/15-deployment-and-operations.md` |
+| P2.4a | Document SQLite read-replica use cases | **DONE** | Analysis doc `26-p2-sqlite-read-replica-use-cases.md` covers sanctioned use cases, risks, non-goals, and done criteria |
 | P2.4b | Analyze leader-election requirements for future implementation | **TODO** | Decision doc: leader-election approach (Raft, etc.) with rationale |
 
 **Dependencies:** None (exploratory/analysis only).
 
 **Touchpoints:**
+- `docs/implementation-path/26-p2-sqlite-read-replica-use-cases.md`
 - `docs/15-deployment-and-operations.md`
 - `docs/implementation-path/18-cross-node-ledger-sync-plan.md`
 
@@ -305,7 +306,7 @@ v1 RC sign-off:
 |------|-------|--------|-------|
 | Multi-node sync write-path | P3 | Not started | Sync-3a probe done; apply-path, two-way merge deferred |
 | Consensus / leader election | Beyond P3 | Not planned | Requires Raft or equivalent; no design doc yet |
-| HA / multi-leader replication | P2 | Analysis TODO | SQLite read-replica use cases, leader-election analysis P2 backlog |
+| HA / multi-leader replication | P2 | Analysis partial | SQLite read-replica use cases analysis DONE (`26-p2-sqlite-read-replica-use-cases.md`); leader-election analysis P2.4b backlog |
 | In-process TLS termination | N/A | Out of scope | External terminator (nginx/cloud LB) required; see TLS ingress runbook |
 | Distributed trace context | P2 | Not started | W3C TraceContext; single-node v1 does not need it |
 | Alerting rules | P2 | Not started | Exploratory/analysis only |
@@ -348,3 +349,4 @@ the single-node supported surface documented in Section 1 / P1.
 - Next issue backlog: `08-next-issue-backlog.md`
 - Remaining tasks: `11-remaining-tasks.md`
 - Sync plan docs: `18-cross-node-ledger-sync-plan.md` through `22a-sync-3a1-probe-api-boundary.md`
+- P2.4a SQLite read-replica use-case analysis: `26-p2-sqlite-read-replica-use-cases.md`
