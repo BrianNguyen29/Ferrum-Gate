@@ -172,8 +172,7 @@ enum DiffClass {
     InSync,           // leader_tip == follower_tip (including both None)
     FollowerAhead,    // follower_tip > leader_tip
     LeaderAhead,      // leader_tip > follower_tip AND follower_tip exists
-    LeaderAheadEmpty, // leader_tip > follower_tip AND follower_tip is None
-    Bootstrap,       // follower_tip is None AND leader_tip exists
+    Bootstrap,        // follower_tip is None AND leader_tip exists
     Divergent,        // same sequence, different hashes
     Unknown,          // insufficient info to classify (fail-closed)
 }
@@ -236,7 +235,6 @@ Sync-2 produces a `DiffClass` that feeds the Sync-1 decision table:
 | InSync                 | DONE             | No sync needed                       |
 | FollowerAhead          | ABORT (A4)        | Do not sync; local commits ahead      |
 | LeaderAhead            | SYNC             | Prepare to fetch entries N+1..M      |
-| LeaderAheadEmpty       | FAST_FORWARD     | Prepare to fetch entries 0..M         |
 | Bootstrap              | FAST_FORWARD     | Prepare to fetch entries 0..M         |
 | Divergent              | ABORT (A3/A6)    | Do not sync; chains diverge          |
 | Unknown                | ABORT (A0)       | Do not sync; insufficient info        |

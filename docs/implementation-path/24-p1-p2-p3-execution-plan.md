@@ -165,7 +165,7 @@ rough next-step estimate:
 | Sync-3: real HTTP transport (not FakeTransport) | P2 | Sync-3 impl | DONE | `HttpLeaderTransport` in `ferrum-sync/src/http_transport.rs` using `reqwest`; HTTP/JSON protocol |
 | Sync-1: entry apply/write-path (follower side) | P3 | Write-path | 10+ days | Design doc first; then implement atomic entry application with rollback |
 | Sync-1: retry/backoff on transient failure | P3 | Sync-3 impl | **DONE (bounded)** | Bounded retry added to `HttpLeaderTransport`: 1 retry on `LeaderTimeout`/`LeaderUnreachable` with 100ms backoff; non-retryable errors fail immediately; richer policy (exponential backoff, jitter, config) deferred |
-| Sync-2: `LeaderAheadEmpty` variant unused in `classify()` | P3 cleanup | Sync-2 impl | 0.5 days | Either wire into classify or remove; currently `Bootstrap` covers the case |
+| Sync-2: `LeaderAheadEmpty` variant removed | P3 cleanup | Sync-2 impl | DONE | Removed; `Bootstrap` covers the case |
 | Consensus / leader election | Future | Beyond P3 | Unknown | Requires Raft or similar; full design doc needed first |
 
 **Touchpoints:**
