@@ -92,7 +92,7 @@ pub struct ProvenanceQueryRequest {
     pub terminal_only: Option<bool>,
     pub since: Option<Timestamp>,
     pub until: Option<Timestamp>,
-    /// Maximum number of events to return (1-1000). Defaults to 100.
+    /// Maximum number of events to return (1-10000). Defaults to 100.
     #[serde(default = "default_query_limit")]
     pub limit: Option<u32>,
     /// Cursor for keyset pagination. Use the returned next_cursor to advance.
@@ -250,4 +250,84 @@ pub struct ProvenanceReplayResponse {
     pub events: Vec<ProvenanceEvent>,
     /// The execution_id this replay covers.
     pub execution_id: ExecutionId,
+}
+
+/// Request for exporting provenance events as a deterministic audit payload.
+/// Uses the same filter semantics as ProvenanceQueryRequest but returns
+/// a self-contained export with metadata for auditability.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProvenanceExportRequest {
+    /// Filter by intent_id.
+    #[serde(default)]
+    pub intent_id: Option<crate::IntentId>,
+    /// Filter by proposal_id.
+    #[serde(default)]
+    pub proposal_id: Option<ProposalId>,
+    /// Filter by execution_id.
+    #[serde(default)]
+    pub execution_id: Option<ExecutionId>,
+    /// Filter by capability_id.
+    #[serde(default)]
+    pub capability_id: Option<CapabilityId>,
+    /// Filter by event kind.
+    #[serde(default)]
+    pub event_kind: Option<ProvenanceEventKind>,
+    /// Filter to terminal events only.
+    #[serde(default)]
+    pub terminal_only: Option<bool>,
+    /// Filter events that occurred at or after this timestamp.
+    #[serde(default)]
+    pub since: Option<Timestamp>,
+    /// Filter events that occurred at or before this timestamp.
+    #[serde(default)]
+    pub until: Option<Timestamp>,
+    /// Maximum number of events to export (1-10000). Defaults to 1000.
+    #[serde(default = "default_export_limit")]
+    pub limit: Option<u32>,
+    /// Cursor for keyset pagination. Use the returned next_cursor to advance.
+    #[serde(default)]
+    pub cursor: Option<String>,
+}
+
+fn default_export_limit() -> Option<u32> {
+    Some(1000)
+}
+
+/// Response containing the exported provenance events as a deterministic audit payload.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ProvenanceExportResponse {
+    /// Exported provenance events, sorted by occurred_at ascending, then event_id ascending.
+    pub events: Vec<ProvenanceEvent>,
+    /// Number of events in this export page.
+    pub total_matched: u64,
+    /// Number of events included in this export page (same as total_matched for single-page exports).
+    pub exported_count: u64,
+    /// Cursor for fetching the next page of exports. None if this is the last page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    /// Export metadata for auditability.
+    pub export_info: ProvenanceExportInfo,
+}
+
+/// Metadata about the export itself, for audit trail purposes.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ProvenanceExportInfo {
+    /// RFC3339 timestamp when this export was generated.
+    pub exported_at: Timestamp,
+    /// The filter criteria used for this export (mirrors the request).
+    pub filters: ProvenanceExportFilters,
+}
+
+/// Subset of request filters echoed back in the response for auditability.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ProvenanceExportFilters {
+    pub intent_id: Option<bool>,
+    pub proposal_id: Option<bool>,
+    pub execution_id: Option<bool>,
+    pub capability_id: Option<bool>,
+    pub event_kind: Option<bool>,
+    pub terminal_only: Option<bool>,
+    pub since: Option<bool>,
+    pub until: Option<bool>,
 }

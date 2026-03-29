@@ -1338,7 +1338,7 @@ components:
         limit:
           type: integer
           nullable: true
-          description: Maximum number of events to return (1-1000). Defaults to 100.
+          description: Maximum number of events to return (1-10000). Defaults to 100.
         cursor:
           type: string
           nullable: true
