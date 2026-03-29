@@ -962,6 +962,13 @@ enum ServerCommand {
         #[arg(long)]
         max_hops: Option<u32>,
 
+        /// Filter traversal to only include these edge types.
+        /// Can be specified multiple times. Valid values: DerivedFrom, AuthorizedBy,
+        /// ApprovedBy, TaintedBy, UsesManifest, EvaluatedByPolicy, Caused,
+        /// Compensates, Verifies, References, ObservedBy.
+        #[arg(long, value_name = "EDGE_TYPE")]
+        edge_type: Option<Vec<String>>,
+
         /// Server base URL (e.g. http://127.0.0.1:8080).
         #[arg(long, env = "FERRUMCTL_SERVER_URL")]
         server_url: Option<String>,
@@ -2406,12 +2413,14 @@ async fn run_inspect_lineage(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_inspect_lineage_query(
     execution_id: String,
     event_id: String,
     ancestry: bool,
     descendants: bool,
     max_hops: Option<u32>,
+    edge_type: Option<Vec<String>>,
     url: Option<String>,
     token: Option<String>,
     as_json: bool,
@@ -2423,6 +2432,9 @@ async fn run_inspect_lineage_query(
 
     // Validate max_hops locally before making any network call
     let max_hops = validate_max_hops(max_hops)?;
+
+    // Parse edge_type strings to ProvenanceEdgeType
+    let edge_types = parse_edge_types(edge_type)?;
 
     let req = LineageQueryRequest {
         execution_id: ferrum_proto::ExecutionId(
@@ -2436,6 +2448,7 @@ async fn run_inspect_lineage_query(
         ancestry,
         descendants,
         max_hops,
+        edge_types,
     };
 
     let url = resolve_server_url(url)?;
@@ -2543,6 +2556,36 @@ fn validate_max_hops(max_hops: Option<u32>) -> Result<Option<u32>> {
         None => Ok(None),
         Some(v) if (1..=32).contains(&v) => Ok(Some(v)),
         Some(v) => bail!("--max-hops must be between 1 and 32, got {}", v),
+    }
+}
+
+/// Parses a list of edge type strings into ProvenanceEdgeType enum variants.
+fn parse_edge_types(
+    edge_types: Option<Vec<String>>,
+) -> Result<Option<Vec<ferrum_proto::ProvenanceEdgeType>>> {
+    match edge_types {
+        None => Ok(None),
+        Some(types) => {
+            let mut parsed = Vec::new();
+            for s in types {
+                let edge_type = match s.as_str() {
+                    "DerivedFrom" => ferrum_proto::ProvenanceEdgeType::DerivedFrom,
+                    "AuthorizedBy" => ferrum_proto::ProvenanceEdgeType::AuthorizedBy,
+                    "ApprovedBy" => ferrum_proto::ProvenanceEdgeType::ApprovedBy,
+                    "TaintedBy" => ferrum_proto::ProvenanceEdgeType::TaintedBy,
+                    "UsesManifest" => ferrum_proto::ProvenanceEdgeType::UsesManifest,
+                    "EvaluatedByPolicy" => ferrum_proto::ProvenanceEdgeType::EvaluatedByPolicy,
+                    "Caused" => ferrum_proto::ProvenanceEdgeType::Caused,
+                    "Compensates" => ferrum_proto::ProvenanceEdgeType::Compensates,
+                    "Verifies" => ferrum_proto::ProvenanceEdgeType::Verifies,
+                    "References" => ferrum_proto::ProvenanceEdgeType::References,
+                    "ObservedBy" => ferrum_proto::ProvenanceEdgeType::ObservedBy,
+                    other => bail!("unknown edge type: {}", other),
+                };
+                parsed.push(edge_type);
+            }
+            Ok(Some(parsed))
+        }
     }
 }
 
@@ -3124,6 +3167,7 @@ async fn main() -> Result<()> {
                 ancestry,
                 descendants,
                 max_hops,
+                edge_type,
                 server_url,
                 bearer_token,
                 json,
@@ -3134,6 +3178,7 @@ async fn main() -> Result<()> {
                     ancestry,
                     descendants,
                     max_hops,
+                    edge_type,
                     server_url,
                     bearer_token,
                     json,
@@ -4421,6 +4466,7 @@ mod tests {
             ancestry: true,
             descendants: false,
             max_hops: Some(8),
+            edge_types: None,
         };
         let json = serde_json::to_string(&req).unwrap();
         assert!(json.contains("\"execution_id\":\"11111111-1111-1111-1111-111111111111\""));
@@ -4443,6 +4489,7 @@ mod tests {
             ancestry: false,
             descendants: true,
             max_hops: None,
+            edge_types: None,
         };
         let json = serde_json::to_string(&req).unwrap();
         assert!(json.contains("\"ancestry\":false"));

@@ -1703,6 +1703,7 @@ async fn test_lineage_query_happy_path_ancestry() {
         ancestry: true,
         descendants: false,
         max_hops: Some(8),
+        edge_types: None,
     };
 
     let app = build_router(runtime.clone());
@@ -1758,6 +1759,7 @@ async fn test_lineage_query_both_directions_false_returns_400() {
         ancestry: false,
         descendants: false,
         max_hops: Some(8),
+        edge_types: None,
     };
 
     let app = build_router(runtime.clone());
@@ -1955,6 +1957,7 @@ async fn test_lineage_query_max_hops_respected() {
         ancestry: true,
         descendants: true,
         max_hops: Some(1),
+        edge_types: None,
     };
 
     let app = build_router(runtime.clone());
@@ -1998,6 +2001,7 @@ async fn test_lineage_query_unknown_event_returns_404() {
         ancestry: true,
         descendants: false,
         max_hops: Some(8),
+        edge_types: None,
     };
 
     let app = build_router(runtime.clone());
@@ -2306,5 +2310,326 @@ async fn test_provenance_export_rejects_unknown_fields() {
         response.status() == 400 || response.status() == 422,
         "should reject request with unknown fields, got {}",
         response.status()
+    );
+}
+
+/// Helper to create a provenance event with a specific edge type for parent edges.
+fn make_event_with_edge_type(
+    kind: ProvenanceEventKind,
+    parent_ids: Vec<ferrum_proto::EventId>,
+    edge_type: ProvenanceEdgeType,
+) -> ProvenanceEvent {
+    ProvenanceEvent {
+        event_id: ferrum_proto::EventId::new(),
+        kind,
+        occurred_at: chrono::Utc::now(),
+        actor: ActorRef {
+            actor_type: ActorType::System,
+            actor_id: "integration-test".to_string(),
+            display_name: Some("Integration Test".to_string()),
+        },
+        object: ObjectRef {
+            object_type: ObjectType::Unknown,
+            object_id: "edge-type-test-object".to_string(),
+            summary: Some("event for edge_types filter test".to_string()),
+        },
+        intent_id: None,
+        proposal_id: None,
+        execution_id: None,
+        capability_id: None,
+        rollback_contract_id: None,
+        policy_bundle_id: None,
+        trust_labels: Vec::new(),
+        sensitivity_labels: Vec::new(),
+        parent_edges: parent_ids
+            .into_iter()
+            .map(|from_event_id| ProvenanceEdge {
+                edge_type: edge_type.clone(),
+                from_event_id,
+                summary: None,
+            })
+            .collect(),
+        hash_chain: HashChainRef {
+            content_hash: None,
+            manifest_hash: None,
+            policy_bundle_hash: None,
+            previous_ledger_hash: None,
+        },
+        metadata: JsonMap::new(),
+    }
+}
+
+/// Test: lineage query with edge_types filter restricts ancestry traversal
+#[tokio::test]
+async fn test_lineage_query_edge_types_filter_restricts_ancestry() {
+    let (_temp_dir, runtime, store) = create_test_runtime().await;
+
+    // Create chain: root -[DerivedFrom]-> middle -[AuthorizedBy]-> leaf
+    let root = make_event_with_edge_type(
+        ProvenanceEventKind::IntentCompiled,
+        Vec::new(),
+        ProvenanceEdgeType::DerivedFrom,
+    );
+    let middle = make_event_with_edge_type(
+        ProvenanceEventKind::ToolCallPrepared,
+        vec![root.event_id],
+        ProvenanceEdgeType::DerivedFrom,
+    );
+    let leaf = make_event_with_edge_type(
+        ProvenanceEventKind::SideEffectCommitted,
+        vec![middle.event_id],
+        ProvenanceEdgeType::AuthorizedBy,
+    );
+
+    store.provenance().append_event(&root).await.unwrap();
+    store.provenance().append_event(&middle).await.unwrap();
+    store.provenance().append_event(&leaf).await.unwrap();
+
+    let execution_id = ferrum_proto::ExecutionId::new();
+
+    // Query with no filter - should get all 3 events in ancestry
+    let lineage_req_all = LineageQueryRequest {
+        execution_id,
+        event_id: leaf.event_id,
+        ancestry: true,
+        descendants: false,
+        max_hops: Some(8),
+        edge_types: None,
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/provenance/lineage")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&lineage_req_all).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let lineage_resp_all: LineageQueryResponse = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        lineage_resp_all.events.len(),
+        3,
+        "no filter should return all 3 events"
+    );
+
+    // Query with filter for DerivedFrom only - should NOT follow AuthorizedBy edge
+    // So ancestry should be: root, middle, leaf (the seed)
+    let lineage_req_derived = LineageQueryRequest {
+        execution_id,
+        event_id: leaf.event_id,
+        ancestry: true,
+        descendants: false,
+        max_hops: Some(8),
+        edge_types: Some(vec![ProvenanceEdgeType::DerivedFrom]),
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/provenance/lineage")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&lineage_req_derived).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let lineage_resp_derived: LineageQueryResponse = serde_json::from_slice(&body).unwrap();
+
+    // The leaf's only parent edge is AuthorizedBy, which is filtered out,
+    // so we should only get the leaf itself (no ancestors followed)
+    assert!(
+        lineage_resp_derived.events.len() <= 1,
+        "AuthorizedBy filter should not follow any edges, got {} events",
+        lineage_resp_derived.events.len()
+    );
+}
+
+/// Test: lineage query with edge_types filter restricts descendants traversal
+#[tokio::test]
+async fn test_lineage_query_edge_types_filter_restricts_descendants() {
+    let (_temp_dir, runtime, store) = create_test_runtime().await;
+
+    // Create chain: root -[DerivedFrom]-> child1 -[AuthorizedBy]-> child2
+    let root = make_event_with_edge_type(
+        ProvenanceEventKind::IntentCompiled,
+        Vec::new(),
+        ProvenanceEdgeType::DerivedFrom,
+    );
+    let child1 = make_event_with_edge_type(
+        ProvenanceEventKind::ToolCallPrepared,
+        vec![root.event_id],
+        ProvenanceEdgeType::DerivedFrom,
+    );
+    let child2 = make_event_with_edge_type(
+        ProvenanceEventKind::SideEffectCommitted,
+        vec![child1.event_id],
+        ProvenanceEdgeType::AuthorizedBy,
+    );
+
+    // Add execution_id to all events for the query to work
+    let mut root_with_exec = root.clone();
+    root_with_exec.execution_id = Some(ferrum_proto::ExecutionId::new());
+    let mut child1_with_exec = child1.clone();
+    child1_with_exec.execution_id = root_with_exec.execution_id;
+    let mut child2_with_exec = child2.clone();
+    child2_with_exec.execution_id = root_with_exec.execution_id;
+
+    let execution_id = root_with_exec.execution_id.unwrap();
+
+    store
+        .provenance()
+        .append_event(&root_with_exec)
+        .await
+        .unwrap();
+    store
+        .provenance()
+        .append_event(&child1_with_exec)
+        .await
+        .unwrap();
+    store
+        .provenance()
+        .append_event(&child2_with_exec)
+        .await
+        .unwrap();
+
+    // Query descendants with no filter - should get child1 and child2
+    let lineage_req_all = LineageQueryRequest {
+        execution_id,
+        event_id: root_with_exec.event_id,
+        ancestry: false,
+        descendants: true,
+        max_hops: Some(8),
+        edge_types: None,
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/provenance/lineage")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&lineage_req_all).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let lineage_resp_all: LineageQueryResponse = serde_json::from_slice(&body).unwrap();
+    // Note: API includes seed event in response, so we get root + child1 + child2 = 3
+    assert_eq!(
+        lineage_resp_all.events.len(),
+        3,
+        "no filter should return root and both children (API includes seed)"
+    );
+
+    // Query descendants with DerivedFrom only - should get root + child1 (2 events)
+    // child2 is not reachable because child1->child2 is AuthorizedBy, not DerivedFrom
+    let lineage_req_derived = LineageQueryRequest {
+        execution_id,
+        event_id: root_with_exec.event_id,
+        ancestry: false,
+        descendants: true,
+        max_hops: Some(8),
+        edge_types: Some(vec![ProvenanceEdgeType::DerivedFrom]),
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/provenance/lineage")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&lineage_req_derived).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let lineage_resp_derived: LineageQueryResponse = serde_json::from_slice(&body).unwrap();
+    // API includes seed event, so we get root + child1 = 2 events
+    assert_eq!(
+        lineage_resp_derived.events.len(),
+        2,
+        "DerivedFrom filter should return root + child1"
+    );
+    // child1 should be in the response (either first or second depending on sort order)
+    assert!(
+        lineage_resp_derived
+            .events
+            .iter()
+            .any(|e| e.event_id == child1_with_exec.event_id),
+        "child1 should be in the response"
+    );
+
+    // Query descendants with AuthorizedBy only - should get root only (1 event)
+    // root->child1 is DerivedFrom (not AuthorizedBy), so child1 is not reachable
+    // child2 is only reachable via child1->child2 AuthorizedBy edge, but we can't reach child1
+    let lineage_req_auth = LineageQueryRequest {
+        execution_id,
+        event_id: root_with_exec.event_id,
+        ancestry: false,
+        descendants: true,
+        max_hops: Some(8),
+        edge_types: Some(vec![ProvenanceEdgeType::AuthorizedBy]),
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/provenance/lineage")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&lineage_req_auth).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let lineage_resp_auth: LineageQueryResponse = serde_json::from_slice(&body).unwrap();
+    // API includes seed event, and AuthorizedBy filter from root only returns root (1 event)
+    // since root has no direct AuthorizedBy edges to children
+    assert_eq!(
+        lineage_resp_auth.events.len(),
+        1,
+        "AuthorizedBy filter should only return root - no direct AuthorizedBy edge from root"
+    );
+    // root should be in the response
+    assert!(
+        lineage_resp_auth
+            .events
+            .iter()
+            .any(|e| e.event_id == root_with_exec.event_id),
+        "root should be in the response"
     );
 }

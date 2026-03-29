@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use ferrum_proto::{EventId, ProvenanceEvent, ProvenanceEventKind};
+use ferrum_proto::{EventId, ProvenanceEdgeType, ProvenanceEvent, ProvenanceEventKind};
 
 #[derive(Debug, thiserror::Error)]
 pub enum LineageGraphError {
@@ -63,7 +63,11 @@ impl LineageGraph {
             .collect()
     }
 
-    pub fn walk_backwards_from(&self, event_id: EventId) -> Vec<ProvenanceEvent> {
+    pub fn walk_backwards_from(
+        &self,
+        event_id: EventId,
+        edge_types: Option<&[ProvenanceEdgeType]>,
+    ) -> Vec<ProvenanceEvent> {
         let by_id: HashMap<EventId, &ProvenanceEvent> = self
             .events
             .iter()
@@ -85,6 +89,12 @@ impl LineageGraph {
             lineage.push((*event).clone());
 
             for edge in &event.parent_edges {
+                // Filter by edge type if specified
+                if let Some(types) = edge_types {
+                    if !types.contains(&edge.edge_type) {
+                        continue;
+                    }
+                }
                 frontier.push(edge.from_event_id);
             }
         }
@@ -95,7 +105,12 @@ impl LineageGraph {
 
     /// Walk forwards from a given event, collecting all descendant events.
     /// Uses the child_index to find children at each step.
-    pub fn walk_forwards_from(&self, event_id: EventId) -> Vec<ProvenanceEvent> {
+    /// When edge_types is Some, only traverses edges whose type is in the allowed set.
+    pub fn walk_forwards_from(
+        &self,
+        event_id: EventId,
+        edge_types: Option<&[ProvenanceEdgeType]>,
+    ) -> Vec<ProvenanceEvent> {
         let by_id: HashMap<EventId, &ProvenanceEvent> = self
             .events
             .iter()
@@ -113,9 +128,25 @@ impl LineageGraph {
             // Get children from the child_index
             if let Some(child_ids) = self.child_index.get(&current_id) {
                 for &child_id in child_ids {
-                    if !visited.contains(&child_id) {
-                        frontier.push(child_id);
+                    if visited.contains(&child_id) {
+                        continue;
                     }
+
+                    // Check edge type filter: find the edge from current_id to child_id
+                    if let Some(types) = edge_types {
+                        let Some(child_event) = by_id.get(&child_id) else {
+                            continue;
+                        };
+                        let has_valid_edge = child_event
+                            .parent_edges
+                            .iter()
+                            .any(|e| e.from_event_id == current_id && types.contains(&e.edge_type));
+                        if !has_valid_edge {
+                            continue;
+                        }
+                    }
+
+                    frontier.push(child_id);
                 }
             }
 
@@ -252,6 +283,15 @@ mod tests {
         occurred_at: chrono::DateTime<Utc>,
         parents: Vec<EventId>,
     ) -> ProvenanceEvent {
+        make_event_with_edge_type(kind, occurred_at, parents, ProvenanceEdgeType::DerivedFrom)
+    }
+
+    fn make_event_with_edge_type(
+        kind: ProvenanceEventKind,
+        occurred_at: chrono::DateTime<Utc>,
+        parents: Vec<EventId>,
+        edge_type: ProvenanceEdgeType,
+    ) -> ProvenanceEvent {
         ProvenanceEvent {
             event_id: EventId::new(),
             kind,
@@ -277,7 +317,7 @@ mod tests {
             parent_edges: parents
                 .into_iter()
                 .map(|from_event_id| ProvenanceEdge {
-                    edge_type: ProvenanceEdgeType::DerivedFrom,
+                    edge_type: edge_type.clone(),
                     from_event_id,
                     summary: None,
                 })
@@ -325,7 +365,7 @@ mod tests {
         );
         let graph = LineageGraph::from_events(vec![leaf.clone(), root.clone(), middle.clone()]);
 
-        let lineage = graph.walk_backwards_from(leaf.event_id);
+        let lineage = graph.walk_backwards_from(leaf.event_id, None);
         let lineage_ids: Vec<EventId> = lineage.into_iter().map(|event| event.event_id).collect();
 
         assert_eq!(
@@ -350,7 +390,7 @@ mod tests {
         );
         let graph = LineageGraph::from_events(vec![leaf.clone(), root.clone(), middle.clone()]);
 
-        let descendants = graph.walk_forwards_from(root.event_id);
+        let descendants = graph.walk_forwards_from(root.event_id, None);
         let descendant_ids: Vec<EventId> = descendants
             .into_iter()
             .map(|event| event.event_id)
@@ -543,6 +583,271 @@ mod tests {
             matches!(err, LineageGraphError::CyclicLineage(_)),
             "expected CyclicLineage error, got {:?}",
             err
+        );
+    }
+
+    #[test]
+    fn walk_backwards_filters_by_edge_type() {
+        let base_time = Utc::now();
+        // Create a chain: root -[DerivedFrom]-> middle -[AuthorizedBy]-> leaf
+        let root = make_event(ProvenanceEventKind::IntentCompiled, base_time, Vec::new());
+        let middle = make_event_with_edge_type(
+            ProvenanceEventKind::ToolCallPrepared,
+            base_time + Duration::seconds(1),
+            vec![root.event_id],
+            ProvenanceEdgeType::DerivedFrom,
+        );
+        let leaf = make_event_with_edge_type(
+            ProvenanceEventKind::SideEffectCommitted,
+            base_time + Duration::seconds(2),
+            vec![middle.event_id],
+            ProvenanceEdgeType::AuthorizedBy,
+        );
+        let graph = LineageGraph::from_events(vec![leaf.clone(), root.clone(), middle.clone()]);
+
+        // Without filter, should get all 3 events
+        let full_lineage = graph.walk_backwards_from(leaf.event_id, None);
+        assert_eq!(full_lineage.len(), 3, "full lineage should have 3 events");
+
+        // Filter to only DerivedFrom edges starting from leaf:
+        // - leaf's parent edge is AuthorizedBy (doesn't match DerivedFrom filter)
+        // - So traversal stops and only leaf is returned
+        let derived_only =
+            graph.walk_backwards_from(leaf.event_id, Some(&[ProvenanceEdgeType::DerivedFrom]));
+        let derived_ids: Vec<EventId> = derived_only.iter().map(|e| e.event_id).collect();
+        assert!(
+            derived_ids.contains(&leaf.event_id),
+            "leaf should be included (seed event)"
+        );
+        assert!(
+            !derived_ids.contains(&middle.event_id),
+            "middle should NOT be included - leaf's AuthorizedBy edge was filtered"
+        );
+        assert!(
+            !derived_ids.contains(&root.event_id),
+            "root should NOT be included - chain was blocked by AuthorizedBy filter"
+        );
+    }
+
+    #[test]
+    fn walk_backwards_filter_with_matching_edge_type() {
+        let base_time = Utc::now();
+        // Create: root -[DerivedFrom]-> middle -[AuthorizedBy]-> leaf
+        let root = make_event(ProvenanceEventKind::IntentCompiled, base_time, Vec::new());
+        let middle = make_event_with_edge_type(
+            ProvenanceEventKind::ToolCallPrepared,
+            base_time + Duration::seconds(1),
+            vec![root.event_id],
+            ProvenanceEdgeType::DerivedFrom,
+        );
+        let leaf = make_event_with_edge_type(
+            ProvenanceEventKind::SideEffectCommitted,
+            base_time + Duration::seconds(2),
+            vec![middle.event_id],
+            ProvenanceEdgeType::AuthorizedBy,
+        );
+        let graph = LineageGraph::from_events(vec![leaf.clone(), root.clone(), middle.clone()]);
+
+        // Filter AuthorizedBy from leaf: should get leaf and middle
+        // because leaf's edge to middle is AuthorizedBy (matches)
+        let auth_filtered =
+            graph.walk_backwards_from(leaf.event_id, Some(&[ProvenanceEdgeType::AuthorizedBy]));
+        let auth_ids: Vec<EventId> = auth_filtered.iter().map(|e| e.event_id).collect();
+        assert!(
+            auth_ids.contains(&leaf.event_id),
+            "leaf should be included (seed event)"
+        );
+        assert!(
+            auth_ids.contains(&middle.event_id),
+            "middle should be included via AuthorizedBy edge from leaf"
+        );
+        // root is NOT included because middle's edge to root is DerivedFrom (doesn't match)
+        assert!(
+            !auth_ids.contains(&root.event_id),
+            "root should NOT be included - middle's DerivedFrom edge was filtered"
+        );
+    }
+
+    #[test]
+    fn walk_backwards_filter_returns_subset_with_mixed_edges() {
+        let base_time = Utc::now();
+        // Create: A -[DerivedFrom]-> B -[AuthorizedBy]-> C -[ApprovedBy]-> D
+        let a = make_event(ProvenanceEventKind::IntentCompiled, base_time, Vec::new());
+        let b = make_event_with_edge_type(
+            ProvenanceEventKind::ToolCallPrepared,
+            base_time + Duration::seconds(1),
+            vec![a.event_id],
+            ProvenanceEdgeType::DerivedFrom,
+        );
+        let c = make_event_with_edge_type(
+            ProvenanceEventKind::PolicyEvaluated,
+            base_time + Duration::seconds(2),
+            vec![b.event_id],
+            ProvenanceEdgeType::AuthorizedBy,
+        );
+        let d = make_event_with_edge_type(
+            ProvenanceEventKind::SideEffectCommitted,
+            base_time + Duration::seconds(3),
+            vec![c.event_id],
+            ProvenanceEdgeType::ApprovedBy,
+        );
+        let graph = LineageGraph::from_events(vec![d.clone(), c.clone(), b.clone(), a.clone()]);
+
+        // Filter only ApprovedBy from D: should get D and C
+        // D's edge to C is ApprovedBy (matches), so C is included
+        // C's edge to B is AuthorizedBy (doesn't match), so B is not included
+        let approved_only =
+            graph.walk_backwards_from(d.event_id, Some(&[ProvenanceEdgeType::ApprovedBy]));
+        let approved_ids: Vec<EventId> = approved_only.iter().map(|e| e.event_id).collect();
+        assert!(
+            approved_ids.contains(&d.event_id),
+            "D should be included (seed event)"
+        );
+        assert!(
+            approved_ids.contains(&c.event_id),
+            "C should be included via ApprovedBy edge from D"
+        );
+        assert!(
+            !approved_ids.contains(&b.event_id),
+            "B should NOT be included - C's AuthorizedBy edge was filtered"
+        );
+        assert!(
+            !approved_ids.contains(&a.event_id),
+            "A should NOT be included - chain was blocked"
+        );
+
+        // Filter AuthorizedBy and ApprovedBy from D: should get D, C, and B
+        // D->C via ApprovedBy (matches), C->B via AuthorizedBy (matches)
+        // B->A via DerivedFrom (doesn't match, but B is already included)
+        let auth_or_approved = graph.walk_backwards_from(
+            d.event_id,
+            Some(&[
+                ProvenanceEdgeType::AuthorizedBy,
+                ProvenanceEdgeType::ApprovedBy,
+            ]),
+        );
+        let auth_approved_ids: Vec<EventId> = auth_or_approved.iter().map(|e| e.event_id).collect();
+        assert!(
+            auth_approved_ids.contains(&d.event_id),
+            "D should be included (seed event)"
+        );
+        assert!(
+            auth_approved_ids.contains(&c.event_id),
+            "C should be included via ApprovedBy edge"
+        );
+        assert!(
+            auth_approved_ids.contains(&b.event_id),
+            "B should be included via AuthorizedBy edge from C"
+        );
+        assert!(
+            !auth_approved_ids.contains(&a.event_id),
+            "A should NOT be included - B's DerivedFrom edge was filtered"
+        );
+    }
+
+    #[test]
+    fn walk_forwards_filters_by_edge_type() {
+        let base_time = Utc::now();
+        // Create chain: root -[DerivedFrom]-> child1 -[AuthorizedBy]-> child2
+        let root = make_event(ProvenanceEventKind::IntentCompiled, base_time, Vec::new());
+        let child1 = make_event_with_edge_type(
+            ProvenanceEventKind::ToolCallPrepared,
+            base_time + Duration::seconds(1),
+            vec![root.event_id],
+            ProvenanceEdgeType::DerivedFrom,
+        );
+        let child2 = make_event_with_edge_type(
+            ProvenanceEventKind::SideEffectCommitted,
+            base_time + Duration::seconds(2),
+            vec![child1.event_id],
+            ProvenanceEdgeType::AuthorizedBy,
+        );
+        let graph = LineageGraph::from_events(vec![root.clone(), child1.clone(), child2.clone()]);
+
+        // Without filter, should get both children
+        let full_descendants = graph.walk_forwards_from(root.event_id, None);
+        assert_eq!(
+            full_descendants.len(),
+            2,
+            "full forward traversal should return 2 descendants"
+        );
+
+        // Filter to only DerivedFrom - should only get child1
+        // root->child1 is DerivedFrom (matches), so child1 is pushed and visited
+        // child1->child2 is AuthorizedBy (doesn't match), so child2 is not pushed
+        let derived_only =
+            graph.walk_forwards_from(root.event_id, Some(&[ProvenanceEdgeType::DerivedFrom]));
+        assert_eq!(
+            derived_only.len(),
+            1,
+            "DerivedFrom filter should only return child1"
+        );
+        assert_eq!(
+            derived_only[0].event_id, child1.event_id,
+            "should return child1 via DerivedFrom edge"
+        );
+
+        // Filter to only AuthorizedBy - should get nothing
+        // root->child1 is DerivedFrom (doesn't match AuthorizedBy), so child1 is not pushed
+        // child2 is only reachable through child1, so it can't be reached
+        let auth_only =
+            graph.walk_forwards_from(root.event_id, Some(&[ProvenanceEdgeType::AuthorizedBy]));
+        assert!(
+            auth_only.is_empty(),
+            "AuthorizedBy filter from root should return nothing - no direct AuthorizedBy edge from root"
+        );
+    }
+
+    #[test]
+    fn walk_forwards_filter_with_multiple_hops() {
+        let base_time = Utc::now();
+        // Create: root -[DerivedFrom]-> A -[DerivedFrom]-> B -[AuthorizedBy]-> C
+        let root = make_event(ProvenanceEventKind::IntentCompiled, base_time, Vec::new());
+        let a = make_event_with_edge_type(
+            ProvenanceEventKind::ToolCallPrepared,
+            base_time + Duration::seconds(1),
+            vec![root.event_id],
+            ProvenanceEdgeType::DerivedFrom,
+        );
+        let b = make_event_with_edge_type(
+            ProvenanceEventKind::PolicyEvaluated,
+            base_time + Duration::seconds(2),
+            vec![a.event_id],
+            ProvenanceEdgeType::DerivedFrom,
+        );
+        let c = make_event_with_edge_type(
+            ProvenanceEventKind::SideEffectCommitted,
+            base_time + Duration::seconds(3),
+            vec![b.event_id],
+            ProvenanceEdgeType::AuthorizedBy,
+        );
+        let graph = LineageGraph::from_events(vec![root.clone(), a.clone(), b.clone(), c.clone()]);
+
+        // Filter DerivedFrom only - should get A and B (two hops via DerivedFrom)
+        let derived_only =
+            graph.walk_forwards_from(root.event_id, Some(&[ProvenanceEdgeType::DerivedFrom]));
+        let derived_ids: Vec<EventId> = derived_only.iter().map(|e| e.event_id).collect();
+        assert!(
+            derived_ids.contains(&a.event_id),
+            "should include A via DerivedFrom"
+        );
+        assert!(
+            derived_ids.contains(&b.event_id),
+            "should include B via DerivedFrom"
+        );
+        assert!(
+            !derived_ids.contains(&c.event_id),
+            "should NOT include C (only reachable via AuthorizedBy)"
+        );
+
+        // Filter AuthorizedBy only - should return nothing
+        // root->A is DerivedFrom (doesn't match), so A is not pushed
+        // C is only reachable through A, so it can't be reached
+        let auth_only =
+            graph.walk_forwards_from(root.event_id, Some(&[ProvenanceEdgeType::AuthorizedBy]));
+        assert!(
+            auth_only.is_empty(),
+            "AuthorizedBy filter should return nothing - chain starts with DerivedFrom edge"
         );
     }
 }

@@ -346,6 +346,7 @@ async fn test_mcp_bridge_ingest_creates_linked_external_event() {
         ancestry: true,
         descendants: true,
         max_hops: Some(8),
+        edge_types: None,
     };
 
     let app = build_router(runtime.clone());
