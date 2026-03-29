@@ -398,426 +398,6 @@ async fn test_provenance_query_by_execution_id() {
             "event should belong to the queried proposal"
         );
     }
-
-    // Query with non-existent execution_id should return empty events
-    let query_req = ProvenanceQueryRequest {
-        intent_id: None,
-        proposal_id: None,
-        execution_id: Some(ferrum_proto::ExecutionId::new()),
-        capability_id: None,
-        event_kind: None,
-        terminal_only: None,
-        since: None,
-        until: None,
-        ..Default::default()
-    };
-
-    let app = build_router(runtime.clone());
-    let response = app
-        .oneshot(
-            axum::http::Request::builder()
-                .uri("/v1/provenance/query")
-                .method(axum::http::Method::POST)
-                .header(axum::http::header::CONTENT_TYPE, "application/json")
-                .body(serde_json::to_string(&query_req).unwrap())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), 200);
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let query_resp: ferrum_proto::ProvenanceQueryResponse = serde_json::from_slice(&body).unwrap();
-    assert!(
-        query_resp.events.is_empty(),
-        "expected empty events for non-existent execution"
-    );
-}
-
-/// Test: query by time window returns events within range
-#[tokio::test]
-async fn test_provenance_query_by_time_window() {
-    let (_temp_dir, runtime, _store) = create_test_runtime().await;
-
-    let (execution_id, _intent_id, _proposal_id) = create_execution_with_events(&runtime).await;
-
-    // Query with full time range (should return events)
-    let query_req = ProvenanceQueryRequest {
-        intent_id: None,
-        proposal_id: None,
-        execution_id: Some(execution_id),
-        capability_id: None,
-        event_kind: None,
-        terminal_only: None,
-        since: None,
-        until: None,
-        ..Default::default()
-    };
-
-    let app = build_router(runtime.clone());
-    let response = app
-        .oneshot(
-            axum::http::Request::builder()
-                .uri("/v1/provenance/query")
-                .method(axum::http::Method::POST)
-                .header(axum::http::header::CONTENT_TYPE, "application/json")
-                .body(serde_json::to_string(&query_req).unwrap())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), 200);
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let query_resp: ferrum_proto::ProvenanceQueryResponse = serde_json::from_slice(&body).unwrap();
-    let event_count = query_resp.events.len();
-    assert!(event_count > 0, "expected events in full time range");
-
-    // Query with narrow time window in the past (should return empty)
-    let past_time = chrono::Utc::now() - chrono::Duration::hours(1);
-    let query_req = ProvenanceQueryRequest {
-        intent_id: None,
-        proposal_id: None,
-        execution_id: Some(execution_id),
-        capability_id: None,
-        event_kind: None,
-        terminal_only: None,
-        since: Some(past_time),
-        until: Some(past_time + chrono::Duration::minutes(5)),
-        ..Default::default()
-    };
-
-    let app = build_router(runtime.clone());
-    let response = app
-        .oneshot(
-            axum::http::Request::builder()
-                .uri("/v1/provenance/query")
-                .method(axum::http::Method::POST)
-                .header(axum::http::header::CONTENT_TYPE, "application/json")
-                .body(serde_json::to_string(&query_req).unwrap())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), 200);
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let query_resp: ferrum_proto::ProvenanceQueryResponse = serde_json::from_slice(&body).unwrap();
-    // Narrow window in the past should not contain our recent events
-    assert!(
-        query_resp.events.is_empty(),
-        "expected empty events for narrow past time window"
-    );
-
-    // Query with since only (from past to now)
-    let query_req = ProvenanceQueryRequest {
-        intent_id: None,
-        proposal_id: None,
-        execution_id: Some(execution_id),
-        capability_id: None,
-        event_kind: None,
-        terminal_only: None,
-        since: Some(past_time),
-        until: None,
-        ..Default::default()
-    };
-
-    let app = build_router(runtime.clone());
-    let response = app
-        .oneshot(
-            axum::http::Request::builder()
-                .uri("/v1/provenance/query")
-                .method(axum::http::Method::POST)
-                .header(axum::http::header::CONTENT_TYPE, "application/json")
-                .body(serde_json::to_string(&query_req).unwrap())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), 200);
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let query_resp: ferrum_proto::ProvenanceQueryResponse = serde_json::from_slice(&body).unwrap();
-    // Since past to now should include our events
-    assert_eq!(
-        query_resp.events.len(),
-        event_count,
-        "expected all events when querying from past to now"
-    );
-}
-
-/// Test: reject unknown JSON fields with fail-closed behavior
-#[tokio::test]
-async fn test_provenance_query_rejects_unknown_fields() {
-    let (_temp_dir, runtime, _store) = create_test_runtime().await;
-
-    // Valid request (should succeed)
-    let query_req = ProvenanceQueryRequest {
-        intent_id: None,
-        proposal_id: None,
-        execution_id: None,
-        capability_id: None,
-        event_kind: None,
-        terminal_only: None,
-        since: None,
-        until: None,
-        ..Default::default()
-    };
-
-    let app = build_router(runtime.clone());
-    let response = app
-        .oneshot(
-            axum::http::Request::builder()
-                .uri("/v1/provenance/query")
-                .method(axum::http::Method::POST)
-                .header(axum::http::header::CONTENT_TYPE, "application/json")
-                .body(serde_json::to_string(&query_req).unwrap())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    // Empty query should succeed (returns all events)
-    assert_eq!(response.status(), 200);
-
-    // Request with unknown field "unknown_field" should be rejected
-    let invalid_json = r#"{"execution_id": null, "unknown_field": "should fail"}"#;
-    let app = build_router(runtime.clone());
-    let response = app
-        .oneshot(
-            axum::http::Request::builder()
-                .uri("/v1/provenance/query")
-                .method(axum::http::Method::POST)
-                .header(axum::http::header::CONTENT_TYPE, "application/json")
-                .body(invalid_json.to_string())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    // Should be rejected (400 or similar) due to deny_unknown_fields
-    assert!(
-        response.status() == axum::http::StatusCode::BAD_REQUEST
-            || response.status() == axum::http::StatusCode::UNPROCESSABLE_ENTITY,
-        "expected 400/422 for unknown fields, got {}",
-        response.status()
-    );
-
-    // Request with another unknown field "extraneous_param" should be rejected
-    let invalid_json = r#"{"intent_id": null, "extraneous_param": 123}"#;
-    let app = build_router(runtime.clone());
-    let response = app
-        .oneshot(
-            axum::http::Request::builder()
-                .uri("/v1/provenance/query")
-                .method(axum::http::Method::POST)
-                .header(axum::http::header::CONTENT_TYPE, "application/json")
-                .body(invalid_json.to_string())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(
-        response.status() == axum::http::StatusCode::BAD_REQUEST
-            || response.status() == axum::http::StatusCode::UNPROCESSABLE_ENTITY,
-        "expected 400/422 for unknown fields, got {}",
-        response.status()
-    );
-}
-
-/// Test: query by event_kind filter
-#[tokio::test]
-async fn test_provenance_query_by_event_kind() {
-    let (_temp_dir, runtime, _store) = create_test_runtime().await;
-
-    let (execution_id, _intent_id, _proposal_id) = create_execution_with_events(&runtime).await;
-
-    // Query by event_kind = IntentCompiled
-    let query_req = ProvenanceQueryRequest {
-        intent_id: None,
-        proposal_id: None,
-        execution_id: Some(execution_id),
-        capability_id: None,
-        event_kind: Some(ProvenanceEventKind::IntentCompiled),
-        terminal_only: None,
-        since: None,
-        until: None,
-        ..Default::default()
-    };
-
-    let app = build_router(runtime.clone());
-    let response = app
-        .oneshot(
-            axum::http::Request::builder()
-                .uri("/v1/provenance/query")
-                .method(axum::http::Method::POST)
-                .header(axum::http::header::CONTENT_TYPE, "application/json")
-                .body(serde_json::to_string(&query_req).unwrap())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), 200);
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let query_resp: ferrum_proto::ProvenanceQueryResponse = serde_json::from_slice(&body).unwrap();
-
-    // All events should be IntentCompiled
-    for event in &query_resp.events {
-        assert!(
-            matches!(event.kind, ProvenanceEventKind::IntentCompiled),
-            "expected IntentCompiled events"
-        );
-    }
-}
-
-/// Test: query can return terminal events only
-#[tokio::test]
-async fn test_provenance_query_terminal_only() {
-    let (_temp_dir, runtime, store) = create_test_runtime().await;
-
-    let (execution_id, intent_id, proposal_id) = create_execution_with_events(&runtime).await;
-
-    store
-        .provenance()
-        .append_event(&ferrum_proto::ProvenanceEvent {
-            event_id: ferrum_proto::EventId::new(),
-            kind: ProvenanceEventKind::SideEffectCommitted,
-            occurred_at: chrono::Utc::now(),
-            actor: ferrum_proto::ActorRef {
-                actor_type: ferrum_proto::ActorType::Gateway,
-                actor_id: "gateway".to_string(),
-                display_name: Some("Ferrum Gateway".to_string()),
-            },
-            object: ferrum_proto::ObjectRef {
-                object_type: ferrum_proto::ObjectType::SideEffect,
-                object_id: execution_id.to_string(),
-                summary: Some("terminal query test".to_string()),
-            },
-            intent_id: Some(intent_id),
-            proposal_id: Some(proposal_id),
-            execution_id: Some(execution_id),
-            capability_id: None,
-            rollback_contract_id: None,
-            policy_bundle_id: None,
-            trust_labels: Vec::new(),
-            sensitivity_labels: Vec::new(),
-            parent_edges: Vec::new(),
-            hash_chain: ferrum_proto::HashChainRef {
-                content_hash: None,
-                manifest_hash: None,
-                policy_bundle_hash: None,
-                previous_ledger_hash: None,
-            },
-            metadata: ferrum_proto::JsonMap::new(),
-        })
-        .await
-        .unwrap();
-
-    let query_req = ProvenanceQueryRequest {
-        intent_id: None,
-        proposal_id: None,
-        execution_id: Some(execution_id),
-        capability_id: None,
-        event_kind: None,
-        terminal_only: Some(true),
-        since: None,
-        until: None,
-        ..Default::default()
-    };
-
-    let app = build_router(runtime.clone());
-    let response = app
-        .oneshot(
-            axum::http::Request::builder()
-                .uri("/v1/provenance/query")
-                .method(axum::http::Method::POST)
-                .header(axum::http::header::CONTENT_TYPE, "application/json")
-                .body(serde_json::to_string(&query_req).unwrap())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), 200);
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let query_resp: ferrum_proto::ProvenanceQueryResponse = serde_json::from_slice(&body).unwrap();
-
-    assert!(!query_resp.events.is_empty(), "expected terminal events");
-    assert!(query_resp.events.iter().all(|event| {
-        matches!(
-            event.kind,
-            ProvenanceEventKind::SideEffectCommitted
-                | ProvenanceEventKind::SideEffectCompensated
-                | ProvenanceEventKind::SideEffectRolledBack
-                | ProvenanceEventKind::ApprovalDenied
-                | ProvenanceEventKind::Quarantined
-                | ProvenanceEventKind::ErrorRaised
-        )
-    }));
-}
-
-#[tokio::test]
-async fn test_get_provenance_event_returns_ancestry_and_descendants() {
-    let (_temp_dir, runtime, store) = create_test_runtime().await;
-
-    let root = sample_provenance_event(ProvenanceEventKind::IntentCompiled, Vec::new());
-    let middle =
-        sample_provenance_event(ProvenanceEventKind::ToolCallPrepared, vec![root.event_id]);
-    let leaf = sample_provenance_event(ProvenanceEventKind::ErrorRaised, vec![middle.event_id]);
-
-    store.provenance().append_event(&root).await.unwrap();
-    store.provenance().append_event(&middle).await.unwrap();
-    store.provenance().append_event(&leaf).await.unwrap();
-
-    let app = build_router(runtime.clone());
-    let response = app
-        .oneshot(
-            axum::http::Request::builder()
-                .uri(format!(
-                    "/v1/provenance/events/{}?ancestry=true&descendants=true",
-                    middle.event_id
-                ))
-                .method(axum::http::Method::GET)
-                .body(axum::body::Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), 200);
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let event_resp: ProvenanceEventResponse = serde_json::from_slice(&body).unwrap();
-
-    assert_eq!(event_resp.event.event_id, middle.event_id);
-
-    let ancestry = event_resp.ancestry.expect("expected ancestry in response");
-    let ancestry_ids: Vec<_> = ancestry.into_iter().map(|event| event.event_id).collect();
-    assert_eq!(ancestry_ids, vec![root.event_id]);
-
-    let descendants = event_resp
-        .descendants
-        .expect("expected descendants in response");
-    let descendant_ids: Vec<_> = descendants
-        .into_iter()
-        .map(|event| event.event_id)
-        .collect();
-    assert_eq!(descendant_ids, vec![leaf.event_id]);
 }
 
 #[tokio::test]
@@ -2631,5 +2211,486 @@ async fn test_lineage_query_edge_types_filter_restricts_descendants() {
             .iter()
             .any(|e| e.event_id == root_with_exec.event_id),
         "root should be in the response"
+    );
+}
+
+/// Test: GET /v1/provenance/events/{event_id} with edge_types filter restricts ancestry traversal
+#[tokio::test]
+async fn test_get_provenance_event_edge_type_filter_restricts_ancestry() {
+    let (_temp_dir, runtime, store) = create_test_runtime().await;
+
+    // Create chain: root -[DerivedFrom]-> middle -[AuthorizedBy]-> leaf
+    let root = make_event_with_edge_type(
+        ProvenanceEventKind::IntentCompiled,
+        Vec::new(),
+        ProvenanceEdgeType::DerivedFrom,
+    );
+    let middle = make_event_with_edge_type(
+        ProvenanceEventKind::ToolCallPrepared,
+        vec![root.event_id],
+        ProvenanceEdgeType::DerivedFrom,
+    );
+    let leaf = make_event_with_edge_type(
+        ProvenanceEventKind::SideEffectCommitted,
+        vec![middle.event_id],
+        ProvenanceEdgeType::AuthorizedBy,
+    );
+
+    store.provenance().append_event(&root).await.unwrap();
+    store.provenance().append_event(&middle).await.unwrap();
+    store.provenance().append_event(&leaf).await.unwrap();
+
+    // Query ancestry with no filter - should get both root and middle
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!(
+                    "/v1/provenance/events/{}?ancestry=true",
+                    leaf.event_id
+                ))
+                .method(axum::http::Method::GET)
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let event_resp: ProvenanceEventResponse = serde_json::from_slice(&body).unwrap();
+
+    let ancestry = event_resp.ancestry.expect("expected ancestry in response");
+    let ancestry_ids: Vec<_> = ancestry.into_iter().map(|e| e.event_id).collect();
+    // Without filter, we should get both root and middle
+    assert!(
+        ancestry_ids.contains(&root.event_id),
+        "root should be in ancestry, got {:?}",
+        ancestry_ids
+    );
+    assert!(
+        ancestry_ids.contains(&middle.event_id),
+        "middle should be in ancestry, got {:?}",
+        ancestry_ids
+    );
+    assert_eq!(
+        ancestry_ids.len(),
+        2,
+        "should have 2 ancestors without filter, got {}",
+        ancestry_ids.len()
+    );
+
+    // Query ancestry with AuthorizedBy filter only - should follow AuthorizedBy edge from leaf to middle
+    // but NOT DerivedFrom edge from middle to root
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!(
+                    "/v1/provenance/events/{}?ancestry=true&edge_types=AuthorizedBy",
+                    leaf.event_id
+                ))
+                .method(axum::http::Method::GET)
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let (parts, body) = response.into_parts();
+    let body_bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap();
+    assert_eq!(
+        parts.status.as_u16(),
+        200,
+        "ancestry query with AuthorizedBy filter failed. body: {:?}",
+        String::from_utf8_lossy(&body_bytes)
+    );
+    let event_resp: ProvenanceEventResponse = serde_json::from_slice(&body_bytes).unwrap();
+
+    let ancestry = event_resp.ancestry.expect("expected ancestry in response");
+    let ancestry_ids: Vec<_> = ancestry.into_iter().map(|e| e.event_id).collect();
+    // AuthorizedBy filter should follow leaf's AuthorizedBy edge to middle,
+    // but NOT middle's DerivedFrom edge to root, so we should get middle only
+    assert!(
+        ancestry_ids.contains(&middle.event_id),
+        "AuthorizedBy filter should include middle (reachable via AuthorizedBy), got {:?}",
+        ancestry_ids
+    );
+    assert!(
+        !ancestry_ids.contains(&root.event_id),
+        "AuthorizedBy filter should NOT include root (only reachable via DerivedFrom), got {:?}",
+        ancestry_ids
+    );
+
+    // Query ancestry with DerivedFrom filter only - should follow DerivedFrom edge from middle to root
+    // but NOT AuthorizedBy edge from leaf to middle
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!(
+                    "/v1/provenance/events/{}?ancestry=true&edge_types=DerivedFrom",
+                    leaf.event_id
+                ))
+                .method(axum::http::Method::GET)
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let event_resp: ProvenanceEventResponse = serde_json::from_slice(&body).unwrap();
+
+    // DerivedFrom filter: leaf's parent edge is AuthorizedBy (NOT DerivedFrom), so we skip it
+    // We never reach middle, so we never see middle's DerivedFrom edge to root
+    // Result: no ancestry (None when serialized as JSON)
+    let ancestry_ids: Vec<_> = match event_resp.ancestry {
+        Some(ancestry) => ancestry.into_iter().map(|e| e.event_id).collect(),
+        None => vec![],
+    };
+    assert!(
+        ancestry_ids.is_empty(),
+        "DerivedFrom filter should skip leaf's AuthorizedBy edge, got {:?}",
+        ancestry_ids
+    );
+}
+
+/// Test: GET /v1/provenance/events/{event_id} with edge_types filter restricts descendants traversal
+#[tokio::test]
+async fn test_get_provenance_event_edge_type_filter_restricts_descendants() {
+    let (_temp_dir, runtime, store) = create_test_runtime().await;
+
+    // Create chain: root -[DerivedFrom]-> child1 -[AuthorizedBy]-> child2
+    let root = make_event_with_edge_type(
+        ProvenanceEventKind::IntentCompiled,
+        Vec::new(),
+        ProvenanceEdgeType::DerivedFrom,
+    );
+    let child1 = make_event_with_edge_type(
+        ProvenanceEventKind::ToolCallPrepared,
+        vec![root.event_id],
+        ProvenanceEdgeType::DerivedFrom,
+    );
+    let child2 = make_event_with_edge_type(
+        ProvenanceEventKind::SideEffectCommitted,
+        vec![child1.event_id],
+        ProvenanceEdgeType::AuthorizedBy,
+    );
+
+    store.provenance().append_event(&root).await.unwrap();
+    store.provenance().append_event(&child1).await.unwrap();
+    store.provenance().append_event(&child2).await.unwrap();
+
+    // Query descendants with no filter - should get child1 and child2
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!(
+                    "/v1/provenance/events/{}?descendants=true",
+                    root.event_id
+                ))
+                .method(axum::http::Method::GET)
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let event_resp: ProvenanceEventResponse = serde_json::from_slice(&body).unwrap();
+
+    let descendants = event_resp
+        .descendants
+        .expect("expected descendants in response");
+    let descendant_ids: Vec<_> = descendants.into_iter().map(|e| e.event_id).collect();
+    // Without filter, we should get both child1 and child2
+    assert!(
+        descendant_ids.contains(&child1.event_id),
+        "child1 should be in descendants, got {:?}",
+        descendant_ids
+    );
+    assert!(
+        descendant_ids.contains(&child2.event_id),
+        "child2 should be in descendants, got {:?}",
+        descendant_ids
+    );
+    assert_eq!(
+        descendant_ids.len(),
+        2,
+        "should have 2 descendants without filter, got {}",
+        descendant_ids.len()
+    );
+
+    // Query descendants with DerivedFrom filter only - should get child1 but NOT child2
+    // because child1->child2 is AuthorizedBy, not DerivedFrom
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!(
+                    "/v1/provenance/events/{}?descendants=true&edge_types=DerivedFrom",
+                    root.event_id
+                ))
+                .method(axum::http::Method::GET)
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(
+        status, 200,
+        "descendants query failed with edge_types=DerivedFrom"
+    );
+    let event_resp: ProvenanceEventResponse = serde_json::from_slice(&body).unwrap();
+
+    // DerivedFrom filter should follow root->child1 (DerivedFrom), but NOT child1->child2 (AuthorizedBy)
+    let descendant_ids: Vec<_> = match event_resp.descendants {
+        Some(descendants) => descendants.into_iter().map(|e| e.event_id).collect(),
+        None => vec![],
+    };
+    assert!(
+        descendant_ids.contains(&child1.event_id),
+        "child1 should be in descendants with DerivedFrom filter, got {:?}",
+        descendant_ids
+    );
+    assert!(
+        !descendant_ids.contains(&child2.event_id),
+        "child2 should NOT be in descendants with DerivedFrom filter (child1->child2 is AuthorizedBy), got {:?}",
+        descendant_ids
+    );
+
+    // Query descendants with AuthorizedBy filter only - should get NO descendants
+    // because root has no direct AuthorizedBy edges to children
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!(
+                    "/v1/provenance/events/{}?descendants=true&edge_types=AuthorizedBy",
+                    root.event_id
+                ))
+                .method(axum::http::Method::GET)
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let event_resp: ProvenanceEventResponse = serde_json::from_slice(&body).unwrap();
+
+    // AuthorizedBy filter should not follow any edges from root
+    let descendant_ids: Vec<_> = match event_resp.descendants {
+        Some(descendants) => descendants.into_iter().map(|e| e.event_id).collect(),
+        None => vec![],
+    };
+    assert!(
+        descendant_ids.is_empty(),
+        "AuthorizedBy filter should not follow any edges from root, got {:?}",
+        descendant_ids
+    );
+}
+
+/// Test: GET /v1/provenance/events/{event_id} with multiple edge_types query params
+#[tokio::test]
+async fn test_get_provenance_event_multiple_edge_types_params() {
+    let (_temp_dir, runtime, store) = create_test_runtime().await;
+
+    // Create chain: root -[DerivedFrom]-> child1 -[AuthorizedBy]-> child2 -[ApprovedBy]-> child3
+    let root = make_event_with_edge_type(
+        ProvenanceEventKind::IntentCompiled,
+        Vec::new(),
+        ProvenanceEdgeType::DerivedFrom,
+    );
+    let child1 = make_event_with_edge_type(
+        ProvenanceEventKind::ToolCallPrepared,
+        vec![root.event_id],
+        ProvenanceEdgeType::DerivedFrom,
+    );
+    let child2 = make_event_with_edge_type(
+        ProvenanceEventKind::SideEffectCommitted,
+        vec![child1.event_id],
+        ProvenanceEdgeType::AuthorizedBy,
+    );
+    let child3 = make_event_with_edge_type(
+        ProvenanceEventKind::SideEffectCommitted,
+        vec![child2.event_id],
+        ProvenanceEdgeType::ApprovedBy,
+    );
+
+    store.provenance().append_event(&root).await.unwrap();
+    store.provenance().append_event(&child1).await.unwrap();
+    store.provenance().append_event(&child2).await.unwrap();
+    store.provenance().append_event(&child3).await.unwrap();
+
+    // Query with multiple edge_types via comma-separated values: DerivedFrom,AuthorizedBy
+    // This should follow: root->child1 (DerivedFrom) AND child1->child2 (AuthorizedBy)
+    // But NOT child2->child3 (ApprovedBy)
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!(
+                    "/v1/provenance/events/{}?descendants=true&edge_types=DerivedFrom,AuthorizedBy",
+                    root.event_id
+                ))
+                .method(axum::http::Method::GET)
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let event_resp: ProvenanceEventResponse = serde_json::from_slice(&body).unwrap();
+
+    let descendant_ids: Vec<_> = match event_resp.descendants {
+        Some(descendants) => descendants.into_iter().map(|e| e.event_id).collect(),
+        None => vec![],
+    };
+    assert!(
+        descendant_ids.contains(&child1.event_id),
+        "child1 should be in descendants (via DerivedFrom), got {:?}",
+        descendant_ids
+    );
+    assert!(
+        descendant_ids.contains(&child2.event_id),
+        "child2 should be in descendants (via AuthorizedBy), got {:?}",
+        descendant_ids
+    );
+    assert!(
+        !descendant_ids.contains(&child3.event_id),
+        "child3 should NOT be in descendants (via ApprovedBy, not filtered), got {:?}",
+        descendant_ids
+    );
+
+    // Query with comma-separated edge_types: DerivedFrom,AuthorizedBy
+    // Should produce the same result as repeated params
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!(
+                    "/v1/provenance/events/{}?descendants=true&edge_types=DerivedFrom,AuthorizedBy",
+                    root.event_id
+                ))
+                .method(axum::http::Method::GET)
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let event_resp: ProvenanceEventResponse = serde_json::from_slice(&body).unwrap();
+
+    let descendant_ids: Vec<_> = match event_resp.descendants {
+        Some(descendants) => descendants.into_iter().map(|e| e.event_id).collect(),
+        None => vec![],
+    };
+    assert!(
+        descendant_ids.contains(&child1.event_id),
+        "child1 should be in descendants with comma-separated filter, got {:?}",
+        descendant_ids
+    );
+    assert!(
+        descendant_ids.contains(&child2.event_id),
+        "child2 should be in descendants with comma-separated filter, got {:?}",
+        descendant_ids
+    );
+    assert!(
+        !descendant_ids.contains(&child3.event_id),
+        "child3 should NOT be in descendants with comma-separated filter, got {:?}",
+        descendant_ids
+    );
+}
+
+/// Test: GET /v1/provenance/events/{event_id} with ancestry and multiple edge_types params
+#[tokio::test]
+async fn test_get_provenance_event_ancestry_multiple_edge_types_params() {
+    let (_temp_dir, runtime, store) = create_test_runtime().await;
+
+    // Create chain: root -[DerivedFrom]-> middle -[AuthorizedBy]-> leaf
+    let root = make_event_with_edge_type(
+        ProvenanceEventKind::IntentCompiled,
+        Vec::new(),
+        ProvenanceEdgeType::DerivedFrom,
+    );
+    let middle = make_event_with_edge_type(
+        ProvenanceEventKind::ToolCallPrepared,
+        vec![root.event_id],
+        ProvenanceEdgeType::DerivedFrom,
+    );
+    let leaf = make_event_with_edge_type(
+        ProvenanceEventKind::SideEffectCommitted,
+        vec![middle.event_id],
+        ProvenanceEdgeType::AuthorizedBy,
+    );
+
+    store.provenance().append_event(&root).await.unwrap();
+    store.provenance().append_event(&middle).await.unwrap();
+    store.provenance().append_event(&leaf).await.unwrap();
+
+    // Query ancestry with multiple edge_types: AuthorizedBy AND DerivedFrom
+    // Starting from leaf: leaf has AuthorizedBy edge to middle, middle has DerivedFrom edge to root
+    // So we should get both middle and root
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!(
+                    "/v1/provenance/events/{}?ancestry=true&edge_types=AuthorizedBy,DerivedFrom",
+                    leaf.event_id
+                ))
+                .method(axum::http::Method::GET)
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let event_resp: ProvenanceEventResponse = serde_json::from_slice(&body).unwrap();
+
+    let ancestry_ids: Vec<_> = match event_resp.ancestry {
+        Some(ancestry) => ancestry.into_iter().map(|e| e.event_id).collect(),
+        None => vec![],
+    };
+    assert!(
+        ancestry_ids.contains(&middle.event_id),
+        "middle should be in ancestry (via AuthorizedBy), got {:?}",
+        ancestry_ids
+    );
+    assert!(
+        ancestry_ids.contains(&root.event_id),
+        "root should be in ancestry (via DerivedFrom), got {:?}",
+        ancestry_ids
     );
 }

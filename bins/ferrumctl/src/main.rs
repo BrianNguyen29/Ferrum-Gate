@@ -5,8 +5,9 @@ use ferrum_proto::api::{CompensateRequest, CompensateResponse, RollbackRequest, 
 use ferrum_proto::approval::ApprovalResolveRequest;
 use ferrum_proto::common::{ActorRef, ActorType};
 use ferrum_proto::provenance::{
-    LineageQueryRequest, LineageQueryResponse, ProvenanceEventKind, ProvenanceExportRequest,
-    ProvenanceExportResponse, ProvenanceReplayRequest, ProvenanceReplayResponse,
+    LineageQueryRequest, LineageQueryResponse, ProvenanceEdgeType, ProvenanceEventKind,
+    ProvenanceExportRequest, ProvenanceExportResponse, ProvenanceReplayRequest,
+    ProvenanceReplayResponse,
 };
 use ferrum_proto::{CapabilityId, ExecutionId, IntentId, ProposalId};
 use reqwest::Client;
@@ -669,16 +670,19 @@ impl ServerClient {
         event_id: &str,
         ancestry: bool,
         descendants: bool,
+        edge_types: Option<Vec<ProvenanceEdgeType>>,
     ) -> Result<ProvenanceEventResponse> {
         let path = format!("/v1/provenance/events/{}", event_id);
-        let resp = self
-            .request(reqwest::Method::GET, &path)
-            .query(&[
-                ("ancestry", ancestry.to_string()),
-                ("descendants", descendants.to_string()),
-            ])
-            .send()
-            .await?;
+        let mut req = self.request(reqwest::Method::GET, &path);
+        req = req.query(&[
+            ("ancestry", ancestry.to_string()),
+            ("descendants", descendants.to_string()),
+        ]);
+        if let Some(ref types) = edge_types {
+            // Send multiple edge types as one comma-separated query value
+            req = req.query(&[("edge_types", edge_types_to_query_string(types))]);
+        }
+        let resp = req.send().await?;
         self.decode_json(resp).await
     }
 
@@ -1171,6 +1175,14 @@ enum ServerCommand {
         /// Include descendant events in response.
         #[arg(long)]
         descendants: bool,
+
+        /// Filter ancestry/descendants to only include edges of this type.
+        /// Can be specified multiple times to include multiple edge types.
+        /// Valid values: DerivedFrom, AuthorizedBy, ApprovedBy, TaintedBy,
+        /// UsesManifest, EvaluatedByPolicy, Caused, Compensates, Verifies,
+        /// References, ObservedBy.
+        #[arg(long, value_parser = parse_edge_type)]
+        edge_type: Vec<ProvenanceEdgeType>,
 
         /// Server base URL (e.g. http://127.0.0.1:8080).
         #[arg(long, env = "FERRUMCTL_SERVER_URL")]
@@ -2905,17 +2917,71 @@ async fn run_export_provenance(
     Ok(())
 }
 
+fn parse_edge_type(s: &str) -> Result<ProvenanceEdgeType, String> {
+    match s {
+        "DerivedFrom" => Ok(ProvenanceEdgeType::DerivedFrom),
+        "AuthorizedBy" => Ok(ProvenanceEdgeType::AuthorizedBy),
+        "ApprovedBy" => Ok(ProvenanceEdgeType::ApprovedBy),
+        "TaintedBy" => Ok(ProvenanceEdgeType::TaintedBy),
+        "UsesManifest" => Ok(ProvenanceEdgeType::UsesManifest),
+        "EvaluatedByPolicy" => Ok(ProvenanceEdgeType::EvaluatedByPolicy),
+        "Caused" => Ok(ProvenanceEdgeType::Caused),
+        "Compensates" => Ok(ProvenanceEdgeType::Compensates),
+        "Verifies" => Ok(ProvenanceEdgeType::Verifies),
+        "References" => Ok(ProvenanceEdgeType::References),
+        "ObservedBy" => Ok(ProvenanceEdgeType::ObservedBy),
+        _ => Err(format!(
+            "unknown edge type '{}': valid values are DerivedFrom, AuthorizedBy, \
+             ApprovedBy, TaintedBy, UsesManifest, EvaluatedByPolicy, Caused, \
+             Compensates, Verifies, References, ObservedBy",
+            s
+        )),
+    }
+}
+
+/// Converts a ProvenanceEdgeType to its string representation for query parameters.
+/// This is the reverse of parse_edge_type.
+fn edge_type_to_string(et: &ProvenanceEdgeType) -> &'static str {
+    match et {
+        ProvenanceEdgeType::DerivedFrom => "DerivedFrom",
+        ProvenanceEdgeType::AuthorizedBy => "AuthorizedBy",
+        ProvenanceEdgeType::ApprovedBy => "ApprovedBy",
+        ProvenanceEdgeType::TaintedBy => "TaintedBy",
+        ProvenanceEdgeType::UsesManifest => "UsesManifest",
+        ProvenanceEdgeType::EvaluatedByPolicy => "EvaluatedByPolicy",
+        ProvenanceEdgeType::Caused => "Caused",
+        ProvenanceEdgeType::Compensates => "Compensates",
+        ProvenanceEdgeType::Verifies => "Verifies",
+        ProvenanceEdgeType::References => "References",
+        ProvenanceEdgeType::ObservedBy => "ObservedBy",
+    }
+}
+
+/// Joins multiple ProvenanceEdgeType values into a comma-separated string
+/// for use as a single query parameter value.
+/// E.g., [DerivedFrom, AuthorizedBy] -> "DerivedFrom,AuthorizedBy"
+fn edge_types_to_query_string(types: &[ProvenanceEdgeType]) -> String {
+    types
+        .iter()
+        .map(edge_type_to_string)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 async fn run_inspect_event(
     event_id: &str,
     ancestry: bool,
     descendants: bool,
+    edge_types: Option<Vec<ProvenanceEdgeType>>,
     url: Option<String>,
     token: Option<String>,
     as_json: bool,
 ) -> Result<()> {
     let url = resolve_server_url(url)?;
     let client = ServerClient::new(&url, token);
-    let response = client.get_event(event_id, ancestry, descendants).await?;
+    let response = client
+        .get_event(event_id, ancestry, descendants, edge_types)
+        .await?;
 
     if as_json {
         println!("{}", serde_json::to_string_pretty(&response)?);
@@ -3294,6 +3360,7 @@ async fn main() -> Result<()> {
                 event_id,
                 ancestry,
                 descendants,
+                edge_type,
                 server_url,
                 bearer_token,
                 json,
@@ -3302,6 +3369,7 @@ async fn main() -> Result<()> {
                     &event_id,
                     ancestry,
                     descendants,
+                    Some(edge_type),
                     server_url,
                     bearer_token,
                     json,
@@ -4744,5 +4812,120 @@ mod tests {
         assert!(text.contains("Proposal:"));
         assert!(text.contains("Capability:"));
         assert!(text.contains("Started:"));
+    }
+
+    // -------------------------------------------------------------------------
+    // Edge type parsing and encoding tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_edge_type_to_string_all_variants() {
+        use ProvenanceEdgeType::*;
+        let cases = [
+            (DerivedFrom, "DerivedFrom"),
+            (AuthorizedBy, "AuthorizedBy"),
+            (ApprovedBy, "ApprovedBy"),
+            (TaintedBy, "TaintedBy"),
+            (UsesManifest, "UsesManifest"),
+            (EvaluatedByPolicy, "EvaluatedByPolicy"),
+            (Caused, "Caused"),
+            (Compensates, "Compensates"),
+            (Verifies, "Verifies"),
+            (References, "References"),
+            (ObservedBy, "ObservedBy"),
+        ];
+        for (et, expected) in cases {
+            let result = edge_type_to_string(&et);
+            assert_eq!(
+                result, expected,
+                "edge_type_to_string({:?}) should be '{}', got '{}'",
+                et, expected, result
+            );
+        }
+    }
+
+    #[test]
+    fn test_edge_type_to_string_not_json_quoted() {
+        // Verify edge_type_to_string produces plain string, not JSON-quoted
+        let et = ProvenanceEdgeType::DerivedFrom;
+        let result = edge_type_to_string(&et);
+        // Should NOT contain quotes - JSON serialization would produce "\"DerivedFrom\""
+        assert!(
+            !result.starts_with('"'),
+            "edge_type_to_string should not produce JSON-quoted string, got '{}'",
+            result
+        );
+        assert!(
+            !result.ends_with('"'),
+            "edge_type_to_string should not produce JSON-quoted string, got '{}'",
+            result
+        );
+    }
+
+    #[test]
+    fn test_parse_edge_type_and_to_string_are_inverses() {
+        // Verify parse_edge_type and edge_type_to_string are inverses
+        let variants = [
+            "DerivedFrom",
+            "AuthorizedBy",
+            "ApprovedBy",
+            "TaintedBy",
+            "UsesManifest",
+            "EvaluatedByPolicy",
+            "Caused",
+            "Compensates",
+            "Verifies",
+            "References",
+            "ObservedBy",
+        ];
+        for variant_str in variants {
+            let parsed = parse_edge_type(variant_str).expect("valid edge type");
+            let back_to_string = edge_type_to_string(&parsed);
+            assert_eq!(
+                back_to_string, variant_str,
+                "parse_edge_type and edge_type_to_string should be inverses for '{}'",
+                variant_str
+            );
+        }
+    }
+
+    #[test]
+    fn test_edge_types_to_query_string_single() {
+        use ProvenanceEdgeType::*;
+        // Single edge type produces no commas
+        let result = edge_types_to_query_string(&[DerivedFrom]);
+        assert_eq!(result, "DerivedFrom");
+    }
+
+    #[test]
+    fn test_edge_types_to_query_string_multiple() {
+        use ProvenanceEdgeType::*;
+        // Multiple edge types joined with commas
+        let result = edge_types_to_query_string(&[DerivedFrom, AuthorizedBy]);
+        assert_eq!(result, "DerivedFrom,AuthorizedBy");
+    }
+
+    #[test]
+    fn test_edge_types_to_query_string_three() {
+        use ProvenanceEdgeType::*;
+        // Three edge types
+        let result = edge_types_to_query_string(&[DerivedFrom, AuthorizedBy, TaintedBy]);
+        assert_eq!(result, "DerivedFrom,AuthorizedBy,TaintedBy");
+    }
+
+    #[test]
+    fn test_edge_types_to_query_string_empty() {
+        // Empty slice produces empty string
+        let result = edge_types_to_query_string(&[]);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_edge_types_to_query_string_ascii_only() {
+        use ProvenanceEdgeType::*;
+        // Result should be pure ASCII (no special chars)
+        let result = edge_types_to_query_string(&[DerivedFrom, AuthorizedBy, ApprovedBy]);
+        assert!(result.is_ascii());
+        assert!(!result.contains(' '));
     }
 }
