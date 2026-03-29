@@ -108,6 +108,21 @@ fn sample_intent_request() -> IntentCompileRequest {
 }
 
 fn sample_intent_request_with_effect(effect_type: EffectType) -> IntentCompileRequest {
+    // For mutation effect types, provide a default resource scope to satisfy the
+    // P0 scope-mismatch deny policy (engine.rs:31-46) which blocks mutations without scope.
+    // ReadOnlyAnalysis and DraftCreation are non-mutations and don't need scope.
+    let resource_scope = if matches!(
+        effect_type,
+        EffectType::ReadOnlyAnalysis | EffectType::DraftCreation
+    ) {
+        vec![]
+    } else {
+        vec![ferrum_proto::ResourceSelector::SqliteDatabase {
+            db_path: ":memory:".to_string(),
+            tables: vec![],
+            mode: ferrum_proto::ResourceMode::ReadWrite,
+        }]
+    };
     IntentCompileRequest {
         principal_id: ferrum_proto::PrincipalId::new(),
         session_id: None,
@@ -117,7 +132,7 @@ fn sample_intent_request_with_effect(effect_type: EffectType) -> IntentCompileRe
         agent_plan_summary: None,
         trusted_context: ferrum_proto::JsonMap::new(),
         raw_inputs: vec![],
-        requested_resource_scope: vec![],
+        requested_resource_scope: resource_scope,
         requested_risk_tier: Some(RiskTier::Medium),
         effect_type: Some(effect_type),
         metadata: ferrum_proto::JsonMap::new(),
