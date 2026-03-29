@@ -270,8 +270,13 @@ async fn test_taint_propagates_into_evaluate_decision() {
         event_id: None,
     }];
 
-    let req =
+    let mut req =
         sample_intent_request_with_effect_and_inputs(EffectType::DatabaseMutation, clean_inputs);
+    req.requested_resource_scope = vec![ResourceSelector::SqliteDatabase {
+        db_path: "/tmp/test.db".to_string(),
+        tables: vec!["users".to_string()],
+        mode: ResourceMode::Write,
+    }];
     let (intent_id, _) = compile_intent_via_gateway(&runtime, req).await;
 
     // Step 2: Create proposal with high taint inputs (should trigger quarantine)
@@ -984,7 +989,13 @@ async fn test_external_prefix_taint_scoring() {
         vec![],
         "Clean",
     )];
-    let req = sample_intent_request_with_effect_and_inputs(EffectType::ReadOnlyAnalysis, inputs);
+    let mut req =
+        sample_intent_request_with_effect_and_inputs(EffectType::ReadOnlyAnalysis, inputs);
+    req.requested_resource_scope = vec![ResourceSelector::FilesystemPath {
+        path: "/tmp".to_string(),
+        mode: ResourceMode::Read,
+        content_hash: None,
+    }];
     let (intent_id, _) = compile_intent_via_gateway(&runtime, req).await;
 
     // 3 external sources = 75 >= 70, non-R0 → Quarantine
@@ -1014,7 +1025,13 @@ async fn test_web_url_prefix_taint_scoring() {
         vec![],
         "Clean",
     )];
-    let req = sample_intent_request_with_effect_and_inputs(EffectType::ReadOnlyAnalysis, inputs);
+    let mut req =
+        sample_intent_request_with_effect_and_inputs(EffectType::ReadOnlyAnalysis, inputs);
+    req.requested_resource_scope = vec![ResourceSelector::FilesystemPath {
+        path: "/tmp".to_string(),
+        mode: ResourceMode::Read,
+        content_hash: None,
+    }];
     let (intent_id, _) = compile_intent_via_gateway(&runtime, req).await;
 
     // 4 web/url sources = 80 >= 70, non-R0 → Quarantine
@@ -1057,7 +1074,13 @@ async fn test_low_taint_non_r0_allowed() {
         vec![],
         "Clean system data",
     )];
-    let req = sample_intent_request_with_effect_and_inputs(EffectType::ReadOnlyAnalysis, inputs);
+    let mut req =
+        sample_intent_request_with_effect_and_inputs(EffectType::ReadOnlyAnalysis, inputs);
+    req.requested_resource_scope = vec![ResourceSelector::FilesystemPath {
+        path: "/tmp".to_string(),
+        mode: ResourceMode::Read,
+        content_hash: None,
+    }];
     let (intent_id, _) = compile_intent_via_gateway(&runtime, req).await;
 
     // Only 1 generic source = 10, well below 70, non-R0 → Allow
@@ -1177,7 +1200,13 @@ async fn test_r3_rollback_requires_approval_regardless_of_taint() {
         vec![],
         "Clean data",
     )];
-    let req = sample_intent_request_with_effect_and_inputs(EffectType::ReadOnlyAnalysis, inputs);
+    let mut req =
+        sample_intent_request_with_effect_and_inputs(EffectType::ReadOnlyAnalysis, inputs);
+    req.requested_resource_scope = vec![ResourceSelector::FilesystemPath {
+        path: "/tmp".to_string(),
+        mode: ResourceMode::Read,
+        content_hash: None,
+    }];
     let (intent_id, _) = compile_intent_via_gateway(&runtime, req).await;
 
     // Low taint, but R3 → RequireApproval

@@ -28,6 +28,23 @@ impl PdpEngine for StaticPdpEngine {
         let mut matched_rule_ids = Vec::new();
         let mut warnings = Vec::new();
 
+        // P0: Scope mismatch deny - if intent has no resource scope and the proposal
+        // requests a mutating rollback class (non-R0), deny explicitly.
+        // This is a conservative default: mutations require explicit resource scope.
+        let is_mutation = !matches!(
+            proposal.requested_rollback_class,
+            RollbackClass::R0NativeReversible
+        );
+        if intent.resource_scope.is_empty() && is_mutation {
+            matched_rule_ids.push("scope.mismatch.empty.scope".to_string());
+            return Ok(EvaluateProposalResponse {
+                decision: Decision::Deny,
+                reason: "scope mismatch: no resources authorized for mutation action".to_string(),
+                matched_rule_ids,
+                warnings,
+            });
+        }
+
         if trust.taint_score >= 70
             && !matches!(
                 proposal.requested_rollback_class,
