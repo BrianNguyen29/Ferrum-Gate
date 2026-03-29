@@ -24,10 +24,10 @@ the full supported surface with evidence links.
 - Post-v1 items (multi-node sync, HA, in-process TLS, distributed trace context, alerting rules) remain out of scope and are not v1 blockers.
 
 ## Contract integrity
-- [x] contracts cập nhật (`python3 scripts/check_contract_consistency.py` => `VALIDATION PASSED`)
-- [x] schemas cập nhật
-- [x] openapi cập nhật (`openapi/ferrumgate-control-api.v1.yaml` parsed and matches current routes)
-- [x] docs cập nhật (`docs/01-quickstart.md`, `docs/14-api-and-contracts-map.md`, `docs/15-deployment-and-operations.md`, `docs/17-troubleshooting.md`)
+- [x] contracts updated (`python3 scripts/check_contract_consistency.py` => `VALIDATION PASSED`)
+- [x] schemas updated
+- [x] openapi updated (`openapi/ferrumgate-control-api.v1.yaml` parsed and matches current routes)
+- [x] docs updated (`docs/01-quickstart.md`, `docs/14-api-and-contracts-map.md`, `docs/15-deployment-and-operations.md`, `docs/17-troubleshooting.md`)
 
 ## Workspace quality
 - [x] cargo check pass (`cargo check --workspace`)
@@ -43,8 +43,8 @@ the full supported surface with evidence links.
 - [x] poisoned context test
 
 ## Operator readiness
-- [x] config docs đúng (config precedence, auth mode, startup guard documented)
-- [x] CLI hữu dụng tối thiểu (`ferrumctl server health/inspect-*` documented and implemented)
+- [x] config docs correct (config precedence, auth mode, startup guard documented)
+- [x] CLI useful minimum (`ferrumctl server health/inspect-*` documented and implemented)
 - [x] lineage usable
 - [x] approval flow documented (state transitions, CLI examples, and resolve-approval command)
 - [x] runbooks updated (`runbooks/ops-tls-ingress-runbook.md` — TLS/ingress production runbook, `runbooks/ops-approval-workflow-runbook.md` — approval workflow)
