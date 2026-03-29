@@ -14,8 +14,8 @@ use ferrum_proto::{
     EffectType, ExternalEventIngestRequest, HashChainRef, IntentCompileRequest, JsonMap,
     LineageQueryRequest, LineageQueryResponse, ObjectRef, ObjectType, ProvenanceEdge,
     ProvenanceEdgeType, ProvenanceEvent, ProvenanceEventKind, ProvenanceEventResponse,
-    ProvenanceQueryRequest, ResourceBinding, ResourceMode, RiskTier, RollbackClass, TaintBudget,
-    ToolBinding, TrustLabel,
+    ProvenanceQueryRequest, ProvenanceReplayRequest, ProvenanceReplayResponse, ResourceBinding,
+    ResourceMode, RiskTier, RollbackClass, TaintBudget, ToolBinding, TrustLabel,
 };
 use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
 use ferrum_store::{ProvenanceRepo, SqliteStore};
@@ -2016,5 +2016,142 @@ async fn test_lineage_query_unknown_event_returns_404() {
         response.status(),
         404,
         "should return 404 for unknown event"
+    );
+}
+
+// ============================================================
+// Provenance Replay Tests
+// ============================================================
+
+/// Test: happy path - replay returns events for a known execution
+#[tokio::test]
+async fn test_replay_happy_path() {
+    let (runtime_temp_dir, runtime, _store) = create_test_runtime().await;
+    let _ = &runtime_temp_dir; // Keep alive
+
+    // Create an execution with events
+    let (execution_id, _intent_id, _proposal_id) = create_execution_with_events(&runtime).await;
+
+    // Replay the execution
+    let replay_req = ProvenanceReplayRequest { execution_id };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/provenance/replay")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&replay_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let replay_resp: ProvenanceReplayResponse = serde_json::from_slice(&body).unwrap();
+
+    // Should have events for this execution
+    assert!(!replay_resp.events.is_empty(), "expected events for replay");
+    assert_eq!(replay_resp.execution_id, execution_id);
+
+    // All events should belong to this execution
+    for event in &replay_resp.events {
+        assert_eq!(
+            event.execution_id,
+            Some(execution_id),
+            "all events should belong to the replayed execution"
+        );
+    }
+
+    // Events should be topologically sorted (events with no parents come first)
+    // Verify that for each event, all of its parents appear earlier in the list
+    let event_pos: std::collections::HashMap<_, _> = replay_resp
+        .events
+        .iter()
+        .enumerate()
+        .map(|(i, e)| (e.event_id, i))
+        .collect();
+    for event in &replay_resp.events {
+        for parent_edge in &event.parent_edges {
+            let parent_pos = event_pos
+                .get(&parent_edge.from_event_id)
+                .expect("parent should be in the event set");
+            let child_pos = event_pos
+                .get(&event.event_id)
+                .expect("child should be in the event set");
+            assert!(
+                parent_pos < child_pos,
+                "parent {} (pos {}) should appear before child {} (pos {})",
+                parent_edge.from_event_id,
+                parent_pos,
+                event.event_id,
+                child_pos
+            );
+        }
+    }
+}
+
+/// Test: malformed lineage - replay returns 404 for unknown execution
+#[tokio::test]
+async fn test_replay_unknown_execution_returns_404() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    let unknown_execution_id = ferrum_proto::ExecutionId::new();
+
+    let replay_req = ProvenanceReplayRequest {
+        execution_id: unknown_execution_id,
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/provenance/replay")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&replay_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        404,
+        "should return 404 for unknown execution"
+    );
+}
+
+/// Test: fail-closed - replay rejects request with unknown fields
+#[tokio::test]
+async fn test_replay_fail_closed_on_unknown_fields() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Sending a request with an unknown field should fail (deny_unknown_fields)
+    let body =
+        r#"{"execution_id": "00000000-0000-0000-0000-000000000000", "unknown_field": "bad"}"#;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/provenance/replay")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(body.to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Should reject the request due to unknown field
+    assert!(
+        response.status() == 400 || response.status() == 422,
+        "should reject request with unknown fields, got {}",
+        response.status()
     );
 }

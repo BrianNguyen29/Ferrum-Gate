@@ -17,10 +17,10 @@ use ferrum_proto::{
     IntentCompileRequest, IntentCompileResponse, IntentEnvelope, IntentStatus, LineageEdge,
     LineageQueryRequest, LineageQueryResponse, ObjectRef, ObjectType, OutcomeClause, ProposalId,
     ProvenanceEdge, ProvenanceEdgeType, ProvenanceEvent, ProvenanceEventKind,
-    ProvenanceEventResponse, ProvenanceQueryRequest, ProvenanceQueryResponse, ResourceBinding,
-    ResourceMode, ResourceSelector, RiskTier, RollbackClass, RollbackRequest, RollbackResponse,
-    RollbackState, RollbackTarget, TimeBudget, TrustContextSummary, TrustLabel, VerifyRequest,
-    VerifyResponse,
+    ProvenanceEventResponse, ProvenanceQueryRequest, ProvenanceQueryResponse,
+    ProvenanceReplayRequest, ProvenanceReplayResponse, ResourceBinding, ResourceMode,
+    ResourceSelector, RiskTier, RollbackClass, RollbackRequest, RollbackResponse, RollbackState,
+    RollbackTarget, TimeBudget, TrustContextSummary, TrustLabel, VerifyRequest, VerifyResponse,
 };
 use ferrum_store::{
     ApprovalRepo, ExecutionRepo, IntentRepo, LedgerRepo, ProposalRepo, ProvenanceRepo, RollbackRepo,
@@ -166,6 +166,7 @@ fn build_router_inner(runtime: GatewayRuntime, auth_config: Option<ServerConfig>
         )
         .route("/v1/provenance/lineage", post(lineage_query))
         .route("/v1/provenance/query", post(query_provenance))
+        .route("/v1/provenance/replay", post(replay_provenance))
         .route(
             "/v1/provenance/events/external",
             post(ingest_external_event),
@@ -2270,6 +2271,52 @@ async fn query_provenance(
     Ok(Json(ProvenanceQueryResponse {
         events,
         next_cursor,
+    }))
+}
+
+/// Replay a read-only provenance reconstruction for a single execution.
+/// Returns all events belonging to the execution, sorted topologically by parent_edges.
+async fn replay_provenance(
+    State(runtime): State<Arc<GatewayRuntime>>,
+    Json(request): Json<ProvenanceReplayRequest>,
+) -> Result<Json<ProvenanceReplayResponse>, ApiProblem> {
+    // Fail-closed: execution_id must refer to an existing execution
+    let _execution = runtime
+        .store
+        .executions()
+        .get(request.execution_id)
+        .await
+        .map_err(|err| ApiProblem::internal(err.into()))?
+        .ok_or_else(|| {
+            ApiProblem::new(
+                StatusCode::NOT_FOUND,
+                ApiErrorCode::NotFound,
+                format!("execution {} not found", request.execution_id),
+            )
+        })?;
+
+    // Fetch all events for this execution using get_lineage_by_execution
+    // which walks edges to collect all reachable events
+    let events = runtime
+        .store
+        .provenance()
+        .get_lineage_by_execution(request.execution_id)
+        .await
+        .map_err(|err| ApiProblem::internal(err.into()))?;
+
+    // Build lineage graph and topologically sort events
+    let graph = LineageGraph::from_events(events);
+    let sorted_events = graph.topological_sort().map_err(|e| {
+        ApiProblem::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            ApiErrorCode::Internal,
+            format!("malformed lineage detected during replay: {}", e),
+        )
+    })?;
+
+    Ok(Json(ProvenanceReplayResponse {
+        events: sorted_events,
+        execution_id: request.execution_id,
     }))
 }
 

@@ -4,7 +4,9 @@ use ferrum_proto::ExecutionId;
 use ferrum_proto::api::{CompensateRequest, CompensateResponse, RollbackRequest, RollbackResponse};
 use ferrum_proto::approval::ApprovalResolveRequest;
 use ferrum_proto::common::{ActorRef, ActorType};
-use ferrum_proto::provenance::{LineageQueryRequest, LineageQueryResponse};
+use ferrum_proto::provenance::{
+    LineageQueryRequest, LineageQueryResponse, ProvenanceReplayRequest, ProvenanceReplayResponse,
+};
 use reqwest::Client;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -686,6 +688,18 @@ impl ServerClient {
         self.decode_json(resp).await
     }
 
+    async fn replay_provenance(
+        &self,
+        req: &ProvenanceReplayRequest,
+    ) -> Result<ProvenanceReplayResponse> {
+        let resp = self
+            .request(reqwest::Method::POST, "/v1/provenance/replay")
+            .json(req)
+            .send()
+            .await?;
+        self.decode_json(resp).await
+    }
+
     async fn post_external_event(
         &self,
         req: &ExternalEventIngestRequest,
@@ -942,6 +956,24 @@ enum ServerCommand {
         bearer_token: Option<String>,
 
         /// Output raw JSON instead of human-readable summary.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Replay a read-only provenance reconstruction for a single execution.
+    Replay {
+        /// Execution ID (UUID) to replay.
+        #[arg(long)]
+        execution_id: String,
+
+        /// Server base URL (e.g. http://127.0.0.1:8080).
+        #[arg(long, env = "FERRUMCTL_SERVER_URL")]
+        server_url: Option<String>,
+
+        /// Bearer token for authentication.
+        #[arg(long, env = "FERRUMCTL_BEARER_TOKEN")]
+        bearer_token: Option<String>,
+
+        /// Output as JSON instead of human-readable.
         #[arg(long)]
         json: bool,
     },
@@ -2350,6 +2382,37 @@ async fn run_inspect_lineage_query(
     Ok(())
 }
 
+async fn run_replay(
+    execution_id: String,
+    url: Option<String>,
+    token: Option<String>,
+    as_json: bool,
+) -> Result<()> {
+    let req = ProvenanceReplayRequest {
+        execution_id: ferrum_proto::ExecutionId(
+            uuid::Uuid::parse_str(&execution_id)
+                .map_err(|e| anyhow::anyhow!("invalid execution_id: {}", e))?,
+        ),
+    };
+
+    let url = resolve_server_url(url)?;
+    let client = ServerClient::new(&url, token);
+    let resp = client.replay_provenance(&req).await?;
+
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&resp)?);
+    } else {
+        // Human-readable output: show execution_id and event count
+        println!("Replay for execution: {}", resp.execution_id);
+        println!("Total events: {}", resp.events.len());
+        for (i, event) in resp.events.iter().enumerate() {
+            println!("  [{}] {} ({:?})", i + 1, event.event_id, event.kind);
+        }
+    }
+
+    Ok(())
+}
+
 /// Renders a `LineageResponse` as a deterministic Graphviz DOT graph.
 /// The graph is named after the execution ID and lists all events as nodes
 /// with directed edges representing parent→child relationships via parent_edges.
@@ -2859,6 +2922,14 @@ async fn main() -> Result<()> {
                     json,
                 )
                 .await?;
+            }
+            ServerCommand::Replay {
+                execution_id,
+                server_url,
+                bearer_token,
+                json,
+            } => {
+                run_replay(execution_id, server_url, bearer_token, json).await?;
             }
             ServerCommand::InspectProvenanceStats {
                 intent_id,
