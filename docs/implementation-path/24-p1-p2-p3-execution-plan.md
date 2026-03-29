@@ -107,7 +107,7 @@ block v1 RC sign-off. See Section 6 for the complete v1 scope-freeze list.
 | Slice | Description | Status | Verification |
 |-------|-------------|--------|--------------|
 | P2.1a | Core query surface implemented | DONE | `POST /v1/provenance/query` with filters; `ferrum-graph` helpers (`terminal_events`, `walk_backwards_from`, `walk_forwards_from`) |
-| P2.1b | Advanced replay/fabric tooling | **TODO** | New endpoints or CLI commands for replay, graph traversal, audit export |
+| P2.1b | Advanced replay/fabric tooling | **DONE** | `POST /v1/provenance/replay`, `POST /v1/provenance/lineage`, `POST /v1/provenance/export` endpoints implemented; `ferrumctl lineage-query` CLI command exists |
 
 **Dependencies:** P2.1a is done; P2.1b is P2 backlog.
 
@@ -311,7 +311,7 @@ v1 RC sign-off:
 | In-process TLS termination | N/A | Out of scope | External terminator (nginx/cloud LB) required; see TLS ingress runbook |
 | Distributed trace context | P2 | Not started | W3C TraceContext; single-node v1 does not need it |
 | Alerting rules | P2 | Not started | Exploratory/analysis only |
-| Generic provenance replay/fabric tooling | P2 | Core DONE | Advanced replay tooling P2 backlog |
+| Generic provenance replay/fabric tooling | P2 | **DONE** | `POST /v1/provenance/replay`, `POST /v1/provenance/lineage`, `POST /v1/provenance/export` endpoints implemented; `ferrumctl lineage-query` CLI command exists |
 | Write-path (follower side) | P3 | Not started | Design doc TODO; explicitly deferred beyond v1 |
 
 All P2 and P3 items above are post-v1 work. v1 RC evidence pass covers only
