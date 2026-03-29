@@ -19,7 +19,7 @@ All release checklist gates pass. Single-node v1 is ready for RC sign-off.
 | Contract consistency | `python3 scripts/check_contract_consistency.py` | VALIDATION PASSED |
 | Cargo check | `cargo check --workspace` | all crates compile |
 | Cargo fmt | `cargo fmt --all --check` | No formatting differences |
-| Cargo clippy | `cargo clippy --workspace -- -D warnings` | passed (0 errors) |
+| Cargo clippy | `cargo clippy --workspace -- -D warnings` | passed |
 | Cargo test | `cargo test --workspace` | passed (all tests pass) |
 
 ---
@@ -82,7 +82,7 @@ runbook. The operational procedure is equivalent; only the tooling differs.
 `cargo fmt --all --check` => no formatting diffs
 
 ### 3.4 Clippy
-`cargo clippy --workspace -- -D warnings` => passed (0 errors; previously 11 mechanical errors in ferrum-ledger and ferrumctl, all fixed)
+`cargo clippy --workspace -- -D warnings` => passed (0 errors; previously 11 mechanical errors in ferrum-ledger and ferrumctl, all fixed).
 
 ### 3.5 Tests
 `cargo test --workspace` => all tests pass (previously 3 missing-field errors in integration_capability_restart.rs, all fixed)

@@ -6,6 +6,7 @@ Operational playbooks for day-to-day and incident response.
 
 - [TLS / Ingress (nginx)](ops-tls-ingress-runbook.md) — production TLS termination in front of ferrumd
 - [SQLite Backup / Restore / Capacity Planning](ops-sqlite-backup-runbook.md) — online and offline backup, restore procedures, DB growth estimation, and connection/throughput planning
+- [Approval Workflow](ops-approval-workflow-runbook.md) — R3 governance path: proposal review, approval request lifecycle, operator resolve-approval CLI usage, and state machine transitions
 - [Provenance Audit](provenance-audit-runbook.md) — execution audit, lineage investigation, external event verification, and compliance evidence export for operators and security/compliance reviewers
 
 ## Release Artifacts

@@ -87,6 +87,6 @@ Neu can tiep tuc Phase F/C theo nhung gap con lai, thu tu doc nhanh nen la:
 ## 6. Recommended next slices
 
 See `23-production-readiness-assessment.md` for the full phased hardening plan. In brief:
-- P1: Observability baseline (tracing + Prometheus), TLS/ingress runbook, operational runbook (backup/restore, capacity)
-- P2: Advanced provenance replay/fabric tooling; complete Sync-3a.1 probe API boundary, begin Sync-1 implementation
+- P1: **DONE** -- Observability baseline (tracing + Prometheus), TLS/ingress runbook, operational runbook (backup/restore, capacity), poisoned-context fixture breadth expansion
+- P2: Advanced provenance replay/fabric tooling; Sync-1 protocol implementation (decision kernel and preflight groundwork already in `ferrum-sync`; write-path deferred to P3); Sync-3a.1 already reconciled
 - P3: Full MCP transport loop (future)

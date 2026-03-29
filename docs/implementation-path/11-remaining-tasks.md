@@ -21,21 +21,21 @@ write-path items as v1 blockers.
 
 - [x] final docs pack for Phase F
   - Src: `91-phase-success-criteria-and-kpis.md` 7.5 evidence "final docs pack"
-  - Done: `docs/18-phase-f-evidence-pack.md` exists and covers all sections
+  - Done: `docs/implementation-path/11-phase-f-evidence.md` exists and covers all sections
 
 - [x] supported flows list (Phase F evidence)
   - Src: `91-phase-success-criteria-and-kpis.md` 7.5 evidence "supported flows list"
-  - Done: Section 2 of `docs/18-phase-f-evidence-pack.md` has full table
+  - Done: Section 3 of `docs/implementation-path/11-phase-f-evidence.md` has supported flows
 
 - [x] open gaps list (Phase F evidence)
   - Src: `91-phase-success-criteria-and-kpis.md` 7.5 evidence "open gaps list"
-  - Done: Section 3 of `docs/18-phase-f-evidence-pack.md` has P0/P1/P2 gaps
+  - Done: Section 4 of `docs/implementation-path/11-phase-f-evidence.md` has open gaps
 
 ## P2 — Future work (not MVP scope)
 
 - [x] ledger hash chain (initial integration slice DONE)
   - Src: `08-next-issue-backlog.md` P1
-  - Plan: `12-ledger-hash-chain-execution-plan.md` (Commits 1-4 complete; evidence at `18-phase-f-evidence-pack.md` line 159)
+  - Plan: `12-ledger-hash-chain-execution-plan.md` (Commits 1-4 complete; evidence at `docs/implementation-path/11-phase-f-evidence.md` Section 3.1)
   - Live append-time verification DONE per `17-ledger-live-hash-verification-execution-plan.md` (Commits A-C complete); evidence: `ferrum-ledger/src/lib.rs:229`, `ferrum-store/src/sqlite/ledger.rs:22`, `ferrum-store/src/sqlite/ledger.rs:77`, `ferrum-gateway/src/server.rs:1602`, `ferrum-store/src/sqlite/tests.rs:1423`
   - Future: ledger read-model, cross-node sync remain open; Sync-0 safety-contract discovery/plan started per `18-cross-node-ledger-sync-plan.md`; Sync-1 protocol-sketch per `19-sync-1-protocol-sketch.md`; Sync-2 read-only preflight + diff classifier per `20-sync-2-read-only-preflight-diff-classifier.md`; Sync-3 transport-sketch per `21-sync-3-transport-sketch.md`; Sync-3a read-only transport-probe per `22-sync-3a-read-only-transport-probe.md`; Sync-3a.1 probe API boundary per `22a-sync-3a1-probe-api-boundary.md`
   - Note: Sync-0 does NOT include protocol design, consensus, or implementation; Sync-1 does NOT include transport, consensus, or write-path implementation; Sync-2 does NOT include transport, consensus, or write-path implementation; Sync-3 does NOT include write-path, consensus, or two-way merge; Sync-3a does NOT include write-path, consensus, or two-way merge; Sync-3a.1 does NOT include adapter implementation, write-path, consensus, or two-way merge
