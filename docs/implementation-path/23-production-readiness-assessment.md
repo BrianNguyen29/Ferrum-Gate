@@ -51,8 +51,8 @@ multi-node-ready deployment; the remaining gaps are documented in Section 2.
 | Enforcement | Status | Evidence |
 |-------------|--------|----------|
 | Trust labeling at compile time | Supported | `integration_poisoned_context.rs` |
-| Taint propagation into evaluate | Supported | `test_taint_propagates_into_evaluate_decisions` |
-| Read-only contradiction blocking | Supported | `test_read_only_intent_fails_closed_against_mutation_proposal` |
+| Taint propagation into evaluate | Supported | `test_taint_propagates_into_evaluate_decision` |
+| Read-only contradiction blocking | Supported | `test_read_only_intent_fails_closed_against_mutation` |
 | MCP scope contradiction blocking | Supported | `test_mcp_scope_constraints_fail_closed_with_poisoned_context` |
 | Execution-time File enforcement | Supported | `test_file_path_mismatch_denies`, `test_file_traversal_denied` |
 | Execution-time Http enforcement | Supported | `test_http_host_method_header_mismatch_denies` |

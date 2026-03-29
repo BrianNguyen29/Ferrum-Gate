@@ -72,7 +72,7 @@ Source: `tests/integration_gateway_flow.rs`
 
 | Scenario | Evidence |
 |----------|----------|
-| scope mismatch deny | `test_evaluate_proposal_loads_real_intent_and_persists` + scope enforcement at mint |
+| scope mismatch deny | `test_scope_mismatch_denied_at_mint_time` (line 7015), `test_empty_scope_denies_any_binding` (line 7631) |
 | proposal_id mismatch | `test_evaluate_proposal_id_mismatch_returns_400_and_no_events` (line 628) |
 | missing intent (fail-closed) | `test_evaluate_proposal_rejects_missing_intent_fail_closed` (line 310) |
 | rollback class floor enforced | `test_rollback_class_floor_prevents_downgrade_below_intent_default` (line 392) |
