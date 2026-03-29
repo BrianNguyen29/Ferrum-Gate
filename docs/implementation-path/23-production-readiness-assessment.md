@@ -228,9 +228,9 @@ Items to prepare for multi-node deployment without implementing full sync:
    - Distributed trace context (W3C TraceContext) (future)
    - Node identity + topology discovery docs (future)
 
-3. **HA readiness analysis**
-   - Document SQLite read-replica use cases (DONE — `26-p2-sqlite-read-replica-use-cases.md`)
-   - Analyze leader election requirements for future implementation (TODO)
+ 3. **HA readiness analysis**
+   - Document SQLite read-replica use cases (DONE -- `26-p2-sqlite-read-replica-use-cases.md`)
+   - Analyze leader election requirements for future implementation (DONE -- `27-p2-leader-election-requirements-analysis.md`)
 
 **Exit criteria**: Multi-node architecture is documented; sync implementation can begin.
 
@@ -256,8 +256,8 @@ v1 RC sign-off:
 |------|--------|-------|
 | Multi-node sync write-path | Post-v1 (P3) | Sync-3a probe done; apply/write-path, two-way merge not started |
 | Two-way merge | Post-v1 | Not designed |
-| Consensus / leader election | Post-v1 | Requires Raft or equivalent; not designed |
-| HA / multi-leader | Post-v1 (P2 analysis) | SQLite read-replica analysis TODO; leader election not designed |
+| Consensus / leader election | Post-v1 | Analysis complete; implementation deferred beyond P3 |
+| HA / multi-leader | Post-v1 (P2 analysis complete) | SQLite read-replica and leader-election analysis are done; implementation still deferred |
 | In-process TLS termination | Post-v1 | External terminator (nginx/cloud LB) required; documented in runbook |
 | Distributed trace context (W3C TraceContext) | Post-v1 (P2) | Single-node; not needed for v1 |
 | Alerting rules | Post-v1 (P2) | Exploratory/analysis only |

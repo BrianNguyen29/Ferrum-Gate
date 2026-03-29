@@ -21,21 +21,25 @@ fast-forward sync decision table from the Sync-1 protocol sketch. Given
 follower state and leader state, it returns the correct Sync-1 decision
 with zero side effects.
 
-### Sync-2 Groundwork (Partial)
+### Sync-2 Groundwork
 
 A read-only preflight checker (PF1-PF8) and diff classifier (`DiffClass`) that
 operates purely on caller-provided inputs. No transport, no repo queries, no
-mutation. This is groundwork aligned with
+mutation. This is aligned with
 `docs/implementation-path/20-sync-2-read-only-preflight-diff-classifier.md`.
 
-**This is NOT the full Sync-2 implementation.** PF1 and PF5 have a real
+**The Sync-2 groundwork is complete.** PF1 and PF5 have a real
 SQLite-backed implementation via `SqliteSyncPreflightRepo` in `ferrum-store`.
-The following remain deferred to P3:
+The following are also implemented (not deferred to P3):
 
-- Actual ledger queries (PF2/PF6 require schema additions)
-- Transport-based leader tip acquisition (PF3/PF8)
-- Sync session tracking (PF7)
-- Capability model enforcement (PF4)
+- PF2/PF6 state wired via `sync_state` table (migration 003)
+- PF7 sync session tracking via `acquire_sync_session_async()` / `release_sync_session_async()`
+- PF4 capability model enforcement via `leader_allowlist` table (migration 004)
+- PF8 leader tip cache via `leader_tips` table (migration 002) and `SqliteSyncPreflightRepo::read_leader_tip()`
+- PF3 transport-boundary helper via `PreflightTransportInput::evaluate()` (pure, fail-closed)
+- PF3/PF8 leader tip acquisition via `probe_and_cache_leader_tip()` in `ferrum-store`
+- Read-only local+cached readiness composition via `evaluate_sync_readiness_from_cache()`
+- Live-readiness orchestration via `run_live_sync_readiness_once()`
 
 ### Sync-2 Repo Port
 
@@ -50,7 +54,8 @@ preflight contract; `ferrum-store` provides concrete backends.
 - `InMemorySyncPreflightRepo`: in-memory test double (tests only)
 - `build_preflight_input()`: pure adapter that converts `LocalPreflightState`
   + externally supplied PF3/PF4/PF8 flags into `PreflightInput`
-- **PF3 is explicitly excluded** from the trait (it is a transport/config concern)
+- PF3 is handled by the caller via `PreflightTransportInput::evaluate()` in
+  `src/transport.rs` (a pure, fail-closed helper; not a trait method)
 
 **Concrete implementations:**
 - `InMemorySyncPreflightRepo` (ferrum-sync): test double
@@ -72,15 +77,25 @@ preflight contract; `ferrum-store` provides concrete backends.
 - **Sync-2 repo port**: read-only preflight port (`SyncPreflightRepo`) +
   `LocalPreflightState` + `InMemorySyncPreflightRepo` test double +
   `build_preflight_input()` adapter + `SqliteSyncPreflightRepo` (in ferrum-store)
+- **PF2/PF6/PF7 state wired**: `sync_state` table, `read_local_state_async()`,
+  `acquire_sync_session_async()` / `release_sync_session_async()`
+- **PF4 capability model**: `leader_allowlist` table, `is_authorized()`,
+  `authorize()` / `deauthorize()` with deny-by-default semantics
+- **PF8 leader tip cache**: `leader_tips` table, `SqliteSyncPreflightRepo::read_leader_tip()`
+- **PF3 transport-boundary helper**: `PreflightTransportInput::evaluate()` (pure, fail-closed)
+- **PF3/PF8 tip acquisition**: `probe_and_cache_leader_tip()` in `ferrum-store`
+- **Read-only readiness composition**: `evaluate_sync_readiness_from_cache()`
+- **Live-readiness orchestration**: `run_live_sync_readiness_once()` with guaranteed session release
+- **Real HTTP transport**: `HttpLeaderTransport` using `reqwest`; HTTP/JSON protocol;
+  bounded retry (1 retry on transient failure, 100ms backoff)
 
 ### What Is Out of Scope
 
-- Entry apply/write-path
+- Entry apply/write-path (follower side)
 - Consensus algorithm or leader election
 - Two-way merge or bidirectional sync
 - Peer discovery or address management
-- Full Sync-2 implementation (PF2/PF6/PF7 state, transport-based tip acquisition,
-  sync session tracking, capability model enforcement)
+- Full Sync-2 implementation gaps: actual ledger query for PF2/PF6 (requires schema additions beyond current migrations); richer distributed session coordination beyond PF7 atomic compare-and-set
 
 ## Key Types
 

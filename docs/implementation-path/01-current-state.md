@@ -27,10 +27,11 @@
 
 ## Phase hợp lý nhất để tiếp tục
 
-Theo `23-production-readiness-assessment.md` and `24-p1-p2-p3-execution-plan.md`, uu tien hien tai la:
-1. P1 single-node hardening: observability baseline (tracing + Prometheus metrics), TLS/ingress docs, operational runbook
-2. P2 provenance tooling: advanced replay/fabric tooling tren persisted event graph
-3. P2 sync prep: reconcile Sync-3a.1 probe API boundary status, then begin Sync-1 protocol implementation
+ Theo `23-production-readiness-assessment.md` and `24-p1-p2-p3-execution-plan.md`, P1 single-node hardening la DONE. Uu tien hien tai la P2:
+
+1. P2 provenance tooling: advanced replay/fabric tooling tren persisted event graph
+2. P2 sync prep: begin Sync-1 protocol implementation (decision kernel DONE; preflight groundwork DONE; write-path deferred to P3)
+3. P3 sync implementation (after P2 is complete): one-way fast-forward model with preflight + decision table + real HTTP transport
 
 ## Nguyen tac tiep tuc
 - khong mo lai cac rollout slice da dong cua capability persistence
