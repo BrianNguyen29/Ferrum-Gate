@@ -204,6 +204,10 @@ pub struct LineageQueryRequest {
     /// Maximum hops for BFS traversal. Hard-capped at 32 by the server.
     #[serde(default = "default_max_hops")]
     pub max_hops: Option<u32>,
+    /// Optional filter to restrict traversal to specific edge types only.
+    /// When None, all edge types are included.
+    #[serde(default)]
+    pub edge_types: Option<Vec<ProvenanceEdgeType>>,
 }
 
 fn default_true() -> bool {

@@ -2498,6 +2498,13 @@ async fn lineage_query(
 
         // Process parent edges (for ancestry walk)
         for edge in &parent_edges {
+            // Filter by edge type if specified
+            if let Some(ref edge_types) = request.edge_types {
+                if !edge_types.contains(&edge.edge_type) {
+                    continue;
+                }
+            }
+
             discovered_edges.push(LineageEdge {
                 edge_type: edge.edge_type.clone(),
                 from_event_id: edge.from_event_id,
@@ -2527,6 +2534,13 @@ async fn lineage_query(
 
         // Process child edges (for descendants walk)
         for edge in &child_edges {
+            // Filter by edge type if specified
+            if let Some(ref edge_types) = request.edge_types {
+                if !edge_types.contains(&edge.edge_type) {
+                    continue;
+                }
+            }
+
             // Note: get_edges_from returns edges where from_event_id is the CHILD in our schema
             // So edge.from_event_id is actually the child (descendant)
             discovered_edges.push(LineageEdge {
