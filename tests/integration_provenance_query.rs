@@ -14,8 +14,9 @@ use ferrum_proto::{
     EffectType, ExternalEventIngestRequest, HashChainRef, IntentCompileRequest, JsonMap,
     LineageQueryRequest, LineageQueryResponse, ObjectRef, ObjectType, ProvenanceEdge,
     ProvenanceEdgeType, ProvenanceEvent, ProvenanceEventKind, ProvenanceEventResponse,
-    ProvenanceQueryRequest, ProvenanceReplayRequest, ProvenanceReplayResponse, ResourceBinding,
-    ResourceMode, RiskTier, RollbackClass, TaintBudget, ToolBinding, TrustLabel,
+    ProvenanceExportRequest, ProvenanceExportResponse, ProvenanceQueryRequest,
+    ProvenanceReplayRequest, ProvenanceReplayResponse, ResourceBinding, ResourceMode, RiskTier,
+    RollbackClass, TaintBudget, ToolBinding, TrustLabel,
 };
 use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
 use ferrum_store::{ProvenanceRepo, SqliteStore};
@@ -2140,6 +2141,158 @@ async fn test_replay_fail_closed_on_unknown_fields() {
         .oneshot(
             axum::http::Request::builder()
                 .uri("/v1/provenance/replay")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(body.to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Should reject the request due to unknown field
+    assert!(
+        response.status() == 400 || response.status() == 422,
+        "should reject request with unknown fields, got {}",
+        response.status()
+    );
+}
+
+// =============================================================================
+// Provenance Export Tests
+// =============================================================================
+
+/// Test: export endpoint returns proper audit payload structure
+#[tokio::test]
+async fn test_provenance_export_happy_path() {
+    let (runtime_temp_dir, runtime, _store) = create_test_runtime().await;
+    let _ = &runtime_temp_dir;
+
+    let (execution_id, _intent_id, _proposal_id) = create_execution_with_events(&runtime).await;
+
+    // Export by execution_id
+    let export_req = ProvenanceExportRequest {
+        intent_id: None,
+        proposal_id: None,
+        execution_id: Some(execution_id),
+        capability_id: None,
+        event_kind: None,
+        terminal_only: None,
+        since: None,
+        until: None,
+        limit: Some(100),
+        cursor: None,
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/provenance/export")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&export_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let export_resp: ProvenanceExportResponse = serde_json::from_slice(&body).unwrap();
+
+    // Should have exported events
+    assert!(!export_resp.events.is_empty(), "expected events in export");
+
+    // Should have export info metadata
+    assert!(
+        export_resp.export_info.exported_at <= chrono::Utc::now(),
+        "exported_at should be in the past or present"
+    );
+
+    // Check filter presence flags
+    let filters = &export_resp.export_info.filters;
+    assert!(
+        filters.execution_id == Some(true),
+        "execution_id filter should be marked as present"
+    );
+    assert!(
+        filters.intent_id.is_none(),
+        "intent_id filter should not be marked"
+    );
+}
+
+/// Test: export endpoint respects limit parameter
+#[tokio::test]
+async fn test_provenance_export_respects_limit() {
+    let (runtime_temp_dir, runtime, _store) = create_test_runtime().await;
+    let _ = &runtime_temp_dir;
+
+    let (execution_id, _intent_id, _proposal_id) = create_execution_with_events(&runtime).await;
+
+    // Export with limit of 1
+    let export_req = ProvenanceExportRequest {
+        intent_id: None,
+        proposal_id: None,
+        execution_id: Some(execution_id),
+        capability_id: None,
+        event_kind: None,
+        terminal_only: None,
+        since: None,
+        until: None,
+        limit: Some(1),
+        cursor: None,
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/provenance/export")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&export_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let export_resp: ProvenanceExportResponse = serde_json::from_slice(&body).unwrap();
+
+    // Should respect limit
+    assert_eq!(
+        export_resp.events.len(),
+        1,
+        "exported_count should be limited to 1"
+    );
+    assert_eq!(export_resp.exported_count, 1, "exported_count should be 1");
+
+    // total_matched should be >= exported_count (could be more events)
+    assert!(
+        export_resp.total_matched >= export_resp.exported_count,
+        "total_matched should be >= exported_count"
+    );
+}
+
+/// Test: export endpoint rejects unknown fields (fail-closed)
+#[tokio::test]
+async fn test_provenance_export_rejects_unknown_fields() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Sending a request with an unknown field should fail (deny_unknown_fields)
+    let body =
+        r#"{"execution_id": "00000000-0000-0000-0000-000000000000", "unknown_field": "bad"}"#;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/provenance/export")
                 .method(axum::http::Method::POST)
                 .header(axum::http::header::CONTENT_TYPE, "application/json")
                 .body(body.to_string())

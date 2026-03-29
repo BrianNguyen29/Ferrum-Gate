@@ -1,17 +1,20 @@
 use anyhow::{Context, Result, bail};
+use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand, ValueEnum};
-use ferrum_proto::ExecutionId;
 use ferrum_proto::api::{CompensateRequest, CompensateResponse, RollbackRequest, RollbackResponse};
 use ferrum_proto::approval::ApprovalResolveRequest;
 use ferrum_proto::common::{ActorRef, ActorType};
 use ferrum_proto::provenance::{
-    LineageQueryRequest, LineageQueryResponse, ProvenanceReplayRequest, ProvenanceReplayResponse,
+    LineageQueryRequest, LineageQueryResponse, ProvenanceEventKind, ProvenanceExportRequest,
+    ProvenanceExportResponse, ProvenanceReplayRequest, ProvenanceReplayResponse,
 };
+use ferrum_proto::{CapabilityId, ExecutionId, IntentId, ProposalId};
 use reqwest::Client;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
+use uuid::Uuid;
 
 const CONTRACT_PATHS: &[&str] = &[
     "contracts/ferrumgate-agent-contract.v1.yaml",
@@ -700,6 +703,18 @@ impl ServerClient {
         self.decode_json(resp).await
     }
 
+    async fn export_provenance(
+        &self,
+        req: &ProvenanceExportRequest,
+    ) -> Result<ProvenanceExportResponse> {
+        let resp = self
+            .request(reqwest::Method::POST, "/v1/provenance/export")
+            .json(req)
+            .send()
+            .await?;
+        self.decode_json(resp).await
+    }
+
     async fn post_external_event(
         &self,
         req: &ExternalEventIngestRequest,
@@ -1058,7 +1073,7 @@ enum ServerCommand {
         #[arg(long)]
         until: Option<String>,
 
-        /// Maximum number of events to return per page (1-1000).
+        /// Maximum number of events to return per page (1-10000).
         #[arg(long)]
         limit: Option<u32>,
 
@@ -1070,6 +1085,60 @@ enum ServerCommand {
         /// Automatically sets --json output.
         #[arg(long)]
         all_pages: bool,
+
+        /// Server base URL (e.g. http://127.0.0.1:8080).
+        #[arg(long, env = "FERRUMCTL_SERVER_URL")]
+        server_url: Option<String>,
+
+        /// Bearer token for authentication.
+        #[arg(long, env = "FERRUMCTL_BEARER_TOKEN")]
+        bearer_token: Option<String>,
+
+        /// Output as JSON instead of human-readable.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Export provenance events as a deterministic audit payload.
+    ExportProvenance {
+        /// Filter by intent ID.
+        #[arg(long)]
+        intent_id: Option<String>,
+
+        /// Filter by proposal ID.
+        #[arg(long)]
+        proposal_id: Option<String>,
+
+        /// Filter by execution ID.
+        #[arg(long)]
+        execution_id: Option<String>,
+
+        /// Filter by capability ID.
+        #[arg(long)]
+        capability_id: Option<String>,
+
+        /// Filter by event kind.
+        #[arg(long)]
+        event_kind: Option<String>,
+
+        /// Return only terminal provenance events.
+        #[arg(long)]
+        terminal_only: bool,
+
+        /// Filter events since timestamp (ISO 8601).
+        #[arg(long)]
+        since: Option<String>,
+
+        /// Filter events until timestamp (ISO 8601).
+        #[arg(long)]
+        until: Option<String>,
+
+        /// Maximum number of events to export (1-10000). Defaults to 1000.
+        #[arg(long)]
+        limit: Option<u32>,
+
+        /// Cursor from a previous export's next_cursor to fetch the next page.
+        #[arg(long)]
+        cursor: Option<String>,
 
         /// Server base URL (e.g. http://127.0.0.1:8080).
         #[arg(long, env = "FERRUMCTL_SERVER_URL")]
@@ -2645,6 +2714,154 @@ async fn run_inspect_provenance(options: InspectProvenanceOptions) -> Result<()>
     Ok(())
 }
 
+/// Parse an optional UUID string into an IntentId.
+fn parse_intent_id(s: Option<String>) -> Result<Option<IntentId>> {
+    match s {
+        Some(s) => Ok(Some(IntentId(Uuid::parse_str(&s)?))),
+        None => Ok(None),
+    }
+}
+
+/// Parse an optional UUID string into a ProposalId.
+fn parse_proposal_id(s: Option<String>) -> Result<Option<ProposalId>> {
+    match s {
+        Some(s) => Ok(Some(ProposalId(Uuid::parse_str(&s)?))),
+        None => Ok(None),
+    }
+}
+
+/// Parse an optional UUID string into an ExecutionId.
+fn parse_execution_id(s: Option<String>) -> Result<Option<ExecutionId>> {
+    match s {
+        Some(s) => Ok(Some(ExecutionId(Uuid::parse_str(&s)?))),
+        None => Ok(None),
+    }
+}
+
+/// Parse an optional UUID string into a CapabilityId.
+fn parse_capability_id(s: Option<String>) -> Result<Option<CapabilityId>> {
+    match s {
+        Some(s) => Ok(Some(CapabilityId(Uuid::parse_str(&s)?))),
+        None => Ok(None),
+    }
+}
+
+/// Parse an optional ISO 8601 timestamp string into a DateTime<Utc>.
+fn parse_timestamp(s: Option<String>) -> Result<Option<DateTime<Utc>>> {
+    match s {
+        Some(s) => {
+            // Try RFC3339 format first, then ISO 8601
+            let dt = DateTime::parse_from_rfc3339(&s)
+                .map(|dt| dt.with_timezone(&Utc))
+                .or_else(|_| {
+                    // Try ISO 8601 without timezone (assume UTC)
+                    chrono::NaiveDateTime::parse_from_str(&s, "%Y-%m-%dT%H:%M:%S")
+                        .map(|ndt| DateTime::<Utc>::from_naive_utc_and_offset(ndt, Utc))
+                })
+                .with_context(|| format!("invalid timestamp format: {}", s))?;
+            Ok(Some(dt))
+        }
+        None => Ok(None),
+    }
+}
+
+/// Parse an optional event kind string into ProvenanceEventKind.
+fn parse_event_kind(s: Option<String>) -> Result<Option<ProvenanceEventKind>> {
+    match s {
+        Some(s) => {
+            let kind = match s.as_str() {
+                "UserGoalReceived" => ProvenanceEventKind::UserGoalReceived,
+                "IntentCompiled" => ProvenanceEventKind::IntentCompiled,
+                "IntentRevoked" => ProvenanceEventKind::IntentRevoked,
+                "ActionProposalSubmitted" => ProvenanceEventKind::ActionProposalSubmitted,
+                "PolicyEvaluated" => ProvenanceEventKind::PolicyEvaluated,
+                "CapabilityMinted" => ProvenanceEventKind::CapabilityMinted,
+                "CapabilityRevoked" => ProvenanceEventKind::CapabilityRevoked,
+                "ApprovalRequested" => ProvenanceEventKind::ApprovalRequested,
+                "ApprovalGranted" => ProvenanceEventKind::ApprovalGranted,
+                "ApprovalDenied" => ProvenanceEventKind::ApprovalDenied,
+                "ToolCallPrepared" => ProvenanceEventKind::ToolCallPrepared,
+                "ToolCallIntercepted" => ProvenanceEventKind::ToolCallIntercepted,
+                "ToolCallExecuted" => ProvenanceEventKind::ToolCallExecuted,
+                "ToolOutputReceived" => ProvenanceEventKind::ToolOutputReceived,
+                "ToolOutputSanitized" => ProvenanceEventKind::ToolOutputSanitized,
+                "DlpBlocked" => ProvenanceEventKind::DlpBlocked,
+                "SideEffectPrepared" => ProvenanceEventKind::SideEffectPrepared,
+                "SideEffectVerified" => ProvenanceEventKind::SideEffectVerified,
+                "SideEffectCommitted" => ProvenanceEventKind::SideEffectCommitted,
+                "SideEffectCompensated" => ProvenanceEventKind::SideEffectCompensated,
+                "SideEffectRolledBack" => ProvenanceEventKind::SideEffectRolledBack,
+                "Quarantined" => ProvenanceEventKind::Quarantined,
+                "ErrorRaised" => ProvenanceEventKind::ErrorRaised,
+                "ExternalEventObserved" => ProvenanceEventKind::ExternalEventObserved,
+                _ => anyhow::bail!("unknown event kind: {}", s),
+            };
+            Ok(Some(kind))
+        }
+        None => Ok(None),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_export_provenance(
+    intent_id: Option<String>,
+    proposal_id: Option<String>,
+    execution_id: Option<String>,
+    capability_id: Option<String>,
+    event_kind: Option<String>,
+    terminal_only: bool,
+    since: Option<String>,
+    until: Option<String>,
+    limit: Option<u32>,
+    cursor: Option<String>,
+    url: Option<String>,
+    token: Option<String>,
+    as_json: bool,
+) -> Result<()> {
+    let url = resolve_server_url(url)?;
+    let client = ServerClient::new(&url, token);
+
+    let req = ProvenanceExportRequest {
+        intent_id: parse_intent_id(intent_id)?,
+        proposal_id: parse_proposal_id(proposal_id)?,
+        execution_id: parse_execution_id(execution_id)?,
+        capability_id: parse_capability_id(capability_id)?,
+        event_kind: parse_event_kind(event_kind)?,
+        terminal_only: if terminal_only { Some(true) } else { None },
+        since: parse_timestamp(since)?,
+        until: parse_timestamp(until)?,
+        limit,
+        cursor,
+    };
+
+    let response = client.export_provenance(&req).await?;
+
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&response)?);
+    } else {
+        println!("Provenance Export");
+        println!("=================");
+        println!("Exported at: {}", response.export_info.exported_at);
+        println!("Total matched: {}", response.total_matched);
+        println!("Exported count: {}", response.exported_count);
+        if response.events.is_empty() {
+            println!("No events found.");
+            return Ok(());
+        }
+        println!("\nEvents ({}):", response.events.len());
+        for event in response.events {
+            println!(
+                "  [{}] {:?}  {}",
+                event.occurred_at, event.kind, event.event_id
+            );
+        }
+        if let Some(next_cursor) = response.next_cursor {
+            println!("Next cursor: {}", next_cursor);
+        }
+    }
+    Ok(())
+}
+
 async fn run_inspect_event(
     event_id: &str,
     ancestry: bool,
@@ -2994,6 +3211,38 @@ async fn main() -> Result<()> {
                     as_json: json,
                     all_pages,
                 })
+                .await?;
+            }
+            ServerCommand::ExportProvenance {
+                intent_id,
+                proposal_id,
+                execution_id,
+                capability_id,
+                event_kind,
+                terminal_only,
+                since,
+                until,
+                limit,
+                cursor,
+                server_url,
+                bearer_token,
+                json,
+            } => {
+                run_export_provenance(
+                    intent_id,
+                    proposal_id,
+                    execution_id,
+                    capability_id,
+                    event_kind,
+                    terminal_only,
+                    since,
+                    until,
+                    limit,
+                    cursor,
+                    server_url,
+                    bearer_token,
+                    json,
+                )
                 .await?;
             }
             ServerCommand::InspectEvent {

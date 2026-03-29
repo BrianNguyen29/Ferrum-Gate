@@ -17,10 +17,12 @@ use ferrum_proto::{
     IntentCompileRequest, IntentCompileResponse, IntentEnvelope, IntentStatus, LineageEdge,
     LineageQueryRequest, LineageQueryResponse, ObjectRef, ObjectType, OutcomeClause, ProposalId,
     ProvenanceEdge, ProvenanceEdgeType, ProvenanceEvent, ProvenanceEventKind,
-    ProvenanceEventResponse, ProvenanceQueryRequest, ProvenanceQueryResponse,
-    ProvenanceReplayRequest, ProvenanceReplayResponse, ResourceBinding, ResourceMode,
-    ResourceSelector, RiskTier, RollbackClass, RollbackRequest, RollbackResponse, RollbackState,
-    RollbackTarget, TimeBudget, TrustContextSummary, TrustLabel, VerifyRequest, VerifyResponse,
+    ProvenanceEventResponse, ProvenanceExportFilters, ProvenanceExportInfo,
+    ProvenanceExportRequest, ProvenanceExportResponse, ProvenanceQueryRequest,
+    ProvenanceQueryResponse, ProvenanceReplayRequest, ProvenanceReplayResponse, ResourceBinding,
+    ResourceMode, ResourceSelector, RiskTier, RollbackClass, RollbackRequest, RollbackResponse,
+    RollbackState, RollbackTarget, TimeBudget, TrustContextSummary, TrustLabel, VerifyRequest,
+    VerifyResponse,
 };
 use ferrum_store::{
     ApprovalRepo, ExecutionRepo, IntentRepo, LedgerRepo, ProposalRepo, ProvenanceRepo, RollbackRepo,
@@ -167,6 +169,7 @@ fn build_router_inner(runtime: GatewayRuntime, auth_config: Option<ServerConfig>
         .route("/v1/provenance/lineage", post(lineage_query))
         .route("/v1/provenance/query", post(query_provenance))
         .route("/v1/provenance/replay", post(replay_provenance))
+        .route("/v1/provenance/export", post(export_provenance))
         .route(
             "/v1/provenance/events/external",
             post(ingest_external_event),
@@ -2317,6 +2320,98 @@ async fn replay_provenance(
     Ok(Json(ProvenanceReplayResponse {
         events: sorted_events,
         execution_id: request.execution_id,
+    }))
+}
+
+/// Export provenance events as a deterministic audit payload.
+/// Uses the same filter semantics as ProvenanceQueryRequest but returns
+/// a self-contained export with metadata for auditability.
+async fn export_provenance(
+    State(runtime): State<Arc<GatewayRuntime>>,
+    Json(request): Json<ProvenanceExportRequest>,
+) -> Result<Json<ProvenanceExportResponse>, ApiProblem> {
+    let limit = request.limit.unwrap_or(1000).clamp(1, 10000);
+
+    // Convert export request to query request for filtering
+    let query_request = ProvenanceQueryRequest {
+        intent_id: request.intent_id,
+        proposal_id: request.proposal_id,
+        execution_id: request.execution_id,
+        capability_id: request.capability_id,
+        event_kind: request.event_kind.clone(),
+        terminal_only: request.terminal_only,
+        since: request.since,
+        until: request.until,
+        limit: Some(limit),
+        cursor: request.cursor,
+    };
+
+    let (events, next_cursor) = runtime
+        .store
+        .provenance()
+        .query_paginated(&query_request)
+        .await
+        .map_err(|err| ApiProblem::internal(err.into()))?;
+
+    // Apply terminal_only filter if requested (query_paginated doesn't filter this)
+    let events = if request.terminal_only.unwrap_or(false) {
+        let graph = LineageGraph::from_events(events.clone());
+        graph.terminal_events()
+    } else {
+        events
+    };
+
+    let exported_count = events.len() as u64;
+
+    // Build filter presence flags for audit info
+    let filters = ProvenanceExportFilters {
+        intent_id: if request.intent_id.is_some() {
+            Some(true)
+        } else {
+            None
+        },
+        proposal_id: if request.proposal_id.is_some() {
+            Some(true)
+        } else {
+            None
+        },
+        execution_id: if request.execution_id.is_some() {
+            Some(true)
+        } else {
+            None
+        },
+        capability_id: if request.capability_id.is_some() {
+            Some(true)
+        } else {
+            None
+        },
+        event_kind: if request.event_kind.is_some() {
+            Some(true)
+        } else {
+            None
+        },
+        terminal_only: request.terminal_only,
+        since: if request.since.is_some() {
+            Some(true)
+        } else {
+            None
+        },
+        until: if request.until.is_some() {
+            Some(true)
+        } else {
+            None
+        },
+    };
+
+    Ok(Json(ProvenanceExportResponse {
+        events,
+        total_matched: exported_count, // Note: for accurate count, would need separate count query
+        exported_count,
+        next_cursor,
+        export_info: ProvenanceExportInfo {
+            exported_at: chrono::Utc::now(),
+            filters,
+        },
     }))
 }
 

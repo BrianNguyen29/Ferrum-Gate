@@ -570,6 +570,30 @@ paths:
                     items:
                       $ref: '#/components/schemas/ProvenanceEvent'
 
+  /v1/provenance/export:
+    post:
+      summary: Export provenance events as a deterministic audit payload
+      description: |
+        Exports provenance events using the same filter semantics as the query endpoint
+        but returns a self-contained audit payload with export metadata for auditability.
+
+        Results are sorted by occurred_at ascending, then event_id ascending.
+        Supports cursor-based pagination via `cursor` and `limit`.
+      operationId: exportProvenance
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProvenanceExportRequest'
+      responses:
+        '200':
+          description: Exported provenance audit payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProvenanceExportResponse'
+
 components:
   securitySchemes:
     ControlPlaneBearer:
@@ -1338,7 +1362,7 @@ components:
         limit:
           type: integer
           nullable: true
-          description: Maximum number of events to return (1-1000). Defaults to 100.
+          description: Maximum number of events to return (1-10000). Defaults to 100.
         cursor:
           type: string
           nullable: true
@@ -1537,3 +1561,116 @@ components:
           type: string
           nullable: true
           description: Optional human-readable summary of the edge.
+
+    ProvenanceExportRequest:
+      type: object
+      properties:
+        intent_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Filter by intent_id.
+        proposal_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Filter by proposal_id.
+        execution_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Filter by execution_id.
+        capability_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Filter by capability_id.
+        event_kind:
+          type: string
+          nullable: true
+          description: Filter by event kind.
+        terminal_only:
+          type: boolean
+          nullable: true
+          description: Filter to terminal events only.
+        since:
+          type: string
+          format: date-time
+          nullable: true
+          description: Filter events that occurred at or after this timestamp.
+        until:
+          type: string
+          format: date-time
+          nullable: true
+          description: Filter events that occurred at or before this timestamp.
+        limit:
+          type: integer
+          nullable: true
+          description: Maximum number of events to export (1-10000). Defaults to 1000.
+        cursor:
+          type: string
+          nullable: true
+          description: Cursor for keyset pagination. Use the returned next_cursor to advance.
+
+    ProvenanceExportResponse:
+      type: object
+      required: [events, total_matched, exported_count, export_info]
+      properties:
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProvenanceEvent'
+          description: Exported provenance events, sorted by occurred_at ascending, then event_id ascending.
+        total_matched:
+          type: integer
+          format: uint64
+          description: Number of events matched by the filter.
+        exported_count:
+          type: integer
+          format: uint64
+          description: Number of events included in this export page.
+        next_cursor:
+          type: string
+          nullable: true
+          description: Cursor for fetching the next page of exports. None if this is the last page.
+        export_info:
+          $ref: '#/components/schemas/ProvenanceExportInfo'
+
+    ProvenanceExportInfo:
+      type: object
+      required: [exported_at, filters]
+      properties:
+        exported_at:
+          type: string
+          format: date-time
+          description: RFC3339 timestamp when this export was generated.
+        filters:
+          $ref: '#/components/schemas/ProvenanceExportFilters'
+
+    ProvenanceExportFilters:
+      type: object
+      properties:
+        intent_id:
+          type: boolean
+          nullable: true
+        proposal_id:
+          type: boolean
+          nullable: true
+        execution_id:
+          type: boolean
+          nullable: true
+        capability_id:
+          type: boolean
+          nullable: true
+        event_kind:
+          type: boolean
+          nullable: true
+        terminal_only:
+          type: boolean
+          nullable: true
+        since:
+          type: boolean
+          nullable: true
+        until:
+          type: boolean
+          nullable: true
