@@ -231,3 +231,23 @@ pub struct LineageEdge {
     pub to_event_id: EventId,
     pub summary: Option<String>,
 }
+
+/// Request for replaying a read-only provenance reconstruction for a single execution.
+/// Returns all events belonging to the execution, sorted topologically by parent_edges
+/// for a deterministic, reproducible reconstruction.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProvenanceReplayRequest {
+    /// The execution_id to replay.
+    pub execution_id: ExecutionId,
+}
+
+/// Response containing the replay reconstruction of an execution's provenance lineage.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ProvenanceReplayResponse {
+    /// All events belonging to the execution, sorted topologically by parent_edges
+    /// (roots first, leaves last) and then by occurred_at for stability.
+    pub events: Vec<ProvenanceEvent>,
+    /// The execution_id this replay covers.
+    pub execution_id: ExecutionId,
+}
