@@ -512,6 +512,286 @@ async fn test_rollback_class_floor_prevents_downgrade_below_intent_default() {
     );
 }
 
+/// Regression test for Weak Spot 1: prepare must use the persisted effective rollback
+/// class from the proposal rather than a downgraded caller value.
+///
+/// Scenario: Intent default is R3, client requests R0 in proposal.
+/// The evaluate phase should elevate R0→R3 and persist R3 in the proposal.
+/// After approval + prepare, the stored rollback contract must have:
+/// - rollback_class = R3IrreversibleHighConsequence
+/// - auto_commit = false
+///
+/// This proves the prepare handler reads the persisted proposal's rollback class,
+/// not a hardcoded or downgraded value.
+#[tokio::test]
+async fn test_prepare_uses_persisted_effective_rollback_class_not_downgraded_caller_value() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Step 1: Compile intent with HTTP POST scope which infers R3 as default rollback class
+    let mut req = sample_intent_request();
+    req.requested_resource_scope = vec![ResourceSelector::HttpEndpoint {
+        method: ferrum_proto::HttpMethod::Post,
+        base_url: "https://api.example.com".to_string(),
+        path_prefix: "/v1/".to_string(),
+        mode: ResourceMode::Write,
+    }];
+    req.effect_type = Some(EffectType::ExternalApiCall);
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Verify the intent's default_rollback_class is R3 for HTTP POST
+    assert_eq!(
+        compile_resp.envelope.default_rollback_class,
+        RollbackClass::R3IrreversibleHighConsequence,
+        "HTTP POST intent should have default_rollback_class of R3"
+    );
+
+    // Step 2: Create a proposal that requests R0 (below the intent default of R3)
+    // This downgrade attempt should be blocked during evaluate, returning RequireApproval
+    let proposal = ActionProposal {
+        proposal_id: ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Try downgrade from R3 to R0".to_string(),
+        tool_name: "http.post".to_string(),
+        server_name: "http".to_string(),
+        raw_arguments: serde_json::json!({"url": "https://api.example.com/v1/users"}),
+        expected_effect: "post http request".to_string(),
+        estimated_risk: RiskTier::High,
+        requested_rollback_class: RollbackClass::R0NativeReversible, // Intentionally below R3
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let eval_resp: ferrum_proto::EvaluateProposalResponse = serde_json::from_slice(&body).unwrap();
+
+    // The client requested R0 but the intent has R3 default.
+    // The floor should be enforced, so R0 should be elevated to R3.
+    // Since R3 requires approval, the decision should be RequireApproval.
+    assert_eq!(
+        eval_resp.decision,
+        Decision::RequireApproval,
+        "Downgrade attempt from R0 to R3 intent should be blocked - R3 requires approval"
+    );
+
+    // Verify the proposal was persisted with the ELEVATED rollback class (R3, not R0)
+    let stored_proposal = runtime.store.proposals().get(proposal_id).await.unwrap();
+    assert!(stored_proposal.is_some(), "Proposal should be persisted");
+    let stored = stored_proposal.unwrap();
+    assert_eq!(
+        stored.requested_rollback_class,
+        RollbackClass::R3IrreversibleHighConsequence,
+        "Persisted rollback class should be R3 (elevated from R0), proving floor was enforced"
+    );
+
+    // Step 3: Mint capability
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "http".to_string(),
+            tool_name: "http.post".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![ResourceBinding::Http {
+            method: ferrum_proto::HttpMethod::Post,
+            base_url: "https://api.example.com".to_string(),
+            path_prefix: "/v1/".to_string(),
+            header_allowlist: vec![],
+            mode: ResourceMode::Write,
+        }],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    // Step 4: Authorize execution - creates execution in AwaitingApproval state
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    // Verify execution is in AwaitingApproval state
+    assert!(matches!(
+        auth_resp.execution.state,
+        ExecutionState::AwaitingApproval
+    ));
+
+    // Get approval ID
+    let (pending_approvals, _) = runtime
+        .store
+        .approvals()
+        .list_pending_cursor(100, None)
+        .await
+        .unwrap();
+    assert!(!pending_approvals.is_empty());
+    let approval_id = pending_approvals[0].approval_id;
+
+    // Step 5: Resolve approval (approve=true)
+    let app = build_router(runtime.clone());
+    let resolve_req = ferrum_proto::ApprovalResolveRequest {
+        actor: ferrum_proto::ActorRef {
+            actor_type: ferrum_proto::ActorType::User,
+            actor_id: "admin".to_string(),
+            display_name: Some("Admin".to_string()),
+        },
+        approve: true,
+        reason: Some("Approved by regression test".to_string()),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/approvals/{}/resolve", approval_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&resolve_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    // Step 6: Prepare execution
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let prep_resp: ferrum_proto::PrepareExecutionResponse = serde_json::from_slice(&body).unwrap();
+    assert!(prep_resp.prepared);
+    assert!(prep_resp.rollback_contract.is_some());
+
+    // Step 7: === REGRESSION ASSERTION ===
+    // After prepare, verify the STORED rollback contract has the correct values.
+    // This proves prepare used the persisted effective rollback class (R3 from proposal)
+    // rather than a downgraded caller value (R0 from initial request).
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored_execution.is_some());
+    let contract_id = stored_execution.unwrap().rollback_contract_id.unwrap();
+
+    let stored_contract = runtime
+        .store
+        .rollback_contracts()
+        .get(contract_id)
+        .await
+        .unwrap()
+        .unwrap();
+
+    // rollback_class must be R3IrreversibleHighConsequence (elevated from R0)
+    assert_eq!(
+        stored_contract.rollback_class,
+        RollbackClass::R3IrreversibleHighConsequence,
+        "Stored rollback contract must have R3 (not R0) - proves prepare used persisted proposal value"
+    );
+
+    // auto_commit must be false for R3 (R0 only has auto_commit=true)
+    assert!(
+        !stored_contract.auto_commit,
+        "R3 rollback class must have auto_commit=false"
+    );
+}
+
 #[tokio::test]
 async fn test_mutating_http_intent_compiles_to_r3() {
     let (_temp_dir, runtime, _store) = create_test_runtime().await;
