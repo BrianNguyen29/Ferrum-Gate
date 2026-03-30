@@ -1388,6 +1388,14 @@ components:
           type: string
           format: uuid
           nullable: true
+          description: Filter by a single execution ID.
+        execution_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          nullable: true
+          description: Additive filter: match events from any of the given execution IDs. When both execution_id and execution_ids are set, events matching either are returned.
         capability_id:
           type: string
           format: uuid

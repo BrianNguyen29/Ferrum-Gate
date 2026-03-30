@@ -87,6 +87,10 @@ pub struct ProvenanceQueryRequest {
     pub intent_id: Option<crate::IntentId>,
     pub proposal_id: Option<ProposalId>,
     pub execution_id: Option<ExecutionId>,
+    /// Additive filter: match events from any of the given execution IDs.
+    /// When both execution_id and execution_ids are set, events matching either are returned.
+    #[serde(default)]
+    pub execution_ids: Vec<ExecutionId>,
     pub capability_id: Option<CapabilityId>,
     pub event_kind: Option<ProvenanceEventKind>,
     pub terminal_only: Option<bool>,
@@ -107,6 +111,7 @@ impl Default for ProvenanceQueryRequest {
             intent_id: None,
             proposal_id: None,
             execution_id: None,
+            execution_ids: Vec::new(),
             capability_id: None,
             event_kind: None,
             terminal_only: None,

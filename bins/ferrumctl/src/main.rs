@@ -238,6 +238,8 @@ struct ProvenanceQueryRequest {
     proposal_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     execution_id: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    execution_ids: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     capability_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1086,6 +1088,10 @@ enum ServerCommand {
         /// Filter by execution ID.
         #[arg(long)]
         execution_id: Option<String>,
+
+        /// Filter by multiple execution IDs (additive, can be specified multiple times).
+        #[arg(long, value_delimiter = ',')]
+        execution_ids: Vec<String>,
 
         /// Filter by capability ID.
         #[arg(long)]
@@ -3371,6 +3377,7 @@ async fn main() -> Result<()> {
                 intent_id,
                 proposal_id,
                 execution_id,
+                execution_ids,
                 capability_id,
                 event_kind,
                 terminal_only,
@@ -3387,6 +3394,7 @@ async fn main() -> Result<()> {
                     intent_id,
                     proposal_id,
                     execution_id,
+                    execution_ids,
                     capability_id,
                     event_kind,
                     terminal_only: terminal_only.then_some(true),
