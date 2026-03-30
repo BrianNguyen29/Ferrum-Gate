@@ -1,0 +1,317 @@
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 8 tests
+test tests::test_prepare_rejects_invalid_repo_path ... ok
+test tests::test_prepare_captures_before_ref ... ok
+test tests::test_execute_captures_after_ref_from_payload ... ok
+test tests::test_execute_rejects_unsupported_payload ... ok
+test tests::test_verify_returns_false_when_head_differs ... ok
+test tests::test_rollback_restores_head ... ok
+test tests::test_compensate_same_as_rollback ... ok
+test tests::test_verify_returns_true_when_head_matches ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 11 tests
+test server::tests::test_determine_rollback_target_from_bindings_empty_scope ... ok
+test server::tests::test_determine_rollback_target_from_bindings_first_git_wins ... ok
+test server::tests::test_determine_rollback_target_from_bindings_generic_fallback ... ok
+test server::tests::test_determine_rollback_target_from_bindings_git_ref ... ok
+test server::tests::test_infer_git_adapter_key_empty_scope ... ok
+test server::tests::test_infer_git_adapter_key_no_git ... ok
+test server::tests::test_infer_git_adapter_key_git_repository ... ok
+test server::tests::test_infer_git_adapter_key_mixed_scope ... ok
+test server::tests::test_protected_route_requires_bearer_auth ... ok
+test server::tests::test_healthz_is_public_under_bearer_auth ... ok
+test server::tests::test_protected_route_accepts_valid_bearer_auth ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 2 tests
+test test_r3_contract_preparation_succeeds ... ok
+test test_r0_contract_has_auto_commit_true ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 15 tests
+test test_poisoned_context_moderate_taint_50_no_quarantine ... ok
+test test_poisoned_context_r0_bypasses_taint_check ... ok
+test test_high_taint_triggers_quarantine ... ok
+test test_pending_approvals_pagination ... ok
+test compensate_execution_flow ... ok
+test test_pending_approvals_filtered_by_proposal_id ... ok
+test test_poisoned_context_r3_requires_approval ... ok
+test test_rollback_and_compensate_are_distinct_operations ... ok
+test test_poisoned_context_taint_at_maximum_100 ... ok
+test test_single_use_capability_cannot_be_reused ... ok
+test test_poisoned_context_taint_at_boundary_69_no_quarantine ... ok
+test test_r0_allowed_with_empty_scope ... ok
+test test_poisoned_context_trust_attributes_no_bypass ... ok
+test test_r3_contracts_have_auto_commit_false ... ok
+test test_scope_mismatch_deny_on_empty_scope_with_mutation ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+
+running 5 tests
+test test_lineage_query_handles_max_hops_clamping ... ok
+test test_lineage_query_rejects_invalid_event_id_format ... ok
+test test_lineage_query_accepts_all_directions ... ok
+test test_lineage_query_accepts_default_direction ... ok
+test test_lineage_query_returns_404_for_nonexistent_event ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 15 tests
+test sqlite::leader_allowlist::tests::returns_false_after_deauthorize ... ok
+test sqlite::leader_tip_cache::tests::delete_removes_cached_tip ... ok
+test sqlite::leader_allowlist::tests::returns_true_for_authorized_leader ... ok
+test sqlite::leader_tip_cache::tests::accepts_idempotent_write ... ok
+test sqlite::leader_allowlist::tests::returns_false_for_unknown_leader ... ok
+test sqlite::leader_tip_cache::tests::accepts_strictly_newer_tip ... ok
+test sqlite::leader_tip_cache::tests::read_returns_none_when_not_cached ... ok
+test sqlite::leader_tip_cache::tests::write_then_read_roundtrip ... ok
+test sqlite::leader_tip_cache::tests::rejects_hash_conflict ... ok
+test sync_service::tests::insync_both_empty ... ok
+test sqlite::leader_tip_cache::tests::rejects_stale_write_lower_sequence ... ok
+test sync_service::tests::leader_ahead ... ok
+test sync_service::tests::pf4_deny_leader_not_authorized ... ok
+test sync_service::tests::pf8_missing_cached_tip ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+
+running 55 tests
+test decision::tests::abort_a3_when_leader_ahead_hash_path_invalid ... ok
+test decision::tests::abort_a3_when_same_sequence_different_hash ... ok
+test decision::tests::abort_a4_when_follower_ahead ... ok
+test decision::tests::abort_a7_when_leader_tip_missing ... ok
+test decision::tests::display_formats ... ok
+test decision::tests::done_at_sequence_zero ... ok
+test decision::tests::done_when_tips_equal ... ok
+test decision::tests::fast_forward_when_follower_empty ... ok
+test decision::tests::is_proceed_false_for_abort ... ok
+test decision::tests::is_proceed_true_for_done ... ok
+test decision::tests::is_proceed_true_for_sync ... ok
+test decision::tests::sync_when_leader_ahead_hash_path_valid ... ok
+test facade::tests::probe_facade_cloneable ... ok
+test facade::tests::probe_facade_generic_probe ... ok
+test facade::tests::probe_facade_health_err ... ok
+test facade::tests::probe_facade_health_ok ... ok
+test facade::tests::probe_facade_default_probe ... ok
+test facade::tests::probe_facade_ready ... ok
+test preflight::tests::bridge_bootstrap_to_fast_forward ... ok
+test facade::tests::probe_facade_status ... ok
+test preflight::tests::bridge_divergent_to_abort_a3 ... ok
+test preflight::tests::bridge_follower_ahead_to_abort_a4 ... ok
+test preflight::tests::bridge_insync_to_done ... ok
+test preflight::tests::bridge_leader_ahead_to_sync ... ok
+test preflight::tests::build_preflight_input_all_passing ... ok
+test preflight::tests::build_preflight_input_leader_not_authorized_fails_pf4 ... ok
+test preflight::tests::classify_bootstrap ... ok
+test preflight::tests::classify_divergent ... ok
+test preflight::tests::classify_follower_ahead ... ok
+test preflight::tests::classify_insync_both_none ... ok
+test preflight::tests::classify_insync_equal_tips ... ok
+test preflight::tests::classify_leader_ahead ... ok
+test preflight::tests::preflight_all_pass ... ok
+test preflight::tests::preflight_pf4_fails ... ok
+test preflight::tests::preflight_pf8_fails ... ok
+test repo::tests::clean_empty_state ... ok
+test repo::tests::clean_with_tip_state ... ok
+test repo::tests::in_memory_configured_is_leader_authorized_true ... ok
+test repo::tests::in_memory_configured_read_leader_tip_none ... ok
+test repo::tests::in_memory_configured_read_leader_tip_some ... ok
+test repo::tests::in_memory_configured_read_local_state ... ok
+test repo::tests::in_memory_configured_verify_ok ... ok
+test repo::tests::in_memory_default_returns_err ... ok
+test transport::tests::fake_transport_health_err ... ok
+test transport::tests::fake_transport_health_ok ... ok
+test transport::tests::fake_transport_probe_custom ... ok
+test transport::tests::fake_transport_probe_default ... ok
+test transport::tests::fake_transport_probe_wildcard_default ... ok
+test transport::tests::preflight_transport_flags_both_missing ... ok
+test transport::tests::preflight_transport_flags_all_present ... ok
+test transport::tests::preflight_transport_flags_empty_address ... ok
+test transport::tests::preflight_transport_flags_missing_address ... ok
+test transport::tests::preflight_transport_flags_missing_tip ... ok
+test transport::tests::preflight_transport_flags_whitespace_address ... ok
+test transport::tests::tip_id_equality ... ok
+
+test result: ok. 55 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 14 tests
+test tests::test_actor_type_cli_all_variants ... ok
+test tests::test_actor_type_cli_to_proto_agent ... ok
+test tests::test_actor_type_cli_to_proto_operator ... ok
+test tests::test_actor_type_cli_to_proto_user ... ok
+test tests::test_escape_dot_label_basic ... ok
+test tests::test_render_dot_deterministic_ordering ... ok
+test tests::test_render_dot_empty_lineage ... ok
+test tests::test_escape_dot_label_valid_escape_in_label ... ok
+test tests::test_validate_flags_approve_is_valid ... ok
+test tests::test_validate_flags_both_approve_and_deny_fails ... ok
+test tests::test_validate_flags_deny_with_reason_is_valid ... ok
+test tests::test_validate_flags_deny_without_reason_fails ... ok
+test tests::test_validate_flags_deny_with_empty_reason_fails ... ok
+test tests::test_validate_flags_neither_approve_nor_deny_fails ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 3 tests
+test tests::test_resolve_config_allows_nonlocal_bind_when_env_override_is_true ... ok
+test tests::test_resolve_config_cli_over_env_over_file ... ok
+test tests::test_resolve_config_rejects_bearer_mode_without_token ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

@@ -8,6 +8,36 @@
 ## OpenAPI
 - `openapi/ferrumgate-control-api.v1.yaml`
 
+## Implemented REST Endpoints
+
+### Unauthenticated (health/readiness)
+- `GET /v1/healthz` - Basic health check
+- `GET /v1/readyz` - Shallow readiness check
+
+### Policy and Intents
+- `POST /v1/intents/compile` - Compile an IntentEnvelope
+- `POST /v1/proposals/{proposal_id}/evaluate` - Evaluate proposal via policy
+
+### Capabilities
+- `POST /v1/capabilities/mint` - Mint a capability lease
+- `POST /v1/capabilities/{capability_id}/revoke` - Revoke capability
+
+### Executions
+- `POST /v1/executions/authorize` - Authorize execution
+- `POST /v1/executions/{execution_id}/prepare` - Prepare rollback/preflight
+- `GET /v1/executions/{execution_id}` - Get execution record
+
+### Approvals
+- `GET /v1/approvals` - List pending approvals
+- `GET /v1/approvals/{approval_id}` - Get specific approval
+
+### Provenance
+- `POST /v1/provenance/query` - Query provenance events
+- `GET /v1/provenance/lineage/{execution_id}` - Get lineage for execution
+- `POST /v1/provenance/lineage` - Multi-hop lineage query from seed event (supports ancestors, descendants, both directions with bounded depth)
+
+> **CLI Export**: `ferrumctl server inspect-lineage <execution_id>` supports `--format text|json|dot` and `--output <path>` for exporting lineage as Graphviz DOT format without any API changes.
+
 ## Schemas
 - `schemas/jsonschema/common.json`
 - `schemas/jsonschema/intent-envelope.json`
@@ -17,57 +47,28 @@
 - `schemas/jsonschema/provenance-event.json`
 - `schemas/jsonschema/approval-request.json`
 
-## Core control-plane endpoints (operator quick-ref)
-
-| Lifecycle step | Purpose |
-|---------------|---------|
-| `POST /v1/intents/compile` | Parse and scope intent from agent |
-| `POST /v1/proposals/{proposal_id}/evaluate` | Evaluate proposal against policy bundle |
-| `POST /v1/capabilities/mint` | Issue a limited-capability lease |
-| `POST /v1/executions/authorize` | Gateway-level capability check before execution |
-| `POST /v1/executions/{execution_id}/prepare` | Prepare rollback contract for the operation |
-| `POST /v1/executions/{execution_id}/execute` | Run the tool/adapter (fs, git, sqlite, http, maildraft) |
-| `POST /v1/executions/{execution_id}/verify` | Verify result against intent and policy |
-| `POST /v1/executions/{execution_id}/commit` | Finalize and commit the action |
-| `POST /v1/executions/{execution_id}/compensate` | Trigger compensation when a recovery path exists |
-| `POST /v1/executions/{execution_id}/rollback` | Trigger rollback via prepared adapter |
-| `GET /v1/executions/{execution_id}` | Inspect the stored execution record |
-| `GET /v1/approvals` | List pending approvals |
-| `GET /v1/approvals/{approval_id}` | Inspect a specific approval |
-| `POST /v1/approvals/{approval_id}/resolve` | Approve or deny a pending approval; also available as `ferrumctl server resolve-approval` |
-| `GET /v1/provenance/lineage/{execution_id}` | Inspect the execution lineage chain |
-| `GET /v1/provenance/events/{event_id}` | Inspect a single provenance event, optionally with `?ancestry=true` and/or `?descendants=true` |
-| `POST /v1/provenance/query` | Query provenance events by `intent_id`, `proposal_id`, `execution_id`, `capability_id`, `event_kind`, time window, or `terminal_only`. Supports cursor-based pagination via `limit` (default 100, max 1000) and `cursor` (keyset on `occurred_at, event_id`). Response includes `next_cursor` for advance. |
-| `POST /v1/provenance/lineage` | Multi-hop provenance lineage traversal from a seed event_id using BFS. Fields: `execution_id` (required), `event_id` (required), `ancestry` (default true), `descendants` (default false), `max_hops` (default 8, hard-capped at 32). Execution fence: all traversed events with `execution_id=Some(x)` must match request.execution_id. Returns 400 if both ancestry and descendants are false. |
-| `POST /v1/provenance/events/external` | Ingest an externally-observed runtime event into the provenance lineage (fail-closed: execution_id and parent_event_id must exist and belong to the same execution). Also available as `ferrumctl server ingest-external-event`. |
-
-## `ferrumctl` lineage and provenance inspection
-
-`ferrumctl server inspect-lineage <execution_id>` supports three output formats via `--format`:
-
-| Format | Description |
-|--------|-------------|
-| `text` | Human-readable event list (default) |
-| `json` | Full lineage as structured JSON |
-| `dot` | Graphviz DOT graph; use `--output <path>` to write to file |
-
-`ferrumctl server inspect-provenance` returns events filtered by the query parameters listed above.
-
-HTTP adapter rollback is a **no-op by design** today; see `15-deployment-and-operations.md` for caveats.
-
-When `ferrumd` runs with `auth.mode = "bearer"`, all non-health control-plane routes require `Authorization: Bearer <token>`.
-
-## Khi nào phải cập nhật đồng thời
-Nếu thay:
+## Khi nao phai cap nhat dong thoi
+Neu thay:
 - field names
 - object semantics
 - enum values
 - API payload shapes
 - invariant logic
 
-thì phải sync lại giữa:
+thi phai sync lai giua:
 - code
 - docs
 - contracts
 - schemas
 - openapi
+
+## Authentication
+
+When `auth_mode = "bearer"`, all endpoints except `/v1/healthz` and `/v1/readyz` require:
+```
+Authorization: Bearer <token>
+```
+
+## TLS
+
+This API does not terminate TLS. Deploy behind a TLS-terminating proxy (e.g., nginx, cloud load balancer) for production use.

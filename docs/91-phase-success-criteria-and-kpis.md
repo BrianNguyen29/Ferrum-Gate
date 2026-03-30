@@ -1,4 +1,4 @@
-# 91 - Phase Success Criteria and KPIs
+# 91 — Phase Success Criteria and KPIs
 
 > Tai lieu nay dinh nghia **success criteria**, **KPI muc tieu**, **release gates**, va **evidence can co** cho tung phase cua FerrumGate.
 >
@@ -6,46 +6,33 @@
 >
 > Tai lieu nay **khong thay the** `09-implementation-path.md`, ma la lop do luong cu the hon de ra quyet dinh "phase da xong chua".
 
-## Current progress snapshot (2026-03-27)
+## Current progress snapshot (2026-03-29)
 
 ### Phase status now
 
-- **Phase A**: coi nhu dat release gate; workspace va shape loi da du on dinh de lam nen cho persistence/runtime flow.
-- **Phase B**: coi nhu dat release gate; SQLite-backed persistence cho intents/proposals/capabilities/executions/rollback/provenance da chay qua integration path thuc.
-- **Phase C**: da co firewall MVP co y nghia trong branch hien tai; trust labeling, taint scoring, contradiction checks, output sanitization, basic DLP, va execution-time HTTP/File/Sqlite/Git/EmailDraft resource enforcement da duoc wire vao gateway. Tat ca 5 resource binding types (File, Http, Sqlite, Git, EmailDraft) gio day deu co execution-time enforcement.
-- **Phase D**: da co adapter-backed rollback evidence toi thieu cho filesystem, sqlite, maildraft draft-only, git local-ref, va HTTP full-parity path (GET/POST/PUT/PATCH/DELETE + body/header/query binding + auth); gateway prepare flow gio co the route sang fs/sqlite/maildraft/git/http adapter va integration tests da chung minh file create/delete, file overwrite/restore, sqlite row restore, maildraft draft create/delete recovery, git ref restore, va HTTP GET/POST verify/rollback no-op path. Co the xem la dat release gate Phase D cho supported adapter set hien tai; `EmailSend` va HTTP remote mutation recovery parity van ngoai scope adapter-backed recovery trong v1; HTTP rollback/compensate van conservative no-op.
-- **Phase E**: coi nhu dat cho supported flow hien tai; gateway da di qua `evaluate -> mint -> authorize -> prepare -> execute -> verify -> commit`, cung negative/recovery paths va approval/draft-only governance.
-- **Phase F**: da co poisoned-context suite, provenance minimum-chain evidence, provenance query fail-closed endpoint, va docs handoff ro rang cho supported flows + open gaps. Git gateway path va HTTP full-parity adapter gio da co them evidence end-to-end. Operator/runtime hardening co ban da hoan thanh (troubleshooting, diagnostics, deployment docs); P1 observability baseline (tracing + Prometheus) va TLS/ingress runbook con lai. Sync groundwork hoan thanh: Sync-3a probe crate (`ferrum-sync`) da co, cac slice tiep theo sang P2.
-
+- **Phase A**: DONE — workspace and core shapes stable; `cargo check --workspace` passes; crates scaffolded and building.
+- **Phase B**: DONE — SQLite-backed persistence for intents/proposals/capabilities/executions/rollback contracts/provenance/events/approvals confirmed via integration tests.
+- **Phase C**: DONE — firewall logic present (trust labels, taint scorer, sanitize, contradiction checks); curated poisoned-context regression fixtures implemented (6 fixture tests).
+- **Phase D**: PARTIAL — adapter skeletons exist (fs, sqlite, maildraft, git, http); real implementations are post-v1 backlog. NoopRollbackAdapter used for integration tests.
+- **Phase E**: DONE for SQLite-backed single-node flow — gateway orchestrates `evaluate -> mint -> authorize -> prepare -> execute -> verify -> compensate` (internal lifecycle: commit/rollback not exposed in v1 router); negative paths: deny, quarantine, RequireApproval (R3), draft-only gated at evaluate (before prepare), scope-mismatch (P0 resolved).
+- **Phase F**: DONE — integration tests strong; poisoned-context regression fixtures curated (6 tests); supported flows list and open gaps list documented in `25-v1-single-node-rc-evidence.md`.
 
 ### Latest evidence snapshot
 
-- `cargo check --workspace`: pass sau khi wire firewall vao gateway va cap nhat proto request shape.
-- `cargo clippy -p ferrum-gateway -p ferrum-adapter-maildraft -p ferrum-rollback -- -D warnings`: pass.
-- `cargo test --package ferrum-firewall`: `35/35` pass.
-- `cargo test --package ferrum-adapter-git`: `8/8` pass.
-- `cargo test --package ferrum-adapter-http`: `11/11` pass.
-- `cargo test --package integration-tests --test integration_gateway_flow`: `74/74` pass.
-- `cargo test --package integration-tests --test integration_poisoned_context`: `5/5` pass (curated poisoned-context regression suite).
-- `cargo test --package integration-tests --test integration_lineage_chain`: `5/5` pass (provenance minimum-chain/lineage evidence tests, including execution lineage endpoint).
-- Targeted git adapter/gateway coverage va HTTP initial-slice coverage tren mainline da xanh; full `integration_gateway_flow` suite pass sau PR #13.
-- Provenance edges are now persisted to `provenance_edges` table and queryable via `ProvenanceRepo::get_edges_to()`, execution lineage is available via `GET /v1/provenance/lineage/{execution_id}`, and a minimal fail-closed provenance query endpoint exists at `POST /v1/provenance/query`.
-- `docs/implementation-path/11-phase-f-evidence.md`: handoff tai lieu cho supported flows, evidence links, va open gaps hien tai.
-- Gateway firewall coverage hien da co trust-context derivation, read-only contradiction blocking, MCP scope contradiction blocking, compile-time taint lineage propagation, DLP redact/detect, execution-time enforcement cho ca 5 resource binding types (File, Http, Sqlite, Git, EmailDraft), va regression tests cho tat ca enforcement paths bao gom: empty-scope read-only bypass, host/method/header mismatch, missing binding, file path mismatch, file traversal, write-on-read binding, Sqlite db_path/table violations, Git repo_path/ref violations, va EmailDraft recipient/send violations.
-- Gateway hardening/evidence hien da co them capability single-use deny, explicit scope mismatch deny at mint time, direct R3 no-auto-commit evidence, fs/sqlite/maildraft/git/http-full-parity adapter-backed recovery evidence, va explicit prepare-time deny cho `EmailDraft allow_send=true` de tranh silently fall-through sang `noop`.
-- Mainline da hap thu cac moc quan trong truoc do:
-  - `PR #3` - harden proposal provenance coverage
-  - `PR #5` - execute / verify / commit gateway flow
-  - `PR #6` - recovery terminal gateway paths
-  - `PR #8` - approval and draft-only gateway flow
-  - `PR #13` - fix git verify handoff and add initial http adapter flow
+- `cargo check --workspace`: workspace compiles successfully.
+- Integration test suite (`crates/ferrum-integration-tests/src/integration_gateway_flow.rs`): capability single-use, R3 no-auto-commit, rollback/compensate distinct ops, taint-based quarantine, compensate end-to-end flow, pending-approvals pagination and filter, lineage endpoint shape/validation — all present and passing.
+- Lineage integration tests (`tests/integration_lineage_chain.rs`): empty lineage for unknown execution, invalid UUID rejection, correct content-type, max_hops clamping, direction variants — all present.
+- Gateway negative-path coverage: deny, quarantine, rollback, compensate, RequireApproval (R3), draft-only gated at evaluate (before prepare), scope-mismatch (P0 resolved).
+- `scripts/generate_rc_evidence.py`: exists and PASS with all five checks.
 
 ### Working interpretation of release gates
 
-- Co the xem **Phase B** la complete theo tai lieu nay.
-- Co the xem **Phase E** la complete cho supported SQLite-backed gateway flow hien tai.
-- **Phase C** da dat mot MVP co tac dung that cho compile/evaluate va full execution-time enforcement cho ca 5 resource binding types (File, Http, Sqlite, Git, EmailDraft); co the xem la dat release gate cho firewall MVP hien tai voi day du execution-time enforcement coverage.
-- Co the xem **Phase F** da dat muc evidence/docs handoff cho supported gateway flow hien tai; cac gap con lai da duoc liet ke ro thanh open gaps de xu ly tiep, voi git gateway path va HTTP full-parity adapter da co them evidence end-to-end.
+- **Phase A**: complete.
+- **Phase B**: complete for SQLite-backed single-node flow.
+- **Phase C**: complete — firewall logic present, regression fixtures curated.
+- **Phase D**: partial — adapter skeletons present, real implementations are post-v1.
+- **Phase E**: complete for SQLite-backed single-node flow (scope-mismatch P0 now resolved).
+- **Phase F**: complete for single-node v1 RC — poisoned-context regression fixtures curated, supported flows and open gaps documented, evidence automation script present.
 
 ---
 
@@ -53,20 +40,20 @@
 
 Moi phase gom 5 phan:
 
-1. **Objective** - muc tieu cua phase  
-2. **Success criteria** - dieu kien hoan thanh mang tinh chuc nang  
-3. **KPIs / target metrics** - chi so muc tieu  
-4. **Release gate** - dieu kien cho phep chuyen phase  
-5. **Evidence** - bang chung phai co trong repo  
+1. **Objective** — muc tieu cua phase
+2. **Success criteria** — dieu kien hoan thanh mang tinh chuc nang
+3. **KPIs / target metrics** — chi so muc tieu
+4. **Release gate** — dieu kien cho phep chuyen phase
+5. **Evidence** — bang chung phai co trong repo
 
 ## 1.1 Luu y ve KPI
 
-Các KPI o day la **target KPIs cho trien khai**, khong phai so lieu da do san.
+Cac KPI o day la **target KPIs cho trien khai**, khong phai so lieu da do san.
 Chung duoc dung nhu nguong muc tieu de agent/dev biet khi nao co the coi mot phase la "du tot".
 
 ---
 
-# 2. Phase A - Compile and Shape Stability
+# 2. Phase A — Compile and Shape Stability
 
 ## 2.1 Objective
 
@@ -127,7 +114,7 @@ Phase A la dieu kien tien quyet de:
 
 ---
 
-# 3. Phase B - Storage Boundary
+# 3. Phase B — Storage Boundary
 
 ## 3.1 Objective
 
@@ -186,7 +173,7 @@ Neu khong co storage boundary tot, rat kho tich hop:
 
 ---
 
-# 4. Phase C - Firewall MVP
+# 4. Phase C — Firewall MVP
 
 ## 4.1 Objective
 
@@ -243,7 +230,7 @@ thi du lieu di vao FerrumGate phai duoc quy ve trust/taint model thong nhat.
 
 ---
 
-# 5. Phase D - Adapter-backed Rollback
+# 5. Phase D — Adapter-backed Rollback
 
 ## 5.1 Objective
 
@@ -294,7 +281,7 @@ Chi sang Phase E khi:
 ## 5.6 Lien he voi ke hoach nang cap/tich hop
 
 Day la phase tao moat thuc te cho FerrumGate.
-Các nang cap tuong lai nhu:
+Cac nang cap tuong lai nhu:
 - Reversible Execution Planner
 - Outcome Contract enforcement
 - cross-runtime governance
@@ -303,7 +290,7 @@ deu can mot adapter/recovery model that chu khong chi mock.
 
 ---
 
-# 6. Phase E - Gateway Orchestration
+# 6. Phase E — Gateway Orchestration
 
 ## 6.1 Objective
 
@@ -313,7 +300,7 @@ Noi full execution path trong `ferrum-gateway`.
 
 Phase E thanh cong khi gateway co the dieu phoi mot flow day du:
 
-proposal -> evaluate -> mint -> prepare -> execute -> verify -> commit/rollback -> emit provenance
+proposal -> evaluate -> mint -> prepare -> execute -> verify -> compensate -> emit provenance (internal lifecycle: commit/rollback not exposed as v1 routes)
 
 cho it nhat mot happy path va mot negative path.
 
@@ -360,7 +347,7 @@ Neu gateway orchestration chua xong, tich hop voi runtime khac se chi lam tang c
 
 ---
 
-# 7. Phase F - Hardening, Evidence, and Integration Readiness
+# 7. Phase F — Hardening, Evidence, and Integration Readiness
 
 ## 7.1 Objective
 
@@ -432,7 +419,7 @@ Phan nay noi truc tiep voi **ke hoach nang cap va tich hop**.
 
 ---
 
-# 8.1 Upgrade Track U1 - Outcome-aware Governance
+# 8.1 Upgrade Track U1 — Outcome-aware Governance
 
 ## Objective
 Them `Outcome Contract` hoac lop tuong duong de do "diem ket thuc hop le" cua workflow.
@@ -452,7 +439,7 @@ Chi xem U1 thanh cong khi outcome layer thuc su anh huong den decision hoac veri
 
 ---
 
-# 8.2 Upgrade Track U2 - Reversible Execution Planner
+# 8.2 Upgrade Track U2 — Reversible Execution Planner
 
 ## Objective
 Planner tu sinh hoac ho tro sinh:
@@ -476,7 +463,7 @@ Planner phai tao duoc gia tri thuc, khong chi them abstraction.
 
 ---
 
-# 8.3 Upgrade Track U3 - Cross-runtime Provenance Fabric
+# 8.3 Upgrade Track U3 — Cross-runtime Provenance Fabric
 
 ## Objective
 Gop event tu nhieu runtime/sandbox/tool sources vao cung execution lineage.
@@ -496,7 +483,7 @@ Phai chung minh event ben ngoai khong chi duoc log rieng, ma duoc lien ket vao l
 
 ---
 
-# 8.4 Upgrade Track U4 - Runtime Integrations
+# 8.4 Upgrade Track U4 — Runtime Integrations
 
 ## Objective
 Tich hop voi:
