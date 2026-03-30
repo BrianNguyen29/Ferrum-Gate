@@ -3,7 +3,8 @@ use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand, ValueEnum};
 use ferrum_proto::api::{
     CancelExecutionRequest, CancelExecutionResponse, CompensateRequest, CompensateResponse,
-    LedgerVerificationResponse, RollbackRequest, RollbackResponse,
+    LedgerVerificationResponse, PauseExecutionRequest, PauseExecutionResponse, RollbackRequest,
+    RollbackResponse,
 };
 use ferrum_proto::approval::ApprovalResolveRequest;
 use ferrum_proto::common::{ActorRef, ActorType};
@@ -658,6 +659,20 @@ impl ServerClient {
         req: &CancelExecutionRequest,
     ) -> Result<CancelExecutionResponse> {
         let path = format!("/v1/executions/{}/cancel", execution_id);
+        let resp = self
+            .request(reqwest::Method::POST, &path)
+            .json(req)
+            .send()
+            .await?;
+        self.decode_json(resp).await
+    }
+
+    async fn pause_execution(
+        &self,
+        execution_id: &str,
+        req: &PauseExecutionRequest,
+    ) -> Result<PauseExecutionResponse> {
+        let path = format!("/v1/executions/{}/pause", execution_id);
         let resp = self
             .request(reqwest::Method::POST, &path)
             .json(req)
@@ -1518,6 +1533,23 @@ enum ServerCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Pause an execution that is in a running state (Running, AwaitingVerification).
+    PauseExecution {
+        /// Execution ID (UUID).
+        execution_id: String,
+
+        /// Server base URL (e.g. http://127.0.0.1:8080).
+        #[arg(long, env = "FERRUMCTL_SERVER_URL")]
+        server_url: Option<String>,
+
+        /// Bearer token for authentication.
+        #[arg(long, env = "FERRUMCTL_BEARER_TOKEN")]
+        bearer_token: Option<String>,
+
+        /// Output as JSON instead of human-readable.
+        #[arg(long)]
+        json: bool,
+    },
     /// Verify ledger hash-chain integrity via the server.
     VerifyLedger {
         /// Server base URL (e.g. http://127.0.0.1:8080).
@@ -2014,6 +2046,33 @@ async fn run_cancel_execution(
         println!("  Cancelled: {}", resp.cancelled);
         if let Some(ts) = resp.cancelled_at {
             println!("  Cancelled at: {}", ts);
+        }
+    }
+    Ok(())
+}
+
+async fn run_pause_execution(
+    execution_id: &str,
+    url: Option<String>,
+    token: Option<String>,
+    as_json: bool,
+) -> Result<()> {
+    let exec_id = ExecutionId(execution_id.parse().context("invalid execution_id UUID")?);
+    let req = PauseExecutionRequest {
+        execution_id: exec_id,
+    };
+
+    let url = resolve_server_url(url)?;
+    let client = ServerClient::new(&url, token);
+    let resp = client.pause_execution(execution_id, &req).await?;
+
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&resp)?);
+    } else {
+        println!("Pause requested for execution: {}", resp.execution_id);
+        println!("  Paused: {}", resp.paused);
+        if let Some(ts) = resp.paused_at {
+            println!("  Paused at: {}", ts);
         }
     }
     Ok(())
@@ -2833,6 +2892,7 @@ fn kind_label(kind: &ferrum_proto::ProvenanceEventKind) -> String {
         PK::Quarantined => "Quarantined".to_string(),
         PK::ErrorRaised => "ErrorRaised".to_string(),
         PK::ExecutionCancelled => "ExecutionCancelled".to_string(),
+        PK::ExecutionPaused => "ExecutionPaused".to_string(),
         PK::ExternalEventObserved => "ExternalEventObserved".to_string(),
     }
 }
@@ -3680,6 +3740,14 @@ async fn main() -> Result<()> {
                 json,
             } => {
                 run_cancel_execution(&execution_id, server_url, bearer_token, json).await?;
+            }
+            ServerCommand::PauseExecution {
+                execution_id,
+                server_url,
+                bearer_token,
+                json,
+            } => {
+                run_pause_execution(&execution_id, server_url, bearer_token, json).await?;
             }
             ServerCommand::VerifyLedger {
                 server_url,

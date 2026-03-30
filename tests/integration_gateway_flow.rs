@@ -6,9 +6,9 @@ use ferrum_gateway::{GatewayRuntime, build_router};
 use ferrum_pdp::StaticPdpEngine;
 use ferrum_proto::{
     ActionProposal, CapabilityMintRequest, Decision, EffectType, ExecutionState,
-    IntentCompileRequest, IntentCompileResponse, IntentId, ProposalId, ProvenanceEventKind,
-    ResourceBinding, ResourceMode, ResourceSelector, RiskTier, RollbackClass, RollbackTarget,
-    SensitivityLabel, TaintBudget, ToolBinding, TrustLabel,
+    IntentCompileRequest, IntentCompileResponse, IntentId, PauseExecutionRequest, ProposalId,
+    ProvenanceEventKind, ResourceBinding, ResourceMode, ResourceSelector, RiskTier, RollbackClass,
+    RollbackTarget, SensitivityLabel, TaintBudget, ToolBinding, TrustLabel,
 };
 use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
 use ferrum_store::{
@@ -12762,6 +12762,278 @@ async fn test_http_execute_denied_when_api_key_auth_missing_from_header_allowlis
         matches!(exec.state, ExecutionState::Prepared),
         "execution should remain Prepared when firewall denies before execution starts, got {:?}",
         exec.state
+    );
+}
+
+// ============================================
+// PAUSE EXECUTION TESTS
+// ============================================
+
+/// Helper: runs flow to Running state (up to but not including verify).
+/// Returns the execution_id.
+async fn run_flow_to_running(runtime: &GatewayRuntime) -> ferrum_proto::ExecutionId {
+    let app = build_router(runtime.clone());
+    let mut req = sample_intent_request_with_effect(EffectType::FileMutation);
+    req.requested_resource_scope = vec![ResourceSelector::FilesystemPath {
+        path: "/tmp".to_string(),
+        mode: ResourceMode::Write,
+        content_hash: None,
+    }];
+    let response = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    let proposal = ActionProposal {
+        proposal_id: ferrum_proto::ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Execute mutation".to_string(),
+        tool_name: "fs.write".to_string(),
+        server_name: "workspace".to_string(),
+        raw_arguments: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        expected_effect: "write a file".to_string(),
+        estimated_risk: RiskTier::Medium,
+        requested_rollback_class: RollbackClass::R0NativeReversible,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let response = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "workspace".to_string(),
+            tool_name: "fs.write".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![ResourceBinding::File {
+            path: "/tmp/test.txt".to_string(),
+            mode: ResourceMode::Write,
+            required_hash: None,
+        }],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+
+    let response = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    // Prepare
+    let response = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Execute (stop here - execution is in Running state)
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+    };
+    let response = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    execution_id
+}
+
+/// Test: pause from Running sets state to Paused.
+#[tokio::test]
+async fn test_gateway_pause_from_running_sets_paused() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Seed execution to Running state
+    let execution_id = run_flow_to_running(&runtime).await;
+
+    // Verify initial state is Running
+    let stored = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored.is_some());
+    assert!(
+        matches!(stored.unwrap().state, ExecutionState::Running),
+        "execution should be Running before pause"
+    );
+
+    // Call pause endpoint
+    let app = build_router(runtime.clone());
+    let pause_req = PauseExecutionRequest { execution_id };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/pause", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&pause_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        200,
+        "pause should succeed from Running state"
+    );
+
+    // Verify state is now Paused
+    let stored = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored.is_some());
+    let exec = stored.unwrap();
+    assert!(
+        matches!(exec.state, ExecutionState::Paused),
+        "execution should be Paused after pause, got {:?}",
+        exec.state
+    );
+    // Verify finished_at is NOT set (pause is not terminal)
+    assert!(
+        exec.finished_at.is_none(),
+        "finished_at should not be set for Paused state"
+    );
+}
+
+/// Test: pause from Prepared returns 409 Conflict.
+#[tokio::test]
+async fn test_gateway_pause_from_prepared_returns_conflict() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Seed execution to Prepared state (stop after prepare)
+    let (_intent_id, _proposal_id, execution_id) =
+        run_flow_to_prepared(&runtime, RollbackClass::R0NativeReversible).await;
+
+    // Verify initial state is Prepared
+    let stored = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored.is_some());
+    assert!(
+        matches!(stored.unwrap().state, ExecutionState::Prepared),
+        "execution should be Prepared before pause attempt"
+    );
+
+    // Call pause endpoint - should fail with 409 Conflict
+    let app = build_router(runtime.clone());
+    let pause_req = PauseExecutionRequest { execution_id };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/pause", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&pause_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        409,
+        "pause should return 409 Conflict from Prepared state"
+    );
+
+    // Verify state is still Prepared (no transition)
+    let stored = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored.is_some());
+    assert!(
+        matches!(stored.unwrap().state, ExecutionState::Prepared),
+        "execution should remain Prepared after failed pause"
     );
 }
 

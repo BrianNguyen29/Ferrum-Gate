@@ -16,14 +16,15 @@ use ferrum_proto::{
     ExecutionRecord, ExecutionState, ExternalEventIngestRequest, ExternalEventIngestResponse,
     HashChainRef, HealthResponse, IntentCompileRequest, IntentCompileResponse, IntentEnvelope,
     IntentStatus, LedgerVerificationError, LedgerVerificationResponse, LineageEdge,
-    LineageQueryRequest, LineageQueryResponse, ObjectRef, ObjectType, OutcomeClause, ProposalId,
-    ProvenanceEdge, ProvenanceEdgeType, ProvenanceEvent, ProvenanceEventKind,
-    ProvenanceEventResponse, ProvenanceExportFilters, ProvenanceExportInfo,
-    ProvenanceExportRequest, ProvenanceExportResponse, ProvenanceQueryRequest,
-    ProvenanceQueryResponse, ProvenanceReplayRequest, ProvenanceReplayResponse,
-    ProvenanceStatsRequest, ProvenanceStatsResponse, ResourceBinding, ResourceMode,
-    ResourceSelector, RiskTier, RollbackClass, RollbackRequest, RollbackResponse, RollbackState,
-    RollbackTarget, TimeBudget, TrustContextSummary, TrustLabel, VerifyRequest, VerifyResponse,
+    LineageQueryRequest, LineageQueryResponse, ObjectRef, ObjectType, OutcomeClause,
+    PauseExecutionRequest, PauseExecutionResponse, ProposalId, ProvenanceEdge, ProvenanceEdgeType,
+    ProvenanceEvent, ProvenanceEventKind, ProvenanceEventResponse, ProvenanceExportFilters,
+    ProvenanceExportInfo, ProvenanceExportRequest, ProvenanceExportResponse,
+    ProvenanceQueryRequest, ProvenanceQueryResponse, ProvenanceReplayRequest,
+    ProvenanceReplayResponse, ProvenanceStatsRequest, ProvenanceStatsResponse, ResourceBinding,
+    ResourceMode, ResourceSelector, RiskTier, RollbackClass, RollbackRequest, RollbackResponse,
+    RollbackState, RollbackTarget, TimeBudget, TrustContextSummary, TrustLabel, VerifyRequest,
+    VerifyResponse,
 };
 use ferrum_store::{
     ApprovalRepo, ExecutionRepo, IntentRepo, LedgerRepo, ProposalRepo, ProvenanceRepo, RollbackRepo,
@@ -156,6 +157,7 @@ fn build_router_inner(runtime: GatewayRuntime, auth_config: Option<ServerConfig>
             "/v1/executions/{execution_id}/cancel",
             post(cancel_execution),
         )
+        .route("/v1/executions/{execution_id}/pause", post(pause_execution))
         .route("/v1/executions/{execution_id}", get(get_execution))
         .route("/v1/approvals", get(list_pending_approvals))
         .route("/v1/approvals/{approval_id}", get(get_approval))
@@ -1136,6 +1138,7 @@ async fn prepare_execution(
     // State guard: block terminal/error states from proceeding to prepare
     // Terminal states that should NOT proceed: Quarantined, Denied, Failed, Compensated, RolledBack, Committed
     // Also block: AwaitingApproval (requires external approval before proceeding)
+    // Also block: Paused (no hidden unpause/bypass path)
     match existing.state {
         ExecutionState::Quarantined => {
             return Err(ApiProblem::new(
@@ -1173,6 +1176,13 @@ async fn prepare_execution(
                     "execution is already in terminal state: {:?}",
                     existing.state
                 ),
+            ));
+        }
+        ExecutionState::Paused => {
+            return Err(ApiProblem::new(
+                StatusCode::CONFLICT,
+                ApiErrorCode::Conflict,
+                "execution is paused and cannot proceed to prepare",
             ));
         }
         _ => {} // Proceed for non-terminal states: Proposed, Authorized, Prepared, Running, AwaitingVerification
@@ -2034,6 +2044,89 @@ async fn cancel_execution(
         execution_id,
         cancelled: true,
         cancelled_at: Some(now),
+    }))
+}
+
+async fn pause_execution(
+    State(runtime): State<Arc<GatewayRuntime>>,
+    Path(execution_id_str): Path<String>,
+    Json(req): Json<PauseExecutionRequest>,
+) -> Result<Json<PauseExecutionResponse>, ApiProblem> {
+    let execution_id = parse_execution_id(&execution_id_str)?;
+
+    // Validate that the request execution_id matches the path
+    if req.execution_id != execution_id {
+        return Err(ApiProblem::new(
+            StatusCode::BAD_REQUEST,
+            ApiErrorCode::ValidationError,
+            "execution_id in body does not match path",
+        ));
+    }
+
+    let existing = runtime
+        .store
+        .executions()
+        .get(execution_id)
+        .await
+        .map_err(|err| ApiProblem::internal(err.into()))?
+        .ok_or_else(|| {
+            ApiProblem::new(
+                StatusCode::NOT_FOUND,
+                ApiErrorCode::NotFound,
+                "execution record not found",
+            )
+        })?;
+
+    // State guard: pause is only allowed from Running or AwaitingVerification
+    use ferrum_proto::ExecutionState::*;
+    match existing.state {
+        Running | AwaitingVerification => {
+            // These states can be paused
+        }
+        _ => {
+            return Err(ApiProblem::new(
+                StatusCode::CONFLICT,
+                ApiErrorCode::Conflict,
+                format!(
+                    "execution in state {:?} cannot be paused; only Running or AwaitingVerification states are allowed",
+                    existing.state
+                ),
+            ));
+        }
+    }
+
+    let now = Utc::now();
+    let intent_id = existing.intent_id;
+    let proposal_id = existing.proposal_id;
+
+    // Update execution state to Paused
+    let mut updated_execution = existing.clone();
+    updated_execution.state = ExecutionState::Paused;
+    // NOTE: do NOT set finished_at for pause - execution is not terminal
+
+    if let Err(e) = runtime.store.executions().update(&updated_execution).await {
+        tracing::warn!("failed to update execution state to paused: {}", e);
+    }
+
+    // Emit ExecutionPaused provenance event
+    let event = create_provenance_event(
+        ProvenanceEventKind::ExecutionPaused,
+        now,
+        Some(intent_id),
+        Some(proposal_id),
+        Some(execution_id),
+        Some(existing.capability_id),
+        existing.rollback_contract_id,
+        None,
+    );
+    if let Err(e) = runtime.store.provenance().append_event(&event).await {
+        tracing::warn!("failed to persist execution paused provenance event: {}", e);
+    }
+
+    Ok(Json(PauseExecutionResponse {
+        execution_id,
+        paused: true,
+        paused_at: Some(now),
     }))
 }
 

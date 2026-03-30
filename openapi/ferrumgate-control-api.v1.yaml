@@ -350,6 +350,33 @@ paths:
         '409':
           $ref: '#/components/responses/ApiError'
 
+  /v1/executions/{execution_id}/pause:
+    post:
+      summary: Pause an execution in a running state
+      description: |
+        Pauses an execution that is in a running state (Running, AwaitingVerification).
+        Returns 409 Conflict if the execution is not in one of these states.
+      operationId: pauseExecution
+      parameters:
+        - $ref: '#/components/parameters/ExecutionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PauseExecutionRequest'
+      responses:
+        '200':
+          description: Pause acknowledged
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PauseExecutionResponse'
+        '404':
+          $ref: '#/components/responses/ApiError'
+        '409':
+          $ref: '#/components/responses/ApiError'
+
   /v1/executions/{execution_id}:
     get:
       summary: Get execution record
@@ -1297,6 +1324,28 @@ components:
         cancelled:
           type: boolean
         cancelled_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    PauseExecutionRequest:
+      type: object
+      required: [execution_id]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+
+    PauseExecutionResponse:
+      type: object
+      required: [execution_id, paused]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+        paused:
+          type: boolean
+        paused_at:
           type: string
           format: date-time
           nullable: true
