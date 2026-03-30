@@ -34,7 +34,7 @@ v1 single-node instance. For support scope, limits, and known caveats, see:
 | Cancel execution | `ferrumctl server cancel-execution <id>` | `POST /v1/executions/<id>/cancel` | Mutating; pre-execute states only |
 | Pause execution | `ferrumctl server pause-execution <id>` | `POST /v1/executions/<id>/pause` | Mutating; running states only |
 | Resume execution | `ferrumctl server resume-execution <id>` | `POST /v1/executions/<id>/resume` | Mutating; paused state only |
-| Prepare execution | `ferrumctl server prepare-execution <id>` | `POST /v1/executions/<id>/prepare` | Mutating; authorized state only |
+| Prepare execution | `ferrumctl server prepare-execution <id>` | `POST /v1/executions/<id>/prepare` | Mutating; non-terminal states (Proposed, Authorized, Prepared, Running, AwaitingVerification) |
 | Execute execution | `ferrumctl server execute-execution <id>` | `POST /v1/executions/<id>/execute` | Mutating; prepared state only |
 | Compensate execution | `ferrumctl server compensate-execution <id>` | `POST /v1/executions/<id>/compensate` | Mutating; may be noop |
 | Rollback execution | `ferrumctl server rollback-execution <id>` | `POST /v1/executions/<id>/rollback` | Mutating; terminal-state guarded |
@@ -315,7 +315,7 @@ post-v1 or not operator-facing:
 
 | Command / Route | Reason not covered |
 |---|---|
-| `POST /v1/executions/{id}/commit` | Not exposed in v1 router |
+| `POST /v1/executions/{id}/commit` | Operator-facing use is rare in single-node; compensate/rollback are the primary recovery paths |
 | `ferrumctl intent create`, `ferrumctl capability revoke`, etc. | No intent/capability creation CLI in v1 |
 | Adapter-backed undo (fs, sqlite, maildraft, git, http) | Skeleton implementations; no production-verified side effects in v1 |
 | Multi-node, HA, read-replica configurations | Out of scope for v1 single-node |

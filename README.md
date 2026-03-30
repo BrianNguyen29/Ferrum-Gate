@@ -41,7 +41,7 @@ Phan core cua workspace da compile, gateway orchestration da co, SQLite persiste
 ### Nhung phan da co
 
 - `ferrum-proto`, `ferrum-pdp`, `ferrum-cap`, `ferrum-rollback`, `ferrum-store`, `ferrum-firewall`, `ferrum-graph`, `ferrum-ledger`
-- `ferrum-gateway` voi full orchestration: evaluate -> mint -> authorize -> prepare -> execute -> verify -> compensate (commit/rollback deferred to post-v1)
+- `ferrum-gateway` voi full orchestration: evaluate -> mint -> authorize -> prepare -> execute -> verify -> compensate (commit available but rarely needed in single-node; compensate/rollback are primary recovery paths)
 - SQLite-backed persistence cho intents, proposals, capabilities, executions, rollback contracts, provenance, approvals
 - Trust labeler, taint scorer, contradiction checks
 - CLI (`ferrumctl`) voi: health, inspect-execution, inspect-approvals, inspect-approval, inspect-lineage, inspect-provenance, inspect-lineage-query, watch-execution, watch-approvals, resolve-approval, cancel-execution, pause-execution, resume-execution, prepare-execution, execute-execution, compensate-execution, rollback-execution

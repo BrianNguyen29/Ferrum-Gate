@@ -91,10 +91,10 @@ The following are explicitly out of scope for FerrumGate v1 single-node:
   These are skeleton crate/API shapes only; no production-verified side-effect integrations exist in v1.
 - Guaranteed external undo via adapter. Compensate may be noop-backed.
 
-### 2.3 Routes not in v1 router
+### 2.3 Routes with different visibility
 
-- `POST /v1/executions/{id}/commit` — **not exposed** in the v1 router.
-  Commit is internal orchestration semantics; the gateway flow terminates at compensate as the exposed recovery endpoint.
+- `POST /v1/executions/{id}/commit` — **exposed** in the v1 router and OpenAPI spec (`server.rs:145`).
+  Commit finalizes a verified execution. The gateway flow uses compensate as the primary recovery endpoint; commit is available but typically not needed for single-node operation.
 
 ### 2.4 Upgrade tracks
 
