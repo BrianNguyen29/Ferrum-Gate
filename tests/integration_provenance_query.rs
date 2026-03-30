@@ -842,6 +842,288 @@ async fn test_get_provenance_event_returns_not_found_for_unknown_event() {
     assert_eq!(response.status(), axum::http::StatusCode::NOT_FOUND);
 }
 
+/// Test: inspect-event with edge_types filter restricts ancestry traversal
+#[tokio::test]
+async fn test_get_provenance_event_edge_types_filter_restricts_ancestry() {
+    let (_temp_dir, runtime, store) = create_test_runtime().await;
+
+    // Create chain: root -[DerivedFrom]-> middle -[AuthorizedBy]-> leaf
+    let root = make_event_with_edge_type(
+        ProvenanceEventKind::IntentCompiled,
+        Vec::new(),
+        ProvenanceEdgeType::DerivedFrom,
+    );
+    let middle = make_event_with_edge_type(
+        ProvenanceEventKind::ToolCallPrepared,
+        vec![root.event_id],
+        ProvenanceEdgeType::DerivedFrom,
+    );
+    let leaf = make_event_with_edge_type(
+        ProvenanceEventKind::SideEffectCommitted,
+        vec![middle.event_id],
+        ProvenanceEdgeType::AuthorizedBy,
+    );
+
+    store.provenance().append_event(&root).await.unwrap();
+    store.provenance().append_event(&middle).await.unwrap();
+    store.provenance().append_event(&leaf).await.unwrap();
+
+    // Query leaf with ancestry=true and edge_types=AuthorizedBy
+    // Should only follow AuthorizedBy edges backwards, which leads to middle but
+    // middle only has DerivedFrom edges to its parents, so we should not follow further
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!(
+                    "/v1/provenance/events/{}?ancestry=true&edge_types=AuthorizedBy",
+                    leaf.event_id
+                ))
+                .method(axum::http::Method::GET)
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let event_resp: ProvenanceEventResponse = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(event_resp.event.event_id, leaf.event_id);
+    // Ancestry should include middle (reached via AuthorizedBy), but not root
+    // because middle's only parent edge is DerivedFrom which is filtered out
+    let ancestry = event_resp.ancestry.expect("expected ancestry");
+    let ancestry_ids: Vec<_> = ancestry.iter().map(|e| e.event_id).collect();
+    assert!(
+        ancestry_ids.contains(&middle.event_id),
+        "middle should be in ancestry via AuthorizedBy edge"
+    );
+    assert!(
+        !ancestry_ids.contains(&root.event_id),
+        "root should NOT be in ancestry - DerivedFrom edge from middle is filtered"
+    );
+}
+
+/// Test: inspect-event with edge_types filter restricts descendants traversal
+#[tokio::test]
+async fn test_get_provenance_event_edge_types_filter_restricts_descendants() {
+    let (_temp_dir, runtime, store) = create_test_runtime().await;
+
+    // Create chain: root -[DerivedFrom]-> middle -[AuthorizedBy]-> leaf
+    let root = make_event_with_edge_type(
+        ProvenanceEventKind::IntentCompiled,
+        Vec::new(),
+        ProvenanceEdgeType::DerivedFrom,
+    );
+    let middle = make_event_with_edge_type(
+        ProvenanceEventKind::ToolCallPrepared,
+        vec![root.event_id],
+        ProvenanceEdgeType::DerivedFrom,
+    );
+    let leaf = make_event_with_edge_type(
+        ProvenanceEventKind::SideEffectCommitted,
+        vec![middle.event_id],
+        ProvenanceEdgeType::AuthorizedBy,
+    );
+
+    // Set execution_id for query to work
+    let execution_id = ferrum_proto::ExecutionId::new();
+    let mut root_with_exec = root.clone();
+    root_with_exec.execution_id = Some(execution_id);
+    let mut middle_with_exec = middle.clone();
+    middle_with_exec.execution_id = Some(execution_id);
+    let mut leaf_with_exec = leaf.clone();
+    leaf_with_exec.execution_id = Some(execution_id);
+
+    store
+        .provenance()
+        .append_event(&root_with_exec)
+        .await
+        .unwrap();
+    store
+        .provenance()
+        .append_event(&middle_with_exec)
+        .await
+        .unwrap();
+    store
+        .provenance()
+        .append_event(&leaf_with_exec)
+        .await
+        .unwrap();
+
+    // Query leaf with descendants=true and edge_types=AuthorizedBy
+    // Leaf's only outgoing edges are none (it's terminal), so descendants should be empty
+    // This test verifies edge_types filter does NOT incorrectly return descendants
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!(
+                    "/v1/provenance/events/{}?descendants=true&edge_types=AuthorizedBy",
+                    leaf_with_exec.event_id
+                ))
+                .method(axum::http::Method::GET)
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let event_resp: ProvenanceEventResponse = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(event_resp.event.event_id, leaf_with_exec.event_id);
+    // leaf has no outgoing edges, so descendants should be None (not empty array)
+    assert!(
+        event_resp.descendants.is_none(),
+        "leaf with no outgoing edges should have no descendants"
+    );
+
+    // Query middle with descendants=true and edge_types=AuthorizedBy
+    // middle's only outgoing edge is to leaf via AuthorizedBy, so leaf should be included
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!(
+                    "/v1/provenance/events/{}?descendants=true&edge_types=AuthorizedBy",
+                    middle_with_exec.event_id
+                ))
+                .method(axum::http::Method::GET)
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let event_resp: ProvenanceEventResponse = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(event_resp.event.event_id, middle_with_exec.event_id);
+    let descendants = event_resp
+        .descendants
+        .expect("expected descendants since AuthorizedBy edge leads to leaf");
+    let descendant_ids: Vec<_> = descendants.iter().map(|e| e.event_id).collect();
+    assert!(
+        descendant_ids.contains(&leaf_with_exec.event_id),
+        "leaf should be in descendants via AuthorizedBy edge"
+    );
+    // root is NOT included because root is not a descendant of middle
+    assert!(
+        !descendant_ids.contains(&root_with_exec.event_id),
+        "root should NOT be in descendants"
+    );
+}
+
+/// Test: inspect-event with comma-separated edge_types filters correctly
+#[tokio::test]
+async fn test_get_provenance_event_edge_types_comma_separated_filter() {
+    let (_temp_dir, runtime, store) = create_test_runtime().await;
+
+    // Create chain: root -[DerivedFrom]-> middle -[AuthorizedBy]-> leaf
+    let root = make_event_with_edge_type(
+        ProvenanceEventKind::IntentCompiled,
+        Vec::new(),
+        ProvenanceEdgeType::DerivedFrom,
+    );
+    let middle = make_event_with_edge_type(
+        ProvenanceEventKind::ToolCallPrepared,
+        vec![root.event_id],
+        ProvenanceEdgeType::DerivedFrom,
+    );
+    let leaf = make_event_with_edge_type(
+        ProvenanceEventKind::SideEffectCommitted,
+        vec![middle.event_id],
+        ProvenanceEdgeType::AuthorizedBy,
+    );
+
+    store.provenance().append_event(&root).await.unwrap();
+    store.provenance().append_event(&middle).await.unwrap();
+    store.provenance().append_event(&leaf).await.unwrap();
+
+    // Query leaf with ancestry=true and edge_types=DerivedFrom,AuthorizedBy
+    // This should follow both DerivedFrom and AuthorizedBy edges
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!(
+                    "/v1/provenance/events/{}?ancestry=true&edge_types=DerivedFrom,AuthorizedBy",
+                    leaf.event_id
+                ))
+                .method(axum::http::Method::GET)
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let event_resp: ProvenanceEventResponse = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(event_resp.event.event_id, leaf.event_id);
+    // With both edge types allowed, we should follow AuthorizedBy to middle,
+    // then DerivedFrom to root
+    let ancestry = event_resp.ancestry.expect("expected ancestry");
+    let ancestry_ids: Vec<_> = ancestry.iter().map(|e| e.event_id).collect();
+    assert!(
+        ancestry_ids.contains(&middle.event_id),
+        "middle should be in ancestry"
+    );
+    assert!(
+        ancestry_ids.contains(&root.event_id),
+        "root should be in ancestry via DerivedFrom from middle"
+    );
+}
+
+/// Test: inspect-event with invalid edge_type returns 400
+#[tokio::test]
+async fn test_get_provenance_event_invalid_edge_type_returns_400() {
+    let (_temp_dir, runtime, store) = create_test_runtime().await;
+
+    let root = make_event_with_edge_type(
+        ProvenanceEventKind::IntentCompiled,
+        Vec::new(),
+        ProvenanceEdgeType::DerivedFrom,
+    );
+    store.provenance().append_event(&root).await.unwrap();
+
+    // Query with invalid edge type string
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!(
+                    "/v1/provenance/events/{}?ancestry=true&edge_types=NotAValidEdgeType",
+                    root.event_id
+                ))
+                .method(axum::http::Method::GET)
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        axum::http::StatusCode::BAD_REQUEST,
+        "expected 400 for invalid edge type, got {}",
+        response.status()
+    );
+}
+
 /// Test: ingest external event successfully links to parent event in same execution
 #[tokio::test]
 async fn test_ingest_external_event_happy_path() {

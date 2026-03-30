@@ -2607,6 +2607,58 @@ async fn lineage_query(
     }))
 }
 
+/// Parses a single edge type string into ProvenanceEdgeType.
+fn parse_edge_type_str(s: &str) -> Result<ProvenanceEdgeType, ApiProblem> {
+    match s {
+        "DerivedFrom" => Ok(ProvenanceEdgeType::DerivedFrom),
+        "AuthorizedBy" => Ok(ProvenanceEdgeType::AuthorizedBy),
+        "ApprovedBy" => Ok(ProvenanceEdgeType::ApprovedBy),
+        "TaintedBy" => Ok(ProvenanceEdgeType::TaintedBy),
+        "UsesManifest" => Ok(ProvenanceEdgeType::UsesManifest),
+        "EvaluatedByPolicy" => Ok(ProvenanceEdgeType::EvaluatedByPolicy),
+        "Caused" => Ok(ProvenanceEdgeType::Caused),
+        "Compensates" => Ok(ProvenanceEdgeType::Compensates),
+        "Verifies" => Ok(ProvenanceEdgeType::Verifies),
+        "References" => Ok(ProvenanceEdgeType::References),
+        "ObservedBy" => Ok(ProvenanceEdgeType::ObservedBy),
+        other => Err(ApiProblem::new(
+            StatusCode::BAD_REQUEST,
+            ApiErrorCode::ValidationError,
+            format!(
+                "unknown edge type '{}': valid values are DerivedFrom, AuthorizedBy, \
+                 ApprovedBy, TaintedBy, UsesManifest, EvaluatedByPolicy, Caused, \
+                 Compensates, Verifies, References, ObservedBy",
+                other
+            ),
+        )),
+    }
+}
+
+/// Parses query string edge_types into ProvenanceEdgeType.
+/// Supports comma-separated values: edge_types=DerivedFrom,AuthorizedBy
+fn parse_edge_types_param(
+    edge_types: Option<String>,
+) -> Result<Option<Vec<ProvenanceEdgeType>>, ApiProblem> {
+    let Some(edge_types_str) = edge_types else {
+        return Ok(None);
+    };
+    if edge_types_str.trim().is_empty() {
+        return Ok(None);
+    }
+    let mut parsed = Vec::new();
+    for part in edge_types_str.split(',') {
+        let trimmed = part.trim();
+        if !trimmed.is_empty() {
+            parsed.push(parse_edge_type_str(trimmed)?);
+        }
+    }
+    if parsed.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(parsed))
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct ProvenanceEventQueryParams {
     /// When true, include descendant events (walk forwards from this event using child edges).
@@ -2615,6 +2667,11 @@ pub(crate) struct ProvenanceEventQueryParams {
     /// When true, include ancestry (walk backwards from this event using parent edges).
     #[serde(default)]
     pub ancestry: bool,
+    /// Optional filter to restrict traversal to specific edge types only.
+    /// When empty or not provided, all edge types are included.
+    /// Supports comma-separated values: edge_types=DerivedFrom,AuthorizedBy
+    #[serde(default)]
+    pub edge_types: Option<String>,
 }
 
 async fn get_provenance_event(
@@ -2638,19 +2695,63 @@ async fn get_provenance_event(
             )
         })?;
 
-    let ancestry = if params.ancestry {
-        let lineage = runtime
-            .store
-            .provenance()
-            .get_lineage_by_event(event_id)
-            .await
-            .map_err(|err| ApiProblem::internal(err.into()))?;
+    let parsed_edge_types = parse_edge_types_param(params.edge_types)?;
+    let edge_types_filter: Option<&[ProvenanceEdgeType]> = parsed_edge_types.as_deref();
 
-        let ancestors = lineage
-            .into_iter()
-            .filter(|lineage_event| lineage_event.event_id != event_id)
-            .collect();
-        Some(ancestors)
+    let ancestry = if params.ancestry {
+        // Walk ancestry backwards via get_edges_to, filtering by edge type if specified
+        let mut visited = std::collections::HashSet::new();
+        let mut frontier = vec![event_id];
+
+        while let Some(current_id) = frontier.pop() {
+            // Only skip if we've already processed this node
+            if visited.contains(&current_id) {
+                continue;
+            }
+            // Mark as visited BEFORE processing to avoid duplicates from frontier
+            visited.insert(current_id);
+
+            let edges = runtime
+                .store
+                .provenance()
+                .get_edges_to(current_id)
+                .await
+                .map_err(|err| ApiProblem::internal(err.into()))?;
+
+            for edge in edges {
+                // Apply edge type filter if specified
+                if let Some(ref filter) = edge_types_filter {
+                    if !filter.contains(&edge.edge_type) {
+                        continue;
+                    }
+                }
+                // Only add to frontier if not already processed
+                if !visited.contains(&edge.from_event_id) {
+                    frontier.push(edge.from_event_id);
+                }
+            }
+        }
+
+        // Fetch full event records for all visited ids (excluding the starting event)
+        visited.remove(&event_id);
+        if !visited.is_empty() {
+            let mut events: Vec<ProvenanceEvent> = Vec::with_capacity(visited.len());
+            for &visited_id in &visited {
+                if let Some(ancestor_event) = runtime
+                    .store
+                    .provenance()
+                    .get_event(visited_id)
+                    .await
+                    .map_err(|err| ApiProblem::internal(err.into()))?
+                {
+                    events.push(ancestor_event);
+                }
+            }
+            events.sort_by(|a, b| a.occurred_at.cmp(&b.occurred_at));
+            Some(events)
+        } else {
+            None
+        }
     } else {
         None
     };
@@ -2673,6 +2774,12 @@ async fn get_provenance_event(
                 .map_err(|err| ApiProblem::internal(err.into()))?;
 
             for edge in edges {
+                // Apply edge type filter if specified
+                if let Some(ref filter) = edge_types_filter {
+                    if !filter.contains(&edge.edge_type) {
+                        continue;
+                    }
+                }
                 if !visited.contains(&edge.from_event_id) {
                     frontier.push(edge.from_event_id);
                 }
