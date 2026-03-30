@@ -407,26 +407,6 @@ a no-op in v1.
    maildraft, git, http) are skeleton implementations in v1. Real
    side-effect undo via adapters is a post-v1 item.
 
-8. **No rollback contract auto-enforcement at prepare.** The gateway's
-   prepare handler hardcodes rollback class at the prepare step. The
-   caller is responsible for ensuring the correct rollback_class is
-   persisted at intent creation. See `26-v1-single-node-invariant-control-test-evidence-matrix.md`
-   Weak Spot 1.
-
-9. **Single-use capability not enforced end-to-end at authorize.**
-   The capability service's `mark_used` is not called by the gateway's
-   authorize path. Caller must ensure single-use capability mapping is
-   respected client-side. See `26-v1-single-node-invariant-control-test-evidence-matrix.md`
-   Weak Spot 3.
-
-10. **Provenance chain completeness not test-covered end-to-end.**
-    Lineage events are emitted at each gateway step, but there is no
-    integration test that queries the lineage endpoint for a full
-    execution chain and confirms every step appears. Manual tracing or
-    ad-hoc verification is required to confirm completeness. See
-    `26-v1-single-node-invariant-control-test-evidence-matrix.md`
-    Weak Spot 4.
-
 ---
 
 ## References
