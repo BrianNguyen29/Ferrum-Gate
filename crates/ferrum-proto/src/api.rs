@@ -149,6 +149,19 @@ pub struct CancelExecutionResponse {
     pub cancelled_at: Option<crate::Timestamp>,
 }
 
+// Pause request/response types
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct PauseExecutionRequest {
+    pub execution_id: crate::ExecutionId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct PauseExecutionResponse {
+    pub execution_id: crate::ExecutionId,
+    pub paused: bool,
+    pub paused_at: Option<crate::Timestamp>,
+}
+
 // Ledger verification types
 /// Response for on-demand ledger hash-chain verification.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

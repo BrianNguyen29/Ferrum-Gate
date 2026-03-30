@@ -53,4 +53,5 @@ pub enum ExecutionState {
     Quarantined,
     Failed,
     Cancelled,
+    Paused,
 }
