@@ -613,3 +613,194 @@ async fn test_process_rollback_execution_already_rolled_back() {
 
     server_handle.abort();
 }
+
+// ---------------------------------------------------------------------------
+// Cancel execution tests
+// ---------------------------------------------------------------------------
+
+/// Helper: seeds an execution and cancels it at the Authorized state.
+/// Returns the execution_id.
+async fn seed_authorized_execution(client: &Client, server_url: &str) -> ferrum_proto::ExecutionId {
+    // Step 1: Compile intent
+    let req = IntentCompileRequest {
+        principal_id: ferrum_proto::PrincipalId::new(),
+        session_id: None,
+        channel_id: None,
+        title: "Test Intent".to_string(),
+        goal: "Test goal".to_string(),
+        agent_plan_summary: None,
+        trusted_context: ferrum_proto::JsonMap::new(),
+        raw_inputs: vec![],
+        requested_resource_scope: vec![ResourceSelector::FilesystemPath {
+            path: "/tmp".to_string(),
+            mode: ResourceMode::Write,
+            content_hash: None,
+        }],
+        requested_risk_tier: Some(RiskTier::Medium),
+        effect_type: Some(EffectType::FileMutation),
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let resp = client
+        .post(&format!("{}/v1/intents/compile", server_url))
+        .json(&req)
+        .send()
+        .await
+        .expect("intent compile failed");
+    assert_eq!(resp.status(), 200);
+    let compile_resp: IntentCompileResponse =
+        resp.json().await.expect("failed to parse compile response");
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Step 2: Create and evaluate proposal
+    let proposal = ActionProposal {
+        proposal_id: ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Execute mutation".to_string(),
+        tool_name: "fs.write".to_string(),
+        server_name: "workspace".to_string(),
+        raw_arguments: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        expected_effect: "write a file".to_string(),
+        estimated_risk: RiskTier::Medium,
+        requested_rollback_class: RollbackClass::R2Compensatable,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let resp = client
+        .post(&format!(
+            "{}/v1/proposals/{}/evaluate",
+            server_url, proposal_id
+        ))
+        .json(&proposal)
+        .send()
+        .await
+        .expect("proposal evaluate failed");
+    assert_eq!(resp.status(), 200);
+
+    // Step 3: Mint capability
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "workspace".to_string(),
+            tool_name: "fs.write".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![ResourceBinding::File {
+            path: "/tmp/test.txt".to_string(),
+            mode: ResourceMode::Write,
+            required_hash: None,
+        }],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let resp = client
+        .post(&format!("{}/v1/capabilities/mint", server_url))
+        .json(&mint_req)
+        .send()
+        .await
+        .expect("capability mint failed");
+    assert_eq!(resp.status(), 200);
+    let mint_resp: ferrum_proto::CapabilityMintResponse =
+        resp.json().await.expect("failed to parse mint response");
+    let capability_id = mint_resp.lease.capability_id;
+
+    // Step 4: Authorize execution (stops here - in Authorized state)
+    let auth_req = AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+
+    let resp = client
+        .post(&format!("{}/v1/executions/authorize", server_url))
+        .json(&auth_req)
+        .send()
+        .await
+        .expect("execution authorize failed");
+    assert_eq!(resp.status(), 200);
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        resp.json().await.expect("failed to parse auth response");
+    auth_resp.execution.execution_id
+}
+
+/// Test: cancel-execution via CLI on an authorized execution succeeds.
+#[tokio::test]
+async fn test_process_cancel_execution_via_binary() {
+    let (temp_dir, runtime, _store) = create_test_runtime().await;
+    let _ = &temp_dir;
+
+    let (server_url, server_handle) = start_local_server(runtime).await;
+    let client = Client::new();
+
+    // Seed an authorized execution
+    let execution_id = seed_authorized_execution(&client, &server_url).await;
+
+    // Cancel via CLI
+    let output = run_ferrumctl(
+        &server_url,
+        ["cancel-execution", &execution_id.to_string(), "--json"],
+    )
+    .await;
+
+    assert!(
+        output.status.success(),
+        "cancel-execution should succeed. stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("cancelled") || stdout.contains("Cancelled") || stdout.contains("cancel"),
+        "stdout should mention cancelled. stdout: {}",
+        stdout
+    );
+
+    server_handle.abort();
+}
+
+/// Test: cancel-execution fails when execution does not exist.
+#[tokio::test]
+async fn test_process_cancel_execution_not_found() {
+    let (temp_dir, runtime, _store) = create_test_runtime().await;
+    let _ = &temp_dir;
+
+    let (server_url, server_handle) = start_local_server(runtime).await;
+
+    let fake_execution_id = ferrum_proto::ExecutionId::new();
+
+    let output = run_ferrumctl(
+        &server_url,
+        ["cancel-execution", &fake_execution_id.to_string(), "--json"],
+    )
+    .await;
+
+    // Should fail (non-zero exit)
+    assert!(
+        !output.status.success(),
+        "ferrumctl should exit non-zero for non-existent execution"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("not found") || stderr.contains("404") || stderr.contains("NotFound"),
+        "stderr should mention not found. stderr: {}",
+        stderr
+    );
+
+    server_handle.abort();
+}

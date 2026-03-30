@@ -2,8 +2,8 @@ use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand, ValueEnum};
 use ferrum_proto::api::{
-    CompensateRequest, CompensateResponse, LedgerVerificationResponse, RollbackRequest,
-    RollbackResponse,
+    CancelExecutionRequest, CancelExecutionResponse, CompensateRequest, CompensateResponse,
+    LedgerVerificationResponse, RollbackRequest, RollbackResponse,
 };
 use ferrum_proto::approval::ApprovalResolveRequest;
 use ferrum_proto::common::{ActorRef, ActorType};
@@ -644,6 +644,20 @@ impl ServerClient {
         req: &RollbackRequest,
     ) -> Result<RollbackResponse> {
         let path = format!("/v1/executions/{}/rollback", execution_id);
+        let resp = self
+            .request(reqwest::Method::POST, &path)
+            .json(req)
+            .send()
+            .await?;
+        self.decode_json(resp).await
+    }
+
+    async fn cancel_execution(
+        &self,
+        execution_id: &str,
+        req: &CancelExecutionRequest,
+    ) -> Result<CancelExecutionResponse> {
+        let path = format!("/v1/executions/{}/cancel", execution_id);
         let resp = self
             .request(reqwest::Method::POST, &path)
             .json(req)
@@ -1487,6 +1501,23 @@ enum ServerCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Cancel an execution that is in a pre-execute state (Proposed, Authorized, Prepared).
+    CancelExecution {
+        /// Execution ID (UUID).
+        execution_id: String,
+
+        /// Server base URL (e.g. http://127.0.0.1:8080).
+        #[arg(long, env = "FERRUMCTL_SERVER_URL")]
+        server_url: Option<String>,
+
+        /// Bearer token for authentication.
+        #[arg(long, env = "FERRUMCTL_BEARER_TOKEN")]
+        bearer_token: Option<String>,
+
+        /// Output as JSON instead of human-readable.
+        #[arg(long)]
+        json: bool,
+    },
     /// Verify ledger hash-chain integrity via the server.
     VerifyLedger {
         /// Server base URL (e.g. http://127.0.0.1:8080).
@@ -1956,6 +1987,33 @@ async fn run_rollback_execution(
         println!("  Rolled back: {}", resp.rolled_back);
         if let Some(ts) = resp.rolled_back_at {
             println!("  Rolled back at: {}", ts);
+        }
+    }
+    Ok(())
+}
+
+async fn run_cancel_execution(
+    execution_id: &str,
+    url: Option<String>,
+    token: Option<String>,
+    as_json: bool,
+) -> Result<()> {
+    let exec_id = ExecutionId(execution_id.parse().context("invalid execution_id UUID")?);
+    let req = CancelExecutionRequest {
+        execution_id: exec_id,
+    };
+
+    let url = resolve_server_url(url)?;
+    let client = ServerClient::new(&url, token);
+    let resp = client.cancel_execution(execution_id, &req).await?;
+
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&resp)?);
+    } else {
+        println!("Cancel requested for execution: {}", resp.execution_id);
+        println!("  Cancelled: {}", resp.cancelled);
+        if let Some(ts) = resp.cancelled_at {
+            println!("  Cancelled at: {}", ts);
         }
     }
     Ok(())
@@ -2774,6 +2832,7 @@ fn kind_label(kind: &ferrum_proto::ProvenanceEventKind) -> String {
         PK::SideEffectRolledBack => "SideEffectRolledBack".to_string(),
         PK::Quarantined => "Quarantined".to_string(),
         PK::ErrorRaised => "ErrorRaised".to_string(),
+        PK::ExecutionCancelled => "ExecutionCancelled".to_string(),
         PK::ExternalEventObserved => "ExternalEventObserved".to_string(),
     }
 }
@@ -3613,6 +3672,14 @@ async fn main() -> Result<()> {
                 json,
             } => {
                 run_rollback_execution(&execution_id, server_url, bearer_token, json).await?;
+            }
+            ServerCommand::CancelExecution {
+                execution_id,
+                server_url,
+                bearer_token,
+                json,
+            } => {
+                run_cancel_execution(&execution_id, server_url, bearer_token, json).await?;
             }
             ServerCommand::VerifyLedger {
                 server_url,

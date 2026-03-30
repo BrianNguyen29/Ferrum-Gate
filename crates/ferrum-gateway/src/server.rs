@@ -10,20 +10,20 @@ use ferrum_graph::LineageGraph;
 use ferrum_proto::{
     ActorRef, ActorType, ApiError, ApiErrorCode, ApprovalId, ApprovalListEnvelope, ApprovalRequest,
     ApprovalResolveRequest, ApprovalState, AuthorizeExecutionRequest, AuthorizeExecutionResponse,
-    CapabilityId, CapabilityMintRequest, CapabilityMintResponse, CommitRequest, CommitResponse,
-    CompensateRequest, CompensateResponse, Decision, EvaluateProposalResponse, EventId,
-    ExecuteRequest, ExecuteResponse, ExecutionId, ExecutionRecord, ExecutionState,
-    ExternalEventIngestRequest, ExternalEventIngestResponse, HashChainRef, HealthResponse,
-    IntentCompileRequest, IntentCompileResponse, IntentEnvelope, IntentStatus,
-    LedgerVerificationError, LedgerVerificationResponse, LineageEdge, LineageQueryRequest,
-    LineageQueryResponse, ObjectRef, ObjectType, OutcomeClause, ProposalId, ProvenanceEdge,
-    ProvenanceEdgeType, ProvenanceEvent, ProvenanceEventKind, ProvenanceEventResponse,
-    ProvenanceExportFilters, ProvenanceExportInfo, ProvenanceExportRequest,
-    ProvenanceExportResponse, ProvenanceQueryRequest, ProvenanceQueryResponse,
-    ProvenanceReplayRequest, ProvenanceReplayResponse, ProvenanceStatsRequest,
-    ProvenanceStatsResponse, ResourceBinding, ResourceMode, ResourceSelector, RiskTier,
-    RollbackClass, RollbackRequest, RollbackResponse, RollbackState, RollbackTarget, TimeBudget,
-    TrustContextSummary, TrustLabel, VerifyRequest, VerifyResponse,
+    CancelExecutionRequest, CancelExecutionResponse, CapabilityId, CapabilityMintRequest,
+    CapabilityMintResponse, CommitRequest, CommitResponse, CompensateRequest, CompensateResponse,
+    Decision, EvaluateProposalResponse, EventId, ExecuteRequest, ExecuteResponse, ExecutionId,
+    ExecutionRecord, ExecutionState, ExternalEventIngestRequest, ExternalEventIngestResponse,
+    HashChainRef, HealthResponse, IntentCompileRequest, IntentCompileResponse, IntentEnvelope,
+    IntentStatus, LedgerVerificationError, LedgerVerificationResponse, LineageEdge,
+    LineageQueryRequest, LineageQueryResponse, ObjectRef, ObjectType, OutcomeClause, ProposalId,
+    ProvenanceEdge, ProvenanceEdgeType, ProvenanceEvent, ProvenanceEventKind,
+    ProvenanceEventResponse, ProvenanceExportFilters, ProvenanceExportInfo,
+    ProvenanceExportRequest, ProvenanceExportResponse, ProvenanceQueryRequest,
+    ProvenanceQueryResponse, ProvenanceReplayRequest, ProvenanceReplayResponse,
+    ProvenanceStatsRequest, ProvenanceStatsResponse, ResourceBinding, ResourceMode,
+    ResourceSelector, RiskTier, RollbackClass, RollbackRequest, RollbackResponse, RollbackState,
+    RollbackTarget, TimeBudget, TrustContextSummary, TrustLabel, VerifyRequest, VerifyResponse,
 };
 use ferrum_store::{
     ApprovalRepo, ExecutionRepo, IntentRepo, LedgerRepo, ProposalRepo, ProvenanceRepo, RollbackRepo,
@@ -151,6 +151,10 @@ fn build_router_inner(runtime: GatewayRuntime, auth_config: Option<ServerConfig>
         .route(
             "/v1/executions/{execution_id}/rollback",
             post(rollback_execution),
+        )
+        .route(
+            "/v1/executions/{execution_id}/cancel",
+            post(cancel_execution),
         )
         .route("/v1/executions/{execution_id}", get(get_execution))
         .route("/v1/approvals", get(list_pending_approvals))
@@ -1943,6 +1947,93 @@ async fn rollback_execution(
         execution_id,
         rolled_back: true,
         rolled_back_at: Some(now),
+    }))
+}
+
+async fn cancel_execution(
+    State(runtime): State<Arc<GatewayRuntime>>,
+    Path(execution_id_str): Path<String>,
+    Json(req): Json<CancelExecutionRequest>,
+) -> Result<Json<CancelExecutionResponse>, ApiProblem> {
+    let execution_id = parse_execution_id(&execution_id_str)?;
+
+    // Validate that the request execution_id matches the path
+    if req.execution_id != execution_id {
+        return Err(ApiProblem::new(
+            StatusCode::BAD_REQUEST,
+            ApiErrorCode::ValidationError,
+            "execution_id in body does not match path",
+        ));
+    }
+
+    let existing = runtime
+        .store
+        .executions()
+        .get(execution_id)
+        .await
+        .map_err(|err| ApiProblem::internal(err.into()))?
+        .ok_or_else(|| {
+            ApiProblem::new(
+                StatusCode::NOT_FOUND,
+                ApiErrorCode::NotFound,
+                "execution record not found",
+            )
+        })?;
+
+    // State guard: cancel is only allowed from pre-execute states
+    // Only Proposed, Authorized, and Prepared can transition to Cancelled
+    use ferrum_proto::ExecutionState::*;
+    match existing.state {
+        Proposed | Authorized | Prepared => {
+            // These states can be cancelled
+        }
+        _ => {
+            return Err(ApiProblem::new(
+                StatusCode::CONFLICT,
+                ApiErrorCode::Conflict,
+                format!(
+                    "execution in state {:?} cannot be cancelled; only Proposed, Authorized, or Prepared states are allowed",
+                    existing.state
+                ),
+            ));
+        }
+    }
+
+    let now = Utc::now();
+    let intent_id = existing.intent_id;
+    let proposal_id = existing.proposal_id;
+
+    // Update execution state to Cancelled
+    let mut updated_execution = existing.clone();
+    updated_execution.state = ExecutionState::Cancelled;
+    updated_execution.finished_at = Some(now);
+
+    if let Err(e) = runtime.store.executions().update(&updated_execution).await {
+        tracing::warn!("failed to update execution state to cancelled: {}", e);
+    }
+
+    // Emit ExecutionCancelled provenance event
+    let event = create_provenance_event(
+        ProvenanceEventKind::ExecutionCancelled,
+        now,
+        Some(intent_id),
+        Some(proposal_id),
+        Some(execution_id),
+        Some(existing.capability_id),
+        existing.rollback_contract_id,
+        None,
+    );
+    if let Err(e) = runtime.store.provenance().append_event(&event).await {
+        tracing::warn!(
+            "failed to persist execution cancelled provenance event: {}",
+            e
+        );
+    }
+
+    Ok(Json(CancelExecutionResponse {
+        execution_id,
+        cancelled: true,
+        cancelled_at: Some(now),
     }))
 }
 
