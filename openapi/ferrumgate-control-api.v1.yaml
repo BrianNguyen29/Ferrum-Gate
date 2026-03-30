@@ -594,6 +594,27 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProvenanceExportResponse'
 
+  /v1/ledger/verify:
+    get:
+      summary: Verify ledger hash-chain integrity
+      description: |
+        Performs on-demand verification of the ledger hash-chain integrity.
+
+        This endpoint reads all ledger entries from persistent storage and validates:
+        - Sequence numbers match entry positions
+        - prev_hash linkage is intact (chain continuity)
+        - Entry hashes match recomputed content hashes (tamper detection)
+
+        This is a read-only diagnostic endpoint for operators to audit ledger integrity.
+        It does not modify any state.
+      operationId: verifyLedger
+      responses:
+        '200':
+          description: Ledger verification result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LedgerVerificationResponse'
   /v1/provenance/stats:
     post:
       summary: Compute server-side provenance statistics
@@ -1700,6 +1721,42 @@ components:
         until:
           type: boolean
           nullable: true
+
+    LedgerVerificationResponse:
+      type: object
+      required: [valid, entry_count, verified_at]
+      properties:
+        valid:
+          type: boolean
+          description: True if the ledger chain is valid, false if tampered or broken.
+        entry_count:
+          type: integer
+          format: uint64
+          description: Number of ledger entries verified.
+        verified_at:
+          type: string
+          format: date-time
+          description: Timestamp when verification was performed.
+        error:
+          description: Error details when verification fails (None when valid).
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/LedgerVerificationError'
+
+    LedgerVerificationError:
+      type: object
+      required: [type, detail]
+      properties:
+        type:
+          type: string
+          enum:
+            - BrokenChain
+            - TamperDetected
+            - SequenceMismatch
+            - EmptyLedger
+        detail:
+          type: object
+          description: Error detail object whose schema varies by type.
 
     ProvenanceStatsRequest:
       type: object

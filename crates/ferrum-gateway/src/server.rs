@@ -14,15 +14,16 @@ use ferrum_proto::{
     CompensateRequest, CompensateResponse, Decision, EvaluateProposalResponse, EventId,
     ExecuteRequest, ExecuteResponse, ExecutionId, ExecutionRecord, ExecutionState,
     ExternalEventIngestRequest, ExternalEventIngestResponse, HashChainRef, HealthResponse,
-    IntentCompileRequest, IntentCompileResponse, IntentEnvelope, IntentStatus, LineageEdge,
-    LineageQueryRequest, LineageQueryResponse, ObjectRef, ObjectType, OutcomeClause, ProposalId,
-    ProvenanceEdge, ProvenanceEdgeType, ProvenanceEvent, ProvenanceEventKind,
-    ProvenanceEventResponse, ProvenanceExportFilters, ProvenanceExportInfo,
-    ProvenanceExportRequest, ProvenanceExportResponse, ProvenanceQueryRequest,
-    ProvenanceQueryResponse, ProvenanceReplayRequest, ProvenanceReplayResponse,
-    ProvenanceStatsRequest, ProvenanceStatsResponse, ResourceBinding, ResourceMode,
-    ResourceSelector, RiskTier, RollbackClass, RollbackRequest, RollbackResponse, RollbackState,
-    RollbackTarget, TimeBudget, TrustContextSummary, TrustLabel, VerifyRequest, VerifyResponse,
+    IntentCompileRequest, IntentCompileResponse, IntentEnvelope, IntentStatus,
+    LedgerVerificationError, LedgerVerificationResponse, LineageEdge, LineageQueryRequest,
+    LineageQueryResponse, ObjectRef, ObjectType, OutcomeClause, ProposalId, ProvenanceEdge,
+    ProvenanceEdgeType, ProvenanceEvent, ProvenanceEventKind, ProvenanceEventResponse,
+    ProvenanceExportFilters, ProvenanceExportInfo, ProvenanceExportRequest,
+    ProvenanceExportResponse, ProvenanceQueryRequest, ProvenanceQueryResponse,
+    ProvenanceReplayRequest, ProvenanceReplayResponse, ProvenanceStatsRequest,
+    ProvenanceStatsResponse, ResourceBinding, ResourceMode, ResourceSelector, RiskTier,
+    RollbackClass, RollbackRequest, RollbackResponse, RollbackState, RollbackTarget, TimeBudget,
+    TrustContextSummary, TrustLabel, VerifyRequest, VerifyResponse,
 };
 use ferrum_store::{
     ApprovalRepo, ExecutionRepo, IntentRepo, LedgerRepo, ProposalRepo, ProvenanceRepo, RollbackRepo,
@@ -178,6 +179,8 @@ fn build_router_inner(runtime: GatewayRuntime, auth_config: Option<ServerConfig>
         // Sync-3a read-only probe endpoints (leader-side)
         .route("/v1/sync/leader/tip", get(get_leader_tip))
         .route("/v1/sync/leader/tip/proof", get(get_leader_tip_proof))
+        // Ledger verification endpoint (operator diagnostics)
+        .route("/v1/ledger/verify", get(verify_ledger))
         .with_state(Arc::new(runtime))
         .layer(Extension(metrics))
         .layer(metrics_layer)
@@ -3542,6 +3545,137 @@ async fn get_leader_tip_proof(
     Ok(Json(LeaderTipProofResponse { proof }))
 }
 
+/// GET /v1/ledger/verify
+///
+/// Performs on-demand verification of the ledger hash-chain integrity.
+///
+/// This endpoint reads all ledger entries from persistent storage and validates:
+/// - Sequence numbers match entry positions
+/// - prev_hash linkage is intact (chain continuity)
+/// - Entry hashes match recomputed content hashes (tamper detection)
+///
+/// This is a read-only diagnostic endpoint for operators to audit ledger integrity.
+/// It does not modify any state.
+///
+/// # Authentication
+///
+/// Requires bearer token authentication like other non-health endpoints.
+async fn verify_ledger(
+    State(runtime): State<Arc<GatewayRuntime>>,
+) -> Result<Json<LedgerVerificationResponse>, ApiProblem> {
+    let now = Utc::now();
+
+    // Get entry count first for the response
+    let entries = runtime
+        .store
+        .ledger()
+        .list_all()
+        .await
+        .map_err(|e| ApiProblem::internal(e.into()))?;
+
+    let entry_count = entries.len() as u64;
+
+    // Perform verification using the store's verify_ledger_chain
+    match runtime.store.verify_ledger_chain().await {
+        Ok(()) => {
+            let resp = LedgerVerificationResponse {
+                valid: true,
+                entry_count,
+                verified_at: now,
+                error: None,
+            };
+            Ok(Json(resp))
+        }
+        Err(e) => {
+            // Convert store error to user-facing error
+            let ledger_error = convert_store_error_to_ledger_error(&e);
+            let resp = LedgerVerificationResponse {
+                valid: false,
+                entry_count,
+                verified_at: now,
+                error: Some(ledger_error),
+            };
+            Ok(Json(resp))
+        }
+    }
+}
+
+/// Converts a store error to a LedgerVerificationError for API responses.
+fn convert_store_error_to_ledger_error(e: &ferrum_store::StoreError) -> LedgerVerificationError {
+    // Try to extract LedgerError from the wrapped anyhow error
+    let msg = e.to_string();
+
+    // Parse common error patterns
+    if msg.contains("content_hash column") && msg.contains("does not match recomputed") {
+        // Try to extract sequence number
+        if let Some(seq_start) = msg.find("sequence ") {
+            let seq_part = &msg[seq_start + 9..];
+            if let Some(seq_end) = seq_part.find(|c: char| !c.is_ascii_digit()) {
+                if let Ok(seq) = seq_part[..seq_end].parse::<u64>() {
+                    // Try to extract hashes
+                    let (recorded, recomputed) = if let (Some(rec_start), Some(rec_end)) = (
+                        msg.find("content_hash column ("),
+                        msg.find(") does not match"),
+                    ) {
+                        let recorded = &msg[rec_start + 22..rec_end];
+                        let recomputed_part =
+                            msg.find("recomputed entry hash (").map(|p| &msg[p + 25..]);
+                        (
+                            recorded.to_string(),
+                            recomputed_part.unwrap_or("unknown").to_string(),
+                        )
+                    } else {
+                        ("unknown".to_string(), "unknown".to_string())
+                    };
+                    return LedgerVerificationError::TamperDetected {
+                        sequence: seq,
+                        recorded,
+                        recomputed,
+                    };
+                }
+            }
+        }
+        return LedgerVerificationError::TamperDetected {
+            sequence: 0,
+            recorded: "unknown".to_string(),
+            recomputed: "unknown".to_string(),
+        };
+    }
+
+    if msg.contains("previous_ledger_hash column") && msg.contains("does not match entry prev_hash")
+    {
+        return LedgerVerificationError::BrokenChain {
+            expected: "previous hash".to_string(),
+            actual: "mismatch".to_string(),
+        };
+    }
+
+    if msg.contains("broken") || msg.contains("BrokenChain") {
+        // Try to extract expected and actual hashes
+        let expected = msg
+            .lines()
+            .find(|l| l.contains("expected"))
+            .map(|l| l.split(':').nth(1).unwrap_or("unknown").trim().to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        let actual = msg
+            .lines()
+            .find(|l| l.contains("actual"))
+            .map(|l| l.split(':').nth(1).unwrap_or("unknown").trim().to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        return LedgerVerificationError::BrokenChain { expected, actual };
+    }
+
+    if msg.contains("empty ledger") {
+        return LedgerVerificationError::EmptyLedger;
+    }
+
+    // Fallback for unparseable errors
+    LedgerVerificationError::BrokenChain {
+        expected: "unknown".to_string(),
+        actual: msg,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -3556,8 +3690,8 @@ mod tests {
     use ferrum_firewall::{DefaultFirewall, SemanticFirewall};
     use ferrum_pdp::StaticPdpEngine;
     use ferrum_proto::{
-        ApiError, ApiErrorCode, HttpMethod, ResourceBinding, ResourceMode, ResourceSelector,
-        RollbackClass, RollbackTarget,
+        ApiError, ApiErrorCode, HttpMethod, LedgerVerificationResponse, ResourceBinding,
+        ResourceMode, ResourceSelector, RollbackClass, RollbackTarget,
     };
     use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
     use ferrum_store::SqliteStore;
@@ -4393,5 +4527,99 @@ mod tests {
             .unwrap();
 
         assert_eq!(proof_response.status(), StatusCode::OK);
+    }
+
+    // ---------------------------------------------------------------------------
+    // Ledger verification endpoint tests
+    // ---------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn verify_ledger_returns_valid_for_empty_ledger() {
+        let app = build_router(create_test_runtime().await);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/ledger/verify")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: LedgerVerificationResponse = serde_json::from_slice(&body).unwrap();
+
+        // Empty ledger should verify as valid
+        assert!(json.valid);
+        assert_eq!(json.entry_count, 0);
+        assert!(json.error.is_none());
+    }
+
+    #[tokio::test]
+    async fn verify_ledger_requires_auth_in_bearer_mode() {
+        let app = build_authenticated_router(
+            create_test_runtime().await,
+            ServerConfig {
+                auth_mode: AuthMode::Bearer,
+                bearer_token: Some("test-token".to_string()),
+            },
+        );
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/ledger/verify")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn verify_ledger_accessible_with_valid_bearer() {
+        let app = build_authenticated_router(
+            create_test_runtime().await,
+            ServerConfig {
+                auth_mode: AuthMode::Bearer,
+                bearer_token: Some("test-token".to_string()),
+            },
+        );
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/ledger/verify")
+                    .header(AUTHORIZATION, "Bearer test-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn verify_ledger_accessible_in_auth_disabled_mode() {
+        let app = build_router(create_test_runtime().await);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/ledger/verify")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
     }
 }
