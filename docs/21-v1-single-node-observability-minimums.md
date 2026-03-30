@@ -102,9 +102,6 @@ The following cannot be observed in v1 without external tooling:
 | No error rate counters | Error rates must be inferred from probe failures or log scraping |
 | No SQLite WAL size or page count | Store health must be checked via `sqlite3` CLI directly |
 | No connection pool saturation signal | sqlx pool exhaustion is not exposed as a metric |
-| No rollback class enforcement signal | R3 `auto_commit=false` bypass at prepare is not observable |
-| No single-use capability reuse detection | Reuse is not enforced server-side at authorize |
-| No provenance completeness assertion | Silent gaps in lineage are not flagged automatically |
 
 ---
 
@@ -349,21 +346,7 @@ Gaps in the event chain are not detected or flagged automatically.
 Manual lineage verification is required if completeness is needed for
 audit.
 
-### 7.5 Rollback Class Bypass at Prepare
-
-The gateway's prepare handler hardcodes `rollback_class = R0` before
-transitioning to `PREPARED` state. An R3 intent could reach `PREPARED`
-with `rollback_class = R0`, bypassing the `auto_commit = false` control.
-This is not observable from outside the process. See
-`19-v1-single-node-support-contract.md` Section 4.1.
-
-### 7.6 No Single-Use Capability Enforcement at Authorize
-
-The capability service's `mark_used` is not called by the gateway's
-authorize path. Reuse of single-use capabilities is not rejected
-server-side. See `19-v1-single-node-support-contract.md` Section 4.2.
-
-### 7.7 SQLite Store Health
+### 7.5 SQLite Store Health
 
 There is no built-in store health endpoint. Operators must use
 `sqlite3 /path/to/db "PRAGMA integrity_check;"` directly to verify

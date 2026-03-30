@@ -132,45 +132,9 @@ via CLI). Mutating operations must be performed via the REST API.
 
 These risks are acknowledged based on current implementation and test evidence.
 They are documented in `26-v1-single-node-invariant-control-test-evidence-matrix.md`
-Weak Spots 1-4 and the runbook.
+and the runbook.
 
-### 4.1 prepare-step rollback-class handling weak spot
-
-The gateway prepare handler hardcodes `rollback_class = R0` before
-transitioning to the PREPARED state. The R3 `auto_commit = false` control
-is therefore bypassed at prepare. A caller could reach PREPARED state
-with `rollback_class = R0` even when the intent requires R3.
-**Mitigation**: Caller is responsible for ensuring the correct
-`rollback_class` is persisted by the intent creation service before
-the execution flow begins.
-
-### 4.2 Single-use capability not enforced end-to-end at authorize
-
-The capability service `mark_used` function exists but is not called by
-the gateway authorize path. A caller could reuse a single-use capability
-by bypassing execute, or mint multiple single-use capabilities for one
-intent. **Mitigation**: Caller is expected to track `intent_id` ->
-single capability mapping; not enforced server-side at authorize.
-
-### 4.3 Draft-only not revalidated at prepare
-
-The draft-only check exists in the PDP evaluate path but the
-`POST /v1/executions/{id}/prepare` handler does not re-validate
-`intent.is_draft_only` before transitioning to PREPARED. If a draft-only
-intent bypasses evaluate (e.g., re-hydrated from a stale execution
-record), prepare may not re-check. **Mitigation**: Low risk in v1 since
-all flows go through evaluate first.
-
-### 4.4 Provenance completeness lacks end-to-end assertion
-
-Lineage events are emitted at each gateway step, but there is no
-integration test that queries the lineage endpoint for a full execution
-chain and confirms every step appears. A silent gap in event emission
-would not be caught by the current test suite. **Mitigation**: Manual
-trace or ad-hoc integration run required to confirm full chain
-completeness.
-
-### 4.5 Restore causes data loss after backup timestamp
+### 4.1 Restore causes data loss after backup timestamp
 
 Any state created after a backup's timestamp is lost when restoring.
 There is no incremental or point-in-time restore in v1. **Mitigation**:

@@ -69,6 +69,11 @@ evaluate -> mint -> authorize -> prepare -> execute -> verify -> compensate
 ```
 (commit/rollback are internal orchestration semantics; compensate is the sole exposed v1 recovery endpoint)
 
+**Regression coverage for prepare rollback class**: `integration_gateway_flow.rs:527-792`
+verifies that the prepare path loads the persisted rollback class and `auto_commit=false`
+from the store (not a hardcoded R0). This regression test confirms R3 intents
+retain their elevated rollback class through the prepare step post-approval.
+
 Supported negative paths:
 - **deny**: StaticPdpEngine returns Deny for high-risk proposals
 - **quarantine**: taint score >= 70 triggers Quarantine for non-R0 mutations

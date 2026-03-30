@@ -282,6 +282,7 @@ async fn test_minimum_lineage_chain_events_exist() {
             intent_id: Some(intent_id),
             proposal_id: None,
             execution_id: None,
+            execution_ids: vec![],
             capability_id: None,
             event_kind: None,
             terminal_only: None,
@@ -459,6 +460,7 @@ async fn test_lineage_chain_is_contiguous_no_missing_events() {
             intent_id: Some(intent_id),
             proposal_id: None,
             execution_id: None,
+            execution_ids: vec![],
             capability_id: None,
             event_kind: None,
             terminal_only: None,
@@ -694,6 +696,7 @@ async fn test_rollback_lineage_chain_has_terminal_event() {
             intent_id: Some(intent_id),
             proposal_id: None,
             execution_id: None,
+            execution_ids: vec![],
             capability_id: None,
             event_kind: None,
             terminal_only: None,
@@ -924,20 +927,41 @@ async fn test_get_execution_lineage_endpoint() {
         "lineage should contain at least one event"
     );
 
-    // Verify we have events from the minimum lineage chain
+    // Verify execution-scoped lineage chain events via the endpoint
+    // The /v1/provenance/lineage/{execution_id} endpoint returns events scoped to
+    // the execution (ToolCallPrepared, ToolCallExecuted, SideEffectPrepared,
+    // SideEffectVerified, SideEffectCommitted). Upstream events like
+    // ActionProposalSubmitted, PolicyEvaluated, CapabilityMinted are associated
+    // with intent_id/proposal_id/capability_id and are queryable via
+    // POST /v1/provenance/query with the respective filter.
     let event_kinds: Vec<_> = events
         .iter()
         .map(|e| e.get("kind").and_then(|k| k.as_str()).unwrap_or(""))
         .collect();
 
     assert!(
-        event_kinds.contains(&"SideEffectCommitted"),
-        "lineage should include SideEffectCommitted event, got: {:?}",
+        event_kinds.contains(&"ToolCallPrepared"),
+        "lineage should include ToolCallPrepared, got: {:?}",
         event_kinds
     );
     assert!(
         event_kinds.contains(&"ToolCallExecuted"),
-        "lineage should include ToolCallExecuted event, got: {:?}",
+        "lineage should include ToolCallExecuted, got: {:?}",
+        event_kinds
+    );
+    assert!(
+        event_kinds.contains(&"SideEffectPrepared"),
+        "lineage should include SideEffectPrepared, got: {:?}",
+        event_kinds
+    );
+    assert!(
+        event_kinds.contains(&"SideEffectVerified"),
+        "lineage should include SideEffectVerified, got: {:?}",
+        event_kinds
+    );
+    assert!(
+        event_kinds.contains(&"SideEffectCommitted"),
+        "lineage should include SideEffectCommitted, got: {:?}",
         event_kinds
     );
 
