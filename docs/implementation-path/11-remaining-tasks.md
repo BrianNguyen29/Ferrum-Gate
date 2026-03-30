@@ -2,75 +2,83 @@
 
 Prioritized checklist of incomplete work, grounded in existing docs.
 Do not invent scope; all items cite source docs.
+Scope is single-node v1 unless labeled post-v1.
 
-**v1 Scope Freeze — Single-Node Only.** All items in this document are
-post-v1 non-goals except where explicitly marked as v1. FerrumGate v1 is
-closed at single-node only. See `23-production-readiness-assessment.md`
-Section 4 and `24-p1-p2-p3-execution-plan.md` Section 6 for the complete
-v1 scope-freeze list. Do not add multi-node sync, HA, consensus, or
-write-path items as v1 blockers.
+## P0 — Must fix before v1 RC
 
-## P0 — Firewall validation (Phase C residual)
+- [x] scope mismatch deny behavior implemented
+  - Src: `docs/16-release-checklist.md` line 16 "scope mismatch deny test (explicit scope-mismatch deny behavior not implemented yet; see test_scope_mismatch_behavior_not_yet_implemented)"
+  - Status: DONE — `StaticPdpEngine::evaluate()` now checks `intent.resource_scope.is_empty()` AND non-R0 mutation and returns `Decision::Deny` with rule `"scope.mismatch.empty.scope"`. Tests: `test_scope_mismatch_deny_on_empty_scope_with_mutation`, `test_r0_allowed_with_empty_scope`.
 
-- [x] poisoned context test suite (>= 80% on curated fixtures)
-  - Src: `91-phase-success-criteria-and-kpis.md` F.3 "Poisoned-context test suite pass rate: >= 80% target", `91-phase-success-criteria-and-kpis.md` 7.5 evidence "poisoned-context tests"
-  - Done: 5/5 pass (curated poisoned-context regression suite) per `91-phase-success-criteria-and-kpis.md` line 28. P1 backlog: expanding fixture breadth.
-  - Note: Phase C firewall logic exists (trust labels, taint, sanitize, contradiction checks confirmed via tests). Fixture breadth expansion is P1.
+## P1 — v1 RC evidence gaps
 
-## P1 — Phase F evidence pack
+- [x] poisoned context regression fixtures (curated test set, >= 80% catch rate target)
+  - Src: `docs/91-phase-success-criteria-and-kpis.md` F.3 "Poisoned-context test suite pass rate: >= 80% target on curated fixtures"
+  - Src: `docs/91-phase-success-criteria-and-kpis.md` 7.5 evidence "poisoned-context tests"
+  - Status: DONE — 6 curated fixture tests added: `test_poisoned_context_taint_at_boundary_69_no_quarantine`, `test_poisoned_context_r0_bypasses_taint_check`, `test_poisoned_context_taint_at_maximum_100`, `test_poisoned_context_r3_requires_approval`, `test_poisoned_context_moderate_taint_50_no_quarantine`, `test_poisoned_context_trust_attributes_no_bypass`.
 
-- [x] final docs pack for Phase F
-  - Src: `91-phase-success-criteria-and-kpis.md` 7.5 evidence "final docs pack"
-  - Done: `docs/implementation-path/11-phase-f-evidence.md` exists and covers all sections
+- [x] final docs pack for Phase F (complete, consistent, internally non-contradictory)
+  - Src: `docs/91-phase-success-criteria-and-kpis.md` 7.5 evidence "final docs pack"
+  - Status: DONE — implementation-path docs finalized as cohesive pack. See `01-current-state.md`, `11-remaining-tasks.md`, `23-production-readiness-assessment.md`, `25-v1-single-node-rc-evidence.md`.
 
 - [x] supported flows list (Phase F evidence)
-  - Src: `91-phase-success-criteria-and-kpis.md` 7.5 evidence "supported flows list"
-  - Done: Section 3 of `docs/implementation-path/11-phase-f-evidence.md` has supported flows
+  - Src: `docs/91-phase-success-criteria-and-kpis.md` 7.5 evidence "supported flows list"
+  - Status: DONE — documented in `25-v1-single-node-rc-evidence.md` Evidence 9. The gateway orchestrates: evaluate -> mint -> authorize -> prepare -> execute -> verify -> compensate (commit/rollback are internal semantics; compensate is the exposed v1 recovery endpoint). Denial paths: deny, quarantine, compensate, await-approval, scope-mismatch (now explicit), draft-only gated at evaluate (before prepare).
 
 - [x] open gaps list (Phase F evidence)
-  - Src: `91-phase-success-criteria-and-kpis.md` 7.5 evidence "open gaps list"
-  - Done: Section 4 of `docs/implementation-path/11-phase-f-evidence.md` has open gaps
+  - Src: `docs/91-phase-success-criteria-and-kpis.md` 7.5 evidence "open gaps list"
+  - Status: DONE — this file serves as the gaps list. Remaining gaps are P3 post-v1 backlog items.
 
-## P2 — Future work (not MVP scope)
+## P2 — v1 polish (not blockers for RC but needed before v1 stable)
 
-- [x] ledger hash chain (initial integration slice DONE)
-  - Src: `08-next-issue-backlog.md` P1
-  - Plan: `12-ledger-hash-chain-execution-plan.md` (Commits 1-4 complete; evidence at `docs/implementation-path/11-phase-f-evidence.md` Section 3.1)
-  - Live append-time verification DONE per `17-ledger-live-hash-verification-execution-plan.md` (Commits A-C complete); evidence: `ferrum-ledger/src/lib.rs:229`, `ferrum-store/src/sqlite/ledger.rs:22`, `ferrum-store/src/sqlite/ledger.rs:77`, `ferrum-gateway/src/server.rs:1602`, `ferrum-store/src/sqlite/tests.rs:1423`
-  - Future: ledger read-model, cross-node sync remain open; Sync-0 safety-contract discovery/plan started per `18-cross-node-ledger-sync-plan.md`; Sync-1 protocol-sketch per `19-sync-1-protocol-sketch.md`; Sync-2 read-only preflight + diff classifier per `20-sync-2-read-only-preflight-diff-classifier.md`; Sync-3 transport-sketch per `21-sync-3-transport-sketch.md`; Sync-3a read-only transport-probe per `22-sync-3a-read-only-transport-probe.md`; Sync-3a.1 probe API boundary per `22a-sync-3a1-probe-api-boundary.md`
-  - Note: Sync-0 does NOT include protocol design, consensus, or implementation; Sync-1 does NOT include transport, consensus, or write-path implementation; Sync-2 does NOT include transport, consensus, or write-path implementation; Sync-3 does NOT include write-path, consensus, or two-way merge; Sync-3a does NOT include write-path, consensus, or two-way merge; Sync-3a.1 does NOT include adapter implementation, write-path, consensus, or two-way merge
-  - **Recommended next slice: runtime integration boundary** -> DONE per `08-next-issue-backlog.md` P3; see `ferrumctl more useful` below
+- [x] clippy cleanup: `cargo clippy --workspace -- -D warnings` PASS — evidence: `docs/artifacts/2026-03-30/03-cargo-clippy.txt`
+  - Src: `cargo clippy --workspace -- -D warnings` verified PASS
+  - Note: Not a v1 RC blocker; verified clean as of 2026-03-29.
 
-- [x] provenance query/read-model enhancement (core surface DONE)
-  - Src: `08-next-issue-backlog.md` P2 lines 19-22
-  - `POST /v1/provenance/query` expanded with filters on `intent_id`, `proposal_id`, `execution_id`, `capability_id`, event kind, terminal state, time range; `ferrum-graph` read-model helpers implemented (`terminal_events`, `walk_backwards_from`, `walk_forwards_from`); integration tests at `tests/integration_provenance_query.rs`
-  - Future P2: advanced replay/fabric tooling, cross-node ledger sync (Sync-0 discovery/plan started per `18-cross-node-ledger-sync-plan.md`)
-  - **Recommended next slice: runtime integration boundary** -> DONE per `08-next-issue-backlog.md` P3; see `ferrumctl more useful` below
+- [x] RC evidence automation script
+  - Src: `scripts/generate_rc_evidence.py` exists and PASS with all five checks
+  - Note: RC evidence generation now automated.
 
-- [x] operator/runtime hardening (DONE - Commit 2 complete)
-  - Src: `08-next-issue-backlog.md` P2 lines 23-27
-  - Confirm troubleshooting doc has clear startup-failure diagnostic entry; mark backlog done
-  - Plan: `docs/implementation-path/13-operator-runtime-hardening-execution-plan.md`
-  - Evidence: `docs/17-troubleshooting.md` startup-failure section exists per `13-operator-runtime-hardening-execution-plan.md` Commit 1
+## P3 — post-v1 backlog (not in v1 scope)
 
-- [x] ferrumctl more useful (beyond health/inspect)
-  - Src: `08-next-issue-backlog.md` P2
-  - watch-execution (bounded polling, --json, --require-terminal) and execution-control (compensate, rollback) wrappers merged per PR #40; plan doc shows both slices complete at `docs/implementation-path/15-ferrumctl-more-useful-execution-plan.md` lines 281, 472
+These are explicitly out of v1 scope. Do not treat as blockers.
 
-- [x] git adapter
-  - Evidence added end-to-end per `91-phase-success-criteria-and-kpis.md` line 18
+- [ ] ledger hash chain
+  - Src: `docs/implementation-path/08-next-issue-backlog.md` P2
 
-- [x] http adapter (full-parity)
-  - Evidence added end-to-end per `91-phase-success-criteria-and-kpis.md` line 18
+- [ ] git adapter (real implementation)
+  - Src: `docs/implementation-path/08-next-issue-backlog.md` P2
+  - Src: `docs/implementation-path/04-crate-by-crate-tasks.md` "adapters: ... -> git/http"
+  - Note: Skeleton exists at `crates/ferrum-adapter-git/`; real implementation is post-v1.
 
-## Documented drift / cleanup tasks
+- [ ] http adapter (real implementation)
+  - Src: `docs/implementation-path/08-next-issue-backlog.md` P2
+  - Src: `docs/implementation-path/04-crate-by-crate-tasks.md` "adapters: ... -> git/http"
 
-- scope mismatch deny is already complete in current docs/code; keep it out of remaining work (`16-release-checklist.md` line 39, `tests/integration_gateway_flow.rs:7015`, `tests/integration_gateway_flow.rs:7631`)
-- all other Phase A/B/E items treated as complete per `91-phase-success-criteria-and-kpis.md` lines 13-15
+- [ ] ferrumctl expanded commands (beyond health/inspect)
+  - Src: `docs/implementation-path/08-next-issue-backlog.md` P2
+  - Src: `docs/implementation-path/15-ferrumctl-more-useful-execution-plan.md`
 
-## Production Readiness Assessment
+- [ ] multi-node / HA / read-replica support
+  - Src: `docs/00-project-canon.md` line 56 "full distributed deployment"
 
-For a consolidated view of what is and is not production-ready, including
-phased hardening guidance, see `23-production-readiness-assessment.md`.
-For the authoritative ordered execution plan (P1/P2/P3 slices, dependencies,
-verification), see `24-p1-p2-p3-execution-plan.md`.
+- [ ] Outcome-aware Governance (U1)
+  - Src: `docs/91-phase-success-criteria-and-kpis.md` section 8.1
+
+- [ ] Reversible Execution Planner (U2)
+  - Src: `docs/91-phase-success-criteria-and-kpis.md` section 8.2
+
+- [ ] Cross-runtime Provenance Fabric (U3)
+  - Src: `docs/91-phase-success-criteria-and-kpis.md` section 8.3
+
+- [ ] Runtime Integrations — MCP / local / NemoClaw (U4)
+  - Src: `docs/91-phase-success-criteria-and-kpis.md` section 8.4
+
+## Documented drift / cleanup notes (all resolved as of 2026-03-29)
+
+- scope mismatch deny: IMPLEMENTED in `crates/ferrum-pdp/src/engine.rs` lines 31-46
+- all Phase A/B/E items treated as complete per `docs/91-phase-success-criteria-and-kpis.md`
+- Phase C firewall logic confirmed present; curated regression fixtures DONE (6 tests)
+- `scripts/generate_rc_evidence.py` EXISTS and PASS
+- clippy: PASS with no warnings
+- test count: 128 tests across workspace

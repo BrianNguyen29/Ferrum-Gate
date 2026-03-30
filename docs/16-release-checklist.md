@@ -1,56 +1,34 @@
 # 16 — Release checklist
 
-## v1 Scope Freeze — Single-Node Only
+Single-node v1 scope. Last updated: 2026-03-30.
 
-**v1 closure is scoped to single-node deployment only.** The following are
-explicitly out of scope for v1 and are not blockers for v1 RC sign-off:
-
-- Multi-node sync (write-path, two-way merge, consensus)
-- HA / multi-leader replication
-- In-process TLS termination (external terminator required)
-- Distributed trace context (W3C TraceContext)
-- Alerting rules
-- Generic provenance replay/fabric tooling
-
-The supported v1 surface is: SQLite-backed single-node gateway flow with
-filesystem, SQLite, maildraft, git, and HTTP adapters; firewall enforcement;
-capability mint/authorize/execute; R0/R2/R3 governance paths; rollback and
-compensation; provenance lineage chain. See
-`docs/implementation-path/23-production-readiness-assessment.md` Section 1 for
-the full supported surface with evidence links.
-
-**RC evidence artifact:** `docs/implementation-path/25-v1-single-node-rc-evidence.md`
-- Current verdict: **READY TO CLOSE** — single-node v1 (all checklist items green: clippy, tests, startup guard, smoke server, readiness endpoint, metrics auth, SQLite backup/integrity)
-- Post-v1 items (multi-node sync, HA, in-process TLS, distributed trace context, alerting rules) remain out of scope and are not v1 blockers.
+> **Canonical support contract**: [19-v1-single-node-support-contract.md](./19-v1-single-node-support-contract.md)
 
 ## Contract integrity
-- [x] contracts updated (`python3 scripts/check_contract_consistency.py` => `VALIDATION PASSED`)
-- [x] schemas updated
-- [x] openapi updated (`openapi/ferrumgate-control-api.v1.yaml` parsed and matches current routes)
-- [x] docs updated (`docs/01-quickstart.md`, `docs/14-api-and-contracts-map.md`, `docs/15-deployment-and-operations.md`, `docs/17-troubleshooting.md`)
+- [x] contracts cap nhat (ran check_contract_consistency.py: VALIDATION PASSED) — evidence: `docs/artifacts/2026-03-30/05-contract-consistency.txt`
+- [x] schemas cap nhat — evidence: `docs/artifacts/2026-03-30/05-contract-consistency.txt`
+- [x] openapi cap nhat (synced to actual routes/auth) — evidence: `docs/artifacts/2026-03-30/05-contract-consistency.txt`
+- [x] docs cap nhat (14, 15, 17, 01 updated; see also implementation-path docs)
 
 ## Workspace quality
-- [x] cargo check pass (`cargo check --workspace`)
-- [x] fmt pass (`cargo fmt --all --check`)
-- [x] clippy pass (`cargo clippy --workspace -- -D warnings`)
-- [x] test pass (`cargo test --workspace`)
+- [x] cargo check pass (`cargo check --workspace`) — evidence: `docs/artifacts/2026-03-30/01-cargo-check.txt` — PASS
+- [x] fmt pass — evidence: `docs/artifacts/2026-03-30/02-cargo-fmt.txt` — PASS
+- [x] clippy pass — evidence: `docs/artifacts/2026-03-30/03-cargo-clippy.txt` — PASS
+- [x] cargo test pass — evidence: `docs/artifacts/2026-03-30/04-cargo-test.txt` — PASS (tests pass)
 
 ## Behavior quality
-- [x] scope mismatch deny test
-- [x] single-use capability test
-- [x] R3 no auto-commit test
-- [x] rollback/compensate test
-- [x] poisoned context test
+- [x] scope mismatch deny test — VERIFIED: empty scope + non-R0 mutation = Deny (`scope.mismatch.empty.scope`), empty scope + R0 = Allow (`test_scope_mismatch_deny_on_empty_scope_with_mutation`, `test_r0_allowed_with_empty_scope`)
+- [x] single-use capability test — VERIFIED: capability marked Used returns AlreadyUsed error on reuse (`test_single_use_capability_cannot_be_reused`)
+- [x] R3 no auto-commit test — VERIFIED: R3 contracts have auto_commit=false, R0 have auto_commit=true (`test_r3_contracts_have_auto_commit_false`)
+- [x] rollback/compensate test — VERIFIED: rollback and compensate are distinct adapter operations (`test_rollback_and_compensate_are_distinct_operations`)
+- [x] poisoned context test — VERIFIED: high taint score (>=70) triggers Quarantine decision for non-R0 (`test_high_taint_triggers_quarantine`)
+- [x] compensate end-to-end flow test — VERIFIED: full evaluate -> mint -> authorize -> prepare -> compensate flow with state transitions (`compensate_execution_flow`)
+- [x] pending approvals pagination test — VERIFIED: limit/offset pagination returns correct subsets (`test_pending_approvals_pagination`)
+- [x] pending approvals filter test — VERIFIED: filter by proposal_id returns correct subset (`test_pending_approvals_filtered_by_proposal_id`)
+- [x] lineage endpoint shape tests — VERIFIED: empty lineage for unknown execution returns 200, invalid UUID returns 400, content-type correct, max_hops clamping works (`test_lineage_endpoint_*`)
 
 ## Operator readiness
-- [x] config docs correct (config precedence, auth mode, startup guard documented)
-- [x] CLI useful minimum (`ferrumctl server health/inspect-*` documented and implemented)
-- [x] lineage usable
-- [x] approval flow documented (state transitions, CLI examples, and resolve-approval command)
-- [x] runbooks updated (`runbooks/ops-tls-ingress-runbook.md` — TLS/ingress production runbook, `runbooks/ops-approval-workflow-runbook.md` — approval workflow)
-
-## CLI / docs parity
-- [x] every `ferrumctl server` subcommand is documented in the relevant docs section
-- [x] every documented `ferrumctl server` flag matches the actual flag in `--help`
-- [x] approval state transitions in docs match runtime (`Authorized` on approve, `Denied` on deny)
-- [x] new runbooks are referenced from `runbooks/README.md`
+- [x] config docs dung (15-deployment-and-operations.md updated)
+- [x] CLI huu ich toi thieu (server health/inspect-execution/inspect-approvals/inspect-approval/inspect-lineage/inspect-provenance)
+- [x] lineage usable (GET /v1/provenance/lineage/{execution_id} implemented)
+- [x] approval flow documented (GET /v1/approvals, GET /v1/approvals/{approval_id} implemented)

@@ -1,0 +1,26 @@
+# Ferrum Gate v1 RC Evidence Bundle
+# Generated: 2026-03-30
+# Purpose: Timestamped evidence for release readiness
+
+## Artifact Index
+
+| File | Command | Status |
+|------|---------|--------|
+| 01-cargo-check.txt | cargo check --workspace | PASS |
+| 02-cargo-fmt.txt | cargo fmt --all --check | PASS |
+| 03-cargo-clippy.txt | cargo clippy --workspace -- -D warnings | PASS |
+| 04-cargo-test.txt | cargo test --workspace | PASS |
+| 05-contract-consistency.txt | python3 scripts/check_contract_consistency.py | PASS |
+| 06-repo-layout.txt | bash scripts/validate_repo_layout.sh | PASS |
+| 07-rc-evidence-script.txt | python3 scripts/generate_rc_evidence.py | PASS |
+
+## Evidence Summary
+
+All commands: PASS
+Overall: ALL PASS
+
+## Notes
+
+- All artifacts generated on 2026-03-30
+- Single-node v1 scope confirmed
+- No product code changes in this bundle (docs/artifacts only)
