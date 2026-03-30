@@ -594,6 +594,32 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProvenanceExportResponse'
 
+  /v1/provenance/stats:
+    post:
+      summary: Compute server-side provenance statistics
+      description: |
+        Computes aggregated provenance statistics over the same filter semantics as the query endpoint.
+        Returns counts and breakdowns rather than individual events.
+
+        Statistics include totals by event kind, terminal event counts, issue indicators,
+        and unique entity counts. Optionally includes events flagged by consistency checks.
+      operationId: provenanceStats
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProvenanceStatsRequest'
+      responses:
+        '200':
+          description: Provenance statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProvenanceStatsResponse'
+        '400':
+          $ref: '#/components/responses/ApiError'
+
 components:
   securitySchemes:
     ControlPlaneBearer:
@@ -1674,3 +1700,104 @@ components:
         until:
           type: boolean
           nullable: true
+
+    ProvenanceStatsRequest:
+      type: object
+      properties:
+        intent_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Filter by intent_id.
+        proposal_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Filter by proposal_id.
+        execution_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Filter by execution_id.
+        capability_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Filter by capability_id.
+        event_kind:
+          type: string
+          nullable: true
+          description: Filter by event kind.
+        since:
+          type: string
+          format: date-time
+          nullable: true
+          description: Filter events that occurred at or after this timestamp.
+        until:
+          type: string
+          format: date-time
+          nullable: true
+          description: Filter events that occurred at or before this timestamp.
+        max_events:
+          type: integer
+          nullable: true
+          description: Maximum events to process for stats computation (1-100000). Defaults to 10000.
+
+    ProvenanceStatsResponse:
+      type: object
+      required: [total_events, kinds, terminal_count, issue_count, events_without_execution_id, unique_intents, unique_proposals, unique_executions, flagged_events]
+      properties:
+        total_events:
+          type: integer
+          format: uint64
+          description: Total number of events matching the filter.
+        kinds:
+          type: object
+          additionalProperties:
+            type: integer
+            format: uint64
+          description: Count of events by kind.
+        terminal_count:
+          type: integer
+          format: uint64
+          description: Count of terminal events.
+        issue_count:
+          type: integer
+          format: uint64
+          description: Count of events that indicate a problem condition.
+        events_without_execution_id:
+          type: integer
+          format: uint64
+          description: Count of events missing an execution_id.
+        unique_intents:
+          type: integer
+          format: uint64
+          description: Number of unique intents with matching events.
+        unique_proposals:
+          type: integer
+          format: uint64
+          description: Number of unique proposals with matching events.
+        unique_executions:
+          type: integer
+          format: uint64
+          description: Number of unique executions with matching events.
+        flagged_events:
+          type: array
+          items:
+            $ref: '#/components/schemas/FlaggedEvent'
+          description: Events flagged by consistency checks.
+
+    FlaggedEvent:
+      type: object
+      required: [event_id, kind, reason]
+      properties:
+        event_id:
+          type: string
+          format: uuid
+          description: The event ID of the flagged event.
+        kind:
+          type: string
+          description: The kind of the flagged event.
+        reason:
+          type: string
+          description: Human-readable reason why the event was flagged.

@@ -4,7 +4,8 @@ use ferrum_proto::{
     ActionProposal, ApprovalId, ApprovalRequest, ApprovalState, CapabilityId, CapabilityLease,
     CapabilityStatus, EventId, ExecutionId, ExecutionRecord, ExecutionState, IntentEnvelope,
     IntentId, IntentStatus, ProposalId, ProvenanceEdge, ProvenanceEvent, ProvenanceQueryRequest,
-    RollbackContract, RollbackContractId, RollbackState,
+    ProvenanceStatsRequest, ProvenanceStatsResponse, RollbackContract, RollbackContractId,
+    RollbackState,
 };
 
 use crate::Result;
@@ -150,6 +151,13 @@ pub trait ProvenanceRepo: Send + Sync {
         &self,
         execution_id: ExecutionId,
     ) -> Result<Vec<ProvenanceEvent>>;
+    /// Compute aggregated statistics over provenance events matching the given filters.
+    /// This is more efficient than fetching all events and aggregating client-side
+    /// because it performs aggregation at the database level.
+    async fn query_stats(
+        &self,
+        request: &ProvenanceStatsRequest,
+    ) -> Result<ProvenanceStatsResponse>;
 }
 
 #[async_trait]

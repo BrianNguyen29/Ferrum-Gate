@@ -15,8 +15,9 @@ use ferrum_proto::{
     LineageQueryRequest, LineageQueryResponse, ObjectRef, ObjectType, ProvenanceEdge,
     ProvenanceEdgeType, ProvenanceEvent, ProvenanceEventKind, ProvenanceEventResponse,
     ProvenanceExportRequest, ProvenanceExportResponse, ProvenanceQueryRequest,
-    ProvenanceReplayRequest, ProvenanceReplayResponse, ResourceBinding, ResourceMode, RiskTier,
-    RollbackClass, TaintBudget, ToolBinding, TrustLabel,
+    ProvenanceReplayRequest, ProvenanceReplayResponse, ProvenanceStatsRequest,
+    ProvenanceStatsResponse, ResourceBinding, ResourceMode, RiskTier, RollbackClass, TaintBudget,
+    ToolBinding, TrustLabel,
 };
 use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
 use ferrum_store::{ProvenanceRepo, SqliteStore};
@@ -2914,4 +2915,152 @@ async fn test_lineage_query_edge_types_filter_restricts_descendants() {
             .any(|e| e.event_id == root_with_exec.event_id),
         "root should be in the response"
     );
+}
+
+/// Test: server-side provenance stats endpoint returns correct aggregated stats
+#[tokio::test]
+async fn test_provenance_stats_endpoint() {
+    let (_temp_dir, runtime, store) = create_test_runtime().await;
+
+    let (execution_id, intent_id, _proposal_id) = create_execution_with_events(&runtime).await;
+
+    // Add a terminal event to get terminal_count > 0
+    store
+        .provenance()
+        .append_event(&ProvenanceEvent {
+            event_id: ferrum_proto::EventId::new(),
+            kind: ProvenanceEventKind::SideEffectCommitted,
+            occurred_at: chrono::Utc::now(),
+            actor: ActorRef {
+                actor_type: ActorType::Gateway,
+                actor_id: "gateway".to_string(),
+                display_name: Some("Ferrum Gateway".to_string()),
+            },
+            object: ferrum_proto::ObjectRef {
+                object_type: ObjectType::SideEffect,
+                object_id: execution_id.to_string(),
+                summary: Some("terminal event for stats test".to_string()),
+            },
+            intent_id: Some(intent_id),
+            proposal_id: None,
+            execution_id: Some(execution_id),
+            capability_id: None,
+            rollback_contract_id: None,
+            policy_bundle_id: None,
+            trust_labels: Vec::new(),
+            sensitivity_labels: Vec::new(),
+            parent_edges: Vec::new(),
+            hash_chain: HashChainRef {
+                content_hash: None,
+                manifest_hash: None,
+                policy_bundle_hash: None,
+                previous_ledger_hash: None,
+            },
+            metadata: JsonMap::new(),
+        })
+        .await
+        .unwrap();
+
+    // Query stats filtered by execution_id
+    let stats_request = ProvenanceStatsRequest {
+        intent_id: None,
+        proposal_id: None,
+        execution_id: Some(execution_id),
+        capability_id: None,
+        event_kind: None,
+        since: None,
+        until: None,
+        max_events: Some(1000),
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/provenance/stats")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&stats_request).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let stats_resp: ProvenanceStatsResponse = serde_json::from_slice(&body).unwrap();
+
+    // Should have events for this execution
+    assert!(
+        stats_resp.total_events > 0,
+        "expected events for execution_id"
+    );
+    // Should have exactly 1 unique execution
+    assert_eq!(
+        stats_resp.unique_executions, 1,
+        "expected exactly 1 unique execution"
+    );
+    // Should have exactly 1 unique intent
+    assert_eq!(
+        stats_resp.unique_intents, 1,
+        "expected exactly 1 unique intent"
+    );
+    // Should have at least 1 terminal event (the SideEffectCommitted we added)
+    assert!(
+        stats_resp.terminal_count >= 1,
+        "expected at least 1 terminal event"
+    );
+    // Should not have any flagged events (all events have execution_id)
+    assert!(
+        stats_resp.flagged_events.is_empty(),
+        "expected no flagged events"
+    );
+}
+
+/// Test: provenance stats endpoint with no matching events returns empty stats
+#[tokio::test]
+async fn test_provenance_stats_endpoint_empty() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    let stats_request = ProvenanceStatsRequest {
+        intent_id: None,
+        proposal_id: None,
+        execution_id: Some(ferrum_proto::ExecutionId::new()),
+        capability_id: None,
+        event_kind: None,
+        since: None,
+        until: None,
+        max_events: Some(1000),
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/provenance/stats")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&stats_request).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let stats_resp: ProvenanceStatsResponse = serde_json::from_slice(&body).unwrap();
+
+    // All counts should be zero
+    assert_eq!(stats_resp.total_events, 0);
+    assert_eq!(stats_resp.terminal_count, 0);
+    assert_eq!(stats_resp.issue_count, 0);
+    assert_eq!(stats_resp.events_without_execution_id, 0);
+    assert_eq!(stats_resp.unique_intents, 0);
+    assert_eq!(stats_resp.unique_proposals, 0);
+    assert_eq!(stats_resp.unique_executions, 0);
+    assert!(stats_resp.flagged_events.is_empty());
 }
