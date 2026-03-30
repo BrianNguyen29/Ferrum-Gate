@@ -20,9 +20,10 @@ use ferrum_proto::{
     ProvenanceEdgeType, ProvenanceEvent, ProvenanceEventKind, ProvenanceEventResponse,
     ProvenanceExportFilters, ProvenanceExportInfo, ProvenanceExportRequest,
     ProvenanceExportResponse, ProvenanceQueryRequest, ProvenanceQueryResponse,
-    ProvenanceReplayRequest, ProvenanceReplayResponse, ResourceBinding, ResourceMode,
-    ResourceSelector, RiskTier, RollbackClass, RollbackRequest, RollbackResponse, RollbackState,
-    RollbackTarget, TimeBudget, TrustContextSummary, TrustLabel, VerifyRequest, VerifyResponse,
+    ProvenanceReplayRequest, ProvenanceReplayResponse, ProvenanceStatsRequest,
+    ProvenanceStatsResponse, ResourceBinding, ResourceMode, ResourceSelector, RiskTier,
+    RollbackClass, RollbackRequest, RollbackResponse, RollbackState, RollbackTarget, TimeBudget,
+    TrustContextSummary, TrustLabel, VerifyRequest, VerifyResponse,
 };
 use ferrum_store::{
     ApprovalRepo, ExecutionRepo, IntentRepo, LedgerRepo, ProposalRepo, ProvenanceRepo, RollbackRepo,
@@ -170,6 +171,7 @@ fn build_router_inner(runtime: GatewayRuntime, auth_config: Option<ServerConfig>
         .route("/v1/provenance/query", post(query_provenance))
         .route("/v1/provenance/replay", post(replay_provenance))
         .route("/v1/provenance/export", post(export_provenance))
+        .route("/v1/provenance/stats", post(provenance_stats))
         .route(
             "/v1/provenance/events/external",
             post(ingest_external_event),
@@ -2415,6 +2417,21 @@ async fn export_provenance(
             filters,
         },
     }))
+}
+
+/// Compute aggregated provenance statistics server-side.
+async fn provenance_stats(
+    State(runtime): State<Arc<GatewayRuntime>>,
+    Json(request): Json<ProvenanceStatsRequest>,
+) -> Result<Json<ProvenanceStatsResponse>, ApiProblem> {
+    let stats = runtime
+        .store
+        .provenance()
+        .query_stats(&request)
+        .await
+        .map_err(|err| ApiProblem::internal(err.into()))?;
+
+    Ok(Json(stats))
 }
 
 const MAX_LINEAGE_HOPS: u32 = 32;

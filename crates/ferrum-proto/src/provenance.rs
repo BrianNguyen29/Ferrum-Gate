@@ -335,3 +335,80 @@ pub struct ProvenanceExportFilters {
     pub since: Option<bool>,
     pub until: Option<bool>,
 }
+
+// =============================================================================
+// Server-side provenance stats types
+// =============================================================================
+
+/// Request for server-side provenance statistics aggregation.
+/// Uses the same filter semantics as ProvenanceQueryRequest but returns
+/// aggregated statistics instead of individual events.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProvenanceStatsRequest {
+    /// Filter by intent_id.
+    #[serde(default)]
+    pub intent_id: Option<crate::IntentId>,
+    /// Filter by proposal_id.
+    #[serde(default)]
+    pub proposal_id: Option<ProposalId>,
+    /// Filter by execution_id.
+    #[serde(default)]
+    pub execution_id: Option<ExecutionId>,
+    /// Filter by capability_id.
+    #[serde(default)]
+    pub capability_id: Option<CapabilityId>,
+    /// Filter by event kind.
+    #[serde(default)]
+    pub event_kind: Option<ProvenanceEventKind>,
+    /// Filter events that occurred at or after this timestamp.
+    #[serde(default)]
+    pub since: Option<Timestamp>,
+    /// Filter events that occurred at or before this timestamp.
+    #[serde(default)]
+    pub until: Option<Timestamp>,
+    /// Maximum events to process for stats computation (1-100000).
+    /// Defaults to 10000. Events beyond this limit are not reflected in stats.
+    #[serde(default = "default_stats_max_events")]
+    pub max_events: Option<u32>,
+}
+
+fn default_stats_max_events() -> Option<u32> {
+    Some(10_000)
+}
+
+/// Response containing aggregated provenance statistics.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ProvenanceStatsResponse {
+    /// Total number of events matching the filter.
+    pub total_events: u64,
+    /// Count of events by kind.
+    pub kinds: std::collections::HashMap<String, u64>,
+    /// Count of terminal events (SideEffectCommitted, SideEffectCompensated,
+    /// SideEffectRolledBack, ApprovalDenied, Quarantined, ErrorRaised).
+    pub terminal_count: u64,
+    /// Count of events that indicate a problem condition (ErrorRaised, Quarantined,
+    /// ApprovalDenied, SideEffectRolledBack).
+    pub issue_count: u64,
+    /// Count of events missing an execution_id.
+    pub events_without_execution_id: u64,
+    /// Number of unique intents with matching events.
+    pub unique_intents: u64,
+    /// Number of unique proposals with matching events.
+    pub unique_proposals: u64,
+    /// Number of unique executions with matching events.
+    pub unique_executions: u64,
+    /// Events flagged by consistency checks.
+    pub flagged_events: Vec<FlaggedEvent>,
+}
+
+/// A single event flagged by a consistency check.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct FlaggedEvent {
+    /// The event ID of the flagged event.
+    pub event_id: EventId,
+    /// The kind of the flagged event.
+    pub kind: ProvenanceEventKind,
+    /// Human-readable reason why the event was flagged.
+    pub reason: String,
+}
