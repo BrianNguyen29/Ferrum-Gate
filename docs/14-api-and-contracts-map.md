@@ -25,11 +25,18 @@
 ### Executions
 - `POST /v1/executions/authorize` - Authorize execution
 - `POST /v1/executions/{execution_id}/prepare` - Prepare rollback/preflight
+- `POST /v1/executions/{execution_id}/execute` - Execute the prepared operation
+- `POST /v1/executions/{execution_id}/verify` - Verify execution result against intent and policy
+- `POST /v1/executions/{execution_id}/compensate` - Compensate execution (may be noop-backed)
+- `POST /v1/executions/{execution_id}/cancel` - Cancel execution in pre-execute state (Proposed, Authorized, Prepared)
+- `POST /v1/executions/{execution_id}/pause` - Pause execution in running state (Running, AwaitingVerification)
+- `POST /v1/executions/{execution_id}/resume` - Resume paused execution
 - `GET /v1/executions/{execution_id}` - Get execution record
 
 ### Approvals
 - `GET /v1/approvals` - List pending approvals
 - `GET /v1/approvals/{approval_id}` - Get specific approval
+- `POST /v1/approvals/{approval_id}/resolve` - Resolve a pending approval (approve or deny)
 
 ### Provenance
 - `POST /v1/provenance/query` - Query provenance events

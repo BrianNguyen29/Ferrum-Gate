@@ -44,7 +44,7 @@ Phan core cua workspace da compile, gateway orchestration da co, SQLite persiste
 - `ferrum-gateway` voi full orchestration: evaluate -> mint -> authorize -> prepare -> execute -> verify -> compensate (commit/rollback deferred to post-v1)
 - SQLite-backed persistence cho intents, proposals, capabilities, executions, rollback contracts, provenance, approvals
 - Trust labeler, taint scorer, contradiction checks
-- CLI (`ferrumctl`) voi: health, inspect-execution, inspect-approvals, inspect-approval, inspect-lineage, inspect-provenance
+- CLI (`ferrumctl`) voi: health, inspect-execution, inspect-approvals, inspect-approval, inspect-lineage, inspect-provenance, inspect-lineage-query, watch-execution, watch-approvals, resolve-approval, cancel-execution, pause-execution, resume-execution, prepare-execution, execute-execution, compensate-execution, rollback-execution
 - Integration tests cho: capability single-use, R3 no-auto-commit, rollback/compensate distinct ops, taint-based quarantine, compensate end-to-end, pending-approvals pagination/filter, lineage endpoint
 - CI pipeline voi cargo check, repo layout validation, contract consistency
 

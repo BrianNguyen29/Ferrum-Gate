@@ -3,8 +3,9 @@ use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand, ValueEnum};
 use ferrum_proto::api::{
     CancelExecutionRequest, CancelExecutionResponse, CompensateRequest, CompensateResponse,
-    LedgerVerificationResponse, PauseExecutionRequest, PauseExecutionResponse, RollbackRequest,
-    RollbackResponse,
+    ExecuteRequest, ExecuteResponse, LedgerVerificationResponse, PauseExecutionRequest,
+    PauseExecutionResponse, PrepareExecutionResponse, ResumeExecutionRequest,
+    ResumeExecutionResponse, RollbackRequest, RollbackResponse,
 };
 use ferrum_proto::approval::ApprovalResolveRequest;
 use ferrum_proto::common::{ActorRef, ActorType};
@@ -673,6 +674,40 @@ impl ServerClient {
         req: &PauseExecutionRequest,
     ) -> Result<PauseExecutionResponse> {
         let path = format!("/v1/executions/{}/pause", execution_id);
+        let resp = self
+            .request(reqwest::Method::POST, &path)
+            .json(req)
+            .send()
+            .await?;
+        self.decode_json(resp).await
+    }
+
+    async fn resume_execution(
+        &self,
+        execution_id: &str,
+        req: &ResumeExecutionRequest,
+    ) -> Result<ResumeExecutionResponse> {
+        let path = format!("/v1/executions/{}/resume", execution_id);
+        let resp = self
+            .request(reqwest::Method::POST, &path)
+            .json(req)
+            .send()
+            .await?;
+        self.decode_json(resp).await
+    }
+
+    async fn prepare_execution(&self, execution_id: &str) -> Result<PrepareExecutionResponse> {
+        let path = format!("/v1/executions/{}/prepare", execution_id);
+        let resp = self.request(reqwest::Method::POST, &path).send().await?;
+        self.decode_json(resp).await
+    }
+
+    async fn execute_execution(
+        &self,
+        execution_id: &str,
+        req: &ExecuteRequest,
+    ) -> Result<ExecuteResponse> {
+        let path = format!("/v1/executions/{}/execute", execution_id);
         let resp = self
             .request(reqwest::Method::POST, &path)
             .json(req)
@@ -1550,6 +1585,62 @@ enum ServerCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Resume a paused execution (resume from Paused state).
+    ResumeExecution {
+        /// Execution ID (UUID).
+        execution_id: String,
+
+        /// Server base URL (e.g. http://127.0.0.1:8080).
+        #[arg(long, env = "FERRUMCTL_SERVER_URL")]
+        server_url: Option<String>,
+
+        /// Bearer token for authentication.
+        #[arg(long, env = "FERRUMCTL_BEARER_TOKEN")]
+        bearer_token: Option<String>,
+
+        /// Output as JSON instead of human-readable.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Prepare an execution for execution (transition from Authorized to Prepared).
+    PrepareExecution {
+        /// Execution ID (UUID).
+        execution_id: String,
+
+        /// Server base URL (e.g. http://127.0.0.1:8080).
+        #[arg(long, env = "FERRUMCTL_SERVER_URL")]
+        server_url: Option<String>,
+
+        /// Bearer token for authentication.
+        #[arg(long, env = "FERRUMCTL_BEARER_TOKEN")]
+        bearer_token: Option<String>,
+
+        /// Output as JSON instead of human-readable.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Execute a prepared execution (transition from Prepared to Running).
+    ExecuteExecution {
+        /// Execution ID (UUID).
+        execution_id: String,
+
+        /// JSON payload to pass to the execution adapter.
+        /// Must be a JSON object (e.g. --payload '{"path":"/tmp/test.txt","content":"hello"}').
+        #[arg(long, value_parser = parse_payload_json)]
+        payload: serde_json::Value,
+
+        /// Server base URL (e.g. http://127.0.0.1:8080).
+        #[arg(long, env = "FERRUMCTL_SERVER_URL")]
+        server_url: Option<String>,
+
+        /// Bearer token for authentication.
+        #[arg(long, env = "FERRUMCTL_BEARER_TOKEN")]
+        bearer_token: Option<String>,
+
+        /// Output as JSON instead of human-readable.
+        #[arg(long)]
+        json: bool,
+    },
     /// Verify ledger hash-chain integrity via the server.
     VerifyLedger {
         /// Server base URL (e.g. http://127.0.0.1:8080).
@@ -2073,6 +2164,95 @@ async fn run_pause_execution(
         println!("  Paused: {}", resp.paused);
         if let Some(ts) = resp.paused_at {
             println!("  Paused at: {}", ts);
+        }
+    }
+    Ok(())
+}
+
+async fn run_resume_execution(
+    execution_id: &str,
+    url: Option<String>,
+    token: Option<String>,
+    as_json: bool,
+) -> Result<()> {
+    let exec_id = ExecutionId(execution_id.parse().context("invalid execution_id UUID")?);
+    let req = ResumeExecutionRequest {
+        execution_id: exec_id,
+    };
+
+    let url = resolve_server_url(url)?;
+    let client = ServerClient::new(&url, token);
+    let resp = client.resume_execution(execution_id, &req).await?;
+
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&resp)?);
+    } else {
+        println!("Resume requested for execution: {}", resp.execution_id);
+        println!("  Resumed: {}", resp.resumed);
+        if let Some(ts) = resp.resumed_at {
+            println!("  Resumed at: {}", ts);
+        }
+    }
+    Ok(())
+}
+
+async fn run_prepare_execution(
+    execution_id: &str,
+    url: Option<String>,
+    token: Option<String>,
+    as_json: bool,
+) -> Result<()> {
+    let _ = ExecutionId(execution_id.parse().context("invalid execution_id UUID")?);
+
+    let url = resolve_server_url(url)?;
+    let client = ServerClient::new(&url, token);
+    let resp = client.prepare_execution(execution_id).await?;
+
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&resp)?);
+    } else {
+        println!("Prepare requested for execution: {}", resp.execution_id);
+        println!("  Prepared: {}", resp.prepared);
+        if let Some(ref contract) = resp.rollback_contract {
+            println!("  Rollback contract: {}", contract.contract_id);
+        }
+        if !resp.warnings.is_empty() {
+            println!("  Warnings:");
+            for w in &resp.warnings {
+                println!("    - {}", w);
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn run_execute_execution(
+    execution_id: &str,
+    payload: serde_json::Value,
+    url: Option<String>,
+    token: Option<String>,
+    as_json: bool,
+) -> Result<()> {
+    let exec_id = ExecutionId(execution_id.parse().context("invalid execution_id UUID")?);
+    let req = ExecuteRequest {
+        execution_id: exec_id,
+        payload,
+    };
+
+    let url = resolve_server_url(url)?;
+    let client = ServerClient::new(&url, token);
+    let resp = client.execute_execution(execution_id, &req).await?;
+
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&resp)?);
+    } else {
+        println!("Execute requested for execution: {}", resp.execution_id);
+        println!("  Executed: {}", resp.executed);
+        if let Some(digest) = resp.result_digest {
+            println!("  Result digest: {}", digest);
+        }
+        if let Some(ext_id) = resp.external_id {
+            println!("  External ID: {}", ext_id);
         }
     }
     Ok(())
@@ -2893,6 +3073,7 @@ fn kind_label(kind: &ferrum_proto::ProvenanceEventKind) -> String {
         PK::ErrorRaised => "ErrorRaised".to_string(),
         PK::ExecutionCancelled => "ExecutionCancelled".to_string(),
         PK::ExecutionPaused => "ExecutionPaused".to_string(),
+        PK::ExecutionResumed => "ExecutionResumed".to_string(),
         PK::ExternalEventObserved => "ExternalEventObserved".to_string(),
     }
 }
@@ -2906,6 +3087,11 @@ fn parse_metadata_json(s: &str) -> Result<serde_json::Map<String, serde_json::Va
         serde_json::Value::Object(map) => Ok(map),
         _ => Err(String::from("metadata must be a JSON object")),
     }
+}
+
+/// Parses a JSON string into a serde_json::Value.
+fn parse_payload_json(s: &str) -> Result<serde_json::Value, String> {
+    serde_json::from_str(s).map_err(|e| format!("invalid JSON payload: {}", e))
 }
 
 async fn run_inspect_provenance(options: InspectProvenanceOptions) -> Result<()> {
@@ -3748,6 +3934,32 @@ async fn main() -> Result<()> {
                 json,
             } => {
                 run_pause_execution(&execution_id, server_url, bearer_token, json).await?;
+            }
+            ServerCommand::ResumeExecution {
+                execution_id,
+                server_url,
+                bearer_token,
+                json,
+            } => {
+                run_resume_execution(&execution_id, server_url, bearer_token, json).await?;
+            }
+            ServerCommand::PrepareExecution {
+                execution_id,
+                server_url,
+                bearer_token,
+                json,
+            } => {
+                run_prepare_execution(&execution_id, server_url, bearer_token, json).await?;
+            }
+            ServerCommand::ExecuteExecution {
+                execution_id,
+                payload,
+                server_url,
+                bearer_token,
+                json,
+            } => {
+                run_execute_execution(&execution_id, payload, server_url, bearer_token, json)
+                    .await?;
             }
             ServerCommand::VerifyLedger {
                 server_url,

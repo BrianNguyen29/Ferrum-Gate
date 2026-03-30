@@ -805,6 +805,69 @@ async fn test_process_cancel_execution_not_found() {
     server_handle.abort();
 }
 
+/// Test: cancel-execution fails when execution is in Committed state.
+/// Committed is a terminal state; only pre-commit states (Authorized, Prepared, Running)
+/// can be cancelled.
+#[tokio::test]
+async fn test_process_cancel_execution_committed_state() {
+    let (temp_dir, runtime, _store) = create_test_runtime().await;
+    let _ = &temp_dir;
+
+    let (server_url, server_handle) = start_local_server(runtime).await;
+    let client = Client::new();
+
+    // Seed a committed execution (full flow: intent → proposal → capability →
+    // authorize → prepare → execute → verify → commit).
+    // The execution is in Committed state after this, which is a terminal state.
+    let execution_id =
+        seed_committed_execution(&client, &server_url, RollbackClass::R1SnapshotRecoverable).await;
+
+    // Verify the execution is in Committed state
+    let resp = client
+        .get(&format!("{}/v1/executions/{}", server_url, execution_id))
+        .send()
+        .await
+        .expect("get execution failed");
+    assert_eq!(resp.status(), 200);
+    let exec_json: serde_json::Value = resp
+        .json()
+        .await
+        .expect("failed to parse execution response");
+    let state = exec_json
+        .get("state")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    assert!(
+        state.contains("Committed"),
+        "execution should be in Committed state before test, got {}",
+        state
+    );
+
+    // Cancel via CLI - should fail with conflict (Committed state cannot be cancelled)
+    let output = run_ferrumctl(
+        &server_url,
+        ["cancel-execution", &execution_id.to_string(), "--json"],
+    )
+    .await;
+
+    // Should fail (non-zero exit)
+    assert!(
+        !output.status.success(),
+        "cancel-execution should fail for Committed execution"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("conflict")
+            || stderr.contains("Conflict")
+            || stderr.contains("cannot be cancelled"),
+        "stderr should mention conflict or cannot be cancelled. stderr: {}",
+        stderr
+    );
+
+    server_handle.abort();
+}
+
 // ---------------------------------------------------------------------------
 // Pause execution tests
 // ---------------------------------------------------------------------------
@@ -1029,8 +1092,30 @@ async fn test_process_pause_execution_from_prepared_conflict() {
     let (server_url, server_handle) = start_local_server(runtime).await;
     let client = Client::new();
 
-    // Seed an authorized execution (stops at Authorized state)
-    let execution_id = seed_authorized_execution(&client, &server_url).await;
+    // Seed a prepared execution (stops at Prepared state after prepare step)
+    let execution_id =
+        seed_prepared_execution(&client, &server_url, RollbackClass::R1SnapshotRecoverable).await;
+
+    // Verify the execution is in Prepared state
+    let resp = client
+        .get(&format!("{}/v1/executions/{}", server_url, execution_id))
+        .send()
+        .await
+        .expect("get execution failed");
+    assert_eq!(resp.status(), 200);
+    let exec_json: serde_json::Value = resp
+        .json()
+        .await
+        .expect("failed to parse execution response");
+    let state = exec_json
+        .get("state")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    assert!(
+        state.contains("Prepared"),
+        "execution should be in Prepared state before test, got {}",
+        state
+    );
 
     // Pause via CLI - should fail with conflict (Prepared state cannot be paused)
     let output = run_ferrumctl(
@@ -1043,6 +1128,68 @@ async fn test_process_pause_execution_from_prepared_conflict() {
     assert!(
         !output.status.success(),
         "pause-execution should fail for Prepared execution"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("conflict")
+            || stderr.contains("Conflict")
+            || stderr.contains("cannot be paused"),
+        "stderr should mention conflict or cannot be paused. stderr: {}",
+        stderr
+    );
+
+    server_handle.abort();
+}
+
+/// Test: pause-execution via CLI fails when execution is in Committed state.
+/// Committed is a terminal state; only Running or AwaitingVerification can be paused.
+#[tokio::test]
+async fn test_process_pause_execution_committed_state() {
+    let (temp_dir, runtime, _store) = create_test_runtime().await;
+    let _ = &temp_dir;
+
+    let (server_url, server_handle) = start_local_server(runtime).await;
+    let client = Client::new();
+
+    // Seed a committed execution (full flow: intent → proposal → capability →
+    // authorize → prepare → execute → verify → commit).
+    // The execution is in Committed state after this, which is a terminal state.
+    let execution_id =
+        seed_committed_execution(&client, &server_url, RollbackClass::R1SnapshotRecoverable).await;
+
+    // Verify the execution is in Committed state
+    let resp = client
+        .get(&format!("{}/v1/executions/{}", server_url, execution_id))
+        .send()
+        .await
+        .expect("get execution failed");
+    assert_eq!(resp.status(), 200);
+    let exec_json: serde_json::Value = resp
+        .json()
+        .await
+        .expect("failed to parse execution response");
+    let state = exec_json
+        .get("state")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    assert!(
+        state.contains("Committed"),
+        "execution should be in Committed state before test, got {}",
+        state
+    );
+
+    // Pause via CLI - should fail with conflict (Committed state cannot be paused)
+    let output = run_ferrumctl(
+        &server_url,
+        ["pause-execution", &execution_id.to_string(), "--json"],
+    )
+    .await;
+
+    // Should fail (non-zero exit)
+    assert!(
+        !output.status.success(),
+        "pause-execution should fail for Committed execution"
     );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1084,6 +1231,553 @@ async fn test_process_pause_execution_not_found() {
     assert!(
         stderr.contains("not found") || stderr.contains("404") || stderr.contains("NotFound"),
         "stderr should mention not found. stderr: {}",
+        stderr
+    );
+
+    server_handle.abort();
+}
+
+// ---------------------------------------------------------------------------
+// Prepare execution tests
+// ---------------------------------------------------------------------------
+
+/// Test: `ferrumctl server prepare-execution` transitions authorized execution
+/// to Prepared and exits with code 0.
+#[tokio::test]
+async fn test_process_prepare_execution_via_binary() {
+    let (temp_dir, runtime, _store) = create_test_runtime().await;
+    let _ = &temp_dir;
+
+    let (server_url, server_handle) = start_local_server(runtime).await;
+    let client = Client::new();
+
+    // Seed an authorized execution (stops at Authorized state)
+    let execution_id = seed_authorized_execution(&client, &server_url).await;
+
+    // Prepare via CLI
+    let output = run_ferrumctl(
+        &server_url,
+        ["prepare-execution", &execution_id.to_string(), "--json"],
+    )
+    .await;
+
+    assert!(
+        output.status.success(),
+        "prepare-execution should succeed. stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(&execution_id.to_string()),
+        "stdout should contain execution_id. stdout: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("prepared") || stdout.contains("Prepared"),
+        "stdout should mention 'prepared'. stdout: {}",
+        stdout
+    );
+
+    // Verify execution is now Prepared via API
+    let resp = client
+        .get(&format!("{}/v1/executions/{}", server_url, execution_id))
+        .send()
+        .await
+        .expect("get execution failed");
+    assert_eq!(resp.status(), 200);
+    let exec_json: serde_json::Value = resp
+        .json()
+        .await
+        .expect("failed to parse execution response");
+    let state = exec_json
+        .get("state")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    assert!(
+        state.contains("Prepared"),
+        "execution state should be Prepared after CLI prepare, got {}",
+        state
+    );
+
+    server_handle.abort();
+}
+
+/// Test: `ferrumctl server prepare-execution` fails for non-existent execution.
+#[tokio::test]
+async fn test_process_prepare_execution_not_found() {
+    let (temp_dir, runtime, _store) = create_test_runtime().await;
+    let _ = &temp_dir;
+
+    let (server_url, server_handle) = start_local_server(runtime).await;
+    let _ = server_url;
+
+    let fake_execution_id = ferrum_proto::ExecutionId::new();
+
+    let output = run_ferrumctl(
+        &server_url,
+        [
+            "prepare-execution",
+            &fake_execution_id.to_string(),
+            "--json",
+        ],
+    )
+    .await;
+
+    // Should fail (non-zero exit)
+    assert!(
+        !output.status.success(),
+        "ferrumctl should exit non-zero for non-existent execution"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("not found") || stderr.contains("404") || stderr.contains("NotFound"),
+        "stderr should mention not found. stderr: {}",
+        stderr
+    );
+
+    server_handle.abort();
+}
+
+/// Test: `ferrumctl server prepare-execution` fails when execution is in Committed state.
+/// Committed is a terminal state; prepare must not be called on it.
+#[tokio::test]
+async fn test_process_prepare_execution_committed_state() {
+    let (temp_dir, runtime, _store) = create_test_runtime().await;
+    let _ = &temp_dir;
+
+    let (server_url, server_handle) = start_local_server(runtime).await;
+    let client = Client::new();
+
+    // Seed a committed execution (full flow: intent → proposal → capability →
+    // authorize → prepare → execute → verify → commit).
+    // The execution is in Committed state after this, which is a terminal state.
+    let execution_id =
+        seed_committed_execution(&client, &server_url, RollbackClass::R1SnapshotRecoverable).await;
+
+    // Verify the execution is in Committed state
+    let resp = client
+        .get(&format!("{}/v1/executions/{}", server_url, execution_id))
+        .send()
+        .await
+        .expect("get execution failed");
+    assert_eq!(resp.status(), 200);
+    let exec_json: serde_json::Value = resp
+        .json()
+        .await
+        .expect("failed to parse execution response");
+    let state = exec_json
+        .get("state")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    assert!(
+        state.contains("Committed"),
+        "execution should be in Committed state before test, got {}",
+        state
+    );
+
+    // Try to prepare via CLI - should fail because execution is in Committed (terminal) state
+    let output = run_ferrumctl(
+        &server_url,
+        ["prepare-execution", &execution_id.to_string(), "--json"],
+    )
+    .await;
+
+    // Should fail (non-zero exit)
+    assert!(
+        !output.status.success(),
+        "prepare-execution should fail for Committed execution"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("conflict") || stderr.contains("Conflict") || stderr.contains("terminal"),
+        "stderr should mention conflict or terminal state. stderr: {}",
+        stderr
+    );
+
+    server_handle.abort();
+}
+
+// ---------------------------------------------------------------------------
+// Execute execution tests
+// ---------------------------------------------------------------------------
+
+/// Helper: seeds an execution and leaves it in Prepared state.
+/// Returns the execution_id.
+/// The execution is in Prepared state after this (prepare was called, but not execute).
+async fn seed_prepared_execution(
+    client: &Client,
+    server_url: &str,
+    rollback_class: RollbackClass,
+) -> ferrum_proto::ExecutionId {
+    // Step 1: Compile intent
+    let req = IntentCompileRequest {
+        principal_id: ferrum_proto::PrincipalId::new(),
+        session_id: None,
+        channel_id: None,
+        title: "Test Intent".to_string(),
+        goal: "Test goal".to_string(),
+        agent_plan_summary: None,
+        trusted_context: ferrum_proto::JsonMap::new(),
+        raw_inputs: vec![],
+        requested_resource_scope: vec![ResourceSelector::FilesystemPath {
+            path: "/tmp".to_string(),
+            mode: ResourceMode::Write,
+            content_hash: None,
+        }],
+        requested_risk_tier: Some(RiskTier::Medium),
+        effect_type: Some(EffectType::FileMutation),
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let resp = client
+        .post(&format!("{}/v1/intents/compile", server_url))
+        .json(&req)
+        .send()
+        .await
+        .expect("intent compile failed");
+    assert_eq!(resp.status(), 200);
+    let compile_resp: IntentCompileResponse =
+        resp.json().await.expect("failed to parse compile response");
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Step 2: Create and evaluate proposal
+    let proposal = ActionProposal {
+        proposal_id: ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Execute mutation".to_string(),
+        tool_name: "fs.write".to_string(),
+        server_name: "workspace".to_string(),
+        raw_arguments: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        expected_effect: "write a file".to_string(),
+        estimated_risk: RiskTier::Medium,
+        requested_rollback_class: rollback_class,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let resp = client
+        .post(&format!(
+            "{}/v1/proposals/{}/evaluate",
+            server_url, proposal_id
+        ))
+        .json(&proposal)
+        .send()
+        .await
+        .expect("proposal evaluate failed");
+    assert_eq!(resp.status(), 200);
+
+    // Step 3: Mint capability
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "workspace".to_string(),
+            tool_name: "fs.write".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![ResourceBinding::File {
+            path: "/tmp/test.txt".to_string(),
+            mode: ResourceMode::Write,
+            required_hash: None,
+        }],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let resp = client
+        .post(&format!("{}/v1/capabilities/mint", server_url))
+        .json(&mint_req)
+        .send()
+        .await
+        .expect("capability mint failed");
+    assert_eq!(resp.status(), 200);
+    let mint_resp: ferrum_proto::CapabilityMintResponse =
+        resp.json().await.expect("failed to parse mint response");
+    let capability_id = mint_resp.lease.capability_id;
+
+    // Step 4: Authorize execution
+    let auth_req = AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+
+    let resp = client
+        .post(&format!("{}/v1/executions/authorize", server_url))
+        .json(&auth_req)
+        .send()
+        .await
+        .expect("execution authorize failed");
+    assert_eq!(resp.status(), 200);
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        resp.json().await.expect("failed to parse auth response");
+    let execution_id = auth_resp.execution.execution_id;
+
+    // Step 5: Prepare execution (stop here - execution is now in Prepared state)
+    let resp = client
+        .post(&format!(
+            "{}/v1/executions/{}/prepare",
+            server_url, execution_id
+        ))
+        .send()
+        .await
+        .expect("execution prepare failed");
+    assert_eq!(resp.status(), 200);
+
+    execution_id
+}
+
+/// Test: `ferrumctl server execute-execution` transitions prepared execution
+/// to Running and exits with code 0.
+#[tokio::test]
+async fn test_process_execute_execution_via_binary() {
+    let (temp_dir, runtime, _store) = create_test_runtime().await;
+    let _ = &temp_dir;
+
+    let (server_url, server_handle) = start_local_server(runtime).await;
+    let client = Client::new();
+
+    // Seed a prepared execution
+    let execution_id =
+        seed_prepared_execution(&client, &server_url, RollbackClass::R1SnapshotRecoverable).await;
+
+    // Execute via CLI
+    let payload = serde_json::json!({"path": "/tmp/test.txt", "content": "hello"});
+    let output = run_ferrumctl(
+        &server_url,
+        [
+            "execute-execution",
+            &execution_id.to_string(),
+            "--payload",
+            &payload.to_string(),
+            "--json",
+        ],
+    )
+    .await;
+
+    assert!(
+        output.status.success(),
+        "execute-execution should succeed. stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(&execution_id.to_string()),
+        "stdout should contain execution_id. stdout: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("executed") || stdout.contains("Executed"),
+        "stdout should mention 'executed'. stdout: {}",
+        stdout
+    );
+
+    // Verify execution is now Running (or beyond) via API
+    let resp = client
+        .get(&format!("{}/v1/executions/{}", server_url, execution_id))
+        .send()
+        .await
+        .expect("get execution failed");
+    assert_eq!(resp.status(), 200);
+    let exec_json: serde_json::Value = resp
+        .json()
+        .await
+        .expect("failed to parse execution response");
+    let state = exec_json
+        .get("state")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    assert!(
+        state.contains("Running") || state.contains("AwaitingVerification"),
+        "execution state should be Running or AwaitingVerification after CLI execute, got {}",
+        state
+    );
+
+    server_handle.abort();
+}
+
+/// Test: `ferrumctl server execute-execution` fails for non-existent execution.
+#[tokio::test]
+async fn test_process_execute_execution_not_found() {
+    let (temp_dir, runtime, _store) = create_test_runtime().await;
+    let _ = &temp_dir;
+
+    let (server_url, server_handle) = start_local_server(runtime).await;
+    let _ = server_url;
+
+    let fake_execution_id = ferrum_proto::ExecutionId::new();
+    let payload = serde_json::json!({"test": "data"});
+
+    let output = run_ferrumctl(
+        &server_url,
+        [
+            "execute-execution",
+            &fake_execution_id.to_string(),
+            "--payload",
+            &payload.to_string(),
+            "--json",
+        ],
+    )
+    .await;
+
+    // Should fail (non-zero exit)
+    assert!(
+        !output.status.success(),
+        "ferrumctl should exit non-zero for non-existent execution"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("not found") || stderr.contains("404") || stderr.contains("NotFound"),
+        "stderr should mention not found. stderr: {}",
+        stderr
+    );
+
+    server_handle.abort();
+}
+
+/// Test: `ferrumctl server execute-execution` fails when execution is not in Prepared state.
+/// Execution must be Prepared before execute; a Committed execution should be rejected.
+#[tokio::test]
+async fn test_process_execute_execution_invalid_state() {
+    let (temp_dir, runtime, _store) = create_test_runtime().await;
+    let _ = &temp_dir;
+
+    let (server_url, server_handle) = start_local_server(runtime).await;
+    let client = Client::new();
+
+    // Seed a committed execution (full flow: intent → proposal → capability →
+    // authorize → prepare → execute → verify → commit).
+    // The execution is in Committed state after this, which is NOT Prepared.
+    let execution_id =
+        seed_committed_execution(&client, &server_url, RollbackClass::R1SnapshotRecoverable).await;
+
+    // Verify the execution is in Committed state (not Prepared)
+    let resp = client
+        .get(&format!("{}/v1/executions/{}", server_url, execution_id))
+        .send()
+        .await
+        .expect("get execution failed");
+    assert_eq!(resp.status(), 200);
+    let exec_json: serde_json::Value = resp
+        .json()
+        .await
+        .expect("failed to parse execution response");
+    let state = exec_json
+        .get("state")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    assert!(
+        state.contains("Committed"),
+        "execution should be in Committed state before test, got {}",
+        state
+    );
+
+    // Try to execute via CLI - should fail because execution is not in Prepared state
+    let payload = serde_json::json!({"path": "/tmp/test.txt", "content": "hello"});
+    let output = run_ferrumctl(
+        &server_url,
+        [
+            "execute-execution",
+            &execution_id.to_string(),
+            "--payload",
+            &payload.to_string(),
+            "--json",
+        ],
+    )
+    .await;
+
+    // Should fail (non-zero exit)
+    assert!(
+        !output.status.success(),
+        "execute-execution should fail for Committed execution (not Prepared)"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("conflict") || stderr.contains("Conflict") || stderr.contains("Prepared"),
+        "stderr should mention conflict or Prepared state requirement. stderr: {}",
+        stderr
+    );
+
+    server_handle.abort();
+}
+
+// ---------------------------------------------------------------------------
+// Resume execution tests
+// ---------------------------------------------------------------------------
+
+/// Test: `ferrumctl server resume-execution` fails when execution is not in Paused state.
+/// Resume is only allowed from Paused; Running executions should be rejected.
+#[tokio::test]
+async fn test_process_resume_execution_invalid_state() {
+    let (temp_dir, runtime, _store) = create_test_runtime().await;
+    let _ = &temp_dir;
+
+    let (server_url, server_handle) = start_local_server(runtime).await;
+    let client = Client::new();
+
+    // Seed a running execution (prepare → execute, but not verify).
+    // The execution is in Running state, which is NOT Paused.
+    let execution_id =
+        seed_running_execution(&client, &server_url, RollbackClass::R1SnapshotRecoverable).await;
+
+    // Verify the execution is in Running state (not Paused)
+    let resp = client
+        .get(&format!("{}/v1/executions/{}", server_url, execution_id))
+        .send()
+        .await
+        .expect("get execution failed");
+    assert_eq!(resp.status(), 200);
+    let exec_json: serde_json::Value = resp
+        .json()
+        .await
+        .expect("failed to parse execution response");
+    let state = exec_json
+        .get("state")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    assert!(
+        state.contains("Running"),
+        "execution should be in Running state before test, got {}",
+        state
+    );
+
+    // Try to resume via CLI - should fail because execution is not in Paused state
+    let output = run_ferrumctl(
+        &server_url,
+        ["resume-execution", &execution_id.to_string(), "--json"],
+    )
+    .await;
+
+    // Should fail (non-zero exit)
+    assert!(
+        !output.status.success(),
+        "resume-execution should fail for Running execution (not Paused)"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("conflict")
+            || stderr.contains("Conflict")
+            || stderr.contains("cannot be resumed"),
+        "stderr should mention conflict or cannot be resumed. stderr: {}",
         stderr
     );
 
