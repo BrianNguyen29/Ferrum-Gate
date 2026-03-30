@@ -1,5 +1,8 @@
 use async_trait::async_trait;
-use ferrum_proto::{EventId, ExecutionId, ProvenanceEdge, ProvenanceEvent, ProvenanceQueryRequest};
+use ferrum_proto::{
+    EventId, ExecutionId, FlaggedEvent, ProvenanceEdge, ProvenanceEvent, ProvenanceQueryRequest,
+    ProvenanceStatsRequest, ProvenanceStatsResponse,
+};
 use sqlx::{Row, SqlitePool};
 
 use crate::{ProvenanceRepo, Result};
@@ -385,5 +388,119 @@ impl ProvenanceRepo for SqliteProvenanceRepo {
 
         let visited = self.collect_lineage_event_ids(direct_event_ids).await?;
         self.fetch_events_by_ids(&visited).await
+    }
+
+    async fn query_stats(
+        &self,
+        request: &ProvenanceStatsRequest,
+    ) -> Result<ProvenanceStatsResponse> {
+        let max_events = request.max_events.unwrap_or(10_000).min(100_000) as usize;
+
+        // Convert stats request to query request for fetching events
+        let query_request = ProvenanceQueryRequest {
+            intent_id: request.intent_id.clone(),
+            proposal_id: request.proposal_id.clone(),
+            execution_id: request.execution_id.clone(),
+            capability_id: request.capability_id.clone(),
+            event_kind: request.event_kind.clone(),
+            terminal_only: None,
+            since: request.since.clone(),
+            until: request.until.clone(),
+            limit: Some(max_events as u32),
+            cursor: None,
+        };
+
+        let (events, _) = self.query_paginated(&query_request).await?;
+
+        // Compute stats from events
+        let mut total_events: u64 = 0;
+        let mut kinds: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+        let mut terminal_count: u64 = 0;
+        let mut issue_count: u64 = 0;
+        let mut events_without_execution_id: u64 = 0;
+        let mut unique_intents: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        let mut unique_proposals: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        let mut unique_executions: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        let mut flagged_events: Vec<FlaggedEvent> = Vec::new();
+
+        // Terminal event kinds
+        let terminal_kinds = [
+            "SideEffectCommitted",
+            "SideEffectCompensated",
+            "SideEffectRolledBack",
+            "ApprovalDenied",
+            "Quarantined",
+            "ErrorRaised",
+        ];
+        // Issue event kinds
+        let issue_kinds = [
+            "ErrorRaised",
+            "Quarantined",
+            "ApprovalDenied",
+            "SideEffectRolledBack",
+        ];
+
+        for event in &events {
+            total_events += 1;
+
+            // Count by kind
+            let kind_str = format!("{:?}", event.kind);
+            *kinds.entry(kind_str.clone()).or_insert(0) += 1;
+
+            // Check if terminal
+            if terminal_kinds.contains(&kind_str.as_str()) {
+                terminal_count += 1;
+            }
+
+            // Check if issue
+            if issue_kinds.contains(&kind_str.as_str()) {
+                issue_count += 1;
+            }
+
+            // Track events without execution_id
+            if event.execution_id.is_none() {
+                events_without_execution_id += 1;
+            }
+
+            // Track unique entities
+            if let Some(ref intent_id) = event.intent_id {
+                unique_intents.insert(intent_id.to_string());
+            }
+            if let Some(ref proposal_id) = event.proposal_id {
+                unique_proposals.insert(proposal_id.to_string());
+            }
+            if let Some(ref execution_id) = event.execution_id {
+                unique_executions.insert(execution_id.to_string());
+            }
+
+            // Flag terminal events missing execution_id
+            if terminal_kinds.contains(&kind_str.as_str()) && event.execution_id.is_none() {
+                flagged_events.push(FlaggedEvent {
+                    event_id: event.event_id,
+                    kind: event.kind.clone(),
+                    reason: "terminal event missing execution_id".to_string(),
+                });
+            }
+        }
+
+        // Limit flagged events
+        if flagged_events.len() > 100 {
+            flagged_events.truncate(100);
+        }
+
+        Ok(ProvenanceStatsResponse {
+            total_events,
+            kinds,
+            terminal_count,
+            issue_count,
+            events_without_execution_id,
+            unique_intents: unique_intents.len() as u64,
+            unique_proposals: unique_proposals.len() as u64,
+            unique_executions: unique_executions.len() as u64,
+            flagged_events,
+        })
     }
 }

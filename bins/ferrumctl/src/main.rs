@@ -7,7 +7,7 @@ use ferrum_proto::common::{ActorRef, ActorType};
 use ferrum_proto::provenance::{
     LineageQueryRequest, LineageQueryResponse, ProvenanceEdgeType, ProvenanceEventKind,
     ProvenanceExportRequest, ProvenanceExportResponse, ProvenanceReplayRequest,
-    ProvenanceReplayResponse,
+    ProvenanceReplayResponse, ProvenanceStatsRequest, ProvenanceStatsResponse,
 };
 use ferrum_proto::{CapabilityId, ExecutionId, IntentId, ProposalId};
 use reqwest::Client;
@@ -725,6 +725,18 @@ impl ServerClient {
     ) -> Result<ExternalEventIngestResponse> {
         let resp = self
             .request(reqwest::Method::POST, "/v1/provenance/events/external")
+            .json(req)
+            .send()
+            .await?;
+        self.decode_json(resp).await
+    }
+
+    async fn get_provenance_stats(
+        &self,
+        req: &ProvenanceStatsRequest,
+    ) -> Result<ProvenanceStatsResponse> {
+        let resp = self
+            .request(reqwest::Method::POST, "/v1/provenance/stats")
             .json(req)
             .send()
             .await?;
@@ -3046,54 +3058,69 @@ async fn run_inspect_provenance_stats(config: InspectProvenanceStatsConfig) -> R
     let url = resolve_server_url(url)?;
     let client = ServerClient::new(&url, token);
 
-    let max_events = max_events.unwrap_or(10_000).min(100_000);
-    let page_limit = std::cmp::min(max_events, 1000);
+    // Build stats request with properly parsed UUIDs
+    let stats_request = ProvenanceStatsRequest {
+        intent_id: parse_intent_id(intent_id)?,
+        proposal_id: parse_proposal_id(proposal_id)?,
+        execution_id: parse_execution_id(execution_id)?,
+        capability_id: parse_capability_id(capability_id)?,
+        event_kind: parse_event_kind(event_kind)?,
+        since: parse_timestamp(since)?,
+        until: parse_timestamp(until)?,
+        max_events,
+    };
 
-    let mut all_events: Vec<ProvenanceEvent> = Vec::new();
-    let mut cursor: Option<String> = None;
-
-    loop {
-        let query = ProvenanceQueryRequest {
-            intent_id: intent_id.clone(),
-            proposal_id: proposal_id.clone(),
-            execution_id: execution_id.clone(),
-            capability_id: capability_id.clone(),
-            event_kind: event_kind.clone(),
-            terminal_only: None,
-            since: since.clone(),
-            until: until.clone(),
-            limit: Some(page_limit),
-            cursor: cursor.clone(),
-        };
-
-        let response = client.query_provenance(&query).await?;
-
-        for event in response.events {
-            if all_events.len() >= max_events as usize {
-                break;
-            }
-            all_events.push(event);
-        }
-
-        if all_events.len() >= max_events as usize {
-            break;
-        }
-
-        match response.next_cursor {
-            Some(next_cursor) => {
-                cursor = Some(next_cursor);
-            }
-            None => break,
-        }
-    }
-
-    let stats = aggregate_provenance_stats(&all_events);
+    // Call server-side stats endpoint
+    let stats_response = client.get_provenance_stats(&stats_request).await?;
 
     if as_json {
-        let json_stats: ProvenanceStatsJson = stats.into();
-        println!("{}", serde_json::to_string_pretty(&json_stats)?);
+        // For JSON output, use the server response directly
+        println!("{}", serde_json::to_string_pretty(&stats_response)?);
     } else {
-        println!("{}", format_provenance_stats_text(&stats));
+        // Format as text to match existing output semantics
+        println!("Total events: {}", stats_response.total_events);
+        println!("Terminal events: {}", stats_response.terminal_count);
+        println!(
+            "Issue events (error/denied/quarantined/rolledback): {}",
+            stats_response.issue_count
+        );
+        println!(
+            "Events missing execution_id: {}",
+            stats_response.events_without_execution_id
+        );
+        println!(
+            "Unique intents: {}, proposals: {}, executions: {}",
+            stats_response.unique_intents,
+            stats_response.unique_proposals,
+            stats_response.unique_executions
+        );
+
+        // Sort kinds by count descending for readability
+        let mut kinds: Vec<(String, u64)> = stats_response
+            .kinds
+            .iter()
+            .map(|(k, v)| (k.clone(), *v))
+            .collect();
+        kinds.sort_by(|a, b| b.1.cmp(&a.1));
+        println!("\nEvents by kind:");
+        for (kind, count) in kinds {
+            println!("  {}: {}", kind, count);
+        }
+
+        if !stats_response.flagged_events.is_empty() {
+            println!(
+                "\nFlagged events ({}):",
+                stats_response.flagged_events.len()
+            );
+            for flagged in &stats_response.flagged_events {
+                println!(
+                    "  [{:?}] {}  {}",
+                    flagged.kind, flagged.event_id, flagged.reason
+                );
+            }
+        } else {
+            println!("\nNo flagged events.");
+        }
     }
 
     Ok(())
