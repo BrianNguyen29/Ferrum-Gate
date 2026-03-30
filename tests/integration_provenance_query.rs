@@ -1532,6 +1532,7 @@ async fn test_provenance_query_pagination_with_limit() {
         intent_id: None,
         proposal_id: None,
         execution_id: Some(execution_id),
+        execution_ids: Vec::new(),
         capability_id: None,
         event_kind: None,
         terminal_only: None,
@@ -1626,6 +1627,7 @@ async fn test_provenance_query_cursor_pagination() {
         intent_id: None,
         proposal_id: None,
         execution_id: Some(execution_id),
+        execution_ids: Vec::new(),
         capability_id: None,
         event_kind: None,
         terminal_only: None,
@@ -1662,6 +1664,7 @@ async fn test_provenance_query_cursor_pagination() {
             intent_id: None,
             proposal_id: None,
             execution_id: Some(execution_id),
+            execution_ids: Vec::new(),
             capability_id: None,
             event_kind: None,
             terminal_only: None,
@@ -1751,6 +1754,7 @@ async fn test_provenance_query_filter_with_pagination() {
         intent_id: None,
         proposal_id: None,
         execution_id: Some(execution_id),
+        execution_ids: Vec::new(),
         capability_id: None,
         event_kind: Some(ProvenanceEventKind::ToolCallPrepared),
         terminal_only: None,
@@ -3063,4 +3067,263 @@ async fn test_provenance_stats_endpoint_empty() {
     assert_eq!(stats_resp.unique_proposals, 0);
     assert_eq!(stats_resp.unique_executions, 0);
     assert!(stats_resp.flagged_events.is_empty());
+}
+
+/// Test: query by execution_ids (multiple execution IDs) returns matching events
+#[tokio::test]
+async fn test_provenance_query_by_execution_ids() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Create two separate executions
+    let (execution_id1, _intent_id1, _proposal_id1) = create_execution_with_events(&runtime).await;
+    let (execution_id2, _intent_id2, _proposal_id2) = create_execution_with_events(&runtime).await;
+
+    // Query using execution_ids with both execution IDs
+    let query_req = ProvenanceQueryRequest {
+        intent_id: None,
+        proposal_id: None,
+        execution_id: None,
+        execution_ids: vec![execution_id1, execution_id2],
+        capability_id: None,
+        event_kind: None,
+        terminal_only: None,
+        since: None,
+        until: None,
+        ..Default::default()
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/provenance/query")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&query_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let query_resp: ferrum_proto::ProvenanceQueryResponse = serde_json::from_slice(&body).unwrap();
+
+    // Should have events for both executions
+    assert!(
+        !query_resp.events.is_empty(),
+        "expected events for execution_ids query"
+    );
+
+    // All returned events should belong to either execution_id1 or execution_id2
+    let mut found_exec1 = false;
+    let mut found_exec2 = false;
+    for event in &query_resp.events {
+        match event.execution_id {
+            Some(eid) if eid == execution_id1 => found_exec1 = true,
+            Some(eid) if eid == execution_id2 => found_exec2 = true,
+            _ => panic!("event {} belongs to unexpected execution", event.event_id),
+        }
+    }
+    assert!(
+        found_exec1,
+        "expected at least one event from execution_id1"
+    );
+    assert!(
+        found_exec2,
+        "expected at least one event from execution_id2"
+    );
+
+    // Query using execution_ids with only one of the two execution IDs
+    let query_req = ProvenanceQueryRequest {
+        intent_id: None,
+        proposal_id: None,
+        execution_id: None,
+        execution_ids: vec![execution_id1],
+        capability_id: None,
+        event_kind: None,
+        terminal_only: None,
+        since: None,
+        until: None,
+        ..Default::default()
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/provenance/query")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&query_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let query_resp: ferrum_proto::ProvenanceQueryResponse = serde_json::from_slice(&body).unwrap();
+
+    // All events should belong to execution_id1 only
+    for event in &query_resp.events {
+        assert_eq!(
+            event.execution_id,
+            Some(execution_id1),
+            "event should belong to execution_id1 only"
+        );
+    }
+
+    // Query with non-existent execution_ids returns empty
+    let query_req = ProvenanceQueryRequest {
+        intent_id: None,
+        proposal_id: None,
+        execution_id: None,
+        execution_ids: vec![
+            ferrum_proto::ExecutionId::new(),
+            ferrum_proto::ExecutionId::new(),
+        ],
+        capability_id: None,
+        event_kind: None,
+        terminal_only: None,
+        since: None,
+        until: None,
+        ..Default::default()
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/provenance/query")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&query_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let query_resp: ferrum_proto::ProvenanceQueryResponse = serde_json::from_slice(&body).unwrap();
+    assert!(
+        query_resp.events.is_empty(),
+        "expected empty events for non-existent execution_ids"
+    );
+}
+
+/// Test: query by both execution_id and execution_ids uses OR semantics
+#[tokio::test]
+async fn test_provenance_query_execution_id_and_execution_ids_or_semantics() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Create two separate executions
+    let (execution_id1, _intent_id1, _proposal_id1) = create_execution_with_events(&runtime).await;
+    let (execution_id2, _intent_id2, _proposal_id2) = create_execution_with_events(&runtime).await;
+
+    // Query using execution_id=exec_id1 AND execution_ids=[exec_id2]
+    // Should return events from EITHER execution (OR semantics)
+    let query_req = ProvenanceQueryRequest {
+        intent_id: None,
+        proposal_id: None,
+        execution_id: Some(execution_id1),
+        execution_ids: vec![execution_id2],
+        capability_id: None,
+        event_kind: None,
+        terminal_only: None,
+        since: None,
+        until: None,
+        ..Default::default()
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/provenance/query")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&query_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let query_resp: ferrum_proto::ProvenanceQueryResponse = serde_json::from_slice(&body).unwrap();
+
+    // Should have events from both execution_id1 and execution_id2
+    assert!(
+        !query_resp.events.is_empty(),
+        "expected events when using execution_id OR execution_ids"
+    );
+
+    let mut found_exec1 = false;
+    let mut found_exec2 = false;
+    for event in &query_resp.events {
+        match event.execution_id {
+            Some(eid) if eid == execution_id1 => found_exec1 = true,
+            Some(eid) if eid == execution_id2 => found_exec2 = true,
+            None => panic!("event {} has no execution_id", event.event_id),
+            _ => panic!("event {} belongs to unexpected execution", event.event_id),
+        }
+    }
+    assert!(found_exec1, "expected at least one event from execution_id");
+    assert!(
+        found_exec2,
+        "expected at least one event from execution_ids"
+    );
+
+    // Query execution_id=exec_id1 AND execution_ids=[exec_id1]
+    // Should return only events from execution_id1 (both filters match the same execution)
+    let query_req = ProvenanceQueryRequest {
+        intent_id: None,
+        proposal_id: None,
+        execution_id: Some(execution_id1),
+        execution_ids: vec![execution_id1],
+        capability_id: None,
+        event_kind: None,
+        terminal_only: None,
+        since: None,
+        until: None,
+        ..Default::default()
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/provenance/query")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&query_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let query_resp: ferrum_proto::ProvenanceQueryResponse = serde_json::from_slice(&body).unwrap();
+
+    // All events should belong to execution_id1
+    for event in &query_resp.events {
+        assert_eq!(
+            event.execution_id,
+            Some(execution_id1),
+            "event should belong to execution_id1 when both filters match same execution"
+        );
+    }
 }

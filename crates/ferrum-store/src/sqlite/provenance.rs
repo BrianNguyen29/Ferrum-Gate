@@ -162,9 +162,44 @@ impl ProvenanceRepo for SqliteProvenanceRepo {
             sql_params.push(proposal_id.to_string());
         }
 
-        if let Some(ref execution_id) = request.execution_id {
+        // Handle execution_id and execution_ids with additive (OR) logic
+        let has_single_exec = request.execution_id.is_some();
+        let has_multi_exec = !request.execution_ids.is_empty();
+
+        if has_single_exec && has_multi_exec {
+            // Both single and multiple: use single grouped OR condition
+            // (execution_id = $X OR execution_id IN ($Y1, $Y2, ...))
+            let single_idx = sql_params.len() + 1;
+            sql_params.push(request.execution_id.as_ref().unwrap().to_string());
+
+            let placeholders: Vec<String> = request
+                .execution_ids
+                .iter()
+                .enumerate()
+                .map(|(i, _)| format!("${}", sql_params.len() + 1 + i))
+                .collect();
+            for exec_id in &request.execution_ids {
+                sql_params.push(exec_id.to_string());
+            }
+            conditions.push(format!(
+                "(execution_id = ${} OR execution_id IN ({}))",
+                single_idx,
+                placeholders.join(", ")
+            ));
+        } else if has_single_exec {
             conditions.push(format!("execution_id = ${}", sql_params.len() + 1));
-            sql_params.push(execution_id.to_string());
+            sql_params.push(request.execution_id.as_ref().unwrap().to_string());
+        } else if has_multi_exec {
+            let placeholders: Vec<String> = request
+                .execution_ids
+                .iter()
+                .enumerate()
+                .map(|(i, _)| format!("${}", sql_params.len() + 1 + i))
+                .collect();
+            conditions.push(format!("execution_id IN ({})", placeholders.join(", ")));
+            for exec_id in &request.execution_ids {
+                sql_params.push(exec_id.to_string());
+            }
         }
 
         if let Some(ref capability_id) = request.capability_id {
@@ -401,6 +436,7 @@ impl ProvenanceRepo for SqliteProvenanceRepo {
             intent_id: request.intent_id.clone(),
             proposal_id: request.proposal_id.clone(),
             execution_id: request.execution_id.clone(),
+            execution_ids: Vec::new(),
             capability_id: request.capability_id.clone(),
             event_kind: request.event_kind.clone(),
             terminal_only: None,

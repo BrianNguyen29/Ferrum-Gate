@@ -2341,6 +2341,7 @@ async fn export_provenance(
         intent_id: request.intent_id,
         proposal_id: request.proposal_id,
         execution_id: request.execution_id,
+        execution_ids: Vec::new(),
         capability_id: request.capability_id,
         event_kind: request.event_kind.clone(),
         terminal_only: request.terminal_only,
