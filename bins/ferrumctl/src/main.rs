@@ -668,6 +668,12 @@ impl ServerClient {
         self.decode_json(resp).await
     }
 
+    async fn revoke_capability(&self, capability_id: &str) -> Result<serde_json::Value> {
+        let path = format!("/v1/capabilities/{}/revoke", capability_id);
+        let resp = self.request(reqwest::Method::POST, &path).send().await?;
+        self.decode_json(resp).await
+    }
+
     async fn pause_execution(
         &self,
         execution_id: &str,
@@ -1657,6 +1663,23 @@ enum ServerCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Revoke a capability by ID.
+    RevokeCapability {
+        /// Capability ID (UUID).
+        capability_id: String,
+
+        /// Server base URL (e.g. http://127.0.0.1:8080).
+        #[arg(long, env = "FERRUMCTL_SERVER_URL")]
+        server_url: Option<String>,
+
+        /// Bearer token for authentication.
+        #[arg(long, env = "FERRUMCTL_BEARER_TOKEN")]
+        bearer_token: Option<String>,
+
+        /// Output as JSON instead of human-readable.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -2138,6 +2161,35 @@ async fn run_cancel_execution(
         if let Some(ts) = resp.cancelled_at {
             println!("  Cancelled at: {}", ts);
         }
+    }
+    Ok(())
+}
+
+async fn run_revoke_capability(
+    capability_id: &str,
+    url: Option<String>,
+    token: Option<String>,
+    as_json: bool,
+) -> Result<()> {
+    let _ = CapabilityId(
+        capability_id
+            .parse()
+            .context("invalid capability_id UUID")?,
+    );
+
+    let url = resolve_server_url(url)?;
+    let client = ServerClient::new(&url, token);
+    let resp = client.revoke_capability(capability_id).await?;
+
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&resp)?);
+    } else {
+        let ok = resp.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+        let cap_id = resp
+            .get("capability_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        println!("Capability {} revoked: {}", cap_id, ok);
     }
     Ok(())
 }
@@ -3967,6 +4019,14 @@ async fn main() -> Result<()> {
                 json,
             } => {
                 run_verify_ledger(server_url, bearer_token, json).await?;
+            }
+            ServerCommand::RevokeCapability {
+                capability_id,
+                server_url,
+                bearer_token,
+                json,
+            } => {
+                run_revoke_capability(&capability_id, server_url, bearer_token, json).await?;
             }
         },
         Command::Debug { sub } => match sub {
