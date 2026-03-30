@@ -32,26 +32,45 @@ The following REST endpoints are in the v1 single-node support contract:
 | POST | /v1/capabilities/mint | Mint a capability lease |
 | POST | /v1/executions/authorize | Authorize execution |
 | POST | /v1/executions/{execution_id}/prepare | Prepare rollback/preflight |
-| POST | /v1/executions/{execution_id}/compensate | Compensate (may be noop-backed) |
+| POST | /v1/executions/{execution_id}/execute | Execute the prepared operation |
+| POST | /v1/executions/{execution_id}/verify | Verify execution result against intent and policy |
+| POST | /v1/executions/{execution_id}/cancel | Cancel execution in pre-execute state (Proposed, Authorized, Prepared) |
+| POST | /v1/executions/{execution_id}/pause | Pause execution in running state (Running, AwaitingVerification) |
+| POST | /v1/executions/{execution_id}/resume | Resume paused execution |
+| POST | /v1/executions/{execution_id}/compensate | Compensate execution (may be noop-backed) |
+| POST | /v1/executions/{execution_id}/rollback | Rollback/compensate via rollback contract |
 | GET | /v1/executions/{execution_id} | Inspect execution record |
 | GET | /v1/approvals | List pending approvals (pagination, filter by proposal_id) |
 | GET | /v1/approvals/{approval_id} | Get specific approval |
+| POST | /v1/approvals/{approval_id}/resolve | Resolve a pending approval (approve or deny) |
 | GET | /v1/provenance/lineage/{execution_id} | Get lineage for execution |
 | POST | /v1/provenance/lineage | Multi-hop lineage query (ancestors/descendants/both, bounded depth) |
 | POST | /v1/provenance/query | Query provenance events (intent_id, execution_id, capability_id, event_kind, time range) |
 
-### 1.3 CLI surface (inspect-only)
+### 1.3 CLI surface
 
 The following `ferrumctl` commands are in the v1 single-node support contract:
 
+**Read-only:**
 - `ferrumctl server health` — shallow health probe
 - `ferrumctl server inspect-execution <execution_id>` — fetch execution record
 - `ferrumctl server inspect-approvals` — list approvals (pagination/filtering available via REST API at `/v1/approvals`)
 - `ferrumctl server inspect-approval <approval_id>` — fetch single approval
 - `ferrumctl server inspect-lineage <execution_id>` — fetch lineage for execution
 - `ferrumctl server inspect-provenance --intent-id <intent_id>` — query provenance events (intent-id-only via CLI; richer filtering via POST /v1/provenance/query)
+- `ferrumctl server watch-execution <execution_id>` — bounded polling for execution terminal state
+- `ferrumctl server watch-approvals` — bounded polling for approval changes
+- `ferrumctl server inspect-lineage-query` — multi-hop lineage query via `--ancestry`/`--descendants` flags
 
-Mutating `ferrumctl` commands are post-v1 scope.
+**Mutating:**
+- `ferrumctl server resolve-approval <approval_id> --approve|--deny` — resolve a pending approval
+- `ferrumctl server cancel-execution <execution_id>` — cancel an execution in pre-execute state
+- `ferrumctl server pause-execution <execution_id>` — pause an execution in running state
+- `ferrumctl server resume-execution <execution_id>` — resume a paused execution
+- `ferrumctl server prepare-execution <execution_id>` — prepare an execution for execution
+- `ferrumctl server execute-execution <execution_id>` — execute a prepared execution
+- `ferrumctl server compensate-execution <execution_id>` — trigger compensation on an execution
+- `ferrumctl server rollback-execution <execution_id>` — trigger rollback on an execution
 
 ---
 
@@ -72,11 +91,10 @@ The following are explicitly out of scope for FerrumGate v1 single-node:
   These are skeleton crate/API shapes only; no production-verified side-effect integrations exist in v1.
 - Guaranteed external undo via adapter. Compensate may be noop-backed.
 
-### 2.3 Routes not in v1 router
+### 2.3 Routes with different visibility
 
-- `POST /v1/executions/{id}/commit` — **not exposed** in the v1 router.
-- `POST /v1/executions/{id}/rollback` — **not exposed** in the v1 router.
-  The gateway flow terminates at compensate as the recovery endpoint.
+- `POST /v1/executions/{id}/commit` — **exposed** in the v1 router and OpenAPI spec (`server.rs:145`).
+  Commit finalizes a verified execution. The gateway flow uses compensate as the primary recovery endpoint; commit is available but typically not needed for single-node operation.
 
 ### 2.4 Upgrade tracks
 
@@ -120,11 +138,13 @@ Restoring from a backup overwrites the entire store. Any executions,
 intents, approvals, or provenance events created after the backup
 timestamp are permanently lost. There is no incremental restore in v1.
 
-### 3.5 CLI is inspect-only
+### 3.5 Mutating CLI commands exist alongside REST API
 
-`ferrumctl` provides read/inspect commands only. There are no mutating
-commands (e.g., no `ferrumctl intent create`, no `ferrumctl capability revoke`
-via CLI). Mutating operations must be performed via the REST API.
+`ferrumctl` provides both read/inspect commands and mutating execution-control
+commands. All mutating operations are also available via the REST API. The CLI
+wrappers (cancel-execution, pause-execution, resume-execution, prepare-execution,
+execute-execution, compensate-execution, rollback-execution, resolve-approval)
+invoke the same underlying gateway endpoints as their REST counterparts.
 
 ---
 

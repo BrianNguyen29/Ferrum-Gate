@@ -7,8 +7,9 @@ use ferrum_pdp::StaticPdpEngine;
 use ferrum_proto::{
     ActionProposal, CapabilityMintRequest, Decision, EffectType, ExecutionState,
     IntentCompileRequest, IntentCompileResponse, IntentId, PauseExecutionRequest, ProposalId,
-    ProvenanceEventKind, ResourceBinding, ResourceMode, ResourceSelector, RiskTier, RollbackClass,
-    RollbackTarget, SensitivityLabel, TaintBudget, ToolBinding, TrustLabel,
+    ProvenanceEventKind, ResourceBinding, ResourceMode, ResourceSelector, ResumeExecutionRequest,
+    RiskTier, RollbackClass, RollbackTarget, SensitivityLabel, TaintBudget, ToolBinding,
+    TrustLabel,
 };
 use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
 use ferrum_store::{
@@ -13034,6 +13035,175 @@ async fn test_gateway_pause_from_prepared_returns_conflict() {
     assert!(
         matches!(stored.unwrap().state, ExecutionState::Prepared),
         "execution should remain Prepared after failed pause"
+    );
+}
+
+// ============================================
+// RESUME EXECUTION TESTS
+// ============================================
+
+/// Test: resume from Paused sets state to Running.
+#[tokio::test]
+async fn test_gateway_resume_from_paused_sets_running() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Seed execution to Running state first
+    let execution_id = run_flow_to_running(&runtime).await;
+
+    // Pause the execution first
+    let app = build_router(runtime.clone());
+    let pause_req = PauseExecutionRequest { execution_id };
+    let response = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/pause", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&pause_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200, "pause should succeed");
+
+    // Verify state is now Paused
+    let stored = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored.is_some());
+    let exec = stored.unwrap();
+    assert!(
+        matches!(exec.state, ExecutionState::Paused),
+        "execution should be Paused after pause, got {:?}",
+        exec.state
+    );
+
+    // Now call resume endpoint
+    let resume_req = ResumeExecutionRequest { execution_id };
+    let response = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/resume", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&resume_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        200,
+        "resume should succeed from Paused state"
+    );
+
+    // Verify state is now Running
+    let stored = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored.is_some());
+    let exec = stored.unwrap();
+    assert!(
+        matches!(exec.state, ExecutionState::Running),
+        "execution should be Running after resume, got {:?}",
+        exec.state
+    );
+    // Verify finished_at is NOT set (resume is not terminal)
+    assert!(
+        exec.finished_at.is_none(),
+        "finished_at should not be set for Running state"
+    );
+}
+
+/// Test: resume from Running returns 409 Conflict.
+#[tokio::test]
+async fn test_gateway_resume_from_running_returns_conflict() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Seed execution to Running state (without pausing first)
+    let execution_id = run_flow_to_running(&runtime).await;
+
+    // Verify initial state is Running
+    let stored = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored.is_some());
+    assert!(
+        matches!(stored.unwrap().state, ExecutionState::Running),
+        "execution should be Running before resume attempt"
+    );
+
+    // Call resume endpoint - should fail with 409 Conflict
+    let app = build_router(runtime.clone());
+    let resume_req = ResumeExecutionRequest { execution_id };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/resume", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&resume_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        409,
+        "resume should return 409 Conflict from Running state"
+    );
+
+    // Verify state is still Running (no transition)
+    let stored = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored.is_some());
+    assert!(
+        matches!(stored.unwrap().state, ExecutionState::Running),
+        "execution should remain Running after failed resume"
+    );
+}
+
+/// Test: resume from Prepared returns 409 Conflict.
+#[tokio::test]
+async fn test_gateway_resume_from_prepared_returns_conflict() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Seed execution to Prepared state (stop after prepare)
+    let (_intent_id, _proposal_id, execution_id) =
+        run_flow_to_prepared(&runtime, RollbackClass::R0NativeReversible).await;
+
+    // Verify initial state is Prepared
+    let stored = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored.is_some());
+    assert!(
+        matches!(stored.unwrap().state, ExecutionState::Prepared),
+        "execution should be Prepared before resume attempt"
+    );
+
+    // Call resume endpoint - should fail with 409 Conflict
+    let app = build_router(runtime.clone());
+    let resume_req = ResumeExecutionRequest { execution_id };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/resume", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&resume_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        409,
+        "resume should return 409 Conflict from Prepared state"
+    );
+
+    // Verify state is still Prepared (no transition)
+    let stored = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored.is_some());
+    assert!(
+        matches!(stored.unwrap().state, ExecutionState::Prepared),
+        "execution should remain Prepared after failed resume"
     );
 }
 

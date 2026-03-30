@@ -377,6 +377,33 @@ paths:
         '409':
           $ref: '#/components/responses/ApiError'
 
+  /v1/executions/{execution_id}/resume:
+    post:
+      summary: Resume a paused execution
+      description: |
+        Resumes an execution that is in a Paused state. Returns the execution to Running state.
+        Returns 409 Conflict if the execution is not in Paused state.
+      operationId: resumeExecution
+      parameters:
+        - $ref: '#/components/parameters/ExecutionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResumeExecutionRequest'
+      responses:
+        '200':
+          description: Resume acknowledged
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResumeExecutionResponse'
+        '404':
+          $ref: '#/components/responses/ApiError'
+        '409':
+          $ref: '#/components/responses/ApiError'
+
   /v1/executions/{execution_id}:
     get:
       summary: Get execution record
@@ -1346,6 +1373,28 @@ components:
         paused:
           type: boolean
         paused_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    ResumeExecutionRequest:
+      type: object
+      required: [execution_id]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+
+    ResumeExecutionResponse:
+      type: object
+      required: [execution_id, resumed]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+        resumed:
+          type: boolean
+        resumed_at:
           type: string
           format: date-time
           nullable: true

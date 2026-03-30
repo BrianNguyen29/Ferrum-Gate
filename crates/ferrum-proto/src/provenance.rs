@@ -52,6 +52,7 @@ pub enum ProvenanceEventKind {
     ErrorRaised,
     ExecutionCancelled,
     ExecutionPaused,
+    ExecutionResumed,
     /// Observed externally-derived event that has been ingested into the provenance lineage.
     /// Used by the external runtime event ingest boundary to anchor external observations
     /// into an existing execution lineage without granting the external system any agency.

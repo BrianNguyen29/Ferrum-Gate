@@ -162,6 +162,19 @@ pub struct PauseExecutionResponse {
     pub paused_at: Option<crate::Timestamp>,
 }
 
+// Resume request/response types
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ResumeExecutionRequest {
+    pub execution_id: crate::ExecutionId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ResumeExecutionResponse {
+    pub execution_id: crate::ExecutionId,
+    pub resumed: bool,
+    pub resumed_at: Option<crate::Timestamp>,
+}
+
 // Ledger verification types
 /// Response for on-demand ledger hash-chain verification.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
