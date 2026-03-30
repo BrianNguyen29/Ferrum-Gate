@@ -67,7 +67,7 @@ The gateway orchestrates the complete flow for SQLite-backed single-node:
 ```
 evaluate -> mint -> authorize -> prepare -> execute -> verify -> compensate
 ```
-(commit/rollback are internal orchestration semantics; compensate is the sole exposed v1 recovery endpoint)
+(compensate is the primary recovery endpoint; commit and rollback routes are also exposed)
 
 **Regression coverage for prepare rollback class**: `integration_gateway_flow.rs:527-792`
 verifies that the prepare path loads the persisted rollback class and `auto_commit=false`
@@ -153,9 +153,9 @@ The following flows are confirmed supported in single-node v1:
 4. **Prepare execution**: POST /v1/executions/{execution_id}/prepare
 5. **Execute** (via gateway internal call)
 6. **Verify execution** (via gateway internal call)
-7. ~~**Commit execution**: POST /v1/executions/{execution_id}/commit~~ — not exposed in v1 router
+7. **Commit execution**: POST /v1/executions/{execution_id}/commit
 8. **Compensate execution**: POST /v1/executions/{execution_id}/compensate
-9. ~~**Rollback execution**: POST /v1/executions/{execution_id}/rollback~~ — not exposed in v1 router
+9. **Rollback execution**: POST /v1/executions/{execution_id}/rollback
 10. **Inspect execution**: GET /v1/executions/{execution_id}
 11. **Inspect lineage**: GET /v1/provenance/lineage/{execution_id}
 12. **Query lineage**: POST /v1/provenance/lineage

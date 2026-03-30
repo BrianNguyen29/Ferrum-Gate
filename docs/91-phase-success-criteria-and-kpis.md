@@ -14,7 +14,7 @@
 - **Phase B**: DONE — SQLite-backed persistence for intents/proposals/capabilities/executions/rollback contracts/provenance/events/approvals confirmed via integration tests.
 - **Phase C**: DONE — firewall logic present (trust labels, taint scorer, sanitize, contradiction checks); curated poisoned-context regression fixtures implemented (6 fixture tests).
 - **Phase D**: PARTIAL — adapter skeletons exist (fs, sqlite, maildraft, git, http); real implementations are post-v1 backlog. NoopRollbackAdapter used for integration tests.
-- **Phase E**: DONE for SQLite-backed single-node flow — gateway orchestrates `evaluate -> mint -> authorize -> prepare -> execute -> verify -> compensate` (internal lifecycle: commit/rollback not exposed in v1 router); negative paths: deny, quarantine, RequireApproval (R3), draft-only gated at evaluate (before prepare), scope-mismatch (P0 resolved).
+- **Phase E**: DONE for SQLite-backed single-node flow — gateway orchestrates `evaluate -> mint -> authorize -> prepare -> execute -> verify -> compensate` (compensate is the primary recovery endpoint; commit and rollback routes are also exposed); negative paths: deny, quarantine, RequireApproval (R3), draft-only gated at evaluate (before prepare), scope-mismatch (P0 resolved).
 - **Phase F**: DONE — integration tests strong; poisoned-context regression fixtures curated (6 tests); supported flows list and open gaps list documented in `25-v1-single-node-rc-evidence.md`.
 
 ### Latest evidence snapshot
@@ -300,7 +300,7 @@ Noi full execution path trong `ferrum-gateway`.
 
 Phase E thanh cong khi gateway co the dieu phoi mot flow day du:
 
-proposal -> evaluate -> mint -> prepare -> execute -> verify -> compensate -> emit provenance (internal lifecycle: commit/rollback not exposed as v1 routes)
+proposal -> evaluate -> mint -> prepare -> execute -> verify -> compensate -> emit provenance (compensate is the primary recovery endpoint; commit and rollback routes are also exposed)
 
 cho it nhat mot happy path va mot negative path.
 

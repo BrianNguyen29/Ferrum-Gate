@@ -32,7 +32,7 @@ As of 2026-03-29 all P0/P1/P2 items are closed. Phase D adapters are skeleton-on
 - [DONE] gateway calls cap
 - [DONE] gateway calls rollback
 - [DONE] gateway emits provenance
-- [DONE] evaluate -> mint -> authorize -> prepare -> execute -> verify -> compensate flow (commit/rollback are internal orchestration semantics; compensate is the exposed v1 recovery endpoint)
+- [DONE] evaluate -> mint -> authorize -> prepare -> execute -> verify -> compensate flow (compensate is the primary recovery endpoint; commit and rollback routes are also exposed)
 - [DONE] negative paths: deny, quarantine, RequireApproval, draft-only gated at evaluate (before prepare)
 - [DONE] scope mismatch deny (explicit scope-bounds check implemented in PDP — P0 resolved)
 

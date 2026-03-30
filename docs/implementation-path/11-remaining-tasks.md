@@ -23,7 +23,7 @@ Scope is single-node v1 unless labeled post-v1.
 
 - [x] supported flows list (Phase F evidence)
   - Src: `docs/91-phase-success-criteria-and-kpis.md` 7.5 evidence "supported flows list"
-  - Status: DONE — documented in `25-v1-single-node-rc-evidence.md` Evidence 9. The gateway orchestrates: evaluate -> mint -> authorize -> prepare -> execute -> verify -> compensate (commit/rollback are internal semantics; compensate is the exposed v1 recovery endpoint). Denial paths: deny, quarantine, compensate, await-approval, scope-mismatch (now explicit), draft-only gated at evaluate (before prepare).
+  - Status: DONE — documented in `25-v1-single-node-rc-evidence.md` Evidence 9. The gateway orchestrates: evaluate -> mint -> authorize -> prepare -> execute -> verify -> compensate (compensate is the primary recovery endpoint; commit and rollback routes are also exposed). Denial paths: deny, quarantine, compensate, await-approval, scope-mismatch (now explicit), draft-only gated at evaluate (before prepare).
 
 - [x] open gaps list (Phase F evidence)
   - Src: `docs/91-phase-success-criteria-and-kpis.md` 7.5 evidence "open gaps list"

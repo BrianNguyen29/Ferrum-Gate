@@ -43,7 +43,7 @@ FerrumGate giai bai toan **execution governance** chu khong phai thay the agent.
 
 FerrumGate v1 Supported scope:
 - evaluate -> mint -> authorize -> prepare -> execute -> verify -> compensate flow (single-node, SQLite)
-  - Note: commit and rollback routes are not exposed in the v1 router; compensate is the provided recovery endpoint
+  - Compensate is the primary recovery endpoint; commit and rollback routes are also exposed in the v1 router
 - approvals queries (GET /v1/approvals, GET /v1/approvals/{id})
 - provenance lineage/query APIs (GET /v1/provenance/lineage/{id}, POST /v1/provenance/lineage, POST /v1/provenance/query)
 - Trust labels, taint scoring, scope-bounds enforcement

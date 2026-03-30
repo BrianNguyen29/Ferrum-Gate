@@ -31,7 +31,6 @@ instance backed by SQLite.
 ### Not supported (post-v1)
 - Multi-node, HA, or read-replica deployments
 - Real adapter implementations (fs, sqlite, maildraft, git, http)
-- Commit and rollback routes (not exposed in the v1 router)
 - U1-U4 upgrade tracks
 
 ---
@@ -372,9 +371,9 @@ a no-op in v1.
 
 ## 9. Known Limitations and Operator Caveats
 
-1. **No commit/rollback routes.** The v1 router does not expose
-   POST /v1/executions/{id}/commit or POST /v1/executions/{id}/rollback.
-   Compensate is the only provided recovery endpoint.
+1. **Compensate is the primary recovery endpoint.** POST /v1/executions/{id}/commit
+   and POST /v1/executions/{id}/rollback are exposed in the v1 router. For
+   typical single-node operations, compensate is the preferred recovery path.
 
 2. **Compensate may be noop-backed.** Depending on the adapter
    implementation and rollback class (R0/R1/R2/R3), compensate() may
