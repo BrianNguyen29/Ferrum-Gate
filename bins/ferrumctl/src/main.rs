@@ -1,7 +1,10 @@
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand, ValueEnum};
-use ferrum_proto::api::{CompensateRequest, CompensateResponse, RollbackRequest, RollbackResponse};
+use ferrum_proto::api::{
+    CompensateRequest, CompensateResponse, LedgerVerificationResponse, RollbackRequest,
+    RollbackResponse,
+};
 use ferrum_proto::approval::ApprovalResolveRequest;
 use ferrum_proto::common::{ActorRef, ActorType};
 use ferrum_proto::provenance::{
@@ -726,6 +729,14 @@ impl ServerClient {
         let resp = self
             .request(reqwest::Method::POST, "/v1/provenance/events/external")
             .json(req)
+            .send()
+            .await?;
+        self.decode_json(resp).await
+    }
+
+    async fn verify_ledger(&self) -> Result<LedgerVerificationResponse> {
+        let resp = self
+            .request(reqwest::Method::GET, "/v1/ledger/verify")
             .send()
             .await?;
         self.decode_json(resp).await
@@ -1458,6 +1469,22 @@ enum ServerCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Verify ledger hash-chain integrity via the server.
+    VerifyLedger {
+        /// Server base URL (e.g. http://127.0.0.1:8080).
+        /// Can also be set via FERRUMCTL_SERVER_URL env var.
+        #[arg(long, env = "FERRUMCTL_SERVER_URL")]
+        server_url: Option<String>,
+
+        /// Bearer token for authentication.
+        /// Can also be set via FERRUMCTL_BEARER_TOKEN env var.
+        #[arg(long, env = "FERRUMCTL_BEARER_TOKEN")]
+        bearer_token: Option<String>,
+
+        /// Output as JSON instead of human-readable.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -1911,6 +1938,32 @@ async fn run_rollback_execution(
         println!("  Rolled back: {}", resp.rolled_back);
         if let Some(ts) = resp.rolled_back_at {
             println!("  Rolled back at: {}", ts);
+        }
+    }
+    Ok(())
+}
+
+async fn run_verify_ledger(
+    url: Option<String>,
+    token: Option<String>,
+    as_json: bool,
+) -> Result<()> {
+    let url = resolve_server_url(url)?;
+    let client = ServerClient::new(&url, token);
+    let resp = client.verify_ledger().await?;
+
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&resp)?);
+    } else {
+        if resp.valid {
+            println!("Ledger verification: PASSED");
+        } else {
+            println!("Ledger verification: FAILED");
+        }
+        println!("  Entry count: {}", resp.entry_count);
+        println!("  Verified at: {}", resp.verified_at);
+        if let Some(ref err) = resp.error {
+            println!("  Error: {:?}", err);
         }
     }
     Ok(())
@@ -3526,6 +3579,13 @@ async fn main() -> Result<()> {
             } => {
                 run_rollback_execution(&execution_id, server_url, bearer_token, json).await?;
             }
+            ServerCommand::VerifyLedger {
+                server_url,
+                bearer_token,
+                json,
+            } => {
+                run_verify_ledger(server_url, bearer_token, json).await?;
+            }
         },
         Command::Debug { sub } => match sub {
             DebugCommand::RepoRoot => {
@@ -4927,5 +4987,105 @@ mod tests {
         let result = edge_types_to_query_string(&[DerivedFrom, AuthorizedBy, ApprovedBy]);
         assert!(result.is_ascii());
         assert!(!result.contains(' '));
+    }
+
+    // ---------------------------------------------------------------------------
+    // Ledger verification type tests
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn test_ledger_verification_response_valid_empty() {
+        use ferrum_proto::api::LedgerVerificationResponse;
+
+        let json = r#"{"valid":true,"entry_count":0,"verified_at":"2026-03-30T12:00:00Z"}"#;
+        let resp: LedgerVerificationResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.valid);
+        assert_eq!(resp.entry_count, 0);
+        assert!(resp.error.is_none());
+    }
+
+    #[test]
+    fn test_ledger_verification_response_valid_with_entries() {
+        use ferrum_proto::api::LedgerVerificationResponse;
+
+        let json = r#"{"valid":true,"entry_count":5,"verified_at":"2026-03-30T12:00:00Z"}"#;
+        let resp: LedgerVerificationResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.valid);
+        assert_eq!(resp.entry_count, 5);
+        assert!(resp.error.is_none());
+    }
+
+    #[test]
+    fn test_ledger_verification_response_invalid_broken_chain() {
+        use ferrum_proto::api::{LedgerVerificationError, LedgerVerificationResponse};
+
+        let json = r#"{"valid":false,"entry_count":3,"verified_at":"2026-03-30T12:00:00Z","error":{"type":"BrokenChain","detail":{"expected":"abc123","actual":"def456"}}}"#;
+        let resp: LedgerVerificationResponse = serde_json::from_str(json).unwrap();
+        assert!(!resp.valid);
+        assert_eq!(resp.entry_count, 3);
+        assert!(resp.error.is_some());
+
+        if let Some(LedgerVerificationError::BrokenChain { expected, actual }) = resp.error {
+            assert_eq!(expected, "abc123");
+            assert_eq!(actual, "def456");
+        } else {
+            panic!("expected BrokenChain error");
+        }
+    }
+
+    #[test]
+    fn test_ledger_verification_response_invalid_tamper_detected() {
+        use ferrum_proto::api::{LedgerVerificationError, LedgerVerificationResponse};
+
+        let json = r#"{"valid":false,"entry_count":2,"verified_at":"2026-03-30T12:00:00Z","error":{"type":"TamperDetected","detail":{"sequence":1,"recorded":"xyz","recomputed":"abc"}}}"#;
+        let resp: LedgerVerificationResponse = serde_json::from_str(json).unwrap();
+        assert!(!resp.valid);
+
+        if let Some(LedgerVerificationError::TamperDetected {
+            sequence,
+            recorded,
+            recomputed,
+        }) = resp.error
+        {
+            assert_eq!(sequence, 1);
+            assert_eq!(recorded, "xyz");
+            assert_eq!(recomputed, "abc");
+        } else {
+            panic!("expected TamperDetected error");
+        }
+    }
+
+    #[test]
+    fn test_ledger_verification_response_invalid_sequence_mismatch() {
+        use ferrum_proto::api::{LedgerVerificationError, LedgerVerificationResponse};
+
+        let json = r#"{"valid":false,"entry_count":1,"verified_at":"2026-03-30T12:00:00Z","error":{"type":"SequenceMismatch","detail":{"event_seq":5,"ledger_len":3}}}"#;
+        let resp: LedgerVerificationResponse = serde_json::from_str(json).unwrap();
+        assert!(!resp.valid);
+
+        if let Some(LedgerVerificationError::SequenceMismatch {
+            event_seq,
+            ledger_len,
+        }) = resp.error
+        {
+            assert_eq!(event_seq, 5);
+            assert_eq!(ledger_len, 3);
+        } else {
+            panic!("expected SequenceMismatch error");
+        }
+    }
+
+    #[test]
+    fn test_ledger_verification_response_invalid_empty_ledger() {
+        use ferrum_proto::api::{LedgerVerificationError, LedgerVerificationResponse};
+
+        // EmptyLedger is a unit variant - JSON is {"type": "EmptyLedger"} without detail
+        let json = r#"{"valid":false,"entry_count":0,"verified_at":"2026-03-30T12:00:00Z","error":{"type":"EmptyLedger"}}"#;
+        let resp: LedgerVerificationResponse = serde_json::from_str(json).unwrap();
+        assert!(!resp.valid);
+        assert!(matches!(
+            resp.error,
+            Some(LedgerVerificationError::EmptyLedger)
+        ));
     }
 }

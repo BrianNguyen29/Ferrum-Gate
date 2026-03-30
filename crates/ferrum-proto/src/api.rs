@@ -135,3 +135,36 @@ pub struct RollbackResponse {
     pub rolled_back: bool,
     pub rolled_back_at: Option<crate::Timestamp>,
 }
+
+// Ledger verification types
+/// Response for on-demand ledger hash-chain verification.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct LedgerVerificationResponse {
+    /// True if the ledger chain is valid, false if tampered or broken.
+    pub valid: bool,
+    /// Number of ledger entries verified.
+    pub entry_count: u64,
+    /// Timestamp when verification was performed.
+    pub verified_at: crate::Timestamp,
+    /// Error details when verification fails (None when valid).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<LedgerVerificationError>,
+}
+
+/// Error details when ledger verification fails.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", content = "detail")]
+pub enum LedgerVerificationError {
+    /// Chain linkage is broken: prev_hash does not match expected.
+    BrokenChain { expected: String, actual: String },
+    /// Entry hash mismatch: tampered content detected.
+    TamperDetected {
+        sequence: u64,
+        recorded: String,
+        recomputed: String,
+    },
+    /// Sequence number mismatch.
+    SequenceMismatch { event_seq: u64, ledger_len: usize },
+    /// Ledger is empty but verification required at least one entry.
+    EmptyLedger,
+}
