@@ -136,6 +136,19 @@ pub struct RollbackResponse {
     pub rolled_back_at: Option<crate::Timestamp>,
 }
 
+// Cancel request/response types
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CancelExecutionRequest {
+    pub execution_id: crate::ExecutionId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CancelExecutionResponse {
+    pub execution_id: crate::ExecutionId,
+    pub cancelled: bool,
+    pub cancelled_at: Option<crate::Timestamp>,
+}
+
 // Ledger verification types
 /// Response for on-demand ledger hash-chain verification.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

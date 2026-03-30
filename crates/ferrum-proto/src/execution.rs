@@ -52,4 +52,5 @@ pub enum ExecutionState {
     Denied,
     Quarantined,
     Failed,
+    Cancelled,
 }
