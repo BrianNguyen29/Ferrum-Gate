@@ -26,7 +26,7 @@ Single-node v1 scope unless noted.
 ### Adapters
 - `ferrum-adapter-fs` — filesystem adapter (skeleton)
 - `ferrum-adapter-sqlite` — SQLite adapter (skeleton)
-- `ferrum-adapter-maildraft` — maildraft adapter (skeleton)
+- `ferrum-adapter-maildraft` — maildraft adapter (SQLite-backed draft persistence; verify semantics implemented; send semantics explicitly out of scope)
 - `ferrum-adapter-git` — git adapter (skeleton, no real implementation)
 - `ferrum-adapter-http` — HTTP adapter (skeleton, no real implementation)
 
