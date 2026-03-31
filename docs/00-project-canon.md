@@ -62,7 +62,6 @@ FerrumGate v1 Supported scope:
 - real adapter implementations (fs, sqlite, maildraft, git, http)
 - multi-node / HA / read-replica
 - U1-U4 upgrade tracks (Outcome-aware Governance, Reversible Execution Planner, Cross-runtime Provenance Fabric, MCP/local/NemoClaw runtime integrations)
-- ledger hash chain
 
 ### Not supported
 

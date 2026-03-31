@@ -30,6 +30,7 @@ The following REST endpoints are in the v1 single-node support contract:
 | GET | /v1/readyz | Shallow readiness check |
 | POST | /v1/proposals/{server_name}/evaluate | Evaluate proposal via policy |
 | POST | /v1/capabilities/mint | Mint a capability lease |
+| GET | /v1/capabilities/{capability_id} | Inspect a capability lease |
 | POST | /v1/executions/authorize | Authorize execution |
 | POST | /v1/executions/{execution_id}/prepare | Prepare rollback/preflight |
 | POST | /v1/executions/{execution_id}/execute | Execute the prepared operation |
@@ -53,6 +54,7 @@ The following `ferrumctl` commands are in the v1 single-node support contract:
 
 **Read-only:**
 - `ferrumctl server health` — shallow health probe
+- `ferrumctl server inspect-capability <capability_id>` — fetch a capability record
 - `ferrumctl server inspect-execution <execution_id>` — fetch execution record
 - `ferrumctl server inspect-approvals` — list approvals (pagination/filtering available via REST API at `/v1/approvals`)
 - `ferrumctl server inspect-approval <approval_id>` — fetch single approval
@@ -63,6 +65,7 @@ The following `ferrumctl` commands are in the v1 single-node support contract:
 - `ferrumctl server inspect-lineage-query` — multi-hop lineage query via `--ancestry`/`--descendants` flags
 
 **Mutating:**
+- `ferrumctl server revoke-capability <capability_id>` — revoke a capability
 - `ferrumctl server resolve-approval <approval_id> --approve|--deny` — resolve a pending approval
 - `ferrumctl server cancel-execution <execution_id>` — cancel an execution in pre-execute state
 - `ferrumctl server pause-execution <execution_id>` — pause an execution in running state

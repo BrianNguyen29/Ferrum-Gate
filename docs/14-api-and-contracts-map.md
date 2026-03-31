@@ -20,6 +20,7 @@
 
 ### Capabilities
 - `POST /v1/capabilities/mint` - Mint a capability lease
+- `GET /v1/capabilities/{capability_id}` - Inspect a capability lease
 - `POST /v1/capabilities/{capability_id}/revoke` - Revoke capability
 
 ### Executions

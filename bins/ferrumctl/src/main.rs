@@ -674,6 +674,12 @@ impl ServerClient {
         self.decode_json(resp).await
     }
 
+    async fn get_capability(&self, capability_id: &str) -> Result<ferrum_proto::CapabilityLease> {
+        let path = format!("/v1/capabilities/{}", capability_id);
+        let resp = self.request(reqwest::Method::GET, &path).send().await?;
+        self.decode_json(resp).await
+    }
+
     async fn pause_execution(
         &self,
         execution_id: &str,
@@ -1680,6 +1686,23 @@ enum ServerCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Inspect a capability by ID.
+    InspectCapability {
+        /// Capability ID (UUID).
+        capability_id: String,
+
+        /// Server base URL (e.g. http://127.0.0.1:8080).
+        #[arg(long, env = "FERRUMCTL_SERVER_URL")]
+        server_url: Option<String>,
+
+        /// Bearer token for authentication.
+        #[arg(long, env = "FERRUMCTL_BEARER_TOKEN")]
+        bearer_token: Option<String>,
+
+        /// Output as JSON instead of human-readable.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -2190,6 +2213,43 @@ async fn run_revoke_capability(
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
         println!("Capability {} revoked: {}", cap_id, ok);
+    }
+    Ok(())
+}
+
+async fn run_inspect_capability(
+    capability_id: &str,
+    url: Option<String>,
+    token: Option<String>,
+    as_json: bool,
+) -> Result<()> {
+    let _ = CapabilityId(
+        capability_id
+            .parse()
+            .context("invalid capability_id UUID")?,
+    );
+
+    let url = resolve_server_url(url)?;
+    let client = ServerClient::new(&url, token);
+    let lease = client.get_capability(capability_id).await?;
+
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&lease)?);
+    } else {
+        println!("Capability: {}", lease.capability_id);
+        println!("  Intent:    {}", lease.intent_id);
+        println!("  Proposal: {}", lease.proposal_id);
+        println!("  Status:   {:?}", lease.status);
+        println!("  Issued:   {}", lease.issued_at);
+        println!("  Expires:  {}", lease.expires_at);
+        if let Some(revoked) = lease.revoked_at {
+            println!("  Revoked:  {}", revoked);
+        }
+        println!(
+            "  Tool:     {}.{}",
+            lease.tool_binding.server_name, lease.tool_binding.tool_name
+        );
+        println!("  Resources: {}", lease.resource_bindings.len());
     }
     Ok(())
 }
@@ -4027,6 +4087,14 @@ async fn main() -> Result<()> {
                 json,
             } => {
                 run_revoke_capability(&capability_id, server_url, bearer_token, json).await?;
+            }
+            ServerCommand::InspectCapability {
+                capability_id,
+                server_url,
+                bearer_token,
+                json,
+            } => {
+                run_inspect_capability(&capability_id, server_url, bearer_token, json).await?;
             }
         },
         Command::Debug { sub } => match sub {

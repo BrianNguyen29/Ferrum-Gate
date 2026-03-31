@@ -43,21 +43,10 @@ Scope is single-node v1 unless labeled post-v1.
 
 These are explicitly out of v1 scope. Do not treat as blockers.
 
-- [ ] ledger hash chain
-  - Src: `docs/implementation-path/08-next-issue-backlog.md` P2
-
-- [ ] git adapter (real implementation)
-  - Src: `docs/implementation-path/08-next-issue-backlog.md` P2
-  - Src: `docs/implementation-path/04-crate-by-crate-tasks.md` "adapters: ... -> git/http"
-  - Note: Skeleton exists at `crates/ferrum-adapter-git/`; real implementation is post-v1.
-
-- [ ] http adapter (real implementation)
-  - Src: `docs/implementation-path/08-next-issue-backlog.md` P2
-  - Src: `docs/implementation-path/04-crate-by-crate-tasks.md` "adapters: ... -> git/http"
-
-- [ ] ferrumctl expanded commands (beyond health/inspect)
-  - Src: `docs/implementation-path/08-next-issue-backlog.md` P2
-  - Src: `docs/implementation-path/15-ferrumctl-more-useful-execution-plan.md`
+- [ ] real adapter implementations (fs, sqlite, maildraft, git, http)
+  - Src: `docs/00-project-canon.md` line 62 "real adapter implementations (fs, sqlite, maildraft, git, http)"
+  - Src: `docs/implementation-path/01-current-state.md` lines 26-31
+  - Note: v1 ships adapter crate/API surfaces only; production-verified external side-effect integrations remain post-v1.
 
 - [ ] multi-node / HA / read-replica support
   - Src: `docs/00-project-canon.md` line 56 "full distributed deployment"

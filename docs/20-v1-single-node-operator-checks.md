@@ -316,7 +316,7 @@ post-v1 or not operator-facing:
 | Command / Route | Reason not covered |
 |---|---|
 | `POST /v1/executions/{id}/commit` | Operator-facing use is rare in single-node; compensate/rollback are the primary recovery paths |
-| `ferrumctl intent create`, `ferrumctl capability revoke`, etc. | No intent/capability creation CLI in v1 |
+| `ferrumctl intent create`, `ferrumctl capability mint`, etc. | Intent/capability creation CLI is not in the v1 operator surface; `inspect-capability` and `revoke-capability` are covered above |
 | Adapter-backed undo (fs, sqlite, maildraft, git, http) | Skeleton implementations; no production-verified side effects in v1 |
 | Multi-node, HA, read-replica configurations | Out of scope for v1 single-node |
 

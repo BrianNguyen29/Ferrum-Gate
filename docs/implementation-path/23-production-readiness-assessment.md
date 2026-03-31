@@ -4,7 +4,7 @@ Single-node v1 scope. Assessment against FerrumGate v1 success criteria.
 
 **Release support contract**:
 - Supported = single-node governance core with SQLite-backed persistence.
-- Partial = adapter crate surfaces (fs/sqlite/maildraft/git/http) and limited `ferrumctl` inspect surface.
+- Partial = adapter crate surfaces (fs/sqlite/maildraft/git/http) and a bounded `ferrumctl` operator surface.
 - Deferred/post-v1 = real adapter implementations, multi-node/HA/read-replica, U1-U4 upgrade tracks.
 
 ## Overall readiness: RC-READY
@@ -54,13 +54,13 @@ Remaining gaps are post-v1 backlog documented in `11-remaining-tasks.md` P3.
 | Criterion | Status | Evidence |
 |---|---|---|
 | SQLite persistence | PASS | `ferrum-store` with embedded migrations |
-| CLI usable for inspection | PARTIAL | health, inspect-execution, inspect-approvals, inspect-approval, inspect-lineage, inspect-provenance |
+| CLI usable for inspection and targeted operator control | PARTIAL | See `docs/19-v1-single-node-support-contract.md` Section 1.3 for the current `ferrumctl` surface |
 | Config docs | PASS | `docs/15-deployment-and-operations.md` |
 | Approval workflow | PASS | GET /v1/approvals with pagination/filter |
 | Provenance query | PASS | GET/POST /v1/provenance/lineage, POST /v1/provenance/query |
 
 **Known gaps**:
-- `ferrumctl` limited to read/inspect operations; no mutating commands (post-v1 backlog).
+- `ferrumctl` does not expose the full REST surface; some flows still require direct HTTP/OpenAPI usage.
 
 ---
 
