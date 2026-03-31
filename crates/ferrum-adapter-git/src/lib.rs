@@ -4,7 +4,7 @@
 // scope here.
 
 use async_trait::async_trait;
-use ferrum_proto::{JsonMap, RollbackContract, RollbackPrepareRequest, RollbackTarget};
+use ferrum_proto::{ActionType, JsonMap, RollbackContract, RollbackPrepareRequest, RollbackTarget};
 use ferrum_rollback::{
     AdapterError, AdapterRegistry, ExecuteReceipt, PrepareReceipt, RecoveryReceipt,
     RollbackAdapter, VerifyReceipt,
@@ -42,6 +42,43 @@ impl RollbackAdapter for GitRollbackAdapter {
         metadata.insert("repo_path".to_string(), serde_json::json!(repo_path));
         metadata.insert("before_ref".to_string(), serde_json::json!(before_ref));
 
+        // For GitBranchCreate action, perform additional validation
+        if matches!(request.action_type, ActionType::GitBranchCreate) {
+            // Extract new branch name from metadata
+            let new_branch = request
+                .metadata
+                .get("new_branch_name")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    AdapterError::Validation(
+                        "GitBranchCreate requires new_branch_name in metadata".to_string(),
+                    )
+                })?;
+
+            // Fail-closed if repo is dirty
+            if git_is_repo_dirty(&repo_path)? {
+                return Err(AdapterError::Validation(
+                    "GitBranchCreate failed: repo has uncommitted changes".to_string(),
+                ));
+            }
+
+            // Fail-closed if branch already exists
+            if git_branch_exists(&repo_path, new_branch)? {
+                return Err(AdapterError::Validation(format!(
+                    "GitBranchCreate failed: branch '{}' already exists",
+                    new_branch
+                )));
+            }
+
+            // Capture original branch name for rollback
+            let original_branch = git_current_branch(&repo_path)?;
+            metadata.insert(
+                "original_branch".to_string(),
+                serde_json::json!(original_branch),
+            );
+            metadata.insert("new_branch_name".to_string(), serde_json::json!(new_branch));
+        }
+
         Ok(PrepareReceipt {
             accepted: true,
             adapter_metadata: metadata,
@@ -54,6 +91,50 @@ impl RollbackAdapter for GitRollbackAdapter {
         payload: &serde_json::Value,
     ) -> Result<ExecuteReceipt, AdapterError> {
         let repo_path = extract_repo_path_from_contract(contract)?;
+
+        // Handle GitBranchCreate action type
+        if matches!(contract.action_type, ActionType::GitBranchCreate) {
+            let new_branch = contract
+                .metadata
+                .get("new_branch_name")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    AdapterError::Validation(
+                        "GitBranchCreate execute requires new_branch_name in contract metadata"
+                            .to_string(),
+                    )
+                })?;
+
+            // Create the new branch
+            git_create_branch(&repo_path, new_branch)?;
+
+            // Switch to the new branch
+            git_checkout(&repo_path, new_branch)?;
+
+            // Verify we're now on the new branch
+            let current_branch = git_current_branch(&repo_path)?;
+            if current_branch != new_branch {
+                return Err(AdapterError::Internal(format!(
+                    "After branch creation and checkout, expected branch '{}' but on branch '{}'",
+                    new_branch, current_branch
+                )));
+            }
+
+            let current_head = git_head(&repo_path)?;
+
+            let mut metadata = JsonMap::new();
+            metadata.insert("repo_path".to_string(), serde_json::json!(repo_path));
+            metadata.insert("new_branch_name".to_string(), serde_json::json!(new_branch));
+            metadata.insert("after_ref".to_string(), serde_json::json!(current_head));
+
+            return Ok(ExecuteReceipt {
+                external_id: Some(current_branch),
+                result_digest: Some(format!("git-branch:{}", new_branch)),
+                adapter_metadata: metadata,
+            });
+        }
+
+        // Default: GitCommit behavior - validate after_ref matches HEAD
         let after_ref = payload
             .get("after_ref")
             .and_then(|value| value.as_str())
@@ -85,6 +166,50 @@ impl RollbackAdapter for GitRollbackAdapter {
     async fn verify(&self, contract: &RollbackContract) -> Result<VerifyReceipt, AdapterError> {
         let repo_path = extract_repo_path_from_contract(contract)?;
         let current_head = git_head(&repo_path)?;
+
+        // For GitBranchCreate, verify we're on the correct branch and at expected ref
+        if matches!(contract.action_type, ActionType::GitBranchCreate) {
+            let new_branch = contract
+                .metadata
+                .get("new_branch_name")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    AdapterError::Validation(
+                        "GitBranchCreate verify requires new_branch_name in contract metadata"
+                            .to_string(),
+                    )
+                })?;
+
+            let current_branch = git_current_branch(&repo_path)?;
+            let expected_ref = expected_verify_ref(contract)?;
+
+            let mut metadata = JsonMap::new();
+            metadata.insert("repo_path".to_string(), serde_json::json!(repo_path));
+            metadata.insert(
+                "current_branch".to_string(),
+                serde_json::json!(current_branch.clone()),
+            );
+            metadata.insert("expected_branch".to_string(), serde_json::json!(new_branch));
+            metadata.insert(
+                "current_ref".to_string(),
+                serde_json::json!(current_head.clone()),
+            );
+            metadata.insert(
+                "expected_ref".to_string(),
+                serde_json::json!(expected_ref.clone()),
+            );
+
+            // Verified if we're on the correct branch AND at the expected ref
+            let branch_verified = current_branch == new_branch;
+            let ref_verified = current_head == expected_ref;
+
+            return Ok(VerifyReceipt {
+                verified: branch_verified && ref_verified,
+                adapter_metadata: metadata,
+            });
+        }
+
+        // Default: verify against expected ref
         let expected_ref = expected_verify_ref(contract)?;
 
         let mut metadata = JsonMap::new();
@@ -108,10 +233,18 @@ impl RollbackAdapter for GitRollbackAdapter {
         &self,
         contract: &RollbackContract,
     ) -> Result<RecoveryReceipt, AdapterError> {
+        // For GitBranchCreate, restore original branch and cleanup
+        if matches!(contract.action_type, ActionType::GitBranchCreate) {
+            return git_cleanup_branch_create(contract);
+        }
         reset_to_before_ref(contract)
     }
 
     async fn rollback(&self, contract: &RollbackContract) -> Result<RecoveryReceipt, AdapterError> {
+        // For GitBranchCreate, restore original branch and cleanup
+        if matches!(contract.action_type, ActionType::GitBranchCreate) {
+            return git_cleanup_branch_create(contract);
+        }
         reset_to_before_ref(contract)
     }
 }
@@ -207,6 +340,81 @@ fn git_head(repo_path: &str) -> Result<String, AdapterError> {
 
 fn git_reset_hard(repo_path: &str, target_ref: &str) -> Result<(), AdapterError> {
     run_git(repo_path, &["reset", "--hard", target_ref]).map(|_| ())
+}
+
+fn git_current_branch(repo_path: &str) -> Result<String, AdapterError> {
+    // Use --quiet to avoid error output when HEAD is detached
+    run_git(repo_path, &["branch", "--show-current"])
+}
+
+fn git_is_repo_dirty(repo_path: &str) -> Result<bool, AdapterError> {
+    // Check for uncommitted changes using git status --porcelain
+    let output = run_git(repo_path, &["status", "--porcelain"])?;
+    // If output is empty, repo is clean; otherwise it's dirty
+    Ok(!output.trim().is_empty())
+}
+
+fn git_branch_exists(repo_path: &str, branch_name: &str) -> Result<bool, AdapterError> {
+    let output = run_git(repo_path, &["branch", "--list", branch_name])?;
+    Ok(!output.trim().is_empty())
+}
+
+fn git_create_branch(repo_path: &str, branch_name: &str) -> Result<(), AdapterError> {
+    run_git(repo_path, &["branch", branch_name]).map(|_| ())
+}
+
+fn git_checkout(repo_path: &str, branch_name: &str) -> Result<(), AdapterError> {
+    run_git(repo_path, &["checkout", branch_name]).map(|_| ())
+}
+
+fn git_delete_branch(repo_path: &str, branch_name: &str) -> Result<(), AdapterError> {
+    // Use -d (delete) which fails if branch is not merged; use -D for force delete
+    // We use -D since we created this branch and know it's safe to delete
+    run_git(repo_path, &["branch", "-D", branch_name]).map(|_| ())
+}
+
+fn git_cleanup_branch_create(contract: &RollbackContract) -> Result<RecoveryReceipt, AdapterError> {
+    let repo_path = extract_repo_path_from_contract(contract)?;
+    let original_branch = contract
+        .metadata
+        .get("original_branch")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            AdapterError::Validation(
+                "GitBranchCreate rollback requires original_branch in contract metadata"
+                    .to_string(),
+            )
+        })?;
+    let new_branch = contract
+        .metadata
+        .get("new_branch_name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            AdapterError::Validation(
+                "GitBranchCreate rollback requires new_branch_name in contract metadata"
+                    .to_string(),
+            )
+        })?;
+
+    // Switch back to original branch
+    git_checkout(&repo_path, original_branch)?;
+
+    // Delete the created branch (force delete since we created it during execute)
+    // Ignore error if branch was already deleted or doesn't exist
+    let _ = git_delete_branch(&repo_path, new_branch);
+
+    let mut metadata = JsonMap::new();
+    metadata.insert("repo_path".to_string(), serde_json::json!(repo_path));
+    metadata.insert(
+        "restored_branch".to_string(),
+        serde_json::json!(original_branch),
+    );
+    metadata.insert("deleted_branch".to_string(), serde_json::json!(new_branch));
+
+    Ok(RecoveryReceipt {
+        recovered: true,
+        adapter_metadata: metadata,
+    })
 }
 
 fn run_git(repo_path: &str, args: &[&str]) -> Result<String, AdapterError> {
@@ -454,6 +662,371 @@ mod tests {
         let receipt = adapter.compensate(&contract).await.unwrap();
 
         assert!(receipt.recovered);
+        assert_eq!(git_head(&repo_path).unwrap(), before_ref);
+    }
+
+    // ============ GitBranchCreate Tests ============
+
+    fn make_branch_create_prepare_request(
+        repo_path: &str,
+        new_branch_name: &str,
+    ) -> RollbackPrepareRequest {
+        let mut metadata = JsonMap::new();
+        metadata.insert(
+            "new_branch_name".to_string(),
+            serde_json::json!(new_branch_name),
+        );
+
+        RollbackPrepareRequest {
+            intent_id: IntentId::new(),
+            proposal_id: ProposalId::new(),
+            execution_id: ExecutionId::new(),
+            action_type: ActionType::GitBranchCreate,
+            rollback_class: RollbackClass::R1SnapshotRecoverable,
+            adapter_key: ADAPTER_KEY.to_string(),
+            target: RollbackTarget::GitRef {
+                repo_path: repo_path.to_string(),
+                before_ref: None,
+                after_ref: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            metadata,
+        }
+    }
+
+    fn make_branch_create_contract(
+        repo_path: &str,
+        before_ref: &str,
+        new_branch_name: &str,
+        original_branch: &str,
+    ) -> RollbackContract {
+        let mut metadata = JsonMap::new();
+        metadata.insert("repo_path".to_string(), serde_json::json!(repo_path));
+        metadata.insert("before_ref".to_string(), serde_json::json!(before_ref));
+        metadata.insert(
+            "new_branch_name".to_string(),
+            serde_json::json!(new_branch_name),
+        );
+        metadata.insert(
+            "original_branch".to_string(),
+            serde_json::json!(original_branch),
+        );
+
+        RollbackContract {
+            contract_id: RollbackContractId::new(),
+            intent_id: IntentId::new(),
+            proposal_id: ProposalId::new(),
+            execution_id: ExecutionId::new(),
+            action_type: ActionType::GitBranchCreate,
+            rollback_class: RollbackClass::R1SnapshotRecoverable,
+            adapter_key: ADAPTER_KEY.to_string(),
+            target: RollbackTarget::GitRef {
+                repo_path: repo_path.to_string(),
+                before_ref: Some(before_ref.to_string()),
+                after_ref: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: RollbackState::Prepared,
+            created_at: Utc::now(),
+            expires_at: None,
+            metadata,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_branch_create_prepare_captures_original_branch() {
+        let (_temp_dir, repo_path, _head) = init_temp_repo();
+        let adapter = GitRollbackAdapter::new(ADAPTER_KEY);
+
+        let receipt = adapter
+            .prepare(&make_branch_create_prepare_request(
+                &repo_path,
+                "feature/test",
+            ))
+            .await
+            .unwrap();
+
+        assert!(receipt.accepted);
+        // Verify original_branch is captured (actual name may be "main" or "master" depending on git version)
+        let original_branch = receipt
+            .adapter_metadata
+            .get("original_branch")
+            .unwrap()
+            .as_str()
+            .unwrap();
+        assert!(original_branch == "main" || original_branch == "master");
+        assert_eq!(
+            receipt
+                .adapter_metadata
+                .get("new_branch_name")
+                .unwrap()
+                .as_str(),
+            Some("feature/test")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_branch_create_prepare_rejects_dirty_repo() {
+        let (_temp_dir, repo_path, _head) = init_temp_repo();
+        let adapter = GitRollbackAdapter::new(ADAPTER_KEY);
+
+        // Make repo dirty by creating a file
+        std::fs::write(Path::new(&repo_path).join("uncommitted.txt"), "dirty\n").unwrap();
+
+        let err = adapter
+            .prepare(&make_branch_create_prepare_request(
+                &repo_path,
+                "feature/test",
+            ))
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(err, AdapterError::Validation(ref msg) if msg.contains("uncommitted changes"))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_branch_create_prepare_rejects_existing_branch() {
+        let (_temp_dir, repo_path, _head) = init_temp_repo();
+        let adapter = GitRollbackAdapter::new(ADAPTER_KEY);
+
+        // Create the branch first
+        run_git(&repo_path, &["branch", "feature/existing"]).unwrap();
+
+        let err = adapter
+            .prepare(&make_branch_create_prepare_request(
+                &repo_path,
+                "feature/existing",
+            ))
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, AdapterError::Validation(ref msg) if msg.contains("already exists")));
+    }
+
+    #[tokio::test]
+    async fn test_branch_create_execute_creates_and_switches_branch() {
+        let (_temp_dir, repo_path, before_ref) = init_temp_repo();
+        let adapter = GitRollbackAdapter::new(ADAPTER_KEY);
+        let new_branch = "feature/test";
+
+        // First prepare
+        let prep_receipt = adapter
+            .prepare(&make_branch_create_prepare_request(&repo_path, new_branch))
+            .await
+            .unwrap();
+
+        // Get original branch from prepare receipt
+        let original_branch = prep_receipt
+            .adapter_metadata
+            .get("original_branch")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let contract =
+            make_branch_create_contract(&repo_path, &before_ref, new_branch, &original_branch);
+
+        // Execute
+        let exec_receipt = adapter
+            .execute(&contract, &serde_json::json!({}))
+            .await
+            .unwrap();
+
+        assert_eq!(exec_receipt.external_id.as_deref(), Some(new_branch));
+        assert_eq!(
+            exec_receipt
+                .adapter_metadata
+                .get("new_branch_name")
+                .unwrap()
+                .as_str(),
+            Some(new_branch)
+        );
+
+        // Verify we're on the new branch
+        let current_branch = git_current_branch(&repo_path).unwrap();
+        assert_eq!(current_branch, new_branch);
+
+        // Verify HEAD hasn't changed (branch points to same commit)
+        assert_eq!(git_head(&repo_path).unwrap(), before_ref);
+    }
+
+    #[tokio::test]
+    async fn test_branch_create_verify_checks_branch_and_ref() {
+        let (_temp_dir, repo_path, before_ref) = init_temp_repo();
+        let adapter = GitRollbackAdapter::new(ADAPTER_KEY);
+        let new_branch = "feature/test";
+
+        // Prepare and execute
+        let prep_receipt = adapter
+            .prepare(&make_branch_create_prepare_request(&repo_path, new_branch))
+            .await
+            .unwrap();
+
+        let original_branch = prep_receipt
+            .adapter_metadata
+            .get("original_branch")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let contract =
+            make_branch_create_contract(&repo_path, &before_ref, new_branch, &original_branch);
+
+        adapter
+            .execute(&contract, &serde_json::json!({}))
+            .await
+            .unwrap();
+
+        // Verify should succeed
+        let verify_receipt = adapter.verify(&contract).await.unwrap();
+        assert!(verify_receipt.verified);
+        assert_eq!(
+            verify_receipt
+                .adapter_metadata
+                .get("current_branch")
+                .unwrap()
+                .as_str(),
+            Some(new_branch)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_branch_create_rollback_restores_original_and_cleans_up() {
+        let (_temp_dir, repo_path, before_ref) = init_temp_repo();
+        let adapter = GitRollbackAdapter::new(ADAPTER_KEY);
+        let new_branch = "feature/rollback-test";
+
+        // Prepare
+        let prep_receipt = adapter
+            .prepare(&make_branch_create_prepare_request(&repo_path, new_branch))
+            .await
+            .unwrap();
+
+        let original_branch = prep_receipt
+            .adapter_metadata
+            .get("original_branch")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let contract =
+            make_branch_create_contract(&repo_path, &before_ref, new_branch, &original_branch);
+
+        // Execute
+        adapter
+            .execute(&contract, &serde_json::json!({}))
+            .await
+            .unwrap();
+
+        // Verify we're on the new branch
+        assert_eq!(git_current_branch(&repo_path).unwrap(), new_branch);
+
+        // Rollback
+        let rollback_receipt = adapter.rollback(&contract).await.unwrap();
+        assert!(rollback_receipt.recovered);
+
+        // Verify we're back on original branch
+        let current_branch = git_current_branch(&repo_path).unwrap();
+        assert_eq!(current_branch, original_branch);
+
+        // Verify the created branch was deleted
+        assert!(!git_branch_exists(&repo_path, new_branch).unwrap());
+
+        // Verify HEAD is restored to before_ref
+        assert_eq!(git_head(&repo_path).unwrap(), before_ref);
+    }
+
+    #[tokio::test]
+    async fn test_branch_create_compensate_same_as_rollback() {
+        let (_temp_dir, repo_path, before_ref) = init_temp_repo();
+        let adapter = GitRollbackAdapter::new(ADAPTER_KEY);
+        let new_branch = "feature/compensate-test";
+
+        // Prepare
+        let prep_receipt = adapter
+            .prepare(&make_branch_create_prepare_request(&repo_path, new_branch))
+            .await
+            .unwrap();
+
+        let original_branch = prep_receipt
+            .adapter_metadata
+            .get("original_branch")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let contract =
+            make_branch_create_contract(&repo_path, &before_ref, new_branch, &original_branch);
+
+        // Execute
+        adapter
+            .execute(&contract, &serde_json::json!({}))
+            .await
+            .unwrap();
+
+        // Compensate
+        let compensate_receipt = adapter.compensate(&contract).await.unwrap();
+        assert!(compensate_receipt.recovered);
+
+        // Verify we're back on original branch and branch was cleaned up
+        assert_eq!(git_current_branch(&repo_path).unwrap(), original_branch);
+        assert!(!git_branch_exists(&repo_path, new_branch).unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_branch_create_happy_path_full_flow() {
+        let (_temp_dir, repo_path, before_ref) = init_temp_repo();
+        let adapter = GitRollbackAdapter::new(ADAPTER_KEY);
+        let new_branch = "feature/full-flow-test";
+
+        // Step 1: Prepare
+        let prep_receipt = adapter
+            .prepare(&make_branch_create_prepare_request(&repo_path, new_branch))
+            .await
+            .unwrap();
+        assert!(prep_receipt.accepted);
+
+        let original_branch = prep_receipt
+            .adapter_metadata
+            .get("original_branch")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        // Step 2: Execute
+        let contract =
+            make_branch_create_contract(&repo_path, &before_ref, new_branch, &original_branch);
+
+        let exec_receipt = adapter
+            .execute(&contract, &serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_eq!(exec_receipt.external_id.as_deref(), Some(new_branch));
+
+        // Step 3: Verify
+        let verify_receipt = adapter.verify(&contract).await.unwrap();
+        assert!(verify_receipt.verified);
+
+        // Step 4: Rollback (simulating failure/recovery)
+        let rollback_receipt = adapter.rollback(&contract).await.unwrap();
+        assert!(rollback_receipt.recovered);
+
+        // Final state verification
+        assert_eq!(git_current_branch(&repo_path).unwrap(), original_branch);
+        assert!(!git_branch_exists(&repo_path, new_branch).unwrap());
         assert_eq!(git_head(&repo_path).unwrap(), before_ref);
     }
 }

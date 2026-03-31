@@ -24,10 +24,10 @@ Single-node v1 scope unless noted.
 - `ferrum-testkit` — test helpers
 
 ### Adapters
-- `ferrum-adapter-fs` — filesystem adapter (skeleton)
-- `ferrum-adapter-sqlite` — SQLite adapter (skeleton)
+- `ferrum-adapter-fs` — filesystem adapter (local file write/delete with hash-based verify semantics; durability/hardening still limited)
+- `ferrum-adapter-sqlite` — SQLite adapter (single-row and atomic multi-row rollback/compensate path for bounded local table/row mutations)
 - `ferrum-adapter-maildraft` — maildraft adapter (SQLite-backed draft persistence; verify semantics implemented; send semantics explicitly out of scope)
-- `ferrum-adapter-git` — git adapter (skeleton, no real implementation)
+- `ferrum-adapter-git` — git adapter (local HEAD capture/reset and branch-create rollback path; remote workflows explicitly out of scope)
 - `ferrum-adapter-http` — HTTP adapter (skeleton, no real implementation)
 
 ### Binaries

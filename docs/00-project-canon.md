@@ -51,15 +51,15 @@ FerrumGate v1 Supported scope:
 
 ### Partial — adapter surfaces (crate/API shape only, not production-verified side-effect integrations)
 
-- `ferrum-adapter-fs` — filesystem adapter skeleton (no real implementation)
-- `ferrum-adapter-sqlite` — SQLite adapter skeleton (no real implementation)
+- `ferrum-adapter-fs` — filesystem adapter (local file write/delete with hash-based verify; broader hardening deferred)
+- `ferrum-adapter-sqlite` — SQLite adapter (bounded local row mutation rollback, including atomic multi-row support)
 - `ferrum-adapter-maildraft` — maildraft adapter (SQLite-backed draft persistence and verify semantics; send/provider integration deferred)
-- `ferrum-adapter-git` — git adapter skeleton (no real implementation)
+- `ferrum-adapter-git` — git adapter (local HEAD capture/reset and branch-create rollback; remote workflows deferred)
 - `ferrum-adapter-http` — HTTP adapter skeleton (no real implementation)
 
 ### Deferred / post-v1
 
-- real adapter implementations (fs, sqlite, maildraft, git, http)
+- broader production-verified adapter integrations and hardening (fs, sqlite, maildraft, git, http)
 - multi-node / HA / read-replica
 - U1-U4 upgrade tracks (Outcome-aware Governance, Reversible Execution Planner, Cross-runtime Provenance Fabric, MCP/local/NemoClaw runtime integrations)
 
