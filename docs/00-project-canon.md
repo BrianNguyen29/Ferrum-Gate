@@ -55,7 +55,7 @@ FerrumGate v1 Supported scope:
 - `ferrum-adapter-sqlite` — SQLite adapter (bounded local row mutation rollback, including atomic multi-row support)
 - `ferrum-adapter-maildraft` — maildraft adapter (SQLite-backed draft persistence and verify semantics; send/provider integration deferred)
 - `ferrum-adapter-git` — git adapter (local HEAD capture/reset and branch-create rollback; remote workflows deferred)
-- `ferrum-adapter-http` — HTTP adapter skeleton (no real implementation)
+- `ferrum-adapter-http` — HTTP adapter (bounded HTTP execute/verify with body-aware digest, header-shape binding, canonical query strings, auth support, and conservative rollback no-op; mutation recovery is R3 boundary)
 
 ### Deferred / post-v1
 
