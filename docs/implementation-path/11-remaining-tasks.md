@@ -43,10 +43,14 @@ Scope is single-node v1 unless labeled post-v1.
 
 These are explicitly out of v1 scope. Do not treat as blockers.
 
-- [ ] real adapter implementations (fs, sqlite, maildraft, git, http)
+- [ ] real adapter implementations (fs, sqlite, git, http)
   - Src: `docs/00-project-canon.md` line 62 "real adapter implementations (fs, sqlite, maildraft, git, http)"
   - Src: `docs/implementation-path/01-current-state.md` lines 26-31
   - Note: v1 ships adapter crate/API surfaces only; production-verified external side-effect integrations remain post-v1.
+
+- [ ] maildraft: send/provider integration (post-v1)
+  - Src: `crates/ferrum-adapter-maildraft/src/lib.rs` line 6 "send semantics out of scope"
+  - Note: maildraft durable persistence and verify semantics implemented in v1; actual mail send to external provider remains post-v1.
 
 - [ ] multi-node / HA / read-replica support
   - Src: `docs/00-project-canon.md` line 56 "full distributed deployment"

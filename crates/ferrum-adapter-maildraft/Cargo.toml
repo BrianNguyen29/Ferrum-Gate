@@ -14,3 +14,7 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 ferrum-proto = { path = "../ferrum-proto" }
 ferrum-rollback = { path = "../ferrum-rollback" }
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+[dev-dependencies]
+tempfile = "3"

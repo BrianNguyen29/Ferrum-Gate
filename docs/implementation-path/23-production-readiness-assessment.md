@@ -4,7 +4,7 @@ Single-node v1 scope. Assessment against FerrumGate v1 success criteria.
 
 **Release support contract**:
 - Supported = single-node governance core with SQLite-backed persistence.
-- Partial = adapter crate surfaces (fs/sqlite/maildraft/git/http) and a bounded `ferrumctl` operator surface.
+- Partial = adapter crate surfaces (fs/sqlite/git/http) plus maildraft (SQLite-backed persistence and verify semantics implemented; send/provider integration deferred/post-v1), and a bounded `ferrumctl` operator surface.
 - Deferred/post-v1 = real adapter implementations, multi-node/HA/read-replica, U1-U4 upgrade tracks.
 
 ## Overall readiness: RC-READY

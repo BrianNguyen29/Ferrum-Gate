@@ -53,7 +53,7 @@ FerrumGate v1 Supported scope:
 
 - `ferrum-adapter-fs` — filesystem adapter skeleton (no real implementation)
 - `ferrum-adapter-sqlite` — SQLite adapter skeleton (no real implementation)
-- `ferrum-adapter-maildraft` — maildraft adapter skeleton (no real implementation)
+- `ferrum-adapter-maildraft` — maildraft adapter (SQLite-backed draft persistence and verify semantics; send/provider integration deferred)
 - `ferrum-adapter-git` — git adapter skeleton (no real implementation)
 - `ferrum-adapter-http` — HTTP adapter skeleton (no real implementation)
 

@@ -19,6 +19,7 @@
 ## Maildraft
 - draft-only (`allow_send=false`) in v1: routes to maildraft adapter for draft create/delete
 - `allow_send=true` bindings: explicitly denied at gateway prepare-time (fail-closed); does NOT silently fall through to noop
+- SQLite-backed durable draft persistence with real verify semantics (checks draft existence in store)
 - `EmailSend` van ngoai scope recovery / unsend trong v1
 
 ## Git
