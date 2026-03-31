@@ -10,6 +10,7 @@ use ferrum_rollback::{
     AdapterError, AdapterRegistry, ExecuteReceipt, PrepareReceipt, RecoveryReceipt,
     RollbackAdapter, VerifyReceipt,
 };
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
@@ -17,17 +18,41 @@ use std::sync::Mutex;
 pub const ADAPTER_KIND: &str = "ferrum-adapter-fs";
 pub const ADAPTER_KEY: &str = "fs";
 
+/// Compute SHA256 hash of file content at given path.
+/// Returns None if file does not exist or cannot be read.
+fn compute_file_hash(path: &str) -> Result<Option<String>, AdapterError> {
+    match std::fs::read(path) {
+        Ok(content) => {
+            let mut hasher = Sha256::new();
+            hasher.update(&content);
+            let hash = hex::encode(hasher.finalize());
+            Ok(Some(hash))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(AdapterError::Internal(format!(
+            "Failed to read file for hashing: {}",
+            e
+        ))),
+    }
+}
+
 /// In-memory store for file snapshots (compensation data)
 /// Maps execution_id -> file_path -> original_content
 #[derive(Default)]
 pub struct FsSnapshotStore {
     snapshots: Mutex<HashMap<String, HashMap<String, Vec<u8>>>>,
+    /// Maps execution_id -> file_path -> before_hash (computed at prepare time)
+    before_hashes: Mutex<HashMap<String, HashMap<String, String>>>,
+    /// Maps execution_id -> file_path -> after_hash (computed at execute time)
+    after_hashes: Mutex<HashMap<String, HashMap<String, String>>>,
 }
 
 impl FsSnapshotStore {
     pub fn new() -> Self {
         Self {
             snapshots: Mutex::new(HashMap::new()),
+            before_hashes: Mutex::new(HashMap::new()),
+            after_hashes: Mutex::new(HashMap::new()),
         }
     }
 
@@ -55,6 +80,44 @@ impl FsSnapshotStore {
             .get(execution_id)
             .map(|exec| exec.contains_key(path))
             .unwrap_or(false)
+    }
+
+    /// Store the before_hash for a file at prepare time
+    fn set_before_hash(&self, execution_id: &str, path: &str, hash: String) {
+        let mut before_hashes = self.before_hashes.lock().unwrap();
+        let exec_hashes = before_hashes.entry(execution_id.to_string()).or_default();
+        exec_hashes.insert(path.to_string(), hash);
+    }
+
+    /// Get the before_hash for a file
+    fn get_before_hash(&self, execution_id: &str, path: &str) -> Option<String> {
+        let before_hashes = self.before_hashes.lock().unwrap();
+        before_hashes
+            .get(execution_id)
+            .and_then(|exec| exec.get(path).cloned())
+    }
+
+    /// Store the after_hash for a file at execute time
+    fn set_after_hash(&self, execution_id: &str, path: &str, hash: String) {
+        let mut after_hashes = self.after_hashes.lock().unwrap();
+        let exec_hashes = after_hashes.entry(execution_id.to_string()).or_default();
+        exec_hashes.insert(path.to_string(), hash);
+    }
+
+    /// Get the after_hash for a file
+    fn get_after_hash(&self, execution_id: &str, path: &str) -> Option<String> {
+        let after_hashes = self.after_hashes.lock().unwrap();
+        after_hashes
+            .get(execution_id)
+            .and_then(|exec| exec.get(path).cloned())
+    }
+
+    /// Clear all hashes for an execution
+    fn clear_hashes(&self, execution_id: &str) {
+        let mut before_hashes = self.before_hashes.lock().unwrap();
+        let mut after_hashes = self.after_hashes.lock().unwrap();
+        before_hashes.remove(execution_id);
+        after_hashes.remove(execution_id);
     }
 }
 
@@ -99,6 +162,7 @@ impl RollbackAdapter for FsRollbackAdapter {
         let file_path = extract_file_path(request);
 
         // If file exists, snapshot its current content for compensation
+        // and compute before_hash for verification
         if let Some(ref path) = file_path {
             if Path::new(path).exists() {
                 match std::fs::read(path) {
@@ -108,6 +172,14 @@ impl RollbackAdapter for FsRollbackAdapter {
                             path,
                             content,
                         );
+                        // Compute and store before_hash
+                        if let Ok(Some(hash)) = compute_file_hash(path) {
+                            self.snapshot_store.set_before_hash(
+                                &request.execution_id.to_string(),
+                                path,
+                                hash,
+                            );
+                        }
                     }
                     Err(e) => {
                         return Err(AdapterError::Internal(format!(
@@ -197,11 +269,37 @@ impl RollbackAdapter for FsRollbackAdapter {
                 std::fs::write(file_path, content)
                     .map_err(|e| AdapterError::Internal(format!("Failed to write file: {}", e)))?;
 
+                // Compute and store after_hash for verification
+                let execution_id = contract.execution_id.to_string();
+                if let Ok(Some(hash)) = compute_file_hash(file_path) {
+                    self.snapshot_store
+                        .set_after_hash(&execution_id, file_path, hash);
+                }
+
                 let mut metadata = JsonMap::new();
                 metadata.insert(
                     "file_path".to_string(),
                     serde_json::Value::String(file_path.to_string()),
                 );
+
+                // Include hashes in metadata for observability
+                if let Some(before_hash) = self
+                    .snapshot_store
+                    .get_before_hash(&execution_id, file_path)
+                {
+                    metadata.insert(
+                        "before_hash".to_string(),
+                        serde_json::Value::String(before_hash),
+                    );
+                }
+                if let Some(after_hash) =
+                    self.snapshot_store.get_after_hash(&execution_id, file_path)
+                {
+                    metadata.insert(
+                        "after_hash".to_string(),
+                        serde_json::Value::String(after_hash),
+                    );
+                }
 
                 Ok(ExecuteReceipt {
                     external_id: Some(file_path.to_string()),
@@ -222,22 +320,114 @@ impl RollbackAdapter for FsRollbackAdapter {
             });
         };
 
+        let execution_id = contract.execution_id.to_string();
+
         match contract.action_type {
             ferrum_proto::ActionType::FileDelete => {
                 // For FileDelete: verify file does NOT exist (successful deletion)
+                // This is meaningful verification - it confirms the delete actually happened
                 let file_exists = Path::new(path).exists();
+                let mut metadata = JsonMap::new();
+                metadata.insert(
+                    "verified_action".to_string(),
+                    serde_json::Value::String("file_absent".to_string()),
+                );
+                metadata.insert(
+                    "file_exists".to_string(),
+                    serde_json::Value::Bool(file_exists),
+                );
                 Ok(VerifyReceipt {
                     verified: !file_exists,
-                    adapter_metadata: JsonMap::new(),
+                    adapter_metadata: metadata,
                 })
             }
             _ => {
-                // For FileWrite and other: verify file exists
+                // For FileWrite: verify file exists AND content hash matches after_hash
+                // This is meaningful hash-based verification
                 let file_exists = Path::new(path).exists();
-                Ok(VerifyReceipt {
-                    verified: file_exists,
-                    adapter_metadata: JsonMap::new(),
-                })
+                let mut metadata = JsonMap::new();
+                metadata.insert(
+                    "verified_action".to_string(),
+                    serde_json::Value::String("content_hash_match".to_string()),
+                );
+                metadata.insert(
+                    "file_exists".to_string(),
+                    serde_json::Value::Bool(file_exists),
+                );
+
+                if !file_exists {
+                    // File doesn't exist - verification fails
+                    return Ok(VerifyReceipt {
+                        verified: false,
+                        adapter_metadata: metadata,
+                    });
+                }
+
+                // Compute current file hash
+                let current_hash = match compute_file_hash(path) {
+                    Ok(Some(h)) => h,
+                    Ok(None) => {
+                        // File disappeared between exists check and read
+                        metadata.insert(
+                            "hash_error".to_string(),
+                            serde_json::Value::String("file_not_readable".to_string()),
+                        );
+                        return Ok(VerifyReceipt {
+                            verified: false,
+                            adapter_metadata: metadata,
+                        });
+                    }
+                    Err(e) => {
+                        metadata.insert(
+                            "hash_error".to_string(),
+                            serde_json::Value::String(e.to_string()),
+                        );
+                        return Ok(VerifyReceipt {
+                            verified: false,
+                            adapter_metadata: metadata,
+                        });
+                    }
+                };
+
+                metadata.insert(
+                    "current_hash".to_string(),
+                    serde_json::Value::String(current_hash.clone()),
+                );
+
+                // Compare with after_hash
+                let expected_after_hash = self.snapshot_store.get_after_hash(&execution_id, path);
+                let before_hash = self.snapshot_store.get_before_hash(&execution_id, path);
+
+                if let Some(expected) = expected_after_hash {
+                    metadata.insert(
+                        "expected_after_hash".to_string(),
+                        serde_json::Value::String(expected.clone()),
+                    );
+                    metadata.insert(
+                        "hash_matches".to_string(),
+                        serde_json::Value::Bool(current_hash == expected),
+                    );
+                    // Also include before_hash for completeness
+                    if let Some(before) = before_hash {
+                        metadata
+                            .insert("before_hash".to_string(), serde_json::Value::String(before));
+                    }
+                    Ok(VerifyReceipt {
+                        verified: current_hash == expected,
+                        adapter_metadata: metadata,
+                    })
+                } else {
+                    // No after_hash stored - fall back to basic existence check
+                    // This shouldn't normally happen if execute was called properly
+                    metadata.insert(
+                        "hash_error".to_string(),
+                        serde_json::Value::String("no_after_hash_stored".to_string()),
+                    );
+                    Ok(VerifyReceipt {
+                        verified: file_exists,
+                        adapter_metadata: metadata,
+                    })
+                }
             }
         }
     }
@@ -289,6 +479,7 @@ impl RollbackAdapter for FsRollbackAdapter {
         }
 
         self.snapshot_store.clear_snapshots(&execution_id);
+        self.snapshot_store.clear_hashes(&execution_id);
 
         Ok(RecoveryReceipt {
             recovered: true,
@@ -347,6 +538,7 @@ impl RollbackAdapter for FsRollbackAdapter {
         }
 
         self.snapshot_store.clear_snapshots(&execution_id);
+        self.snapshot_store.clear_hashes(&execution_id);
 
         Ok(RecoveryReceipt {
             recovered: true,
@@ -1006,5 +1198,477 @@ mod tests {
         // Verify should fail because file still exists
         let verify_receipt = adapter.verify(&contract).await.unwrap();
         assert!(!verify_receipt.verified);
+    }
+
+    #[tokio::test]
+    async fn test_fs_adapter_hash_tracking_before_hash_stored_on_prepare() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.txt");
+
+        // Create original file
+        std::fs::write(&file_path, "original content").unwrap();
+
+        let adapter = FsRollbackAdapter::new("fs");
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        // Prepare (file exists - should compute and store before_hash)
+        let prepare_req = RollbackPrepareRequest {
+            intent_id: ferrum_proto::IntentId::new(),
+            proposal_id: ferrum_proto::ProposalId::new(),
+            execution_id,
+            action_type: ferrum_proto::ActionType::FileWrite,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "fs".to_string(),
+            target: ferrum_proto::RollbackTarget::FilePath {
+                path: file_path.to_str().unwrap().to_string(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            metadata: JsonMap::new(),
+        };
+
+        adapter.prepare(&prepare_req).await.unwrap();
+
+        // before_hash should be stored in snapshot store
+        let before_hash = adapter
+            .snapshot_store()
+            .get_before_hash(&execution_id.to_string(), file_path.to_str().unwrap());
+        assert!(
+            before_hash.is_some(),
+            "before_hash should be computed for existing file"
+        );
+
+        // Verify the hash is a valid hex string (SHA256 = 64 hex chars)
+        let hash = before_hash.unwrap();
+        assert_eq!(hash.len(), 64, "SHA256 hash should be 64 hex characters");
+        assert!(
+            hash.chars().all(|c| c.is_ascii_hexdigit()),
+            "Hash should be hex"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_fs_adapter_hash_tracking_after_hash_stored_on_execute() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.txt");
+
+        // File doesn't exist initially
+        assert!(!file_path.exists());
+
+        let adapter = FsRollbackAdapter::new("fs");
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        // Prepare
+        let prepare_req = RollbackPrepareRequest {
+            intent_id: ferrum_proto::IntentId::new(),
+            proposal_id: ferrum_proto::ProposalId::new(),
+            execution_id,
+            action_type: ferrum_proto::ActionType::FileWrite,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "fs".to_string(),
+            target: ferrum_proto::RollbackTarget::FilePath {
+                path: file_path.to_str().unwrap().to_string(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            metadata: JsonMap::new(),
+        };
+
+        let prep_receipt = adapter.prepare(&prepare_req).await.unwrap();
+
+        // Execute (creates file)
+        let payload = serde_json::json!({
+            "path": file_path.to_str().unwrap(),
+            "content": "new content"
+        });
+
+        let contract = RollbackContract {
+            contract_id: ferrum_proto::RollbackContractId::new(),
+            intent_id: prepare_req.intent_id,
+            proposal_id: prepare_req.proposal_id,
+            execution_id: prepare_req.execution_id,
+            action_type: ferrum_proto::ActionType::FileWrite,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "fs".to_string(),
+            target: ferrum_proto::RollbackTarget::FilePath {
+                path: file_path.to_str().unwrap().to_string(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: ferrum_proto::RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: prep_receipt.adapter_metadata,
+        };
+
+        let exec_receipt = adapter.execute(&contract, &payload).await.unwrap();
+
+        // after_hash should be stored in snapshot store
+        let after_hash = adapter
+            .snapshot_store()
+            .get_after_hash(&execution_id.to_string(), file_path.to_str().unwrap());
+        assert!(
+            after_hash.is_some(),
+            "after_hash should be computed after write"
+        );
+
+        // Verify the hash is a valid hex string
+        let hash = after_hash.unwrap();
+        assert_eq!(hash.len(), 64, "SHA256 hash should be 64 hex characters");
+
+        // after_hash should be in execute receipt metadata for observability
+        let after_hash_in_metadata = exec_receipt
+            .adapter_metadata
+            .get("after_hash")
+            .and_then(|v| v.as_str());
+        assert!(
+            after_hash_in_metadata.is_some(),
+            "after_hash should be in execute receipt metadata"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_fs_adapter_verify_uses_hash_for_file_write() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.txt");
+
+        // File doesn't exist initially
+        assert!(!file_path.exists());
+
+        let adapter = FsRollbackAdapter::new("fs");
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        // Prepare
+        let prepare_req = RollbackPrepareRequest {
+            intent_id: ferrum_proto::IntentId::new(),
+            proposal_id: ferrum_proto::ProposalId::new(),
+            execution_id,
+            action_type: ferrum_proto::ActionType::FileWrite,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "fs".to_string(),
+            target: ferrum_proto::RollbackTarget::FilePath {
+                path: file_path.to_str().unwrap().to_string(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            metadata: JsonMap::new(),
+        };
+
+        let prep_receipt = adapter.prepare(&prepare_req).await.unwrap();
+
+        // Execute (creates file with "hello world")
+        let payload = serde_json::json!({
+            "path": file_path.to_str().unwrap(),
+            "content": "hello world"
+        });
+
+        let contract = RollbackContract {
+            contract_id: ferrum_proto::RollbackContractId::new(),
+            intent_id: prepare_req.intent_id,
+            proposal_id: prepare_req.proposal_id,
+            execution_id: prepare_req.execution_id,
+            action_type: ferrum_proto::ActionType::FileWrite,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "fs".to_string(),
+            target: ferrum_proto::RollbackTarget::FilePath {
+                path: file_path.to_str().unwrap().to_string(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: ferrum_proto::RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: prep_receipt.adapter_metadata,
+        };
+
+        adapter.execute(&contract, &payload).await.unwrap();
+
+        // Verify should pass because file content matches after_hash
+        let verify_receipt = adapter.verify(&contract).await.unwrap();
+        assert!(
+            verify_receipt.verified,
+            "verify should pass when content matches after_hash"
+        );
+
+        // Verify metadata contains hash information
+        let verified_action = verify_receipt
+            .adapter_metadata
+            .get("verified_action")
+            .and_then(|v| v.as_str());
+        assert_eq!(
+            verified_action,
+            Some("content_hash_match"),
+            "verified_action should indicate hash-based verification"
+        );
+
+        let current_hash = verify_receipt
+            .adapter_metadata
+            .get("current_hash")
+            .and_then(|v| v.as_str());
+        assert!(current_hash.is_some(), "current_hash should be in metadata");
+
+        let hash_matches = verify_receipt
+            .adapter_metadata
+            .get("hash_matches")
+            .and_then(|v| v.as_bool());
+        assert_eq!(hash_matches, Some(true), "hash_matches should be true");
+    }
+
+    #[tokio::test]
+    async fn test_fs_adapter_verify_fails_when_content_mismatch() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.txt");
+
+        let adapter = FsRollbackAdapter::new("fs");
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        // Prepare
+        let prepare_req = RollbackPrepareRequest {
+            intent_id: ferrum_proto::IntentId::new(),
+            proposal_id: ferrum_proto::ProposalId::new(),
+            execution_id,
+            action_type: ferrum_proto::ActionType::FileWrite,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "fs".to_string(),
+            target: ferrum_proto::RollbackTarget::FilePath {
+                path: file_path.to_str().unwrap().to_string(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            metadata: JsonMap::new(),
+        };
+
+        let prep_receipt = adapter.prepare(&prepare_req).await.unwrap();
+
+        // Execute (creates file with "hello world")
+        let payload = serde_json::json!({
+            "path": file_path.to_str().unwrap(),
+            "content": "hello world"
+        });
+
+        let contract = RollbackContract {
+            contract_id: ferrum_proto::RollbackContractId::new(),
+            intent_id: prepare_req.intent_id,
+            proposal_id: prepare_req.proposal_id,
+            execution_id: prepare_req.execution_id,
+            action_type: ferrum_proto::ActionType::FileWrite,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "fs".to_string(),
+            target: ferrum_proto::RollbackTarget::FilePath {
+                path: file_path.to_str().unwrap().to_string(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: ferrum_proto::RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: prep_receipt.adapter_metadata,
+        };
+
+        adapter.execute(&contract, &payload).await.unwrap();
+
+        // Manually modify the file to simulate content mismatch
+        std::fs::write(&file_path, "tampered content").unwrap();
+
+        // Verify should fail because content no longer matches after_hash
+        let verify_receipt = adapter.verify(&contract).await.unwrap();
+        assert!(
+            !verify_receipt.verified,
+            "verify should fail when content doesn't match"
+        );
+
+        let hash_matches = verify_receipt
+            .adapter_metadata
+            .get("hash_matches")
+            .and_then(|v| v.as_bool());
+        assert_eq!(hash_matches, Some(false), "hash_matches should be false");
+    }
+
+    #[tokio::test]
+    async fn test_fs_adapter_verify_fails_when_file_deleted_after_write() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.txt");
+
+        let adapter = FsRollbackAdapter::new("fs");
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        // Prepare
+        let prepare_req = RollbackPrepareRequest {
+            intent_id: ferrum_proto::IntentId::new(),
+            proposal_id: ferrum_proto::ProposalId::new(),
+            execution_id,
+            action_type: ferrum_proto::ActionType::FileWrite,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "fs".to_string(),
+            target: ferrum_proto::RollbackTarget::FilePath {
+                path: file_path.to_str().unwrap().to_string(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            metadata: JsonMap::new(),
+        };
+
+        let prep_receipt = adapter.prepare(&prepare_req).await.unwrap();
+
+        // Execute
+        let payload = serde_json::json!({
+            "path": file_path.to_str().unwrap(),
+            "content": "hello world"
+        });
+
+        let contract = RollbackContract {
+            contract_id: ferrum_proto::RollbackContractId::new(),
+            intent_id: prepare_req.intent_id,
+            proposal_id: prepare_req.proposal_id,
+            execution_id: prepare_req.execution_id,
+            action_type: ferrum_proto::ActionType::FileWrite,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "fs".to_string(),
+            target: ferrum_proto::RollbackTarget::FilePath {
+                path: file_path.to_str().unwrap().to_string(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: ferrum_proto::RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: prep_receipt.adapter_metadata,
+        };
+
+        adapter.execute(&contract, &payload).await.unwrap();
+
+        // Manually delete the file
+        std::fs::remove_file(&file_path).unwrap();
+
+        // Verify should fail because file doesn't exist
+        let verify_receipt = adapter.verify(&contract).await.unwrap();
+        assert!(
+            !verify_receipt.verified,
+            "verify should fail when file doesn't exist"
+        );
+
+        let file_exists = verify_receipt
+            .adapter_metadata
+            .get("file_exists")
+            .and_then(|v| v.as_bool());
+        assert_eq!(file_exists, Some(false), "file_exists should be false");
+    }
+
+    #[tokio::test]
+    async fn test_fs_adapter_verify_for_file_delete_checks_absence() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.txt");
+
+        // Create file
+        std::fs::write(&file_path, "content to delete").unwrap();
+        assert!(file_path.exists());
+
+        let adapter = FsRollbackAdapter::new("fs");
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        // Prepare
+        let prepare_req = RollbackPrepareRequest {
+            intent_id: ferrum_proto::IntentId::new(),
+            proposal_id: ferrum_proto::ProposalId::new(),
+            execution_id,
+            action_type: ferrum_proto::ActionType::FileDelete,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "fs".to_string(),
+            target: ferrum_proto::RollbackTarget::FilePath {
+                path: file_path.to_str().unwrap().to_string(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            metadata: JsonMap::new(),
+        };
+
+        let prep_receipt = adapter.prepare(&prepare_req).await.unwrap();
+
+        let contract = RollbackContract {
+            contract_id: ferrum_proto::RollbackContractId::new(),
+            intent_id: prepare_req.intent_id,
+            proposal_id: prepare_req.proposal_id,
+            execution_id: prepare_req.execution_id,
+            action_type: ferrum_proto::ActionType::FileDelete,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "fs".to_string(),
+            target: ferrum_proto::RollbackTarget::FilePath {
+                path: file_path.to_str().unwrap().to_string(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: ferrum_proto::RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: prep_receipt.adapter_metadata,
+        };
+
+        // Execute delete
+        let payload = serde_json::json!({
+            "path": file_path.to_str().unwrap()
+        });
+        adapter.execute(&contract, &payload).await.unwrap();
+        assert!(!file_path.exists());
+
+        // Verify should pass (file is absent as expected)
+        let verify_receipt = adapter.verify(&contract).await.unwrap();
+        assert!(
+            verify_receipt.verified,
+            "verify should pass when file is absent after delete"
+        );
+
+        let verified_action = verify_receipt
+            .adapter_metadata
+            .get("verified_action")
+            .and_then(|v| v.as_str());
+        assert_eq!(
+            verified_action,
+            Some("file_absent"),
+            "verified_action should indicate absence verification for delete"
+        );
     }
 }
