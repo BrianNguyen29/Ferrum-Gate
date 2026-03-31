@@ -123,6 +123,11 @@ impl RollbackAdapter for FsRollbackAdapter {
         if let Some(path) = file_path {
             metadata.insert("file_path".to_string(), serde_json::Value::String(path));
         }
+        // Track action type for verify/compensate/rollback to know how to behave
+        metadata.insert(
+            "action_type".to_string(),
+            serde_json::Value::String(format!("{:?}", request.action_type)),
+        );
 
         Ok(PrepareReceipt {
             accepted: true,
@@ -141,43 +146,100 @@ impl RollbackAdapter for FsRollbackAdapter {
             .or_else(|| contract.metadata.get("file_path").and_then(|v| v.as_str()))
             .ok_or_else(|| AdapterError::Validation("Missing file path in payload".to_string()))?;
 
-        let content = payload
-            .get("content")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        match contract.action_type {
+            ferrum_proto::ActionType::FileDelete => {
+                // For FileDelete: snapshot was already taken in prepare if file existed
+                // Check current state to determine if we should delete
+                let existed_before = self
+                    .snapshot_store
+                    .file_existed_before(&contract.execution_id.to_string(), file_path);
 
-        // Create parent directories if needed
-        if let Some(parent) = Path::new(file_path).parent() {
-            if !parent.exists() {
-                std::fs::create_dir_all(parent).map_err(|e| {
-                    AdapterError::Internal(format!("Failed to create directories: {}", e))
-                })?;
+                // Delete the file if it existed before
+                if existed_before {
+                    std::fs::remove_file(file_path).map_err(|e| {
+                        AdapterError::Internal(format!("Failed to delete file: {}", e))
+                    })?;
+                }
+
+                let mut metadata = JsonMap::new();
+                metadata.insert(
+                    "file_path".to_string(),
+                    serde_json::Value::String(file_path.to_string()),
+                );
+                metadata.insert(
+                    "file_existed_before".to_string(),
+                    serde_json::Value::Bool(existed_before),
+                );
+
+                Ok(ExecuteReceipt {
+                    external_id: Some(file_path.to_string()),
+                    result_digest: Some(format!("deleted:{}", existed_before)),
+                    adapter_metadata: metadata,
+                })
+            }
+            _ => {
+                // FileWrite and other actions: create or overwrite file
+                let content = payload
+                    .get("content")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+
+                // Create parent directories if needed
+                if let Some(parent) = Path::new(file_path).parent() {
+                    if !parent.exists() {
+                        std::fs::create_dir_all(parent).map_err(|e| {
+                            AdapterError::Internal(format!("Failed to create directories: {}", e))
+                        })?;
+                    }
+                }
+
+                // Write file
+                std::fs::write(file_path, content)
+                    .map_err(|e| AdapterError::Internal(format!("Failed to write file: {}", e)))?;
+
+                let mut metadata = JsonMap::new();
+                metadata.insert(
+                    "file_path".to_string(),
+                    serde_json::Value::String(file_path.to_string()),
+                );
+
+                Ok(ExecuteReceipt {
+                    external_id: Some(file_path.to_string()),
+                    result_digest: Some(format!("written:{}", content.len())),
+                    adapter_metadata: metadata,
+                })
             }
         }
-
-        // Write file
-        std::fs::write(file_path, content)
-            .map_err(|e| AdapterError::Internal(format!("Failed to write file: {}", e)))?;
-
-        let mut metadata = JsonMap::new();
-        metadata.insert(
-            "file_path".to_string(),
-            serde_json::Value::String(file_path.to_string()),
-        );
-
-        Ok(ExecuteReceipt {
-            external_id: Some(file_path.to_string()),
-            result_digest: Some(format!("written:{}", content.len())),
-            adapter_metadata: metadata,
-        })
     }
 
-    async fn verify(&self, _contract: &RollbackContract) -> Result<VerifyReceipt, AdapterError> {
-        // Simple verification: file exists
-        Ok(VerifyReceipt {
-            verified: true,
-            adapter_metadata: JsonMap::new(),
-        })
+    async fn verify(&self, contract: &RollbackContract) -> Result<VerifyReceipt, AdapterError> {
+        let file_path = contract.metadata.get("file_path").and_then(|v| v.as_str());
+
+        let Some(path) = file_path else {
+            return Ok(VerifyReceipt {
+                verified: false,
+                adapter_metadata: JsonMap::new(),
+            });
+        };
+
+        match contract.action_type {
+            ferrum_proto::ActionType::FileDelete => {
+                // For FileDelete: verify file does NOT exist (successful deletion)
+                let file_exists = Path::new(path).exists();
+                Ok(VerifyReceipt {
+                    verified: !file_exists,
+                    adapter_metadata: JsonMap::new(),
+                })
+            }
+            _ => {
+                // For FileWrite and other: verify file exists
+                let file_exists = Path::new(path).exists();
+                Ok(VerifyReceipt {
+                    verified: file_exists,
+                    adapter_metadata: JsonMap::new(),
+                })
+            }
+        }
     }
 
     async fn compensate(
@@ -195,15 +257,34 @@ impl RollbackAdapter for FsRollbackAdapter {
                 AdapterError::Validation("Missing file_path in contract metadata".to_string())
             })?;
 
-        // Restore original content if we have a snapshot
-        if let Some(original_content) = self.snapshot_store.get_snapshot(&execution_id, file_path) {
-            std::fs::write(file_path, original_content)
-                .map_err(|e| AdapterError::Internal(format!("Failed to restore file: {}", e)))?;
-        } else {
-            // No snapshot means file didn't exist before - delete it
-            if Path::new(file_path).exists() {
-                std::fs::remove_file(file_path)
-                    .map_err(|e| AdapterError::Internal(format!("Failed to delete file: {}", e)))?;
+        match contract.action_type {
+            ferrum_proto::ActionType::FileDelete => {
+                // For FileDelete: restore file if it existed before (has snapshot)
+                if let Some(original_content) =
+                    self.snapshot_store.get_snapshot(&execution_id, file_path)
+                {
+                    std::fs::write(file_path, original_content).map_err(|e| {
+                        AdapterError::Internal(format!("Failed to restore deleted file: {}", e))
+                    })?;
+                }
+                // If no snapshot, file didn't exist before delete - nothing to compensate
+            }
+            _ => {
+                // For FileWrite and other: restore original content if we have a snapshot
+                if let Some(original_content) =
+                    self.snapshot_store.get_snapshot(&execution_id, file_path)
+                {
+                    std::fs::write(file_path, original_content).map_err(|e| {
+                        AdapterError::Internal(format!("Failed to restore file: {}", e))
+                    })?;
+                } else {
+                    // No snapshot means file didn't exist before - delete it if it exists now
+                    if Path::new(file_path).exists() {
+                        std::fs::remove_file(file_path).map_err(|e| {
+                            AdapterError::Internal(format!("Failed to delete new file: {}", e))
+                        })?;
+                    }
+                }
             }
         }
 
@@ -227,25 +308,41 @@ impl RollbackAdapter for FsRollbackAdapter {
                 AdapterError::Validation("Missing file_path in contract metadata".to_string())
             })?;
 
-        // Rollback deletes the file ONLY if it was newly created (no snapshot)
-        // If file existed before (has snapshot), we restore it
-        if self
-            .snapshot_store
-            .file_existed_before(&execution_id, file_path)
-        {
-            // File existed before - restore original content
-            if let Some(original_content) =
-                self.snapshot_store.get_snapshot(&execution_id, file_path)
-            {
-                std::fs::write(file_path, original_content).map_err(|e| {
-                    AdapterError::Internal(format!("Failed to restore file: {}", e))
-                })?;
+        match contract.action_type {
+            ferrum_proto::ActionType::FileDelete => {
+                // For FileDelete: restore file if it existed before (has snapshot)
+                if let Some(original_content) =
+                    self.snapshot_store.get_snapshot(&execution_id, file_path)
+                {
+                    std::fs::write(file_path, original_content).map_err(|e| {
+                        AdapterError::Internal(format!("Failed to restore deleted file: {}", e))
+                    })?;
+                }
+                // If no snapshot, file didn't exist before delete - nothing to rollback
             }
-        } else {
-            // File was newly created - delete it
-            if Path::new(file_path).exists() {
-                std::fs::remove_file(file_path)
-                    .map_err(|e| AdapterError::Internal(format!("Failed to delete file: {}", e)))?;
+            _ => {
+                // For FileWrite and other: rollback deletes the file ONLY if it was newly created (no snapshot)
+                // If file existed before (has snapshot), we restore it
+                if self
+                    .snapshot_store
+                    .file_existed_before(&execution_id, file_path)
+                {
+                    // File existed before - restore original content
+                    if let Some(original_content) =
+                        self.snapshot_store.get_snapshot(&execution_id, file_path)
+                    {
+                        std::fs::write(file_path, original_content).map_err(|e| {
+                            AdapterError::Internal(format!("Failed to restore file: {}", e))
+                        })?;
+                    }
+                } else {
+                    // File was newly created - delete it
+                    if Path::new(file_path).exists() {
+                        std::fs::remove_file(file_path).map_err(|e| {
+                            AdapterError::Internal(format!("Failed to delete file: {}", e))
+                        })?;
+                    }
+                }
             }
         }
 
@@ -488,5 +585,426 @@ mod tests {
         adapter.compensate(&contract).await.unwrap();
         let restored = std::fs::read_to_string(&file_path).unwrap();
         assert_eq!(restored, "original content");
+    }
+
+    #[tokio::test]
+    async fn test_fs_adapter_delete_existing_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.txt");
+
+        // Create file to delete
+        std::fs::write(&file_path, "content to delete").unwrap();
+        assert!(file_path.exists());
+
+        let adapter = FsRollbackAdapter::new("fs");
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        // Prepare (file exists - will snapshot)
+        let prepare_req = RollbackPrepareRequest {
+            intent_id: ferrum_proto::IntentId::new(),
+            proposal_id: ferrum_proto::ProposalId::new(),
+            execution_id,
+            action_type: ferrum_proto::ActionType::FileDelete,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "fs".to_string(),
+            target: ferrum_proto::RollbackTarget::FilePath {
+                path: file_path.to_str().unwrap().to_string(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            metadata: JsonMap::new(),
+        };
+
+        let prep_receipt = adapter.prepare(&prepare_req).await.unwrap();
+
+        // Execute FileDelete
+        let payload = serde_json::json!({
+            "path": file_path.to_str().unwrap()
+        });
+
+        let contract = RollbackContract {
+            contract_id: ferrum_proto::RollbackContractId::new(),
+            intent_id: prepare_req.intent_id,
+            proposal_id: prepare_req.proposal_id,
+            execution_id: prepare_req.execution_id,
+            action_type: ferrum_proto::ActionType::FileDelete,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "fs".to_string(),
+            target: ferrum_proto::RollbackTarget::FilePath {
+                path: file_path.to_str().unwrap().to_string(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: ferrum_proto::RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: prep_receipt.adapter_metadata,
+        };
+
+        let exec_receipt = adapter.execute(&contract, &payload).await.unwrap();
+        assert!(exec_receipt.external_id.is_some());
+
+        // File should be deleted
+        assert!(!file_path.exists());
+    }
+
+    #[tokio::test]
+    async fn test_fs_adapter_delete_verify_confirms_deletion() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.txt");
+
+        // Create and then delete file
+        std::fs::write(&file_path, "content").unwrap();
+        assert!(file_path.exists());
+
+        let adapter = FsRollbackAdapter::new("fs");
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        let prepare_req = RollbackPrepareRequest {
+            intent_id: ferrum_proto::IntentId::new(),
+            proposal_id: ferrum_proto::ProposalId::new(),
+            execution_id,
+            action_type: ferrum_proto::ActionType::FileDelete,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "fs".to_string(),
+            target: ferrum_proto::RollbackTarget::FilePath {
+                path: file_path.to_str().unwrap().to_string(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            metadata: JsonMap::new(),
+        };
+
+        let prep_receipt = adapter.prepare(&prepare_req).await.unwrap();
+
+        let contract = RollbackContract {
+            contract_id: ferrum_proto::RollbackContractId::new(),
+            intent_id: prepare_req.intent_id,
+            proposal_id: prepare_req.proposal_id,
+            execution_id: prepare_req.execution_id,
+            action_type: ferrum_proto::ActionType::FileDelete,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "fs".to_string(),
+            target: ferrum_proto::RollbackTarget::FilePath {
+                path: file_path.to_str().unwrap().to_string(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: ferrum_proto::RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: prep_receipt.adapter_metadata,
+        };
+
+        // Execute delete
+        let payload = serde_json::json!({
+            "path": file_path.to_str().unwrap()
+        });
+        adapter.execute(&contract, &payload).await.unwrap();
+        assert!(!file_path.exists());
+
+        // Verify should confirm deletion
+        let verify_receipt = adapter.verify(&contract).await.unwrap();
+        assert!(verify_receipt.verified);
+    }
+
+    #[tokio::test]
+    async fn test_fs_adapter_delete_compensate_restores_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.txt");
+
+        // Create file to delete
+        std::fs::write(&file_path, "original content").unwrap();
+
+        let adapter = FsRollbackAdapter::new("fs");
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        // Prepare
+        let prepare_req = RollbackPrepareRequest {
+            intent_id: ferrum_proto::IntentId::new(),
+            proposal_id: ferrum_proto::ProposalId::new(),
+            execution_id,
+            action_type: ferrum_proto::ActionType::FileDelete,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "fs".to_string(),
+            target: ferrum_proto::RollbackTarget::FilePath {
+                path: file_path.to_str().unwrap().to_string(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            metadata: JsonMap::new(),
+        };
+
+        let prep_receipt = adapter.prepare(&prepare_req).await.unwrap();
+
+        let contract = RollbackContract {
+            contract_id: ferrum_proto::RollbackContractId::new(),
+            intent_id: prepare_req.intent_id,
+            proposal_id: prepare_req.proposal_id,
+            execution_id: prepare_req.execution_id,
+            action_type: ferrum_proto::ActionType::FileDelete,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "fs".to_string(),
+            target: ferrum_proto::RollbackTarget::FilePath {
+                path: file_path.to_str().unwrap().to_string(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: ferrum_proto::RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: prep_receipt.adapter_metadata,
+        };
+
+        // Execute delete
+        let payload = serde_json::json!({
+            "path": file_path.to_str().unwrap()
+        });
+        adapter.execute(&contract, &payload).await.unwrap();
+        assert!(!file_path.exists());
+
+        // Compensate should restore the file
+        adapter.compensate(&contract).await.unwrap();
+        assert!(file_path.exists());
+        let restored = std::fs::read_to_string(&file_path).unwrap();
+        assert_eq!(restored, "original content");
+    }
+
+    #[tokio::test]
+    async fn test_fs_adapter_delete_rollback_restores_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.txt");
+
+        // Create file to delete
+        std::fs::write(&file_path, "original content").unwrap();
+
+        let adapter = FsRollbackAdapter::new("fs");
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        // Prepare
+        let prepare_req = RollbackPrepareRequest {
+            intent_id: ferrum_proto::IntentId::new(),
+            proposal_id: ferrum_proto::ProposalId::new(),
+            execution_id,
+            action_type: ferrum_proto::ActionType::FileDelete,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "fs".to_string(),
+            target: ferrum_proto::RollbackTarget::FilePath {
+                path: file_path.to_str().unwrap().to_string(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            metadata: JsonMap::new(),
+        };
+
+        let prep_receipt = adapter.prepare(&prepare_req).await.unwrap();
+
+        let contract = RollbackContract {
+            contract_id: ferrum_proto::RollbackContractId::new(),
+            intent_id: prepare_req.intent_id,
+            proposal_id: prepare_req.proposal_id,
+            execution_id: prepare_req.execution_id,
+            action_type: ferrum_proto::ActionType::FileDelete,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "fs".to_string(),
+            target: ferrum_proto::RollbackTarget::FilePath {
+                path: file_path.to_str().unwrap().to_string(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: ferrum_proto::RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: prep_receipt.adapter_metadata,
+        };
+
+        // Execute delete
+        let payload = serde_json::json!({
+            "path": file_path.to_str().unwrap()
+        });
+        adapter.execute(&contract, &payload).await.unwrap();
+        assert!(!file_path.exists());
+
+        // Rollback should restore the file
+        adapter.rollback(&contract).await.unwrap();
+        assert!(file_path.exists());
+        let restored = std::fs::read_to_string(&file_path).unwrap();
+        assert_eq!(restored, "original content");
+    }
+
+    #[tokio::test]
+    async fn test_fs_adapter_delete_nonexistent_file_noop() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("nonexistent.txt");
+
+        // File doesn't exist
+        assert!(!file_path.exists());
+
+        let adapter = FsRollbackAdapter::new("fs");
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        // Prepare (file doesn't exist - no snapshot)
+        let prepare_req = RollbackPrepareRequest {
+            intent_id: ferrum_proto::IntentId::new(),
+            proposal_id: ferrum_proto::ProposalId::new(),
+            execution_id,
+            action_type: ferrum_proto::ActionType::FileDelete,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "fs".to_string(),
+            target: ferrum_proto::RollbackTarget::FilePath {
+                path: file_path.to_str().unwrap().to_string(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            metadata: JsonMap::new(),
+        };
+
+        let prep_receipt = adapter.prepare(&prepare_req).await.unwrap();
+
+        let contract = RollbackContract {
+            contract_id: ferrum_proto::RollbackContractId::new(),
+            intent_id: prepare_req.intent_id,
+            proposal_id: prepare_req.proposal_id,
+            execution_id: prepare_req.execution_id,
+            action_type: ferrum_proto::ActionType::FileDelete,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "fs".to_string(),
+            target: ferrum_proto::RollbackTarget::FilePath {
+                path: file_path.to_str().unwrap().to_string(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: ferrum_proto::RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: prep_receipt.adapter_metadata,
+        };
+
+        // Execute delete on non-existent file
+        let payload = serde_json::json!({
+            "path": file_path.to_str().unwrap()
+        });
+        adapter.execute(&contract, &payload).await.unwrap();
+
+        // File should still not exist
+        assert!(!file_path.exists());
+
+        // Compensate should be a no-op (file didn't exist before)
+        adapter.compensate(&contract).await.unwrap();
+        assert!(!file_path.exists());
+
+        // Rollback should be a no-op
+        adapter.rollback(&contract).await.unwrap();
+        assert!(!file_path.exists());
+    }
+
+    #[tokio::test]
+    async fn test_fs_adapter_delete_verify_fails_if_file_still_exists() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.txt");
+
+        // Create file
+        std::fs::write(&file_path, "content").unwrap();
+
+        let adapter = FsRollbackAdapter::new("fs");
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        let prepare_req = RollbackPrepareRequest {
+            intent_id: ferrum_proto::IntentId::new(),
+            proposal_id: ferrum_proto::ProposalId::new(),
+            execution_id,
+            action_type: ferrum_proto::ActionType::FileDelete,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "fs".to_string(),
+            target: ferrum_proto::RollbackTarget::FilePath {
+                path: file_path.to_str().unwrap().to_string(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            metadata: JsonMap::new(),
+        };
+
+        let prep_receipt = adapter.prepare(&prepare_req).await.unwrap();
+
+        let contract = RollbackContract {
+            contract_id: ferrum_proto::RollbackContractId::new(),
+            intent_id: prepare_req.intent_id,
+            proposal_id: prepare_req.proposal_id,
+            execution_id: prepare_req.execution_id,
+            action_type: ferrum_proto::ActionType::FileDelete,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "fs".to_string(),
+            target: ferrum_proto::RollbackTarget::FilePath {
+                path: file_path.to_str().unwrap().to_string(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: ferrum_proto::RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: prep_receipt.adapter_metadata,
+        };
+
+        // Execute delete
+        let payload = serde_json::json!({
+            "path": file_path.to_str().unwrap()
+        });
+        adapter.execute(&contract, &payload).await.unwrap();
+
+        // Manually recreate file to simulate failed delete
+        std::fs::write(&file_path, "recreated").unwrap();
+        assert!(file_path.exists());
+
+        // Verify should fail because file still exists
+        let verify_receipt = adapter.verify(&contract).await.unwrap();
+        assert!(!verify_receipt.verified);
     }
 }
