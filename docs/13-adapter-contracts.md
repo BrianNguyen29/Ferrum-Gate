@@ -27,9 +27,9 @@
 
 ## Git
 - `prepare` capture local `HEAD` thanh `before_ref`
-- `execute` hien chi chap nhan `payload.after_ref` va fail-closed neu khong khop `HEAD`
-- `verify` doi chieu `after_ref` da duoc persist tu execute-time metadata, hoac fallback `before_ref`
-- `rollback` / `compensate` reset repo ve `before_ref`
+- `execute` ho tro hai local paths: `payload.after_ref` fail-closed neu khong khop `HEAD`, va `GitBranchCreate` tao branch moi + checkout sang branch do
+- `verify` doi chieu `after_ref` da duoc persist tu execute-time metadata; voi `GitBranchCreate` xac nhan current branch va current `HEAD` khop state expected
+- `rollback` / `compensate` reset repo ve `before_ref`; voi `GitBranchCreate` thi checkout lai original branch va xoa branch moi vua tao
 - gateway `prepare` da route mutating `Git` binding sang git adapter va tao `RollbackTarget::GitRef`
 
 ## HTTP

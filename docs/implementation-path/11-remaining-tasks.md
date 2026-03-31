@@ -43,10 +43,14 @@ Scope is single-node v1 unless labeled post-v1.
 
 These are explicitly out of v1 scope. Do not treat as blockers.
 
-- [ ] real adapter implementations (fs, sqlite, git, http)
-  - Src: `docs/00-project-canon.md` line 62 "real adapter implementations (fs, sqlite, maildraft, git, http)"
+- [ ] broader production-verified adapter integrations and hardening (fs, sqlite, git, http)
+  - Src: `docs/00-project-canon.md` line 62 "broader production-verified adapter integrations and hardening (fs, sqlite, maildraft, git, http)"
   - Src: `docs/implementation-path/01-current-state.md` lines 26-31
-  - Note: v1 ships adapter crate/API surfaces only; production-verified external side-effect integrations remain post-v1.
+  - Note: fs/sqlite/git/maildraft now have bounded local implementations; broader hardening, remote/external integration depth, and production verification remain post-v1.
+
+- [ ] git: remote workflows and broader ref-mutation coverage (post-v1)
+  - Src: `crates/ferrum-adapter-git/README.md` line 22 "All operations are local-only; no remote operations (push/fetch/pull)."
+  - Note: local HEAD restore and branch-create rollback exist; remote Git workflows remain out of scope.
 
 - [ ] maildraft: send/provider integration (post-v1)
   - Src: `crates/ferrum-adapter-maildraft/src/lib.rs` line 6 "send semantics out of scope"
