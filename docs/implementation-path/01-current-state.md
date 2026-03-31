@@ -32,7 +32,7 @@ Single-node v1 scope unless noted.
 
 ### Binaries
 - `ferrumd` — server binary
-- `ferrumctl` — CLI (health, inspect-execution, inspect-approvals, inspect-approval, inspect-lineage, inspect-provenance)
+- `ferrumctl` — operator CLI (health; inspect-capability/execution/approvals/approval/lineage/provenance; watch-execution/watch-approvals; resolve-approval; revoke-capability; cancel/pause/resume/prepare/execute/compensate/rollback execution)
 
 ### Integrations
 - `ferrum-integration-tests` — integration tests covering: capability single-use, R3 no-auto-commit, rollback/compensate distinct ops, taint-based quarantine, compensate end-to-end flow, pending-approvals pagination/filter, lineage endpoint shape/validation
