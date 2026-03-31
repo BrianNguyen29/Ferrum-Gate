@@ -128,6 +128,7 @@ fn build_router_inner(runtime: GatewayRuntime, auth_config: Option<ServerConfig>
             "/v1/capabilities/{capability_id}/revoke",
             post(revoke_capability),
         )
+        .route("/v1/capabilities/{capability_id}", get(get_capability))
         .route("/v1/executions/authorize", post(authorize_execution))
         .route(
             "/v1/executions/{execution_id}/prepare",
@@ -880,6 +881,22 @@ async fn revoke_capability(
         "ok": true,
         "capability_id": lease.capability_id.to_string()
     })))
+}
+
+/// GET /v1/capabilities/{capability_id}
+///
+/// Returns the full capability lease for the given capability_id.
+async fn get_capability(
+    State(runtime): State<Arc<GatewayRuntime>>,
+    Path(capability_id): Path<String>,
+) -> Result<Json<ferrum_proto::CapabilityLease>, ApiProblem> {
+    let id = parse_capability_id(&capability_id)?;
+    let lease = runtime
+        .cap
+        .get(id)
+        .await
+        .map_err(ApiProblem::from_capability)?;
+    Ok(Json(lease))
 }
 
 async fn authorize_execution(
