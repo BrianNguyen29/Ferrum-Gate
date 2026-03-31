@@ -28,7 +28,7 @@ Single-node v1 scope unless noted.
 - `ferrum-adapter-sqlite` — SQLite adapter (single-row and atomic multi-row rollback/compensate path for bounded local table/row mutations)
 - `ferrum-adapter-maildraft` — maildraft adapter (SQLite-backed draft persistence; verify semantics implemented; send semantics explicitly out of scope)
 - `ferrum-adapter-git` — git adapter (local HEAD capture/reset and branch-create rollback path; remote workflows explicitly out of scope)
-- `ferrum-adapter-http` — HTTP adapter (skeleton, no real implementation)
+- `ferrum-adapter-http` — HTTP adapter (bounded HTTP execute/verify with body-aware digest, header-shape binding, canonical query strings, auth support, and conservative rollback no-op; mutation recovery is R3 boundary)
 
 ### Binaries
 - `ferrumd` — server binary
