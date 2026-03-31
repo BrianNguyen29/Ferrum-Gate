@@ -11,7 +11,7 @@ use ferrum_proto::{
     RiskTier, RollbackClass, RollbackTarget, SensitivityLabel, TaintBudget, ToolBinding,
     TrustLabel,
 };
-use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
+use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackAdapter, RollbackService};
 use ferrum_store::{
     ApprovalRepo, CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo, ProposalRepo,
     ProvenanceRepo, RollbackRepo, SqliteStore,
@@ -5665,6 +5665,286 @@ async fn test_sqlite_execution_denied_write_on_read_binding() {
         .unwrap();
 
     assert_eq!(response.status(), 403);
+}
+
+// ============================================
+// SQLITE MULTI-ROW TRANSACTION ROLLBACK TESTS
+// ============================================
+
+/// Helper to create a test contract for SQLite multi-row transactions.
+fn make_sqlite_multi_row_contract(
+    db_path: &str,
+    execution_id: ferrum_proto::ExecutionId,
+) -> ferrum_proto::RollbackContract {
+    let mut metadata = ferrum_proto::JsonMap::new();
+    metadata.insert("db_path".to_string(), serde_json::json!(db_path));
+
+    ferrum_proto::RollbackContract {
+        contract_id: ferrum_proto::RollbackContractId::new(),
+        intent_id: ferrum_proto::IntentId::new(),
+        proposal_id: ferrum_proto::ProposalId::new(),
+        execution_id,
+        action_type: ferrum_proto::ActionType::SqlMutation,
+        rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+        adapter_key: "sqlite".to_string(),
+        target: ferrum_proto::RollbackTarget::SqliteTxn {
+            db_path: db_path.to_string(),
+            tx_id: "test-tx".to_string(),
+        },
+        prepare_checks: vec![],
+        verify_checks: vec![],
+        compensation_plan: vec![],
+        auto_commit: false,
+        state: ferrum_proto::RollbackState::Prepared,
+        created_at: chrono::Utc::now(),
+        expires_at: None,
+        metadata,
+    }
+}
+
+#[tokio::test]
+async fn test_sqlite_multi_row_transaction_executes_and_rollback_restores_original_state() {
+    // Test that multi-row payload {rows: [...]} executes atomically and rollback
+    // restores the original state for all touched rows.
+    let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
+    let db_path = temp_dir.path().join("test_multi_row.sqlite");
+    std::fs::File::create(&db_path).expect("failed to create db file");
+    let db_path_str = format!("sqlite://{}", db_path.display());
+
+    let adapter = ferrum_adapter_sqlite::SqliteRollbackAdapter::new("sqlite");
+    let execution_id = ferrum_proto::ExecutionId::new();
+    let contract = make_sqlite_multi_row_contract(&db_path_str, execution_id);
+
+    // Pre-populate with original values
+    {
+        let mut conn = sqlx::SqliteConnection::connect(&db_path_str)
+            .await
+            .expect("failed to connect");
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, content TEXT NOT NULL)",
+        )
+        .execute(&mut conn)
+        .await
+        .expect("failed to create table");
+        sqlx::query("INSERT INTO users (id, content) VALUES ('user1', 'OriginalAlice')")
+            .execute(&mut conn)
+            .await
+            .expect("failed to seed user1");
+        sqlx::query("INSERT INTO users (id, content) VALUES ('user2', 'OriginalBob')")
+            .execute(&mut conn)
+            .await
+            .expect("failed to seed user2");
+    }
+
+    // Multi-row payload updating two existing rows
+    let multi_row_payload = serde_json::json!({
+        "rows": [
+            {"table": "users", "row_id": "user1", "content": "UpdatedAlice"},
+            {"table": "users", "row_id": "user2", "content": "UpdatedBob"}
+        ]
+    });
+
+    // Execute multi-row transaction
+    let result = adapter.execute(&contract, &multi_row_payload).await;
+    assert!(
+        result.is_ok(),
+        "Multi-row execute should succeed: {:?}",
+        result.err()
+    );
+    let receipt = result.unwrap();
+    assert_eq!(
+        receipt.external_id,
+        Some("sqlite:multi-row-txn:2rows".to_string())
+    );
+
+    // Verify values were updated
+    {
+        let mut conn = sqlx::SqliteConnection::connect(&db_path_str)
+            .await
+            .expect("failed to connect");
+        let row1: String = sqlx::query("SELECT content FROM users WHERE id = 'user1'")
+            .fetch_one(&mut conn)
+            .await
+            .expect("failed to fetch user1")
+            .get(0);
+        assert_eq!(row1, "UpdatedAlice");
+
+        let row2: String = sqlx::query("SELECT content FROM users WHERE id = 'user2'")
+            .fetch_one(&mut conn)
+            .await
+            .expect("failed to fetch user2")
+            .get(0);
+        assert_eq!(row2, "UpdatedBob");
+    }
+
+    // Rollback should restore original values for ALL rows
+    let rollback_result = adapter.rollback(&contract).await;
+    assert!(
+        rollback_result.is_ok(),
+        "Rollback should succeed: {:?}",
+        rollback_result.err()
+    );
+
+    // After rollback, original values should be restored
+    let mut conn = sqlx::SqliteConnection::connect(&db_path_str)
+        .await
+        .expect("failed to connect");
+    let row1: String = sqlx::query("SELECT content FROM users WHERE id = 'user1'")
+        .fetch_one(&mut conn)
+        .await
+        .expect("failed to fetch user1 after rollback")
+        .get(0);
+    assert_eq!(
+        row1, "OriginalAlice",
+        "user1 should be restored to original value"
+    );
+
+    let row2: String = sqlx::query("SELECT content FROM users WHERE id = 'user2'")
+        .fetch_one(&mut conn)
+        .await
+        .expect("failed to fetch user2 after rollback")
+        .get(0);
+    assert_eq!(
+        row2, "OriginalBob",
+        "user2 should be restored to original value"
+    );
+}
+
+#[tokio::test]
+async fn test_sqlite_multi_row_transaction_creates_new_rows_and_rollback_deletes_all() {
+    // Test that multi-row payload can create new rows and rollback deletes them all.
+    let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
+    let db_path = temp_dir.path().join("test_multi_row_create.sqlite");
+    std::fs::File::create(&db_path).expect("failed to create db file");
+    let db_path_str = format!("sqlite://{}", db_path.display());
+
+    let adapter = ferrum_adapter_sqlite::SqliteRollbackAdapter::new("sqlite");
+    let execution_id = ferrum_proto::ExecutionId::new();
+    let contract = make_sqlite_multi_row_contract(&db_path_str, execution_id);
+
+    // Multi-row payload creating new rows (tables don't exist yet)
+    let multi_row_payload = serde_json::json!({
+        "rows": [
+            {"table": "users", "row_id": "user1", "content": "Alice"},
+            {"table": "users", "row_id": "user2", "content": "Bob"},
+            {"table": "orders", "row_id": "order1", "content": "Order123"}
+        ]
+    });
+
+    // Execute multi-row transaction
+    let result = adapter.execute(&contract, &multi_row_payload).await;
+    assert!(
+        result.is_ok(),
+        "Multi-row execute should succeed: {:?}",
+        result.err()
+    );
+    let receipt = result.unwrap();
+    assert_eq!(
+        receipt.external_id,
+        Some("sqlite:multi-row-txn:3rows".to_string())
+    );
+
+    // Verify all rows were created
+    let mut conn = sqlx::SqliteConnection::connect(&db_path_str)
+        .await
+        .expect("failed to connect");
+
+    let count: i64 = sqlx::query("SELECT COUNT(*) FROM users")
+        .fetch_one(&mut conn)
+        .await
+        .expect("failed to count users")
+        .get(0);
+    assert_eq!(count, 2, "Should have 2 users");
+
+    let order_count: i64 = sqlx::query("SELECT COUNT(*) FROM orders")
+        .fetch_one(&mut conn)
+        .await
+        .expect("failed to count orders")
+        .get(0);
+    assert_eq!(order_count, 1, "Should have 1 order");
+
+    // Rollback should delete all created rows (since they didn't exist before)
+    let rollback_result = adapter.rollback(&contract).await;
+    assert!(
+        rollback_result.is_ok(),
+        "Rollback should succeed: {:?}",
+        rollback_result.err()
+    );
+
+    // After rollback, all rows should be gone
+    let user_count: i64 = sqlx::query("SELECT COUNT(*) FROM users")
+        .fetch_one(&mut conn)
+        .await
+        .expect("failed to count users after rollback")
+        .get(0);
+    assert_eq!(user_count, 0, "Users table should be empty after rollback");
+
+    let order_count: i64 = sqlx::query("SELECT COUNT(*) FROM orders")
+        .fetch_one(&mut conn)
+        .await
+        .expect("failed to count orders after rollback")
+        .get(0);
+    assert_eq!(
+        order_count, 0,
+        "Orders table should be empty after rollback"
+    );
+}
+
+#[tokio::test]
+async fn test_sqlite_legacy_single_row_payload_still_works() {
+    // Test that legacy single-row payload (without "rows" key) still works
+    // for backward compatibility.
+    let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
+    let db_path = temp_dir.path().join("test_single_row.sqlite");
+    std::fs::File::create(&db_path).expect("failed to create db file");
+    let db_path_str = format!("sqlite://{}", db_path.display());
+
+    let adapter = ferrum_adapter_sqlite::SqliteRollbackAdapter::new("sqlite");
+    let execution_id = ferrum_proto::ExecutionId::new();
+    let contract = make_sqlite_multi_row_contract(&db_path_str, execution_id);
+
+    // Legacy single-row payload (no "rows" key)
+    let single_row_payload = serde_json::json!({
+        "table": "users",
+        "row_id": "user1",
+        "content": "Alice"
+    });
+
+    // Execute single-row (legacy path)
+    let result = adapter.execute(&contract, &single_row_payload).await;
+    assert!(
+        result.is_ok(),
+        "Single-row execute should succeed: {:?}",
+        result.err()
+    );
+    let receipt = result.unwrap();
+    assert_eq!(receipt.external_id, Some("sqlite:users/user1".to_string()));
+
+    // Verify row was written
+    let mut conn = sqlx::SqliteConnection::connect(&db_path_str)
+        .await
+        .expect("failed to connect");
+    let row: String = sqlx::query("SELECT content FROM users WHERE id = 'user1'")
+        .fetch_one(&mut conn)
+        .await
+        .expect("failed to fetch user1")
+        .get(0);
+    assert_eq!(row, "Alice");
+
+    // Rollback should delete the row (since it didn't exist before)
+    let rollback_result = adapter.rollback(&contract).await;
+    assert!(
+        rollback_result.is_ok(),
+        "Rollback should succeed: {:?}",
+        rollback_result.err()
+    );
+
+    let remaining: i64 = sqlx::query("SELECT COUNT(*) FROM users")
+        .fetch_one(&mut conn)
+        .await
+        .expect("failed to count users after rollback")
+        .get(0);
+    assert_eq!(remaining, 0, "Users table should be empty after rollback");
 }
 
 // ============================================

@@ -15,6 +15,9 @@
 - transaction wrapper
 - verify predicate / row count
 - rollback transaction
+- **Multi-row transaction support**: payload can use `{rows: [{table, row_id, content}, ...]}` for atomic multi-row mutations; legacy single-row `{table, row_id, content}` still supported for backward compatibility
+- All multi-row operations execute atomically within a single SQLite transaction
+- Rollback/compensate restores ALL touched rows to their prior state
 
 ## Maildraft
 - draft-only (`allow_send=false`) in v1: routes to maildraft adapter for draft create/delete
