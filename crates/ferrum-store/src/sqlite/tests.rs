@@ -43,6 +43,7 @@ fn sample_intent() -> IntentEnvelope {
             description: "test outcome".to_string(),
             effect_type: EffectType::ReadOnlyAnalysis,
             required: true,
+            selectors: None,
         }],
         forbidden_outcomes: Vec::new(),
         resource_scope: Vec::new(),

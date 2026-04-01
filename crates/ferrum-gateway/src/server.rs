@@ -1816,6 +1816,8 @@ fn get_adapter_family(adapter_key: &str) -> String {
 }
 
 /// U1-S4: Check if a clause's selectors match the observed execution signals.
+/// U1-S7a: Extended to support list-based selectors with OR semantics.
+/// When both scalar and list are present for a dimension, matches scalar OR any list member.
 /// Returns (matched_selectors, mismatched_selectors).
 fn check_selector_match(
     clause_selectors: &ferrum_proto::OutcomeSelectors,
@@ -1827,55 +1829,123 @@ fn check_selector_match(
     let mut matched = Vec::new();
     let mut mismatched = Vec::new();
 
-    // Check adapter_family if specified
-    if let Some(ref selector) = clause_selectors.adapter_family {
-        if selector.to_lowercase() == observed_adapter_family {
-            matched.push(format!("adapter_family:{}", observed_adapter_family));
-        } else {
-            mismatched.push(format!(
-                "adapter_family: expected '{}', got '{}'",
-                selector, observed_adapter_family
-            ));
-        }
-    }
+    // Check adapter_family if specified (scalar or list or both)
+    // U1-S7a: OR semantics when both scalar and list are present
+    let adapter_match = check_selector_dimension(
+        clause_selectors.adapter_family.as_deref(),
+        clause_selectors.adapter_family_in.as_deref(),
+        observed_adapter_family,
+        "adapter_family",
+    );
+    matched.extend(adapter_match.matched);
+    mismatched.extend(adapter_match.mismatched);
 
-    // Check target_family if specified
-    if let Some(ref selector) = clause_selectors.target_family {
-        if selector.to_lowercase() == observed_target_family {
-            matched.push(format!("target_family:{}", observed_target_family));
-        } else {
-            mismatched.push(format!(
-                "target_family: expected '{}', got '{}'",
-                selector, observed_target_family
-            ));
-        }
-    }
+    // Check target_family if specified (scalar or list or both)
+    let target_match = check_selector_dimension(
+        clause_selectors.target_family.as_deref(),
+        clause_selectors.target_family_in.as_deref(),
+        observed_target_family,
+        "target_family",
+    );
+    matched.extend(target_match.matched);
+    mismatched.extend(target_match.mismatched);
 
-    // Check request_class if specified
-    if let Some(ref selector) = clause_selectors.request_class {
-        if selector.to_lowercase() == observed_request_class {
-            matched.push(format!("request_class:{}", observed_request_class));
-        } else {
-            mismatched.push(format!(
-                "request_class: expected '{}', got '{}'",
-                selector, observed_request_class
-            ));
-        }
-    }
+    // Check request_class if specified (scalar or list or both)
+    let request_match = check_selector_dimension(
+        clause_selectors.request_class.as_deref(),
+        clause_selectors.request_class_in.as_deref(),
+        observed_request_class,
+        "request_class",
+    );
+    matched.extend(request_match.matched);
+    mismatched.extend(request_match.mismatched);
 
-    // Check mutation_family if specified
-    if let Some(ref selector) = clause_selectors.mutation_family {
-        if selector.to_lowercase() == observed_mutation_family {
-            matched.push(format!("mutation_family:{}", observed_mutation_family));
-        } else {
-            mismatched.push(format!(
-                "mutation_family: expected '{}', got '{}'",
-                selector, observed_mutation_family
-            ));
-        }
-    }
+    // Check mutation_family if specified (scalar or list or both)
+    let mutation_match = check_selector_dimension(
+        clause_selectors.mutation_family.as_deref(),
+        clause_selectors.mutation_family_in.as_deref(),
+        observed_mutation_family,
+        "mutation_family",
+    );
+    matched.extend(mutation_match.matched);
+    mismatched.extend(mutation_match.mismatched);
 
     (matched, mismatched)
+}
+
+/// U1-S7a: Helper struct for selector dimension matching result.
+struct SelectorDimensionMatch {
+    matched: Vec<String>,
+    mismatched: Vec<String>,
+}
+
+/// U1-S7a: Check a single selector dimension with scalar+list OR semantics.
+/// Returns match result for this dimension.
+fn check_selector_dimension(
+    scalar: Option<&str>,
+    list: Option<&[String]>,
+    observed: &str,
+    dimension_name: &str,
+) -> SelectorDimensionMatch {
+    // If neither scalar nor list is specified, dimension is not relevant (skip)
+    if scalar.is_none() && list.is_none() {
+        return SelectorDimensionMatch {
+            matched: Vec::new(),
+            mismatched: Vec::new(),
+        };
+    }
+
+    let observed_lower = observed.to_lowercase();
+
+    // Check scalar match
+    let scalar_match = scalar
+        .map(|s| s.to_lowercase() == observed_lower)
+        .unwrap_or(false);
+
+    // Check list match (any member matches)
+    let list_match = list
+        .map(|items| items.iter().any(|i| i.to_lowercase() == observed_lower))
+        .unwrap_or(false);
+
+    // U1-S7a: OR semantics - match if scalar OR any list member matches
+    let is_match = scalar_match || list_match;
+
+    if is_match {
+        // Build matched string showing what matched
+        let matched_value = if scalar_match {
+            format!("{}:{}", dimension_name, observed)
+        } else {
+            format!("{}:{} (via list)", dimension_name, observed)
+        };
+        SelectorDimensionMatch {
+            matched: vec![matched_value],
+            mismatched: Vec::new(),
+        }
+    } else {
+        // Build mismatch description
+        let mut expected_parts = Vec::new();
+        if let Some(s) = scalar {
+            expected_parts.push(format!("'{}'", s));
+        }
+        if let Some(items) = list {
+            if !items.is_empty() {
+                let list_str = items
+                    .iter()
+                    .map(|i| format!("'{}'", i))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                expected_parts.push(format!("[{}]", list_str));
+            }
+        }
+        let expected_str = expected_parts.join(" OR ");
+        SelectorDimensionMatch {
+            matched: Vec::new(),
+            mismatched: vec![format!(
+                "{}: expected {} OR list, got '{}'",
+                dimension_name, expected_str, observed
+            )],
+        }
+    }
 }
 
 /// U1-S2: Verify-time outcome assessment for annotate-only governance.

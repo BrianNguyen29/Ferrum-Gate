@@ -1838,6 +1838,7 @@ mod tests {
                 description: "Test outcome".to_string(),
                 effect_type,
                 required: true,
+                selectors: None,
             }],
             forbidden_outcomes: Vec::new(),
             resource_scope: Vec::new(),
@@ -2021,6 +2022,7 @@ mod tests {
             description: "File mutations are forbidden".to_string(),
             effect_type: EffectType::FileMutation,
             required: false,
+            selectors: None,
         }];
         // Proposal is FileMutation - matches forbidden, PDP denies
         // Firewall should NOT fire contradiction (PDP's forbidden check handles it)
