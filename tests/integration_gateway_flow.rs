@@ -10996,7 +10996,7 @@ async fn test_http_post_execute_and_verify_with_bearer_auth_through_gateway_afte
     let response = app
         .oneshot(
             axum::http::Request::builder()
-                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .uri(format!("/v1/executions/{}/prepare", execution_id))
                 .method(axum::http::Method::POST)
                 .header(axum::http::header::CONTENT_TYPE, "application/json")
                 .body("{}".to_string())
@@ -16522,5 +16522,682 @@ async fn test_u1_s4_selector_enhanced_but_selector_mismatch_at_verify_time() {
         annotate_only,
         Some(true),
         "annotate_only should always be true for U1-S3b"
+    );
+}
+
+// ============================================
+// U1-S5a SOFT GATE PREVIEW SIGNALS TESTS
+// ============================================
+
+/// Test U1-S5a: HIGH band mismatch => would_block=true.
+/// Uses existing HIGH band mismatch setup from test_u1_s3b_high_band_mismatch_via_allowed_outcome_non_match.
+#[tokio::test]
+async fn test_u1_s5a_high_mismatch_would_block() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+    let app = build_router(runtime.clone());
+
+    // Step 1: Compile intent with FileMutation effect type
+    let mut req = sample_intent_request_with_effect(EffectType::FileMutation);
+    req.requested_resource_scope = vec![ResourceSelector::FilesystemPath {
+        path: "/tmp".to_string(),
+        mode: ResourceMode::Write,
+        content_hash: None,
+    }];
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Step 2: Modify intent to set allowed_outcomes to ExternalApiCall (NOT FileMutation)
+    let mut stored_intent = runtime
+        .store
+        .intents()
+        .get(intent_id)
+        .await
+        .unwrap()
+        .unwrap();
+    stored_intent.allowed_outcomes = vec![ferrum_proto::OutcomeClause {
+        id: "allow_http_call".to_string(),
+        description: "allow http calls only".to_string(),
+        effect_type: EffectType::ExternalApiCall,
+        required: true,
+        selectors: None,
+    }];
+    stored_intent.forbidden_outcomes = vec![];
+    runtime
+        .store
+        .intents()
+        .update(&stored_intent)
+        .await
+        .unwrap();
+
+    // Step 3: Evaluate proposal with fs.write (will infer FileMutation)
+    let proposal = ActionProposal {
+        proposal_id: ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Write file via fs".to_string(),
+        tool_name: "fs.write".to_string(),
+        server_name: "workspace".to_string(),
+        raw_arguments: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        expected_effect: "write a file".to_string(),
+        estimated_risk: RiskTier::Medium,
+        requested_rollback_class: RollbackClass::R0NativeReversible,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 4-7: Mint, authorize, prepare, execute
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "workspace".to_string(),
+            tool_name: "fs.write".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![ResourceBinding::File {
+            path: "/tmp/test.txt".to_string(),
+            mode: ResourceMode::Write,
+            required_hash: None,
+        }],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 8: Verify
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 9: Verify U1-S5a preview signals for HIGH mismatch => would_block
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored_execution.is_some());
+    let exec = stored_execution.unwrap();
+    let assessment_json = exec.metadata.get("u1_s2_verify_assessment");
+    assert!(
+        assessment_json.is_some(),
+        "execution.metadata should contain u1_s2_verify_assessment"
+    );
+    let assessment = assessment_json.unwrap();
+
+    // Verify would_block is true for HIGH mismatch
+    let would_block = assessment.get("would_block").and_then(|v| v.as_bool());
+    assert_eq!(
+        would_block,
+        Some(true),
+        "would_block should be true for HIGH band mismatch"
+    );
+
+    // Verify would_require_review is false (would_block takes precedence)
+    let would_require_review = assessment
+        .get("would_require_review")
+        .and_then(|v| v.as_bool());
+    assert_eq!(
+        would_require_review,
+        Some(false),
+        "would_require_review should be false when would_block is true"
+    );
+
+    // Verify reason_codes contains high_mismatch
+    let reason_codes = assessment.get("reason_codes").and_then(|v| v.as_array());
+    assert!(reason_codes.is_some(), "reason_codes should be present");
+    let codes: Vec<&str> = reason_codes
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    assert!(
+        codes.contains(&"high_mismatch"),
+        "reason_codes should contain 'high_mismatch', got: {:?}",
+        codes
+    );
+
+    // Verify derive_basis is populated
+    let derive_basis = assessment.get("derive_basis").and_then(|v| v.as_str());
+    assert!(
+        derive_basis.is_some() && !derive_basis.unwrap().is_empty(),
+        "derive_basis should be populated for HIGH mismatch"
+    );
+}
+
+/// Test U1-S5a: Selector mismatch => would_require_review=true.
+/// Uses existing selector mismatch setup from test_u1_s4_selector_enhanced_but_selector_mismatch_at_verify_time.
+#[tokio::test]
+async fn test_u1_s5a_selector_mismatch_would_require_review() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+    let app = build_router(runtime.clone());
+
+    // Step 1: Compile intent with FileMutation effect type
+    let mut req = sample_intent_request_with_effect(EffectType::FileMutation);
+    req.requested_resource_scope = vec![ResourceSelector::FilesystemPath {
+        path: "/tmp".to_string(),
+        mode: ResourceMode::Write,
+        content_hash: None,
+    }];
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Step 2: Set allowed_outcomes with git-like selectors but FileMutation effect type
+    let mut stored_intent = runtime
+        .store
+        .intents()
+        .get(intent_id)
+        .await
+        .unwrap()
+        .unwrap();
+    stored_intent.allowed_outcomes = vec![ferrum_proto::OutcomeClause {
+        id: "git_mutation".to_string(),
+        description: "git mutations via git adapter".to_string(),
+        effect_type: EffectType::FileMutation, // Same effect type
+        required: true,
+        selectors: Some(ferrum_proto::OutcomeSelectors {
+            adapter_family: Some("git".to_string()), // Different from fs
+            target_family: Some("git".to_string()),  // Different from file
+            request_class: Some("mutation".to_string()),
+            mutation_family: Some("git_commit".to_string()), // Different from file_write
+        }),
+    }];
+    stored_intent.forbidden_outcomes = vec![];
+    runtime
+        .store
+        .intents()
+        .update(&stored_intent)
+        .await
+        .unwrap();
+
+    // Step 3-7: Evaluate, mint, authorize, prepare, execute (same as existing test)
+    let proposal = ActionProposal {
+        proposal_id: ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Write file via fs".to_string(),
+        tool_name: "fs.write".to_string(),
+        server_name: "workspace".to_string(),
+        raw_arguments: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        expected_effect: "write a file".to_string(),
+        estimated_risk: RiskTier::Medium,
+        requested_rollback_class: RollbackClass::R0NativeReversible,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "workspace".to_string(),
+            tool_name: "fs.write".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![ResourceBinding::File {
+            path: "/tmp/test.txt".to_string(),
+            mode: ResourceMode::Write,
+            required_hash: None,
+        }],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 6b: Verify U1-S5a prepare-time preview signals are present in response
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let prepare_resp: ferrum_proto::PrepareExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+
+    // Verify prepare response contains the U1-S5a warning
+    assert!(
+        prepare_resp
+            .warnings
+            .iter()
+            .any(|w| w.contains("U1-S5a") && w.contains("would require review")),
+        "prepare response warnings should contain U1-S5a would_require_review warning, got: {:?}",
+        prepare_resp.warnings
+    );
+
+    // Verify rollback contract contains u1_s5a_prepare_preview metadata
+    let contract = prepare_resp.rollback_contract.as_ref().unwrap();
+    let prepare_preview_json = contract.metadata.get("u1_s5a_prepare_preview");
+    assert!(
+        prepare_preview_json.is_some(),
+        "rollback contract should contain u1_s5a_prepare_preview metadata"
+    );
+    let prepare_preview = prepare_preview_json.unwrap();
+
+    // Verify would_require_review is true for selector mismatch
+    let would_require_review = prepare_preview
+        .get("would_require_review")
+        .and_then(|v| v.as_bool());
+    assert_eq!(
+        would_require_review,
+        Some(true),
+        "would_require_review should be true for selector mismatch at prepare-time"
+    );
+
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 8: Verify
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 9: Verify U1-S5a preview signals for selector mismatch => would_require_review (verify-time)
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored_execution.is_some());
+    let exec = stored_execution.unwrap();
+    let assessment_json = exec.metadata.get("u1_s2_verify_assessment");
+    assert!(
+        assessment_json.is_some(),
+        "execution.metadata should contain u1_s2_verify_assessment"
+    );
+    let assessment = assessment_json.unwrap();
+
+    // Verify would_block is false (selector mismatch is medium severity)
+    let would_block = assessment.get("would_block").and_then(|v| v.as_bool());
+    assert_eq!(
+        would_block,
+        Some(false),
+        "would_block should be false for selector mismatch"
+    );
+
+    // Verify would_require_review is true for selector mismatch
+    let would_require_review = assessment
+        .get("would_require_review")
+        .and_then(|v| v.as_bool());
+    assert_eq!(
+        would_require_review,
+        Some(true),
+        "would_require_review should be true for selector mismatch"
+    );
+
+    // Verify reason_codes contains selector_mismatch
+    let reason_codes = assessment.get("reason_codes").and_then(|v| v.as_array());
+    assert!(reason_codes.is_some(), "reason_codes should be present");
+    let codes: Vec<&str> = reason_codes
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    assert!(
+        codes.contains(&"selector_mismatch"),
+        "reason_codes should contain 'selector_mismatch', got: {:?}",
+        codes
+    );
+}
+
+/// Test U1-S5a: Regression - verify endpoint behavior and state transitions remain unchanged.
+/// This ensures that adding U1-S5a preview signals does not affect the verify state machine.
+/// Note: Unavailable context scenario is already covered by
+/// test_u1_s2_verify_assessment_unavailable_when_context_missing.
+#[tokio::test]
+async fn test_u1_s5a_regression_verify_state_machine_unchanged() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Run flow to prepare with R0 (auto-commit enabled)
+    let (_intent_id, _proposal_id, execution_id) =
+        run_flow_to_prepared(&runtime, RollbackClass::R0NativeReversible).await;
+
+    // Execute
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Verify (should auto-commit for R0)
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Verify response status is still 200
+    assert_eq!(response.status(), 200);
+
+    // Parse response body
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let verify_resp: ferrum_proto::VerifyResponse = serde_json::from_slice(&body).unwrap();
+
+    // Verify response shape is unchanged
+    assert_eq!(verify_resp.execution_id, execution_id);
+    assert_eq!(verify_resp.verified, true);
+    assert!(verify_resp.verified_at.is_some());
+
+    // Verify execution state transitioned to AwaitingVerification then auto-committed to Committed
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored_execution.is_some());
+    let exec = stored_execution.unwrap();
+
+    // After auto-commit, state should be Committed (not AwaitingVerification)
+    assert!(
+        matches!(exec.state, ExecutionState::Committed),
+        "execution state should be Committed after auto-commit, got: {:?}",
+        exec.state
+    );
+
+    // Verify execution metadata contains the U1-S5a preview signals
+    let assessment_json = exec.metadata.get("u1_s2_verify_assessment");
+    assert!(
+        assessment_json.is_some(),
+        "execution.metadata should contain u1_s2_verify_assessment"
+    );
+    let assessment = assessment_json.unwrap();
+
+    // Verify all U1-S5a fields are present
+    assert!(
+        assessment.get("would_block").is_some(),
+        "would_block field should be present"
+    );
+    assert!(
+        assessment.get("would_require_review").is_some(),
+        "would_require_review field should be present"
+    );
+    assert!(
+        assessment.get("reason_codes").is_some(),
+        "reason_codes field should be present"
+    );
+    assert!(
+        assessment.get("derive_basis").is_some(),
+        "derive_basis field should be present"
+    );
+
+    // Verify no issues case: would_block=false, would_require_review=false, reason_codes=["none"]
+    let would_block = assessment.get("would_block").and_then(|v| v.as_bool());
+    let would_require_review = assessment
+        .get("would_require_review")
+        .and_then(|v| v.as_bool());
+    let reason_codes = assessment.get("reason_codes").and_then(|v| v.as_array());
+
+    assert_eq!(
+        would_block,
+        Some(false),
+        "would_block should be false for aligned execution"
+    );
+    assert_eq!(
+        would_require_review,
+        Some(false),
+        "would_require_review should be false for aligned execution"
+    );
+    assert!(
+        reason_codes.is_some()
+            && reason_codes
+                .unwrap()
+                .iter()
+                .any(|v| v.as_str() == Some("none")),
+        "reason_codes should contain 'none' for aligned execution"
     );
 }
