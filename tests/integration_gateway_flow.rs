@@ -15020,6 +15020,7 @@ async fn test_u1_s4_selector_enhanced_clause_match() {
             target_family: Some("file".to_string()),
             request_class: Some("read_only".to_string()),
             mutation_family: Some("mcp_tool_mutation".to_string()),
+            ..Default::default()
         }),
     }];
     stored_intent.forbidden_outcomes = vec![];
@@ -15217,6 +15218,7 @@ async fn test_u1_s4_effect_type_matches_but_selector_mismatch() {
             target_family: Some("git".to_string()),  // Different
             request_class: Some("mutation".to_string()),
             mutation_family: Some("git_commit".to_string()), // Different
+            ..Default::default()
         }),
     }];
     stored_intent.forbidden_outcomes = vec![];
@@ -16043,6 +16045,7 @@ async fn test_u1_s4_selector_enhanced_but_selector_mismatch_at_verify_time() {
             target_family: Some("git".to_string()),  // Different from file
             request_class: Some("mutation".to_string()),
             mutation_family: Some("git_commit".to_string()), // Different from file_write
+            ..Default::default()
         }),
     }];
     stored_intent.forbidden_outcomes = vec![];
@@ -16794,6 +16797,7 @@ async fn test_u1_s5a_selector_mismatch_would_require_review() {
             target_family: Some("git".to_string()),  // Different from file
             request_class: Some("mutation".to_string()),
             mutation_family: Some("git_commit".to_string()), // Different from file_write
+            ..Default::default()
         }),
     }];
     stored_intent.forbidden_outcomes = vec![];
@@ -17106,5 +17110,925 @@ async fn test_u1_s5a_regression_verify_state_machine_unchanged() {
                 .iter()
                 .any(|v| v.as_str() == Some("none")),
         "reason_codes should contain 'none' for aligned execution"
+    );
+}
+
+// ============================================
+// U1-S7a: LIST-BASED SELECTOR MATCH TESTS
+// ============================================
+
+/// Test U1-S7a: List-based selector match success.
+/// When a selector list is specified and observed value matches ANY member, it should match.
+#[tokio::test]
+async fn test_u1_s7a_list_based_selector_match_success() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+    let app = build_router(runtime.clone());
+
+    // Step 1: Compile intent
+    let mut req = sample_intent_request_with_effect(EffectType::FileMutation);
+    req.requested_resource_scope = vec![ResourceSelector::FilesystemPath {
+        path: "/tmp".to_string(),
+        mode: ResourceMode::Write,
+        content_hash: None,
+    }];
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Step 2: Update intent with list-based selectors
+    // adapter_family_in contains "fs" which should match observed "fs"
+    let mut stored_intent = runtime
+        .store
+        .intents()
+        .get(intent_id)
+        .await
+        .unwrap()
+        .unwrap();
+    stored_intent.allowed_outcomes = vec![ferrum_proto::OutcomeClause {
+        id: "file_ops".to_string(),
+        description: "file operations via list-based selectors".to_string(),
+        effect_type: EffectType::FileMutation,
+        required: true,
+        selectors: Some(ferrum_proto::OutcomeSelectors {
+            adapter_family: None,
+            adapter_family_in: Some(vec!["fs".to_string(), "http".to_string()]),
+            target_family: None,
+            target_family_in: Some(vec!["file".to_string(), "sqlite".to_string()]),
+            request_class: None,
+            request_class_in: Some(vec!["read_only".to_string(), "mutation".to_string()]),
+            mutation_family: None,
+            mutation_family_in: Some(vec![
+                "mcp_tool_mutation".to_string(),
+                "file_write".to_string(),
+            ]),
+        }),
+    }];
+    stored_intent.forbidden_outcomes = vec![];
+    runtime
+        .store
+        .intents()
+        .update(&stored_intent)
+        .await
+        .unwrap();
+
+    // Step 3: Evaluate proposal
+    let proposal = ActionProposal {
+        proposal_id: ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Write file".to_string(),
+        tool_name: "fs.write".to_string(),
+        server_name: "workspace".to_string(),
+        raw_arguments: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        expected_effect: "write a file".to_string(),
+        estimated_risk: RiskTier::Medium,
+        requested_rollback_class: RollbackClass::R0NativeReversible,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 4: Mint capability
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "workspace".to_string(),
+            tool_name: "fs.write".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![ResourceBinding::File {
+            path: "/tmp/test.txt".to_string(),
+            mode: ResourceMode::Write,
+            required_hash: None,
+        }],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    // Step 5: Authorize
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    // Step 6: Prepare - list-based selectors should match
+    // adapter_family_in=["fs","http"] contains "fs" -> match
+    // target_family_in=["file","sqlite"] contains "file" -> match
+    // request_class_in=["read_only","mutation"] contains "read_only" (R0) -> match
+    // mutation_family_in=["mcp_tool_mutation","file_write"] contains "mcp_tool_mutation" -> match
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        200,
+        "U1-S7a: list-based selectors should match when observed value is in list"
+    );
+
+    // Verify execution state is Prepared
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored_execution.is_some());
+    let exec = stored_execution.unwrap();
+    assert!(
+        matches!(exec.state, ExecutionState::Prepared),
+        "execution state should be Prepared when list-based selectors match"
+    );
+}
+
+/// Test U1-S7a: List-based selector mismatch.
+/// When a selector list is specified and observed value does NOT match ANY member, it should mismatch.
+#[tokio::test]
+async fn test_u1_s7a_list_based_selector_mismatch() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+    let app = build_router(runtime.clone());
+
+    // Step 1: Compile intent
+    let mut req = sample_intent_request_with_effect(EffectType::FileMutation);
+    req.requested_resource_scope = vec![ResourceSelector::FilesystemPath {
+        path: "/tmp".to_string(),
+        mode: ResourceMode::Write,
+        content_hash: None,
+    }];
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Step 2: Update intent with list-based selectors that DON'T include the observed values
+    let mut stored_intent = runtime
+        .store
+        .intents()
+        .get(intent_id)
+        .await
+        .unwrap()
+        .unwrap();
+    stored_intent.allowed_outcomes = vec![ferrum_proto::OutcomeClause {
+        id: "git_ops".to_string(),
+        description: "git operations - should NOT match fs".to_string(),
+        effect_type: EffectType::FileMutation,
+        required: true,
+        selectors: Some(ferrum_proto::OutcomeSelectors {
+            adapter_family: None,
+            adapter_family_in: Some(vec!["git".to_string(), "http".to_string()]),
+            target_family: None,
+            target_family_in: Some(vec!["git".to_string(), "http".to_string()]),
+            request_class: None,
+            request_class_in: Some(vec!["mutation".to_string()]),
+            mutation_family: None,
+            mutation_family_in: Some(vec![
+                "git_commit".to_string(),
+                "git_branch_create".to_string(),
+            ]),
+        }),
+    }];
+    stored_intent.forbidden_outcomes = vec![];
+    runtime
+        .store
+        .intents()
+        .update(&stored_intent)
+        .await
+        .unwrap();
+
+    // Step 3: Evaluate proposal
+    let proposal = ActionProposal {
+        proposal_id: ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Write file via fs".to_string(),
+        tool_name: "fs.write".to_string(),
+        server_name: "workspace".to_string(),
+        raw_arguments: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        expected_effect: "write a file".to_string(),
+        estimated_risk: RiskTier::Medium,
+        requested_rollback_class: RollbackClass::R0NativeReversible,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 4: Mint capability
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "workspace".to_string(),
+            tool_name: "fs.write".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![ResourceBinding::File {
+            path: "/tmp/test.txt".to_string(),
+            mode: ResourceMode::Write,
+            required_hash: None,
+        }],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    // Step 5: Authorize
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    // Step 6: Prepare - list-based selectors should NOT match (fs not in git list)
+    // U1-S6: effective_match = false (effect_type matches but selectors don't)
+    // This should trigger HIGH mismatch and block at prepare-time
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        403,
+        "U1-S7a: list-based selector mismatch should block at prepare-time"
+    );
+
+    // Verify execution state is Denied (hard gate at prepare)
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored_execution.is_some());
+    let exec = stored_execution.unwrap();
+    assert!(
+        matches!(exec.state, ExecutionState::Denied),
+        "execution state should be Denied when list-based selectors mismatch"
+    );
+
+    // Verify u1_s5b_hard_gate metadata is present
+    let gate_json = exec.metadata.get("u1_s5b_hard_gate");
+    assert!(
+        gate_json.is_some(),
+        "u1_s5b_hard_gate metadata should be present for selector mismatch"
+    );
+}
+
+/// Test U1-S7a: Scalar + list union behavior.
+/// When both scalar and list are present, match if scalar OR any list member matches.
+#[tokio::test]
+async fn test_u1_s7a_scalar_list_union_semantics() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+    let app = build_router(runtime.clone());
+
+    // Step 1: Compile intent
+    let mut req = sample_intent_request_with_effect(EffectType::FileMutation);
+    req.requested_resource_scope = vec![ResourceSelector::FilesystemPath {
+        path: "/tmp".to_string(),
+        mode: ResourceMode::Write,
+        content_hash: None,
+    }];
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Step 2: Update intent with scalar + list selectors
+    // adapter_family scalar = "http", adapter_family_in = ["git", "fs"]
+    // -> scalar matches "http" but observed is "fs", so list must match -> fs IS in list -> MATCH
+    let mut stored_intent = runtime
+        .store
+        .intents()
+        .get(intent_id)
+        .await
+        .unwrap()
+        .unwrap();
+    stored_intent.allowed_outcomes = vec![ferrum_proto::OutcomeClause {
+        id: "multi_adapter".to_string(),
+        description: "multiple adapters via scalar+list union".to_string(),
+        effect_type: EffectType::FileMutation,
+        required: true,
+        selectors: Some(ferrum_proto::OutcomeSelectors {
+            adapter_family: Some("http".to_string()), // scalar does NOT match "fs"
+            adapter_family_in: Some(vec!["fs".to_string(), "git".to_string()]), // but "fs" IS in list -> MATCH
+            target_family: Some("sqlite".to_string()), // scalar does NOT match "file"
+            target_family_in: Some(vec!["file".to_string()]), // but "file" IS in list -> MATCH
+            request_class: Some("mutation".to_string()), // scalar does NOT match "read_only"
+            request_class_in: Some(vec!["read_only".to_string()]), // but "read_only" IS in list -> MATCH
+            mutation_family: Some("git_commit".to_string()),       // scalar does NOT match
+            mutation_family_in: Some(vec!["mcp_tool_mutation".to_string()]), // but mcp_tool_mutation IS in list -> MATCH
+        }),
+    }];
+    stored_intent.forbidden_outcomes = vec![];
+    runtime
+        .store
+        .intents()
+        .update(&stored_intent)
+        .await
+        .unwrap();
+
+    // Step 3: Evaluate proposal
+    let proposal = ActionProposal {
+        proposal_id: ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Write file via fs".to_string(),
+        tool_name: "fs.write".to_string(),
+        server_name: "workspace".to_string(),
+        raw_arguments: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        expected_effect: "write a file".to_string(),
+        estimated_risk: RiskTier::Medium,
+        requested_rollback_class: RollbackClass::R0NativeReversible,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 4: Mint capability
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "workspace".to_string(),
+            tool_name: "fs.write".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![ResourceBinding::File {
+            path: "/tmp/test.txt".to_string(),
+            mode: ResourceMode::Write,
+            required_hash: None,
+        }],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    // Step 5: Authorize
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    // Step 6: Prepare - scalar+list OR semantics should match via list
+    // All dimensions: scalar doesn't match but list DOES match -> overall MATCH
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        200,
+        "U1-S7a: scalar+list OR semantics should match when list member matches"
+    );
+
+    // Verify execution state is Prepared
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored_execution.is_some());
+    let exec = stored_execution.unwrap();
+    assert!(
+        matches!(exec.state, ExecutionState::Prepared),
+        "execution state should be Prepared when scalar+list union matches via list"
+    );
+}
+
+/// Test U1-S7a: Backward compatibility - selector-less legacy behavior remains intact.
+/// When no selectors are present, coarse effect_type matching is used.
+#[tokio::test]
+async fn test_u1_s7a_selector_less_legacy_behavior_intact() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Run flow to prepare with R0 (auto-commit enabled)
+    let (_intent_id, _proposal_id, execution_id) =
+        run_flow_to_prepared(&runtime, RollbackClass::R0NativeReversible).await;
+
+    // Execute
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Verify (should auto-commit for R0)
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Verify response status is still 200
+    assert_eq!(response.status(), 200);
+
+    // Parse response body
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let verify_resp: ferrum_proto::VerifyResponse = serde_json::from_slice(&body).unwrap();
+
+    // Verify response shape is unchanged
+    assert_eq!(verify_resp.execution_id, execution_id);
+    assert_eq!(verify_resp.verified, true);
+    assert!(verify_resp.verified_at.is_some());
+
+    // Verify execution state transitioned to Committed
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored_execution.is_some());
+    let exec = stored_execution.unwrap();
+    assert!(
+        matches!(exec.state, ExecutionState::Committed),
+        "selector-less legacy behavior: execution state should be Committed after verify"
+    );
+
+    // Verify selector-less clause annotation (no selectors in original intent)
+    // The selector-less case should have coarse match, not selector-enhanced
+    let assessment_json = exec.metadata.get("u1_s2_verify_assessment");
+    assert!(
+        assessment_json.is_some(),
+        "execution.metadata should contain u1_s2_verify_assessment"
+    );
+    let assessment = assessment_json.unwrap();
+
+    // For selector-less legacy case, clause_match_annotations should show
+    // selector_match=None (not applicable) and overall_result="strong_match"
+    // This proves backward compatibility - no selector fields means coarse matching
+    let clause_annotations = assessment.get("clause_match_annotations");
+    assert!(
+        clause_annotations.is_some(),
+        "clause_match_annotations should be present"
+    );
+    let annotations = clause_annotations.unwrap().as_array().unwrap();
+    if !annotations.is_empty() {
+        let first_annotation = &annotations[0];
+        let selector_match = first_annotation.get("selector_match");
+        // For selector-less clauses, selector_match should be None (not applicable)
+        assert!(
+            selector_match.is_none() || selector_match.unwrap().is_null(),
+            "selector_match should be null/None for selector-less legacy behavior"
+        );
+    }
+}
+
+/// Test U1-S7a: Scalar hit + list miss still matches via OR semantics.
+/// When scalar matches and list misses, overall should still be MATCH (scalar OR any list member).
+#[tokio::test]
+async fn test_u1_s7a_scalar_hit_list_miss_or_semantics() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+    let app = build_router(runtime.clone());
+
+    // Step 1: Compile intent
+    let mut req = sample_intent_request_with_effect(EffectType::FileMutation);
+    req.requested_resource_scope = vec![ResourceSelector::FilesystemPath {
+        path: "/tmp".to_string(),
+        mode: ResourceMode::Write,
+        content_hash: None,
+    }];
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Step 2: Update intent with selectors where scalar matches but list misses
+    // adapter_family scalar = "fs" (MATCHES observed "fs")
+    // adapter_family_in = ["git", "http"] (DOES NOT contain "fs" - list misses)
+    // But OR semantics means: scalar OR any list member = fs OR (git OR http) = fs OR git OR http = MATCH
+    let mut stored_intent = runtime
+        .store
+        .intents()
+        .get(intent_id)
+        .await
+        .unwrap()
+        .unwrap();
+    stored_intent.allowed_outcomes = vec![ferrum_proto::OutcomeClause {
+        id: "scalar_hit_list_miss".to_string(),
+        description: "scalar matches but list misses - should still match via OR".to_string(),
+        effect_type: EffectType::FileMutation,
+        required: true,
+        selectors: Some(ferrum_proto::OutcomeSelectors {
+            adapter_family: Some("fs".to_string()), // scalar MATCHES "fs"
+            adapter_family_in: Some(vec!["git".to_string(), "http".to_string()]), // list MISSES "fs"
+            target_family: Some("file".to_string()),                              // scalar MATCHES
+            target_family_in: Some(vec!["sqlite".to_string()]), // list MISSES "file"
+            request_class: Some("read_only".to_string()),       // scalar MATCHES (R0)
+            request_class_in: Some(vec!["mutation".to_string()]), // list MISSES "read_only"
+            mutation_family: Some("mcp_tool_mutation".to_string()), // scalar MATCHES
+            mutation_family_in: Some(vec!["git_commit".to_string()]), // list MISSES
+            ..Default::default()
+        }),
+    }];
+    stored_intent.forbidden_outcomes = vec![];
+    runtime
+        .store
+        .intents()
+        .update(&stored_intent)
+        .await
+        .unwrap();
+
+    // Step 3: Evaluate proposal
+    let proposal = ActionProposal {
+        proposal_id: ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Write file via fs".to_string(),
+        tool_name: "fs.write".to_string(),
+        server_name: "workspace".to_string(),
+        raw_arguments: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        expected_effect: "write a file".to_string(),
+        estimated_risk: RiskTier::Medium,
+        requested_rollback_class: RollbackClass::R0NativeReversible,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 4: Mint capability
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "workspace".to_string(),
+            tool_name: "fs.write".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![ResourceBinding::File {
+            path: "/tmp/test.txt".to_string(),
+            mode: ResourceMode::Write,
+            required_hash: None,
+        }],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    // Step 5: Authorize
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    // Step 6: Prepare - scalar hits but list misses, should still MATCH via OR semantics
+    // adapter_family: scalar "fs" MATCHES, list ["git","http"] MISSES -> OR -> MATCH
+    // target_family: scalar "file" MATCHES, list ["sqlite"] MISSES -> OR -> MATCH
+    // request_class: scalar "read_only" MATCHES, list ["mutation"] MISSES -> OR -> MATCH
+    // mutation_family: scalar "mcp_tool_mutation" MATCHES, list ["git_commit"] MISSES -> OR -> MATCH
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        200,
+        "U1-S7a: scalar hit + list miss should still match via OR semantics"
+    );
+
+    // Verify execution state is Prepared
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored_execution.is_some());
+    let exec = stored_execution.unwrap();
+    assert!(
+        matches!(exec.state, ExecutionState::Prepared),
+        "execution state should be Prepared when scalar hits and list misses but OR semantics applies"
     );
 }

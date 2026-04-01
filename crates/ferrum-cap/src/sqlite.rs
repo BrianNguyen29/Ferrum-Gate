@@ -214,6 +214,7 @@ mod tests {
                 description: "test outcome".to_string(),
                 effect_type: ferrum_proto::EffectType::ReadOnlyAnalysis,
                 required: true,
+                selectors: None,
             }],
             forbidden_outcomes: Vec::new(),
             resource_scope: Vec::new(),
