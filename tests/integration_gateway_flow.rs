@@ -14559,5 +14559,377 @@ async fn test_u1_s3a_separate_inference_and_alignment_confidence() {
 }
 
 // ============================================
+// U1-S3b: CONFIDENCE-THRESHOLDED VERIFY ANNOTATIONS TESTS
+// ============================================
+
+/// Test U1-S3b: threshold_metadata schema presence and valid structure.
+/// This test demonstrates schema-presence coverage: the threshold_metadata nested block
+/// is correctly populated with all required fields (threshold_band, threshold_rule_id,
+/// suggested_future_action, annotate_only, ambiguity_reason).
+///
+/// Note: This fs.write case produces alignment (not mismatch), so threshold_band
+/// is "low" with ambiguity_reason indicating no mismatch detected.
+/// This validates the LOW-band / ambiguity path, not the HIGH/medium mismatch path.
+#[tokio::test]
+async fn test_u1_s3b_threshold_metadata_schema_presence() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Run flow to prepare with R0 (auto-commit enabled) using fs.write
+    let (_intent_id, _proposal_id, execution_id) =
+        run_flow_to_prepared(&runtime, RollbackClass::R0NativeReversible).await;
+
+    // Execute
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    // Verify
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    // Verify threshold_metadata schema is present and valid
+    // This fs.write case with rollback_target alignment produces LOW band (no mismatch)
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    let exec = stored_execution.unwrap();
+    let assessment_json = exec.metadata.get("u1_s2_verify_assessment").unwrap();
+
+    // Verify threshold_metadata is present
+    let threshold_metadata = assessment_json.get("threshold_metadata");
+    assert!(
+        threshold_metadata.is_some(),
+        "threshold_metadata should be present in assessment"
+    );
+    let threshold = threshold_metadata.unwrap();
+
+    // Verify threshold_band is present and valid
+    let threshold_band = threshold.get("threshold_band").and_then(|v| v.as_str());
+    assert!(threshold_band.is_some(), "threshold_band should be present");
+    assert!(
+        threshold_band == Some("high")
+            || threshold_band == Some("medium")
+            || threshold_band == Some("low"),
+        "threshold_band should be high/medium/low, got: {:?}",
+        threshold_band
+    );
+
+    // For this alignment case, we expect LOW band with ambiguity_reason
+    assert_eq!(
+        threshold_band,
+        Some("low"),
+        "fs.write alignment case should produce LOW band (no mismatch), got: {:?}",
+        threshold_band
+    );
+
+    // Verify ambiguity_reason is present for LOW band
+    let ambiguity_reason = threshold.get("ambiguity_reason").and_then(|v| v.as_str());
+    assert!(
+        ambiguity_reason.is_some() && !ambiguity_reason.unwrap().is_empty(),
+        "ambiguity_reason should be present for LOW band"
+    );
+
+    // Verify threshold_rule_id is present and follows u1_s3b.{band}.{strength} pattern
+    let threshold_rule_id = threshold.get("threshold_rule_id").and_then(|v| v.as_str());
+    assert!(
+        threshold_rule_id.is_some(),
+        "threshold_rule_id should be present"
+    );
+    assert!(
+        threshold_rule_id.unwrap().starts_with("u1_s3b."),
+        "threshold_rule_id should start with 'u1_s3b.', got: {:?}",
+        threshold_rule_id
+    );
+
+    // Verify annotate_only is true (this is U1-S3b, still annotate-only)
+    let annotate_only = threshold.get("annotate_only").and_then(|v| v.as_bool());
+    assert_eq!(
+        annotate_only,
+        Some(true),
+        "annotate_only should always be true for U1-S3b"
+    );
+
+    // Verify suggested_future_action is present
+    let suggested_future_action = threshold
+        .get("suggested_future_action")
+        .and_then(|v| v.as_str());
+    assert!(
+        suggested_future_action.is_some(),
+        "suggested_future_action should be present"
+    );
+}
+
+/// Test U1-S3b: threshold_metadata is correctly populated for unavailable assessment.
+/// When assessment_available=false, threshold_band should be "low" with ambiguity_reason set.
+#[tokio::test]
+async fn test_u1_s3b_low_threshold_band_when_assessment_unavailable() {
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+
+    let (temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Run flow to prepare with R0
+    let (_intent_id, _proposal_id, execution_id) =
+        run_flow_to_prepared(&runtime, RollbackClass::R0NativeReversible).await;
+
+    // Execute
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    // Delete intent to make assessment unavailable
+    let db_path = temp_dir.path().join("store.sqlite");
+    let options = SqliteConnectOptions::new()
+        .filename(db_path)
+        .pragma("foreign_keys", "off");
+
+    let fk_disabled_pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .expect("failed to create FK-disabled pool");
+
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    let original_intent_id = stored_execution.unwrap().intent_id;
+
+    sqlx::query("DELETE FROM intents WHERE intent_id = ?1")
+        .bind(original_intent_id.to_string())
+        .execute(&fk_disabled_pool)
+        .await
+        .expect("failed to delete intent row");
+
+    drop(fk_disabled_pool);
+
+    // Verify - intent is now non-existent so assessment should report unavailable
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    // Verify threshold_metadata reflects low band with unavailable context
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    let exec = stored_execution.unwrap();
+    let assessment_json = exec.metadata.get("u1_s2_verify_assessment").unwrap();
+
+    let threshold_metadata = assessment_json.get("threshold_metadata").unwrap();
+
+    // threshold_band should be "low" when assessment is unavailable
+    let threshold_band = threshold_metadata
+        .get("threshold_band")
+        .and_then(|v| v.as_str());
+    assert_eq!(
+        threshold_band,
+        Some("low"),
+        "threshold_band should be 'low' when assessment unavailable, got: {:?}",
+        threshold_band
+    );
+
+    // ambiguity_reason should be present
+    let ambiguity_reason = threshold_metadata
+        .get("ambiguity_reason")
+        .and_then(|v| v.as_str());
+    assert!(
+        ambiguity_reason.is_some(),
+        "ambiguity_reason should be present when assessment unavailable"
+    );
+
+    // annotate_only should still be true
+    let annotate_only = threshold_metadata
+        .get("annotate_only")
+        .and_then(|v| v.as_bool());
+    assert_eq!(annotate_only, Some(true), "annotate_only should be true");
+}
+
+/// Test U1-S3b: threshold_metadata field structure and annotate_only flag.
+/// This test validates all required fields are present and correctly populated:
+/// - threshold_band, threshold_rule_id, suggested_future_action, annotate_only
+/// - ambiguity_reason is present when threshold_band is "low"
+///
+/// Note: This test uses the fs.write alignment case which produces LOW band.
+/// It validates schema presence and LOW-band ambiguity coverage, not high/medium band paths.
+#[tokio::test]
+async fn test_u1_s3b_threshold_metadata_field_structure_and_annotate_flag() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Run flow to prepare with R0
+    let (_intent_id, _proposal_id, execution_id) =
+        run_flow_to_prepared(&runtime, RollbackClass::R0NativeReversible).await;
+
+    // Execute
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    // Verify
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    // Check threshold_metadata structure
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    let exec = stored_execution.unwrap();
+    let assessment_json = exec.metadata.get("u1_s2_verify_assessment").unwrap();
+
+    let threshold_metadata = assessment_json.get("threshold_metadata").unwrap();
+
+    // All required fields should be present
+    let required_fields = [
+        "threshold_band",
+        "threshold_rule_id",
+        "suggested_future_action",
+        "annotate_only",
+    ];
+    for field in &required_fields {
+        assert!(
+            threshold_metadata.get(*field).is_some(),
+            "threshold_metadata.{} should be present",
+            field
+        );
+    }
+
+    // threshold_band should be one of the valid values
+    let threshold_band = threshold_metadata
+        .get("threshold_band")
+        .and_then(|v| v.as_str())
+        .unwrap();
+    assert!(
+        ["high", "medium", "low"].contains(&threshold_band),
+        "threshold_band should be high/medium/low, got: {}",
+        threshold_band
+    );
+
+    // threshold_rule_id should follow the pattern u1_s3b.{band}.{strength}
+    let threshold_rule_id = threshold_metadata
+        .get("threshold_rule_id")
+        .and_then(|v| v.as_str())
+        .unwrap();
+    assert!(
+        threshold_rule_id.starts_with(&format!("u1_s3b.{}.", threshold_band)),
+        "threshold_rule_id should start with 'u1_s3b.{}.', got: {}",
+        threshold_band,
+        threshold_rule_id
+    );
+
+    // suggested_future_action should be one of the valid values
+    let suggested_future_action = threshold_metadata
+        .get("suggested_future_action")
+        .and_then(|v| v.as_str())
+        .unwrap();
+    assert!(
+        [
+            "enforce_or_block",
+            "enforce_with_human_review",
+            "continue_annotate_only"
+        ]
+        .contains(&suggested_future_action),
+        "suggested_future_action should be one of the valid values, got: {}",
+        suggested_future_action
+    );
+
+    // Verify annotate_only is always true for U1-S3b
+    let annotate_only = threshold_metadata
+        .get("annotate_only")
+        .and_then(|v| v.as_bool())
+        .unwrap();
+    assert!(
+        annotate_only,
+        "annotate_only should always be true for U1-S3b"
+    );
+
+    // If threshold_band is "low", ambiguity_reason should be present
+    if threshold_band == "low" {
+        let ambiguity_reason = threshold_metadata.get("ambiguity_reason");
+        assert!(
+            ambiguity_reason.is_some() && !ambiguity_reason.unwrap().is_null(),
+            "ambiguity_reason should be present when threshold_band is 'low'"
+        );
+    }
+}
+
+// ============================================
 // LEDGER CHAIN TESTS
 // ============================================
