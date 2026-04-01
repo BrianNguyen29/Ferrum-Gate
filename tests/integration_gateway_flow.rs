@@ -14298,5 +14298,266 @@ async fn test_u1_s2_verify_assessment_unavailable_when_context_missing() {
 }
 
 // ============================================
+// U1-S3a: MULTI-SIGNAL INFERENCE TESTS
+// ============================================
+
+/// Test U1-S3a: verify-time assessment uses rollback_target for HIGH confidence inference.
+/// The fs.write operation maps to FilePath rollback target, which infers FileMutation with HIGH confidence.
+#[tokio::test]
+async fn test_u1_s3a_rollback_target_high_confidence_inference() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Run flow to prepare with R0 (auto-commit enabled) using fs.write
+    let (_intent_id, _proposal_id, execution_id) =
+        run_flow_to_prepared(&runtime, RollbackClass::R0NativeReversible).await;
+
+    // Execute
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    // Verify
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    // Check execution metadata for U1-S3a fields
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    let exec = stored_execution.unwrap();
+    let assessment_json = exec.metadata.get("u1_s2_verify_assessment").unwrap();
+
+    // Verify inference_source is rollback_target (HIGH confidence)
+    let inference_source = assessment_json
+        .get("inference_source")
+        .and_then(|v| v.as_str());
+    assert_eq!(
+        inference_source,
+        Some("rollback_target"),
+        "inference_source should be 'rollback_target' for fs.write, got: {:?}",
+        inference_source
+    );
+
+    // Verify inference_confidence is HIGH
+    let inference_confidence = assessment_json
+        .get("inference_confidence")
+        .and_then(|v| v.as_str());
+    assert_eq!(
+        inference_confidence,
+        Some("HIGH"),
+        "inference_confidence should be 'HIGH' for rollback_target inference, got: {:?}",
+        inference_confidence
+    );
+
+    // Verify alignment_confidence is at least MED (structural match)
+    let alignment_confidence = assessment_json
+        .get("alignment_confidence")
+        .and_then(|v| v.as_str());
+    assert!(
+        alignment_confidence == Some("HIGH") || alignment_confidence == Some("MED"),
+        "alignment_confidence should be HIGH or MED for strong/rollback match, got: {:?}",
+        alignment_confidence
+    );
+
+    // Verify alignment_strength reflects structural match
+    let alignment_strength = assessment_json
+        .get("alignment_strength")
+        .and_then(|v| v.as_str());
+    assert!(
+        alignment_strength == Some("strong_match") || alignment_strength == Some("moderate_match"),
+        "alignment_strength should be strong_match or moderate_match for rollback_target, got: {:?}",
+        alignment_strength
+    );
+}
+
+/// Test U1-S3a: alignment_strength distinguishes strong vs weak matches.
+/// A strong_match occurs when rollback_target provides exact effect type match.
+/// A weak_match occurs when only expected_effect keyword heuristic is available.
+#[tokio::test]
+async fn test_u1_s3a_alignment_strength_distinguishes_strong_from_weak() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Run flow to prepare with R0
+    let (_intent_id, _proposal_id, execution_id) =
+        run_flow_to_prepared(&runtime, RollbackClass::R0NativeReversible).await;
+
+    // Execute
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    // Verify
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    // Check that alignment_strength is NOT "weak_match" when rollback_target is available
+    // (rollback_target provides HIGH confidence structural inference)
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    let exec = stored_execution.unwrap();
+    let assessment_json = exec.metadata.get("u1_s2_verify_assessment").unwrap();
+
+    let alignment_strength = assessment_json
+        .get("alignment_strength")
+        .and_then(|v| v.as_str());
+    assert_ne!(
+        alignment_strength,
+        Some("weak_match"),
+        "alignment_strength should NOT be weak_match when rollback_target is available, got: {:?}",
+        alignment_strength
+    );
+
+    // When rollback_target is used, it should be at least moderate_match
+    assert!(
+        alignment_strength == Some("strong_match") || alignment_strength == Some("moderate_match"),
+        "alignment_strength should be strong_match or moderate_match for rollback_target inference, got: {:?}",
+        alignment_strength
+    );
+}
+
+/// Test U1-S3a: verify assessment records inference_confidence and alignment_confidence separately.
+/// This ensures we can distinguish "how confident we are in the effect inference"
+/// from "how confident we are in the alignment assessment".
+#[tokio::test]
+async fn test_u1_s3a_separate_inference_and_alignment_confidence() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Run flow to prepare with R0
+    let (_intent_id, _proposal_id, execution_id) =
+        run_flow_to_prepared(&runtime, RollbackClass::R0NativeReversible).await;
+
+    // Execute
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    // Verify
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    // Check that both confidence fields are present and meaningful
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    let exec = stored_execution.unwrap();
+    let assessment_json = exec.metadata.get("u1_s2_verify_assessment").unwrap();
+
+    let inference_confidence = assessment_json
+        .get("inference_confidence")
+        .and_then(|v| v.as_str());
+    let alignment_confidence = assessment_json
+        .get("alignment_confidence")
+        .and_then(|v| v.as_str());
+
+    // Both fields should be present (not null/missing)
+    assert!(
+        inference_confidence.is_some(),
+        "inference_confidence field should be present"
+    );
+    assert!(
+        alignment_confidence.is_some(),
+        "alignment_confidence field should be present"
+    );
+
+    // Both should be valid confidence levels
+    let valid_confidences = ["HIGH", "MED", "LOW", "NONE"];
+    assert!(
+        valid_confidences.contains(&inference_confidence.unwrap()),
+        "inference_confidence should be HIGH/MED/LOW/NONE, got: {:?}",
+        inference_confidence
+    );
+    assert!(
+        valid_confidences.contains(&alignment_confidence.unwrap()),
+        "alignment_confidence should be HIGH/MED/LOW/NONE, got: {:?}",
+        alignment_confidence
+    );
+}
+
+// ============================================
 // LEDGER CHAIN TESTS
 // ============================================

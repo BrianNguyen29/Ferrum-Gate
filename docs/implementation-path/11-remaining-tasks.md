@@ -61,7 +61,7 @@ These are explicitly out of v1 scope. Do not treat as blockers.
 
 - [ ] Outcome-aware Governance (U1)
   - Src: `docs/91-phase-success-criteria-and-kpis.md` section 8.1
-  - Note: evaluate-time slice DONE (allowed-outcome mismatch warns; explicit forbidden-outcome match denies). U1-S2 (verify-time annotate-only assessment) DONE: assessment persisted into execution.metadata, rollback contract metadata, and SideEffectVerified provenance event metadata, with unavailable-context fallback covered by `test_u1_s2_verify_assessment_unavailable_when_context_missing`. Remaining: deeper outcome contracts and higher-confidence drift detection.
+  - Note: evaluate-time slice DONE (allowed-outcome mismatch warns; explicit forbidden-outcome match denies). U1-S2 (verify-time annotate-only assessment) DONE: assessment persisted into execution.metadata, rollback contract metadata, and SideEffectVerified provenance event metadata, with unavailable-context fallback covered by `test_u1_s2_verify_assessment_unavailable_when_context_missing`. U1-S3a (multi-signal inference with confidence/strength) DONE: rollback_target (HIGH), adapter_key (MED), expected_effect (LOW) inference hierarchy implemented; alignment_strength distinguishes strong/moderate/weak/mismatch/none. Remaining: deeper outcome contracts and verify-time enforcement.
 
 - [ ] Reversible Execution Planner (U2)
   - Src: `docs/91-phase-success-criteria-and-kpis.md` section 8.2
