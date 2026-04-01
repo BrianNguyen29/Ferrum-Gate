@@ -5988,4 +5988,168 @@ mod u1_s3a_tests {
             "inference_confidence should be 'LOW' for expected_effect_keyword fallback"
         );
     }
+
+    #[test]
+    fn test_u1_s3b_medium_band_mismatch_via_adapter_key_inference() {
+        // MED band requires: alignment_confidence=MED + alignment_strength=mismatch + forbidden_match=false
+        //
+        // Path to MED band mismatch:
+        // 1. rollback_target is Generic (doesn't infer effect) → falls through to adapter_key
+        // 2. adapter_key="http" infers ExternalApiCall (MED confidence via adapter_key)
+        // 3. allowed_outcomes has FileMutation → effect doesn't match → alignment_strength=mismatch
+        // 4. forbidden_match=false
+        // Result: alignment_confidence=MED, alignment_strength=mismatch → threshold_band=medium
+
+        // Create intent with FileMutation as allowed outcome
+        let intent_id = ferrum_proto::IntentId::new();
+        let intent = IntentEnvelope {
+            intent_id,
+            principal_id: ferrum_proto::PrincipalId::new(),
+            session_id: None,
+            channel_id: None,
+            title: "Test MED band".to_string(),
+            goal: "Test goal".to_string(),
+            normalized_goal: "test goal".to_string(),
+            allowed_outcomes: vec![ferrum_proto::OutcomeClause {
+                id: "allow_file_mutation".to_string(),
+                description: "allow file mutations".to_string(),
+                effect_type: ferrum_proto::EffectType::FileMutation,
+                required: true,
+                selectors: None,
+            }],
+            forbidden_outcomes: Vec::new(),
+            resource_scope: vec![ferrum_proto::ResourceSelector::FilesystemPath {
+                path: "/tmp".to_string(),
+                mode: ferrum_proto::ResourceMode::Write,
+                content_hash: None,
+            }],
+            risk_tier: ferrum_proto::RiskTier::Medium,
+            approval_mode: ferrum_proto::ApprovalMode::None,
+            default_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+            time_budget: ferrum_proto::TimeBudget {
+                max_duration_ms: 30_000,
+                max_steps: 8,
+                max_retries_per_step: 1,
+            },
+            trust_context: ferrum_proto::TrustContextSummary {
+                input_labels: Vec::new(),
+                sensitivity_labels: Vec::new(),
+                taint_score: 0,
+                contains_external_metadata: false,
+                contains_tool_output: false,
+                contains_untrusted_text: false,
+            },
+            derived_from_event_ids: Vec::new(),
+            tags: Vec::new(),
+            metadata: ferrum_proto::JsonMap::new(),
+            status: ferrum_proto::IntentStatus::Active,
+            created_at: chrono::Utc::now(),
+            expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
+        };
+
+        let proposal = ferrum_proto::ActionProposal {
+            proposal_id: ferrum_proto::ProposalId::new(),
+            intent_id,
+            step_index: 1,
+            title: "Test proposal".to_string(),
+            tool_name: "http.get".to_string(),
+            server_name: "web".to_string(),
+            raw_arguments: serde_json::json!({"url": "https://example.com"}),
+            expected_effect: "make HTTP request".to_string(),
+            estimated_risk: ferrum_proto::RiskTier::Medium,
+            requested_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+            decision: None,
+            taint_inputs: vec![],
+            metadata: ferrum_proto::JsonMap::new(),
+            created_at: chrono::Utc::now(),
+        };
+
+        // Generic rollback target doesn't infer effect → falls through to adapter_key
+        let rollback_target = ferrum_proto::RollbackTarget::Generic {
+            namespace: "test".to_string(),
+            identifier: "test".to_string(),
+        };
+        // HTTP adapter_key infers ExternalApiCall at MED confidence
+        let adapter_key = "http";
+        let action_type = ferrum_proto::ActionType::HttpMutation;
+        let rollback_class = ferrum_proto::RollbackClass::R0NativeReversible;
+
+        let assessment = compute_u1_verify_assessment(
+            &Some(intent),
+            &Some(proposal),
+            Some(&rollback_target),
+            Some(adapter_key),
+            Some(&action_type),
+            Some(&rollback_class),
+        );
+
+        // Step 1: Verify inference_source is adapter_key (MED confidence path)
+        assert_eq!(
+            assessment.inference_source, "adapter_key",
+            "inference_source should be 'adapter_key' (Generic target falls through to adapter_key)"
+        );
+        assert_eq!(
+            assessment.inference_confidence, "MED",
+            "inference_confidence should be 'MED' for adapter_key inference"
+        );
+
+        // Step 2: Verify alignment state
+        // allowed_outcomes has FileMutation, but inferred effect is ExternalApiCall → no match
+        assert!(
+            !assessment.allowed_alignment,
+            "allowed_alignment should be false when effect doesn't match allowed_outcomes"
+        );
+        assert!(
+            !assessment.forbidden_match,
+            "forbidden_match should be false (no forbidden outcomes defined)"
+        );
+
+        // Step 3: Verify alignment_strength is mismatch (effect doesn't match allowed)
+        assert_eq!(
+            assessment.alignment_strength, "mismatch",
+            "alignment_strength should be 'mismatch' when effect doesn't match allowed_outcomes"
+        );
+
+        // Step 4: Verify alignment_confidence is MED (from adapter_key inference)
+        assert_eq!(
+            assessment.alignment_confidence, "MED",
+            "alignment_confidence should be 'MED' for mismatch via adapter_key inference"
+        );
+
+        // Step 5: Verify threshold_band is medium
+        // MED band: alignment_confidence=MED + (forbidden_match OR alignment_strength=mismatch)
+        // Since forbidden_match=false and alignment_strength=mismatch, MED band condition is met
+        let threshold_metadata = &assessment.threshold_metadata;
+        assert_eq!(
+            threshold_metadata.threshold_band, "medium",
+            "threshold_band should be 'medium' for MED-confidence mismatch"
+        );
+
+        // Step 6: Verify threshold_rule_id follows expected pattern
+        assert!(
+            threshold_metadata
+                .threshold_rule_id
+                .starts_with("u1_s3b.medium."),
+            "threshold_rule_id should start with 'u1_s3b.medium.', got: {}",
+            threshold_metadata.threshold_rule_id
+        );
+
+        // Step 7: Verify suggested_future_action for medium band
+        assert_eq!(
+            threshold_metadata.suggested_future_action, "enforce_with_human_review",
+            "suggested_future_action should be 'enforce_with_human_review' for medium band"
+        );
+
+        // Step 8: Verify annotate_only is still true (U1-S3b remains annotate-only)
+        assert!(
+            threshold_metadata.annotate_only,
+            "annotate_only should always be true for U1-S3b (still annotate-only)"
+        );
+
+        // Step 9: Verify ambiguity_reason is None (MED band is not ambiguous)
+        assert!(
+            threshold_metadata.ambiguity_reason.is_none(),
+            "ambiguity_reason should be None for MED band (clear mismatch signal)"
+        );
+    }
 }
