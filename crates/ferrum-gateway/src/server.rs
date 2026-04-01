@@ -2347,6 +2347,7 @@ fn compute_u1_verify_assessment(
             == std::mem::discriminant(&proposal_effect);
 
         // U1-S4: Check selectors if present
+        let is_selector_bearing = forbidden.selectors.is_some();
         let clause_annotation = if let Some(ref selectors) = forbidden.selectors {
             let (matched, mismatched) = check_selector_match(
                 selectors,
@@ -2366,9 +2367,21 @@ fn compute_u1_verify_assessment(
             ClauseMatchAnnotation::coarse_match(&forbidden.id, "forbidden", effect_type_match)
         };
 
+        // U1-S6: For selector-bearing clauses, effective match requires BOTH
+        // effect_type_match AND selector_match to be true. For selector-less clauses,
+        // use legacy behavior (effect_type_match alone).
+        let selector_match_result = clause_annotation.selector_match;
+        let effective_match = if is_selector_bearing {
+            // Selector-bearing clause: require effect_type AND selector match
+            effect_type_match && selector_match_result.unwrap_or(false)
+        } else {
+            // Selector-less clause: legacy behavior (effect_type only)
+            effect_type_match
+        };
+
         clause_match_annotations.push(clause_annotation);
 
-        if effect_type_match {
+        if effective_match {
             let strength = compute_alignment_strength(source, true, false, true);
             let align_conf = compute_alignment_confidence(source, true, false, true);
             let threshold_metadata =
@@ -2418,6 +2431,7 @@ fn compute_u1_verify_assessment(
                 == std::mem::discriminant(&proposal_effect);
 
             // U1-S4: Check selectors if present
+            let is_selector_bearing = allowed.selectors.is_some();
             let clause_annotation = if let Some(ref selectors) = allowed.selectors {
                 let (matched, mismatched) = check_selector_match(
                     selectors,
@@ -2437,9 +2451,21 @@ fn compute_u1_verify_assessment(
                 ClauseMatchAnnotation::coarse_match(&allowed.id, "allowed", effect_type_match)
             };
 
+            // U1-S6: For selector-bearing clauses, effective match requires BOTH
+            // effect_type_match AND selector_match to be true. For selector-less clauses,
+            // use legacy behavior (effect_type_match alone).
+            let selector_match_result = clause_annotation.selector_match;
+            let effective_match = if is_selector_bearing {
+                // Selector-bearing clause: require effect_type AND selector match
+                effect_type_match && selector_match_result.unwrap_or(false)
+            } else {
+                // Selector-less clause: legacy behavior (effect_type only)
+                effect_type_match
+            };
+
             clause_match_annotations.push(clause_annotation);
 
-            if effect_type_match {
+            if effective_match {
                 allowed_alignment = true;
                 matched_allowed_outcome_ids.push(allowed.id.clone());
             }
