@@ -16,7 +16,7 @@ Single-node v1 scope unless noted.
 - `ferrum-cap` — capability mint, mark_used, single-use enforcement
 - `ferrum-rollback` — rollback/compensate operations, R3/R2/R0/R1 contract classes, auto_commit semantics
 - `ferrum-store` — SQLite persistence (intents, proposals, capabilities, executions, rollback contracts, provenance events, approvals)
-- `ferrum-gateway` — full orchestration: evaluate -> mint -> authorize -> prepare -> execute -> verify -> compensate (internal: commit/rollback as orchestration semantics); negative paths: deny, quarantine, RequireApproval, draft-only gated at evaluate (before prepare); U1-S2 verify-time outcome assessment annotation (annotate-only, does not change verify decision semantics)
+- `ferrum-gateway` — full orchestration: evaluate -> mint -> authorize -> prepare -> execute -> verify -> compensate (internal: commit/rollback as orchestration semantics); negative paths: deny, quarantine, RequireApproval, draft-only gated at evaluate (before prepare); U1-S2 verify-time outcome assessment annotation (annotate-only, does not change verify decision semantics); U1-S5a soft gate preview TODO (emit warn at prepare-time, does not block state-machine or change auto-commit); U1-S5b hard gate TODO (block at prepare-time, state-machine halts, auto-commit unchanged per R3 contract semantics)
 - `ferrum-firewall` — trust labeler, taint scorer, sanitize, contradiction checks, and U1-aware read-only contradiction gating
 - `ferrum-graph` — provenance graph
 - `ferrum-ledger` — ledger (skeleton)
