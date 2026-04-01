@@ -1297,6 +1297,63 @@ async fn prepare_execution(
     contract.metadata.remove("approved_http_request");
     let now = Utc::now();
 
+    // U1-S5a: Compute prepare-time soft gate preview signals.
+    // Load intent for outcome assessment. If unavailable, assessment_available=false.
+    let intent = runtime
+        .store
+        .intents()
+        .get(intent_id)
+        .await
+        .map_err(|e| {
+            tracing::warn!(
+                "failed to load intent {} for U1-S5a prepare-time preview: {}",
+                intent_id,
+                e
+            );
+        })
+        .ok()
+        .flatten();
+
+    // Compute U1-S2 verify-time outcome assessment (same logic used at verify-time).
+    // U1-S3a: Use multi-signal inference with rollback_target (HIGH), adapter_key (MED), expected_effect (LOW).
+    // U1-S4: Use action_type and rollback_class for higher-fidelity selector matching.
+    // U1-S5a: Derive would_block/would_require_review preview signals from assessment.
+    let u1_assessment = compute_u1_verify_assessment(
+        &intent,
+        &Some(proposal.clone()),
+        Some(&contract.target),
+        Some(contract.adapter_key.as_str()),
+        Some(&contract.action_type),
+        Some(&contract.rollback_class),
+    );
+
+    // U1-S5a: Store prepare-time preview signals in contract metadata (durable).
+    let assessment_json = serde_json::to_value(&u1_assessment).unwrap_or_else(|e| {
+        tracing::warn!(
+            "failed to serialize U1-S5a assessment at prepare-time: {}",
+            e
+        );
+        serde_json::Value::Null
+    });
+    contract.metadata.insert(
+        "u1_s5a_prepare_preview".to_string(),
+        assessment_json.clone(),
+    );
+
+    // U1-S5a: Build user-visible warnings from preview signals.
+    let mut prepare_warnings = response.warnings;
+    if u1_assessment.would_block {
+        prepare_warnings.push(format!(
+            "U1-S5a: execution would block (reason: {})",
+            u1_assessment.reason_codes.join(", ")
+        ));
+    } else if u1_assessment.would_require_review {
+        prepare_warnings.push(format!(
+            "U1-S5a: execution would require review (reason: {})",
+            u1_assessment.reason_codes.join(", ")
+        ));
+    }
+
     if let Err(e) = runtime.store.rollback_contracts().insert(&contract).await {
         tracing::warn!("failed to persist rollback contract: {}", e);
     } else {
@@ -1327,7 +1384,7 @@ async fn prepare_execution(
         execution_id,
         prepared: response.accepted,
         rollback_contract: Some(contract),
-        warnings: response.warnings,
+        warnings: prepare_warnings,
     }))
 }
 
@@ -1835,6 +1892,20 @@ struct U1VerifyAssessment {
     /// Per-clause match annotations recording effect_type and selector match status.
     /// This enables more precise outcome contracts beyond coarse effect_type matching.
     clause_match_annotations: Vec<ClauseMatchAnnotation>,
+
+    // === U1-S5a: Soft gate preview signals ===
+    /// Preview signal: whether execution would be BLOCKED if hard gates were enforced.
+    /// Derived from: forbidden_match OR (threshold_band=high AND alignment_strength=mismatch).
+    would_block: bool,
+    /// Preview signal: whether execution would REQUIRE human review if hard gates were enforced.
+    /// Derived from: threshold_band=medium OR selector_mismatch OR unavailable_context.
+    would_require_review: bool,
+    /// Machine-friendly reason codes explaining why would_block/would_require_review.
+    /// Codes: "forbidden_match", "high_mismatch", "medium_mismatch", "selector_mismatch",
+    /// "unavailable_context", "none".
+    reason_codes: Vec<String>,
+    /// Human-readable basis for the preview signal derivation.
+    derive_basis: String,
 }
 
 /// U1-S3a: Inference source priority for multi-signal effect inference.
@@ -2054,6 +2125,84 @@ fn compute_alignment_confidence(
     }
 }
 
+/// U1-S5a: Compute soft gate preview signals from assessment state.
+/// Derivation guidance:
+/// - unavailable context => would_require_review
+/// - forbidden strong match => would_block
+/// - threshold high mismatch => would_block
+/// - threshold medium mismatch => would_require_review
+/// - selector mismatch => would_require_review
+fn compute_u1_s5a_preview_signals(
+    assessment_available: bool,
+    forbidden_match: bool,
+    threshold_metadata: &ThresholdMetadata,
+    clause_match_annotations: &[ClauseMatchAnnotation],
+) -> (bool, bool, Vec<String>, String) {
+    let mut would_block = false;
+    let mut would_require_review = false;
+    let mut reason_codes = Vec::new();
+    let mut derive_basis_parts = Vec::new();
+
+    // Unavailable context => would_require_review
+    if !assessment_available {
+        would_require_review = true;
+        reason_codes.push("unavailable_context".to_string());
+        derive_basis_parts.push("assessment context unavailable");
+    }
+
+    // Forbidden strong match => would_block
+    if forbidden_match {
+        would_block = true;
+        reason_codes.push("forbidden_match".to_string());
+        derive_basis_parts.push("forbidden outcome match detected");
+    }
+
+    // Threshold-based signals (only if assessment is available)
+    if assessment_available {
+        match threshold_metadata.threshold_band.as_str() {
+            "high" => {
+                // High band mismatch => would_block
+                would_block = true;
+                reason_codes.push("high_mismatch".to_string());
+                derive_basis_parts.push("high-confidence mismatch");
+            }
+            "medium" => {
+                // Medium band => would_require_review
+                would_require_review = true;
+                reason_codes.push("medium_mismatch".to_string());
+                derive_basis_parts.push("medium-confidence mismatch");
+            }
+            _ => {
+                // Low band - check for selector mismatches
+                // Selector mismatch => would_require_review
+                let has_selector_mismatch = clause_match_annotations
+                    .iter()
+                    .any(|ann| ann.overall_result == "effect_match_selector_mismatch");
+                if has_selector_mismatch {
+                    would_require_review = true;
+                    reason_codes.push("selector_mismatch".to_string());
+                    derive_basis_parts.push("selector-enhanced mismatch detected");
+                }
+            }
+        }
+    }
+
+    // If no issues found, reason is "none"
+    if reason_codes.is_empty() {
+        reason_codes.push("none".to_string());
+        derive_basis_parts.push("no issues detected");
+    }
+
+    let derive_basis = derive_basis_parts.join("; ");
+
+    (
+        would_block,
+        would_require_review,
+        reason_codes,
+        derive_basis,
+    )
+}
+
 /// Compute U1-S2 verify-time outcome assessment using the existing U1 patterns.
 /// U1-S3a: Extended with multi-signal inference and confidence/strength annotations.
 /// U1-S4: Extended with per-clause higher-fidelity selector match annotations.
@@ -2072,6 +2221,8 @@ fn compute_u1_verify_assessment(
         None => {
             let threshold_metadata =
                 ThresholdMetadata::from_assessment("NONE", "none", false, false, false);
+            let (would_block, would_require_review, reason_codes, derive_basis) =
+                compute_u1_s5a_preview_signals(false, false, &threshold_metadata, &[]);
             return U1VerifyAssessment {
                 forbidden_match: false,
                 forbidden_outcome_id: None,
@@ -2086,6 +2237,10 @@ fn compute_u1_verify_assessment(
                 alignment_strength: "none".to_string(),
                 threshold_metadata,
                 clause_match_annotations: Vec::new(),
+                would_block,
+                would_require_review,
+                reason_codes,
+                derive_basis,
             };
         }
     };
@@ -2095,6 +2250,8 @@ fn compute_u1_verify_assessment(
         None => {
             let threshold_metadata =
                 ThresholdMetadata::from_assessment("NONE", "none", false, false, false);
+            let (would_block, would_require_review, reason_codes, derive_basis) =
+                compute_u1_s5a_preview_signals(false, false, &threshold_metadata, &[]);
             return U1VerifyAssessment {
                 forbidden_match: false,
                 forbidden_outcome_id: None,
@@ -2109,6 +2266,10 @@ fn compute_u1_verify_assessment(
                 alignment_strength: "none".to_string(),
                 threshold_metadata,
                 clause_match_annotations: Vec::new(),
+                would_block,
+                would_require_review,
+                reason_codes,
+                derive_basis,
             };
         }
     };
@@ -2161,6 +2322,13 @@ fn compute_u1_verify_assessment(
             let align_conf = compute_alignment_confidence(source, true, false, true);
             let threshold_metadata =
                 ThresholdMetadata::from_assessment(align_conf, strength.as_str(), true, true, true);
+            let (would_block, would_require_review, reason_codes, derive_basis) =
+                compute_u1_s5a_preview_signals(
+                    true,
+                    true,
+                    &threshold_metadata,
+                    &clause_match_annotations,
+                );
             return U1VerifyAssessment {
                 forbidden_match: true,
                 forbidden_outcome_id: Some(forbidden.id.clone()),
@@ -2178,6 +2346,10 @@ fn compute_u1_verify_assessment(
                 alignment_strength: strength.as_str().to_string(),
                 threshold_metadata,
                 clause_match_annotations,
+                would_block,
+                would_require_review,
+                reason_codes,
+                derive_basis,
             };
         }
     }
@@ -2254,6 +2426,9 @@ fn compute_u1_verify_assessment(
         )
     };
 
+    let (would_block, would_require_review, reason_codes, derive_basis) =
+        compute_u1_s5a_preview_signals(true, false, &threshold_metadata, &clause_match_annotations);
+
     U1VerifyAssessment {
         forbidden_match: false,
         forbidden_outcome_id: None,
@@ -2268,6 +2443,10 @@ fn compute_u1_verify_assessment(
         alignment_strength: strength.as_str().to_string(),
         threshold_metadata,
         clause_match_annotations,
+        would_block,
+        would_require_review,
+        reason_codes,
+        derive_basis,
     }
 }
 
