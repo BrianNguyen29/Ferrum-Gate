@@ -1484,6 +1484,9 @@ async fn execute_execution(
 /// When intent/proposal context cannot be loaded at verify time, assessment_available
 /// is set to false and other fields reflect the unavailable state.
 ///
+/// U1-S3a: Extended with multi-signal inference and confidence/strength annotations.
+/// Inference priority: rollback_target (HIGH) > adapter_key (MED) > expected_effect (LOW).
+///
 /// This is a local/internal type (not in shared proto) for this annotate-only slice.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct U1VerifyAssessment {
@@ -1502,14 +1505,251 @@ struct U1VerifyAssessment {
     assessment_available: bool,
     /// Human-readable reason for the assessment result.
     assessment_reason: String,
+
+    // === U1-S3a: Multi-signal inference and confidence/strength fields ===
+    /// Source of the effect inference signal used.
+    /// One of: "rollback_target" (HIGH confidence), "adapter_key" (MED confidence),
+    /// "expected_effect_keyword" (LOW confidence), "none" (no signal available).
+    inference_source: String,
+    /// Confidence level of the effect inference.
+    /// One of: "HIGH", "MED", "LOW", "NONE".
+    inference_confidence: String,
+    /// Confidence level of the alignment assessment (forbidden/allowed match).
+    /// One of: "HIGH", "MED", "LOW", "NONE".
+    alignment_confidence: String,
+    /// Strength of the alignment between proposal effect and intent outcomes.
+    /// One of: "strong_match" (exact effect type match),
+    /// "moderate_match" (effect family match), "weak_match" (heuristic match),
+    /// "mismatch" (no alignment), "none" (no outcomes to compare against).
+    alignment_strength: String,
+}
+
+/// U1-S3a: Inference source priority for multi-signal effect inference.
+/// Note: InferenceSource::None is not used because infer_effect_multi_signal always
+/// returns at least ExpectedEffectKeyword as a fallback (LOW confidence).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InferenceSource {
+    /// Rollback target kind provides HIGH confidence inference.
+    RollbackTarget,
+    /// Adapter key/tool family provides MED confidence inference.
+    AdapterKey,
+    /// Expected effect keywords provide LOW confidence inference (fallback).
+    ExpectedEffectKeyword,
+}
+
+impl InferenceSource {
+    fn confidence(&self) -> &'static str {
+        match self {
+            InferenceSource::RollbackTarget => "HIGH",
+            InferenceSource::AdapterKey => "MED",
+            InferenceSource::ExpectedEffectKeyword => "LOW",
+        }
+    }
+
+    fn as_str(&self) -> &'static str {
+        match self {
+            InferenceSource::RollbackTarget => "rollback_target",
+            InferenceSource::AdapterKey => "adapter_key",
+            InferenceSource::ExpectedEffectKeyword => "expected_effect_keyword",
+        }
+    }
+}
+
+/// U1-S3a: Alignment strength levels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AlignmentStrength {
+    /// Exact effect type match.
+    StrongMatch,
+    /// Effect family match (e.g., FileMutation vs write operations).
+    ModerateMatch,
+    /// Heuristic-based match (keyword inference).
+    WeakMatch,
+    /// No alignment between proposal and intent outcomes.
+    Mismatch,
+    /// No outcomes defined in intent to compare against.
+    None,
+}
+
+impl AlignmentStrength {
+    fn as_str(&self) -> &'static str {
+        match self {
+            AlignmentStrength::StrongMatch => "strong_match",
+            AlignmentStrength::ModerateMatch => "moderate_match",
+            AlignmentStrength::WeakMatch => "weak_match",
+            AlignmentStrength::Mismatch => "mismatch",
+            AlignmentStrength::None => "none",
+        }
+    }
+}
+
+/// U1-S3a: Infer EffectType from rollback target kind.
+/// This provides HIGH confidence inference as the target is a concrete structural signal.
+fn infer_effect_from_rollback_target(
+    target: &ferrum_proto::RollbackTarget,
+) -> Option<ferrum_proto::EffectType> {
+    use ferrum_proto::EffectType;
+    match target {
+        ferrum_proto::RollbackTarget::FilePath { .. } => Some(EffectType::FileMutation),
+        ferrum_proto::RollbackTarget::GitRef { .. } => Some(EffectType::GitMutation),
+        ferrum_proto::RollbackTarget::SqliteTxn { .. } => Some(EffectType::DatabaseMutation),
+        ferrum_proto::RollbackTarget::HttpRequest { .. } => Some(EffectType::ExternalApiCall),
+        ferrum_proto::RollbackTarget::EmailDraft { .. } => Some(EffectType::ExternalCommunication),
+        ferrum_proto::RollbackTarget::Generic { .. } => None,
+    }
+}
+
+/// U1-S3a: Infer EffectType from adapter key.
+/// This provides MED confidence inference as adapter families indicate effect categories.
+fn infer_effect_from_adapter_key(adapter_key: &str) -> Option<ferrum_proto::EffectType> {
+    use ferrum_proto::EffectType;
+    let key_lower = adapter_key.to_lowercase();
+    if key_lower.contains("http") || key_lower.contains("web") || key_lower.contains("api") {
+        Some(EffectType::ExternalApiCall)
+    } else if key_lower.contains("git") || key_lower.contains("vcs") {
+        Some(EffectType::GitMutation)
+    } else if key_lower.contains("sql") || key_lower.contains("sqlite") || key_lower.contains("db")
+    {
+        Some(EffectType::DatabaseMutation)
+    } else if key_lower.contains("fs") || key_lower.contains("file") || key_lower.contains("disk") {
+        Some(EffectType::FileMutation)
+    } else if key_lower.contains("mail")
+        || key_lower.contains("email")
+        || key_lower.contains("smtp")
+    {
+        Some(EffectType::ExternalCommunication)
+    } else if key_lower.contains("schedule")
+        || key_lower.contains("cron")
+        || key_lower.contains("timer")
+    {
+        Some(EffectType::Scheduling)
+    } else if key_lower.contains("admin")
+        || key_lower.contains("config")
+        || key_lower.contains("system")
+    {
+        Some(EffectType::AdministrativeChange)
+    } else {
+        None
+    }
+}
+
+/// U1-S3a: Infer EffectType from expected effect keywords.
+/// This is the LOW confidence fallback inference.
+fn infer_effect_from_expected_effect(effect_desc: &str) -> ferrum_proto::EffectType {
+    StaticPdpEngine::infer_effect_type(effect_desc)
+}
+
+/// U1-S3a: Multi-signal effect inference for verify-time assessment.
+/// Uses signals in priority order: rollback_target (HIGH) > adapter_key (MED) > expected_effect (LOW).
+/// Returns (inferred_effect, inference_source) tuple.
+fn infer_effect_multi_signal(
+    rollback_target: Option<&ferrum_proto::RollbackTarget>,
+    adapter_key: Option<&str>,
+    expected_effect: &str,
+) -> (ferrum_proto::EffectType, InferenceSource) {
+    // Priority 1: Rollback target kind (HIGH confidence)
+    if let Some(target) = rollback_target {
+        if let Some(effect) = infer_effect_from_rollback_target(target) {
+            return (effect, InferenceSource::RollbackTarget);
+        }
+    }
+
+    // Priority 2: Adapter key/tool family (MED confidence)
+    if let Some(key) = adapter_key {
+        if let Some(effect) = infer_effect_from_adapter_key(key) {
+            return (effect, InferenceSource::AdapterKey);
+        }
+    }
+
+    // Priority 3: Expected effect keywords (LOW confidence - fallback)
+    let effect = infer_effect_from_expected_effect(expected_effect);
+    (effect, InferenceSource::ExpectedEffectKeyword)
+}
+
+/// U1-S3a: Determine alignment strength based on inference source and match quality.
+fn compute_alignment_strength(
+    inference_source: InferenceSource,
+    forbidden_match: bool,
+    allowed_alignment: bool,
+    has_outcomes: bool,
+) -> AlignmentStrength {
+    // If forbidden match detected, it's a strong mismatch signal regardless of inference source
+    if forbidden_match {
+        return AlignmentStrength::Mismatch;
+    }
+
+    // If no outcomes defined in intent, alignment is N/A
+    if !has_outcomes {
+        return AlignmentStrength::None;
+    }
+
+    // Alignment strength depends on inference confidence
+    match inference_source {
+        InferenceSource::RollbackTarget => {
+            // Rollback target is concrete structural evidence -> strong alignment signal
+            if allowed_alignment {
+                AlignmentStrength::StrongMatch
+            } else {
+                AlignmentStrength::Mismatch
+            }
+        }
+        InferenceSource::AdapterKey => {
+            // Adapter key is categorical but not as precise -> moderate signal
+            if allowed_alignment {
+                AlignmentStrength::ModerateMatch
+            } else {
+                AlignmentStrength::Mismatch
+            }
+        }
+        InferenceSource::ExpectedEffectKeyword => {
+            // Keyword heuristic is weakest signal -> weak alignment
+            if allowed_alignment {
+                AlignmentStrength::WeakMatch
+            } else {
+                AlignmentStrength::Mismatch
+            }
+        }
+    }
+}
+
+/// U1-S3a: Determine alignment confidence based on inference source and match quality.
+fn compute_alignment_confidence(
+    inference_source: InferenceSource,
+    forbidden_match: bool,
+    allowed_alignment: bool,
+    has_outcomes: bool,
+) -> &'static str {
+    // Forbidden match is high confidence signal regardless of inference source
+    if forbidden_match {
+        return "HIGH";
+    }
+
+    // When no outcomes defined in intent, alignment confidence is N/A
+    if !has_outcomes {
+        return "NONE"; // N/A - nothing to align against
+    }
+
+    // When alignment is present, confidence follows inference source
+    if allowed_alignment {
+        return inference_source.confidence();
+    }
+
+    // Mismatch detection - confidence depends on inference source
+    match inference_source {
+        InferenceSource::RollbackTarget => "HIGH", // Concrete structural mismatch
+        InferenceSource::AdapterKey => "MED",      // Categorical mismatch
+        InferenceSource::ExpectedEffectKeyword => "LOW", // Heuristic mismatch
+    }
 }
 
 /// Compute U1-S2 verify-time outcome assessment using the existing U1 patterns.
+/// U1-S3a: Extended with multi-signal inference and confidence/strength annotations.
 /// This is annotate-only: it does not change verify decision semantics.
 /// Returns U1VerifyAssessment with assessment_available=false if context cannot be loaded.
 fn compute_u1_verify_assessment(
     intent: &Option<IntentEnvelope>,
     proposal: &Option<ferrum_proto::ActionProposal>,
+    rollback_target: Option<&ferrum_proto::RollbackTarget>,
+    adapter_key: Option<&str>,
 ) -> U1VerifyAssessment {
     let intent = match intent {
         Some(i) => i,
@@ -1522,6 +1762,10 @@ fn compute_u1_verify_assessment(
                 proposal_effect_type: "unknown".to_string(),
                 assessment_available: false,
                 assessment_reason: "intent not available at verify time".to_string(),
+                inference_source: "none".to_string(),
+                inference_confidence: "NONE".to_string(),
+                alignment_confidence: "NONE".to_string(),
+                alignment_strength: "none".to_string(),
             };
         }
     };
@@ -1537,19 +1781,28 @@ fn compute_u1_verify_assessment(
                 proposal_effect_type: "unknown".to_string(),
                 assessment_available: false,
                 assessment_reason: "proposal not available at verify time".to_string(),
+                inference_source: "none".to_string(),
+                inference_confidence: "NONE".to_string(),
+                alignment_confidence: "NONE".to_string(),
+                alignment_strength: "none".to_string(),
             };
         }
     };
 
-    // Infer the proposal effect type using the same logic as PDP engine
-    let proposal_effect = StaticPdpEngine::infer_effect_type(&proposal.expected_effect);
+    // U1-S3a: Multi-signal effect inference
+    let (proposal_effect, source) =
+        infer_effect_multi_signal(rollback_target, adapter_key, &proposal.expected_effect);
     let proposal_effect_str = format!("{:?}", proposal_effect);
+    let source_str = source.as_str().to_string();
+    let source_confidence = source.confidence().to_string();
 
     // Check forbidden outcomes (same logic as evaluate-time)
     for forbidden in &intent.forbidden_outcomes {
         if std::mem::discriminant(&forbidden.effect_type)
             == std::mem::discriminant(&proposal_effect)
         {
+            let strength = compute_alignment_strength(source, true, false, true);
+            let align_conf = compute_alignment_confidence(source, true, false, true);
             return U1VerifyAssessment {
                 forbidden_match: true,
                 forbidden_outcome_id: Some(forbidden.id.clone()),
@@ -1561,6 +1814,10 @@ fn compute_u1_verify_assessment(
                     "proposal effect '{}' matches forbidden outcome '{}': {}",
                     proposal_effect_str, forbidden.id, forbidden.description
                 ),
+                inference_source: source_str,
+                inference_confidence: source_confidence,
+                alignment_confidence: align_conf.to_string(),
+                alignment_strength: strength.as_str().to_string(),
             };
         }
     }
@@ -1568,8 +1825,11 @@ fn compute_u1_verify_assessment(
     // Check allowed outcomes alignment (same logic as evaluate-time)
     let mut allowed_alignment = false;
     let mut matched_allowed_outcome_ids = Vec::new();
+    // U1-S3a: has_outcomes is true if EITHER allowed_outcomes or forbidden_outcomes is defined.
+    // When both are empty, there's nothing to align against (alignment_strength=none, confidence=NONE).
+    let has_outcomes = !intent.allowed_outcomes.is_empty() || !intent.forbidden_outcomes.is_empty();
 
-    if !intent.allowed_outcomes.is_empty() {
+    if has_outcomes {
         for allowed in &intent.allowed_outcomes {
             if std::mem::discriminant(&allowed.effect_type)
                 == std::mem::discriminant(&proposal_effect)
@@ -1582,6 +1842,9 @@ fn compute_u1_verify_assessment(
         // No allowed_outcomes specified means any effect is acceptable
         allowed_alignment = true;
     }
+
+    let strength = compute_alignment_strength(source, false, allowed_alignment, has_outcomes);
+    let align_conf = compute_alignment_confidence(source, false, allowed_alignment, has_outcomes);
 
     let reason = if allowed_alignment {
         format!(
@@ -1609,6 +1872,10 @@ fn compute_u1_verify_assessment(
         proposal_effect_type: proposal_effect_str,
         assessment_available: true,
         assessment_reason: reason,
+        inference_source: source_str,
+        inference_confidence: source_confidence,
+        alignment_confidence: align_conf.to_string(),
+        alignment_strength: strength.as_str().to_string(),
     }
 }
 
@@ -1712,7 +1979,13 @@ async fn verify_execution(
         .flatten();
 
     // Compute U1-S2 verify-time outcome assessment (annotate-only, does not affect verify decision)
-    let u1_assessment = compute_u1_verify_assessment(&intent, &proposal);
+    // U1-S3a: Use multi-signal inference with rollback_target (HIGH), adapter_key (MED), expected_effect (LOW)
+    let u1_assessment = compute_u1_verify_assessment(
+        &intent,
+        &proposal,
+        Some(&contract.target),
+        Some(contract.adapter_key.as_str()),
+    );
 
     // Verify via adapter
     let verified = runtime
@@ -5110,5 +5383,192 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
+    }
+}
+
+#[cfg(test)]
+mod u1_s3a_tests {
+    use super::*;
+
+    // Helper to create an empty intent for no-outcomes testing
+    fn make_empty_outcomes_intent() -> IntentEnvelope {
+        IntentEnvelope {
+            intent_id: ferrum_proto::IntentId::new(),
+            principal_id: ferrum_proto::PrincipalId::new(),
+            session_id: None,
+            channel_id: None,
+            title: "Test".to_string(),
+            goal: "Test goal".to_string(),
+            normalized_goal: "test goal".to_string(),
+            allowed_outcomes: Vec::new(), // Empty - no outcomes defined
+            forbidden_outcomes: Vec::new(), // Empty - no outcomes defined
+            resource_scope: vec![ferrum_proto::ResourceSelector::FilesystemPath {
+                path: "/tmp".to_string(),
+                mode: ferrum_proto::ResourceMode::Write,
+                content_hash: None,
+            }],
+            risk_tier: ferrum_proto::RiskTier::Medium,
+            approval_mode: ferrum_proto::ApprovalMode::None,
+            default_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+            time_budget: ferrum_proto::TimeBudget {
+                max_duration_ms: 30_000,
+                max_steps: 8,
+                max_retries_per_step: 1,
+            },
+            trust_context: ferrum_proto::TrustContextSummary {
+                input_labels: Vec::new(),
+                sensitivity_labels: Vec::new(),
+                taint_score: 0,
+                contains_external_metadata: false,
+                contains_tool_output: false,
+                contains_untrusted_text: false,
+            },
+            derived_from_event_ids: Vec::new(),
+            tags: Vec::new(),
+            metadata: ferrum_proto::JsonMap::new(),
+            status: ferrum_proto::IntentStatus::Active,
+            created_at: chrono::Utc::now(),
+            expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
+        }
+    }
+
+    // Helper to create a proposal
+    fn make_proposal(intent_id: ferrum_proto::IntentId) -> ferrum_proto::ActionProposal {
+        ferrum_proto::ActionProposal {
+            proposal_id: ferrum_proto::ProposalId::new(),
+            intent_id,
+            step_index: 1,
+            title: "Test proposal".to_string(),
+            tool_name: "fs.write".to_string(),
+            server_name: "workspace".to_string(),
+            raw_arguments: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+            expected_effect: "write a file".to_string(),
+            estimated_risk: ferrum_proto::RiskTier::Medium,
+            requested_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+            decision: None,
+            taint_inputs: vec![],
+            metadata: ferrum_proto::JsonMap::new(),
+            created_at: chrono::Utc::now(),
+        }
+    }
+
+    // Helper to create a rollback target
+    fn make_file_rollback_target() -> ferrum_proto::RollbackTarget {
+        ferrum_proto::RollbackTarget::FilePath {
+            path: "/tmp/test.txt".to_string(),
+            before_hash: Some("abc123".to_string()),
+            after_hash: Some("def456".to_string()),
+        }
+    }
+
+    #[test]
+    fn test_u1_s3a_no_outcomes_alignment_strength_is_none() {
+        // When both allowed_outcomes and forbidden_outcomes are empty,
+        // alignment_strength should be None (there's nothing to align against).
+        let intent = make_empty_outcomes_intent();
+        let proposal = make_proposal(intent.intent_id);
+        let rollback_target = make_file_rollback_target();
+        let adapter_key = "fs";
+
+        let assessment = compute_u1_verify_assessment(
+            &Some(intent),
+            &Some(proposal),
+            Some(&rollback_target),
+            Some(adapter_key),
+        );
+
+        // With no outcomes defined, alignment_strength should be "none"
+        assert_eq!(
+            assessment.alignment_strength, "none",
+            "alignment_strength should be 'none' when no outcomes are defined"
+        );
+
+        // alignment_confidence should also be "NONE" since there's nothing to align against
+        assert_eq!(
+            assessment.alignment_confidence, "NONE",
+            "alignment_confidence should be 'NONE' when no outcomes are defined"
+        );
+
+        // But allowed_alignment should be true (any effect is acceptable when no constraints)
+        assert!(
+            assessment.allowed_alignment,
+            "allowed_alignment should be true when no outcomes are defined"
+        );
+
+        // And forbidden_match should be false (no forbidden outcomes to match)
+        assert!(
+            !assessment.forbidden_match,
+            "forbidden_match should be false when no forbidden outcomes are defined"
+        );
+
+        // inference_source should still be rollback_target (HIGH confidence inference works)
+        assert_eq!(
+            assessment.inference_source, "rollback_target",
+            "inference_source should still be 'rollback_target'"
+        );
+        assert_eq!(
+            assessment.inference_confidence, "HIGH",
+            "inference_confidence should still be 'HIGH' for rollback_target"
+        );
+    }
+
+    #[test]
+    fn test_u1_s3a_adapter_key_fallback_medium_confidence() {
+        // When rollback_target is Generic (no inference), adapter_key should be used (MED confidence).
+        let intent = make_empty_outcomes_intent();
+        let proposal = make_proposal(intent.intent_id);
+        // Use Generic rollback target which doesn't infer an effect
+        let rollback_target = ferrum_proto::RollbackTarget::Generic {
+            namespace: "test".to_string(),
+            identifier: "test".to_string(),
+        };
+        let adapter_key = "http"; // HTTP adapter should infer ExternalApiCall
+
+        let assessment = compute_u1_verify_assessment(
+            &Some(intent),
+            &Some(proposal),
+            Some(&rollback_target),
+            Some(adapter_key),
+        );
+
+        // With Generic target and HTTP adapter, should fall back to adapter_key inference
+        assert_eq!(
+            assessment.inference_source, "adapter_key",
+            "inference_source should be 'adapter_key' when rollback_target is Generic"
+        );
+        assert_eq!(
+            assessment.inference_confidence, "MED",
+            "inference_confidence should be 'MED' for adapter_key inference"
+        );
+    }
+
+    #[test]
+    fn test_u1_s3a_expected_effect_fallback_low_confidence() {
+        // When both rollback_target (Generic) and adapter_key fail to infer,
+        // should fall back to expected_effect keywords (LOW confidence).
+        let intent = make_empty_outcomes_intent();
+        let proposal = make_proposal(intent.intent_id);
+        let rollback_target = ferrum_proto::RollbackTarget::Generic {
+            namespace: "test".to_string(),
+            identifier: "test".to_string(),
+        };
+        let adapter_key = "noop"; // Noop adapter doesn't infer any specific effect
+
+        let assessment = compute_u1_verify_assessment(
+            &Some(intent),
+            &Some(proposal),
+            Some(&rollback_target),
+            Some(adapter_key),
+        );
+
+        // With Generic target and noop adapter, should fall back to expected_effect
+        assert_eq!(
+            assessment.inference_source, "expected_effect_keyword",
+            "inference_source should be 'expected_effect_keyword' as fallback"
+        );
+        assert_eq!(
+            assessment.inference_confidence, "LOW",
+            "inference_confidence should be 'LOW' for expected_effect_keyword fallback"
+        );
     }
 }
