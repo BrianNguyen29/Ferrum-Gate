@@ -61,7 +61,7 @@ FerrumGate v1 Supported scope:
 
 - broader production-verified adapter integrations and hardening (fs, sqlite, maildraft, git, http)
 - multi-node / HA / read-replica
-- U1-U4 upgrade tracks (Outcome-aware Governance, Reversible Execution Planner, Cross-runtime Provenance Fabric, MCP/local/NemoClaw runtime integrations)
+- deeper U1-U4 upgrade-track work (Outcome-aware Governance, Reversible Execution Planner, Cross-runtime Provenance Fabric, MCP/local/NemoClaw runtime integrations)
 
 ### Not supported
 

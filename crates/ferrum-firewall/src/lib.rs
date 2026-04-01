@@ -375,7 +375,13 @@ impl SemanticFirewall for DefaultFirewall {
         let mut contradictions = Vec::new();
 
         // Rule 1: Read-only intent vs mutating proposal
-        // Enforce even with empty scope - read-only intent must fail closed against mutating proposals
+        // U1-S1 Contract: explicit forbidden-outcome match denies; allowed-outcome mismatch is advisory.
+        // When explicit outcome clauses exist (forbidden OR allowed), skip this contradiction
+        // so PDP's outcome-aware semantics govern the result. This prevents the firewall's
+        // structural contradiction from shadowing PDP's advisory/deny semantics for
+        // explicit outcome clauses.
+        let has_explicit_forbidden = !intent.forbidden_outcomes.is_empty();
+        let has_explicit_allowed = !intent.allowed_outcomes.is_empty();
         let intent_read_only = intent
             .allowed_outcomes
             .iter()
@@ -383,10 +389,19 @@ impl SemanticFirewall for DefaultFirewall {
         let proposal_mutating =
             self.is_mutating_effect(&self.infer_effect_type(&proposal.expected_effect));
 
-        if intent_read_only && proposal_mutating {
+        // Only fire this contradiction if:
+        // 1. All allowed outcomes are read-only AND proposal is mutating
+        // 2. AND there are NO explicit forbidden outcomes (they take precedence via PDP)
+        // 3. AND there are NO explicit allowed outcomes (PDP's allowed check handles advisory)
+        // When both are empty, this is a purely structural check without explicit outcome clauses.
+        if intent_read_only && proposal_mutating && !has_explicit_forbidden && !has_explicit_allowed
+        {
+            // Fire as MEDIUM (advisory) to avoid shadowing PDP's outcome-aware assessment.
+            // PDP will run and can either confirm deny (if other rules trigger) or
+            // add advisory warnings for allowed mismatch.
             contradictions.push(Contradiction {
                 rule_id: "read_only_violation".to_string(),
-                severity: Severity::High,
+                severity: Severity::Medium,
                 message: format!(
                     "Intent allows only read-only effects, but proposal '{}' has mutating effect",
                     proposal.title
@@ -1851,6 +1866,45 @@ mod tests {
         }
     }
 
+    /// Create a test intent with NO explicit outcome clauses (empty allowed and forbidden).
+    /// This represents a fully permissive intent where no explicit outcome restrictions exist.
+    fn create_test_intent_no_outcome_clauses() -> IntentEnvelope {
+        IntentEnvelope {
+            intent_id: ferrum_proto::IntentId::new(),
+            principal_id: ferrum_proto::PrincipalId::new(),
+            session_id: None,
+            channel_id: None,
+            title: "Test Intent".to_string(),
+            goal: "Test goal".to_string(),
+            normalized_goal: "test goal".to_string(),
+            allowed_outcomes: Vec::new(), // Empty = no explicit outcome restrictions
+            forbidden_outcomes: Vec::new(), // Empty = no explicit forbids
+            resource_scope: Vec::new(),
+            risk_tier: ferrum_proto::RiskTier::Medium,
+            approval_mode: ferrum_proto::ApprovalMode::None,
+            default_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+            time_budget: ferrum_proto::TimeBudget {
+                max_duration_ms: 30000,
+                max_steps: 8,
+                max_retries_per_step: 1,
+            },
+            trust_context: ferrum_proto::TrustContextSummary {
+                input_labels: Vec::new(),
+                sensitivity_labels: Vec::new(),
+                taint_score: 0,
+                contains_external_metadata: false,
+                contains_tool_output: false,
+                contains_untrusted_text: false,
+            },
+            derived_from_event_ids: Vec::new(),
+            tags: Vec::new(),
+            metadata: ferrum_proto::JsonMap::new(),
+            status: ferrum_proto::IntentStatus::Active,
+            created_at: chrono::Utc::now(),
+            expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
+        }
+    }
+
     fn create_test_proposal(intent_id: ferrum_proto::IntentId, effect: &str) -> ActionProposal {
         ActionProposal {
             proposal_id: ferrum_proto::ProposalId::new(),
@@ -1896,8 +1950,10 @@ mod tests {
     #[test]
     fn test_contradiction_read_only_violation() {
         let firewall = DefaultFirewall::new();
-        let intent = create_test_intent(EffectType::ReadOnlyAnalysis);
-        // No explicit scope needed - read-only intent should block mutating proposals regardless
+        // Use intent with NO explicit outcome clauses to test structural contradiction
+        // When both allowed_outcomes and forbidden_outcomes are empty, the structural
+        // contradiction check fires for mutating proposals (vacuous read-only inference).
+        let intent = create_test_intent_no_outcome_clauses();
         let proposal = create_test_proposal(intent.intent_id, "write a file");
 
         let contradictions = firewall.contradiction_check(&intent, &proposal);
@@ -1912,8 +1968,9 @@ mod tests {
     #[test]
     fn test_contradiction_read_only_violation_with_empty_scope() {
         let firewall = DefaultFirewall::new();
-        let intent = create_test_intent(EffectType::ReadOnlyAnalysis);
-        // Explicitly test with empty scope - should still block mutating proposals
+        // Use intent with NO explicit outcome clauses - structural contradiction fires
+        // regardless of scope when no explicit outcome clauses exist.
+        let intent = create_test_intent_no_outcome_clauses();
         assert!(intent.resource_scope.is_empty());
         let proposal = create_test_proposal(intent.intent_id, "delete all data");
 
@@ -1923,7 +1980,95 @@ mod tests {
             contradictions
                 .iter()
                 .any(|c| c.rule_id == "read_only_violation"),
-            "Read-only intent with empty scope should still block mutating proposals"
+            "Structural contradiction should fire for mutating proposal when no explicit outcome clauses exist"
+        );
+    }
+
+    // ============================================
+    // U1 PRECEDENCE EDGE CASE REGRESSION TESTS
+    // ============================================
+    // These tests verify that the firewall contradiction check respects U1 semantics:
+    // - explicit forbidden-outcome match => deny (PDP handles via forbidden check)
+    // - allowed-outcome mismatch => advisory warning only (PDP handles via allowed check)
+    // - if explicit outcome clauses are present, firewall contradiction must NOT shadow U1 lane
+
+    #[test]
+    fn test_contradiction_skipped_when_explicit_allowed_outcomes_present() {
+        let firewall = DefaultFirewall::new();
+        // Intent has explicit allowed_outcomes (read-only only) - PDP handles allowed-outcome check
+        let intent = create_test_intent(EffectType::ReadOnlyAnalysis);
+        // Proposal is mutating - allowed-outcome mismatch should be PDP advisory, not firewall contradiction
+        let proposal = create_test_proposal(intent.intent_id, "write a file");
+
+        let contradictions = firewall.contradiction_check(&intent, &proposal);
+        // Contradiction should NOT fire when explicit allowed outcomes are present
+        // PDP's allowed-outcome check handles this case with advisory warnings
+        assert!(
+            !contradictions
+                .iter()
+                .any(|c| c.rule_id == "read_only_violation"),
+            "Firewall contradiction should NOT shadow PDP when explicit allowed outcomes are present"
+        );
+    }
+
+    #[test]
+    fn test_contradiction_skipped_when_explicit_forbidden_outcomes_present() {
+        let firewall = DefaultFirewall::new();
+        // Intent has explicit forbidden outcomes (FileMutation forbidden)
+        let mut intent = create_test_intent_no_outcome_clauses();
+        intent.forbidden_outcomes = vec![ferrum_proto::OutcomeClause {
+            id: "forbid_file_mutation".to_string(),
+            description: "File mutations are forbidden".to_string(),
+            effect_type: EffectType::FileMutation,
+            required: false,
+        }];
+        // Proposal is FileMutation - matches forbidden, PDP denies
+        // Firewall should NOT fire contradiction (PDP's forbidden check handles it)
+        let proposal = create_test_proposal(intent.intent_id, "write a file");
+
+        let contradictions = firewall.contradiction_check(&intent, &proposal);
+        // Contradiction should NOT fire when explicit forbidden outcomes are present
+        assert!(
+            !contradictions
+                .iter()
+                .any(|c| c.rule_id == "read_only_violation"),
+            "Firewall contradiction should NOT shadow PDP when explicit forbidden outcomes are present"
+        );
+    }
+
+    #[test]
+    fn test_contradiction_fires_only_when_no_explicit_outcome_clauses() {
+        let firewall = DefaultFirewall::new();
+        // Intent has NO explicit outcome clauses (both empty)
+        let intent = create_test_intent_no_outcome_clauses();
+        // Proposal is mutating - this is a structural violation, not U1 outcome-based
+        let proposal = create_test_proposal(intent.intent_id, "create database");
+
+        let contradictions = firewall.contradiction_check(&intent, &proposal);
+        // Contradiction SHOULD fire when no explicit outcome clauses exist
+        assert!(
+            contradictions
+                .iter()
+                .any(|c| c.rule_id == "read_only_violation"),
+            "Structural contradiction should fire when no explicit outcome clauses exist"
+        );
+    }
+
+    #[test]
+    fn test_allowed_outcome_alignment_no_contradiction() {
+        let firewall = DefaultFirewall::new();
+        // Intent allows ReadOnlyAnalysis
+        let intent = create_test_intent(EffectType::ReadOnlyAnalysis);
+        // Proposal effect aligns with allowed outcome (read)
+        let proposal = create_test_proposal(intent.intent_id, "read file");
+
+        let contradictions = firewall.contradiction_check(&intent, &proposal);
+        // No contradiction when proposal effect matches allowed outcome
+        assert!(
+            !contradictions
+                .iter()
+                .any(|c| c.rule_id == "read_only_violation"),
+            "No contradiction when proposal effect matches allowed outcome"
         );
     }
 

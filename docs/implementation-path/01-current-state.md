@@ -5,19 +5,19 @@ Single-node v1 scope unless noted.
 
 **Release support contract**:
 - Supported = SQLite-backed single-node governance core.
-- Partial = adapter crates and extended runtime integrations (skeleton only, not production-verified).
-- Deferred/post-v1 = real adapter implementations, multi-node/HA/read-replica, U1-U4 upgrade tracks.
+- Partial = bounded local adapter implementations plus early upgrade-track slices that are not yet production-verified.
+- Deferred/post-v1 = broader adapter hardening, multi-node/HA/read-replica, and deeper U1-U4 upgrade-track work.
 
 ## What exists
 
 ### Core crates
 - `ferrum-proto` — domain shapes, proto definitions
-- `ferrum-pdp` — Policy Decision Point (StaticPdpEngine; trust labels, taint scoring, contradiction checks)
+- `ferrum-pdp` — Policy Decision Point (StaticPdpEngine; trust labels, taint scoring, contradiction checks, advisory outcome-aware assessment with explicit forbidden-outcome deny)
 - `ferrum-cap` — capability mint, mark_used, single-use enforcement
 - `ferrum-rollback` — rollback/compensate operations, R3/R2/R0/R1 contract classes, auto_commit semantics
 - `ferrum-store` — SQLite persistence (intents, proposals, capabilities, executions, rollback contracts, provenance events, approvals)
 - `ferrum-gateway` — full orchestration: evaluate -> mint -> authorize -> prepare -> execute -> verify -> compensate (internal: commit/rollback as orchestration semantics); negative paths: deny, quarantine, RequireApproval, draft-only gated at evaluate (before prepare)
-- `ferrum-firewall` — trust labeler, taint scorer, sanitize, contradiction checks
+- `ferrum-firewall` — trust labeler, taint scorer, sanitize, contradiction checks, and U1-aware read-only contradiction gating
 - `ferrum-graph` — provenance graph
 - `ferrum-ledger` — ledger (skeleton)
 - `ferrum-sync` — sync probe (skeleton, infrastructure only)
@@ -61,10 +61,10 @@ Single-node v1 scope unless noted.
 - **Phase A** (compile/shape stability): DONE
 - **Phase B** (SQLite storage boundary): DONE
 - **Phase C** (firewall MVP): DONE — logic exists, curated regression fixtures implemented (6 tests)
-- **Phase D** (adapters): PARTIAL — skeleton adapters exist for fs/sqlite/maildraft/git/http; real implementations are post-v1
+- **Phase D** (adapters): PARTIAL — bounded local implementations exist for fs/sqlite/maildraft/git/http; broader production hardening is post-v1
 - **Phase E** (gateway orchestration): DONE for SQLite-backed single-node flow
 - **Phase F** (hardening/evidence): DONE — integration tests strong, poisoned-context fixtures curated, supported flows and gaps documented, evidence script present
 
 ## Next step
 
-All P0/P1/P2 items closed. v1 RC is unblocked for single-node SQLite-backed deployment. Remaining work is post-v1 backlog (multi-node/HA, real adapters, U1-U4 upgrade tracks).
+All P0/P1/P2 items closed. v1 RC is unblocked for single-node SQLite-backed deployment. Remaining work is post-v1 backlog (multi-node/HA, broader adapter hardening, and deeper U1-U4 upgrade tracks).
