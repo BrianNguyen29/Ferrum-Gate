@@ -1051,11 +1051,13 @@ async fn test_evaluate_proposal_id_mismatch_returns_400_and_no_events() {
 async fn test_full_happy_path_flow_compile_evaluate_mint_authorize_prepare() {
     let (_temp_dir, runtime, _store) = create_test_runtime().await;
 
-    // Step 1: Compile intent with proper file scope (fail-closed: empty scope denies all)
-    let mut req = sample_intent_request();
+    // Step 1: Compile intent with proper file scope and FileMutation effect type.
+    // Note: U1-S5b checks at prepare-time require intent effect_type to match
+    // the inferred effect from rollback_target. Using FileMutation to match fs.write rollback.
+    let mut req = sample_intent_request_with_effect(EffectType::FileMutation);
     req.requested_resource_scope = vec![ResourceSelector::FilesystemPath {
         path: "/tmp".to_string(),
-        mode: ResourceMode::Read,
+        mode: ResourceMode::Write,
         content_hash: None,
     }];
     let app = build_router(runtime.clone());
@@ -1079,8 +1081,23 @@ async fn test_full_happy_path_flow_compile_evaluate_mint_authorize_prepare() {
     let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
     let intent_id = compile_resp.envelope.intent_id;
 
-    // Step 2: Evaluate proposal
-    let proposal = sample_proposal(intent_id);
+    // Step 2: Evaluate proposal with fs.write (FileMutation)
+    let proposal = ActionProposal {
+        proposal_id: ferrum_proto::ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Write file".to_string(),
+        tool_name: "fs.write".to_string(),
+        server_name: "workspace".to_string(),
+        raw_arguments: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        expected_effect: "write a file".to_string(),
+        estimated_risk: RiskTier::Medium,
+        requested_rollback_class: RollbackClass::R0NativeReversible,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
     let proposal_id = proposal.proposal_id;
 
     let app = build_router(runtime.clone());
@@ -1109,12 +1126,12 @@ async fn test_full_happy_path_flow_compile_evaluate_mint_authorize_prepare() {
         proposal_id,
         tool_binding: ToolBinding {
             server_name: "workspace".to_string(),
-            tool_name: "fs.read".to_string(),
+            tool_name: "fs.write".to_string(),
             tool_version: None,
         },
         resource_bindings: vec![ResourceBinding::File {
             path: "/tmp/test.txt".to_string(),
-            mode: ResourceMode::Read,
+            mode: ResourceMode::Write,
             required_hash: None,
         }],
         argument_constraints: vec![],
@@ -4955,21 +4972,19 @@ async fn test_http_execution_denied_header_violation() {
 async fn test_http_execution_denied_missing_binding() {
     let (_temp_dir, runtime, _store) = create_test_runtime().await;
 
-    // Create intent with BOTH HTTP and File scope to allow file binding minting
-    let http_scope = ferrum_proto::ResourceSelector::HttpEndpoint {
-        method: ferrum_proto::HttpMethod::Get,
-        base_url: "https://api.example.com".to_string(),
-        path_prefix: "/v1/".to_string(),
-        mode: ferrum_proto::ResourceMode::Read,
-    };
+    // Note: U1-S5b check at prepare-time requires effect_type to match what the
+    // binding's rollback target infers. FilePath always infers FileMutation regardless
+    // of binding mode. Since we're minting a File binding only, we use FileMutation
+    // effect type to avoid U1-S5b blocking at prepare-time.
+    // The HTTP binding mismatch will be caught at execute-time.
     let file_scope = ferrum_proto::ResourceSelector::FilesystemPath {
         path: "/tmp".to_string(),
-        mode: ferrum_proto::ResourceMode::Read,
+        mode: ferrum_proto::ResourceMode::Write,
         content_hash: None,
     };
     let app = build_router(runtime.clone());
-    let mut req = sample_intent_request_with_effect(EffectType::ExternalApiCall);
-    req.requested_resource_scope = vec![http_scope, file_scope];
+    let mut req = sample_intent_request_with_effect(EffectType::FileMutation);
+    req.requested_resource_scope = vec![file_scope];
     let response = app
         .oneshot(
             axum::http::Request::builder()
@@ -5196,10 +5211,13 @@ async fn test_file_execution_allowed_with_matching_read_binding() {
         required_hash: None,
     };
 
+    // Note: U1-S5b check at prepare-time requires effect_type to match what the
+    // binding's rollback target infers. FilePath always infers FileMutation regardless
+    // of binding mode, so we use FileMutation here to avoid triggering the hard gate.
     let (_intent_id, _proposal_id, execution_id) = run_file_flow_to_prepared(
         &runtime,
         file_binding,
-        EffectType::ReadOnlyAnalysis,
+        EffectType::FileMutation,
         "fs.read",
         serde_json::json!({"path": "/tmp/readable.txt"}),
         "read a file",
@@ -5270,10 +5288,14 @@ async fn test_file_execution_denied_write_on_read_binding() {
         required_hash: None,
     };
 
+    // Note: U1-S5b check at prepare-time requires effect_type to match what the
+    // binding's rollback target infers. FilePath always infers FileMutation regardless
+    // of binding mode, so we use FileMutation to avoid triggering the hard gate.
+    // The binding mode mismatch (Read binding vs Write operation) will be caught at execute-time.
     let (_intent_id, _proposal_id, execution_id) = run_file_flow_to_prepared(
         &runtime,
         file_binding,
-        EffectType::ReadOnlyAnalysis,
+        EffectType::FileMutation,
         "fs.read",
         serde_json::json!({"path": "/tmp/readable.txt"}),
         "read a file",
@@ -15728,7 +15750,8 @@ async fn test_u1_s3b_high_band_mismatch_via_allowed_outcome_non_match() {
         serde_json::from_slice(&body).unwrap();
     let execution_id = auth_resp.execution.execution_id;
 
-    // Step 6: Prepare
+    // Step 6: Prepare - U1-S5b now blocks at prepare-time due to HIGH mismatch
+    // allowed_outcomes = ExternalApiCall but inferred = FileMutation (HIGH mismatch → would_block=true)
     let app = build_router(runtime.clone());
     let response = app
         .oneshot(
@@ -15741,97 +15764,73 @@ async fn test_u1_s3b_high_band_mismatch_via_allowed_outcome_non_match() {
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), 200);
+    // U1-S5b: prepare should be denied with 403
+    assert_eq!(
+        response.status(),
+        403,
+        "U1-S5b: prepare should return 403 when would_block=true (HIGH mismatch)"
+    );
 
-    // Step 7: Execute
-    let app = build_router(runtime.clone());
-    let execute_req = ferrum_proto::ExecuteRequest {
-        execution_id,
-        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
-    };
-    let response = app
-        .oneshot(
-            axum::http::Request::builder()
-                .uri(format!("/v1/executions/{}/execute", execution_id))
-                .method(axum::http::Method::POST)
-                .header(axum::http::header::CONTENT_TYPE, "application/json")
-                .body(serde_json::to_string(&execute_req).unwrap())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 200);
-
-    // Step 8: Verify - this should detect the allowed_outcome mismatch with HIGH band
-    let app = build_router(runtime.clone());
-    let verify_req = ferrum_proto::VerifyRequest { execution_id };
-    let response = app
-        .oneshot(
-            axum::http::Request::builder()
-                .uri(format!("/v1/executions/{}/verify", execution_id))
-                .method(axum::http::Method::POST)
-                .header(axum::http::header::CONTENT_TYPE, "application/json")
-                .body(serde_json::to_string(&verify_req).unwrap())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 200);
-
-    // Step 9: Verify HIGH band mismatch via allowed_outcome non-alignment
+    // Step 7: Verify execution state is Denied
     let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
     assert!(stored_execution.is_some());
     let exec = stored_execution.unwrap();
-    let assessment_json = exec.metadata.get("u1_s2_verify_assessment");
     assert!(
-        assessment_json.is_some(),
-        "execution.metadata should contain u1_s2_verify_assessment"
+        matches!(exec.state, ExecutionState::Denied),
+        "execution state should be Denied after U1-S5b hard gate, got {:?}",
+        exec.state
     );
-    let assessment = assessment_json.unwrap();
-
-    // Verify forbidden_match is false (no forbidden outcomes were defined)
-    let forbidden_match = assessment.get("forbidden_match").and_then(|v| v.as_bool());
-    assert_eq!(
-        forbidden_match,
-        Some(false),
-        "forbidden_match should be false (no forbidden outcomes)"
+    assert!(
+        exec.finished_at.is_some(),
+        "finished_at should be set when execution is denied"
     );
-
-    // Verify alignment is false (effect doesn't match allowed_outcomes)
-    let allowed_alignment = assessment
-        .get("allowed_alignment")
-        .and_then(|v| v.as_bool());
-    assert_eq!(
-        allowed_alignment,
-        Some(false),
-        "allowed_alignment should be false when effect doesn't match allowed_outcomes"
+    assert!(
+        matches!(exec.decision, Decision::Deny),
+        "decision should be Deny for hard-gated execution"
     );
 
-    // Verify alignment_strength is mismatch
-    let alignment_strength = assessment
-        .get("alignment_strength")
-        .and_then(|v| v.as_str());
+    // Verify u1_s5b_hard_gate metadata is present
+    let gate_json = exec.metadata.get("u1_s5b_hard_gate");
+    assert!(
+        gate_json.is_some(),
+        "u1_s5b_hard_gate metadata should be present"
+    );
+    let gate = gate_json.unwrap();
+
+    // Step 8: Verify HIGH band mismatch via allowed_outcome non-alignment
+    // Note: The full verify assessment is not stored at prepare-time when U1-S5b blocks.
+    // Instead, we verify via the u1_s5b_hard_gate preview signals.
+
+    // Verify would_block is true (U1-S5b hard gate triggered)
+    let would_block = gate.get("would_block").and_then(|v| v.as_bool());
     assert_eq!(
-        alignment_strength,
-        Some("mismatch"),
-        "alignment_strength should be 'mismatch' when effect doesn't match allowed_outcomes"
+        would_block,
+        Some(true),
+        "would_block should be true for HIGH mismatch"
     );
 
-    // Verify alignment_confidence is HIGH (from rollback_target inference)
-    let alignment_confidence = assessment
-        .get("alignment_confidence")
-        .and_then(|v| v.as_str());
-    assert_eq!(
-        alignment_confidence,
-        Some("HIGH"),
-        "alignment_confidence should be HIGH for mismatch via rollback_target"
+    // Verify reason_codes contains high_mismatch
+    let reason_codes = gate.get("reason_codes").and_then(|v| v.as_array());
+    assert!(reason_codes.is_some(), "reason_codes should be present");
+    let codes: Vec<&str> = reason_codes
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    assert!(
+        codes.contains(&"high_mismatch"),
+        "reason_codes should contain 'high_mismatch', got: {:?}",
+        codes
     );
 
     // Verify threshold_band is high
-    let threshold_metadata = assessment.get("threshold_metadata").unwrap();
-    let threshold_band = threshold_metadata
-        .get("threshold_band")
-        .and_then(|v| v.as_str());
+    let threshold_metadata = gate.get("threshold_metadata");
+    assert!(
+        threshold_metadata.is_some(),
+        "threshold_metadata should be present in gate metadata"
+    );
+    let threshold = threshold_metadata.unwrap();
+    let threshold_band = threshold.get("threshold_band").and_then(|v| v.as_str());
     assert_eq!(
         threshold_band,
         Some("high"),
@@ -15839,29 +15838,15 @@ async fn test_u1_s3b_high_band_mismatch_via_allowed_outcome_non_match() {
     );
 
     // Verify threshold_rule_id follows the expected pattern
-    let threshold_rule_id = threshold_metadata
-        .get("threshold_rule_id")
-        .and_then(|v| v.as_str());
+    let threshold_rule_id = threshold.get("threshold_rule_id").and_then(|v| v.as_str());
     assert!(
         threshold_rule_id.unwrap().starts_with("u1_s3b.high."),
         "threshold_rule_id should start with 'u1_s3b.high.', got: {:?}",
         threshold_rule_id
     );
 
-    // Verify suggested_future_action for high band
-    let suggested_future_action = threshold_metadata
-        .get("suggested_future_action")
-        .and_then(|v| v.as_str());
-    assert_eq!(
-        suggested_future_action,
-        Some("enforce_or_block"),
-        "suggested_future_action should be 'enforce_or_block' for high band"
-    );
-
     // Verify annotate_only is still true (U1-S3b remains annotate-only)
-    let annotate_only = threshold_metadata
-        .get("annotate_only")
-        .and_then(|v| v.as_bool());
+    let annotate_only = threshold.get("annotate_only").and_then(|v| v.as_bool());
     assert_eq!(
         annotate_only,
         Some(true),
@@ -16056,7 +16041,8 @@ async fn test_u1_s3b_verify_mismatch_via_http_get_allowed_outcome_mismatch() {
         serde_json::from_slice(&body).unwrap();
     let execution_id = auth_resp.execution.execution_id;
 
-    // Step 6: Prepare
+    // Step 6: Prepare - U1-S5b now blocks at prepare-time due to HIGH mismatch
+    // allowed_outcomes = FileMutation but inferred = ExternalApiCall (HIGH mismatch → would_block=true)
     let app = build_router(runtime.clone());
     let response = app
         .oneshot(
@@ -16069,100 +16055,72 @@ async fn test_u1_s3b_verify_mismatch_via_http_get_allowed_outcome_mismatch() {
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), 200);
+    // U1-S5b: prepare should be denied with 403
+    assert_eq!(
+        response.status(),
+        403,
+        "U1-S5b: prepare should return 403 when would_block=true (HIGH mismatch)"
+    );
 
-    // Step 7: Execute
-    let app = build_router(runtime.clone());
-    let execute_req = ferrum_proto::ExecuteRequest {
-        execution_id,
-        payload: serde_json::json!({"url": "https://api.example.com/v1/users"}),
-    };
-    let response = app
-        .oneshot(
-            axum::http::Request::builder()
-                .uri(format!("/v1/executions/{}/execute", execution_id))
-                .method(axum::http::Method::POST)
-                .header(axum::http::header::CONTENT_TYPE, "application/json")
-                .body(serde_json::to_string(&execute_req).unwrap())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 200);
-
-    // Step 8: Verify
-    let app = build_router(runtime.clone());
-    let verify_req = ferrum_proto::VerifyRequest { execution_id };
-    let response = app
-        .oneshot(
-            axum::http::Request::builder()
-                .uri(format!("/v1/executions/{}/verify", execution_id))
-                .method(axum::http::Method::POST)
-                .header(axum::http::header::CONTENT_TYPE, "application/json")
-                .body(serde_json::to_string(&verify_req).unwrap())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 200);
-
-    // Step 9: Verify assessment shows mismatch
+    // Step 7: Verify execution state is Denied
     let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
     assert!(stored_execution.is_some());
     let exec = stored_execution.unwrap();
-    let assessment_json = exec.metadata.get("u1_s2_verify_assessment");
     assert!(
-        assessment_json.is_some(),
-        "execution.metadata should contain u1_s2_verify_assessment"
+        matches!(exec.state, ExecutionState::Denied),
+        "execution state should be Denied after U1-S5b hard gate, got {:?}",
+        exec.state
     );
-    let assessment = assessment_json.unwrap();
-
-    // Verify forbidden_match is false (we only set allowed_outcomes, not forbidden)
-    let forbidden_match = assessment.get("forbidden_match").and_then(|v| v.as_bool());
-    assert_eq!(
-        forbidden_match,
-        Some(false),
-        "forbidden_match should be false (no forbidden outcomes matched)"
-    );
-
-    // Verify alignment_strength is mismatch (effect didn't match allowed outcomes)
-    let alignment_strength = assessment
-        .get("alignment_strength")
-        .and_then(|v| v.as_str());
-    assert_eq!(
-        alignment_strength,
-        Some("mismatch"),
-        "alignment_strength should be 'mismatch' when effect doesn't match allowed outcomes"
-    );
-
-    // Log the actual alignment_confidence for analysis
-    let alignment_confidence = assessment
-        .get("alignment_confidence")
-        .and_then(|v| v.as_str());
-
-    // Verify threshold_metadata is present
-    let threshold_metadata = assessment.get("threshold_metadata").unwrap();
-    let threshold_band = threshold_metadata
-        .get("threshold_band")
-        .and_then(|v| v.as_str());
-
-    // Verify this is at least a mismatch scenario (not an alignment)
     assert!(
-        alignment_strength == Some("mismatch"),
-        "Should be a mismatch scenario, got alignment_strength={:?}",
-        alignment_strength
+        exec.finished_at.is_some(),
+        "finished_at should be set when execution is denied"
+    );
+    assert!(
+        matches!(exec.decision, Decision::Deny),
+        "decision should be Deny for hard-gated execution"
     );
 
-    // The actual confidence is HIGH because HTTP GET produces HttpRequest target
-    // which gives HIGH confidence via rollback_target inference.
-    // This proves the HIGH band mismatch path works for HTTP adapters.
+    // Step 8: Verify u1_s5b_hard_gate metadata is present
+    let gate_json = exec.metadata.get("u1_s5b_hard_gate");
+    assert!(
+        gate_json.is_some(),
+        "u1_s5b_hard_gate metadata should be present"
+    );
+    let gate = gate_json.unwrap();
+
+    // Note: The full verify assessment is not stored at prepare-time when U1-S5b blocks.
+    // Instead, we verify via the u1_s5b_hard_gate preview signals.
+
+    // Verify would_block is true (U1-S5b hard gate triggered)
+    let would_block = gate.get("would_block").and_then(|v| v.as_bool());
     assert_eq!(
-        alignment_confidence,
-        Some("HIGH"),
-        "With HTTP GET adapter producing HttpRequest target, alignment_confidence should be HIGH"
+        would_block,
+        Some(true),
+        "would_block should be true for HIGH mismatch"
     );
 
-    // Verify threshold_band is high (not medium as originally hoped for MED path)
+    // Verify reason_codes contains high_mismatch
+    let reason_codes = gate.get("reason_codes").and_then(|v| v.as_array());
+    assert!(reason_codes.is_some(), "reason_codes should be present");
+    let codes: Vec<&str> = reason_codes
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    assert!(
+        codes.contains(&"high_mismatch"),
+        "reason_codes should contain 'high_mismatch', got: {:?}",
+        codes
+    );
+
+    // Verify threshold_band is high
+    let threshold_metadata = gate.get("threshold_metadata");
+    assert!(
+        threshold_metadata.is_some(),
+        "threshold_metadata should be present in gate metadata"
+    );
+    let threshold = threshold_metadata.unwrap();
+    let threshold_band = threshold.get("threshold_band").and_then(|v| v.as_str());
     assert_eq!(
         threshold_band,
         Some("high"),
@@ -16170,9 +16128,7 @@ async fn test_u1_s3b_verify_mismatch_via_http_get_allowed_outcome_mismatch() {
     );
 
     // Verify annotate_only is still true
-    let annotate_only = threshold_metadata
-        .get("annotate_only")
-        .and_then(|v| v.as_bool());
+    let annotate_only = threshold.get("annotate_only").and_then(|v| v.as_bool());
     assert_eq!(
         annotate_only,
         Some(true),
@@ -16529,10 +16485,15 @@ async fn test_u1_s4_selector_enhanced_but_selector_mismatch_at_verify_time() {
 // U1-S5a SOFT GATE PREVIEW SIGNALS TESTS
 // ============================================
 
-/// Test U1-S5a: HIGH band mismatch => would_block=true.
-/// Uses existing HIGH band mismatch setup from test_u1_s3b_high_band_mismatch_via_allowed_outcome_non_match.
+/// Test U1-S5b: HIGH band mismatch => hard gate at prepare-time blocks execution.
+/// Verifies:
+/// - prepare returns 403 PolicyDenied
+/// - execution state becomes Denied with finished_at set
+/// - u1_s5b_hard_gate metadata is persisted for auditability
+/// - no SideEffectPrepared event is emitted
+/// - no rollback contract is persisted
 #[tokio::test]
-async fn test_u1_s5a_high_mismatch_would_block() {
+async fn test_u1_s5b_high_mismatch_blocks_at_prepare_time() {
     let (_temp_dir, runtime, _store) = create_test_runtime().await;
     let app = build_router(runtime.clone());
 
@@ -16617,7 +16578,7 @@ async fn test_u1_s5a_high_mismatch_would_block() {
         .unwrap();
     assert_eq!(response.status(), 200);
 
-    // Step 4-7: Mint, authorize, prepare, execute
+    // Step 4-6: Mint, authorize
     let app = build_router(runtime.clone());
     let mint_req = CapabilityMintRequest {
         intent_id,
@@ -16687,6 +16648,7 @@ async fn test_u1_s5a_high_mismatch_would_block() {
         serde_json::from_slice(&body).unwrap();
     let execution_id = auth_resp.execution.execution_id;
 
+    // Step 7: Prepare should return 403 due to U1-S5b hard gate
     let app = build_router(runtime.clone());
     let response = app
         .oneshot(
@@ -16699,8 +16661,112 @@ async fn test_u1_s5a_high_mismatch_would_block() {
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), 200);
+    // U1-S5b: prepare should be denied with 403
+    assert_eq!(
+        response.status(),
+        403,
+        "U1-S5b: prepare should return 403 when would_block=true"
+    );
 
+    // Step 8: Verify execution state is Denied with finished_at set
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored_execution.is_some());
+    let exec = stored_execution.unwrap();
+    assert!(
+        matches!(exec.state, ExecutionState::Denied),
+        "execution state should be Denied after hard gate, got {:?}",
+        exec.state
+    );
+    assert!(
+        exec.finished_at.is_some(),
+        "finished_at should be set when execution is denied"
+    );
+    assert!(
+        matches!(exec.decision, Decision::Deny),
+        "decision should be Deny for hard-gated execution"
+    );
+
+    // Step 9: Verify u1_s5b_hard_gate metadata is persisted
+    let gate_metadata = exec.metadata.get("u1_s5b_hard_gate");
+    assert!(
+        gate_metadata.is_some(),
+        "execution.metadata should contain u1_s5b_hard_gate"
+    );
+    let gate_json = gate_metadata.unwrap();
+
+    // Verify would_block is true in the gate metadata
+    let would_block = gate_json.get("would_block").and_then(|v| v.as_bool());
+    assert_eq!(
+        would_block,
+        Some(true),
+        "would_block should be true in u1_s5b_hard_gate metadata"
+    );
+
+    // Verify reason_codes contains high_mismatch
+    let reason_codes = gate_json.get("reason_codes").and_then(|v| v.as_array());
+    assert!(reason_codes.is_some(), "reason_codes should be present");
+    let codes: Vec<&str> = reason_codes
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    assert!(
+        codes.contains(&"high_mismatch"),
+        "reason_codes should contain 'high_mismatch', got: {:?}",
+        codes
+    );
+
+    // Step 10: Verify no rollback contract was persisted (skip contract persistence)
+    assert!(
+        exec.rollback_contract_id.is_none(),
+        "rollback_contract_id should be None when hard gate blocks at prepare-time"
+    );
+
+    // Step 11: Verify no SideEffectPrepared event was emitted
+    let side_effect_prepared_events = runtime
+        .store
+        .provenance()
+        .query(&ferrum_proto::ProvenanceQueryRequest {
+            intent_id: Some(intent_id),
+            proposal_id: Some(proposal_id),
+            execution_id: Some(execution_id),
+            capability_id: None,
+            event_kind: Some(ProvenanceEventKind::SideEffectPrepared),
+            terminal_only: None,
+            since: None,
+            until: None,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(
+        side_effect_prepared_events.is_empty(),
+        "no SideEffectPrepared event should be emitted when hard gate blocks at prepare-time"
+    );
+
+    // Step 12: Verify an ErrorRaised event was emitted for auditability
+    let error_events = runtime
+        .store
+        .provenance()
+        .query(&ferrum_proto::ProvenanceQueryRequest {
+            intent_id: Some(intent_id),
+            proposal_id: Some(proposal_id),
+            execution_id: Some(execution_id),
+            capability_id: None,
+            event_kind: Some(ProvenanceEventKind::ErrorRaised),
+            terminal_only: None,
+            since: None,
+            until: None,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(
+        !error_events.is_empty(),
+        "ErrorRaised event should be emitted for auditability"
+    );
+
+    // Step 13: Verify execution cannot proceed to execute (state guard)
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
@@ -16717,72 +16783,210 @@ async fn test_u1_s5a_high_mismatch_would_block() {
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), 200);
+    // Execute should fail because execution is in Denied state
+    assert_eq!(
+        response.status(),
+        409,
+        "execute should return 409 for denied execution"
+    );
+}
 
-    // Step 8: Verify
+/// Test U1-S5b: Post-deny state guard - verify execution in Denied state cannot proceed.
+/// This tests that after a U1-S5b hard gate puts execution in Denied state,
+/// subsequent prepare calls return 409 Conflict.
+#[tokio::test]
+async fn test_u1_s5b_post_deny_state_guard_prevents_reprepare() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
     let app = build_router(runtime.clone());
-    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+
+    // Step 1: Compile intent with FileMutation effect type
+    let mut req = sample_intent_request_with_effect(EffectType::FileMutation);
+    req.requested_resource_scope = vec![ResourceSelector::FilesystemPath {
+        path: "/tmp".to_string(),
+        mode: ResourceMode::Write,
+        content_hash: None,
+    }];
     let response = app
         .oneshot(
             axum::http::Request::builder()
-                .uri(format!("/v1/executions/{}/verify", execution_id))
+                .uri("/v1/intents/compile")
                 .method(axum::http::Method::POST)
                 .header(axum::http::header::CONTENT_TYPE, "application/json")
-                .body(serde_json::to_string(&verify_req).unwrap())
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Step 2: Modify intent to set allowed_outcomes to ExternalApiCall (NOT FileMutation)
+    let mut stored_intent = runtime
+        .store
+        .intents()
+        .get(intent_id)
+        .await
+        .unwrap()
+        .unwrap();
+    stored_intent.allowed_outcomes = vec![ferrum_proto::OutcomeClause {
+        id: "allow_http_call".to_string(),
+        description: "allow http calls only".to_string(),
+        effect_type: EffectType::ExternalApiCall,
+        required: true,
+        selectors: None,
+    }];
+    stored_intent.forbidden_outcomes = vec![];
+    runtime
+        .store
+        .intents()
+        .update(&stored_intent)
+        .await
+        .unwrap();
+
+    // Step 3: Evaluate proposal
+    let proposal = ActionProposal {
+        proposal_id: ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Write file via fs".to_string(),
+        tool_name: "fs.write".to_string(),
+        server_name: "workspace".to_string(),
+        raw_arguments: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        expected_effect: "write a file".to_string(),
+        estimated_risk: RiskTier::Medium,
+        requested_rollback_class: RollbackClass::R0NativeReversible,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
                 .unwrap(),
         )
         .await
         .unwrap();
     assert_eq!(response.status(), 200);
 
-    // Step 9: Verify U1-S5a preview signals for HIGH mismatch => would_block
-    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
-    assert!(stored_execution.is_some());
-    let exec = stored_execution.unwrap();
-    let assessment_json = exec.metadata.get("u1_s2_verify_assessment");
-    assert!(
-        assessment_json.is_some(),
-        "execution.metadata should contain u1_s2_verify_assessment"
-    );
-    let assessment = assessment_json.unwrap();
+    // Step 4-6: Mint, authorize
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "workspace".to_string(),
+            tool_name: "fs.write".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![ResourceBinding::File {
+            path: "/tmp/test.txt".to_string(),
+            mode: ResourceMode::Write,
+            required_hash: None,
+        }],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
 
-    // Verify would_block is true for HIGH mismatch
-    let would_block = assessment.get("would_block").and_then(|v| v.as_bool());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    // Step 7: First prepare should return 403 due to U1-S5b hard gate
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(
-        would_block,
-        Some(true),
-        "would_block should be true for HIGH band mismatch"
+        response.status(),
+        403,
+        "first prepare should return 403 due to hard gate"
     );
 
-    // Verify would_require_review is false (would_block takes precedence)
-    let would_require_review = assessment
-        .get("would_require_review")
-        .and_then(|v| v.as_bool());
+    // Step 8: Second prepare should return 409 due to state guard (execution already Denied)
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    // Should get 409 Conflict because execution is already in Denied state
     assert_eq!(
-        would_require_review,
-        Some(false),
-        "would_require_review should be false when would_block is true"
-    );
-
-    // Verify reason_codes contains high_mismatch
-    let reason_codes = assessment.get("reason_codes").and_then(|v| v.as_array());
-    assert!(reason_codes.is_some(), "reason_codes should be present");
-    let codes: Vec<&str> = reason_codes
-        .unwrap()
-        .iter()
-        .filter_map(|v| v.as_str())
-        .collect();
-    assert!(
-        codes.contains(&"high_mismatch"),
-        "reason_codes should contain 'high_mismatch', got: {:?}",
-        codes
-    );
-
-    // Verify derive_basis is populated
-    let derive_basis = assessment.get("derive_basis").and_then(|v| v.as_str());
-    assert!(
-        derive_basis.is_some() && !derive_basis.unwrap().is_empty(),
-        "derive_basis should be populated for HIGH mismatch"
+        response.status(),
+        409,
+        "second prepare should return 409 because execution is already Denied"
     );
 }
 

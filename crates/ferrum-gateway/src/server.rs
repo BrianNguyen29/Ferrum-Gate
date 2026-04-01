@@ -1354,6 +1354,57 @@ async fn prepare_execution(
         ));
     }
 
+    // U1-S5b: Hard gate at prepare-time when would_block=true.
+    // Halt progression deterministically and persist gate metadata for auditability.
+    // Skip rollback contract persistence and SideEffectPrepared event.
+    if u1_assessment.would_block {
+        // Update execution to terminal Denied state with finished_at
+        let mut updated_execution = existing;
+        updated_execution.state = ExecutionState::Denied;
+        updated_execution.finished_at = Some(now);
+        updated_execution.decision = Decision::Deny;
+
+        // U1-S5b: Persist gate metadata for auditability
+        let assessment_json = serde_json::to_value(&u1_assessment).unwrap_or_else(|e| {
+            tracing::warn!(
+                "failed to serialize U1-S5b assessment at prepare-time: {}",
+                e
+            );
+            serde_json::Value::Null
+        });
+        updated_execution
+            .metadata
+            .insert("u1_s5b_hard_gate".to_string(), assessment_json.clone());
+
+        if let Err(e) = runtime.store.executions().update(&updated_execution).await {
+            tracing::warn!("failed to update execution to denied state: {}", e);
+        }
+
+        // Emit ErrorRaised provenance event for auditability
+        let event = create_provenance_event(
+            ProvenanceEventKind::ErrorRaised,
+            now,
+            Some(intent_id),
+            Some(proposal_id),
+            Some(execution_id),
+            None,
+            None,
+            None,
+        );
+        if let Err(e) = runtime.store.provenance().append_event(&event).await {
+            tracing::warn!("failed to persist PolicyDenied provenance event: {}", e);
+        }
+
+        return Err(ApiProblem::new(
+            StatusCode::FORBIDDEN,
+            ApiErrorCode::PolicyDenied,
+            format!(
+                "U1-S5b: execution blocked at prepare-time (reasons: {})",
+                u1_assessment.reason_codes.join(", ")
+            ),
+        ));
+    }
+
     if let Err(e) = runtime.store.rollback_contracts().insert(&contract).await {
         tracing::warn!("failed to persist rollback contract: {}", e);
     } else {
