@@ -429,6 +429,17 @@ Them `Outcome Contract` hoac lop tuong duong de do "diem ket thuc hop le" cua wo
 - proposal evaluation khong chi nhin tool call, ma con nhin outcome alignment
 - drift detection co can cu tot hon
 
+## Sub-slices
+
+### U1-S5a — Soft gate preview
+Gateway emits a warn/preview signal at prepare-time when outcome mismatch is detected, but does not block state-machine progression. Auto-commit behavior remains governed by R3 contract semantics, not by U1 outcome mismatch. Verify remains annotate-only (does not enforce or change decision).
+
+### U1-S5b — Hard gate
+Gateway blocks at prepare-time when outcome mismatch is confirmed. State-machine progression halts. Auto-commit behavior unchanged per R3 contract semantics.
+
+### U1-S5c — (reserved)
+Future extension slot for deeper enforcement integration.
+
 ## KPIs
 - Supported workflows with explicit outcome contract: **>= 2 use cases**
 - Outcome contract coverage on supported happy paths: **100%**
