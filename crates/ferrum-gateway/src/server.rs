@@ -1476,6 +1476,102 @@ async fn execute_execution(
     }))
 }
 
+/// U1-S3b: Threshold metadata for confidence-banded verify annotations.
+/// This nested block provides machine-friendly metadata for future enforcement
+/// while remaining annotate-only (does not change verify decision semantics).
+///
+/// Deterministic mapping:
+/// - high-confidence mismatch => mismatch + HIGH alignment_confidence
+/// - medium-confidence mismatch => mismatch + MED alignment_confidence
+/// - low-confidence ambiguous => mismatch + LOW alignment_confidence OR
+///   assessment unavailable OR no outcomes / NONE alignment_confidence
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct ThresholdMetadata {
+    /// Threshold band based on alignment confidence and mismatch status.
+    /// One of: "high", "medium", "low".
+    threshold_band: String,
+    /// Rule ID that triggered the threshold band classification.
+    /// Format: "u1_s3b.{band}.{strength}" e.g., "u1_s3b.high.mismatch"
+    threshold_rule_id: String,
+    /// Suggested future action when enforcement is enabled.
+    /// Values: "enforce_or_block" (high band), "enforce_with_human_review" (medium band),
+    /// "continue_annotate_only" (low band).
+    /// This field is populated for future enforcement use; current U1-S3b slice remains annotate-only.
+    suggested_future_action: String,
+    /// Flag indicating this is still annotate-only (no enforcement yet).
+    /// Always true for U1-S3b; will be used when enforcement is enabled.
+    annotate_only: bool,
+    /// Optional reason string explaining ambiguity cases.
+    /// Present when threshold_band is "low" or when assessment is unavailable.
+    ambiguity_reason: Option<String>,
+}
+
+impl ThresholdMetadata {
+    /// Compute threshold metadata from alignment state.
+    /// This is deterministic based on alignment_confidence and alignment_strength.
+    fn from_assessment(
+        alignment_confidence: &str,
+        alignment_strength: &str,
+        forbidden_match: bool,
+        assessment_available: bool,
+        has_outcomes: bool,
+    ) -> ThresholdMetadata {
+        // Determine threshold band
+        let (threshold_band, ambiguity_reason) = if !assessment_available {
+            (
+                "low".to_string(),
+                Some("assessment context unavailable".to_string()),
+            )
+        } else if !has_outcomes {
+            (
+                "low".to_string(),
+                Some("no outcomes defined in intent".to_string()),
+            )
+        } else if alignment_confidence == "HIGH"
+            && (forbidden_match || alignment_strength == "mismatch")
+        {
+            ("high".to_string(), None)
+        } else if alignment_confidence == "MED"
+            && (forbidden_match || alignment_strength == "mismatch")
+        {
+            ("medium".to_string(), None)
+        } else if alignment_confidence == "LOW"
+            || alignment_strength == "mismatch"
+            || alignment_strength == "weak_match"
+        {
+            (
+                "low".to_string(),
+                Some(format!(
+                    "low confidence or weak/mismatch alignment: confidence={}, strength={}",
+                    alignment_confidence, alignment_strength
+                )),
+            )
+        } else {
+            // For strong/moderate matches with any confidence, we still classify as low band
+            // since there's no mismatch to act on
+            ("low".to_string(), Some("no mismatch detected".to_string()))
+        };
+
+        let threshold_rule_id = format!("u1_s3b.{}.{}", threshold_band, alignment_strength);
+
+        let suggested_future_action = if threshold_band == "high" {
+            "enforce_or_block".to_string()
+        } else if threshold_band == "medium" {
+            "enforce_with_human_review".to_string()
+        } else {
+            "continue_annotate_only".to_string()
+        };
+
+        ThresholdMetadata {
+            threshold_band,
+            threshold_rule_id,
+            suggested_future_action,
+            annotate_only: true,
+            ambiguity_reason,
+        }
+    }
+}
+
 /// U1-S2: Verify-time outcome assessment for annotate-only governance.
 /// This struct captures the outcome-alignment assessment computed at verify time,
 /// WITHOUT changing verify decision semantics. It is persisted into execution.metadata,
@@ -1486,6 +1582,10 @@ async fn execute_execution(
 ///
 /// U1-S3a: Extended with multi-signal inference and confidence/strength annotations.
 /// Inference priority: rollback_target (HIGH) > adapter_key (MED) > expected_effect (LOW).
+///
+/// U1-S3b: Extended with confidence-thresholded verify annotations for future enforcement.
+/// Provides machine-friendly threshold_band, threshold_rule_id, suggested_future_action,
+/// and annotate_only flag. Remains annotate-only (does not change verify decision semantics).
 ///
 /// This is a local/internal type (not in shared proto) for this annotate-only slice.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -1522,6 +1622,11 @@ struct U1VerifyAssessment {
     /// "moderate_match" (effect family match), "weak_match" (heuristic match),
     /// "mismatch" (no alignment), "none" (no outcomes to compare against).
     alignment_strength: String,
+
+    // === U1-S3b: Confidence-thresholded verify annotations ===
+    /// Threshold metadata for confidence-banded classification.
+    /// Provides machine-friendly metadata for future enforcement while remaining annotate-only.
+    threshold_metadata: ThresholdMetadata,
 }
 
 /// U1-S3a: Inference source priority for multi-signal effect inference.
@@ -1754,6 +1859,8 @@ fn compute_u1_verify_assessment(
     let intent = match intent {
         Some(i) => i,
         None => {
+            let threshold_metadata =
+                ThresholdMetadata::from_assessment("NONE", "none", false, false, false);
             return U1VerifyAssessment {
                 forbidden_match: false,
                 forbidden_outcome_id: None,
@@ -1766,6 +1873,7 @@ fn compute_u1_verify_assessment(
                 inference_confidence: "NONE".to_string(),
                 alignment_confidence: "NONE".to_string(),
                 alignment_strength: "none".to_string(),
+                threshold_metadata,
             };
         }
     };
@@ -1773,6 +1881,8 @@ fn compute_u1_verify_assessment(
     let proposal = match proposal {
         Some(p) => p,
         None => {
+            let threshold_metadata =
+                ThresholdMetadata::from_assessment("NONE", "none", false, false, false);
             return U1VerifyAssessment {
                 forbidden_match: false,
                 forbidden_outcome_id: None,
@@ -1785,6 +1895,7 @@ fn compute_u1_verify_assessment(
                 inference_confidence: "NONE".to_string(),
                 alignment_confidence: "NONE".to_string(),
                 alignment_strength: "none".to_string(),
+                threshold_metadata,
             };
         }
     };
@@ -1803,6 +1914,8 @@ fn compute_u1_verify_assessment(
         {
             let strength = compute_alignment_strength(source, true, false, true);
             let align_conf = compute_alignment_confidence(source, true, false, true);
+            let threshold_metadata =
+                ThresholdMetadata::from_assessment(align_conf, strength.as_str(), true, true, true);
             return U1VerifyAssessment {
                 forbidden_match: true,
                 forbidden_outcome_id: Some(forbidden.id.clone()),
@@ -1818,6 +1931,7 @@ fn compute_u1_verify_assessment(
                 inference_confidence: source_confidence,
                 alignment_confidence: align_conf.to_string(),
                 alignment_strength: strength.as_str().to_string(),
+                threshold_metadata,
             };
         }
     }
@@ -1845,6 +1959,13 @@ fn compute_u1_verify_assessment(
 
     let strength = compute_alignment_strength(source, false, allowed_alignment, has_outcomes);
     let align_conf = compute_alignment_confidence(source, false, allowed_alignment, has_outcomes);
+    let threshold_metadata = ThresholdMetadata::from_assessment(
+        align_conf,
+        strength.as_str(),
+        false,
+        true,
+        has_outcomes,
+    );
 
     let reason = if allowed_alignment {
         format!(
@@ -1876,6 +1997,7 @@ fn compute_u1_verify_assessment(
         inference_confidence: source_confidence,
         alignment_confidence: align_conf.to_string(),
         alignment_strength: strength.as_str().to_string(),
+        threshold_metadata,
     }
 }
 
