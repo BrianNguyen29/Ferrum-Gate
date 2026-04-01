@@ -61,6 +61,7 @@ These are explicitly out of v1 scope. Do not treat as blockers.
 
 - [ ] Outcome-aware Governance (U1)
   - Src: `docs/91-phase-success-criteria-and-kpis.md` section 8.1
+  - Note: first advisory slice is implemented at evaluate-time (allowed-outcome mismatch warns; explicit forbidden-outcome match denies). Remaining work is deeper outcome contracts, verification-path influence, and higher-confidence drift detection.
 
 - [ ] Reversible Execution Planner (U2)
   - Src: `docs/91-phase-success-criteria-and-kpis.md` section 8.2
