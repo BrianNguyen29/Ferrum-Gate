@@ -39,12 +39,35 @@ pub enum IntentStatus {
     Revoked,
 }
 
+/// Optional selector block for higher-fidelity outcome matching (U1-S4).
+/// All fields are optional - when absent, coarse effect_type matching is used.
+/// This enables more precise outcome contracts beyond the coarse effect_type.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct OutcomeSelectors {
+    /// Adapter family filter (e.g., "fs", "git", "sqlite", "http", "noop", "maildraft").
+    /// When present, the outcome only matches if the execution's adapter_key matches.
+    pub adapter_family: Option<String>,
+    /// Target family filter (e.g., "file", "git", "sqlite", "http", "email", "generic").
+    /// When present, the outcome only matches if the execution's rollback target family matches.
+    pub target_family: Option<String>,
+    /// Request class filter (e.g., "mutation", "read_only", "draft").
+    /// When present, the outcome only matches if the execution's request class matches.
+    pub request_class: Option<String>,
+    /// Mutation family filter (e.g., "file_write", "file_delete", "git_commit", "http_mutation").
+    /// When present, the outcome only matches if the execution's action_type matches.
+    pub mutation_family: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct OutcomeClause {
     pub id: String,
     pub description: String,
     pub effect_type: EffectType,
     pub required: bool,
+    /// Optional higher-fidelity selectors for more precise outcome matching (U1-S4).
+    /// When present alongside effect_type, both must match for the clause to be considered aligned.
+    /// When absent, only effect_type matching is used (backward compatible).
+    pub selectors: Option<OutcomeSelectors>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

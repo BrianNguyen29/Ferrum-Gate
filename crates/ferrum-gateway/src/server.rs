@@ -348,6 +348,7 @@ async fn compile_intent(
                 .effect_type
                 .unwrap_or(ferrum_proto::EffectType::ReadOnlyAnalysis),
             required: true,
+            selectors: None,
         }],
         forbidden_outcomes: Vec::new(),
         resource_scope: req.requested_resource_scope,
@@ -1572,6 +1573,203 @@ impl ThresholdMetadata {
     }
 }
 
+/// U1-S4: Per-clause higher-fidelity match annotation.
+/// Records whether effect_type matched and whether higher-fidelity selectors matched
+/// for each outcome clause checked during verify-time assessment.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct ClauseMatchAnnotation {
+    /// The clause ID this annotation refers to.
+    clause_id: String,
+    /// Whether this is a forbidden or allowed clause.
+    clause_type: String, // "forbidden" or "allowed"
+    /// Whether the proposal's effect_type matched the clause's effect_type.
+    effect_type_match: bool,
+    /// Whether higher-fidelity selectors matched (when present in clause).
+    /// When clause has no selectors, this is None (not applicable).
+    selector_match: Option<bool>,
+    /// List of selectors that matched (present in clause and matched).
+    matched_selectors: Vec<String>,
+    /// List of selectors that mismatched (present in clause but didn't match).
+    mismatched_selectors: Vec<String>,
+    /// Human-readable reason if selectors mismatched.
+    selector_mismatch_reason: Option<String>,
+    /// Overall match result considering both effect_type and selectors.
+    /// - "strong_match": effect_type + all selectors matched
+    /// - "effect_match_selector_mismatch": effect_type matched but selectors didn't
+    /// - "effect_type_mismatch": effect_type didn't match (selectors irrelevant)
+    overall_result: String,
+}
+
+impl ClauseMatchAnnotation {
+    /// Create annotation for a clause with no selectors (backward compatible coarse matching).
+    fn coarse_match(clause_id: &str, clause_type: &str, effect_type_match: bool) -> Self {
+        ClauseMatchAnnotation {
+            clause_id: clause_id.to_string(),
+            clause_type: clause_type.to_string(),
+            effect_type_match,
+            selector_match: None,
+            matched_selectors: Vec::new(),
+            mismatched_selectors: Vec::new(),
+            selector_mismatch_reason: None,
+            overall_result: if effect_type_match {
+                "strong_match".to_string()
+            } else {
+                "effect_type_mismatch".to_string()
+            },
+        }
+    }
+
+    /// Create annotation for a clause with selectors (U1-S4 higher-fidelity matching).
+    fn with_selectors(
+        clause_id: &str,
+        clause_type: &str,
+        effect_type_match: bool,
+        matched: Vec<String>,
+        mismatched: Vec<String>,
+    ) -> Self {
+        let selector_match = if mismatched.is_empty() {
+            Some(true)
+        } else {
+            Some(false)
+        };
+
+        let selector_mismatch_reason = if !mismatched.is_empty() {
+            Some(format!(
+                "selectors mismatched: {}; matched: {}",
+                mismatched.join(", "),
+                matched.join(", ")
+            ))
+        } else {
+            None
+        };
+
+        let overall_result = if effect_type_match && mismatched.is_empty() {
+            "strong_match".to_string()
+        } else if effect_type_match && !mismatched.is_empty() {
+            "effect_match_selector_mismatch".to_string()
+        } else {
+            "effect_type_mismatch".to_string()
+        };
+
+        ClauseMatchAnnotation {
+            clause_id: clause_id.to_string(),
+            clause_type: clause_type.to_string(),
+            effect_type_match,
+            selector_match,
+            matched_selectors: matched,
+            mismatched_selectors: mismatched,
+            selector_mismatch_reason,
+            overall_result,
+        }
+    }
+}
+
+/// U1-S4: Infer target_family from RollbackTarget.
+fn infer_target_family(target: &ferrum_proto::RollbackTarget) -> String {
+    match target {
+        ferrum_proto::RollbackTarget::FilePath { .. } => "file".to_string(),
+        ferrum_proto::RollbackTarget::GitRef { .. } => "git".to_string(),
+        ferrum_proto::RollbackTarget::SqliteTxn { .. } => "sqlite".to_string(),
+        ferrum_proto::RollbackTarget::HttpRequest { .. } => "http".to_string(),
+        ferrum_proto::RollbackTarget::EmailDraft { .. } => "email".to_string(),
+        ferrum_proto::RollbackTarget::Generic { .. } => "generic".to_string(),
+    }
+}
+
+/// U1-S4: Infer mutation_family from ActionType.
+fn infer_mutation_family(action_type: &ferrum_proto::ActionType) -> String {
+    match action_type {
+        ferrum_proto::ActionType::FileWrite => "file_write".to_string(),
+        ferrum_proto::ActionType::FileDelete => "file_delete".to_string(),
+        ferrum_proto::ActionType::GitCommit => "git_commit".to_string(),
+        ferrum_proto::ActionType::GitBranchCreate => "git_branch_create".to_string(),
+        ferrum_proto::ActionType::SqlMutation => "sql_mutation".to_string(),
+        ferrum_proto::ActionType::HttpMutation => "http_mutation".to_string(),
+        ferrum_proto::ActionType::EmailDraftCreate => "email_draft_create".to_string(),
+        ferrum_proto::ActionType::EmailSend => "email_send".to_string(),
+        ferrum_proto::ActionType::McpToolMutation => "mcp_tool_mutation".to_string(),
+        ferrum_proto::ActionType::Unknown => "unknown".to_string(),
+    }
+}
+
+/// U1-S4: Infer request_class from RollbackClass.
+fn infer_request_class(rollback_class: &ferrum_proto::RollbackClass) -> String {
+    match rollback_class {
+        ferrum_proto::RollbackClass::R0NativeReversible => "read_only".to_string(),
+        ferrum_proto::RollbackClass::R1SnapshotRecoverable => "snapshot_recoverable".to_string(),
+        ferrum_proto::RollbackClass::R2Compensatable => "compensatable".to_string(),
+        ferrum_proto::RollbackClass::R3IrreversibleHighConsequence => "mutation".to_string(),
+    }
+}
+
+/// U1-S4: Adapter family is derived directly from adapter_key (no inference needed).
+fn get_adapter_family(adapter_key: &str) -> String {
+    adapter_key.to_lowercase()
+}
+
+/// U1-S4: Check if a clause's selectors match the observed execution signals.
+/// Returns (matched_selectors, mismatched_selectors).
+fn check_selector_match(
+    clause_selectors: &ferrum_proto::OutcomeSelectors,
+    observed_adapter_family: &str,
+    observed_target_family: &str,
+    observed_request_class: &str,
+    observed_mutation_family: &str,
+) -> (Vec<String>, Vec<String>) {
+    let mut matched = Vec::new();
+    let mut mismatched = Vec::new();
+
+    // Check adapter_family if specified
+    if let Some(ref selector) = clause_selectors.adapter_family {
+        if selector.to_lowercase() == observed_adapter_family {
+            matched.push(format!("adapter_family:{}", observed_adapter_family));
+        } else {
+            mismatched.push(format!(
+                "adapter_family: expected '{}', got '{}'",
+                selector, observed_adapter_family
+            ));
+        }
+    }
+
+    // Check target_family if specified
+    if let Some(ref selector) = clause_selectors.target_family {
+        if selector.to_lowercase() == observed_target_family {
+            matched.push(format!("target_family:{}", observed_target_family));
+        } else {
+            mismatched.push(format!(
+                "target_family: expected '{}', got '{}'",
+                selector, observed_target_family
+            ));
+        }
+    }
+
+    // Check request_class if specified
+    if let Some(ref selector) = clause_selectors.request_class {
+        if selector.to_lowercase() == observed_request_class {
+            matched.push(format!("request_class:{}", observed_request_class));
+        } else {
+            mismatched.push(format!(
+                "request_class: expected '{}', got '{}'",
+                selector, observed_request_class
+            ));
+        }
+    }
+
+    // Check mutation_family if specified
+    if let Some(ref selector) = clause_selectors.mutation_family {
+        if selector.to_lowercase() == observed_mutation_family {
+            matched.push(format!("mutation_family:{}", observed_mutation_family));
+        } else {
+            mismatched.push(format!(
+                "mutation_family: expected '{}', got '{}'",
+                selector, observed_mutation_family
+            ));
+        }
+    }
+
+    (matched, mismatched)
+}
+
 /// U1-S2: Verify-time outcome assessment for annotate-only governance.
 /// This struct captures the outcome-alignment assessment computed at verify time,
 /// WITHOUT changing verify decision semantics. It is persisted into execution.metadata,
@@ -1586,6 +1784,11 @@ impl ThresholdMetadata {
 /// U1-S3b: Extended with confidence-thresholded verify annotations for future enforcement.
 /// Provides machine-friendly threshold_band, threshold_rule_id, suggested_future_action,
 /// and annotate_only flag. Remains annotate-only (does not change verify decision semantics).
+///
+/// U1-S4: Extended with per-clause higher-fidelity selector match annotations.
+/// Records whether effect_type matched and whether higher-fidelity selectors matched
+/// for each outcome clause checked. This enables more precise outcome contracts beyond
+/// coarse effect_type matching.
 ///
 /// This is a local/internal type (not in shared proto) for this annotate-only slice.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -1627,6 +1830,11 @@ struct U1VerifyAssessment {
     /// Threshold metadata for confidence-banded classification.
     /// Provides machine-friendly metadata for future enforcement while remaining annotate-only.
     threshold_metadata: ThresholdMetadata,
+
+    // === U1-S4: Per-clause higher-fidelity selector match annotations ===
+    /// Per-clause match annotations recording effect_type and selector match status.
+    /// This enables more precise outcome contracts beyond coarse effect_type matching.
+    clause_match_annotations: Vec<ClauseMatchAnnotation>,
 }
 
 /// U1-S3a: Inference source priority for multi-signal effect inference.
@@ -1848,6 +2056,7 @@ fn compute_alignment_confidence(
 
 /// Compute U1-S2 verify-time outcome assessment using the existing U1 patterns.
 /// U1-S3a: Extended with multi-signal inference and confidence/strength annotations.
+/// U1-S4: Extended with per-clause higher-fidelity selector match annotations.
 /// This is annotate-only: it does not change verify decision semantics.
 /// Returns U1VerifyAssessment with assessment_available=false if context cannot be loaded.
 fn compute_u1_verify_assessment(
@@ -1855,6 +2064,8 @@ fn compute_u1_verify_assessment(
     proposal: &Option<ferrum_proto::ActionProposal>,
     rollback_target: Option<&ferrum_proto::RollbackTarget>,
     adapter_key: Option<&str>,
+    action_type: Option<&ferrum_proto::ActionType>,
+    rollback_class: Option<&ferrum_proto::RollbackClass>,
 ) -> U1VerifyAssessment {
     let intent = match intent {
         Some(i) => i,
@@ -1874,6 +2085,7 @@ fn compute_u1_verify_assessment(
                 alignment_confidence: "NONE".to_string(),
                 alignment_strength: "none".to_string(),
                 threshold_metadata,
+                clause_match_annotations: Vec::new(),
             };
         }
     };
@@ -1896,6 +2108,7 @@ fn compute_u1_verify_assessment(
                 alignment_confidence: "NONE".to_string(),
                 alignment_strength: "none".to_string(),
                 threshold_metadata,
+                clause_match_annotations: Vec::new(),
             };
         }
     };
@@ -1907,11 +2120,43 @@ fn compute_u1_verify_assessment(
     let source_str = source.as_str().to_string();
     let source_confidence = source.confidence().to_string();
 
+    // U1-S4: Derive observed selector families for higher-fidelity matching
+    let observed_adapter_family = adapter_key.map(get_adapter_family).unwrap_or_default();
+    let observed_target_family = rollback_target.map(infer_target_family).unwrap_or_default();
+    let observed_mutation_family = action_type.map(infer_mutation_family).unwrap_or_default();
+    let observed_request_class = rollback_class.map(infer_request_class).unwrap_or_default();
+
+    // U1-S4: Collect per-clause match annotations
+    let mut clause_match_annotations = Vec::new();
+
     // Check forbidden outcomes (same logic as evaluate-time)
     for forbidden in &intent.forbidden_outcomes {
-        if std::mem::discriminant(&forbidden.effect_type)
-            == std::mem::discriminant(&proposal_effect)
-        {
+        let effect_type_match = std::mem::discriminant(&forbidden.effect_type)
+            == std::mem::discriminant(&proposal_effect);
+
+        // U1-S4: Check selectors if present
+        let clause_annotation = if let Some(ref selectors) = forbidden.selectors {
+            let (matched, mismatched) = check_selector_match(
+                selectors,
+                &observed_adapter_family,
+                &observed_target_family,
+                &observed_request_class,
+                &observed_mutation_family,
+            );
+            ClauseMatchAnnotation::with_selectors(
+                &forbidden.id,
+                "forbidden",
+                effect_type_match,
+                matched,
+                mismatched,
+            )
+        } else {
+            ClauseMatchAnnotation::coarse_match(&forbidden.id, "forbidden", effect_type_match)
+        };
+
+        clause_match_annotations.push(clause_annotation);
+
+        if effect_type_match {
             let strength = compute_alignment_strength(source, true, false, true);
             let align_conf = compute_alignment_confidence(source, true, false, true);
             let threshold_metadata =
@@ -1932,6 +2177,7 @@ fn compute_u1_verify_assessment(
                 alignment_confidence: align_conf.to_string(),
                 alignment_strength: strength.as_str().to_string(),
                 threshold_metadata,
+                clause_match_annotations,
             };
         }
     }
@@ -1945,9 +2191,32 @@ fn compute_u1_verify_assessment(
 
     if has_outcomes {
         for allowed in &intent.allowed_outcomes {
-            if std::mem::discriminant(&allowed.effect_type)
-                == std::mem::discriminant(&proposal_effect)
-            {
+            let effect_type_match = std::mem::discriminant(&allowed.effect_type)
+                == std::mem::discriminant(&proposal_effect);
+
+            // U1-S4: Check selectors if present
+            let clause_annotation = if let Some(ref selectors) = allowed.selectors {
+                let (matched, mismatched) = check_selector_match(
+                    selectors,
+                    &observed_adapter_family,
+                    &observed_target_family,
+                    &observed_request_class,
+                    &observed_mutation_family,
+                );
+                ClauseMatchAnnotation::with_selectors(
+                    &allowed.id,
+                    "allowed",
+                    effect_type_match,
+                    matched,
+                    mismatched,
+                )
+            } else {
+                ClauseMatchAnnotation::coarse_match(&allowed.id, "allowed", effect_type_match)
+            };
+
+            clause_match_annotations.push(clause_annotation);
+
+            if effect_type_match {
                 allowed_alignment = true;
                 matched_allowed_outcome_ids.push(allowed.id.clone());
             }
@@ -1998,6 +2267,7 @@ fn compute_u1_verify_assessment(
         alignment_confidence: align_conf.to_string(),
         alignment_strength: strength.as_str().to_string(),
         threshold_metadata,
+        clause_match_annotations,
     }
 }
 
@@ -2102,11 +2372,14 @@ async fn verify_execution(
 
     // Compute U1-S2 verify-time outcome assessment (annotate-only, does not affect verify decision)
     // U1-S3a: Use multi-signal inference with rollback_target (HIGH), adapter_key (MED), expected_effect (LOW)
+    // U1-S4: Use action_type and rollback_class for higher-fidelity selector matching
     let u1_assessment = compute_u1_verify_assessment(
         &intent,
         &proposal,
         Some(&contract.target),
         Some(contract.adapter_key.as_str()),
+        Some(&contract.action_type),
+        Some(&contract.rollback_class),
     );
 
     // Verify via adapter
@@ -5583,6 +5856,16 @@ mod u1_s3a_tests {
         }
     }
 
+    // Helper to create an action type
+    fn make_file_write_action_type() -> ferrum_proto::ActionType {
+        ferrum_proto::ActionType::FileWrite
+    }
+
+    // Helper to create a rollback class
+    fn make_r0_rollback_class() -> ferrum_proto::RollbackClass {
+        ferrum_proto::RollbackClass::R0NativeReversible
+    }
+
     #[test]
     fn test_u1_s3a_no_outcomes_alignment_strength_is_none() {
         // When both allowed_outcomes and forbidden_outcomes are empty,
@@ -5591,12 +5874,16 @@ mod u1_s3a_tests {
         let proposal = make_proposal(intent.intent_id);
         let rollback_target = make_file_rollback_target();
         let adapter_key = "fs";
+        let action_type = make_file_write_action_type();
+        let rollback_class = make_r0_rollback_class();
 
         let assessment = compute_u1_verify_assessment(
             &Some(intent),
             &Some(proposal),
             Some(&rollback_target),
             Some(adapter_key),
+            Some(&action_type),
+            Some(&rollback_class),
         );
 
         // With no outcomes defined, alignment_strength should be "none"
@@ -5645,12 +5932,16 @@ mod u1_s3a_tests {
             identifier: "test".to_string(),
         };
         let adapter_key = "http"; // HTTP adapter should infer ExternalApiCall
+        let action_type = make_file_write_action_type();
+        let rollback_class = make_r0_rollback_class();
 
         let assessment = compute_u1_verify_assessment(
             &Some(intent),
             &Some(proposal),
             Some(&rollback_target),
             Some(adapter_key),
+            Some(&action_type),
+            Some(&rollback_class),
         );
 
         // With Generic target and HTTP adapter, should fall back to adapter_key inference
@@ -5675,12 +5966,16 @@ mod u1_s3a_tests {
             identifier: "test".to_string(),
         };
         let adapter_key = "noop"; // Noop adapter doesn't infer any specific effect
+        let action_type = make_file_write_action_type();
+        let rollback_class = make_r0_rollback_class();
 
         let assessment = compute_u1_verify_assessment(
             &Some(intent),
             &Some(proposal),
             Some(&rollback_target),
             Some(adapter_key),
+            Some(&action_type),
+            Some(&rollback_class),
         );
 
         // With Generic target and noop adapter, should fall back to expected_effect
