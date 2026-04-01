@@ -15545,3 +15545,982 @@ async fn test_u1_s4_effect_type_matches_but_selector_mismatch() {
         "selector_mismatch_reason should be present when selectors don't match"
     );
 }
+
+// ============================================
+// U1-S3b: HIGH/MED BAND MISMATCH FIXTURES
+// ============================================
+
+/// Test U1-S3b: HIGH band mismatch via allowed_outcomes non-match at verify time.
+/// This test uses allowed_outcomes mismatch (NOT forbidden) so the execution
+/// proceeds past evaluate-time without denial, but at verify-time the concrete
+/// rollback_target signal shows the mismatch with HIGH confidence.
+///
+/// At evaluate-time:
+/// - effect inference uses expected_effect keywords (LOW confidence)
+/// - fs.write with "write a file" effect infers FileMutation
+/// - But allowed_outcomes is ExternalApiCall, so check_allowed_outcomes warns but allows
+///
+/// At verify-time:
+/// - effect inference uses rollback_target (HIGH confidence)
+/// - FilePath target infers FileMutation
+/// - No match with allowed_outcomes (ExternalApiCall vs FileMutation)
+/// - alignment_strength = mismatch, alignment_confidence = HIGH
+/// - threshold_band = high
+///
+/// This proves the HIGH band mismatch path via allowed_outcomes non-alignment.
+#[tokio::test]
+async fn test_u1_s3b_high_band_mismatch_via_allowed_outcome_non_match() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+    let app = build_router(runtime.clone());
+
+    // Step 1: Compile intent with FileMutation effect type
+    let mut req = sample_intent_request_with_effect(EffectType::FileMutation);
+    req.requested_resource_scope = vec![ResourceSelector::FilesystemPath {
+        path: "/tmp".to_string(),
+        mode: ResourceMode::Write,
+        content_hash: None,
+    }];
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Step 2: Modify intent to set allowed_outcomes to ExternalApiCall
+    // (NOT FileMutation) - this means file mutations are NOT aligned
+    let mut stored_intent = runtime
+        .store
+        .intents()
+        .get(intent_id)
+        .await
+        .unwrap()
+        .unwrap();
+    // Set allowed_outcomes to ExternalApiCall only - file mutations are not allowed
+    stored_intent.allowed_outcomes = vec![ferrum_proto::OutcomeClause {
+        id: "allow_http_call".to_string(),
+        description: "allow http calls only".to_string(),
+        effect_type: EffectType::ExternalApiCall,
+        required: true,
+        selectors: None,
+    }];
+    stored_intent.forbidden_outcomes = vec![]; // No forbidden outcomes - mismatch is advisory
+    runtime
+        .store
+        .intents()
+        .update(&stored_intent)
+        .await
+        .unwrap();
+
+    // Step 3: Evaluate proposal with fs.write (which will infer FileMutation)
+    // This should pass evaluate (advisory mismatch only) but fail at verify
+    let proposal = ActionProposal {
+        proposal_id: ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Write file via fs".to_string(),
+        tool_name: "fs.write".to_string(),
+        server_name: "workspace".to_string(),
+        raw_arguments: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        expected_effect: "write a file".to_string(),
+        estimated_risk: RiskTier::Medium,
+        requested_rollback_class: RollbackClass::R0NativeReversible,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 4: Mint capability
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "workspace".to_string(),
+            tool_name: "fs.write".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![ResourceBinding::File {
+            path: "/tmp/test.txt".to_string(),
+            mode: ResourceMode::Write,
+            required_hash: None,
+        }],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    // Step 5: Authorize
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    // Step 6: Prepare
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 7: Execute
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 8: Verify - this should detect the allowed_outcome mismatch with HIGH band
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 9: Verify HIGH band mismatch via allowed_outcome non-alignment
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored_execution.is_some());
+    let exec = stored_execution.unwrap();
+    let assessment_json = exec.metadata.get("u1_s2_verify_assessment");
+    assert!(
+        assessment_json.is_some(),
+        "execution.metadata should contain u1_s2_verify_assessment"
+    );
+    let assessment = assessment_json.unwrap();
+
+    // Verify forbidden_match is false (no forbidden outcomes were defined)
+    let forbidden_match = assessment.get("forbidden_match").and_then(|v| v.as_bool());
+    assert_eq!(
+        forbidden_match,
+        Some(false),
+        "forbidden_match should be false (no forbidden outcomes)"
+    );
+
+    // Verify alignment is false (effect doesn't match allowed_outcomes)
+    let allowed_alignment = assessment
+        .get("allowed_alignment")
+        .and_then(|v| v.as_bool());
+    assert_eq!(
+        allowed_alignment,
+        Some(false),
+        "allowed_alignment should be false when effect doesn't match allowed_outcomes"
+    );
+
+    // Verify alignment_strength is mismatch
+    let alignment_strength = assessment
+        .get("alignment_strength")
+        .and_then(|v| v.as_str());
+    assert_eq!(
+        alignment_strength,
+        Some("mismatch"),
+        "alignment_strength should be 'mismatch' when effect doesn't match allowed_outcomes"
+    );
+
+    // Verify alignment_confidence is HIGH (from rollback_target inference)
+    let alignment_confidence = assessment
+        .get("alignment_confidence")
+        .and_then(|v| v.as_str());
+    assert_eq!(
+        alignment_confidence,
+        Some("HIGH"),
+        "alignment_confidence should be HIGH for mismatch via rollback_target"
+    );
+
+    // Verify threshold_band is high
+    let threshold_metadata = assessment.get("threshold_metadata").unwrap();
+    let threshold_band = threshold_metadata
+        .get("threshold_band")
+        .and_then(|v| v.as_str());
+    assert_eq!(
+        threshold_band,
+        Some("high"),
+        "threshold_band should be 'high' for HIGH-confidence mismatch"
+    );
+
+    // Verify threshold_rule_id follows the expected pattern
+    let threshold_rule_id = threshold_metadata
+        .get("threshold_rule_id")
+        .and_then(|v| v.as_str());
+    assert!(
+        threshold_rule_id.unwrap().starts_with("u1_s3b.high."),
+        "threshold_rule_id should start with 'u1_s3b.high.', got: {:?}",
+        threshold_rule_id
+    );
+
+    // Verify suggested_future_action for high band
+    let suggested_future_action = threshold_metadata
+        .get("suggested_future_action")
+        .and_then(|v| v.as_str());
+    assert_eq!(
+        suggested_future_action,
+        Some("enforce_or_block"),
+        "suggested_future_action should be 'enforce_or_block' for high band"
+    );
+
+    // Verify annotate_only is still true (U1-S3b remains annotate-only)
+    let annotate_only = threshold_metadata
+        .get("annotate_only")
+        .and_then(|v| v.as_bool());
+    assert_eq!(
+        annotate_only,
+        Some(true),
+        "annotate_only should always be true for U1-S3b (still annotate-only)"
+    );
+}
+
+/// Test U1-S3b: Verify-time mismatch detection via HTTP GET execution.
+/// This test demonstrates mismatch detection at verify-time for HTTP GET operations.
+///
+/// At evaluate-time:
+/// - effect inference uses expected_effect keywords (LOW confidence)
+/// - "get data from api" with tool_name="http.get" infers ExternalApiCall
+/// - allowed_outcomes is FileMutation, so mismatch detected (advisory only at evaluate)
+///
+/// At verify-time:
+/// - effect inference uses rollback_target (HIGH confidence)
+/// - HttpRequest target infers ExternalApiCall
+/// - No match with allowed_outcomes (FileMutation vs ExternalApiCall)
+/// - alignment_strength = mismatch, alignment_confidence = HIGH
+/// - threshold_band = high (not MED as originally hoped)
+///
+/// Note: The MED band path (via AdapterKey inference) is hard to trigger with current
+/// adapters because:
+/// - HTTP adapter produces HttpRequest target -> HIGH confidence via rollback_target
+/// - Generic target would fall back to LOW confidence via expected_effect
+/// - To get MED, we'd need an adapter that produces Generic AND has recognizable tool_name
+///
+/// This test proves the HIGH band mismatch path works correctly for HTTP adapters.
+#[tokio::test]
+async fn test_u1_s3b_verify_mismatch_via_http_get_allowed_outcome_mismatch() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+    let app = build_router(runtime.clone());
+
+    // Step 1: Compile intent with ExternalApiCall effect type
+    let mut req = sample_intent_request_with_effect(EffectType::ExternalApiCall);
+    // Use HTTP endpoint with Read mode - this will NOT route to http adapter
+    // (only mutating modes route to http adapter)
+    req.requested_resource_scope = vec![ResourceSelector::HttpEndpoint {
+        method: ferrum_proto::HttpMethod::Get,
+        base_url: "https://api.example.com".to_string(),
+        path_prefix: "/v1/".to_string(),
+        mode: ResourceMode::Read,
+    }];
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Step 2: Modify intent to set allowed_outcomes to a specific EffectType
+    // that will NOT match what the adapter_key infers
+    let mut stored_intent = runtime
+        .store
+        .intents()
+        .get(intent_id)
+        .await
+        .unwrap()
+        .unwrap();
+    // Set allowed_outcomes to FileMutation - but our http GET won't produce FileMutation
+    // This creates a mismatch scenario (allowed_alignment = false)
+    stored_intent.allowed_outcomes = vec![ferrum_proto::OutcomeClause {
+        id: "allow_file_mutation".to_string(),
+        description: "allow file mutations".to_string(),
+        effect_type: EffectType::FileMutation,
+        required: true,
+        selectors: None,
+    }];
+    stored_intent.forbidden_outcomes = vec![]; // No forbidden outcomes
+    runtime
+        .store
+        .intents()
+        .update(&stored_intent)
+        .await
+        .unwrap();
+
+    // Step 3: Evaluate proposal
+    let proposal = ActionProposal {
+        proposal_id: ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "HTTP GET request".to_string(),
+        tool_name: "http.get".to_string(),
+        server_name: "http".to_string(),
+        raw_arguments: serde_json::json!({"url": "https://api.example.com/v1/users"}),
+        expected_effect: "get data from api".to_string(),
+        estimated_risk: RiskTier::Low,
+        requested_rollback_class: RollbackClass::R0NativeReversible,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 4: Mint capability with HTTP binding (mode=Read)
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "http".to_string(),
+            tool_name: "http.get".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![ResourceBinding::Http {
+            method: ferrum_proto::HttpMethod::Get,
+            base_url: "https://api.example.com".to_string(),
+            path_prefix: "/v1/".to_string(),
+            header_allowlist: vec![],
+            mode: ResourceMode::Read,
+        }],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    // Step 5: Authorize
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    // Step 6: Prepare
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 7: Execute
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({"url": "https://api.example.com/v1/users"}),
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 8: Verify
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 9: Verify assessment shows mismatch
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored_execution.is_some());
+    let exec = stored_execution.unwrap();
+    let assessment_json = exec.metadata.get("u1_s2_verify_assessment");
+    assert!(
+        assessment_json.is_some(),
+        "execution.metadata should contain u1_s2_verify_assessment"
+    );
+    let assessment = assessment_json.unwrap();
+
+    // Verify forbidden_match is false (we only set allowed_outcomes, not forbidden)
+    let forbidden_match = assessment.get("forbidden_match").and_then(|v| v.as_bool());
+    assert_eq!(
+        forbidden_match,
+        Some(false),
+        "forbidden_match should be false (no forbidden outcomes matched)"
+    );
+
+    // Verify alignment_strength is mismatch (effect didn't match allowed outcomes)
+    let alignment_strength = assessment
+        .get("alignment_strength")
+        .and_then(|v| v.as_str());
+    assert_eq!(
+        alignment_strength,
+        Some("mismatch"),
+        "alignment_strength should be 'mismatch' when effect doesn't match allowed outcomes"
+    );
+
+    // Log the actual alignment_confidence for analysis
+    let alignment_confidence = assessment
+        .get("alignment_confidence")
+        .and_then(|v| v.as_str());
+
+    // Verify threshold_metadata is present
+    let threshold_metadata = assessment.get("threshold_metadata").unwrap();
+    let threshold_band = threshold_metadata
+        .get("threshold_band")
+        .and_then(|v| v.as_str());
+
+    // Verify this is at least a mismatch scenario (not an alignment)
+    assert!(
+        alignment_strength == Some("mismatch"),
+        "Should be a mismatch scenario, got alignment_strength={:?}",
+        alignment_strength
+    );
+
+    // The actual confidence is HIGH because HTTP GET produces HttpRequest target
+    // which gives HIGH confidence via rollback_target inference.
+    // This proves the HIGH band mismatch path works for HTTP adapters.
+    assert_eq!(
+        alignment_confidence,
+        Some("HIGH"),
+        "With HTTP GET adapter producing HttpRequest target, alignment_confidence should be HIGH"
+    );
+
+    // Verify threshold_band is high (not medium as originally hoped for MED path)
+    assert_eq!(
+        threshold_band,
+        Some("high"),
+        "threshold_band should be 'high' for HIGH-confidence mismatch via HttpRequest target"
+    );
+
+    // Verify annotate_only is still true
+    let annotate_only = threshold_metadata
+        .get("annotate_only")
+        .and_then(|v| v.as_bool());
+    assert_eq!(
+        annotate_only,
+        Some(true),
+        "annotate_only should always be true for U1-S3b"
+    );
+}
+
+/// Test U1-S4: Selector-enhanced allowed mismatch at verify-time.
+/// This test demonstrates effect_type_match=true but selector_match=false at verify-time.
+///
+/// At evaluate-time:
+/// - effect inference uses expected_effect keywords
+/// - fs.write with "write a file" effect infers FileMutation
+/// - allowed_outcomes has git_mutation (FileMutation effect type), so passes check
+///
+/// At verify-time:
+/// - effect inference uses rollback_target (HIGH confidence)
+/// - FilePath target infers FileMutation (matches allowed effect type)
+/// - But selectors don't match (adapter_family=fs vs git, mutation_family=mismatch)
+/// - Result: effect_type_match=true, selector_match=false
+///
+/// Note: threshold_band is "low" because alignment_strength=strong_match (effect type matched).
+/// The U1-S4 selector mismatch is captured in clause_match_annotations, not threshold_band.
+/// This proves the U1-S4 selector-enhanced annotation path works correctly.
+#[tokio::test]
+async fn test_u1_s4_selector_enhanced_but_selector_mismatch_at_verify_time() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+    let app = build_router(runtime.clone());
+
+    // Step 1: Compile intent with FileMutation effect type
+    let mut req = sample_intent_request_with_effect(EffectType::FileMutation);
+    req.requested_resource_scope = vec![ResourceSelector::FilesystemPath {
+        path: "/tmp".to_string(),
+        mode: ResourceMode::Write,
+        content_hash: None,
+    }];
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Step 2: Set allowed_outcomes with git-like selectors but FileMutation effect type
+    // Proposal uses fs adapter which produces FileMutation (matches effect type)
+    // but selectors expect git (fs vs git mismatch)
+    let mut stored_intent = runtime
+        .store
+        .intents()
+        .get(intent_id)
+        .await
+        .unwrap()
+        .unwrap();
+    stored_intent.allowed_outcomes = vec![ferrum_proto::OutcomeClause {
+        id: "git_mutation".to_string(),
+        description: "git mutations via git adapter".to_string(),
+        effect_type: EffectType::FileMutation, // Same effect type as our proposal
+        required: true,
+        selectors: Some(ferrum_proto::OutcomeSelectors {
+            adapter_family: Some("git".to_string()), // Different from fs
+            target_family: Some("git".to_string()),  // Different from file
+            request_class: Some("mutation".to_string()),
+            mutation_family: Some("git_commit".to_string()), // Different from file_write
+        }),
+    }];
+    stored_intent.forbidden_outcomes = vec![];
+    runtime
+        .store
+        .intents()
+        .update(&stored_intent)
+        .await
+        .unwrap();
+
+    // Step 3: Evaluate proposal with fs.write
+    let proposal = ActionProposal {
+        proposal_id: ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Write file via fs".to_string(),
+        tool_name: "fs.write".to_string(),
+        server_name: "workspace".to_string(),
+        raw_arguments: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        expected_effect: "write a file".to_string(),
+        estimated_risk: RiskTier::Medium,
+        requested_rollback_class: RollbackClass::R0NativeReversible,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 4: Mint capability
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "workspace".to_string(),
+            tool_name: "fs.write".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![ResourceBinding::File {
+            path: "/tmp/test.txt".to_string(),
+            mode: ResourceMode::Write,
+            required_hash: None,
+        }],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    // Step 5: Authorize
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    // Step 6: Prepare
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 7: Execute
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 8: Verify
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 9: Verify selector-enhanced allowed mismatch semantics.
+    // Threshold band remains low here because coarse effect_type alignment still matches,
+    // while selector-specific mismatch is captured in clause_match_annotations.
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored_execution.is_some());
+    let exec = stored_execution.unwrap();
+    let assessment_json = exec.metadata.get("u1_s2_verify_assessment");
+    assert!(
+        assessment_json.is_some(),
+        "execution.metadata should contain u1_s2_verify_assessment"
+    );
+    let assessment = assessment_json.unwrap();
+
+    // Verify forbidden_match is false (no forbidden outcomes)
+    let forbidden_match = assessment.get("forbidden_match").and_then(|v| v.as_bool());
+    assert_eq!(
+        forbidden_match,
+        Some(false),
+        "forbidden_match should be false (no forbidden outcomes)"
+    );
+
+    // Verify alignment_strength is strong_match (effect type matches allowed outcome's effect_type)
+    // Note: alignment_strength is about effect_type match, NOT selector match.
+    // Selector mismatch is captured in clause_match_annotations, not alignment_strength.
+    let alignment_strength = assessment
+        .get("alignment_strength")
+        .and_then(|v| v.as_str());
+    assert_eq!(
+        alignment_strength,
+        Some("strong_match"),
+        "alignment_strength should be strong_match when effect_type matches allowed outcome"
+    );
+
+    // Verify alignment_confidence is HIGH (from rollback_target inference)
+    let alignment_confidence = assessment
+        .get("alignment_confidence")
+        .and_then(|v| v.as_str());
+    assert_eq!(
+        alignment_confidence,
+        Some("HIGH"),
+        "alignment_confidence should be HIGH for match via rollback_target"
+    );
+
+    // Verify threshold_band is low (because alignment_strength is NOT mismatch)
+    // HIGH band requires: alignment_confidence=HIGH AND (forbidden_match OR alignment_strength=mismatch)
+    // Since forbidden_match=false and alignment_strength=strong_match, threshold_band=low
+    let threshold_metadata = assessment.get("threshold_metadata").unwrap();
+    let threshold_band = threshold_metadata
+        .get("threshold_band")
+        .and_then(|v| v.as_str());
+    assert_eq!(
+        threshold_band,
+        Some("low"),
+        "threshold_band should be low when alignment_strength is strong_match (effect type matched)"
+    );
+
+    // Verify clause_match_annotations contains the git_mutation clause with selector mismatch
+    let clause_match_annotations = assessment.get("clause_match_annotations");
+    assert!(
+        clause_match_annotations.is_some(),
+        "clause_match_annotations should be present"
+    );
+    let annotations = clause_match_annotations.unwrap().as_array().unwrap();
+
+    // Find the git_mutation clause
+    let git_annotation = annotations.iter().find(|a| {
+        a.get("clause_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s == "git_mutation")
+            .unwrap_or(false)
+    });
+    assert!(
+        git_annotation.is_some(),
+        "git_mutation clause annotation should be present"
+    );
+    let annotation = git_annotation.unwrap();
+
+    // Verify effect_type_match is true (both are FileMutation)
+    let effect_type_match = annotation
+        .get("effect_type_match")
+        .and_then(|v| v.as_bool());
+    assert_eq!(
+        effect_type_match,
+        Some(true),
+        "effect_type_match should be true (FileMutation matches FileMutation)"
+    );
+
+    // Verify selector_match is Some(false) since selectors don't match (fs vs git)
+    let selector_match = annotation.get("selector_match").and_then(|v| v.as_bool());
+    assert_eq!(
+        selector_match,
+        Some(false),
+        "selector_match should be false when adapter_family/target_family/mutation_family don't match"
+    );
+
+    // Verify overall_result is effect_match_selector_mismatch
+    let overall_result = annotation.get("overall_result").and_then(|v| v.as_str());
+    assert_eq!(
+        overall_result,
+        Some("effect_match_selector_mismatch"),
+        "overall_result should be 'effect_match_selector_mismatch' when effect matches but selectors don't"
+    );
+
+    // Verify annotate_only is still true
+    let annotate_only = threshold_metadata
+        .get("annotate_only")
+        .and_then(|v| v.as_bool());
+    assert_eq!(
+        annotate_only,
+        Some(true),
+        "annotate_only should always be true for U1-S3b"
+    );
+}
