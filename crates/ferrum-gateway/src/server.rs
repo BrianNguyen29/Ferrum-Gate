@@ -7,6 +7,7 @@ use axum::{
 };
 use chrono::{Duration, Utc};
 use ferrum_graph::LineageGraph;
+use ferrum_pdp::StaticPdpEngine;
 use ferrum_proto::{
     ActorRef, ActorType, ApiError, ApiErrorCode, ApprovalId, ApprovalListEnvelope, ApprovalRequest,
     ApprovalResolveRequest, ApprovalState, AuthorizeExecutionRequest, AuthorizeExecutionResponse,
@@ -1475,6 +1476,142 @@ async fn execute_execution(
     }))
 }
 
+/// U1-S2: Verify-time outcome assessment for annotate-only governance.
+/// This struct captures the outcome-alignment assessment computed at verify time,
+/// WITHOUT changing verify decision semantics. It is persisted into execution.metadata,
+/// rollback contract metadata, and SideEffectVerified provenance event metadata.
+///
+/// When intent/proposal context cannot be loaded at verify time, assessment_available
+/// is set to false and other fields reflect the unavailable state.
+///
+/// This is a local/internal type (not in shared proto) for this annotate-only slice.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct U1VerifyAssessment {
+    /// Whether the proposal's effect matched a forbidden outcome in the intent.
+    forbidden_match: bool,
+    /// The ID of the forbidden outcome clause that was matched, if any.
+    forbidden_outcome_id: Option<String>,
+    /// Whether the proposal's effect aligned with an allowed outcome in the intent.
+    allowed_alignment: bool,
+    /// List of allowed outcome IDs that the proposal effect matched.
+    matched_allowed_outcome_ids: Vec<String>,
+    /// The inferred EffectType of the proposal at verify time.
+    proposal_effect_type: String,
+    /// Whether the full context (intent + proposal) was available for assessment.
+    /// When false, other fields reflect unavailable assessment.
+    assessment_available: bool,
+    /// Human-readable reason for the assessment result.
+    assessment_reason: String,
+}
+
+/// Compute U1-S2 verify-time outcome assessment using the existing U1 patterns.
+/// This is annotate-only: it does not change verify decision semantics.
+/// Returns U1VerifyAssessment with assessment_available=false if context cannot be loaded.
+fn compute_u1_verify_assessment(
+    intent: &Option<IntentEnvelope>,
+    proposal: &Option<ferrum_proto::ActionProposal>,
+) -> U1VerifyAssessment {
+    let intent = match intent {
+        Some(i) => i,
+        None => {
+            return U1VerifyAssessment {
+                forbidden_match: false,
+                forbidden_outcome_id: None,
+                allowed_alignment: false,
+                matched_allowed_outcome_ids: Vec::new(),
+                proposal_effect_type: "unknown".to_string(),
+                assessment_available: false,
+                assessment_reason: "intent not available at verify time".to_string(),
+            };
+        }
+    };
+
+    let proposal = match proposal {
+        Some(p) => p,
+        None => {
+            return U1VerifyAssessment {
+                forbidden_match: false,
+                forbidden_outcome_id: None,
+                allowed_alignment: false,
+                matched_allowed_outcome_ids: Vec::new(),
+                proposal_effect_type: "unknown".to_string(),
+                assessment_available: false,
+                assessment_reason: "proposal not available at verify time".to_string(),
+            };
+        }
+    };
+
+    // Infer the proposal effect type using the same logic as PDP engine
+    let proposal_effect = StaticPdpEngine::infer_effect_type(&proposal.expected_effect);
+    let proposal_effect_str = format!("{:?}", proposal_effect);
+
+    // Check forbidden outcomes (same logic as evaluate-time)
+    for forbidden in &intent.forbidden_outcomes {
+        if std::mem::discriminant(&forbidden.effect_type)
+            == std::mem::discriminant(&proposal_effect)
+        {
+            return U1VerifyAssessment {
+                forbidden_match: true,
+                forbidden_outcome_id: Some(forbidden.id.clone()),
+                allowed_alignment: false,
+                matched_allowed_outcome_ids: Vec::new(),
+                proposal_effect_type: proposal_effect_str.clone(),
+                assessment_available: true,
+                assessment_reason: format!(
+                    "proposal effect '{}' matches forbidden outcome '{}': {}",
+                    proposal_effect_str, forbidden.id, forbidden.description
+                ),
+            };
+        }
+    }
+
+    // Check allowed outcomes alignment (same logic as evaluate-time)
+    let mut allowed_alignment = false;
+    let mut matched_allowed_outcome_ids = Vec::new();
+
+    if !intent.allowed_outcomes.is_empty() {
+        for allowed in &intent.allowed_outcomes {
+            if std::mem::discriminant(&allowed.effect_type)
+                == std::mem::discriminant(&proposal_effect)
+            {
+                allowed_alignment = true;
+                matched_allowed_outcome_ids.push(allowed.id.clone());
+            }
+        }
+    } else {
+        // No allowed_outcomes specified means any effect is acceptable
+        allowed_alignment = true;
+    }
+
+    let reason = if allowed_alignment {
+        format!(
+            "proposal effect '{}' aligns with allowed outcomes",
+            proposal_effect_str
+        )
+    } else {
+        let allowed_effects: Vec<String> = intent
+            .allowed_outcomes
+            .iter()
+            .map(|a| format!("{:?}", a.effect_type))
+            .collect();
+        format!(
+            "proposal effect '{}' does not match any allowed outcome; allowed: {}",
+            proposal_effect_str,
+            allowed_effects.join(", ")
+        )
+    };
+
+    U1VerifyAssessment {
+        forbidden_match: false,
+        forbidden_outcome_id: None,
+        allowed_alignment,
+        matched_allowed_outcome_ids,
+        proposal_effect_type: proposal_effect_str,
+        assessment_available: true,
+        assessment_reason: reason,
+    }
+}
+
 async fn verify_execution(
     State(runtime): State<Arc<GatewayRuntime>>,
     Path(execution_id_str): Path<String>,
@@ -1542,6 +1679,41 @@ async fn verify_execution(
             )
         })?;
 
+    // U1-S2: Best-effort load intent and proposal for verify-time outcome assessment.
+    // If unavailable, assessment_available=false is set and we continue (annotate-only).
+    let intent = runtime
+        .store
+        .intents()
+        .get(intent_id)
+        .await
+        .map_err(|e| {
+            tracing::warn!(
+                "failed to load intent {} for U1-S2 verify assessment: {}",
+                intent_id,
+                e
+            );
+        })
+        .ok()
+        .flatten();
+
+    let proposal = runtime
+        .store
+        .proposals()
+        .get(proposal_id)
+        .await
+        .map_err(|e| {
+            tracing::warn!(
+                "failed to load proposal {} for U1-S2 verify assessment: {}",
+                proposal_id,
+                e
+            );
+        })
+        .ok()
+        .flatten();
+
+    // Compute U1-S2 verify-time outcome assessment (annotate-only, does not affect verify decision)
+    let u1_assessment = compute_u1_verify_assessment(&intent, &proposal);
+
     // Verify via adapter
     let verified = runtime
         .rollback
@@ -1559,24 +1731,40 @@ async fn verify_execution(
         ExecutionState::Failed
     };
 
+    // U1-S2: Persist verify-time outcome assessment into execution.metadata
+    let assessment_json = serde_json::to_value(&u1_assessment).unwrap_or_else(|e| {
+        tracing::warn!("failed to serialize U1-S2 assessment: {}", e);
+        serde_json::Value::Null
+    });
+    updated_execution.metadata.insert(
+        "u1_s2_verify_assessment".to_string(),
+        assessment_json.clone(),
+    );
+
     if let Err(e) = runtime.store.executions().update(&updated_execution).await {
         tracing::warn!("failed to update execution state: {}", e);
     }
 
     // Advance rollback contract state to Verified (or Failed)
+    // Also persist U1-S2 assessment into contract.metadata
     if verified {
+        let mut updated_contract = contract.clone();
+        updated_contract.state = RollbackState::Verified;
+        updated_contract
+            .metadata
+            .insert("u1_s2_verify_assessment".to_string(), assessment_json);
         if let Err(e) = runtime
             .store
             .rollback_contracts()
-            .update_state(contract_id, RollbackState::Verified)
+            .update(&updated_contract)
             .await
         {
             tracing::warn!("failed to update rollback contract state: {}", e);
         }
     }
 
-    // Emit SideEffectVerified provenance event
-    let event = create_provenance_event(
+    // Emit SideEffectVerified provenance event with U1-S2 assessment in metadata
+    let mut event = create_provenance_event(
         ProvenanceEventKind::SideEffectVerified,
         now,
         Some(intent_id),
@@ -1586,13 +1774,22 @@ async fn verify_execution(
         Some(contract_id),
         None,
     );
+    // U1-S2: Persist assessment into provenance event metadata
+    let event_assessment_json = serde_json::to_value(&u1_assessment).unwrap_or_else(|e| {
+        tracing::warn!("failed to serialize U1-S2 assessment for provenance: {}", e);
+        serde_json::Value::Null
+    });
+    event
+        .metadata
+        .insert("u1_s2_verify_assessment".to_string(), event_assessment_json);
+
     if let Err(e) = runtime.store.provenance().append_event(&event).await {
         tracing::warn!("failed to persist provenance event: {}", e);
     }
 
     // Auto-commit for non-R3 contracts if verified
     if verified && contract.auto_commit {
-        let commit_response = perform_commit(&runtime, &existing, &contract, now).await?;
+        let commit_response = perform_commit(&runtime, &updated_execution, &contract, now).await?;
         return Ok(Json(VerifyResponse {
             execution_id,
             verified: true,

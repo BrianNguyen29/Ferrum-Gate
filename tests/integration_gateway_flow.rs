@@ -14059,5 +14059,244 @@ async fn test_outcome_git_mutation_inference_and_forbidden() {
 }
 
 // ============================================
+// U1-S2 VERIFY-TIME ASSESSMENT TESTS
+// ============================================
+
+/// Test U1-S2: verify-time outcome assessment is persisted in execution.metadata,
+/// rollback contract metadata, and SideEffectVerified provenance event metadata.
+#[tokio::test]
+async fn test_u1_s2_verify_assessment_persisted_in_metadata() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Run flow to prepare with R0 (auto-commit enabled)
+    let (_intent_id, _proposal_id, execution_id) =
+        run_flow_to_prepared(&runtime, RollbackClass::R0NativeReversible).await;
+
+    // Execute
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    // Verify (should auto-commit for R0)
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let _verify_resp: ferrum_proto::VerifyResponse = serde_json::from_slice(&body).unwrap();
+
+    // 1. Check execution.metadata contains u1_s2_verify_assessment
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored_execution.is_some(), "execution should be persisted");
+    let exec = stored_execution.unwrap();
+    let assessment_json = exec.metadata.get("u1_s2_verify_assessment");
+    assert!(
+        assessment_json.is_some(),
+        "execution.metadata should contain u1_s2_verify_assessment"
+    );
+    let assessment = assessment_json.unwrap();
+    assert!(
+        assessment
+            .get("assessment_available")
+            .and_then(|v| v.as_bool())
+            == Some(true),
+        "assessment_available should be true"
+    );
+
+    // 2. Check rollback contract metadata contains u1_s2_verify_assessment
+    let contract_id = exec.rollback_contract_id.unwrap();
+    let stored_contract = runtime
+        .store
+        .rollback_contracts()
+        .get(contract_id)
+        .await
+        .unwrap();
+    assert!(
+        stored_contract.is_some(),
+        "rollback contract should be persisted"
+    );
+    let contract = stored_contract.unwrap();
+    let contract_assessment_json = contract.metadata.get("u1_s2_verify_assessment");
+    assert!(
+        contract_assessment_json.is_some(),
+        "rollback contract.metadata should contain u1_s2_verify_assessment"
+    );
+
+    // 3. Check SideEffectVerified provenance event contains u1_s2_verify_assessment
+    let events = runtime
+        .store
+        .provenance()
+        .query(&ferrum_proto::ProvenanceQueryRequest {
+            intent_id: None,
+            proposal_id: None,
+            execution_id: Some(execution_id),
+            capability_id: None,
+            event_kind: Some(ProvenanceEventKind::SideEffectVerified),
+            terminal_only: None,
+            since: None,
+            until: None,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(!events.is_empty(), "SideEffectVerified event should exist");
+    let verify_event = &events[0];
+    let event_assessment_json = verify_event.metadata.get("u1_s2_verify_assessment");
+    assert!(
+        event_assessment_json.is_some(),
+        "SideEffectVerified event.metadata should contain u1_s2_verify_assessment"
+    );
+}
+
+/// Test U1-S2: verify-time assessment correctly reports assessment_available=false
+/// when intent context is not available (e.g., intent deleted from store before verify).
+///
+/// Uses sqlx::sqlite::SqliteConnectOptions with foreign_keys=OFF to bypass SQLite FK
+/// constraints that prevent deleting an intent that has executions referencing it.
+/// The execution.raw_json still contains the original intent_id, but when verify tries
+/// to load the intent via store.intents().get(), it returns None, causing
+/// assessment_available=false to be correctly reported.
+#[tokio::test]
+async fn test_u1_s2_verify_assessment_unavailable_when_context_missing() {
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+
+    let (temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Run flow to prepare with R0
+    let (_intent_id, _proposal_id, execution_id) =
+        run_flow_to_prepared(&runtime, RollbackClass::R0NativeReversible).await;
+
+    // Execute
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    // CRITICAL: Delete the intent row to simulate unavailable context.
+    // The execution.raw_json still has the original intent_id, but when verify
+    // tries to load the intent via store.intents().get(), it will return None.
+    // Use FK disabled to bypass the FK constraint from executions->intents.
+    let db_path = temp_dir.path().join("store.sqlite");
+    let options = SqliteConnectOptions::new()
+        .filename(db_path)
+        .pragma("foreign_keys", "off");
+
+    let fk_disabled_pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .expect("failed to create FK-disabled pool");
+
+    // Get the original intent_id from the execution's raw_json by loading via store
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    let original_intent_id = stored_execution.unwrap().intent_id;
+
+    // Delete the intent row (FK disabled to bypass constraint)
+    sqlx::query("DELETE FROM intents WHERE intent_id = ?1")
+        .bind(original_intent_id.to_string())
+        .execute(&fk_disabled_pool)
+        .await
+        .expect("failed to delete intent row");
+
+    // Drop the FK-disabled pool to avoid holding onto the database
+    drop(fk_disabled_pool);
+
+    // Verify - intent is now non-existent so assessment should report unavailable
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    // Verify execution has u1_s2_verify_assessment with assessment_available=false
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored_execution.is_some());
+    let exec = stored_execution.unwrap();
+    let assessment_json = exec.metadata.get("u1_s2_verify_assessment");
+    assert!(
+        assessment_json.is_some(),
+        "execution.metadata should contain u1_s2_verify_assessment"
+    );
+
+    // Parse and assert assessment_available is false
+    let assessment = assessment_json.unwrap();
+    let available = assessment
+        .get("assessment_available")
+        .and_then(|v| v.as_bool())
+        .expect("assessment_available field should be a boolean");
+    assert!(
+        !available,
+        "assessment_available should be false when intent is non-existent"
+    );
+
+    // Assert the reason indicates unavailability
+    let reason = assessment
+        .get("assessment_reason")
+        .and_then(|v| v.as_str())
+        .expect("assessment_reason should be a string");
+    assert!(
+        reason.contains("not available at verify time"),
+        "assessment_reason should indicate context unavailability, got: {}",
+        reason
+    );
+}
+
+// ============================================
 // LEDGER CHAIN TESTS
 // ============================================
