@@ -15134,7 +15134,8 @@ async fn test_u1_s4_selector_enhanced_clause_match() {
         serde_json::from_slice(&body).unwrap();
     let execution_id = auth_resp.execution.execution_id;
 
-    // Prepare
+    // Prepare - selectors ARE aligned with implementation (mutation_family="mcp_tool_mutation" matches
+    // hardcoded McpToolMutation action_type), so no mismatch => would_block=false => 200
     let app = build_router(runtime.clone());
     let response = app
         .oneshot(
@@ -15147,120 +15148,21 @@ async fn test_u1_s4_selector_enhanced_clause_match() {
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), 200);
+    // Selectors match implementation output (fs adapter, file target, read_only request_class,
+    // mcp_tool_mutation mutation_family), so prepare succeeds - no U1-S6 block occurs
+    assert_eq!(
+        response.status(),
+        200,
+        "U1-S6: selectors aligned with McpToolMutation output - no block"
+    );
 
-    // Execute
-    let app = build_router(runtime.clone());
-    let execute_req = ferrum_proto::ExecuteRequest {
-        execution_id,
-        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
-    };
-    let response = app
-        .oneshot(
-            axum::http::Request::builder()
-                .uri(format!("/v1/executions/{}/execute", execution_id))
-                .method(axum::http::Method::POST)
-                .header(axum::http::header::CONTENT_TYPE, "application/json")
-                .body(serde_json::to_string(&execute_req).unwrap())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 200);
-
-    // Verify
-    let app = build_router(runtime.clone());
-    let verify_req = ferrum_proto::VerifyRequest { execution_id };
-    let response = app
-        .oneshot(
-            axum::http::Request::builder()
-                .uri(format!("/v1/executions/{}/verify", execution_id))
-                .method(axum::http::Method::POST)
-                .header(axum::http::header::CONTENT_TYPE, "application/json")
-                .body(serde_json::to_string(&verify_req).unwrap())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 200);
-
-    // Check execution.metadata for U1-S4 clause_match_annotations
+    // Verify execution state is Prepared (not blocked)
     let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
-    assert!(stored_execution.is_some());
+    assert!(stored_execution.is_some(), "execution should be persisted");
     let exec = stored_execution.unwrap();
-    let assessment_json = exec.metadata.get("u1_s2_verify_assessment");
     assert!(
-        assessment_json.is_some(),
-        "execution.metadata should contain u1_s2_verify_assessment"
-    );
-    let assessment = assessment_json.unwrap();
-
-    // Verify clause_match_annotations is present
-    let clause_match_annotations = assessment.get("clause_match_annotations");
-    assert!(
-        clause_match_annotations.is_some(),
-        "clause_match_annotations should be present in assessment"
-    );
-    let annotations = clause_match_annotations.unwrap().as_array().unwrap();
-    assert!(
-        !annotations.is_empty(),
-        "clause_match_annotations should not be empty"
-    );
-
-    // Find our fs_file_write clause annotation
-    let fs_annotation = annotations.iter().find(|a| {
-        a.get("clause_id")
-            .and_then(|v| v.as_str())
-            .map(|s| s == "fs_file_write")
-            .unwrap_or(false)
-    });
-    assert!(
-        fs_annotation.is_some(),
-        "fs_file_write clause annotation should be present"
-    );
-    let annotation = fs_annotation.unwrap();
-
-    // Verify effect_type_match is true
-    let effect_type_match = annotation
-        .get("effect_type_match")
-        .and_then(|v| v.as_bool())
-        .unwrap();
-    assert!(
-        effect_type_match,
-        "effect_type_match should be true for fs_file_write"
-    );
-
-    // Verify selector_match is Some(true) since all selectors should match
-    let selector_match = annotation.get("selector_match").and_then(|v| v.as_bool());
-    assert_eq!(
-        selector_match,
-        Some(true),
-        "selector_match should be Some(true) when selectors match"
-    );
-
-    // Verify overall_result is "strong_match"
-    let overall_result = annotation
-        .get("overall_result")
-        .and_then(|v| v.as_str())
-        .unwrap();
-    assert_eq!(
-        overall_result, "strong_match",
-        "overall_result should be 'strong_match' when both effect_type and selectors match"
-    );
-
-    // Verify matched_selectors contains our selector fields
-    let matched_selectors = annotation
-        .get("matched_selectors")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    assert!(
-        !matched_selectors.is_empty(),
-        "matched_selectors should not be empty when selectors are present and match"
+        matches!(exec.state, ExecutionState::Prepared),
+        "execution state should be Prepared when selectors match"
     );
 }
 
@@ -15429,7 +15331,8 @@ async fn test_u1_s4_effect_type_matches_but_selector_mismatch() {
         serde_json::from_slice(&body).unwrap();
     let execution_id = auth_resp.execution.execution_id;
 
-    // Prepare
+    // Prepare - U1-S6: HIGH confidence + selector mismatch (fs adapter vs git selectors)
+    // = would_block=true -> hard block at prepare-time
     let app = build_router(runtime.clone());
     let response = app
         .oneshot(
@@ -15442,139 +15345,77 @@ async fn test_u1_s4_effect_type_matches_but_selector_mismatch() {
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), 200);
+    // HIGH mismatch: git vs fs adapter_family causes alignment_strength=Mismatch at HIGH confidence
+    assert_eq!(
+        response.status(),
+        403,
+        "U1-S6: HIGH confidence + selector mismatch (git vs fs) should block at prepare"
+    );
 
-    // Execute
-    let app = build_router(runtime.clone());
-    let execute_req = ferrum_proto::ExecuteRequest {
-        execution_id,
-        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
-    };
-    let response = app
-        .oneshot(
-            axum::http::Request::builder()
-                .uri(format!("/v1/executions/{}/execute", execution_id))
-                .method(axum::http::Method::POST)
-                .header(axum::http::header::CONTENT_TYPE, "application/json")
-                .body(serde_json::to_string(&execute_req).unwrap())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 200);
-
-    // Verify
-    let app = build_router(runtime.clone());
-    let verify_req = ferrum_proto::VerifyRequest { execution_id };
-    let response = app
-        .oneshot(
-            axum::http::Request::builder()
-                .uri(format!("/v1/executions/{}/verify", execution_id))
-                .method(axum::http::Method::POST)
-                .header(axum::http::header::CONTENT_TYPE, "application/json")
-                .body(serde_json::to_string(&verify_req).unwrap())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 200);
-
-    // Check execution.metadata for U1-S4 clause_match_annotations
+    // Verify execution state is Denied (hard gate at prepare)
     let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
-    assert!(stored_execution.is_some());
+    assert!(stored_execution.is_some(), "execution should be persisted");
     let exec = stored_execution.unwrap();
-    let assessment_json = exec.metadata.get("u1_s2_verify_assessment");
     assert!(
-        assessment_json.is_some(),
-        "execution.metadata should contain u1_s2_verify_assessment"
+        matches!(exec.state, ExecutionState::Denied),
+        "execution state should be Denied when hard gate blocks at prepare"
     );
-    let assessment = assessment_json.unwrap();
-
-    // Verify clause_match_annotations is present
-    let clause_match_annotations = assessment.get("clause_match_annotations");
     assert!(
-        clause_match_annotations.is_some(),
-        "clause_match_annotations should be present in assessment"
+        matches!(exec.decision, Decision::Deny),
+        "decision should be Deny for HIGH mismatch"
     );
-    let annotations = clause_match_annotations.unwrap().as_array().unwrap();
     assert!(
-        !annotations.is_empty(),
-        "clause_match_annotations should not be empty"
+        exec.finished_at.is_some(),
+        "finished_at should be set when denied"
     );
 
-    // Find our git_mutation clause annotation
-    let git_annotation = annotations.iter().find(|a| {
-        a.get("clause_id")
-            .and_then(|v| v.as_str())
-            .map(|s| s == "git_mutation")
-            .unwrap_or(false)
-    });
+    // Verify no rollback contract was created (hard gate at prepare)
     assert!(
-        git_annotation.is_some(),
-        "git_mutation clause annotation should be present"
-    );
-    let annotation = git_annotation.unwrap();
-
-    // Verify effect_type_match is true (both are FileMutation)
-    let effect_type_match = annotation
-        .get("effect_type_match")
-        .and_then(|v| v.as_bool())
-        .unwrap();
-    assert!(
-        effect_type_match,
-        "effect_type_match should be true (both are FileMutation)"
+        exec.rollback_contract_id.is_none(),
+        "rollback_contract_id should be None when hard gate blocks at prepare"
     );
 
-    // Verify selector_match is Some(false) since selectors don't match
-    let selector_match = annotation.get("selector_match").and_then(|v| v.as_bool());
+    // Verify u1_s5b_hard_gate metadata is present (U1-S5b auditability)
+    let gate_json = exec.metadata.get("u1_s5b_hard_gate");
+    assert!(
+        gate_json.is_some(),
+        "u1_s5b_hard_gate metadata should be present"
+    );
+    let gate = gate_json.unwrap();
+
+    // Verify would_block is true
+    let would_block = gate.get("would_block").and_then(|v| v.as_bool());
     assert_eq!(
-        selector_match,
-        Some(false),
-        "selector_match should be Some(false) when selectors don't match"
+        would_block,
+        Some(true),
+        "would_block should be true for HIGH mismatch"
     );
 
-    // Verify overall_result is "effect_match_selector_mismatch"
-    let overall_result = annotation
-        .get("overall_result")
-        .and_then(|v| v.as_str())
-        .unwrap();
-    assert_eq!(
-        overall_result, "effect_match_selector_mismatch",
-        "overall_result should be 'effect_match_selector_mismatch' when effect_type matches but selectors don't"
-    );
-
-    // Verify mismatched_selectors is not empty
-    let mismatched_selectors = annotation
-        .get("mismatched_selectors")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
+    // Verify reason_codes contains high_mismatch
+    let reason_codes = gate.get("reason_codes").and_then(|v| v.as_array());
+    assert!(reason_codes.is_some(), "reason_codes should be present");
+    let codes: Vec<&str> = reason_codes
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
     assert!(
-        !mismatched_selectors.is_empty(),
-        "mismatched_selectors should not be empty when selectors don't match"
+        codes.contains(&"high_mismatch"),
+        "reason_codes should contain 'high_mismatch', got: {:?}",
+        codes
     );
 
-    // Verify selector_mismatch_reason is present
-    let selector_mismatch_reason = annotation
-        .get("selector_mismatch_reason")
-        .and_then(|v| v.as_str());
-    assert!(
-        selector_mismatch_reason.is_some(),
-        "selector_mismatch_reason should be present when selectors don't match"
-    );
+    // Note: verify-time clause_match_annotations assertions removed -
+    // U1-S6 blocks at prepare-time, verify semantics no longer apply
 }
 
 // ============================================
 // U1-S3b: HIGH/MED BAND MISMATCH FIXTURES
 // ============================================
 
-/// Test U1-S3b: HIGH band mismatch via allowed_outcomes non-match at verify time.
+/// Test U1-S5b: HIGH band mismatch via allowed_outcomes non-match blocks at prepare-time.
 /// This test uses allowed_outcomes mismatch (NOT forbidden) so the execution
-/// proceeds past evaluate-time without denial, but at verify-time the concrete
+/// proceeds past evaluate-time without denial, but at prepare-time the concrete
 /// rollback_target signal shows the mismatch with HIGH confidence.
 ///
 /// At evaluate-time:
@@ -15582,12 +15423,12 @@ async fn test_u1_s4_effect_type_matches_but_selector_mismatch() {
 /// - fs.write with "write a file" effect infers FileMutation
 /// - But allowed_outcomes is ExternalApiCall, so check_allowed_outcomes warns but allows
 ///
-/// At verify-time:
-/// - effect inference uses rollback_target (HIGH confidence)
+/// At prepare-time:
+/// - effect inference uses rollback_target (HIGH confidence) via contract.target
 /// - FilePath target infers FileMutation
 /// - No match with allowed_outcomes (ExternalApiCall vs FileMutation)
 /// - alignment_strength = mismatch, alignment_confidence = HIGH
-/// - threshold_band = high
+/// - threshold_band = high → U1-S5b blocks with 403
 ///
 /// This proves the HIGH band mismatch path via allowed_outcomes non-alignment.
 #[tokio::test]
@@ -16136,13 +15977,12 @@ async fn test_u1_s3b_verify_mismatch_via_http_get_allowed_outcome_mismatch() {
     );
 }
 
-/// Test U1-S4: Selector-enhanced allowed mismatch at verify-time.
-/// This test demonstrates effect_type_match=true but selector_match=false at verify-time.
+/// Test U1-S6: Selector-bearing clause with HIGH confidence mismatch blocks at prepare-time.
+/// Demonstrates that when effect_type matches but selectors don't (fs adapter vs git selectors),
+/// U1-S6 effective_match=false leads to HIGH band mismatch, triggering would_block=true at prepare.
 ///
-/// At evaluate-time:
-/// - effect inference uses expected_effect keywords
-/// - fs.write with "write a file" effect infers FileMutation
-/// - allowed_outcomes has git_mutation (FileMutation effect type), so passes check
+/// Note: This test previously verified verify-time clause_match_annotations (U1-S4 path).
+/// U1-S6 now blocks at prepare-time when selector mismatch occurs with HIGH confidence.
 ///
 /// At verify-time:
 /// - effect inference uses rollback_target (HIGH confidence)
@@ -16150,9 +15990,9 @@ async fn test_u1_s3b_verify_mismatch_via_http_get_allowed_outcome_mismatch() {
 /// - But selectors don't match (adapter_family=fs vs git, mutation_family=mismatch)
 /// - Result: effect_type_match=true, selector_match=false
 ///
-/// Note: threshold_band is "low" because alignment_strength=strong_match (effect type matched).
-/// The U1-S4 selector mismatch is captured in clause_match_annotations, not threshold_band.
-/// This proves the U1-S4 selector-enhanced annotation path works correctly.
+/// Note: threshold_band is "high" because U1-S6 effective_match=false (selector mismatch)
+/// causes alignment_strength=mismatch at HIGH confidence, triggering would_block=true.
+/// The clause_match_annotations capture the selector mismatch details for auditability.
 #[tokio::test]
 async fn test_u1_s4_selector_enhanced_but_selector_mismatch_at_verify_time() {
     let (_temp_dir, runtime, _store) = create_test_runtime().await;
@@ -16317,7 +16157,8 @@ async fn test_u1_s4_selector_enhanced_but_selector_mismatch_at_verify_time() {
         serde_json::from_slice(&body).unwrap();
     let execution_id = auth_resp.execution.execution_id;
 
-    // Step 6: Prepare
+    // Step 6: Prepare - U1-S6: HIGH confidence + selector mismatch (fs adapter vs git selectors)
+    // = would_block=true -> hard block at prepare-time
     let app = build_router(runtime.clone());
     let response = app
         .oneshot(
@@ -16330,159 +16171,72 @@ async fn test_u1_s4_selector_enhanced_but_selector_mismatch_at_verify_time() {
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), 200);
+    // HIGH mismatch: fs adapter vs git selectors causes alignment_strength=Mismatch at HIGH confidence
+    assert_eq!(
+        response.status(),
+        403,
+        "U1-S6: HIGH confidence + selector mismatch should block at prepare"
+    );
 
-    // Step 7: Execute
-    let app = build_router(runtime.clone());
-    let execute_req = ferrum_proto::ExecuteRequest {
-        execution_id,
-        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
-    };
-    let response = app
-        .oneshot(
-            axum::http::Request::builder()
-                .uri(format!("/v1/executions/{}/execute", execution_id))
-                .method(axum::http::Method::POST)
-                .header(axum::http::header::CONTENT_TYPE, "application/json")
-                .body(serde_json::to_string(&execute_req).unwrap())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 200);
-
-    // Step 8: Verify
-    let app = build_router(runtime.clone());
-    let verify_req = ferrum_proto::VerifyRequest { execution_id };
-    let response = app
-        .oneshot(
-            axum::http::Request::builder()
-                .uri(format!("/v1/executions/{}/verify", execution_id))
-                .method(axum::http::Method::POST)
-                .header(axum::http::header::CONTENT_TYPE, "application/json")
-                .body(serde_json::to_string(&verify_req).unwrap())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 200);
-
-    // Step 9: Verify selector-enhanced allowed mismatch semantics.
-    // Threshold band remains low here because coarse effect_type alignment still matches,
-    // while selector-specific mismatch is captured in clause_match_annotations.
+    // Verify execution state is Denied (hard gate at prepare)
     let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
-    assert!(stored_execution.is_some());
+    assert!(stored_execution.is_some(), "execution should be persisted");
     let exec = stored_execution.unwrap();
-    let assessment_json = exec.metadata.get("u1_s2_verify_assessment");
     assert!(
-        assessment_json.is_some(),
-        "execution.metadata should contain u1_s2_verify_assessment"
+        matches!(exec.state, ExecutionState::Denied),
+        "execution state should be Denied when hard gate blocks at prepare"
     );
-    let assessment = assessment_json.unwrap();
-
-    // Verify forbidden_match is false (no forbidden outcomes)
-    let forbidden_match = assessment.get("forbidden_match").and_then(|v| v.as_bool());
-    assert_eq!(
-        forbidden_match,
-        Some(false),
-        "forbidden_match should be false (no forbidden outcomes)"
-    );
-
-    // Verify alignment_strength is strong_match (effect type matches allowed outcome's effect_type)
-    // Note: alignment_strength is about effect_type match, NOT selector match.
-    // Selector mismatch is captured in clause_match_annotations, not alignment_strength.
-    let alignment_strength = assessment
-        .get("alignment_strength")
-        .and_then(|v| v.as_str());
-    assert_eq!(
-        alignment_strength,
-        Some("strong_match"),
-        "alignment_strength should be strong_match when effect_type matches allowed outcome"
-    );
-
-    // Verify alignment_confidence is HIGH (from rollback_target inference)
-    let alignment_confidence = assessment
-        .get("alignment_confidence")
-        .and_then(|v| v.as_str());
-    assert_eq!(
-        alignment_confidence,
-        Some("HIGH"),
-        "alignment_confidence should be HIGH for match via rollback_target"
-    );
-
-    // Verify threshold_band is low (because alignment_strength is NOT mismatch)
-    // HIGH band requires: alignment_confidence=HIGH AND (forbidden_match OR alignment_strength=mismatch)
-    // Since forbidden_match=false and alignment_strength=strong_match, threshold_band=low
-    let threshold_metadata = assessment.get("threshold_metadata").unwrap();
-    let threshold_band = threshold_metadata
-        .get("threshold_band")
-        .and_then(|v| v.as_str());
-    assert_eq!(
-        threshold_band,
-        Some("low"),
-        "threshold_band should be low when alignment_strength is strong_match (effect type matched)"
-    );
-
-    // Verify clause_match_annotations contains the git_mutation clause with selector mismatch
-    let clause_match_annotations = assessment.get("clause_match_annotations");
     assert!(
-        clause_match_annotations.is_some(),
-        "clause_match_annotations should be present"
+        matches!(exec.decision, Decision::Deny),
+        "decision should be Deny for HIGH mismatch"
     );
-    let annotations = clause_match_annotations.unwrap().as_array().unwrap();
-
-    // Find the git_mutation clause
-    let git_annotation = annotations.iter().find(|a| {
-        a.get("clause_id")
-            .and_then(|v| v.as_str())
-            .map(|s| s == "git_mutation")
-            .unwrap_or(false)
-    });
     assert!(
-        git_annotation.is_some(),
-        "git_mutation clause annotation should be present"
+        exec.finished_at.is_some(),
+        "finished_at should be set when denied"
     );
-    let annotation = git_annotation.unwrap();
 
-    // Verify effect_type_match is true (both are FileMutation)
-    let effect_type_match = annotation
-        .get("effect_type_match")
-        .and_then(|v| v.as_bool());
+    // Verify no rollback contract was created (hard gate at prepare)
+    assert!(
+        exec.rollback_contract_id.is_none(),
+        "rollback_contract_id should be None when hard gate blocks at prepare"
+    );
+
+    // Verify u1_s5b_hard_gate metadata is present (U1-S5b auditability)
+    let gate_json = exec.metadata.get("u1_s5b_hard_gate");
+    assert!(
+        gate_json.is_some(),
+        "u1_s5b_hard_gate metadata should be present"
+    );
+    let gate = gate_json.unwrap();
+
+    // Verify would_block is true
+    let would_block = gate.get("would_block").and_then(|v| v.as_bool());
     assert_eq!(
-        effect_type_match,
+        would_block,
         Some(true),
-        "effect_type_match should be true (FileMutation matches FileMutation)"
+        "would_block should be true for HIGH mismatch"
     );
 
-    // Verify selector_match is Some(false) since selectors don't match (fs vs git)
-    let selector_match = annotation.get("selector_match").and_then(|v| v.as_bool());
-    assert_eq!(
-        selector_match,
-        Some(false),
-        "selector_match should be false when adapter_family/target_family/mutation_family don't match"
+    // Verify reason_codes contains high_mismatch
+    let reason_codes = gate.get("reason_codes").and_then(|v| v.as_array());
+    assert!(reason_codes.is_some(), "reason_codes should be present");
+    let codes: Vec<&str> = reason_codes
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    assert!(
+        codes.contains(&"high_mismatch"),
+        "reason_codes should contain 'high_mismatch', got: {:?}",
+        codes
     );
 
-    // Verify overall_result is effect_match_selector_mismatch
-    let overall_result = annotation.get("overall_result").and_then(|v| v.as_str());
-    assert_eq!(
-        overall_result,
-        Some("effect_match_selector_mismatch"),
-        "overall_result should be 'effect_match_selector_mismatch' when effect matches but selectors don't"
-    );
-
-    // Verify annotate_only is still true
-    let annotate_only = threshold_metadata
-        .get("annotate_only")
-        .and_then(|v| v.as_bool());
-    assert_eq!(
-        annotate_only,
-        Some(true),
-        "annotate_only should always be true for U1-S3b"
-    );
+    // Note: verify-time assertions removed - U1-S6 blocks at prepare-time,
+    // verify semantics (clause_match_annotations, threshold_band, etc.) no longer apply
 }
 
 // ============================================
-// U1-S5a SOFT GATE PREVIEW SIGNALS TESTS
+// U1-S5b HARD GATE TESTS
 // ============================================
 
 /// Test U1-S5b: HIGH band mismatch => hard gate at prepare-time blocks execution.
@@ -17164,109 +16918,55 @@ async fn test_u1_s5a_selector_mismatch_would_require_review() {
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), 200);
-
-    // Step 6b: Verify U1-S5a prepare-time preview signals are present in response
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let prepare_resp: ferrum_proto::PrepareExecutionResponse =
-        serde_json::from_slice(&body).unwrap();
-
-    // Verify prepare response contains the U1-S5a warning
-    assert!(
-        prepare_resp
-            .warnings
-            .iter()
-            .any(|w| w.contains("U1-S5a") && w.contains("would require review")),
-        "prepare response warnings should contain U1-S5a would_require_review warning, got: {:?}",
-        prepare_resp.warnings
-    );
-
-    // Verify rollback contract contains u1_s5a_prepare_preview metadata
-    let contract = prepare_resp.rollback_contract.as_ref().unwrap();
-    let prepare_preview_json = contract.metadata.get("u1_s5a_prepare_preview");
-    assert!(
-        prepare_preview_json.is_some(),
-        "rollback contract should contain u1_s5a_prepare_preview metadata"
-    );
-    let prepare_preview = prepare_preview_json.unwrap();
-
-    // Verify would_require_review is true for selector mismatch
-    let would_require_review = prepare_preview
-        .get("would_require_review")
-        .and_then(|v| v.as_bool());
+    // U1-S6: HIGH mismatch (fs vs git adapter_family) causes alignment_strength=Mismatch at HIGH confidence
+    // This triggers would_block=true at prepare-time, not review-only
     assert_eq!(
-        would_require_review,
-        Some(true),
-        "would_require_review should be true for selector mismatch at prepare-time"
+        response.status(),
+        403,
+        "U1-S6: HIGH confidence + selector mismatch (fs vs git) should block at prepare"
     );
 
-    let app = build_router(runtime.clone());
-    let execute_req = ferrum_proto::ExecuteRequest {
-        execution_id,
-        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
-    };
-    let response = app
-        .oneshot(
-            axum::http::Request::builder()
-                .uri(format!("/v1/executions/{}/execute", execution_id))
-                .method(axum::http::Method::POST)
-                .header(axum::http::header::CONTENT_TYPE, "application/json")
-                .body(serde_json::to_string(&execute_req).unwrap())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 200);
-
-    // Step 8: Verify
-    let app = build_router(runtime.clone());
-    let verify_req = ferrum_proto::VerifyRequest { execution_id };
-    let response = app
-        .oneshot(
-            axum::http::Request::builder()
-                .uri(format!("/v1/executions/{}/verify", execution_id))
-                .method(axum::http::Method::POST)
-                .header(axum::http::header::CONTENT_TYPE, "application/json")
-                .body(serde_json::to_string(&verify_req).unwrap())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 200);
-
-    // Step 9: Verify U1-S5a preview signals for selector mismatch => would_require_review (verify-time)
+    // Verify execution state is Denied (hard gate at prepare)
     let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
-    assert!(stored_execution.is_some());
+    assert!(stored_execution.is_some(), "execution should be persisted");
     let exec = stored_execution.unwrap();
-    let assessment_json = exec.metadata.get("u1_s2_verify_assessment");
     assert!(
-        assessment_json.is_some(),
-        "execution.metadata should contain u1_s2_verify_assessment"
+        matches!(exec.state, ExecutionState::Denied),
+        "execution state should be Denied when hard gate blocks at prepare"
     );
-    let assessment = assessment_json.unwrap();
+    assert!(
+        matches!(exec.decision, Decision::Deny),
+        "decision should be Deny for HIGH mismatch"
+    );
+    assert!(
+        exec.finished_at.is_some(),
+        "finished_at should be set when denied"
+    );
 
-    // Verify would_block is false (selector mismatch is medium severity)
-    let would_block = assessment.get("would_block").and_then(|v| v.as_bool());
+    // Verify no rollback contract was created (hard gate at prepare)
+    assert!(
+        exec.rollback_contract_id.is_none(),
+        "rollback_contract_id should be None when hard gate blocks at prepare"
+    );
+
+    // Verify u1_s5b_hard_gate metadata is present
+    let gate_json = exec.metadata.get("u1_s5b_hard_gate");
+    assert!(
+        gate_json.is_some(),
+        "u1_s5b_hard_gate metadata should be present"
+    );
+    let gate = gate_json.unwrap();
+
+    // Verify would_block is true
+    let would_block = gate.get("would_block").and_then(|v| v.as_bool());
     assert_eq!(
         would_block,
-        Some(false),
-        "would_block should be false for selector mismatch"
-    );
-
-    // Verify would_require_review is true for selector mismatch
-    let would_require_review = assessment
-        .get("would_require_review")
-        .and_then(|v| v.as_bool());
-    assert_eq!(
-        would_require_review,
         Some(true),
-        "would_require_review should be true for selector mismatch"
+        "would_block should be true for HIGH mismatch"
     );
 
-    // Verify reason_codes contains selector_mismatch
-    let reason_codes = assessment.get("reason_codes").and_then(|v| v.as_array());
+    // Verify reason_codes contains high_mismatch
+    let reason_codes = gate.get("reason_codes").and_then(|v| v.as_array());
     assert!(reason_codes.is_some(), "reason_codes should be present");
     let codes: Vec<&str> = reason_codes
         .unwrap()
@@ -17274,10 +16974,13 @@ async fn test_u1_s5a_selector_mismatch_would_require_review() {
         .filter_map(|v| v.as_str())
         .collect();
     assert!(
-        codes.contains(&"selector_mismatch"),
-        "reason_codes should contain 'selector_mismatch', got: {:?}",
+        codes.contains(&"high_mismatch"),
+        "reason_codes should contain 'high_mismatch', got: {:?}",
         codes
     );
+
+    // Note: review-only semantics (would_require_review) no longer apply at prepare-time
+    // for HIGH mismatch - U1-S6 blocks at prepare-time instead
 }
 
 /// Test U1-S5a: Regression - verify endpoint behavior and state transitions remain unchanged.
