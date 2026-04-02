@@ -1,7 +1,7 @@
 # 09 — Phase checklists
 
 Single-node v1 scope. Items marked [DONE], [PARTIAL], [TODO] per `docs/91-phase-success-criteria-and-kpis.md` phase status snapshot.
-As of 2026-03-29 all P0/P1/P2 items are closed. Phase D adapters are skeleton-only (partial); real implementations are post-v1 backlog.
+As of 2026-04-02 all P0/P1/P2 items are closed. Phase D adapters have bounded local implementations (fs, sqlite, maildraft, git, http); broader production hardening is post-v1 backlog.
 
 ## Phase A — Compile and Shape Stability
 - [DONE] cargo check pass
@@ -21,11 +21,13 @@ As of 2026-03-29 all P0/P1/P2 items are closed. Phase D adapters are skeleton-on
 - [DONE] poisoned context regression fixtures (6 curated fixtures)
 
 ## Phase D — Adapter-backed Rollback
-- [PARTIAL] fs adapter (skeleton exists; real implementation post-v1)
-- [PARTIAL] sqlite adapter (skeleton exists; real implementation post-v1)
-- [PARTIAL] maildraft adapter (skeleton exists; real implementation post-v1)
-- [DONE] rollback/compensate service (via NoopRollbackAdapter for integration tests)
-- Note: Real adapter implementations are post-v1 backlog per `docs/implementation-path/11-remaining-tasks.md` P3.
+- [PARTIAL] fs adapter (bounded local implementation; broader hardening post-v1)
+- [PARTIAL] sqlite adapter (bounded local implementation; broader hardening post-v1)
+- [PARTIAL] maildraft adapter (bounded local implementation; broader hardening post-v1)
+- [PARTIAL] git adapter (bounded local implementation; broader hardening post-v1)
+- [PARTIAL] http adapter (bounded local implementation; broader hardening post-v1)
+- [DONE] rollback/compensate service (via NoopRollbackAdapter for integration tests where adapter surface not exercised)
+- Note: Broader production hardening for all adapters is post-v1 backlog per `docs/implementation-path/11-remaining-tasks.md` P3.
 
 ## Phase E — Gateway Orchestration
 - [DONE] gateway calls pdp

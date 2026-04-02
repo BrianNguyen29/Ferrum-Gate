@@ -31,12 +31,12 @@ Muc tieu la de **AI agents hoac engineers khac co the bam vao va hoan thien tiep
 FerrumGate dang o **single-node v1 RC candidate**.
 Phan core cua workspace da compile, gateway orchestration da co, SQLite persistence da hoat dong, integration tests da pass.
 
-### RC gates as of 2026-03-29
+### RC gates as of 2026-04-02
 
 - **P0/P1/P2 closed** for single-node v1 RC.
 - **Supported in v1 contract** = single-node SQLite governance core only. See [19-v1-single-node-support-contract.md](./docs/19-v1-single-node-support-contract.md).
-- **Partial** = adapter crates and limited `ferrumctl` inspect surface.
-- **Post-v1** = real adapters, multi-node/HA/read-replica, U1-U4.
+- **Partial** = bounded local adapter implementations (fs, sqlite, maildraft, git, http) plus limited `ferrumctl` inspect surface; broader production hardening is post-v1 backlog.
+- **Post-v1** = broader adapter hardening, multi-node/HA/read-replica, remaining U1 authoring/expressiveness work, and U2-U4.
 
 ### Nhung phan da co
 
@@ -50,9 +50,9 @@ Phan core cua workspace da compile, gateway orchestration da co, SQLite persiste
 
 ### Nhung phan nam ngoai v1 scope (post-v1)
 
-- real adapter implementations (fs, sqlite, maildraft, git, http)
+- broader adapter hardening and production verification for fs/sqlite/maildraft/git/http
 - multi-node / HA / read-replica
-- Outcome-aware Governance (U1)
+- richer Outcome-aware Governance expressiveness and operator/migration tooling
 - Reversible Execution Planner (U2)
 - Cross-runtime Provenance Fabric (U3)
 - Runtime Integrations MCP/local/NemoClaw (U4)
