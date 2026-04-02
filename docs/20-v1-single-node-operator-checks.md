@@ -24,6 +24,7 @@ v1 single-node instance. For support scope, limits, and known caveats, see:
 |---|---|---|---|
 | Shallow process health | `ferrumctl server health` | `GET /v1/healthz` | No auth required |
 | Shallow readiness | — | `GET /v1/readyz` | No auth required; shallow only |
+| Minimum functional readiness probe | `ferrumctl server inspect-approvals` | `GET /v1/approvals?limit=1` | Required after startup; requires bearer auth when `auth_mode=bearer` |
 | Inspect execution record | `ferrumctl server inspect-execution <id>` | `GET /v1/executions/<id>` | Requires bearer auth |
 | List approvals (unpaginated) | `ferrumctl server inspect-approvals` | `GET /v1/approvals` | Requires bearer auth |
 | Inspect single approval | `ferrumctl server inspect-approval <id>` | `GET /v1/approvals/<id>` | Requires bearer auth |
@@ -67,7 +68,7 @@ curl http://127.0.0.1:8080/v1/readyz
 # Expected: 200 OK, {"status":"ready"}
 ```
 
-### Step 3 — Functional probe via CLI (requires bearer auth)
+### Step 3 — Required functional probe (`auth_mode=bearer`)
 
 Set up the environment:
 
@@ -76,24 +77,25 @@ export FERRUMCTL_SERVER_URL=http://127.0.0.1:8080
 export FERRUMCTL_BEARER_TOKEN="$FERRUM_BEARER_TOKEN"
 ```
 
-Then run the functional probe:
+Then run at least one functional probe:
 
 ```bash
-ferrumctl server health
-# Fetches GET /v1/healthz via CLI; confirms connectivity and JSON parse
-```
+ferrumctl server inspect-approvals
+# Returns approvals data (possibly empty) through the authenticated API
 
-If the CLI health succeeds, the HTTP endpoint is reachable and responding.
-If it fails, check the ferrumd logs for startup errors.
-
-### Step 4 — Verify approvals reachable (functional probe)
-
-```bash
-# HTTP functional probe — returns empty list or live approvals
 curl http://127.0.0.1:8080/v1/approvals?limit=1 \
   -H "Authorization: Bearer $FERRUM_BEARER_TOKEN"
 # Expected: 200 OK, {"items":[...]} or {"items":[]} (empty list is normal)
-# Note: omit -H flag when auth_mode=disabled
+```
+
+Do not treat `ferrumctl server health` as a functional probe. It only checks the
+shallow health endpoint.
+
+### Step 4 — Required functional probe (`auth_mode=disabled`)
+
+```bash
+curl http://127.0.0.1:8080/v1/approvals?limit=1
+# Expected: 200 OK, {"items":[...]} or {"items":[]} (empty list is normal)
 ```
 
 A successful response (200 with valid JSON) confirms the store, auth, and

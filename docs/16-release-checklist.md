@@ -33,3 +33,4 @@ Single-node v1 scope. Last updated: 2026-04-02.
 - [x] CLI huu ich toi thieu (server health/inspect-execution/inspect-approvals/inspect-approval/inspect-lineage/inspect-provenance)
 - [x] lineage usable (GET /v1/provenance/lineage/{execution_id} implemented)
 - [x] approval flow documented (GET /v1/approvals, GET /v1/approvals/{approval_id} implemented)
+- [x] startup SOP requires a functional readiness probe after healthz/readyz; shallow checks alone are not sufficient
