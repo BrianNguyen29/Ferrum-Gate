@@ -1862,6 +1862,7 @@ mod tests {
             tags: Vec::new(),
             metadata: ferrum_proto::JsonMap::new(),
             status: ferrum_proto::IntentStatus::Active,
+            policy_bundle_fingerprint: None,
             created_at: chrono::Utc::now(),
             expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
         }
@@ -1901,6 +1902,7 @@ mod tests {
             tags: Vec::new(),
             metadata: ferrum_proto::JsonMap::new(),
             status: ferrum_proto::IntentStatus::Active,
+            policy_bundle_fingerprint: None,
             created_at: chrono::Utc::now(),
             expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
         }

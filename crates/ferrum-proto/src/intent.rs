@@ -26,6 +26,10 @@ pub struct IntentEnvelope {
     pub tags: Vec<String>,
     pub metadata: JsonMap,
     pub status: IntentStatus,
+    /// U1-S9a: Deterministic policy bundle fingerprint derived from authored
+    /// outcome contracts (allowed_outcomes/forbidden_outcomes and selectors).
+    /// Used to derive PolicyBundleId for capability/provenance traceability.
+    pub policy_bundle_fingerprint: Option<String>,
     pub created_at: Timestamp,
     pub expires_at: Timestamp,
 }

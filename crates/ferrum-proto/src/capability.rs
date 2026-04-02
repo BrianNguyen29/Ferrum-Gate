@@ -111,6 +111,10 @@ pub struct CapabilityMintRequest {
     pub taint_budget: TaintBudget,
     pub approval_binding: Option<ApprovalBinding>,
     pub requested_ttl_secs: u64,
+    /// U1-S9a: Optional pre-computed policy bundle ID.
+    /// When provided, the capability service uses this instead of generating a random one.
+    /// Derived deterministically from the intent's outcome contracts.
+    pub policy_bundle_id: Option<PolicyBundleId>,
     pub metadata: JsonMap,
 }
 

@@ -186,6 +186,7 @@ async fn seed_committed_execution(
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -705,6 +706,7 @@ async fn seed_authorized_execution(client: &Client, server_url: &str) -> ferrum_
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -964,6 +966,7 @@ async fn seed_running_execution(
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -1496,6 +1499,7 @@ async fn seed_prepared_execution(
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 

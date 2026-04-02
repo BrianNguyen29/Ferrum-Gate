@@ -207,6 +207,7 @@ async fn create_execution_with_events(
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
     let app = build_router(runtime.clone());
@@ -1876,6 +1877,7 @@ async fn test_lineage_query_happy_path_ancestry() {
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -2135,6 +2137,7 @@ async fn test_lineage_query_max_hops_respected() {
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 

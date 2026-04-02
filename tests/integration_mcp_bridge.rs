@@ -157,6 +157,7 @@ async fn create_execution_with_events(
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: JsonMap::new(),
     };
     let app = build_router(runtime.clone());

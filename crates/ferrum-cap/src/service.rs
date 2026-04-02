@@ -54,6 +54,10 @@ impl CapabilityService for InMemoryCapabilityService {
             return Err(CapabilityError::TtlTooLong);
         }
 
+        // U1-S9a: Use provided policy_bundle_id if given, otherwise generate a random one.
+        // The provided ID is derived deterministically from the intent's outcome contracts.
+        let policy_bundle_id = request.policy_bundle_id.unwrap_or_else(PolicyBundleId::new);
+
         let now = Utc::now();
         let lease = CapabilityLease {
             capability_id: CapabilityId::new(),
@@ -65,7 +69,7 @@ impl CapabilityService for InMemoryCapabilityService {
             taint_budget: request.taint_budget,
             approval_binding: request.approval_binding,
             issued_by: "ferrum-cap".to_string(),
-            policy_bundle_id: PolicyBundleId::new(),
+            policy_bundle_id,
             tool_manifest_id: None,
             manifest_hash: None,
             status: CapabilityStatus::Active,

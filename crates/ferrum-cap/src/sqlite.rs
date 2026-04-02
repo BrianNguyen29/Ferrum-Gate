@@ -36,6 +36,10 @@ impl CapabilityService for SqliteCapabilityService {
             return Err(CapabilityError::TtlTooLong);
         }
 
+        // U1-S9a: Use provided policy_bundle_id if given, otherwise generate a random one.
+        // The provided ID is derived deterministically from the intent's outcome contracts.
+        let policy_bundle_id = request.policy_bundle_id.unwrap_or_else(PolicyBundleId::new);
+
         let now = Utc::now();
         let lease = CapabilityLease {
             capability_id: CapabilityId::new(),
@@ -47,7 +51,7 @@ impl CapabilityService for SqliteCapabilityService {
             taint_budget: request.taint_budget,
             approval_binding: request.approval_binding,
             issued_by: "ferrum-cap".to_string(),
-            policy_bundle_id: PolicyBundleId::new(),
+            policy_bundle_id,
             tool_manifest_id: None,
             manifest_hash: None,
             status: CapabilityStatus::Active,
@@ -196,6 +200,7 @@ mod tests {
             },
             approval_binding: None,
             requested_ttl_secs: ttl_secs,
+            policy_bundle_id: None,
             metadata: ferrum_proto::JsonMap::new(),
         }
     }
@@ -238,6 +243,7 @@ mod tests {
             tags: vec!["test".to_string()],
             metadata: ferrum_proto::JsonMap::new(),
             status: ferrum_proto::IntentStatus::Active,
+            policy_bundle_fingerprint: None,
             created_at: Utc::now(),
             expires_at: Utc::now() + Duration::minutes(15),
         }

@@ -174,6 +174,7 @@ async fn seed_capability(client: &Client, server_url: &str) -> ferrum_proto::Cap
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 

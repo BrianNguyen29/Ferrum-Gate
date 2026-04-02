@@ -652,6 +652,7 @@ async fn test_prepare_uses_persisted_effective_rollback_class_not_downgraded_cal
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -1145,6 +1146,7 @@ async fn test_full_happy_path_flow_compile_evaluate_mint_authorize_prepare() {
         },
         approval_binding: None,
         requested_ttl_secs: 60, // Max allowed is 300 seconds
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -1414,6 +1416,7 @@ async fn run_flow_to_prepared(
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -1823,6 +1826,7 @@ async fn test_quarantine_path_blocks_execution_advance() {
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -2243,6 +2247,7 @@ async fn test_prepare_execution_blocks_quarantined_state() {
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -2407,6 +2412,7 @@ async fn test_authorize_execution_blocks_proposal_capability_mismatch() {
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -2678,6 +2684,7 @@ async fn test_full_approval_flow_approve_then_prepare_succeeds() {
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -2968,6 +2975,7 @@ async fn test_approval_denial_flow_blocks_execution() {
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -3211,6 +3219,7 @@ async fn test_get_approval_by_id() {
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -3521,6 +3530,7 @@ async fn test_high_severity_contradiction_fail_closed() {
         tags: Vec::new(),
         metadata: ferrum_proto::JsonMap::new(),
         status: ferrum_proto::IntentStatus::Active,
+        policy_bundle_fingerprint: None,
         created_at: chrono::Utc::now(),
         expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
     };
@@ -3636,6 +3646,7 @@ async fn test_effect_classifier_word_boundary_safety() {
         tags: Vec::new(),
         metadata: ferrum_proto::JsonMap::new(),
         status: ferrum_proto::IntentStatus::Active,
+        policy_bundle_fingerprint: None,
         created_at: chrono::Utc::now(),
         expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
     };
@@ -3748,6 +3759,7 @@ async fn test_draft_only_flow_dry_run_succeeds() {
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -3895,6 +3907,7 @@ async fn test_draft_only_flow_non_dry_run_is_denied() {
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -4539,6 +4552,7 @@ async fn run_http_flow_to_prepared(
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -4695,6 +4709,7 @@ async fn run_file_flow_to_prepared(
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -5070,6 +5085,7 @@ async fn test_http_execution_denied_missing_binding() {
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
     let response = app
@@ -5495,6 +5511,7 @@ async fn run_sqlite_flow_to_prepared_with_scope(
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -6120,6 +6137,7 @@ async fn run_git_flow_to_prepared_with_scope(
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -6525,6 +6543,7 @@ async fn test_prepare_with_readwrite_git_binding_routes_to_git_adapter() {
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -6765,6 +6784,7 @@ async fn run_git_flow_to_prepared_with_real_repo(
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -7336,6 +7356,7 @@ async fn run_email_flow_to_prepared_with_rollback_class(
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -7740,6 +7761,7 @@ async fn test_scope_mismatch_denied_at_mint_time() {
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -7985,6 +8007,7 @@ async fn test_r3_no_auto_commit_after_approval_requires_explicit_commit() {
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -8356,6 +8379,7 @@ async fn test_empty_scope_denies_any_binding() {
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -8478,6 +8502,7 @@ async fn test_read_scope_denies_readwrite_binding() {
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -8600,6 +8625,7 @@ async fn test_readwrite_scope_allows_read_binding() {
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -8749,6 +8775,7 @@ async fn test_adapter_backed_rollback_deletes_created_file() {
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -9038,6 +9065,7 @@ async fn test_adapter_backed_compensate_restores_overwritten_file() {
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -9326,6 +9354,7 @@ async fn test_adapter_backed_sqlite_compensate_restores_updated_row() {
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -9747,6 +9776,7 @@ async fn run_email_flow_to_authorized(
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -10301,6 +10331,7 @@ async fn test_http_execute_and_verify_through_gateway_uses_payload_url_within_sc
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -10629,6 +10660,7 @@ async fn test_http_post_execute_and_verify_through_gateway_after_approval() {
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -10942,6 +10974,7 @@ async fn test_http_post_execute_and_verify_with_bearer_auth_through_gateway_afte
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -11253,6 +11286,7 @@ async fn test_http_execute_denied_when_bearer_auth_missing_from_header_allowlist
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -11507,6 +11541,7 @@ async fn test_http_rollback_through_gateway_is_conservative_noop() {
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -11755,6 +11790,7 @@ async fn test_http_500_does_not_verify_and_does_not_auto_commit_r0() {
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -12008,6 +12044,7 @@ async fn test_http_execute_succeeds_with_basic_auth_through_full_flow() {
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -12328,6 +12365,7 @@ async fn test_http_execute_denied_when_basic_auth_missing_from_header_allowlist(
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -12600,6 +12638,7 @@ async fn test_http_execute_succeeds_with_api_key_auth_through_full_flow() {
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -12972,6 +13011,7 @@ async fn test_http_execute_denied_when_api_key_auth_missing_from_header_allowlis
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -13211,6 +13251,7 @@ async fn run_flow_to_running(runtime: &GatewayRuntime) -> ferrum_proto::Executio
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -13609,6 +13650,7 @@ async fn create_intent_with_outcomes(
         tags: vec![],
         metadata: ferrum_proto::JsonMap::new(),
         status: ferrum_proto::IntentStatus::Active,
+        policy_bundle_fingerprint: None,
         created_at: chrono::Utc::now(),
         expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
     };
@@ -15098,6 +15140,7 @@ async fn test_u1_s4_selector_enhanced_clause_match() {
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -15296,6 +15339,7 @@ async fn test_u1_s4_effect_type_matches_but_selector_mismatch() {
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -15556,6 +15600,7 @@ async fn test_u1_s3b_high_band_mismatch_via_allowed_outcome_non_match() {
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -15847,6 +15892,7 @@ async fn test_u1_s3b_verify_mismatch_via_http_get_allowed_outcome_mismatch() {
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -16123,6 +16169,7 @@ async fn test_u1_s4_selector_enhanced_but_selector_mismatch_at_verify_time() {
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -16369,6 +16416,7 @@ async fn test_u1_s5b_high_mismatch_blocks_at_prepare_time() {
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -16671,6 +16719,7 @@ async fn test_u1_s5b_post_deny_state_guard_prevents_reprepare() {
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -16874,6 +16923,7 @@ async fn test_u1_s5a_selector_mismatch_would_require_review() {
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -17251,6 +17301,7 @@ async fn test_u1_s7a_list_based_selector_match_success() {
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -17455,6 +17506,7 @@ async fn test_u1_s7a_list_based_selector_mismatch() {
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -17663,6 +17715,7 @@ async fn test_u1_s7a_scalar_list_union_semantics() {
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -17962,6 +18015,7 @@ async fn test_u1_s7a_scalar_hit_list_miss_or_semantics() {
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -18173,6 +18227,7 @@ async fn test_compile_with_explicit_selector_outcomes_allow_match_prepare_200() 
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -18374,6 +18429,7 @@ async fn test_compile_with_explicit_selector_outcomes_allow_mismatch_prepare_403
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -18735,5 +18791,750 @@ async fn test_compile_with_forbidden_only_succeeds() {
     assert_eq!(
         compile_resp.envelope.forbidden_outcomes[0].id, "forbidden-git",
         "U1-S8a: forbidden outcome should have id 'forbidden-git'"
+    );
+}
+
+// ============================================
+// U1-S9a: POLICY BUNDLE FINGERPRINT CANONICALIZATION TESTS
+// ============================================
+
+/// U1-S9a: Reordered equivalent allowed_outcomes produce the same fingerprint.
+/// This proves canonicalization is order-stable for authored outcome contracts.
+#[tokio::test]
+async fn test_policy_bundle_fingerprint_reorder_stability_allowed_outcomes() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Compile intent with allowed_outcomes in order [a, b]
+    let mut req1 = sample_intent_request();
+    req1.allowed_outcomes = Some(vec![
+        OutcomeClause {
+            id: "outcome-a".to_string(),
+            description: "Outcome A".to_string(),
+            effect_type: EffectType::ReadOnlyAnalysis,
+            required: true,
+            selectors: None,
+        },
+        OutcomeClause {
+            id: "outcome-b".to_string(),
+            description: "Outcome B".to_string(),
+            effect_type: EffectType::FileMutation,
+            required: false,
+            selectors: None,
+        },
+    ]);
+    req1.forbidden_outcomes = None;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req1).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp1: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let fingerprint1 = compile_resp1.envelope.policy_bundle_fingerprint.clone();
+
+    // Compile intent with allowed_outcomes in reversed order [b, a]
+    let mut req2 = sample_intent_request();
+    req2.allowed_outcomes = Some(vec![
+        OutcomeClause {
+            id: "outcome-b".to_string(),
+            description: "Outcome B".to_string(),
+            effect_type: EffectType::FileMutation,
+            required: false,
+            selectors: None,
+        },
+        OutcomeClause {
+            id: "outcome-a".to_string(),
+            description: "Outcome A".to_string(),
+            effect_type: EffectType::ReadOnlyAnalysis,
+            required: true,
+            selectors: None,
+        },
+    ]);
+    req2.forbidden_outcomes = None;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req2).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp2: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let fingerprint2 = compile_resp2.envelope.policy_bundle_fingerprint.clone();
+
+    // U1-S9a: Reordered equivalent contracts MUST produce the same fingerprint
+    assert_eq!(
+        fingerprint1, fingerprint2,
+        "U1-S9a: Reordered equivalent allowed_outcomes should produce the same policy_bundle_fingerprint"
+    );
+}
+
+/// U1-S9a: Reordered equivalent forbidden_outcomes produce the same fingerprint.
+#[tokio::test]
+async fn test_policy_bundle_fingerprint_reorder_stability_forbidden_outcomes() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Compile intent with forbidden_outcomes in order [x, y]
+    let mut req1 = sample_intent_request();
+    req1.forbidden_outcomes = Some(vec![
+        OutcomeClause {
+            id: "forbid-x".to_string(),
+            description: "Forbidden X".to_string(),
+            effect_type: EffectType::FileMutation,
+            required: false,
+            selectors: None,
+        },
+        OutcomeClause {
+            id: "forbid-y".to_string(),
+            description: "Forbidden Y".to_string(),
+            effect_type: EffectType::ExternalApiCall,
+            required: false,
+            selectors: None,
+        },
+    ]);
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req1).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp1: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let fingerprint1 = compile_resp1.envelope.policy_bundle_fingerprint.clone();
+
+    // Compile intent with forbidden_outcomes in reversed order [y, x]
+    let mut req2 = sample_intent_request();
+    req2.forbidden_outcomes = Some(vec![
+        OutcomeClause {
+            id: "forbid-y".to_string(),
+            description: "Forbidden Y".to_string(),
+            effect_type: EffectType::ExternalApiCall,
+            required: false,
+            selectors: None,
+        },
+        OutcomeClause {
+            id: "forbid-x".to_string(),
+            description: "Forbidden X".to_string(),
+            effect_type: EffectType::FileMutation,
+            required: false,
+            selectors: None,
+        },
+    ]);
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req2).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp2: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let fingerprint2 = compile_resp2.envelope.policy_bundle_fingerprint.clone();
+
+    // U1-S9a: Reordered equivalent contracts MUST produce the same fingerprint
+    assert_eq!(
+        fingerprint1, fingerprint2,
+        "U1-S9a: Reordered equivalent forbidden_outcomes should produce the same policy_bundle_fingerprint"
+    );
+}
+
+/// U1-S9a: Changed clause content produces a different fingerprint.
+#[tokio::test]
+async fn test_policy_bundle_fingerprint_changed_clause_content_different_identity() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Compile intent with allowed_outcomes containing [outcome-a]
+    let mut req1 = sample_intent_request();
+    req1.allowed_outcomes = Some(vec![OutcomeClause {
+        id: "outcome-a".to_string(),
+        description: "Outcome A".to_string(),
+        effect_type: EffectType::ReadOnlyAnalysis,
+        required: true,
+        selectors: None,
+    }]);
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req1).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp1: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let fingerprint1 = compile_resp1.envelope.policy_bundle_fingerprint.clone();
+
+    // Compile intent with DIFFERENT allowed_outcomes - same id but different effect_type
+    let mut req2 = sample_intent_request();
+    req2.allowed_outcomes = Some(vec![OutcomeClause {
+        id: "outcome-a".to_string(),
+        description: "Outcome A".to_string(),
+        effect_type: EffectType::FileMutation, // CHANGED: was ReadOnlyAnalysis
+        required: true,
+        selectors: None,
+    }]);
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req2).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp2: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let fingerprint2 = compile_resp2.envelope.policy_bundle_fingerprint.clone();
+
+    // U1-S9a: Changed clause content MUST produce a different fingerprint
+    assert_ne!(
+        fingerprint1, fingerprint2,
+        "U1-S9a: Changed clause content should produce a different policy_bundle_fingerprint"
+    );
+}
+
+/// U1-S9a: Different number of clauses produces a different fingerprint.
+#[tokio::test]
+async fn test_policy_bundle_fingerprint_different_clause_count_different_identity() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Compile intent with single allowed outcome
+    let mut req1 = sample_intent_request();
+    req1.allowed_outcomes = Some(vec![OutcomeClause {
+        id: "outcome-single".to_string(),
+        description: "Single outcome".to_string(),
+        effect_type: EffectType::ReadOnlyAnalysis,
+        required: true,
+        selectors: None,
+    }]);
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req1).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp1: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let fingerprint1 = compile_resp1.envelope.policy_bundle_fingerprint.clone();
+
+    // Compile intent with TWO allowed outcomes (same first outcome)
+    let mut req2 = sample_intent_request();
+    req2.allowed_outcomes = Some(vec![
+        OutcomeClause {
+            id: "outcome-single".to_string(),
+            description: "Single outcome".to_string(),
+            effect_type: EffectType::ReadOnlyAnalysis,
+            required: true,
+            selectors: None,
+        },
+        OutcomeClause {
+            id: "outcome-second".to_string(),
+            description: "Second outcome".to_string(),
+            effect_type: EffectType::FileMutation,
+            required: false,
+            selectors: None,
+        },
+    ]);
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req2).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp2: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let fingerprint2 = compile_resp2.envelope.policy_bundle_fingerprint.clone();
+
+    // U1-S9a: Different clause count MUST produce a different fingerprint
+    assert_ne!(
+        fingerprint1, fingerprint2,
+        "U1-S9a: Different number of clauses should produce a different policy_bundle_fingerprint"
+    );
+}
+
+/// U1-S9a: Selector list fields are sorted for canonicalization.
+#[tokio::test]
+async fn test_policy_bundle_fingerprint_selector_list_order_stability() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Compile intent with selectors containing adapter_family_in in order [z, a, m]
+    let mut req1 = sample_intent_request();
+    req1.allowed_outcomes = Some(vec![OutcomeClause {
+        id: "outcome-with-selectors".to_string(),
+        description: "Outcome with selectors".to_string(),
+        effect_type: EffectType::ReadOnlyAnalysis,
+        required: true,
+        selectors: Some(OutcomeSelectors {
+            adapter_family: None,
+            adapter_family_in: Some(vec!["z".to_string(), "a".to_string(), "m".to_string()]),
+            target_family: None,
+            target_family_in: None,
+            request_class: None,
+            request_class_in: None,
+            mutation_family: None,
+            mutation_family_in: None,
+        }),
+    }]);
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req1).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp1: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let fingerprint1 = compile_resp1.envelope.policy_bundle_fingerprint.clone();
+
+    // Compile intent with same selectors but in different order [a, m, z]
+    let mut req2 = sample_intent_request();
+    req2.allowed_outcomes = Some(vec![OutcomeClause {
+        id: "outcome-with-selectors".to_string(),
+        description: "Outcome with selectors".to_string(),
+        effect_type: EffectType::ReadOnlyAnalysis,
+        required: true,
+        selectors: Some(OutcomeSelectors {
+            adapter_family: None,
+            adapter_family_in: Some(vec!["a".to_string(), "m".to_string(), "z".to_string()]),
+            target_family: None,
+            target_family_in: None,
+            request_class: None,
+            request_class_in: None,
+            mutation_family: None,
+            mutation_family_in: None,
+        }),
+    }]);
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req2).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp2: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let fingerprint2 = compile_resp2.envelope.policy_bundle_fingerprint.clone();
+
+    // U1-S9a: Selector lists in different order MUST produce the same fingerprint
+    assert_eq!(
+        fingerprint1, fingerprint2,
+        "U1-S9a: Selector list field order should not affect policy_bundle_fingerprint"
+    );
+}
+
+/// U1-S9a: Capability mint propagates the same policy_bundle_id for reordered outcome contracts.
+#[tokio::test]
+async fn test_capability_mint_propagates_same_policy_bundle_id_for_reordered_contracts() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Compile intent with allowed_outcomes in order [a, b]
+    let mut req1 = sample_intent_request();
+    req1.allowed_outcomes = Some(vec![
+        OutcomeClause {
+            id: "outcome-a".to_string(),
+            description: "Outcome A".to_string(),
+            effect_type: EffectType::ReadOnlyAnalysis,
+            required: true,
+            selectors: None,
+        },
+        OutcomeClause {
+            id: "outcome-b".to_string(),
+            description: "Outcome B".to_string(),
+            effect_type: EffectType::FileMutation,
+            required: false,
+            selectors: None,
+        },
+    ]);
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req1).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp1: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id1 = compile_resp1.envelope.intent_id;
+    let fingerprint1 = compile_resp1.envelope.policy_bundle_fingerprint.clone();
+
+    // Evaluate proposal for intent1
+    let proposal1 = sample_proposal(intent_id1);
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal1.proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal1).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Mint capability for intent1
+    let app = build_router(runtime.clone());
+    let mint_req1 = CapabilityMintRequest {
+        intent_id: intent_id1,
+        proposal_id: proposal1.proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "workspace".to_string(),
+            tool_name: "fs.read".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        policy_bundle_id: None,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req1).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp1: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let policy_bundle_id1 = mint_resp1.lease.policy_bundle_id;
+
+    // Now compile intent with same content but reordered [b, a]
+    let mut req2 = sample_intent_request();
+    req2.allowed_outcomes = Some(vec![
+        OutcomeClause {
+            id: "outcome-b".to_string(),
+            description: "Outcome B".to_string(),
+            effect_type: EffectType::FileMutation,
+            required: false,
+            selectors: None,
+        },
+        OutcomeClause {
+            id: "outcome-a".to_string(),
+            description: "Outcome A".to_string(),
+            effect_type: EffectType::ReadOnlyAnalysis,
+            required: true,
+            selectors: None,
+        },
+    ]);
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req2).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp2: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id2 = compile_resp2.envelope.intent_id;
+    let fingerprint2 = compile_resp2.envelope.policy_bundle_fingerprint.clone();
+
+    // Evaluate proposal for intent2
+    let proposal2 = sample_proposal(intent_id2);
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal2.proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal2).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Mint capability for intent2
+    let app = build_router(runtime.clone());
+    let mint_req2 = CapabilityMintRequest {
+        intent_id: intent_id2,
+        proposal_id: proposal2.proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "workspace".to_string(),
+            tool_name: "fs.read".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        policy_bundle_id: None,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req2).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp2: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let policy_bundle_id2 = mint_resp2.lease.policy_bundle_id;
+
+    // U1-S9a: Both the fingerprints and the resulting PolicyBundleIds must match
+    assert_eq!(
+        fingerprint1, fingerprint2,
+        "U1-S9a: Reordered contracts should produce same fingerprint"
+    );
+    assert_eq!(
+        policy_bundle_id1, policy_bundle_id2,
+        "U1-S9a: Reordered contracts should produce same PolicyBundleId in capability lease"
+    );
+}
+
+/// U1-S9a regression test: minting a capability for an intent with an invalid
+/// (unparseable) policy_bundle_fingerprint must fail-closed rather than silently
+/// degrading to a random PolicyBundleId.
+///
+/// This prevents corrupted/malformed fingerprints from bypassing the deterministic
+/// identity guarantee of U1-S9a.
+#[tokio::test]
+async fn test_mint_fails_closed_for_invalid_policy_bundle_fingerprint() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Step 1: Create a valid intent via compile
+    let req = sample_intent_request();
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Step 2: Corrupt the stored intent's policy_bundle_fingerprint to be invalid
+    // (not a valid UUID that can be parsed as PolicyBundleId)
+    let mut stored_intent = runtime
+        .store
+        .intents()
+        .get(intent_id)
+        .await
+        .unwrap()
+        .unwrap();
+    stored_intent.policy_bundle_fingerprint = Some("not-a-valid-uuid!!!".to_string());
+    runtime
+        .store
+        .intents()
+        .update(&stored_intent)
+        .await
+        .unwrap();
+
+    // Step 3: Create and evaluate a proposal for this intent
+    let proposal = sample_proposal(intent_id);
+    let proposal_id = proposal.proposal_id;
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 4: Attempt to mint a capability - must fail-closed due to invalid fingerprint
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "workspace".to_string(),
+            tool_name: "fs.read".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        policy_bundle_id: None, // Let the gateway derive from intent's fingerprint
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Fail-closed: mint must fail with 500 when fingerprint is invalid
+    assert_eq!(
+        response.status(),
+        500,
+        "U1-S9a: mint should fail-closed for invalid policy_bundle_fingerprint"
+    );
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let error: ferrum_proto::ApiError = serde_json::from_slice(&body).unwrap();
+    assert!(
+        error.message.contains("invalid policy_bundle_fingerprint"),
+        "Error message should mention invalid fingerprint, got: {}",
+        error.message
     );
 }
