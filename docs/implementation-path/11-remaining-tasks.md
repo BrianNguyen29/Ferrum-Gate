@@ -6,6 +6,14 @@ Scope is single-node v1 unless labeled post-v1.
 
 ## P0 — Must fix before v1 RC
 
+- [x] cargo clippy `--workspace -- -D warnings` PASS
+  - Status: PASS as of 2026-04-02 gate run
+  - Historical PASS: `docs/artifacts/2026-03-30/03-cargo-clippy.txt`
+
+- [x] cargo test `--workspace` PASS
+  - Status: PASS as of 2026-04-02 gate run
+  - Historical PASS: `docs/artifacts/2026-03-30/04-cargo-test.txt`
+
 - [x] scope mismatch deny behavior implemented
   - Src: `docs/16-release-checklist.md` line 16 "scope mismatch deny test (explicit scope-mismatch deny behavior not implemented yet; see test_scope_mismatch_behavior_not_yet_implemented)"
   - Status: DONE — `StaticPdpEngine::evaluate()` now checks `intent.resource_scope.is_empty()` AND non-R0 mutation and returns `Decision::Deny` with rule `"scope.mismatch.empty.scope"`. Tests: `test_scope_mismatch_deny_on_empty_scope_with_mutation`, `test_r0_allowed_with_empty_scope`.
@@ -31,13 +39,13 @@ Scope is single-node v1 unless labeled post-v1.
 
 ## P2 — v1 polish (not blockers for RC but needed before v1 stable)
 
-- [x] clippy cleanup: `cargo clippy --workspace -- -D warnings` PASS — evidence: `docs/artifacts/2026-03-30/03-cargo-clippy.txt`
-  - Src: `cargo clippy --workspace -- -D warnings` verified PASS
-  - Note: Not a v1 RC blocker; verified clean as of 2026-03-29.
+- [x] clippy cleanup: `cargo clippy --workspace -- -D warnings` PASS (as of 2026-04-02) — P0 resolved; was PASS on 2026-03-30
+  - Src: `cargo clippy --workspace -- -D warnings` verified PASS (historical evidence: `docs/artifacts/2026-03-30/03-cargo-clippy.txt`)
+  - Note: Clippy gate cleared as of 2026-04-02.
 
 - [x] RC evidence automation script
-  - Src: `scripts/generate_rc_evidence.py` exists and PASS with all five checks
-  - Note: RC evidence generation now automated.
+  - Src: `scripts/generate_rc_evidence.py` exists and runs the RC gate bundle
+  - Note: RC evidence generation is automated; 2026-04-02 verdict is ALL GATES PASSED.
 
 ## P3 — post-v1 backlog (not in v1 scope)
 
@@ -73,11 +81,11 @@ These are explicitly out of v1 scope. Do not treat as blockers.
 - [ ] Runtime Integrations — MCP / local / NemoClaw (U4)
   - Src: `docs/91-phase-success-criteria-and-kpis.md` section 8.4
 
-## Documented drift / cleanup notes (all resolved as of 2026-03-29)
+## Documented drift / cleanup notes (as of 2026-04-02)
 
 - scope mismatch deny: IMPLEMENTED in `crates/ferrum-pdp/src/engine.rs` lines 31-46
 - all Phase A/B/E items treated as complete per `docs/91-phase-success-criteria-and-kpis.md`
 - Phase C firewall logic confirmed present; curated regression fixtures DONE (6 tests)
-- `scripts/generate_rc_evidence.py` EXISTS and PASS
-- clippy: PASS with no warnings
-- test count: 128 tests across workspace
+- `scripts/generate_rc_evidence.py` EXISTS and PASS — verdict is ALL GATES PASSED (2026-04-02)
+- clippy: PASS (2026-04-02) — was PASS on 2026-03-30 per artifacts
+- cargo test --workspace: PASS (2026-04-02) — was PASS on 2026-03-30 per artifacts

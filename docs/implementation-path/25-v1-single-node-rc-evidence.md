@@ -9,13 +9,15 @@ from `91-phase-success-criteria-and-kpis.md` section 7.5.
 ## Evidence 1 — Workspace compiles
 
 ```
-cargo check --workspace     # PASS
-cargo fmt --all --check      # PASS
-cargo clippy --workspace -- -D warnings  # PASS
-cargo test --workspace       # PASS
+cargo check --workspace     # PASS (2026-04-02)
+cargo fmt --all --check      # PASS (2026-04-02)
+cargo clippy --workspace -- -D warnings  # PASS (2026-04-02)
+cargo test --workspace       # PASS (2026-04-02)
 ```
 
-Source: `docs/artifacts/2026-03-30/01-cargo-check.txt`,
+**Status as of 2026-04-02**: all gates PASS. RC sign-off unblocked.
+
+Historical evidence (2026-03-30): `docs/artifacts/2026-03-30/01-cargo-check.txt`,
 `docs/artifacts/2026-03-30/02-cargo-fmt.txt`,
 `docs/artifacts/2026-03-30/03-cargo-clippy.txt`,
 `docs/artifacts/2026-03-30/04-cargo-test.txt`.
@@ -138,8 +140,11 @@ Source: `docs/artifacts/2026-03-30/05-contract-consistency.txt`,
 
 ## Evidence 8 — RC automation script
 
-`scripts/generate_rc_evidence.py` exists and PASS with all five checks.
-Source: `docs/artifacts/2026-03-30/07-rc-evidence-script.txt`.
+`scripts/generate_rc_evidence.py` exists. The script runs the full RC gate bundle.
+**Verdict as of 2026-04-02: ALL GATES PASSED** — `cargo check`, `cargo fmt`, `cargo clippy`,
+`cargo test`, and `check_contract_consistency` all pass. The smoke test was SKIP
+(port 18080 already in use); smoke test is not included in the gate bundle verdict.
+Historical pass artifacts: `docs/artifacts/2026-03-30/07-rc-evidence-script.txt`.
 
 ---
 
@@ -195,7 +200,7 @@ Remaining U1 backlog (not core capability gaps):
 
 | Gap | Priority | Description |
 |---|---|---|
-| (none) | P0 | All P0 items resolved |
+| (none) | P0 | All P0 gates cleared as of 2026-04-02 |
 | (none) | P1 | All P1 items resolved |
 | (none) | P2 | All P2 items resolved |
 | Real adapter implementations | P3 | filesystem/SQLite/maildraft — post-v1 backlog |
@@ -209,15 +214,23 @@ Full details in `docs/implementation-path/11-remaining-tasks.md`.
 
 ## Verdict
 
-FerrumGate v1 single-node is **RC-ready** for SQLite-backed deployment.
+**FerrumGate v1 single-node is RC-ready as of 2026-04-02.**
 
-All P0/P1/P2 items verified complete as of 2026-03-30 (see `docs/artifacts/2026-03-30/`):
-- P0: scope-mismatch deny implemented in PDP
-- P1: poisoned-context fixtures (6 tests), Phase F docs pack finalized, supported flows documented
-- P2: clippy passes, 128 tests pass, RC evidence script present and passing
+All gates pass (2026-04-02):
+1. **Clippy**: `cargo clippy --workspace -- -D warnings` PASS
+2. **Tests**: `cargo test --workspace` PASS
+3. **Repo layout**: `scripts/validate_repo_layout.sh` PASS
+4. **Contract consistency**: `python3 scripts/check_contract_consistency.py` PASS
+5. **RC evidence script**: verdict is ALL GATES PASSED (smoke test SKIP due to port 18080 already in use — not a gate failure)
 
-Remaining gaps are post-v1 backlog (real adapters, multi-node/HA, U2-U4 upgrade tracks). U1 core capability is materially mature; remaining U1 work is richer expressiveness and operator ergonomics (not core gaps).
+Core P0 items resolved:
+- scope-mismatch deny implemented in PDP
+- poisoned-context fixtures curated (6 tests)
+- Phase F docs pack finalized
+- Supported flows documented
 
-All evidence items above are grounded in actual repo content and test files.
-No speculative claims have been made about multi-node, HA, or future upgrade
-tracks.
+P1 items resolved: Phase F docs pack finalized, supported flows documented, gaps listed.
+
+P2: RC evidence script verdict is ALL GATES PASSED.
+
+Remaining gaps are post-v1 backlog (real adapters, multi-node/HA, U2-U4 upgrade tracks). U1 core capability is materially mature for current scope.

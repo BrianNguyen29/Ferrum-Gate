@@ -1,6 +1,6 @@
 # 16 — Release checklist
 
-Single-node v1 scope. Last updated: 2026-03-30.
+Single-node v1 scope. Last updated: 2026-04-02.
 
 > **Canonical support contract**: [19-v1-single-node-support-contract.md](./19-v1-single-node-support-contract.md)
 
@@ -11,10 +11,10 @@ Single-node v1 scope. Last updated: 2026-03-30.
 - [x] docs cap nhat (14, 15, 17, 01 updated; see also implementation-path docs)
 
 ## Workspace quality
-- [x] cargo check pass (`cargo check --workspace`) — evidence: `docs/artifacts/2026-03-30/01-cargo-check.txt` — PASS
-- [x] fmt pass — evidence: `docs/artifacts/2026-03-30/02-cargo-fmt.txt` — PASS
-- [x] clippy pass — evidence: `docs/artifacts/2026-03-30/03-cargo-clippy.txt` — PASS
-- [x] cargo test pass — evidence: `docs/artifacts/2026-03-30/04-cargo-test.txt` — PASS (tests pass)
+- [x] cargo check pass (`cargo check --workspace`) — evidence: `cargo check --workspace` PASS (2026-04-02) — PASS
+- [x] fmt pass (`cargo fmt --all -- --check`) — evidence: `cargo fmt --all -- --check` PASS (2026-04-02) — PASS
+- [x] clippy pass (`cargo clippy --workspace -- -D warnings`) — evidence: `cargo clippy --workspace -- -D warnings` PASS (2026-04-02) — PASS
+- [x] cargo test pass (`cargo test --workspace`) — evidence: `cargo test --workspace` PASS (2026-04-02) — PASS
 
 ## Behavior quality
 - [x] scope mismatch deny test — VERIFIED: empty scope + non-R0 mutation = Deny (`scope.mismatch.empty.scope`), empty scope + R0 = Allow (`test_scope_mismatch_deny_on_empty_scope_with_mutation`, `test_r0_allowed_with_empty_scope`)

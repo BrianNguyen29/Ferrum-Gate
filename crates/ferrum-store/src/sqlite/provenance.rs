@@ -433,15 +433,15 @@ impl ProvenanceRepo for SqliteProvenanceRepo {
 
         // Convert stats request to query request for fetching events
         let query_request = ProvenanceQueryRequest {
-            intent_id: request.intent_id.clone(),
-            proposal_id: request.proposal_id.clone(),
-            execution_id: request.execution_id.clone(),
+            intent_id: request.intent_id,
+            proposal_id: request.proposal_id,
+            execution_id: request.execution_id,
             execution_ids: Vec::new(),
-            capability_id: request.capability_id.clone(),
+            capability_id: request.capability_id,
             event_kind: request.event_kind.clone(),
             terminal_only: None,
-            since: request.since.clone(),
-            until: request.until.clone(),
+            since: request.since,
+            until: request.until,
             limit: Some(max_events as u32),
             cursor: None,
         };
