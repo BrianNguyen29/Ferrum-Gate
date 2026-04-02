@@ -9,6 +9,7 @@ Single-node v1 scope. Last updated: 2026-04-02.
 - [x] schemas cap nhat — evidence: `docs/artifacts/2026-03-30/05-contract-consistency.txt`
 - [x] openapi cap nhat (synced to actual routes/auth) — evidence: `docs/artifacts/2026-03-30/05-contract-consistency.txt`
 - [x] docs cap nhat (14, 15, 17, 01 updated; see also implementation-path docs)
+- [x] support contract review: scope-affecting changes require update to [19-v1-single-node-support-contract.md](./19-v1-single-node-support-contract.md) before release
 
 ## Workspace quality
 - [x] cargo check pass (`cargo check --workspace`) — evidence: `cargo check --workspace` PASS (2026-04-02) — PASS
