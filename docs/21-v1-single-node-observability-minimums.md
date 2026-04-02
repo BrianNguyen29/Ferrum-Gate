@@ -5,7 +5,7 @@ logs, probes, derived signals, and minimum alert thresholds.
 
 **Scope**: single-node, SQLite-backed, v1 only.
 **Audience**: operators, on-call engineers, SREs.
-**Last updated**: 2026-03-30.
+**Last updated**: 2026-04-02.
 
 ---
 
@@ -71,13 +71,21 @@ server goroutine is running. They do **not** validate:
 A 200 from healthz or readyz does not mean the node is ready to serve
 workload traffic. See Section 5 for the functional probe definition.
 
-### 3.3 No Native Metrics Endpoint
+### 3.3 Metrics Endpoint
 
-FerrumGate v1 does **not** expose a native metrics endpoint (Prometheus,
-OpenTelemetry, StatsD, or similar). There is no `/metrics` route.
+FerrumGate v1 exposes a Prometheus-format `/metrics` endpoint at `GET /metrics`.
+It requires bearer-token authentication (same auth as other protected routes).
 
-Alerting must be built from log analysis, probe responses, and periodic
-CLI/REST calls.
+The endpoint exposes:
+- `ferrum_gateway_http_requests_total` — request count by method, path (normalized), status
+- `ferrum_gateway_http_request_duration_seconds` — request latency histograms
+- `ferrum_gateway_http_requests_total` with `kind="error"` — error count by method, path
+
+Path normalization: raw UUIDs in paths are replaced with `/{id}` placeholders to
+avoid high-cardinality label sets.
+
+Alerting can use log analysis, probe responses, periodic CLI/REST calls, and/or
+this metrics endpoint.
 
 ### 3.4 Derived Signals
 
@@ -98,8 +106,6 @@ The following cannot be observed in v1 without external tooling:
 
 | Blind spot | Description |
 |---|---|
-| No request latency histograms | No `/metrics` endpoint; latency must be measured client-side |
-| No error rate counters | Error rates must be inferred from probe failures or log scraping |
 | No SQLite WAL size or page count | Store health must be checked via `sqlite3` CLI directly |
 | No connection pool saturation signal | sqlx pool exhaustion is not exposed as a metric |
 
@@ -322,10 +328,11 @@ These are intrinsic to the v1 single-node design and are documented
 here for completeness. They cannot be resolved without architectural
 changes beyond v1 scope.
 
-### 7.1 No Metrics Endpoint
+### 7.1 Metrics Endpoint is Auth-Protected
 
-There is no Prometheus, OpenTelemetry, or similar endpoint in v1.
-All alerting must use log scraping or periodic HTTP probing.
+The `/metrics` endpoint requires bearer-token authentication. Configure
+alerting tools to present valid credentials. Without auth, `/metrics` returns
+401 Unauthorized.
 
 ### 7.2 healthz and readyz are Shallow
 

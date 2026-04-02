@@ -270,6 +270,7 @@ struct ProvenanceQueryResponse {
 // =============================================================================
 
 /// Terminal event kinds that represent completed execution outcomes.
+#[allow(dead_code)]
 const TERMINAL_KINDS: &[&str] = &[
     "SideEffectCommitted",
     "SideEffectCompensated",
@@ -280,6 +281,7 @@ const TERMINAL_KINDS: &[&str] = &[
 ];
 
 /// Event kinds that indicate a problem condition worth flagging.
+#[allow(dead_code)]
 const ISSUE_KINDS: &[&str] = &[
     "ErrorRaised",
     "Quarantined",
@@ -288,6 +290,7 @@ const ISSUE_KINDS: &[&str] = &[
 ];
 
 /// Aggregated provenance statistics over a set of events.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 struct ProvenanceStats {
     total_events: usize,
@@ -303,6 +306,7 @@ struct ProvenanceStats {
 }
 
 /// A single event flagged by a consistency check.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct FlaggedEvent {
     event_id: String,
@@ -311,6 +315,7 @@ struct FlaggedEvent {
 }
 
 /// JSON-serializable view of ProvenanceStats for --json output.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize)]
 struct ProvenanceStatsJson {
     total_events: usize,
@@ -324,6 +329,7 @@ struct ProvenanceStatsJson {
     flagged_events: Vec<FlaggedEventJson>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize)]
 struct FlaggedEventJson {
     event_id: String,
@@ -356,6 +362,7 @@ impl From<ProvenanceStats> for ProvenanceStatsJson {
 }
 
 /// Collects aggregate statistics from a list of provenance events.
+#[allow(dead_code)]
 fn aggregate_provenance_stats(events: &[ProvenanceEvent]) -> ProvenanceStats {
     let mut stats = ProvenanceStats {
         total_events: events.len(),
@@ -455,6 +462,7 @@ fn aggregate_provenance_stats(events: &[ProvenanceEvent]) -> ProvenanceStats {
 }
 
 /// Formats provenance stats as human-readable text.
+#[allow(dead_code)]
 fn format_provenance_stats_text(stats: &ProvenanceStats) -> String {
     let mut lines = Vec::new();
     lines.push(format!("Total events: {}", stats.total_events));

@@ -2,7 +2,6 @@ use async_trait::async_trait;
 use chrono::{Duration, Utc};
 use ferrum_proto::{
     CapabilityId, CapabilityLease, CapabilityMintRequest, CapabilityMintResponse, CapabilityStatus,
-    PolicyBundleId,
 };
 use std::{collections::HashMap, sync::Arc};
 use thiserror::Error;
@@ -56,7 +55,7 @@ impl CapabilityService for InMemoryCapabilityService {
 
         // U1-S9a: Use provided policy_bundle_id if given, otherwise generate a random one.
         // The provided ID is derived deterministically from the intent's outcome contracts.
-        let policy_bundle_id = request.policy_bundle_id.unwrap_or_else(PolicyBundleId::new);
+        let policy_bundle_id = request.policy_bundle_id.unwrap_or_default();
 
         let now = Utc::now();
         let lease = CapabilityLease {

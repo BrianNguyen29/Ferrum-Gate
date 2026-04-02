@@ -6,7 +6,7 @@ single-node release. All other docs should link here rather than restating
 support scope.
 
 **Scope**: single-node, SQLite-backed, v1 only.
-**Last updated**: 2026-03-30.
+**Last updated**: 2026-04-02.
 
 ---
 
@@ -28,7 +28,7 @@ The following REST endpoints are in the v1 single-node support contract:
 |---|---|---|
 | GET | /v1/healthz | Shallow health check |
 | GET | /v1/readyz | Shallow readiness check |
-| POST | /v1/proposals/{server_name}/evaluate | Evaluate proposal via policy |
+| POST | /v1/proposals/{proposal_id}/evaluate | Evaluate proposal via policy |
 | POST | /v1/capabilities/mint | Mint a capability lease |
 | GET | /v1/capabilities/{capability_id} | Inspect a capability lease |
 | POST | /v1/executions/authorize | Authorize execution |
@@ -90,9 +90,9 @@ The following are explicitly out of scope for FerrumGate v1 single-node:
 
 ### 2.2 Adapter-backed integrations
 
-- Real adapter implementations: `ferrum-adapter-fs`, `ferrum-adapter-sqlite`, `ferrum-adapter-maildraft`, `ferrum-adapter-git`, `ferrum-adapter-http`.
-  These are skeleton crate/API shapes only; no production-verified side-effect integrations exist in v1.
-- Guaranteed external undo via adapter. Compensate may be noop-backed.
+- `ferrum-adapter-fs`, `ferrum-adapter-sqlite`, `ferrum-adapter-maildraft`, `ferrum-adapter-git`, `ferrum-adapter-http` have bounded local implementations.
+  Broader production hardening, remote/external integration depth, and verified side-effect undo are post-v1.
+- Guaranteed external undo via adapter. Compensate may be noop-backed depending on adapter and rollback class.
 
 ### 2.3 Routes with different visibility
 
@@ -101,7 +101,7 @@ The following are explicitly out of scope for FerrumGate v1 single-node:
 
 ### 2.4 Upgrade tracks
 
-- U1 — Outcome-aware Governance.
+- U1 — Outcome-aware Governance: materially mature for current single-node scope; remaining post-v1 backlog includes richer outcome clause expressiveness and operator ergonomics/authoring tooling.
 - U2 — Reversible Execution Planner.
 - U3 — Cross-runtime Provenance Fabric.
 - U4 — MCP/local/NemoClaw runtime integrations.
@@ -172,12 +172,12 @@ Evidence that the above scope is implemented and tested:
 
 | Check | Evidence |
 |---|---|
-| Workspace compiles | `docs/artifacts/2026-03-30/01-cargo-check.txt` |
-| fmt pass | `docs/artifacts/2026-03-30/02-cargo-fmt.txt` |
-| clippy pass | `docs/artifacts/2026-03-30/03-cargo-clippy.txt` |
-| cargo test pass | `docs/artifacts/2026-03-30/04-cargo-test.txt` |
-| Contract consistency | `docs/artifacts/2026-03-30/05-contract-consistency.txt` |
-| RC evidence script | `docs/artifacts/2026-03-30/07-rc-evidence-script.txt` |
+| Workspace compiles | `cargo check --workspace` PASS (2026-04-02) |
+| fmt pass | `cargo fmt --all -- --check` PASS (2026-04-02) |
+| clippy pass | `cargo clippy --workspace -- -D warnings` PASS (2026-04-02). Historical pass: `docs/artifacts/2026-03-30/03-cargo-clippy.txt` |
+| cargo test pass | `cargo test --workspace` PASS (2026-04-02). Historical pass: `docs/artifacts/2026-03-30/04-cargo-test.txt` |
+| Contract consistency | `python3 scripts/check_contract_consistency.py` PASS (2026-04-02) |
+| RC evidence script | `python3 scripts/generate_rc_evidence.py` verdict: ALL GATES PASSED (2026-04-02). Historical pass: `docs/artifacts/2026-03-30/07-rc-evidence-script.txt` |
 | Scope-mismatch deny | `crates/ferrum-pdp/src/engine.rs:31-46`; `16-release-checklist.md:18` |
 | Single-use capability | `crates/ferrum-cap/src/service.rs:101-122`; `16-release-checklist.md:19` |
 | R3 no auto-commit | `crates/ferrum-rollback/src/service.rs:93-112`; `16-release-checklist.md:20` |

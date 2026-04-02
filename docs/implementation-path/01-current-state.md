@@ -1,6 +1,6 @@
 # 01 — Current state
 
-Last updated: 2026-03-29
+Last updated: 2026-04-02
 Single-node v1 scope unless noted.
 
 **Release support contract**:
@@ -44,8 +44,8 @@ Single-node v1 scope unless noted.
 
 ## What is missing
 
-### P0 — v1 RC blockers
-- (none) — scope-mismatch deny implemented in `crates/ferrum-pdp/src/engine.rs` lines 31-46
+### P0 — v1 RC blockers (as of 2026-04-02)
+- (none) — all P0 blockers resolved as of 2026-04-02 gate run
 
 ### P1 — v1 RC evidence gaps
 - (none) — poisoned-context regression fixtures implemented (6 fixture tests)
@@ -54,7 +54,8 @@ Single-node v1 scope unless noted.
 - (none) — open gaps list documented in `11-remaining-tasks.md`
 
 ### P2 — v1 polish
-- (none) — all verified: 128 tests pass, clippy passes, `scripts/generate_rc_evidence.py` exists and passes
+- scope-mismatch deny: DONE in `crates/ferrum-pdp/src/engine.rs` lines 31-46
+- `scripts/generate_rc_evidence.py` exists and PASS — verdict is ALL GATES PASSED (2026-04-02)
 
 ## Phase status summary
 
@@ -63,8 +64,8 @@ Single-node v1 scope unless noted.
 - **Phase C** (firewall MVP): DONE — logic exists, curated regression fixtures implemented (6 tests)
 - **Phase D** (adapters): PARTIAL — bounded local implementations exist for fs/sqlite/maildraft/git/http; broader production hardening is post-v1
 - **Phase E** (gateway orchestration): DONE for SQLite-backed single-node flow
-- **Phase F** (hardening/evidence): DONE — integration tests strong, poisoned-context fixtures curated, supported flows and gaps documented, evidence script present
+- **Phase F** (hardening/evidence): DONE — integration tests strong, poisoned-context fixtures curated, supported flows and gaps documented, evidence script present; all gates cleared as of 2026-04-02
 
 ## Next step
 
-All P0/P1/P2 items closed. v1 RC is unblocked for single-node SQLite-backed deployment. Remaining work is post-v1 backlog (multi-node/HA, broader adapter hardening, and deeper U1-U4 upgrade tracks).
+All P0 gates cleared as of 2026-04-02. RC sign-off can proceed. Remaining work is post-v1 backlog (broader adapter hardening, multi-node/HA, U2-U4 upgrade tracks).

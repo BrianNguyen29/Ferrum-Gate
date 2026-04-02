@@ -4565,7 +4565,7 @@ async fn get_provenance_event(
 
             for edge in edges {
                 // Apply edge type filter if specified
-                if let Some(ref filter) = edge_types_filter {
+                if let Some(filter) = edge_types_filter {
                     if !filter.contains(&edge.edge_type) {
                         continue;
                     }
@@ -4620,7 +4620,7 @@ async fn get_provenance_event(
 
             for edge in edges {
                 // Apply edge type filter if specified
-                if let Some(ref filter) = edge_types_filter {
+                if let Some(filter) = edge_types_filter {
                     if !filter.contains(&edge.edge_type) {
                         continue;
                     }

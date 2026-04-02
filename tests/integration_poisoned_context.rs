@@ -586,8 +586,8 @@ async fn test_read_only_intent_fails_closed_against_mutation() {
     assert!(
         eval_resp
             .matched_rule_ids
-            .contains(&"read_only_violation".to_string()),
-        "Expected read_only_violation rule, got: {:?}",
+            .contains(&"scope.mismatch.empty.scope".to_string()),
+        "Expected precedence-aware scope.mismatch.empty.scope rule, got: {:?}",
         eval_resp.matched_rule_ids
     );
 
@@ -1340,8 +1340,8 @@ async fn test_draft_creation_intent_fails_closed_against_mutation() {
     assert!(
         eval_resp
             .matched_rule_ids
-            .contains(&"read_only_violation".to_string()),
-        "Expected read_only_violation: {:?}",
+            .contains(&"scope.mismatch.empty.scope".to_string()),
+        "Expected precedence-aware scope.mismatch.empty.scope: {:?}",
         eval_resp.matched_rule_ids
     );
 }
