@@ -135,6 +135,17 @@ file-level backup by copying the SQLite database file. There is no
 incremental backup, no automated scheduling, and no backup retention
 policy built into FerrumGate.
 
+**RPO ownership**: RPO is owned entirely by the operator. The operator
+must define an acceptable data-loss window, schedule manual backups
+at intervals consistent with that RPO, and periodically verify
+restore capability through drills. Support cannot backstop an RPO
+the operator has not defined or enforced.
+
+**Recommended minimum cadence**: one backup every 24 hours, plus a
+backup before any major operator-initiated action, plus a backup after
+any unplanned outage. Adjust based on operational risk tolerance.
+Retain at least three daily backups and one weekly backup.
+
 ### 3.4 Restore causes data loss after backup timestamp
 
 Restoring from a backup overwrites the entire store. Any executions,

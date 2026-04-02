@@ -34,3 +34,4 @@ Single-node v1 scope. Last updated: 2026-04-02.
 - [x] lineage usable (GET /v1/provenance/lineage/{execution_id} implemented)
 - [x] approval flow documented (GET /v1/approvals, GET /v1/approvals/{approval_id} implemented)
 - [x] startup SOP requires a functional readiness probe after healthz/readyz; shallow checks alone are not sufficient
+- [x] backup/restore drill procedure and evidence template documented in 18-single-node-operations-runbook.md Section 6.4; operator backup cadence and RPO guidance documented in Sections 5.3 and 5.4

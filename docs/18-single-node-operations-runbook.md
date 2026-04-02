@@ -168,7 +168,36 @@ chmod 600 "$BACKUP_FILE"
 echo "Backup complete: $BACKUP_FILE"
 ```
 
-### 5.3 Notes
+### 5.3 Backup cadence and retention (operator policy)
+
+FerrumGate has no built-in backup scheduler. The operator must define
+and enforce a backup schedule. The following are recommended minimums:
+
+| Cadence | Rationale |
+|---|---|
+| Every 24 hours | Maximum RPO is 24 hours for operator-defined RPO=24h |
+| Before any major operation (major intent, bulk approve, etc.) | Reduces risk of losing targeted work |
+| After any unplanned outage or crash | Captures last known good state |
+
+Retention: keep at least the three most recent daily backups plus one
+weekly backup. Adjust based on available disk space and operational
+risk tolerance. Delete oldest backups only after confirming newer
+backups are valid.
+
+### 5.4 RPO ownership
+
+RPO (Recovery Point Objective) is owned entirely by the operator.
+FerrumGate provides no automatic backup, no incremental backup, and
+no point-in-time restore. The operator must:
+
+- Define the acceptable data-loss window (RPO) for their deployment.
+- Schedule backups at intervals consistent with that RPO.
+- Test restores to confirm backup integrity and RPO achievability.
+
+Support cannot backstop an RPO that the operator has not defined or
+enforced through manual backups.
+
+### 5.5 Notes
 
 - Use `sqlite3` CLI tool or equivalent to validate backup file integrity.
 - Store multiple snapshots with timestamps for point-in-time recovery.
@@ -223,6 +252,65 @@ ferrumd --config /path/to/ferrumgate.toml
   the node is operational.
 - There is no incremental restore; a full file restore is the only option
   in v1.
+
+### 6.4 Restore drill procedure and evidence
+
+The operator must periodically verify that backups are restorable.
+Do not wait for an incident to discover a backup is invalid.
+
+#### Drill cadence
+
+Perform a restore drill at minimum once per quarter and after any
+backup script or storage infrastructure change.
+
+#### Drill procedure
+
+1. Select a recent backup file from the backup directory.
+2. On a non-production node or in a maintenance window, stop the
+   production ferrumd process.
+3. Copy the backup file to a temporary test store path (do not overwrite
+   the production store during a drill).
+4. Start a temporary ferrumd instance pointing at the test store path.
+5. Run the post-start verification from Section 4 against the test instance:
+   - `curl http://127.0.0.1:<test_port>/v1/readyz`
+   - `curl http://127.0.0.1:<test_port>/v1/approvals?limit=1 \
+       -H "Authorization: Bearer $FERRUM_BEARER_TOKEN"`
+6. Run `sqlite3 <test_store_path> "PRAGMA integrity_check;"` on the
+   restored file. Expected output: "ok".
+7. Inspect at least one known execution or approval record to confirm
+   the data is present in the restored store.
+
+#### Evidence expectations
+
+Retain the following as operator records (ticket, runbook appendix,
+or signed attestation):
+
+- Date and time of the drill.
+- Backup file name and timestamp used.
+- `PRAGMA integrity_check` output ("ok" must be present).
+- Description of which records were verified present post-restore.
+- Outcome: PASS or FAIL with any corrective action taken.
+
+If a drill fails, treat it as a high-priority incident. Do not defer
+corrective action. A failed drill means the current backup is not
+known to be restorable and the RPO is not achievable until resolved.
+
+#### Drill log template
+
+```
+Restore Drill Record
+Date:          <YYYY-MM-DD>
+Operator:      <name or ticket>
+Backup file:   <path/to/backup.db>
+Integrity:     <ok | FAIL>
+Records checked:
+  - execution_id <id>: <present | absent>
+  - approval_id  <id>: <present | absent>
+Functional probe (readyz): <200 | other>
+Functional probe (approvals): <200 | other>
+Outcome:       <PASS | FAIL>
+Notes:         <any corrective actions taken>
+```
 
 ---
 
