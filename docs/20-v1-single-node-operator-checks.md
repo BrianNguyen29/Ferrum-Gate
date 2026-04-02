@@ -5,7 +5,7 @@ Covers health ladders, routine checks, and safe command catalog.
 
 **Scope**: single-node, SQLite-backed, v1 only.
 **Audience**: operators, on-call engineers, SREs.
-**Last updated**: 2026-03-30.
+**Last updated**: 2026-04-02.
 
 ---
 

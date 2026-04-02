@@ -6,14 +6,14 @@
 >
 > Tai lieu nay **khong thay the** `09-implementation-path.md`, ma la lop do luong cu the hon de ra quyet dinh "phase da xong chua".
 
-## Current progress snapshot (2026-03-29)
+## Current progress snapshot (2026-04-02)
 
 ### Phase status now
 
 - **Phase A**: DONE — workspace and core shapes stable; `cargo check --workspace` passes; crates scaffolded and building.
 - **Phase B**: DONE — SQLite-backed persistence for intents/proposals/capabilities/executions/rollback contracts/provenance/events/approvals confirmed via integration tests.
 - **Phase C**: DONE — firewall logic present (trust labels, taint scorer, sanitize, contradiction checks); curated poisoned-context regression fixtures implemented (6 fixture tests).
-- **Phase D**: PARTIAL — adapter skeletons exist (fs, sqlite, maildraft, git, http); real implementations are post-v1 backlog. NoopRollbackAdapter used for integration tests.
+- **Phase D**: PARTIAL — bounded local implementations exist for fs/sqlite/maildraft/git/http adapters; broader production hardening is post-v1 backlog. NoopRollbackAdapter used for integration tests where adapter surface is not exercised.
 - **Phase E**: DONE for SQLite-backed single-node flow — gateway orchestrates `evaluate -> mint -> authorize -> prepare -> execute -> verify -> compensate` (compensate is the primary recovery endpoint; commit and rollback routes are also exposed); negative paths: deny, quarantine, RequireApproval (R3), draft-only gated at evaluate (before prepare), scope-mismatch (P0 resolved).
 - **Phase F**: DONE — integration tests strong; poisoned-context regression fixtures curated (6 tests); supported flows list and open gaps list documented in `25-v1-single-node-rc-evidence.md`.
 
@@ -23,14 +23,14 @@
 - Integration test suite (`crates/ferrum-integration-tests/src/integration_gateway_flow.rs`): capability single-use, R3 no-auto-commit, rollback/compensate distinct ops, taint-based quarantine, compensate end-to-end flow, pending-approvals pagination and filter, lineage endpoint shape/validation — all present and passing.
 - Lineage integration tests (`tests/integration_lineage_chain.rs`): empty lineage for unknown execution, invalid UUID rejection, correct content-type, max_hops clamping, direction variants — all present.
 - Gateway negative-path coverage: deny, quarantine, rollback, compensate, RequireApproval (R3), draft-only gated at evaluate (before prepare), scope-mismatch (P0 resolved).
-- `scripts/generate_rc_evidence.py`: exists and PASS with all five checks.
+- `scripts/generate_rc_evidence.py`: latest 2026-04-02 evidence verdict is `READY TO CLOSE`; core checks passed and the smoke test skipped when port 18080 was already in use.
 
 ### Working interpretation of release gates
 
 - **Phase A**: complete.
 - **Phase B**: complete for SQLite-backed single-node flow.
 - **Phase C**: complete — firewall logic present, regression fixtures curated.
-- **Phase D**: partial — adapter skeletons present, real implementations are post-v1.
+- **Phase D**: partial — bounded local adapter implementations present (fs, sqlite, maildraft, git, http); broader production hardening is post-v1.
 - **Phase E**: complete for SQLite-backed single-node flow (scope-mismatch P0 now resolved).
 - **Phase F**: complete for single-node v1 RC — poisoned-context regression fixtures curated, supported flows and open gaps documented, evidence automation script present.
 

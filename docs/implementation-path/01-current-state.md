@@ -6,7 +6,7 @@ Single-node v1 scope unless noted.
 **Release support contract**:
 - Supported = SQLite-backed single-node governance core.
 - Partial = bounded local adapter implementations plus early upgrade-track slices that are not yet production-verified.
-- Deferred/post-v1 = broader adapter hardening, multi-node/HA/read-replica, and deeper U1-U4 upgrade-track work.
+- Deferred/post-v1 = broader adapter hardening, multi-node/HA/read-replica, remaining U1 expressiveness/operator tooling work, and deeper U2-U4 upgrade-track work.
 
 ## What exists
 

@@ -15,7 +15,7 @@ Scope is single-node v1 unless labeled post-v1.
   - Historical PASS: `docs/artifacts/2026-03-30/04-cargo-test.txt`
 
 - [x] scope mismatch deny behavior implemented
-  - Src: `docs/16-release-checklist.md` line 16 "scope mismatch deny test (explicit scope-mismatch deny behavior not implemented yet; see test_scope_mismatch_behavior_not_yet_implemented)"
+  - Src: `docs/16-release-checklist.md` line 20 "scope mismatch deny test -- VERIFIED: empty scope + non-R0 mutation = Deny (`scope.mismatch.empty.scope`), empty scope + R0 = Allow"
   - Status: DONE — `StaticPdpEngine::evaluate()` now checks `intent.resource_scope.is_empty()` AND non-R0 mutation and returns `Decision::Deny` with rule `"scope.mismatch.empty.scope"`. Tests: `test_scope_mismatch_deny_on_empty_scope_with_mutation`, `test_r0_allowed_with_empty_scope`.
 
 ## P1 — v1 RC evidence gaps
