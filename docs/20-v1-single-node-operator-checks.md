@@ -23,7 +23,7 @@ v1 single-node instance. For support scope, limits, and known caveats, see:
 | Check | CLI command | HTTP fallback | Notes |
 |---|---|---|---|
 | Shallow process health | `ferrumctl server health` | `GET /v1/healthz` | No auth required |
-| Shallow readiness | — | `GET /v1/readyz` | No auth required; shallow only |
+| Shallow readiness | `ferrumctl server ready` | `GET /v1/readyz` | No auth required; shallow only |
 | Minimum functional readiness probe | `ferrumctl server inspect-approvals` | `GET /v1/approvals?limit=1` | Required after startup; requires bearer auth when `auth_mode=bearer` |
 | Inspect execution record | `ferrumctl server inspect-execution <id>` | `GET /v1/executions/<id>` | Requires bearer auth |
 | List approvals (unpaginated) | `ferrumctl server inspect-approvals` | `GET /v1/approvals` | Requires bearer auth |
@@ -64,6 +64,8 @@ curl http://127.0.0.1:8080/v1/healthz
 ### Step 2 — Shallow readiness (no auth required)
 
 ```bash
+ferrumctl server ready
+
 curl http://127.0.0.1:8080/v1/readyz
 # Expected: 200 OK, {"status":"ready"}
 ```
@@ -186,6 +188,22 @@ ferrumctl --server-url http://127.0.0.1:8080 --bearer-token "$FERRUM_BEARER_TOKE
 **What it checks**: GET /v1/healthz endpoint, confirms JSON parse.
 **What it does not check**: store, migrations, governance loop.
 **Auth**: None required (healthz is unauthenticated in the gateway).
+
+---
+
+### ferrumctl server ready
+
+Shallow readiness check via CLI.
+
+```bash
+ferrumctl server ready
+# Or with explicit server URL and token:
+ferrumctl --server-url http://127.0.0.1:8080 --bearer-token "$FERRUM_BEARER_TOKEN" server ready
+```
+
+**What it checks**: GET /v1/readyz endpoint, confirms JSON parse.
+**What it does not check**: store, migrations, governance loop.
+**Auth**: None required (readyz is unauthenticated in the gateway).
 
 ---
 
