@@ -31,7 +31,7 @@ v1 single-node instance. For support scope, limits, and known caveats, see:
 | Approvals pagination/filter | `ferrumctl server inspect-approvals --limit N --proposal-id X` | `GET /v1/approvals?limit=N&proposal_id=X` | CLI supports `--limit`, `--cursor`, `--proposal-id`, `--execution-id` |
 | Resolve approval | `ferrumctl server resolve-approval <id> --approve|--deny` | `POST /v1/approvals/<id>/resolve` | Mutating; requires bearer auth |
 | Fetch lineage for execution | `ferrumctl server inspect-lineage <exec_id>` | `GET /v1/provenance/lineage/<exec_id>` | Requires bearer auth |
-| Provenance event query | `ferrumctl server inspect-provenance` | `POST /v1/provenance/query` | CLI form is intent-id-only today; HTTP form supports richer filters |
+| Provenance event query | `ferrumctl server inspect-provenance --execution-id <id>` | `POST /v1/provenance/query` | CLI supports multiple filters, pagination (`--limit`, `--cursor`), and `--all-pages` |
 | Cancel execution | `ferrumctl server cancel-execution <id>` | `POST /v1/executions/<id>/cancel` | Mutating; pre-execute states only |
 | Pause execution | `ferrumctl server pause-execution <id>` | `POST /v1/executions/<id>/pause` | Mutating; running states only |
 | Resume execution | `ferrumctl server resume-execution <id>` | `POST /v1/executions/<id>/resume` | Mutating; paused state only |
@@ -161,13 +161,15 @@ When investigating an issue, collect the following in order:
    ferrumctl server inspect-approval <approval_id>
    ```
 
-5. Provenance events for the intent (if intent_id is known):
+5. Provenance events for the affected resource scope:
    ```bash
    ferrumctl server inspect-provenance --intent-id <intent_id>
+   ferrumctl server inspect-provenance --execution-id <execution_id>
    ```
-   Note: `inspect-provenance` via CLI accepts `--intent-id` only. For richer
-   filtering (by execution_id, capability_id, event_kind, time range), use
-   the HTTP POST endpoint directly.
+   Note: CLI supports richer filtering (`--proposal-id`, `--execution-id`,
+   `--capability-id`, `--event-kind`, `--since`, `--until`, `--limit`,
+   `--cursor`, `--all-pages`). Use the HTTP POST endpoint directly only when
+   you prefer raw request payloads.
 
 ---
 
@@ -272,20 +274,34 @@ ferrumctl server inspect-lineage <execution_id> --format dot --output lineage.do
 
 ---
 
-### ferrumctl server inspect-provenance (intent-id-only via CLI)
+### ferrumctl server inspect-provenance
 
-Query provenance events filtered by intent_id.
+Query provenance events with CLI filters and pagination.
 
 ```bash
 ferrumctl server inspect-provenance --intent-id <intent_id>
+
+# Filter by execution, proposal, capability, or event kind
+ferrumctl server inspect-provenance --execution-id <execution_id>
+ferrumctl server inspect-provenance --proposal-id <proposal_id> --event-kind IntentCompiled
+
+# Time window and pagination
+ferrumctl server inspect-provenance --since 2026-01-01T00:00:00Z --until 2026-12-31T23:59:59Z --limit 100
+ferrumctl server inspect-provenance --limit 100 --cursor <cursor>
+
+# Export all pages as JSON
+ferrumctl server inspect-provenance --execution-id <execution_id> --all-pages
 ```
 
-**What it checks**: POST /v1/provenance/query with intent_id filter.
+**What it checks**: POST /v1/provenance/query.
 **Auth**: Required (bearer).
 
-**Current CLI limitation**: The CLI form only supports `--intent-id`. For other
-filters (execution_id, capability_id, event_kind, time range), use the HTTP
-endpoint directly:
+**CLI filters**: `--intent-id`, `--proposal-id`, `--execution-id`,
+`--execution-ids`, `--capability-id`, `--event-kind`, `--terminal-only`,
+`--since`, `--until`, `--limit`, `--cursor`, and `--all-pages`.
+
+Use the HTTP endpoint directly only if you prefer raw request payloads or need
+to work outside `ferrumctl`:
 
 ```bash
 curl -X POST http://127.0.0.1:8080/v1/provenance/query \
