@@ -57,10 +57,10 @@ The following `ferrumctl` commands are in the v1 single-node support contract:
 - `ferrumctl server ready` — shallow readiness probe
 - `ferrumctl server inspect-capability <capability_id>` — fetch a capability record
 - `ferrumctl server inspect-execution <execution_id>` — fetch execution record
-- `ferrumctl server inspect-approvals` — list approvals (pagination/filtering available via REST API at `/v1/approvals`)
+- `ferrumctl server inspect-approvals` — list approvals with CLI pagination/filtering (`--limit`, `--cursor`, `--proposal-id`, `--execution-id`)
 - `ferrumctl server inspect-approval <approval_id>` — fetch single approval
 - `ferrumctl server inspect-lineage <execution_id>` — fetch lineage for execution
-- `ferrumctl server inspect-provenance --intent-id <intent_id>` — query provenance events (intent-id-only via CLI; richer filtering via POST /v1/provenance/query)
+- `ferrumctl server inspect-provenance` — query provenance events with CLI filters for intent/proposal/execution/capability/event kind/time range, plus pagination and export-all support
 - `ferrumctl server watch-execution <execution_id>` — bounded polling for execution terminal state
 - `ferrumctl server watch-approvals` — bounded polling for approval changes
 - `ferrumctl server inspect-lineage-query` — multi-hop lineage query via `--ancestry`/`--descendants` flags
