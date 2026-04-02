@@ -11,27 +11,9 @@ instance backed by SQLite.
 > **Canonical support contract**: [19-v1-single-node-support-contract.md](./19-v1-single-node-support-contract.md)
 > **Operator checks**: [20-v1-single-node-operator-checks.md](./20-v1-single-node-operator-checks.md)
 
-### Supported (single-node v1)
-- Single-node governance core with SQLite-backed persistence
-- Gateway flow: evaluate -> mint -> authorize -> prepare -> compensate
-- Approval queries: GET /v1/approvals, GET /v1/approvals/{id}
-- Provenance/lineage: GET /v1/provenance/lineage/{id}, POST /v1/provenance/lineage, POST /v1/provenance/query
-- Health and readiness: GET /v1/healthz, GET /v1/readyz
-- CLI inspect commands: health, inspect-execution, inspect-approvals,
-  inspect-approval, inspect-lineage, inspect-provenance
-- Config file, environment variable, and CLI argument configuration
-- Bearer-token authentication mode
-
-### Partial (v1 single-node, not production-verified)
-- Adapter surfaces (fs, sqlite, maildraft, git, http) — crate/API shape only,
-  no real side-effect integrations
-- compensate() — may be noop-backed; not guaranteed to produce external undo
-- healthz / readyz — shallow endpoints; require a functional probe after startup
-
-### Not supported (post-v1)
-- Multi-node, HA, or read-replica deployments
-- Real adapter implementations (fs, sqlite, maildraft, git, http)
-- U1-U4 upgrade tracks
+For supported routes, known limitations, accepted risks, and adapter surface
+details, see the canonical support contract. Do not rely on other docs for
+support-boundary claims — they may be stale or incomplete.
 
 ---
 
