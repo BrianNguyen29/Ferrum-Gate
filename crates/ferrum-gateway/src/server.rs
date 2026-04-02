@@ -307,6 +307,201 @@ async fn metrics_handler(Extension(metrics): Extension<Arc<GatewayMetrics>>) -> 
         .into_response()
 }
 
+/// U1-S8a: Validate authored outcomes at compile-time (fail-closed).
+/// Checks for: empty outcome ids, empty selector strings, duplicate list members,
+/// empty list members in OutcomeSelectors, and fail-closed rejection of empty allowed_outcomes.
+fn validate_authored_outcomes(
+    allowed: Option<&[OutcomeClause]>,
+    forbidden: Option<&[OutcomeClause]>,
+) -> Result<(), ApiProblem> {
+    // U1-S8a fail-closed: reject empty allowed_outcomes - explicit empty list would broaden
+    // semantics beyond the default single-coarse-outcome behavior
+    if let Some(allowed_slice) = allowed {
+        if allowed_slice.is_empty() {
+            return Err(ApiProblem::new(
+                StatusCode::BAD_REQUEST,
+                ApiErrorCode::ValidationError,
+                "allowed_outcomes cannot be empty: omit the field to use backward-compatible defaults",
+            ));
+        }
+    }
+
+    // Collect all outcome ids to check for duplicates
+    let mut seen_ids = std::collections::HashSet::new();
+
+    // Validate allowed outcomes if provided
+    if let Some(allowed_outcomes) = allowed {
+        for clause in allowed_outcomes {
+            // Check for empty outcome id
+            if clause.id.trim().is_empty() {
+                return Err(ApiProblem::new(
+                    StatusCode::BAD_REQUEST,
+                    ApiErrorCode::ValidationError,
+                    "allowed_outcomes contains an outcome with empty id",
+                ));
+            }
+
+            // Check for duplicate outcome id
+            if !seen_ids.insert(clause.id.clone()) {
+                return Err(ApiProblem::new(
+                    StatusCode::BAD_REQUEST,
+                    ApiErrorCode::ValidationError,
+                    format!(
+                        "allowed_outcomes contains duplicate outcome id: {}",
+                        clause.id
+                    ),
+                ));
+            }
+
+            // Validate selectors if present
+            if let Some(ref selectors) = clause.selectors {
+                validate_selectors(selectors, &format!("allowed_outcomes[{}]", clause.id))?;
+            }
+        }
+    }
+
+    // Validate forbidden outcomes if present
+    if let Some(forbidden_outcomes) = forbidden {
+        for clause in forbidden_outcomes {
+            // Check for empty outcome id
+            if clause.id.trim().is_empty() {
+                return Err(ApiProblem::new(
+                    StatusCode::BAD_REQUEST,
+                    ApiErrorCode::ValidationError,
+                    "forbidden_outcomes contains an outcome with empty id",
+                ));
+            }
+
+            // Check for duplicate outcome id (across both allowed and forbidden)
+            if !seen_ids.insert(clause.id.clone()) {
+                return Err(ApiProblem::new(
+                    StatusCode::BAD_REQUEST,
+                    ApiErrorCode::ValidationError,
+                    format!(
+                        "forbidden_outcomes contains outcome id '{}' that already appears in allowed_outcomes",
+                        clause.id
+                    ),
+                ));
+            }
+
+            // Validate selectors if present
+            if let Some(ref selectors) = clause.selectors {
+                validate_selectors(selectors, &format!("forbidden_outcomes[{}]", clause.id))?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Validate OutcomeSelectors for malformed authoring input.
+fn validate_selectors(
+    selectors: &ferrum_proto::OutcomeSelectors,
+    context: &str,
+) -> Result<(), ApiProblem> {
+    // Check adapter_family_in for empty strings
+    if let Some(ref families) = selectors.adapter_family_in {
+        if families.iter().any(|s| s.trim().is_empty()) {
+            return Err(ApiProblem::new(
+                StatusCode::BAD_REQUEST,
+                ApiErrorCode::ValidationError,
+                format!("{} has adapter_family_in containing empty string", context),
+            ));
+        }
+    }
+
+    // Check target_family_in for empty strings
+    if let Some(ref families) = selectors.target_family_in {
+        if families.iter().any(|s| s.trim().is_empty()) {
+            return Err(ApiProblem::new(
+                StatusCode::BAD_REQUEST,
+                ApiErrorCode::ValidationError,
+                format!("{} has target_family_in containing empty string", context),
+            ));
+        }
+    }
+
+    // Check request_class_in for empty strings
+    if let Some(ref classes) = selectors.request_class_in {
+        if classes.iter().any(|s| s.trim().is_empty()) {
+            return Err(ApiProblem::new(
+                StatusCode::BAD_REQUEST,
+                ApiErrorCode::ValidationError,
+                format!("{} has request_class_in containing empty string", context),
+            ));
+        }
+    }
+
+    // Check mutation_family_in for empty strings
+    if let Some(ref families) = selectors.mutation_family_in {
+        if families.iter().any(|s| s.trim().is_empty()) {
+            return Err(ApiProblem::new(
+                StatusCode::BAD_REQUEST,
+                ApiErrorCode::ValidationError,
+                format!("{} has mutation_family_in containing empty string", context),
+            ));
+        }
+    }
+
+    // Check for duplicate members in adapter_family_in
+    if let Some(ref families) = selectors.adapter_family_in {
+        let mut unique = std::collections::HashSet::new();
+        for f in families {
+            if !unique.insert(f) {
+                return Err(ApiProblem::new(
+                    StatusCode::BAD_REQUEST,
+                    ApiErrorCode::ValidationError,
+                    format!("{} has duplicate adapter_family_in member: {}", context, f),
+                ));
+            }
+        }
+    }
+
+    // Check for duplicate members in target_family_in
+    if let Some(ref families) = selectors.target_family_in {
+        let mut unique = std::collections::HashSet::new();
+        for f in families {
+            if !unique.insert(f) {
+                return Err(ApiProblem::new(
+                    StatusCode::BAD_REQUEST,
+                    ApiErrorCode::ValidationError,
+                    format!("{} has duplicate target_family_in member: {}", context, f),
+                ));
+            }
+        }
+    }
+
+    // Check for duplicate members in request_class_in
+    if let Some(ref classes) = selectors.request_class_in {
+        let mut unique = std::collections::HashSet::new();
+        for c in classes {
+            if !unique.insert(c) {
+                return Err(ApiProblem::new(
+                    StatusCode::BAD_REQUEST,
+                    ApiErrorCode::ValidationError,
+                    format!("{} has duplicate request_class_in member: {}", context, c),
+                ));
+            }
+        }
+    }
+
+    // Check for duplicate members in mutation_family_in
+    if let Some(ref families) = selectors.mutation_family_in {
+        let mut unique = std::collections::HashSet::new();
+        for f in families {
+            if !unique.insert(f) {
+                return Err(ApiProblem::new(
+                    StatusCode::BAD_REQUEST,
+                    ApiErrorCode::ValidationError,
+                    format!("{} has duplicate mutation_family_in member: {}", context, f),
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 async fn compile_intent(
     State(runtime): State<Arc<GatewayRuntime>>,
     Json(req): Json<IntentCompileRequest>,
@@ -333,6 +528,51 @@ async fn compile_intent(
         warnings.push(format!("High taint score: {}", trust_context.taint_score));
     }
 
+    // U1-S8a: Validate authored outcomes if provided, then wire into envelope.
+    // Fall back to default single coarse allowed outcome when omitted (backward-compatible).
+    let (allowed_outcomes, forbidden_outcomes) = if let Some(ref outcomes) = req.allowed_outcomes {
+        validate_authored_outcomes(Some(outcomes.as_ref()), req.forbidden_outcomes.as_deref())?;
+        (
+            outcomes.clone(),
+            req.forbidden_outcomes.clone().unwrap_or_default(),
+        )
+    } else if let Some(ref outcomes) = req.forbidden_outcomes {
+        // If only forbidden is provided without allowed, use default allowed + provided forbidden
+        validate_authored_outcomes(None, Some(outcomes))?;
+        (
+            vec![OutcomeClause {
+                id: "primary".to_string(),
+                description: req
+                    .agent_plan_summary
+                    .clone()
+                    .unwrap_or_else(|| req.goal.clone()),
+                effect_type: req
+                    .effect_type
+                    .unwrap_or(ferrum_proto::EffectType::ReadOnlyAnalysis),
+                required: true,
+                selectors: None,
+            }],
+            outcomes.clone(),
+        )
+    } else {
+        // Backward-compatible default: single coarse allowed outcome inferred from effect_type
+        (
+            vec![OutcomeClause {
+                id: "primary".to_string(),
+                description: req
+                    .agent_plan_summary
+                    .clone()
+                    .unwrap_or_else(|| req.goal.clone()),
+                effect_type: req
+                    .effect_type
+                    .unwrap_or(ferrum_proto::EffectType::ReadOnlyAnalysis),
+                required: true,
+                selectors: None,
+            }],
+            Vec::new(),
+        )
+    };
+
     let envelope = IntentEnvelope {
         intent_id: ferrum_proto::IntentId::new(),
         principal_id: req.principal_id,
@@ -341,16 +581,8 @@ async fn compile_intent(
         title: req.title.clone(),
         goal: req.goal.clone(),
         normalized_goal: req.goal.trim().to_lowercase(),
-        allowed_outcomes: vec![OutcomeClause {
-            id: "primary".to_string(),
-            description: req.agent_plan_summary.unwrap_or_else(|| req.goal.clone()),
-            effect_type: req
-                .effect_type
-                .unwrap_or(ferrum_proto::EffectType::ReadOnlyAnalysis),
-            required: true,
-            selectors: None,
-        }],
-        forbidden_outcomes: Vec::new(),
+        allowed_outcomes,
+        forbidden_outcomes,
         resource_scope: req.requested_resource_scope,
         risk_tier: requested_risk,
         approval_mode: ferrum_proto::ApprovalMode::None,

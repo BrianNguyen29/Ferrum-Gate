@@ -161,7 +161,35 @@ pub struct IntentCompileRequest {
     pub requested_risk_tier: Option<RiskTier>,
     /// Optional effect type for the intent. Defaults to ReadOnlyAnalysis if not specified.
     pub effect_type: Option<EffectType>,
+    /// Optional explicit allowed outcomes. When omitted, a default single coarse
+    /// allowed outcome is inferred from effect_type (backward-compatible behavior).
+    #[serde(default)]
+    pub allowed_outcomes: Option<Vec<OutcomeClause>>,
+    /// Optional explicit forbidden outcomes.
+    #[serde(default)]
+    pub forbidden_outcomes: Option<Vec<OutcomeClause>>,
     pub metadata: JsonMap,
+}
+
+impl Default for IntentCompileRequest {
+    fn default() -> Self {
+        Self {
+            principal_id: PrincipalId::new(),
+            session_id: None,
+            channel_id: None,
+            title: String::new(),
+            goal: String::new(),
+            agent_plan_summary: None,
+            trusted_context: JsonMap::new(),
+            raw_inputs: Vec::new(),
+            requested_resource_scope: Vec::new(),
+            requested_risk_tier: None,
+            effect_type: None,
+            allowed_outcomes: None,
+            forbidden_outcomes: None,
+            metadata: JsonMap::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

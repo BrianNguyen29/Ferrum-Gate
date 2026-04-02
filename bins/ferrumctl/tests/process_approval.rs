@@ -107,7 +107,7 @@ async fn seed_approval_request(
         }],
         requested_risk_tier: Some(RiskTier::High),
         effect_type: Some(EffectType::FileMutation),
-        metadata: ferrum_proto::JsonMap::new(),
+        ..Default::default()
     };
 
     let resp = client

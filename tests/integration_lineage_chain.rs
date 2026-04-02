@@ -75,7 +75,7 @@ fn sample_mutation_intent_request(path: &str) -> IntentCompileRequest {
         }],
         requested_risk_tier: Some(RiskTier::Medium),
         effect_type: Some(EffectType::FileMutation),
-        metadata: ferrum_proto::JsonMap::new(),
+        ..Default::default()
     }
 }
 

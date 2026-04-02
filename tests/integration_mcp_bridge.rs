@@ -79,7 +79,7 @@ async fn create_execution_with_events(
         }],
         requested_risk_tier: Some(RiskTier::Medium),
         effect_type: Some(EffectType::FileMutation),
-        metadata: JsonMap::new(),
+        ..Default::default()
     };
 
     let app = build_router(runtime.clone());
