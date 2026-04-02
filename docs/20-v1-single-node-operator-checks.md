@@ -28,7 +28,7 @@ v1 single-node instance. For support scope, limits, and known caveats, see:
 | Inspect execution record | `ferrumctl server inspect-execution <id>` | `GET /v1/executions/<id>` | Requires bearer auth |
 | List approvals (unpaginated) | `ferrumctl server inspect-approvals` | `GET /v1/approvals` | Requires bearer auth |
 | Inspect single approval | `ferrumctl server inspect-approval <id>` | `GET /v1/approvals/<id>` | Requires bearer auth |
-| Approvals pagination/filter | — | `GET /v1/approvals?limit=N&proposal_id=X` | HTTP-only; requires bearer auth |
+| Approvals pagination/filter | `ferrumctl server inspect-approvals --limit N --proposal-id X` | `GET /v1/approvals?limit=N&proposal_id=X` | CLI supports `--limit`, `--cursor`, `--proposal-id`, `--execution-id` |
 | Resolve approval | `ferrumctl server resolve-approval <id> --approve|--deny` | `POST /v1/approvals/<id>/resolve` | Mutating; requires bearer auth |
 | Fetch lineage for execution | `ferrumctl server inspect-lineage <exec_id>` | `GET /v1/provenance/lineage/<exec_id>` | Requires bearer auth |
 | Provenance event query | `ferrumctl server inspect-provenance` | `POST /v1/provenance/query` | CLI form is intent-id-only today; HTTP form supports richer filters |
@@ -222,16 +222,24 @@ ferrumctl server inspect-execution 00000000-0000-0000-0000-000000000001
 
 ### ferrumctl server inspect-approvals
 
-List all approvals. No pagination or filtering via CLI.
+List approvals, with optional pagination and filtering.
 
 ```bash
 ferrumctl server inspect-approvals
+
+# Paginate
+ferrumctl server inspect-approvals --limit 10
+ferrumctl server inspect-approvals --limit 10 --cursor <cursor>
+
+# Filter
+ferrumctl server inspect-approvals --proposal-id <proposal_id>
+ferrumctl server inspect-approvals --execution-id <execution_id>
 ```
 
-**What it checks**: GET /v1/approvals (returns all items, no limit/filter params)
+**What it checks**: GET /v1/approvals
 **Auth**: Required (bearer).
-**Pagination/filtering**: HTTP-only. Use `GET /v1/approvals?limit=N&proposal_id=X`
-directly if you need paginated or filtered results.
+**Pagination/filtering**: CLI supports `--limit`, `--cursor`, `--proposal-id`, and
+`--execution-id`. Use the HTTP endpoint directly only if you prefer raw JSON/API access.
 
 ---
 
