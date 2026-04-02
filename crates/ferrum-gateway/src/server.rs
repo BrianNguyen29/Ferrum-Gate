@@ -502,6 +502,75 @@ fn validate_selectors(
     Ok(())
 }
 
+/// U1-S9a: Compute a deterministic fingerprint from authored outcome contracts.
+/// The fingerprint is derived from the canonical JSON serialization of
+/// allowed_outcomes and forbidden_outcomes, providing a stable identifier
+/// that enables same-input same-id behavior for policy bundle identity.
+///
+/// Canonicalization ensures that semantically equivalent authored contracts
+/// (same clauses, possibly reordered) produce the same fingerprint, while
+/// contracts with different clause content produce different fingerprints.
+///
+/// Returns a fingerprint string that can be used to derive PolicyBundleId.
+fn compute_policy_bundle_fingerprint(
+    allowed_outcomes: &[OutcomeClause],
+    forbidden_outcomes: &[OutcomeClause],
+) -> String {
+    // Canonicalize outcome clauses by sorting by id and canonicalizing selectors.
+    fn canonicalize_clause(clause: &OutcomeClause) -> OutcomeClause {
+        let mut canonicalized = clause.clone();
+        // Sort any list fields within selectors for deterministic serialization
+        if let Some(ref selectors) = canonicalized.selectors {
+            let mut canonical_selectors = selectors.clone();
+            if let Some(ref mut families) = canonical_selectors.adapter_family_in {
+                families.sort();
+            }
+            if let Some(ref mut families) = canonical_selectors.target_family_in {
+                families.sort();
+            }
+            if let Some(ref mut classes) = canonical_selectors.request_class_in {
+                classes.sort();
+            }
+            if let Some(ref mut families) = canonical_selectors.mutation_family_in {
+                families.sort();
+            }
+            canonicalized.selectors = Some(canonical_selectors);
+        }
+        canonicalized
+    }
+
+    // Sort allowed outcomes by id for canonical representation
+    let mut sorted_allowed: Vec<OutcomeClause> =
+        allowed_outcomes.iter().map(canonicalize_clause).collect();
+    sorted_allowed.sort_by(|a, b| a.id.cmp(&b.id));
+
+    // Sort forbidden outcomes by id for canonical representation
+    let mut sorted_forbidden: Vec<OutcomeClause> =
+        forbidden_outcomes.iter().map(canonicalize_clause).collect();
+    sorted_forbidden.sort_by(|a, b| a.id.cmp(&b.id));
+
+    #[derive(serde::Serialize)]
+    struct CanonicalOutcomeContract {
+        allowed: Vec<OutcomeClause>,
+        forbidden: Vec<OutcomeClause>,
+    }
+
+    let contract = CanonicalOutcomeContract {
+        allowed: sorted_allowed,
+        forbidden: sorted_forbidden,
+    };
+
+    // Use a deterministic serialization approach
+    let canonical = serde_json::to_string(&contract).unwrap_or_default();
+
+    // Derive a fingerprint using the same approach as PolicyBundleId::derive
+    // (UUID v5 name-based with SHA-1 from a fixed namespace)
+    let fingerprint_uuid = ferrum_proto::PolicyBundleId::derive(&canonical);
+
+    // Return the UUID as a string (human-readable hex with dashes)
+    fingerprint_uuid.to_string()
+}
+
 async fn compile_intent(
     State(runtime): State<Arc<GatewayRuntime>>,
     Json(req): Json<IntentCompileRequest>,
@@ -573,6 +642,11 @@ async fn compile_intent(
         )
     };
 
+    // U1-S9a: Compute deterministic policy bundle fingerprint from outcome contracts.
+    // This enables same-input same-id behavior for traceability.
+    let policy_bundle_fingerprint =
+        compute_policy_bundle_fingerprint(&allowed_outcomes, &forbidden_outcomes);
+
     let envelope = IntentEnvelope {
         intent_id: ferrum_proto::IntentId::new(),
         principal_id: req.principal_id,
@@ -597,6 +671,7 @@ async fn compile_intent(
         tags: Vec::new(),
         metadata: req.metadata,
         status: IntentStatus::Active,
+        policy_bundle_fingerprint: Some(policy_bundle_fingerprint),
         created_at: now,
         expires_at: now + Duration::minutes(15),
     };
@@ -1052,9 +1127,45 @@ async fn mint_capability(
         ));
     }
 
+    // U1-S9a: Use the intent's stored policy bundle fingerprint directly.
+    // The fingerprint is already a deterministic UUID derived from outcome contracts
+    // at compile-time. We parse it directly rather than re-deriving to ensure
+    // the same fingerprint yields the same PolicyBundleId without double-derivation.
+    //
+    // Fail-closed: if a fingerprint is stored but cannot be parsed as a valid PolicyBundleId,
+    // we reject the minting rather than silently falling back to a random ID (which would
+    // break the deterministic identity guarantee of U1-S9a).
+    let policy_bundle_id = match intent
+        .as_ref()
+        .and_then(|i| i.policy_bundle_fingerprint.as_ref())
+    {
+        Some(fp) => {
+            // Fingerprint is present - it must be parseable as PolicyBundleId.
+            // Fail closed if the stored fingerprint is invalid/corrupted.
+            Some(fp.parse::<ferrum_proto::PolicyBundleId>().map_err(|_| {
+                ApiProblem::new(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    ApiErrorCode::Internal,
+                    format!(
+                        "intent {} has invalid policy_bundle_fingerprint '{}' that cannot be parsed as PolicyBundleId",
+                        request.intent_id,
+                        fp
+                    ),
+                )
+            })?)
+        }
+        None => None, // Backward compatible: no fingerprint means use random ID (pre-U1-S9a behavior)
+    };
+
+    // Create a modified request with the derived policy_bundle_id
+    let mint_request = CapabilityMintRequest {
+        policy_bundle_id,
+        ..request
+    };
+
     let response = runtime
         .cap
-        .mint(request)
+        .mint(mint_request)
         .await
         .map_err(ApiProblem::from_capability)?;
 
@@ -6380,6 +6491,7 @@ mod u1_s3a_tests {
             tags: Vec::new(),
             metadata: ferrum_proto::JsonMap::new(),
             status: ferrum_proto::IntentStatus::Active,
+            policy_bundle_fingerprint: None,
             created_at: chrono::Utc::now(),
             expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
         }
@@ -6601,6 +6713,7 @@ mod u1_s3a_tests {
             tags: Vec::new(),
             metadata: ferrum_proto::JsonMap::new(),
             status: ferrum_proto::IntentStatus::Active,
+            policy_bundle_fingerprint: None,
             created_at: chrono::Utc::now(),
             expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
         };

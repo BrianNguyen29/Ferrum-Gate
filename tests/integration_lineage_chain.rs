@@ -169,6 +169,7 @@ async fn test_minimum_lineage_chain_events_exist() {
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -573,6 +574,7 @@ async fn test_rollback_lineage_chain_has_terminal_event() {
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -792,6 +794,7 @@ async fn test_get_execution_lineage_endpoint() {
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 

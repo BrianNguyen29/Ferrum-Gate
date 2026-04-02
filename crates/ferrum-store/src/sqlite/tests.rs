@@ -67,6 +67,7 @@ fn sample_intent() -> IntentEnvelope {
         tags: vec!["test".to_string()],
         metadata: ferrum_proto::JsonMap::new(),
         status: IntentStatus::Active,
+        policy_bundle_fingerprint: None,
         created_at: Utc::now(),
         expires_at: Utc::now() + Duration::minutes(15),
     }

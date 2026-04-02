@@ -454,6 +454,7 @@ async fn test_high_taint_non_r0_mutation_quarantines() {
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 

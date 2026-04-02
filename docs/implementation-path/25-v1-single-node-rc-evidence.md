@@ -147,7 +147,7 @@ Source: `docs/artifacts/2026-03-30/07-rc-evidence-script.txt`.
 
 The following flows are confirmed supported in single-node v1:
 
-1. **Evaluate proposal**: POST /v1/proposals/{server_name}/evaluate
+1. **Evaluate proposal**: POST /v1/proposals/{proposal_id}/evaluate
 2. **Mint capability**: POST /v1/capabilities/mint
 3. **Authorize execution**: POST /v1/executions/authorize
 4. **Prepare execution**: POST /v1/executions/{execution_id}/prepare
@@ -176,10 +176,11 @@ via SQLite. They cover the complete happy path and major negative paths.
 - U1-S6 (selector-aware effective match): DONE — selector-bearing clauses require effect_type AND selectors to match for effective match
 - U1-S7a (list-based selector matching): DONE — `adapter_family_in`, `target_family_in`, `request_class_in`, `mutation_family_in` fields with OR semantics
 - U1-S8a (operator compile-time ergonomics): DONE — compile endpoint accepts optional `allowed_outcomes`/`forbidden_outcomes` via existing OutcomeClause/OutcomeSelectors schema; fail-closed validation; backward-compatible omission behavior
+- U1-S9a (deterministic policy bundle fingerprinting): DONE — PolicyBundleId::derive() uses UUID v5 (name-based with SHA-1) to create deterministic identity from canonical outcome contract serialization; IntentEnvelope.policy_bundle_fingerprint stores the derived fingerprint; capability mint propagates fingerprint into CapabilityLease.policy_bundle_id via CapabilityMintRequest.policy_bundle_id; provenance events carry derived bundle identity
 
 Remaining U1 backlog (not core capability gaps):
 - Richer outcome clause expressiveness (nested selectors, temporal constraints)
-- Policy bundle versioning and migration tooling
+- Policy bundle migration tooling (CLI authoring workflows remain post-v1)
 
 **NOT YET SUPPORTED in v1** (post-v1 backlog):
 - Real filesystem/SQLite/maildraft adapter implementations (bounded local implementations exist; broader hardening deferred)

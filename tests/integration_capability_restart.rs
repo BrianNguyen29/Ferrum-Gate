@@ -132,6 +132,7 @@ async fn mint_capability(
         },
         approval_binding: None,
         requested_ttl_secs: 60,
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -609,6 +610,7 @@ async fn test_expired_capability_fails_across_runtime_restart() {
         },
         approval_binding: None,
         requested_ttl_secs: 1, // Very short TTL
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -863,6 +865,7 @@ async fn test_mint_provenance_emitted_only_on_success() {
         },
         approval_binding: None,
         requested_ttl_secs: 500, // Exceeds max 300
+        policy_bundle_id: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
