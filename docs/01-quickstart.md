@@ -100,7 +100,7 @@ ferrumctl server inspect-lineage <execution_id> --format dot
 # Get execution lineage as DOT and save to file
 ferrumctl server inspect-lineage <execution_id> --format dot --output lineage.dot
 
-# Query provenance (intent-id only; richer filtering available via HTTP at POST /v1/provenance/query)
+# Query provenance events (CLI supports --intent-id, --proposal-id, --execution-id, --capability-id, --event-kind, --since, --until, --limit, --cursor, --all-pages; raw access via POST /v1/provenance/query)
 ferrumctl server inspect-provenance --intent-id <id>
 ```
 
