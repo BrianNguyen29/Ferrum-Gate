@@ -54,6 +54,7 @@ The following `ferrumctl` commands are in the v1 single-node support contract:
 
 **Read-only:**
 - `ferrumctl server health` — shallow health probe
+- `ferrumctl server ready` — shallow readiness probe
 - `ferrumctl server inspect-capability <capability_id>` — fetch a capability record
 - `ferrumctl server inspect-execution <execution_id>` — fetch execution record
 - `ferrumctl server inspect-approvals` — list approvals (pagination/filtering available via REST API at `/v1/approvals`)
