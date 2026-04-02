@@ -6,10 +6,10 @@ use ferrum_gateway::{GatewayRuntime, build_router};
 use ferrum_pdp::StaticPdpEngine;
 use ferrum_proto::{
     ActionProposal, CapabilityMintRequest, Decision, EffectType, ExecutionState,
-    IntentCompileRequest, IntentCompileResponse, IntentId, PauseExecutionRequest, ProposalId,
-    ProvenanceEventKind, ResourceBinding, ResourceMode, ResourceSelector, ResumeExecutionRequest,
-    RiskTier, RollbackClass, RollbackTarget, SensitivityLabel, TaintBudget, ToolBinding,
-    TrustLabel,
+    IntentCompileRequest, IntentCompileResponse, IntentId, OutcomeClause, OutcomeSelectors,
+    PauseExecutionRequest, ProposalId, ProvenanceEventKind, ResourceBinding, ResourceMode,
+    ResourceSelector, ResumeExecutionRequest, RiskTier, RollbackClass, RollbackTarget,
+    SensitivityLabel, TaintBudget, ToolBinding, TrustLabel,
 };
 use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackAdapter, RollbackService};
 use ferrum_store::{
@@ -136,6 +136,8 @@ fn sample_intent_request_with_effect(effect_type: EffectType) -> IntentCompileRe
         requested_resource_scope: resource_scope,
         requested_risk_tier: Some(RiskTier::Medium),
         effect_type: Some(effect_type),
+        allowed_outcomes: None,
+        forbidden_outcomes: None,
         metadata: ferrum_proto::JsonMap::new(),
     }
 }
@@ -3995,6 +3997,8 @@ async fn test_compile_intent_derives_trust_context_from_inputs() {
         requested_resource_scope: vec![],
         requested_risk_tier: Some(RiskTier::Medium),
         effect_type: Some(EffectType::ReadOnlyAnalysis),
+        allowed_outcomes: None,
+        forbidden_outcomes: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -4060,6 +4064,8 @@ async fn test_evaluate_proposal_denies_read_only_violation() {
         requested_resource_scope: vec![],
         requested_risk_tier: Some(RiskTier::Low),
         effect_type: Some(EffectType::ReadOnlyAnalysis),
+        allowed_outcomes: None,
+        forbidden_outcomes: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -4195,6 +4201,8 @@ async fn test_evaluate_proposal_denies_mcp_scope_violation() {
         }],
         requested_risk_tier: Some(RiskTier::Low),
         effect_type: Some(EffectType::ReadOnlyAnalysis),
+        allowed_outcomes: None,
+        forbidden_outcomes: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -4289,6 +4297,8 @@ async fn test_evaluate_proposal_allows_matching_mcp_scope() {
         }],
         requested_risk_tier: Some(RiskTier::Low),
         effect_type: Some(EffectType::ReadOnlyAnalysis),
+        allowed_outcomes: None,
+        forbidden_outcomes: None,
         metadata: ferrum_proto::JsonMap::new(),
     };
 
@@ -18030,5 +18040,700 @@ async fn test_u1_s7a_scalar_hit_list_miss_or_semantics() {
     assert!(
         matches!(exec.state, ExecutionState::Prepared),
         "execution state should be Prepared when scalar hits and list misses but OR semantics applies"
+    );
+}
+
+/// U1-S8a: Test that selector-based authoring via compile API works for allow-match case.
+/// When explicit allowed_outcomes with selectors are authored that match the subsequent
+/// action's adapter_family, the prepare should return 200.
+#[tokio::test]
+async fn test_compile_with_explicit_selector_outcomes_allow_match_prepare_200() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Step 1: Compile intent with explicit selector-based allowed_outcomes that will MATCH fs.write
+    // Uses list-based selectors to handle R0->"read_only" semantically (same pattern as U1-S7a tests)
+    let allowed_outcomes = vec![OutcomeClause {
+        id: "fs-write".to_string(),
+        description: "File system write operations".to_string(),
+        effect_type: EffectType::FileMutation,
+        required: true,
+        selectors: Some(OutcomeSelectors {
+            adapter_family: Some("fs".to_string()),
+            adapter_family_in: Some(vec!["fs".to_string(), "http".to_string()]),
+            target_family: Some("file".to_string()),
+            target_family_in: Some(vec!["file".to_string(), "sqlite".to_string()]),
+            request_class: None,
+            request_class_in: Some(vec!["read_only".to_string(), "mutation".to_string()]),
+            mutation_family: None,
+            mutation_family_in: Some(vec![
+                "mcp_tool_mutation".to_string(),
+                "file_write".to_string(),
+            ]),
+        }),
+    }];
+
+    let mut req = sample_intent_request_with_effect(EffectType::FileMutation);
+    req.requested_resource_scope = vec![ResourceSelector::FilesystemPath {
+        path: "/tmp".to_string(),
+        mode: ResourceMode::Write,
+        content_hash: None,
+    }];
+    req.allowed_outcomes = Some(allowed_outcomes);
+    // No forbidden_outcomes
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Verify the authored outcomes were stored in the envelope
+    assert_eq!(compile_resp.envelope.allowed_outcomes.len(), 1);
+    assert_eq!(compile_resp.envelope.allowed_outcomes[0].id, "fs-write");
+    assert!(
+        compile_resp.envelope.allowed_outcomes[0]
+            .selectors
+            .is_some(),
+        "selectors should be stored in envelope"
+    );
+
+    // Step 2: Evaluate proposal with matching fs.write action
+    let proposal = ActionProposal {
+        proposal_id: ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Write file".to_string(),
+        tool_name: "fs.write".to_string(),
+        server_name: "workspace".to_string(),
+        raw_arguments: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        expected_effect: "write a file".to_string(),
+        estimated_risk: RiskTier::Medium,
+        requested_rollback_class: RollbackClass::R0NativeReversible,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let eval_resp: ferrum_proto::EvaluateProposalResponse = serde_json::from_slice(&body).unwrap();
+    assert_eq!(eval_resp.decision, Decision::Allow);
+
+    // Step 3: Mint capability
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "workspace".to_string(),
+            tool_name: "fs.write".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![ResourceBinding::File {
+            path: "/tmp/test.txt".to_string(),
+            mode: ResourceMode::Write,
+            required_hash: None,
+        }],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    // Step 4: Authorize execution
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    // Step 5: Prepare - selectors should MATCH, resulting in 200
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // U1-S8a: Allow-match case should return 200
+    assert_eq!(
+        response.status(),
+        200,
+        "U1-S8a: explicit selector-based outcomes that match should allow prepare=200"
+    );
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let prep_resp: ferrum_proto::PrepareExecutionResponse = serde_json::from_slice(&body).unwrap();
+    assert!(
+        prep_resp.prepared,
+        "U1-S8a: prepare should succeed for matching selectors"
+    );
+}
+
+/// U1-S8a: Test that selector-based authoring via compile API works for allow-mismatch case.
+/// When explicit allowed_outcomes with selectors are authored that do NOT match the subsequent
+/// action's adapter_family, the prepare should return 403 (blocked by U1-S5b hard gate).
+#[tokio::test]
+async fn test_compile_with_explicit_selector_outcomes_allow_mismatch_prepare_403() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Step 1: Compile intent with explicit selector-based allowed_outcomes that will NOT MATCH
+    // We use git-related selectors but the proposal will be for fs.write - should MISMATCH
+    let allowed_outcomes = vec![OutcomeClause {
+        id: "git-commit".to_string(),
+        description: "Git commit operations".to_string(),
+        effect_type: EffectType::GitMutation,
+        required: true,
+        selectors: Some(OutcomeSelectors {
+            adapter_family: Some("git".to_string()), // Only matches git adapter
+            adapter_family_in: None,
+            target_family: Some("git".to_string()),
+            target_family_in: None,
+            request_class: Some("mutation".to_string()),
+            request_class_in: None,
+            mutation_family: Some("git_commit".to_string()),
+            mutation_family_in: None,
+        }),
+    }];
+
+    let mut req = sample_intent_request_with_effect(EffectType::FileMutation);
+    req.requested_resource_scope = vec![ResourceSelector::FilesystemPath {
+        path: "/tmp".to_string(),
+        mode: ResourceMode::Write,
+        content_hash: None,
+    }];
+    req.allowed_outcomes = Some(allowed_outcomes);
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Verify the authored outcomes were stored in the envelope
+    assert_eq!(compile_resp.envelope.allowed_outcomes.len(), 1);
+    assert_eq!(compile_resp.envelope.allowed_outcomes[0].id, "git-commit");
+
+    // Step 2: Evaluate proposal with fs.write action (will NOT match git-commit selector)
+    let proposal = ActionProposal {
+        proposal_id: ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Write file".to_string(),
+        tool_name: "fs.write".to_string(),
+        server_name: "workspace".to_string(),
+        raw_arguments: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        expected_effect: "write a file".to_string(),
+        estimated_risk: RiskTier::Medium,
+        requested_rollback_class: RollbackClass::R0NativeReversible,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let _eval_resp: ferrum_proto::EvaluateProposalResponse = serde_json::from_slice(&body).unwrap();
+    // Note: evaluate may still return Allow because it uses different matching logic
+    // The mismatch will be caught at prepare-time by U1-S5b
+
+    // Step 3: Mint capability
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "workspace".to_string(),
+            tool_name: "fs.write".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![ResourceBinding::File {
+            path: "/tmp/test.txt".to_string(),
+            mode: ResourceMode::Write,
+            required_hash: None,
+        }],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    // Step 4: Authorize execution
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    // Step 5: Prepare - selectors should MISMATCH, resulting in 403 blocked
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // U1-S8a: Allow-mismatch case returns 403 (blocked by U1-S5b hard gate)
+    // The intent's allowed_outcomes specify git-commit selectors, but the execution is fs.write
+    assert_eq!(
+        response.status(),
+        403,
+        "U1-S8a: prepare should return 403 for mismatched selectors"
+    );
+
+    // Verify execution state is Denied due to U1-S5b hard gate
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored_execution.is_some());
+    let exec = stored_execution.unwrap();
+    assert!(
+        matches!(exec.state, ExecutionState::Denied),
+        "U1-S8a: execution state should be Denied when selectors don't match"
+    );
+}
+
+/// U1-S8a: Test compile-time validation rejects empty outcome ids.
+#[tokio::test]
+async fn test_compile_rejects_empty_outcome_id() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    let allowed_outcomes = vec![OutcomeClause {
+        id: "".to_string(), // Invalid: empty id
+        description: "Test".to_string(),
+        effect_type: EffectType::FileMutation,
+        required: true,
+        selectors: None,
+    }];
+
+    let mut req = sample_intent_request_with_effect(EffectType::FileMutation);
+    req.allowed_outcomes = Some(allowed_outcomes);
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Should return 400 Bad Request for empty outcome id
+    assert_eq!(
+        response.status(),
+        400,
+        "U1-S8a: compile should reject empty outcome id with 400"
+    );
+}
+
+/// U1-S8a: Test compile-time validation rejects duplicate outcome ids across allowed/forbidden.
+#[tokio::test]
+async fn test_compile_rejects_duplicate_outcome_id_across_allowed_and_forbidden() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    let allowed_outcomes = vec![OutcomeClause {
+        id: "shared-id".to_string(),
+        description: "Allowed".to_string(),
+        effect_type: EffectType::FileMutation,
+        required: true,
+        selectors: None,
+    }];
+    let forbidden_outcomes = vec![OutcomeClause {
+        id: "shared-id".to_string(), // Same id as allowed - invalid
+        description: "Forbidden".to_string(),
+        effect_type: EffectType::FileMutation,
+        required: false,
+        selectors: None,
+    }];
+
+    let mut req = sample_intent_request_with_effect(EffectType::FileMutation);
+    req.allowed_outcomes = Some(allowed_outcomes);
+    req.forbidden_outcomes = Some(forbidden_outcomes);
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Should return 400 Bad Request for duplicate id across allowed/forbidden
+    assert_eq!(
+        response.status(),
+        400,
+        "U1-S8a: compile should reject duplicate outcome id across allowed/forbidden with 400"
+    );
+}
+
+/// U1-S8a: Test compile-time validation rejects empty strings in selector lists.
+#[tokio::test]
+async fn test_compile_rejects_empty_selector_strings() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    let allowed_outcomes = vec![OutcomeClause {
+        id: "test".to_string(),
+        description: "Test".to_string(),
+        effect_type: EffectType::FileMutation,
+        required: true,
+        selectors: Some(OutcomeSelectors {
+            adapter_family: None,
+            adapter_family_in: Some(vec!["fs".to_string(), "".to_string()]), // Invalid: empty string
+            target_family: None,
+            target_family_in: None,
+            request_class: None,
+            request_class_in: None,
+            mutation_family: None,
+            mutation_family_in: None,
+        }),
+    }];
+
+    let mut req = sample_intent_request_with_effect(EffectType::FileMutation);
+    req.allowed_outcomes = Some(allowed_outcomes);
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Should return 400 Bad Request for empty string in selector list
+    assert_eq!(
+        response.status(),
+        400,
+        "U1-S8a: compile should reject empty string in selector list with 400"
+    );
+}
+
+/// U1-S8a: Test compile-time validation rejects duplicate members in selector lists.
+#[tokio::test]
+async fn test_compile_rejects_duplicate_selector_list_members() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    let allowed_outcomes = vec![OutcomeClause {
+        id: "test".to_string(),
+        description: "Test".to_string(),
+        effect_type: EffectType::FileMutation,
+        required: true,
+        selectors: Some(OutcomeSelectors {
+            adapter_family: None,
+            adapter_family_in: Some(vec!["fs".to_string(), "fs".to_string()]), // Invalid: duplicate
+            target_family: None,
+            target_family_in: None,
+            request_class: None,
+            request_class_in: None,
+            mutation_family: None,
+            mutation_family_in: None,
+        }),
+    }];
+
+    let mut req = sample_intent_request_with_effect(EffectType::FileMutation);
+    req.allowed_outcomes = Some(allowed_outcomes);
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Should return 400 Bad Request for duplicate members in selector list
+    assert_eq!(
+        response.status(),
+        400,
+        "U1-S8a: compile should reject duplicate members in selector list with 400"
+    );
+}
+
+/// U1-S8a: Test compile-time validation rejects empty allowed_outcomes (fail-closed).
+/// Explicit empty allowed_outcomes would broaden semantics beyond the backward-compatible
+/// default single-coarse-outcome behavior.
+#[tokio::test]
+async fn test_compile_rejects_empty_allowed_outcomes() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Explicitly provide empty allowed_outcomes - should be rejected
+    let mut req = sample_intent_request_with_effect(EffectType::FileMutation);
+    req.allowed_outcomes = Some(vec![]); // Invalid: empty list
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Should return 400 Bad Request for empty allowed_outcomes
+    assert_eq!(
+        response.status(),
+        400,
+        "U1-S8a: compile should reject empty allowed_outcomes with 400 (fail-closed)"
+    );
+}
+
+/// U1-S8a: Test that forbidden_outcomes-only authoring works correctly.
+/// When only forbidden_outcomes is provided (without allowed_outcomes),
+/// the default single coarse allowed outcome is used (backward-compatible).
+#[tokio::test]
+async fn test_compile_with_forbidden_only_succeeds() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Step 1: Compile intent with only forbidden_outcomes (no allowed_outcomes)
+    let forbidden_outcomes = vec![OutcomeClause {
+        id: "forbidden-git".to_string(),
+        description: "Git mutations are forbidden".to_string(),
+        effect_type: EffectType::GitMutation,
+        required: false,
+        selectors: Some(OutcomeSelectors {
+            adapter_family: Some("git".to_string()),
+            adapter_family_in: None,
+            target_family: Some("git".to_string()),
+            target_family_in: None,
+            request_class: Some("mutation".to_string()),
+            request_class_in: None,
+            mutation_family: Some("git_commit".to_string()),
+            mutation_family_in: None,
+        }),
+    }];
+
+    let mut req = sample_intent_request_with_effect(EffectType::FileMutation);
+    req.forbidden_outcomes = Some(forbidden_outcomes);
+    // Note: allowed_outcomes is not set - should use default behavior
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Should succeed - forbidden-only is valid
+    assert_eq!(
+        response.status(),
+        200,
+        "U1-S8a: compile should accept forbidden_outcomes-only authoring"
+    );
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+
+    // Verify: default allowed outcome should be present
+    assert_eq!(
+        compile_resp.envelope.allowed_outcomes.len(),
+        1,
+        "U1-S8a: default allowed outcome should be present when allowed_outcomes is omitted"
+    );
+    assert_eq!(
+        compile_resp.envelope.allowed_outcomes[0].id, "primary",
+        "U1-S8a: default allowed outcome should have id 'primary'"
+    );
+
+    // Verify: forbidden outcome should be stored
+    assert_eq!(
+        compile_resp.envelope.forbidden_outcomes.len(),
+        1,
+        "U1-S8a: forbidden outcome should be stored"
+    );
+    assert_eq!(
+        compile_resp.envelope.forbidden_outcomes[0].id, "forbidden-git",
+        "U1-S8a: forbidden outcome should have id 'forbidden-git'"
     );
 }

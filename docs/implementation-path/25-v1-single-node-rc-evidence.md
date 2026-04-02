@@ -175,10 +175,10 @@ via SQLite. They cover the complete happy path and major negative paths.
 - U1-S5b (hard gate): DONE — prepare-time blocks when would_block=true; state-machine halts to Denied; auditability via ErrorRaised event and u1_s5b_hard_gate metadata
 - U1-S6 (selector-aware effective match): DONE — selector-bearing clauses require effect_type AND selectors to match for effective match
 - U1-S7a (list-based selector matching): DONE — `adapter_family_in`, `target_family_in`, `request_class_in`, `mutation_family_in` fields with OR semantics
+- U1-S8a (operator compile-time ergonomics): DONE — compile endpoint accepts optional `allowed_outcomes`/`forbidden_outcomes` via existing OutcomeClause/OutcomeSelectors schema; fail-closed validation; backward-compatible omission behavior
 
 Remaining U1 backlog (not core capability gaps):
 - Richer outcome clause expressiveness (nested selectors, temporal constraints)
-- Operator ergonomics for outcome contract authoring
 - Policy bundle versioning and migration tooling
 
 **NOT YET SUPPORTED in v1** (post-v1 backlog):

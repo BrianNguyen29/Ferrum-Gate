@@ -54,7 +54,7 @@ fn sample_poisoned_intent_request_with_inputs(inputs: Vec<IntentInputRef>) -> In
         requested_resource_scope: vec![],
         requested_risk_tier: Some(RiskTier::Medium),
         effect_type: Some(EffectType::ReadOnlyAnalysis),
-        metadata: ferrum_proto::JsonMap::new(),
+        ..Default::default()
     }
 }
 
@@ -74,7 +74,7 @@ fn sample_intent_request_with_effect_and_inputs(
         requested_resource_scope: vec![],
         requested_risk_tier: Some(RiskTier::Medium),
         effect_type: Some(effect_type),
-        metadata: ferrum_proto::JsonMap::new(),
+        ..Default::default()
     }
 }
 
@@ -241,6 +241,7 @@ async fn test_compile_time_trust_labeling_catches_prompt_injection() {
             until: None,
             limit: None,
             cursor: None,
+            ..Default::default()
         })
         .await
         .unwrap();
@@ -334,6 +335,7 @@ async fn test_taint_propagates_into_evaluate_decision() {
             until: None,
             limit: None,
             cursor: None,
+            ..Default::default()
         })
         .await
         .unwrap();
@@ -523,6 +525,7 @@ async fn test_high_taint_non_r0_mutation_quarantines() {
             until: None,
             limit: None,
             cursor: None,
+            ..Default::default()
         })
         .await
         .unwrap();
@@ -602,6 +605,7 @@ async fn test_read_only_intent_fails_closed_against_mutation() {
             until: None,
             limit: None,
             cursor: None,
+            ..Default::default()
         })
         .await
         .unwrap();
@@ -645,7 +649,7 @@ async fn test_mcp_scope_constraints_fail_closed_with_poisoned_context() {
         }],
         requested_risk_tier: Some(RiskTier::Medium),
         effect_type: Some(EffectType::ReadOnlyAnalysis),
-        metadata: ferrum_proto::JsonMap::new(),
+        ..Default::default()
     };
 
     let (intent_id, compile_resp) = compile_intent_via_gateway(&runtime, req).await;
@@ -699,6 +703,7 @@ async fn test_mcp_scope_constraints_fail_closed_with_poisoned_context() {
             until: None,
             limit: None,
             cursor: None,
+            ..Default::default()
         })
         .await
         .unwrap();

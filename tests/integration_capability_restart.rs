@@ -81,7 +81,7 @@ fn sample_intent_request_with_file_scope() -> IntentCompileRequest {
         }],
         requested_risk_tier: Some(RiskTier::Medium),
         effect_type: Some(EffectType::ReadOnlyAnalysis),
-        metadata: ferrum_proto::JsonMap::new(),
+        ..Default::default()
     }
 }
 
@@ -279,6 +279,7 @@ async fn test_mint_persists_across_runtime_restart() {
             until: None,
             cursor: None,
             limit: None,
+            ..Default::default()
         })
         .await
         .unwrap();
@@ -517,6 +518,7 @@ async fn test_revoked_capability_fails_across_runtime_restart() {
             until: None,
             cursor: None,
             limit: None,
+            ..Default::default()
         })
         .await
         .unwrap();
@@ -895,6 +897,7 @@ async fn test_mint_provenance_emitted_only_on_success() {
             until: None,
             cursor: None,
             limit: None,
+            ..Default::default()
         })
         .await
         .unwrap();

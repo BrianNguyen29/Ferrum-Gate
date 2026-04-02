@@ -95,7 +95,7 @@ async fn seed_approval_request(
         }],
         requested_risk_tier: Some(RiskTier::High),
         effect_type: Some(EffectType::FileMutation),
-        metadata: ferrum_proto::JsonMap::new(),
+        ..Default::default()
     };
 
     let resp = client
@@ -757,6 +757,7 @@ async fn test_resolve_approval_emits_provenance_events() {
             until: None,
             limit: None,
             cursor: None,
+            ..Default::default()
         })
         .send()
         .await

@@ -119,7 +119,7 @@ async fn seed_committed_execution(
         }],
         requested_risk_tier: Some(RiskTier::Medium),
         effect_type: Some(EffectType::FileMutation),
-        metadata: ferrum_proto::JsonMap::new(),
+        ..Default::default()
     };
 
     let resp = client
@@ -638,7 +638,7 @@ async fn seed_authorized_execution(client: &Client, server_url: &str) -> ferrum_
         }],
         requested_risk_tier: Some(RiskTier::Medium),
         effect_type: Some(EffectType::FileMutation),
-        metadata: ferrum_proto::JsonMap::new(),
+        ..Default::default()
     };
 
     let resp = client
@@ -897,7 +897,7 @@ async fn seed_running_execution(
         }],
         requested_risk_tier: Some(RiskTier::Medium),
         effect_type: Some(EffectType::FileMutation),
-        metadata: ferrum_proto::JsonMap::new(),
+        ..Default::default()
     };
 
     let resp = client
@@ -1429,7 +1429,7 @@ async fn seed_prepared_execution(
         }],
         requested_risk_tier: Some(RiskTier::Medium),
         effect_type: Some(EffectType::FileMutation),
-        metadata: ferrum_proto::JsonMap::new(),
+        ..Default::default()
     };
 
     let resp = client
