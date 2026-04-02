@@ -104,26 +104,30 @@ curl http://127.0.0.1:8080/v1/healthz
 curl http://127.0.0.1:8080/v1/readyz
 # Expected: 200 OK if ready; 200 OK alone does not guarantee store or governance loop is functional
 
-# 3. Deep verification (requires bearer auth if auth_mode=bearer)
+# 3. Required functional probe (requires bearer auth if auth_mode=bearer)
 export FERRUMCTL_SERVER_URL=http://127.0.0.1:8080
 export FERRUMCTL_BEARER_TOKEN="$FERRUM_BEARER_TOKEN"
-ferrumctl server health
+ferrumctl server inspect-approvals
+curl http://127.0.0.1:8080/v1/approvals?limit=1 \
+  -H "Authorization: Bearer $FERRUM_BEARER_TOKEN"
+# Expected: 200 OK with valid JSON. An empty items list is normal.
+
+# 4. Required functional probe when auth_mode=disabled
+curl http://127.0.0.1:8080/v1/approvals?limit=1
+# Expected: 200 OK with valid JSON. Omit the Authorization header.
+
+# 5. Optional follow-up check when you have a known execution_id
 ferrumctl server inspect-execution 00000000-0000-0000-0000-000000000001
 # The execution inspect will return 404 for unknown IDs (expected);
 # absence of transport error confirms connectivity is functional.
-
-# 4. Verify approvals endpoint reachable
-curl http://127.0.0.1:8080/v1/approvals?limit=1 \
-  -H "Authorization: Bearer $FERRUM_BEARER_TOKEN"
-# Returns empty list or actual approvals; 401 indicates auth issue.
-# Note: omit the -H flag when auth_mode=disabled.
 ```
 
 **Important:** healthz and readyz are shallow checks. They confirm the
 server process is alive and the HTTP endpoint is reachable, but they do
 not guarantee that the governance loop or store is fully functional for
-your workload. Always perform a functional probe (such as an execution
-inspect or approvals list) after startup to confirm end-to-end readiness.
+your workload. Startup is not complete until a functional probe succeeds.
+Use `GET /v1/approvals?limit=1` or `ferrumctl server inspect-approvals` as
+the minimum readiness check, then optionally inspect a known execution.
 
 ---
 
