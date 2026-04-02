@@ -82,5 +82,5 @@ ferrumctl server inspect-approval <id>  # Get approval
 ferrumctl server inspect-lineage <id>   # Get lineage (text)
 ferrumctl server inspect-lineage <id> --format json   # Get lineage as JSON
 ferrumctl server inspect-lineage <id> --format dot --output lineage.dot   # Export as DOT (Graphviz)
-ferrumctl server inspect-provenance --intent-id <intent_id>   # Query provenance events (intent-id-only via CLI; richer filters via POST /v1/provenance/query)
+ferrumctl server inspect-provenance --intent-id <intent_id>   # Query provenance events (CLI supports --intent-id, --proposal-id, --execution-id, --capability-id, --event-kind, --since, --until, --limit, --cursor, --all-pages; raw access via POST /v1/provenance/query)
 ```

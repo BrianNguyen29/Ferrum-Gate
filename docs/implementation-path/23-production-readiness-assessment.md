@@ -63,7 +63,7 @@ All P0 gates cleared as of 2026-04-02. RC sign-off can proceed.
 | Provenance query | PASS | GET/POST /v1/provenance/lineage, POST /v1/provenance/query |
 
 **Known gaps**:
-- `ferrumctl` does not expose the full REST surface; some flows still require direct HTTP/OpenAPI usage.
+- `ferrumctl` covers the high-use operator surface but not every REST endpoint; some advanced or intent-authoring flows still require direct HTTP/OpenAPI usage. The primary operator-facing flows (inspect, watch, resolve, cancel, pause, resume, prepare, execute, compensate, rollback) are all CLI-covered.
 
 ---
 
