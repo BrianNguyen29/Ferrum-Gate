@@ -165,13 +165,28 @@ The following flows are confirmed supported in single-node v1:
 All of the above are backed by integration tests or unit tests and persist
 via SQLite. They cover the complete happy path and major negative paths.
 
+**Materially mature — supported for current scope** (U1):
+- U1-S2 (verify-time annotate-only assessment): DONE — assessment persisted in execution.metadata, rollback contract metadata, and SideEffectVerified provenance event metadata
+- U1-S3a (multi-signal inference): DONE — rollback_target (HIGH), adapter_key (MED), expected_effect (LOW) inference hierarchy
+- U1-S3b (confidence-thresholded verify annotations): DONE — threshold_metadata with high/medium/low bands; annotate-only semantics preserved
+- U1-S4a (higher-fidelity outcome contracts): DONE — additive OutcomeSelectors enrich OutcomeClause; selector-enhanced match/mismatch distinction
+- U1-S4b (explicit HIGH/MED mismatch fixtures): DONE — HIGH band mismatch via allowed_outcome non-match; MED band mismatch via adapter_key inference; selector-enhanced mismatch proven
+- U1-S5a (soft gate preview): DONE — prepare-time `would_block`/`would_require_review`/`reason_codes`/`derive_basis` signals emitted; auto-commit unchanged per R3
+- U1-S5b (hard gate): DONE — prepare-time blocks when would_block=true; state-machine halts to Denied; auditability via ErrorRaised event and u1_s5b_hard_gate metadata
+- U1-S6 (selector-aware effective match): DONE — selector-bearing clauses require effect_type AND selectors to match for effective match
+- U1-S7a (list-based selector matching): DONE — `adapter_family_in`, `target_family_in`, `request_class_in`, `mutation_family_in` fields with OR semantics
+
+Remaining U1 backlog (not core capability gaps):
+- Richer outcome clause expressiveness (nested selectors, temporal constraints)
+- Operator ergonomics for outcome contract authoring
+- Policy bundle versioning and migration tooling
+
 **NOT YET SUPPORTED in v1** (post-v1 backlog):
-- Real filesystem/SQLite/maildraft adapter implementations
+- Real filesystem/SQLite/maildraft adapter implementations (bounded local implementations exist; broader hardening deferred)
 - Multi-node / HA / read-replica
-- Outcome-aware governance (U1)
-- Reversible execution planner (U2)
-- Cross-runtime provenance fabric (U3)
-- MCP/local/NemoClaw runtime integrations (U4)
+- U2 (Reversible Execution Planner)
+- U3 (Cross-runtime Provenance Fabric)
+- U4 (MCP/local/NemoClaw runtime integrations)
 
 ---
 
@@ -184,7 +199,8 @@ via SQLite. They cover the complete happy path and major negative paths.
 | (none) | P2 | All P2 items resolved |
 | Real adapter implementations | P3 | filesystem/SQLite/maildraft — post-v1 backlog |
 | Multi-node/HA | P3 | read-replica support — post-v1 backlog |
-| Upgrade tracks U1-U4 | P3 | post-v1 backlog |
+| Upgrade track U1 — core capability | P3 | Materially mature — remaining: richer expressiveness / operator ergonomics (not core gaps) |
+| Upgrade tracks U2-U4 | P3 | post-v1 backlog |
 
 Full details in `docs/implementation-path/11-remaining-tasks.md`.
 
@@ -199,7 +215,7 @@ All P0/P1/P2 items verified complete as of 2026-03-30 (see `docs/artifacts/2026-
 - P1: poisoned-context fixtures (6 tests), Phase F docs pack finalized, supported flows documented
 - P2: clippy passes, 128 tests pass, RC evidence script present and passing
 
-Remaining gaps are post-v1 backlog (real adapters, multi-node/HA, U1-U4 upgrade tracks).
+Remaining gaps are post-v1 backlog (real adapters, multi-node/HA, U2-U4 upgrade tracks). U1 core capability is materially mature; remaining U1 work is richer expressiveness and operator ergonomics (not core gaps).
 
 All evidence items above are grounded in actual repo content and test files.
 No speculative claims have been made about multi-node, HA, or future upgrade
