@@ -2157,6 +2157,291 @@ async fn test_compensate_path_recovers_execution() {
     );
 }
 
+/// Integration test: HTTP adapter compensate succeeds with conservative no-op behavior.
+///
+/// Observable behavior demonstrated:
+/// - compensate returns 200 with compensated=true for HTTP-backed executions
+/// - This works because HTTP adapter's compensate is a no-op by design (R3 boundary)
+/// - No active HTTP server is required for compensate to succeed
+///
+/// The no-op semantics for HTTP mutation recovery are documented in:
+/// - docs/implementation-path/16a-slice-16-a-boundary-ratification.md
+/// - crates/ferrum-adapter-http/src/lib.rs rollback() implementation
+#[tokio::test]
+async fn test_http_adapter_compensate_succeeds_as_noop() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Start a local server for the HTTP flow
+    let (port, _handle) = start_local_http_server(200);
+
+    // Step 1: Compile intent with HTTP POST scope (R3 default for mutations)
+    let app = build_router(runtime.clone());
+    let mut req = sample_intent_request();
+    req.requested_resource_scope = vec![ResourceSelector::HttpEndpoint {
+        method: ferrum_proto::HttpMethod::Post,
+        base_url: format!("http://127.0.0.1:{}", port),
+        path_prefix: "/".to_string(),
+        mode: ResourceMode::Write,
+    }];
+    req.effect_type = Some(EffectType::ExternalApiCall);
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Step 2: Create proposal requesting R3 (required for HTTP mutations)
+    let proposal = ActionProposal {
+        proposal_id: ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "HTTP POST".to_string(),
+        tool_name: "http.post".to_string(),
+        server_name: "http".to_string(),
+        raw_arguments: serde_json::json!({"url": format!("http://127.0.0.1:{}/test", port)}),
+        expected_effect: "post to API".to_string(),
+        estimated_risk: RiskTier::High,
+        requested_rollback_class: RollbackClass::R3IrreversibleHighConsequence,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 3: Mint capability
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "http".to_string(),
+            tool_name: "http.post".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![ResourceBinding::Http {
+            method: ferrum_proto::HttpMethod::Post,
+            base_url: format!("http://127.0.0.1:{}", port),
+            path_prefix: "/".to_string(),
+            header_allowlist: vec![],
+            mode: ResourceMode::Write,
+        }],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        policy_bundle_id: None,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    // Step 4: Authorize (R3 requires approval)
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    // Step 5: Resolve approval (approve=true)
+    let (pending_approvals, _) = runtime
+        .store
+        .approvals()
+        .list_pending_cursor(100, None)
+        .await
+        .unwrap();
+    assert!(!pending_approvals.is_empty());
+    let approval_id = pending_approvals[0].approval_id;
+
+    let app = build_router(runtime.clone());
+    let resolve_req = ferrum_proto::ApprovalResolveRequest {
+        actor: ferrum_proto::ActorRef {
+            actor_type: ferrum_proto::ActorType::User,
+            actor_id: "admin".to_string(),
+            display_name: Some("Admin".to_string()),
+        },
+        approve: true,
+        reason: Some("Approved by test".to_string()),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/approvals/{}/resolve", approval_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&resolve_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 6: Prepare
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 7: Execute
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({"url": format!("http://127.0.0.1:{}/test", port), "method": "POST"}),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 8: Verify
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let _verify_resp: ferrum_proto::VerifyResponse = serde_json::from_slice(&body).unwrap();
+
+    // Step 9: Compensate - this should succeed WITHOUT requiring any remote HTTP call
+    // HTTP adapter compensate is a no-op by design
+    let app = build_router(runtime.clone());
+    let compensate_req = ferrum_proto::CompensateRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/compensate", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&compensate_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Compensate should succeed (200)
+    assert_eq!(
+        response.status(),
+        200,
+        "HTTP compensate should succeed even though no remote undo was performed"
+    );
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compensate_resp: ferrum_proto::CompensateResponse = serde_json::from_slice(&body).unwrap();
+
+    // compensated=true proves the compensate was acknowledged, not that remote undo happened
+    assert!(
+        compensate_resp.compensated,
+        "HTTP compensate should return compensated=true (no-op acknowledgment)"
+    );
+
+    // Verify execution state is Compensated
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored_execution.is_some());
+    let exec = stored_execution.unwrap();
+    assert!(matches!(exec.state, ExecutionState::Compensated));
+}
+
 // ============================================
 // NEGATIVE TESTS: Illegal State Transitions
 // ============================================
