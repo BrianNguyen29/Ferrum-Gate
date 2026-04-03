@@ -1867,11 +1867,39 @@ async fn execute_execution(
     }
 
     // Execute via adapter
-    let receipt = runtime
-        .rollback
-        .execute(&contract, &req.payload)
-        .await
-        .map_err(ApiProblem::internal)?;
+    let receipt = match runtime.rollback.execute(&contract, &req.payload).await {
+        Ok(r) => r,
+        Err(execute_err) => {
+            // Fail-closed: transport/execution failures transition execution to Failed state.
+            // This ensures deterministic semantics - failed executions don't remain in Prepared.
+            let now = Utc::now();
+            let mut failed_execution = existing.clone();
+            failed_execution.state = ExecutionState::Failed;
+            failed_execution.finished_at = Some(now);
+            failed_execution.result_digest = Some(format!("execute_failed: {}", execute_err));
+
+            if let Err(e) = runtime.store.executions().update(&failed_execution).await {
+                tracing::warn!("failed to update execution to Failed state: {}", e);
+            }
+
+            // Emit ErrorRaised provenance event for auditability
+            let event = create_provenance_event(
+                ProvenanceEventKind::ErrorRaised,
+                now,
+                Some(existing.intent_id),
+                Some(existing.proposal_id),
+                Some(execution_id),
+                None,
+                Some(contract_id),
+                None,
+            );
+            if let Err(e) = runtime.store.provenance().append_event(&event).await {
+                tracing::warn!("failed to persist ErrorRaised provenance event: {}", e);
+            }
+
+            return Err(ApiProblem::internal(execute_err));
+        }
+    };
 
     let now = Utc::now();
     let intent_id = existing.intent_id;

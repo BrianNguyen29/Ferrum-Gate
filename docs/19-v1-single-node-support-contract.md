@@ -6,7 +6,29 @@ single-node release. All other docs should link here rather than restating
 support scope.
 
 **Scope**: single-node, SQLite-backed, v1 only.
-**Last updated**: 2026-04-02.
+**Last updated**: 2026-04-03.
+
+---
+
+## 0. Support Tier Summary — Production Boundary at a Glance
+
+This table is the compact published support matrix for FerrumGate v1 single-node.
+It defines what is fully supported, partially supported, and out-of-scope.
+
+| Tier | Category | Status | Notes |
+|------|----------|--------|-------|
+| **T1 — Supported** | Single-node governance core + SQLite persistence | ✅ SUPPORTED | Core loop, evaluate/mint/authorize/prepare/execute/verify/compensate |
+| **T1 — Supported** | Defined REST route surface (Section 1.2) | ✅ SUPPORTED | All listed endpoints; commit route exposed but optional for single-node |
+| **T1 — Supported** | `ferrumctl` operator surface (Section 1.3) | ✅ SUPPORTED | High-use read/control flows CLI-covered |
+| **T1 — Supported** | Provenance / lineage / approvals | ✅ SUPPORTED | Full pagination and filter support |
+| **T2 — Partial** | Adapter-backed integrations | ⚠️ PARTIAL | Bounded local implementations only; broader hardening post-v1 |
+| **T2 — Partial** | U1 core capability | ⚠️ PARTIAL | Materially mature for current scope; richer expressiveness post-v1 |
+| **T3 — Out of Scope** | Multi-node / HA / read-replica | ❌ NOT SUPPORTED | Post-v1 backlog |
+| **T3 — Out of Scope** | Upgrade tracks U2 / U3 / U4 | ❌ NOT SUPPORTED | Post-v1 backlog |
+| **T3 — Out of Scope** | SLA-backed availability guarantees | ❌ NOT SUPPORTED | No HA; RPO owned by operator |
+| **T3 — Out of Scope** | Automated backup / restore | ❌ NOT SUPPORTED | Manual SQLite file-level only |
+
+**Bottom line**: FerrumGate v1 single-node is RC-ready. It is production-supported for single-node SQLite-backed deployments with the T1 surface. It is NOT production-ready for multi-node, HA, or broadly-hardened adapter integrations.
 
 ---
 
@@ -208,10 +230,157 @@ Source docs:
 
 ---
 
-## 6. Change Control
+## 7. SLA Surface
+
+This section defines the availability, recovery, and response boundaries for
+FerrumGate v1 single-node, distinguishing operator-owned obligations from
+FerrumGate-supported behavior. It is conservative: it makes no promise that
+is not backed by current implementation or explicit contract language.
+
+### 7.1 Availability
+
+| Boundary | Owner | Detail |
+|---|---|---|
+| Process uptime | Operator | No built-in process supervisor or auto-restart. Operator must provide external supervision (systemd, container restart policy, etc.). |
+| Node availability | Operator | Single-node only. No HA, no multi-node failover. If the node goes down, the operator must restart it manually. |
+| Network reachability | Operator | Operator controls network exposure, firewall, and bind address. |
+| Health/readiness probes | FerrumGate | `GET /v1/healthz` and `GET /v1/readyz` return 200 when the HTTP server is reachable. These are shallow checks; they do not validate store or governance loop state. |
+| Functional readiness | Operator | After startup, operator must run a functional probe (e.g., `GET /v1/approvals?limit=1`) to confirm end-to-end readiness. Shallow probes alone are insufficient. |
+
+**What is not guaranteed:**
+- No uptime SLO or availability percentage commitment for FerrumGate v1 single-node.
+- No HA, no automatic failover, no read-replica.
+- healthz/readyz do not guarantee store connectivity or governance loop health.
+
+### 7.2 Recovery
+
+| Boundary | Owner | Detail |
+|---|---|---|
+| Recovery Point Objective (RPO) | **Operator** | RPO is owned entirely by the operator. FerrumGate provides no automatic backup, no incremental backup, no backup scheduler, and no point-in-time restore. The operator must define a data-loss tolerance, schedule manual SQLite file backups at intervals consistent with that tolerance, and periodically verify restore capability. |
+| Recovery Time Objective (RTO) | **Operator** | RTO is determined by operator's backup cadence, restore drill frequency, and manual restore procedure execution time. FerrumGate provides no automated recovery path. |
+| Compensate endpoint | FerrumGate | `POST /v1/executions/{id}/compensate` is the primary recovery endpoint in v1. It returns HTTP 200 on success; however, depending on the adapter and rollback class (R0/R1/R2/R3), compensate may be a no-op. Always verify external resource state after compensate. |
+| Rollback contract | FerrumGate | Rollback contracts (R0/R1/R2/R3) with `auto_commit=false` for R3 are enforced. Compensate triggers the adapter's rollback handler if one is registered. |
+| Manual restore | **Operator** | Restore is a manual SQLite file-level copy. Restoring overwrites the entire store; any state created after the backup timestamp is permanently lost. |
+| Restore drill | **Operator** | Operator must periodically verify (at minimum quarterly and after any backup infrastructure change) that backups are restorable. See runbook Section 6.4. |
+
+**What is not guaranteed:**
+- Compensate is not guaranteed to produce an external undo action. It may return 200 with no observable side effect depending on adapter implementation.
+- No automated backup, no incremental restore, no built-in backup retention policy.
+- No RTO commitment — recovery time depends entirely on operator-defined backup cadence and manual restore speed.
+
+### 7.3 Response
+
+| Boundary | Owner | Detail |
+|---|---|---|
+| Bug response | FerrumGate | FerrumGate supports the T1 surface (Section 1). Bugs in implemented behavior will be addressed per the support contract. |
+| Scope boundary | Operator | Issues arising from deployment outside the supported scope (multi-node, HA, non-SQLite stores, adapter configurations beyond bounded local implementations) are operator-owned. |
+| Adapter external side effects | **Operator** | Adapters (fs, sqlite, git, http, maildraft) have bounded local implementations in v1. Broader production hardening, remote/external integration, and verified external undo are post-v1 backlog. The operator is responsible for verifying adapter behavior in their target environment. |
+| Upgrade path | FerrumGate | Upgrade tracks U2/U3/U4 are post-v1. No in-place upgrade mechanism exists in v1. |
+
+**What is not guaranteed:**
+- No response-time SLO for issue resolution.
+- No advisory SLA for multi-node or HA configurations (they are out of scope for v1).
+- No guaranteed external undo via adapter (compensate may be noop-backed; external undo verification is operator responsibility).
+
+### 7.4 Summary
+
+| Category | FerrumGate supports | Operator owns |
+|---|---|---|
+| Availability | HTTP probe endpoints (shallow); single-node process lifecycle | Node supervision, process restart, failover, network |
+| Recovery | Compensate endpoint (best-effort; may be noop); rollback contracts | RPO definition, manual backup cadence, restore procedure, restore drills |
+| Response | T1 surface bug response; scope boundary enforcement | Adapter behavior in target environment, upgrade paths, backup integrity verification |
+
+---
+
+## 8. Change Control
 
 This document is the canonical support contract for FerrumGate v1 single-node.
 Any doc that describes FerrumGate v1 single-node support scope should link to
 this document rather than restating the support boundaries. Changes to
 supported routes, known limitations, or accepted risks must be reflected
 here first and then propagated to the linked docs.
+
+---
+
+## 9. EOL / Deprecation Policy
+
+This section defines how the v1 single-node support contract is deprecated,
+how supported surface (routes, CLI commands) is retired, and how changes to
+the support boundary are announced. It is intentionally conservative: no
+support window duration or version schedule is implied beyond what is
+explicitly stated elsewhere in this document.
+
+### 9.1 Scope
+
+This policy applies to:
+- **Supported routes** listed in Section 1.2
+- **Supported CLI commands** listed in Section 1.3
+- **Deployment model** (single-node, SQLite-backed, v1)
+- **Support tier assignments** (T1/T2/T3) and their boundaries
+
+This policy does **not** apply to multi-node, HA, or post-v1 upgrade tracks;
+those are out-of-scope for v1 and have no support commitment.
+
+### 9.2 Change classification
+
+| Class | Description | Examples |
+|-------|-------------|----------|
+| **Material scope change** | Removes or reclassifies a previously supported route, CLI command, or deployment model; tightens T1/T2 boundary in a way that may break existing workflows | Removing a supported route from the contract; changing single-node to multi-node-only; promoting a T2 adapter to T1 |
+| **Clarifying change** | Fixes typos, updates evidence links, refines descriptions without changing supported surface or operator obligations | Correcting a CLI command description; adding a missing pagination flag to a CLI command; updating evidence file paths |
+
+### 9.3 Deprecation announcement process (material scope changes)
+
+For any material scope change:
+
+1. **Advance notice**: A deprecation notice is published in the project's
+   release notes or equivalent public record **before** the change takes
+   effect. The notice describes what is changing, why, and the effective date.
+2. **Minimum notice period**: The change does not take effect sooner than
+   **30 days** after the deprecation notice is published. This gives operators
+   time to assess impact and plan migration.
+3. **Contract update**: The support contract (this document) is updated to
+   reflect the deprecation at the time of announcement, with the effective
+   date noted. The deprecated item remains in the contract with a
+   `DEPRECATED` marker until the effective date.
+4. **No automatic migration**: FerrumGate does not provide automated migration
+   tooling for deprecated surface. Operators are responsible for their own
+   migration planning.
+
+**What this policy does not require:**
+- A fixed support window (e.g., "12 months of support after deprecation").
+  Such commitments are not made in this document and would require a separate
+  explicit agreement.
+- A semantic-versioning policy. No semantic-versioning policy is defined for
+  FerrumGate v1 in this document.
+
+### 9.4 Route and CLI removal
+
+A supported route or CLI command is **never removed** without:
+1. First being marked `DEPRECATED` in this document with an effective date.
+2. The deprecation notice process in Section 9.3 being followed.
+
+After the effective date, the deprecated route or CLI command may be removed
+from the implementation without further notice.
+
+### 9.5 Supported-surface additions
+
+New routes, CLI commands, or deployment models may be added to the support
+contract at any time. Additions do not require a deprecation period but do
+require this document to be updated first (per Section 8).
+
+### 9.6 EOL of v1 single-node support
+
+"FerrumGate v1 single-node end-of-life" means the point at which all support
+for the v1 single-node scope (Section 0) ceases. This document does **not**
+define an EOL date for v1 single-node. An EOL date, if set, will be
+announced with the same process as a material scope change (Section 9.3).
+
+Until an EOL date is formally announced, the v1 single-node support contract
+remains in effect. Operators should monitor release notes for announcements.
+
+### 9.7 Relationship to upgrade tracks
+
+U2, U3, U4, and multi-node topologies are out-of-scope for v1 single-node
+support (Section 2.4). The availability of a successor version or upgrade
+track does not, by itself, constitute EOL of v1 single-node. An explicit
+EOL announcement is required to retire v1 single-node support.

@@ -10,6 +10,7 @@ instance backed by SQLite.
 
 > **Canonical support contract**: [19-v1-single-node-support-contract.md](./19-v1-single-node-support-contract.md)
 > **Operator checks**: [20-v1-single-node-operator-checks.md](./20-v1-single-node-operator-checks.md)
+> **First-operator functional readiness proof**: [22-v1-first-operator-walkthrough.md](./22-v1-first-operator-walkthrough.md)
 
 For supported routes, known limitations, accepted risks, and adapter surface
 details, see the canonical support contract. Do not rely on other docs for
