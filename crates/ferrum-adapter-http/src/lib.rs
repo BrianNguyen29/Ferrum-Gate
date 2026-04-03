@@ -146,7 +146,10 @@ impl HttpAuth {
 impl HttpRollbackAdapter {
     pub fn new() -> Self {
         Self {
-            client: Client::new(),
+            client: Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .unwrap_or_else(|_| Client::new()),
         }
     }
 
@@ -1016,11 +1019,32 @@ impl RollbackAdapter for HttpRollbackAdapter {
         // For mutations: always use execute-time metadata (do not replay)
         // For GET without explicit check: only 2xx auto-verifies via execute-time metadata
         let (verified, actual_status) = if !is_mutation && explicit_expected_status.is_some() {
-            // GET with explicit check: re-request to verify actual current state
-            let response = self.client.get(&verify_url).send().await.map_err(|e| {
-                HttpAdapterError::RequestFailed(format!("GET request failed: {}", e))
-            })?;
-            let actual = response.status().as_u16();
+            // GET with explicit check: re-request to verify actual current state.
+            // Fail-closed on transport failure: if re-request fails, return verified=false
+            // instead of propagating the error (which would cause 500 at gateway level).
+            let actual = match self.client.get(&verify_url).send().await {
+                Ok(response) => Some(response.status().as_u16()),
+                Err(_e) => {
+                    // Transport failure during verify re-request - fail closed.
+                    // Return verified=false with reason indicating transport failure.
+                    return Ok(VerifyReceipt {
+                        verified: false,
+                        adapter_metadata: {
+                            let mut m = JsonMap::new();
+                            m.insert(
+                                "bound_method".to_string(),
+                                serde_json::json!(format!("{:?}", bound_method)),
+                            );
+                            m.insert("bound_url".to_string(), serde_json::json!(bound_url));
+                            m.insert("verify_url".to_string(), serde_json::json!(verify_url));
+                            m.insert("reason".to_string(), serde_json::json!("transport failure"));
+                            m.insert("verified".to_string(), serde_json::json!(false));
+                            m
+                        },
+                    });
+                }
+            };
+            let actual = actual.unwrap();
             (actual == expected_status, Some(actual))
         } else if !is_mutation {
             // GET without explicit check: auto-verify only 2xx via execute-time metadata
@@ -4001,6 +4025,263 @@ mod tests {
         assert!(
             meta.get("approved_auth_kind").is_none(),
             "auth_kind should not be present when no auth is used"
+        );
+    }
+
+    /// P2.5: Verify transport failure during GET re-request must fail closed.
+    ///
+    /// When verify() attempts to re-request a GET to verify current server state
+    /// and the server is unreachable (transport failure), verify must return
+    /// verified=false with appropriate metadata, NOT propagate an error.
+    ///
+    /// This test uses 127.0.0.1:0 which immediately refuses connections.
+    /// After the server thread exits, subsequent connection attempts fail.
+    #[tokio::test]
+    async fn test_verify_get_transport_failure_fails_closed() {
+        let adapter = HttpRollbackAdapter::new();
+
+        // Use 127.0.0.1:0 which refuses connections immediately (nothing listening)
+        // This simulates an unreachable server during verify's GET re-request
+        let target = make_http_target(HttpMethod::Get, "http://127.0.0.1:0/api");
+
+        // Execute-time metadata with successful 200 status
+        // (simulates execute succeeding before server became unreachable)
+        let mut metadata = JsonMap::new();
+        metadata.insert("status".to_string(), serde_json::json!(200));
+        metadata.insert(
+            "executed_url".to_string(),
+            serde_json::json!("http://127.0.0.1:0/api"),
+        );
+
+        // Explicit HttpStatusExpected(200) check triggers GET re-request in verify
+        let check = make_status_check(200);
+        let contract = make_contract(target, metadata, vec![check]);
+
+        // BUG: Currently this returns an error (propagates HttpAdapterError::RequestFailed)
+        // EXPECTED: Should return Ok(VerifyReceipt { verified: false, ... })
+        let receipt = adapter.verify(&contract).await.unwrap();
+
+        // Verify must fail closed on transport failure - verified=false, not error
+        assert!(
+            !receipt.verified,
+            "GET verify should return verified=false on transport failure, not error. metadata={:?}",
+            receipt.adapter_metadata
+        );
+        assert_eq!(
+            receipt
+                .adapter_metadata
+                .get("reason")
+                .and_then(|v| v.as_str()),
+            Some("transport failure"),
+            "reason should indicate transport failure"
+        );
+    }
+
+    /// P2.5 Slice A: Verify-phase timeout semantics - GET re-request timeout.
+    ///
+    /// When verify() attempts to re-request a GET to verify current server state
+    /// and the request times out (server accepts connection but never responds),
+    /// verify must return verified=false with appropriate metadata, NOT propagate an error.
+    ///
+    /// This is distinct from connection-refused transport failure (tested separately).
+    /// Timeout means the server accepted the connection but didn't respond within the
+    /// client's timeout period (30 seconds for the default client).
+    ///
+    /// This test uses a local server that accepts connections but never responds.
+    /// Note: This test takes ~30 seconds due to the client timeout.
+    #[tokio::test]
+    async fn test_verify_get_re_request_timeout_fails_closed() {
+        let adapter = HttpRollbackAdapter::new();
+
+        // Start a server that accepts connections but never responds (hangs forever)
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        // Spawn server that accepts one connection and hangs
+        let server_handle = std::thread::spawn(move || {
+            if let Ok((_stream, _)) = listener.accept() {
+                // Accept connection but never respond - hang forever
+                std::thread::park();
+            }
+        });
+
+        // Give server time to start
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        let target = make_http_target(HttpMethod::Get, &format!("http://127.0.0.1:{}/api", port));
+
+        // Execute-time metadata with successful 200 status
+        // (simulates execute succeeding before server became unresponsive)
+        let mut metadata = JsonMap::new();
+        metadata.insert("status".to_string(), serde_json::json!(200));
+        metadata.insert(
+            "executed_url".to_string(),
+            serde_json::json!(format!("http://127.0.0.1:{}/api", port)),
+        );
+
+        // Explicit HttpStatusExpected(200) check triggers GET re-request in verify
+        let check = make_status_check(200);
+        let contract = make_contract(target, metadata, vec![check]);
+
+        // verify should return Ok(VerifyReceipt { verified: false }) on timeout
+        let receipt = adapter.verify(&contract).await.unwrap();
+
+        // Verify must fail closed on timeout - verified=false, not error
+        assert!(
+            !receipt.verified,
+            "GET verify should return verified=false on timeout, not error. metadata={:?}",
+            receipt.adapter_metadata
+        );
+        assert_eq!(
+            receipt
+                .adapter_metadata
+                .get("reason")
+                .and_then(|v| v.as_str()),
+            Some("transport failure"),
+            "reason should indicate transport failure (timeout is a transport failure)"
+        );
+
+        // Clean up server thread
+        server_handle.thread().unpark();
+        let _ = server_handle.join();
+    }
+
+    /// P2.5 Slice B: Mutation verify explicit-check crosscheck mismatch matrix.
+    ///
+    /// When mutation verify is called with an explicit HttpStatusExpected check
+    /// that conflicts with the execute-time metadata status, verify must return
+    /// verified=false (fail closed), using execute-time metadata for the crosscheck
+    /// rather than replaying the mutation.
+    ///
+    /// This test focuses on PATCH method which wasn't covered in the existing
+    /// mutation explicit-check mismatch tests (POST, PUT, DELETE were covered).
+    /// The behavior is consistent across all mutation methods - explicit check
+    /// acts as crosscheck against execute-time metadata.
+    #[tokio::test]
+    async fn test_verify_mutation_patch_explicit_check_mismatch() {
+        let adapter = HttpRollbackAdapter::new();
+        let target = make_http_target(HttpMethod::Patch, "https://example.com/api/users/1");
+
+        // Execute-time metadata says 503 Service Unavailable
+        let mut metadata = JsonMap::new();
+        metadata.insert("status".to_string(), serde_json::json!(503));
+        metadata.insert(
+            "executed_url".to_string(),
+            serde_json::json!("https://example.com/api/users/1"),
+        );
+        metadata.insert("executed_method".to_string(), serde_json::json!("Patch"));
+
+        // Explicit check expects 200 OK - crosscheck mismatch
+        let check = make_status_check(200);
+        let contract = make_contract(target, metadata, vec![check]);
+
+        let receipt = adapter.verify(&contract).await.unwrap();
+
+        // Should NOT verify - execute-time (503) doesn't match explicit (200)
+        assert!(
+            !receipt.verified,
+            "PATCH with explicit 200 check should fail when execute-time was 503. metadata={:?}",
+            receipt.adapter_metadata
+        );
+        assert_eq!(
+            receipt
+                .adapter_metadata
+                .get("actual_status")
+                .unwrap()
+                .as_u64()
+                .unwrap(),
+            503,
+            "actual_status should be from execute-time metadata (503)"
+        );
+        assert_eq!(
+            receipt
+                .adapter_metadata
+                .get("expected_status")
+                .unwrap()
+                .as_u64()
+                .unwrap(),
+            200,
+            "expected_status should be from explicit check (200)"
+        );
+        assert_eq!(
+            receipt
+                .adapter_metadata
+                .get("verified_via")
+                .unwrap()
+                .as_str()
+                .unwrap(),
+            "execute-time metadata",
+            "should indicate execute-time metadata was used (no replay)"
+        );
+    }
+
+    /// P2.5 Slice C: Mutation verify explicit-check crosscheck MATCH matrix.
+    ///
+    /// When mutation verify is called with an explicit HttpStatusExpected check
+    /// that MATCHES the execute-time metadata status, verify must return
+    /// verified=true, using execute-time metadata for the crosscheck
+    /// rather than replaying the mutation.
+    ///
+    /// This is the positive counterpart to test_verify_mutation_patch_explicit_check_mismatch.
+    /// The executed_url is deliberately unreachable (254.254.254.254:9999) to prove
+    /// that verify uses execute-time metadata for crosscheck and does NOT replay.
+    /// If verify tried to replay, it would fail with a connection error.
+    #[tokio::test]
+    async fn test_verify_mutation_patch_explicit_check_match() {
+        let adapter = HttpRollbackAdapter::new();
+        let target = make_http_target(HttpMethod::Patch, "https://example.com/api/users/1");
+
+        // Execute-time metadata says 200 OK
+        let mut metadata = JsonMap::new();
+        metadata.insert("status".to_string(), serde_json::json!(200));
+        // This URL is unreachable - if verify tries to replay, it would fail
+        metadata.insert(
+            "executed_url".to_string(),
+            serde_json::json!("http://254.254.254.254:9999/unreachable"),
+        );
+        metadata.insert("executed_method".to_string(), serde_json::json!("Patch"));
+
+        // Explicit check expects 200 OK - matches execute-time
+        let check = make_status_check(200);
+        let contract = make_contract(target, metadata, vec![check]);
+
+        let receipt = adapter.verify(&contract).await.unwrap();
+
+        // Should verify - execute-time (200) matches explicit (200)
+        assert!(
+            receipt.verified,
+            "PATCH with explicit 200 check should verify when execute-time was 200. metadata={:?}",
+            receipt.adapter_metadata
+        );
+        assert_eq!(
+            receipt
+                .adapter_metadata
+                .get("actual_status")
+                .unwrap()
+                .as_u64()
+                .unwrap(),
+            200,
+            "actual_status should be from execute-time metadata (200)"
+        );
+        assert_eq!(
+            receipt
+                .adapter_metadata
+                .get("expected_status")
+                .unwrap()
+                .as_u64()
+                .unwrap(),
+            200,
+            "expected_status should be from explicit check (200)"
+        );
+        assert_eq!(
+            receipt
+                .adapter_metadata
+                .get("verified_via")
+                .unwrap()
+                .as_str()
+                .unwrap(),
+            "execute-time metadata",
+            "should indicate execute-time metadata was used (no replay)"
         );
     }
 }
