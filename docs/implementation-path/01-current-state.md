@@ -64,7 +64,7 @@ Single-node v1 scope unless noted.
 - **Phase C** (firewall MVP): DONE — logic exists, curated regression fixtures implemented (6 tests)
 - **Phase D** (adapters): PARTIAL — bounded local implementations exist for fs/sqlite/maildraft/git/http; broader production hardening is post-v1
 - **Phase E** (gateway orchestration): DONE for SQLite-backed single-node flow
-- **Phase F** (hardening/evidence): DONE — integration tests strong, poisoned-context fixtures curated, supported flows and gaps documented, evidence script present; all gates cleared as of 2026-04-02
+- **Phase F** (hardening/evidence): DONE — integration tests strong, poisoned-context fixtures curated, supported flows and gaps documented, evidence script present; P3.G1-G4 live evidence all executed and attested (2026-04-03); all gates cleared as of 2026-04-02
 
 ## Next step
 

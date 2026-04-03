@@ -51,6 +51,14 @@ Scope is single-node v1 unless labeled post-v1.
 
 These are explicitly out of v1 scope. Do not treat as blockers.
 
+**P3.G live evidence — all complete (single-node scope):**
+- P3.G1 ✅ DONE — functional readiness proof (end-to-end walkthrough): `docs/implementation-path/34-p3-g1-executed-evidence.md`
+- P3.G2 ✅ DONE — smoke stability evidence (automated 12-interval soak): `docs/implementation-path/35-p3-g2-executed-evidence.md` (run_id: `p3-g2-20260403-live`)
+- P3.G3 ✅ DONE — backup/restore drill: `docs/implementation-path/31-p3-g3-backup-restore-drill-evidence.md`
+- P3.G4 ✅ DONE — observability verification: `docs/implementation-path/32-p3-g4-observability-verification-evidence.md`
+- Source of truth for P3 track status: `docs/implementation-path/30-production-roadmap.md` Section — Priority 3
+
+**Remaining post-v1 adapter and integration work:**
 - [ ] broader production-verified adapter integrations and hardening (fs, sqlite, git, http)
   - Src: `docs/00-project-canon.md` line 62 "broader production-verified adapter integrations and hardening (fs, sqlite, maildraft, git, http)"
   - Src: `docs/implementation-path/01-current-state.md` lines 26-31
@@ -80,6 +88,39 @@ These are explicitly out of v1 scope. Do not treat as blockers.
 
 - [ ] Runtime Integrations — MCP / local / NemoClaw (U4)
   - Src: `docs/91-phase-success-criteria-and-kpis.md` section 8.4
+
+## Execution Sequence
+
+Grounded in `docs/implementation-path/30-production-roadmap.md` post-P3 execution order. Single-node v1 RC-ready; broader production-ready still incomplete.
+
+### Immediate Next Slices (P2 adapter hardening)
+
+| Order | Item | Status | Source |
+|-------|------|--------|--------|
+| 1 | P2.5 http adapter hardening (Slice 1–10) | 🔄 IN PROGRESS | `30-production-roadmap.md` P2.5; `35-p3-g2-executed-evidence.md` |
+| 2 | P2.1 fs adapter hardening + production verification | ⬜ TODO | `30-production-roadmap.md` P2.1 |
+| 3 | P2.2 sqlite adapter hardening + production verification | ⬜ TODO | `30-production-roadmap.md` P2.2 |
+| 4 | P2.3 git adapter hardening + production verification | ⬜ TODO | `30-production-roadmap.md` P2.3 |
+| 5 | P2.4 git remote workflows (push/fetch/pull) | ⬜ TODO | `30-production-roadmap.md` P2.4 |
+| 6 | P2.6 maildraft provider send integration | ⬜ TODO | `30-production-roadmap.md` P2.6 |
+| 7 | P2.7 maildraft broader verify semantics hardening | ⬜ TODO | `30-production-roadmap.md` P2.7 |
+
+### Longer-Term / Planned Tracks
+
+| Order | Item | Status | Source |
+|-------|------|--------|--------|
+| 8 | P4.1 `ferrumctl` advanced operator flows | ⬜ TODO | `30-production-roadmap.md` P4.1 |
+| 9 | P4.2 Policy bundle lifecycle tooling | ⬜ TODO | `30-production-roadmap.md` P4.2 |
+| 10 | P5.4–P5.5 Sync-1 preflight checks + decision table | ⬜ TODO | `30-production-roadmap.md` P5.4–P5.5 |
+| 11 | P5.7 HA / multi-leader replication | ⬜ PLANNED | `30-production-roadmap.md` P5.7 |
+| 12 | U1.1–U1.2 Outcome-aware Governance (remaining backlog) | ⬜ PLANNED | `30-production-roadmap.md` U1.1–U1.2; Outcome-aware Governance backlog note above |
+| 13 | U2 Reversible Execution Planner | ⬜ PLANNED | `30-production-roadmap.md` U2 |
+| 14 | U3 Cross-runtime Provenance Fabric | ⬜ PLANNED | `30-production-roadmap.md` U3 |
+| 15 | U4 Runtime Integrations (MCP / local / NemoClaw) | ⬜ PLANNED | `30-production-roadmap.md` U4 |
+
+**Note:** Execution order follows roadmap priority sequence per `docs/implementation-path/24-p1-p2-p3-execution-plan.md` lines 266–297.
+
+---
 
 ## Documented drift / cleanup notes (as of 2026-04-03)
 

@@ -137,5 +137,6 @@ All gates pass:
 
 Core governance loop is implemented. Scope-mismatch deny is done. P1 evidence items are complete.
 All P0 blockers resolved as of 2026-04-02.
+P3.G1-G4 live evidence all executed and attested (2026-04-03): see `docs/implementation-path/30-production-roadmap.md` Section — Priority 3 for evidence links.
 
 Remaining gaps are post-v1 backlog items (multi-node/HA, broader adapter hardening, U2-U4 upgrade tracks). Issue #97 (2026-04-03) improved HTTP adapter verify semantics and gateway integration coverage but does not expand the supported scope beyond single-node RC-ready.
