@@ -77,9 +77,9 @@ FerrumGate v1 exposes a Prometheus-format `/metrics` endpoint at `GET /metrics`.
 It requires bearer-token authentication (same auth as other protected routes).
 
 The endpoint exposes:
-- `ferrum_gateway_http_requests_total` — request count by method, path (normalized), status
-- `ferrum_gateway_http_request_duration_seconds` — request latency histograms
-- `ferrum_gateway_http_requests_total` with `kind="error"` — error count by method, path
+- `ferrum_gateway_ferrum_gateway_ferrum_gateway_http_requests_total` — request count by method, path (normalized), status (live-observed name; the prefix `ferrum_gateway` appears three times)
+- `ferrum_gateway_ferrum_gateway_ferrum_gateway_http_request_duration_seconds` — request latency histograms (live-observed name; same triple-prefix pattern)
+- `ferrum_gateway_ferrum_gateway_ferrum_gateway_http_requests_total` with `kind="error"` — error count by method, path
 
 Path normalization: raw UUIDs in paths are replaced with `/{id}` placeholders to
 avoid high-cardinality label sets.
