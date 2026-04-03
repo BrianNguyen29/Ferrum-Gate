@@ -45,7 +45,7 @@ Before starting `ferrumd`, confirm the following:
 ```bash
 # Minimal start with persistent SQLite store
 ferrumd \
-  --bind-addr 127.0.0.1:8080 \
+  --bind 127.0.0.1:8080 \
   --store-dsn "sqlite:///var/lib/ferrumgate/ferrumgate.db" \
   --auth-mode bearer \
   --bearer-token "$FERRUM_BEARER_TOKEN" \

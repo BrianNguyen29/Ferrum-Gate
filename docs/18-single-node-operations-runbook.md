@@ -61,7 +61,7 @@ Or with individual flags:
 
 ```bash
 ferrumd \
-  --bind-addr 127.0.0.1:8080 \
+  --bind 127.0.0.1:8080 \
   --store-dsn "sqlite:///var/lib/ferrumgate/ferrumgate.db" \
   --auth-mode bearer \
   --bearer-token "$FERRUM_BEARER_TOKEN" \
