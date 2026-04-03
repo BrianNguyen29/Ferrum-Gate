@@ -68,8 +68,8 @@
 | P3.6 | RC evidence script | ✅ DONE | 2026-04-02 |
 | P3.G1 | Functional readiness proof — end-to-end operator walkthrough (install → functional probe → first control action → first rollback/compensate drill) | 🔄 IN PROGRESS | `docs/22-v1-first-operator-walkthrough.md` created; walkthrough must be executed and attestation block signed to mark DONE |
 | P3.G2 | Smoke stability evidence — sustained-lifecycle smoke suite (48h+ runbook-driven soak or equivalent automated cycle) | ⬜ TODO | Test report / log artifact |
-| P3.G3 | Backup / restore drill evidence — successful backup capture and restore drill under rollback scenario | ⬜ TODO | Drill log / artifact |
-| P3.G4 | Observability verification — metrics, logging, and tracing surface confirmed operational in target environment | ⬜ TODO | Metrics doc + live confirmation |
+| P3.G3 | Backup / restore drill evidence — successful backup capture and restore drill under rollback scenario | 🔄 IN PROGRESS | `docs/implementation-path/31-p3-g3-backup-restore-drill-evidence.md` drill template created; drill must be executed and attestation block signed to mark DONE |
+| P3.G4 | Observability verification — metrics, logging, and tracing surface confirmed operational in target environment | 🔄 IN PROGRESS | `docs/implementation-path/32-p3-g4-observability-verification-evidence.md` evidence template created; live confirmation in target environment required to mark DONE |
 
 **Evidence:** `docs/implementation-path/25-v1-single-node-rc-evidence.md`
 
