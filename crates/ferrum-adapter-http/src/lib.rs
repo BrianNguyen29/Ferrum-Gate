@@ -1511,6 +1511,423 @@ mod tests {
         );
     }
 
+    // === Additional Verify Semantics Tests (Issue #97 slice) ===
+
+    /// Test: GET without explicit HttpStatusExpected auto-verifies 2xx via execute-time metadata.
+    /// This locks the semantics that GET 2xx is self-verifying without explicit check.
+    #[tokio::test]
+    async fn test_verify_get_auto_verifies_2xx_without_explicit_check() {
+        let adapter = HttpRollbackAdapter::new();
+        let target = make_http_target(HttpMethod::Get, "https://example.com/api");
+
+        // Execute-time metadata with 201 Created
+        let mut metadata = JsonMap::new();
+        metadata.insert("status".to_string(), serde_json::json!(201));
+
+        // No explicit verify_checks - 2xx auto-verifies
+        let contract = make_contract(target, metadata, vec![]);
+
+        let receipt = adapter.verify(&contract).await.unwrap();
+
+        assert!(
+            receipt.verified,
+            "GET 2xx should auto-verify without explicit check. metadata={:?}",
+            receipt.adapter_metadata
+        );
+        assert_eq!(
+            receipt
+                .adapter_metadata
+                .get("verified_via")
+                .unwrap()
+                .as_str()
+                .unwrap(),
+            "execute-time metadata",
+            "should indicate auto-verify via execute-time metadata"
+        );
+    }
+
+    /// Test: GET with explicit HttpStatusExpected(404) fails when server returns 200.
+    /// This locks the semantics that explicit check requires exact status match.
+    #[tokio::test]
+    async fn test_verify_get_with_explicit_404_check_fails_when_server_returns_200() {
+        let (port, handle) = start_local_server(200);
+        let adapter = HttpRollbackAdapter::new();
+        let target = make_http_target(HttpMethod::Get, &format!("http://127.0.0.1:{}/test", port));
+
+        // Explicit check expects 404
+        let check = make_status_check(404);
+        let contract = make_contract(target, JsonMap::new(), vec![check]);
+
+        let receipt = adapter.verify(&contract).await.unwrap();
+
+        // Should fail - server returned 200, not 404
+        assert!(
+            !receipt.verified,
+            "GET with explicit 404 check should fail when server returns 200"
+        );
+        assert_eq!(
+            receipt
+                .adapter_metadata
+                .get("actual_status")
+                .unwrap()
+                .as_u64()
+                .unwrap(),
+            200,
+            "actual_status should reflect the 200 from server"
+        );
+        assert_eq!(
+            receipt
+                .adapter_metadata
+                .get("expected_status")
+                .unwrap()
+                .as_u64()
+                .unwrap(),
+            404,
+            "expected_status should reflect the explicit check"
+        );
+        let _ = handle.join();
+    }
+
+    /// Test: Mutation POST with 4xx execute-time status fails verify (fail-closed).
+    /// Mutations do NOT auto-verify 4xx - only 2xx auto-verify.
+    #[tokio::test]
+    async fn test_verify_mutation_post_4xx_execute_time_fails() {
+        let adapter = HttpRollbackAdapter::new();
+        let target = make_http_target(HttpMethod::Post, "https://example.com/api");
+
+        // Execute-time metadata with 400 Bad Request
+        let mut metadata = JsonMap::new();
+        metadata.insert("status".to_string(), serde_json::json!(400));
+        metadata.insert(
+            "executed_url".to_string(),
+            serde_json::json!("https://example.com/api/users"),
+        );
+
+        // No explicit verify_checks
+        let contract = make_contract(target, metadata, vec![]);
+
+        let receipt = adapter.verify(&contract).await.unwrap();
+
+        // 4xx should NOT auto-verify for mutations - fail-closed
+        assert!(
+            !receipt.verified,
+            "Mutation 4xx should NOT auto-verify; verify must be fail-closed. metadata={:?}",
+            receipt.adapter_metadata
+        );
+        assert_eq!(
+            receipt
+                .adapter_metadata
+                .get("actual_status")
+                .unwrap()
+                .as_u64()
+                .unwrap(),
+            400,
+            "actual_status should be 400"
+        );
+    }
+
+    /// Test: Mutation PUT with explicit 404 check crosscheck fails when execute-time was 200.
+    /// Explicit check acts as crosscheck against execute-time metadata, not a live request.
+    #[tokio::test]
+    async fn test_verify_mutation_put_explicit_404_check_fails_when_executed_200() {
+        let adapter = HttpRollbackAdapter::new();
+        let target = make_http_target(HttpMethod::Put, "https://example.com/api/users/1");
+
+        // Execute-time metadata says 200 OK
+        let mut metadata = JsonMap::new();
+        metadata.insert("status".to_string(), serde_json::json!(200));
+        metadata.insert(
+            "executed_url".to_string(),
+            serde_json::json!("https://example.com/api/users/1"),
+        );
+
+        // Explicit check expects 404 - crosscheck mismatch
+        let check = make_status_check(404);
+        let contract = make_contract(target, metadata, vec![check]);
+
+        let receipt = adapter.verify(&contract).await.unwrap();
+
+        // Should fail - execute-time (200) != explicit check (404)
+        assert!(
+            !receipt.verified,
+            "Mutation with explicit 404 check should fail when execute-time was 200"
+        );
+        assert_eq!(
+            receipt
+                .adapter_metadata
+                .get("actual_status")
+                .unwrap()
+                .as_u64()
+                .unwrap(),
+            200,
+            "actual_status should be from execute-time metadata"
+        );
+        assert_eq!(
+            receipt
+                .adapter_metadata
+                .get("expected_status")
+                .unwrap()
+                .as_u64()
+                .unwrap(),
+            404,
+            "expected_status should be from explicit check"
+        );
+    }
+
+    /// Test: Mutation PATCH with 5xx execute-time status fails verify (fail-closed).
+    /// 5xx are never auto-verified - they indicate server error.
+    #[tokio::test]
+    async fn test_verify_mutation_patch_5xx_execute_time_fails() {
+        let adapter = HttpRollbackAdapter::new();
+        let target = make_http_target(HttpMethod::Patch, "https://example.com/api/users/1");
+
+        // Execute-time metadata with 503 Service Unavailable
+        let mut metadata = JsonMap::new();
+        metadata.insert("status".to_string(), serde_json::json!(503));
+        metadata.insert(
+            "executed_url".to_string(),
+            serde_json::json!("https://example.com/api/users/1"),
+        );
+
+        // No explicit verify_checks
+        let contract = make_contract(target, metadata, vec![]);
+
+        let receipt = adapter.verify(&contract).await.unwrap();
+
+        // 5xx should NOT auto-verify for mutations - fail-closed
+        assert!(
+            !receipt.verified,
+            "Mutation 5xx should NOT auto-verify; verify must be fail-closed. metadata={:?}",
+            receipt.adapter_metadata
+        );
+        assert_eq!(
+            receipt
+                .adapter_metadata
+                .get("actual_status")
+                .unwrap()
+                .as_u64()
+                .unwrap(),
+            503,
+            "actual_status should be 503"
+        );
+    }
+
+    /// Test: DELETE with 204 No Content execute-time auto-verifies.
+    /// 204 is a successful 2xx status.
+    #[tokio::test]
+    async fn test_verify_delete_204_execute_time_auto_verifies() {
+        let adapter = HttpRollbackAdapter::new();
+        let target = make_http_target(HttpMethod::Delete, "https://example.com/api/users/1");
+
+        // Execute-time metadata with 204 No Content
+        let mut metadata = JsonMap::new();
+        metadata.insert("status".to_string(), serde_json::json!(204));
+        metadata.insert(
+            "executed_url".to_string(),
+            serde_json::json!("https://example.com/api/users/1"),
+        );
+
+        // No explicit verify_checks
+        let contract = make_contract(target, metadata, vec![]);
+
+        let receipt = adapter.verify(&contract).await.unwrap();
+
+        // 204 IS a successful 2xx status and should auto-verify
+        assert!(
+            receipt.verified,
+            "DELETE 204 should auto-verify. metadata={:?}",
+            receipt.adapter_metadata
+        );
+    }
+
+    /// Test: GET without execute-time status metadata fails-closed.
+    /// Even for GET, if no status metadata is available, verify must fail.
+    #[tokio::test]
+    async fn test_verify_get_without_execute_metadata_fails_closed() {
+        let adapter = HttpRollbackAdapter::new();
+        let target = make_http_target(HttpMethod::Get, "https://example.com/api");
+
+        // No status in metadata
+        let metadata = JsonMap::new();
+        let contract = make_contract(target, metadata, vec![]);
+
+        let receipt = adapter.verify(&contract).await.unwrap();
+
+        // Must fail - no status to verify against
+        assert!(
+            !receipt.verified,
+            "GET without execute-time metadata should fail-closed. metadata={:?}",
+            receipt.adapter_metadata
+        );
+        assert!(
+            receipt
+                .adapter_metadata
+                .get("reason")
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .contains("no HttpStatusExpected"),
+            "reason should indicate missing status check"
+        );
+    }
+
+    /// Test: execute stores non-2xx status in metadata correctly.
+    /// Verifies that the adapter properly records the actual status code.
+    #[tokio::test]
+    async fn test_execute_stores_non_2xx_status_in_metadata() {
+        let (port, handle) = start_local_server(400);
+        let adapter = HttpRollbackAdapter::new();
+        let target = make_http_target(HttpMethod::Post, &format!("http://127.0.0.1:{}/api", port));
+
+        let mut metadata = JsonMap::new();
+        metadata.insert(
+            "approved_request_digest".to_string(),
+            serde_json::json!(HttpRollbackAdapter::compute_body_aware_digest(
+                &HttpMethod::Post,
+                &format!("http://127.0.0.1:{}/api", port),
+                &serde_json::json!({"name": "test"}),
+                None,
+            )),
+        );
+        let contract = make_contract(target, metadata, vec![]);
+        let payload = serde_json::json!({
+            "body": {"name": "test"}
+        });
+
+        let receipt = adapter.execute(&contract, &payload).await.unwrap();
+
+        // Status should be stored regardless of success/failure
+        assert_eq!(
+            receipt
+                .adapter_metadata
+                .get("status")
+                .unwrap()
+                .as_u64()
+                .unwrap(),
+            400,
+            "execute should store 400 in metadata"
+        );
+        // result_digest should contain the status as string
+        assert_eq!(
+            receipt.result_digest.unwrap(),
+            "400",
+            "result_digest should be the status code string"
+        );
+        let _ = handle.join();
+    }
+
+    /// Test: Execute for GET stores 3xx redirect status in metadata (fail-closed for verify).
+    #[tokio::test]
+    async fn test_execute_stores_3xx_status_for_get() {
+        let (port, handle) = start_local_server(301);
+        let adapter = HttpRollbackAdapter::new();
+        let target = make_http_target(HttpMethod::Get, &format!("http://127.0.0.1:{}/api", port));
+
+        let metadata = JsonMap::new();
+        let contract = make_contract(target, metadata, vec![]);
+
+        let receipt = adapter
+            .execute(&contract, &serde_json::json!({}))
+            .await
+            .unwrap();
+
+        // 3xx is stored but will fail verify (not 2xx)
+        assert_eq!(
+            receipt
+                .adapter_metadata
+                .get("status")
+                .unwrap()
+                .as_u64()
+                .unwrap(),
+            301,
+            "execute should store 301 in metadata"
+        );
+        let _ = handle.join();
+    }
+
+    /// Test: Mutation verify with explicit status check does NOT replay a network call.
+    /// This test proves that even when an explicit HttpStatusExpected check is provided,
+    /// mutations use execute-time metadata only and do NOT re-request against the server.
+    ///
+    /// Proof: We provide an executed_url that points to an unreachable address.
+    /// If verify tried to replay (make a network call), it would fail with a connection error.
+    /// Since verify succeeds using execute-time metadata, no replay occurred.
+    #[tokio::test]
+    async fn test_verify_mutation_with_explicit_check_does_not_replay() {
+        let adapter = HttpRollbackAdapter::new();
+        let target = make_http_target(HttpMethod::Post, "https://example.com/api");
+
+        // Execute-time metadata with 201 Created
+        let mut metadata = JsonMap::new();
+        metadata.insert("status".to_string(), serde_json::json!(201));
+        // This URL is unreachable - if verify tries to replay, it would fail
+        metadata.insert(
+            "executed_url".to_string(),
+            serde_json::json!("http://254.254.254.254:9999/unreachable"),
+        );
+        metadata.insert("executed_method".to_string(), serde_json::json!("Post"));
+
+        // Explicit check expects 201
+        let check = make_status_check(201);
+        let contract = make_contract(target, metadata, vec![check]);
+
+        let receipt = adapter.verify(&contract).await.unwrap();
+
+        // Should verify successfully - uses execute-time metadata, no replay
+        assert!(
+            receipt.verified,
+            "Mutation with explicit check should verify using execute-time metadata, not replay. metadata={:?}",
+            receipt.adapter_metadata
+        );
+        // If verify_url was used for replay, it would have failed with connection error
+        // The fact that it succeeded proves no replay happened
+        assert_eq!(
+            receipt
+                .adapter_metadata
+                .get("verified_via")
+                .unwrap()
+                .as_str()
+                .unwrap(),
+            "execute-time metadata",
+            "should indicate execute-time metadata was used, not live replay"
+        );
+    }
+
+    /// Test: GET verify with explicit check does not use execute-time metadata path.
+    /// This demonstrates asymmetry: GET with explicit check skips the execute-time metadata
+    /// path entirely, while mutations always use execute-time metadata.
+    ///
+    /// Observable behavior: verified=true and verified_via is NOT set to "execute-time metadata".
+    /// The actual mechanism (live replay vs cached) is an implementation detail.
+    #[tokio::test]
+    async fn test_verify_get_with_explicit_check_skips_execute_time_metadata() {
+        // Use a reachable local server so verify can succeed
+        let (port, handle) = start_local_server(200);
+        let adapter = HttpRollbackAdapter::new();
+        let target = make_http_target(HttpMethod::Get, &format!("http://127.0.0.1:{}/test", port));
+
+        // No execute-time status - GET with explicit check does not need it
+        let metadata = JsonMap::new();
+
+        // Explicit check expects 200
+        let check = make_status_check(200);
+        let contract = make_contract(target, metadata, vec![check]);
+
+        let receipt = adapter.verify(&contract).await.unwrap();
+
+        // Should verify - explicit check satisfied
+        assert!(
+            receipt.verified,
+            "GET with explicit check should verify successfully"
+        );
+        // verified_via should NOT be "execute-time metadata" - this distinguishes GET from mutation behavior
+        assert!(
+            receipt.adapter_metadata.get("verified_via").is_none(),
+            "GET with explicit check should not use execute-time metadata path (distinguishes from mutations)"
+        );
+        let _ = handle.join();
+    }
+
     /// Test that execute uses payload URL when provided (concrete URL within bound scope prefix).
     /// The bound URL is https://example.com/api but payload specifies https://example.com/api/users
     /// which is within scope, so it should succeed.

@@ -101,9 +101,26 @@ When `auth.api_key` is present, the firewall checks that the specific API key he
 
 ## Verify Behavior by Method
 
+### Verify Semantics Matrix
+
+| Method | Explicit Check | Execute-time Status | Verified? | Reason |
+|--------|---------------|-------------------|-----------|--------|
+| GET | None | 2xx | ✅ YES | Auto-verify via execute-time metadata |
+| GET | None | 4xx/5xx | ❌ NO | Fail-closed: non-2xx not verified |
+| GET | None | None | ❌ NO | Fail-closed: no status to verify |
+| GET | 2xx | Live → 2xx | ✅ YES | Re-request matches explicit check |
+| GET | 2xx | Live → 4xx | ❌ NO | Re-request doesn't match explicit check |
+| Mutation | None | 2xx | ✅ YES | Auto-verify via execute-time metadata |
+| Mutation | None | 4xx/5xx | ❌ NO | Fail-closed: non-2xx not verified |
+| Mutation | None | None | ❌ NO | Fail-closed: mutation requires execute-time status |
+| Mutation | 2xx | 2xx | ✅ YES | Execute-time matches explicit check |
+| Mutation | 2xx | 4xx | ❌ NO | Execute-time doesn't match explicit check |
+| Mutation | 4xx | 4xx | ✅ YES | Execute-time matches explicit check |
+| Mutation | 4xx | 2xx | ❌ NO | Execute-time doesn't match explicit check |
+
 ### GET Requests
 - If explicit `HttpStatusExpected` check: re-requests to verify actual current server state
-- If no explicit check: uses execute-time status metadata fallback
+- If no explicit check: uses execute-time status metadata fallback; only 2xx auto-verifies
 
 ### Mutation Requests (POST/PUT/PATCH/DELETE)
 - **Always uses execute-time metadata only** - does NOT replay the mutating request
