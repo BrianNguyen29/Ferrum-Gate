@@ -51,6 +51,14 @@ Scope is single-node v1 unless labeled post-v1.
 
 These are explicitly out of v1 scope. Do not treat as blockers.
 
+**P3.G live evidence — all complete (single-node scope):**
+- P3.G1 ✅ DONE — functional readiness proof (end-to-end walkthrough): `docs/implementation-path/34-p3-g1-executed-evidence.md`
+- P3.G2 ✅ DONE — smoke stability evidence (automated 12-interval soak): `docs/implementation-path/35-p3-g2-executed-evidence.md` (run_id: `p3-g2-20260403-live`)
+- P3.G3 ✅ DONE — backup/restore drill: `docs/implementation-path/31-p3-g3-backup-restore-drill-evidence.md`
+- P3.G4 ✅ DONE — observability verification: `docs/implementation-path/32-p3-g4-observability-verification-evidence.md`
+- Source of truth for P3 track status: `docs/implementation-path/30-production-roadmap.md` Section — Priority 3
+
+**Remaining post-v1 adapter and integration work:**
 - [ ] broader production-verified adapter integrations and hardening (fs, sqlite, git, http)
   - Src: `docs/00-project-canon.md` line 62 "broader production-verified adapter integrations and hardening (fs, sqlite, maildraft, git, http)"
   - Src: `docs/implementation-path/01-current-state.md` lines 26-31

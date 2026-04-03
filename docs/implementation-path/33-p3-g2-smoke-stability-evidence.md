@@ -163,7 +163,7 @@ and once at the end of the run.
 
 ```
 Control-Path Check Record — FerrumGate v1 Single-Node
-=====================================================
+====================================================
 Date:                  <YYYY-MM-DD>
 Time (UTC):            <HH:MM:SS>
 Operator:              <name or ticket>
@@ -173,10 +173,10 @@ Check type:            <start-of-run | end-of-run | interval | ad-hoc>
 
 --- Read path checks ---
 
-GET /v1/executions?limit=1  (with bearer auth)
+GET /v1/executions/{execution_id}  (with bearer auth)
   HTTP status:         <200 | other>
   JSON parseable:      <yes | no>
-  read-path outcome:  <PASS | FAIL | SKIP (no executions yet)>
+  read-path outcome:  <PASS | FAIL>
 
 GET /v1/approvals?limit=1  (with bearer auth if auth_mode=bearer)
   HTTP status:         <200 | other>
@@ -197,7 +197,7 @@ Notes:                         <any observations>
 
 | Check | Required |
 |---|---|
-| Read-path (`GET /v1/executions?limit=1`) returns 200 with valid JSON | Yes |
+| Read-path (`GET /v1/executions/{execution_id}`) returns 200 with valid JSON | Yes |
 | Approvals path (`GET /v1/approvals?limit=1`) returns 200 with valid JSON | Yes |
 | Control action (cancel/pause/resume) returns expected HTTP status | Yes (or SKIP if no execution available) |
 
@@ -312,7 +312,7 @@ Operator sign-off:          <name / ticket / date>
 | Readiness (shallow) | `curl http://<addr>:<port>/v1/readyz` | None | 200 |
 | Store + governance (functional probe) | `curl http://<addr>:<port>/v1/approvals?limit=1` | Bearer (if auth enabled) | 200 + JSON |
 | Store integrity | `sqlite3 <path> "PRAGMA integrity_check;"` | None | `ok` |
-| Control-path read | `curl http://<addr>:<port>/v1/executions?limit=1` | Bearer | 200 + JSON |
+| Control-path read | `curl http://<addr>:<port>/v1/executions/{id}` | Bearer | 200 + JSON |
 | Control-path mutating | `curl -X POST http://<addr>:<port>/v1/executions/<id>/cancel` | Bearer | 200 or 404 |
 
 For escalation thresholds and consecutive failure streak definitions,

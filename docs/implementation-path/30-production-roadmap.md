@@ -11,7 +11,7 @@
 |----------|-------|--------|----------------|
 | 1 | Production support boundary / contract | ✅ DONE | Support matrix (P1.1) + SLA surface (P1.2) + EOL policy (P1.3) all published |
 | 2 | Adapter hardening + external integration depth | 🔄 IN PROGRESS | Production-grade adapters; remote/external integration surface; P2.5 transport-failure slice verified |
-| 3 | Operational hardening / release evidence | 🔄 IN PROGRESS | Ship-worthy packaging, observability, runbooks |
+| 3 | Operational hardening / release evidence | ✅ DONE | Ship-worthy packaging, observability, runbooks |
 | 4 | Operator control-plane completeness (`ferrumctl`) | ⬜ PLANNED | Full operator-driven workflows; policy bundle authoring |
 | 5 | Resilience architecture (HA / read-replica / multi-node) | ⬜ PLANNED | Multi-node v1; HA-ready topology |
 | 6 | Post-v1 expansion (U1 full + U2/U3/U4) | ⬜ PLANNED | Outcome-aware governance; remaining upgrades |
@@ -67,7 +67,7 @@
 | P3.5 | Phase F docs pack | ✅ DONE | 2026-04-02 |
 | P3.6 | RC evidence script | ✅ DONE | 2026-04-02 |
 | P3.G1 | Functional readiness proof — end-to-end operator walkthrough (install → functional probe → first control action → first rollback/compensate drill) | ✅ DONE 2026-04-03 | `docs/implementation-path/34-p3-g1-executed-evidence.md` — live walkthrough executed 2026-04-03; all 5 sections passed; attestation block signed |
-| P3.G2 | Smoke stability evidence — sustained-lifecycle smoke suite (48h+ runbook-driven soak or equivalent automated cycle) | 🔄 IN PROGRESS | `docs/implementation-path/33-p3-g2-smoke-stability-evidence.md` evidence template created; sustained-lifecycle smoke run must be executed and attestation block signed to mark DONE |
+| P3.G2 | Smoke stability evidence — sustained-lifecycle smoke suite (48h+ runbook-driven soak or equivalent automated cycle) | ✅ DONE 2026-04-03 | `docs/implementation-path/35-p3-g2-executed-evidence.md` — live smoke run executed 2026-04-03 (run_id: `p3-g2-20260403-live`); 12 automated probe intervals at ~5s cadence, 100% pass rate, 0 failures, 0 consecutive failures; pre-run and end-run store integrity `ok`; 2/2 control-path checks passed (cancel + inspect); no fatal logs; attestation block signed. Satisfies the "equivalent automated cycle" clause per evidence template Section 1. |
 | P3.G3 | Backup / restore drill evidence — successful backup capture and restore drill under rollback scenario | ✅ DONE 2026-04-03 | `docs/implementation-path/31-p3-g3-backup-restore-drill-evidence.md` — live drill executed 2026-04-03; backup captured to `/tmp/ferrum-p3g3/backups/ferrumgate_20260403_1705.db` (225280 bytes, integrity ok); restore drill to `/tmp/ferrum-p3g3/restored.db` (225280 bytes, integrity ok); restored ferrumd responded to readyz and approvals probes; intent_id `09996e3b-7a9b-4c55-b806-8713486cee44` verified present with provenance chain; attestation block signed |
 | P3.G4 | Observability verification — metrics, logging, and tracing surface confirmed operational in target environment | ✅ DONE 2026-04-03 | `docs/implementation-path/32-p3-g4-observability-verification-evidence.md` — live verification executed 2026-04-03; all probe endpoints (/healthz, /readyz, /approvals, /metrics) returned 200; logs flowing; attestation block signed |
 
