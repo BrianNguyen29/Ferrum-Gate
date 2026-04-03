@@ -75,6 +75,34 @@
 
 ---
 
+## Post-P3 Execution Order
+
+The following lists the remaining execution order after P3 completion (P3.G1–P3.G4 ✅ DONE 2026-04-03), grounded in roadmap priority order. Single-node v1 RC-ready; broader production-ready still incomplete.
+
+### Immediate Next Slice (P2 adapter hardening — in progress / todo)
+
+1. **P2.5** — http adapter hardening (Slice 1–10 ✅ DONE; broader production hardening continues)
+2. **P2.1** — fs adapter hardening + production verification
+3. **P2.2** — sqlite adapter hardening + production verification
+4. **P2.3** — git adapter hardening + production verification
+5. **P2.4** — git remote workflows (push/fetch/pull integration)
+6. **P2.6** — maildraft provider send integration
+7. **P2.7** — maildraft broader verify semantics hardening
+
+### Longer-Term / Planned Tracks
+
+8. **P4.1–P4.2** — `ferrumctl` advanced operator flows + policy bundle lifecycle tooling
+9. **P5.4–P5.5** — Sync-1 preflight checks (PF1–PF8) + decision table + abort semantics
+10. **P5.7** — HA / multi-leader replication
+11. **U1.1–U1.2** — Outcome-aware Governance (remaining backlog: richer clause expressiveness, policy bundle authoring tooling)
+12. **U2** — Reversible Execution Planner
+13. **U3** — Cross-runtime Provenance Fabric
+14. **U4** — Runtime Integrations (MCP / local / NemoClaw)
+
+**Source:** `docs/implementation-path/11-remaining-tasks.md`; execution order follows roadmap priority sequence per `docs/implementation-path/24-p1-p2-p3-execution-plan.md` lines 266–297.
+
+---
+
 ## Priority 4 — Operator Control-Plane Completeness (`ferrumctl`)
 
 **Goal:** Close remaining `ferrumctl` gaps; policy bundle lifecycle tooling.

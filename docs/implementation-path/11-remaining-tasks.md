@@ -89,6 +89,39 @@ These are explicitly out of v1 scope. Do not treat as blockers.
 - [ ] Runtime Integrations — MCP / local / NemoClaw (U4)
   - Src: `docs/91-phase-success-criteria-and-kpis.md` section 8.4
 
+## Execution Sequence
+
+Grounded in `docs/implementation-path/30-production-roadmap.md` post-P3 execution order. Single-node v1 RC-ready; broader production-ready still incomplete.
+
+### Immediate Next Slices (P2 adapter hardening)
+
+| Order | Item | Status | Source |
+|-------|------|--------|--------|
+| 1 | P2.5 http adapter hardening (Slice 1–10) | 🔄 IN PROGRESS | `30-production-roadmap.md` P2.5; `35-p3-g2-executed-evidence.md` |
+| 2 | P2.1 fs adapter hardening + production verification | ⬜ TODO | `30-production-roadmap.md` P2.1 |
+| 3 | P2.2 sqlite adapter hardening + production verification | ⬜ TODO | `30-production-roadmap.md` P2.2 |
+| 4 | P2.3 git adapter hardening + production verification | ⬜ TODO | `30-production-roadmap.md` P2.3 |
+| 5 | P2.4 git remote workflows (push/fetch/pull) | ⬜ TODO | `30-production-roadmap.md` P2.4 |
+| 6 | P2.6 maildraft provider send integration | ⬜ TODO | `30-production-roadmap.md` P2.6 |
+| 7 | P2.7 maildraft broader verify semantics hardening | ⬜ TODO | `30-production-roadmap.md` P2.7 |
+
+### Longer-Term / Planned Tracks
+
+| Order | Item | Status | Source |
+|-------|------|--------|--------|
+| 8 | P4.1 `ferrumctl` advanced operator flows | ⬜ TODO | `30-production-roadmap.md` P4.1 |
+| 9 | P4.2 Policy bundle lifecycle tooling | ⬜ TODO | `30-production-roadmap.md` P4.2 |
+| 10 | P5.4–P5.5 Sync-1 preflight checks + decision table | ⬜ TODO | `30-production-roadmap.md` P5.4–P5.5 |
+| 11 | P5.7 HA / multi-leader replication | ⬜ PLANNED | `30-production-roadmap.md` P5.7 |
+| 12 | U1.1–U1.2 Outcome-aware Governance (remaining backlog) | ⬜ PLANNED | `30-production-roadmap.md` U1.1–U1.2; Outcome-aware Governance backlog note above |
+| 13 | U2 Reversible Execution Planner | ⬜ PLANNED | `30-production-roadmap.md` U2 |
+| 14 | U3 Cross-runtime Provenance Fabric | ⬜ PLANNED | `30-production-roadmap.md` U3 |
+| 15 | U4 Runtime Integrations (MCP / local / NemoClaw) | ⬜ PLANNED | `30-production-roadmap.md` U4 |
+
+**Note:** Execution order follows roadmap priority sequence per `docs/implementation-path/24-p1-p2-p3-execution-plan.md` lines 266–297.
+
+---
+
 ## Documented drift / cleanup notes (as of 2026-04-03)
 
 - scope mismatch deny: IMPLEMENTED in `crates/ferrum-pdp/src/engine.rs` lines 31-46
