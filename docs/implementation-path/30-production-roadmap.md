@@ -40,7 +40,7 @@
 
 | Item | Description | Status | Verification |
 |------|-------------|--------|--------------|
-| P2.1 | fs adapter — hardening and production verification | ⬜ TODO | Integration test |
+| P2.1 | fs adapter — hardening and production verification | 🔄 IN PROGRESS (Slice 1: fail-closed verify on I/O errors ✅ 2026-04-03) | `ferrum-adapter-fs`: `test_fs_adapter_verify_fail_closed_on_io_error_permission_denied`, `test_fs_adapter_verify_hash_mismatch_is_verified_false_not_error`, `test_fs_adapter_verify_file_deleted_is_verified_false_not_error` |
 | P2.2 | sqlite adapter — hardening and production verification | ⬜ TODO | Integration test |
 | P2.3 | git adapter — hardening and production verification | ⬜ TODO | Integration test |
 | P2.4 | git remote workflows — push/fetch/pull integration | ⬜ TODO | Integration test |

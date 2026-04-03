@@ -98,7 +98,7 @@ Grounded in `docs/implementation-path/30-production-roadmap.md` post-P3 executio
 | Order | Item | Status | Source |
 |-------|------|--------|--------|
 | 1 | P2.5 http adapter hardening (Slice 1–10) | 🔄 IN PROGRESS | `30-production-roadmap.md` P2.5; `35-p3-g2-executed-evidence.md` |
-| 2 | P2.1 fs adapter hardening + production verification | ⬜ TODO | `30-production-roadmap.md` P2.1 |
+| 2 | P2.1 fs adapter hardening (Slice 1: fail-closed verify on I/O errors ✅) | 🔄 IN PROGRESS | `30-production-roadmap.md` P2.1 |
 | 3 | P2.2 sqlite adapter hardening + production verification | ⬜ TODO | `30-production-roadmap.md` P2.2 |
 | 4 | P2.3 git adapter hardening + production verification | ⬜ TODO | `30-production-roadmap.md` P2.3 |
 | 5 | P2.4 git remote workflows (push/fetch/pull) | ⬜ TODO | `30-production-roadmap.md` P2.4 |

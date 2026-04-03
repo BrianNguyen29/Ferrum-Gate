@@ -378,14 +378,10 @@ impl RollbackAdapter for FsRollbackAdapter {
                         });
                     }
                     Err(e) => {
-                        metadata.insert(
-                            "hash_error".to_string(),
-                            serde_json::Value::String(e.to_string()),
-                        );
-                        return Ok(VerifyReceipt {
-                            verified: false,
-                            adapter_metadata: metadata,
-                        });
+                        // Fail closed: propagate I/O errors rather than treating as verification failure.
+                        // An I/O error means we cannot determine the file state, so verification
+                        // cannot succeed. This is distinct from a content mismatch (verified=false).
+                        return Err(e);
                     }
                 };
 
@@ -1669,6 +1665,264 @@ mod tests {
             verified_action,
             Some("file_absent"),
             "verified_action should indicate absence verification for delete"
+        );
+    }
+
+    // === Fail-closed I/O error tests ===
+
+    #[tokio::test]
+    async fn test_fs_adapter_verify_fail_closed_on_io_error_permission_denied() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.txt");
+
+        let adapter = FsRollbackAdapter::new("fs");
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        // Prepare
+        let prepare_req = RollbackPrepareRequest {
+            intent_id: ferrum_proto::IntentId::new(),
+            proposal_id: ferrum_proto::ProposalId::new(),
+            execution_id,
+            action_type: ferrum_proto::ActionType::FileWrite,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "fs".to_string(),
+            target: ferrum_proto::RollbackTarget::FilePath {
+                path: file_path.to_str().unwrap().to_string(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            metadata: JsonMap::new(),
+        };
+
+        let prep_receipt = adapter.prepare(&prepare_req).await.unwrap();
+
+        // Execute (creates file)
+        let payload = serde_json::json!({
+            "path": file_path.to_str().unwrap(),
+            "content": "hello world"
+        });
+
+        let contract = RollbackContract {
+            contract_id: ferrum_proto::RollbackContractId::new(),
+            intent_id: prepare_req.intent_id,
+            proposal_id: prepare_req.proposal_id,
+            execution_id: prepare_req.execution_id,
+            action_type: ferrum_proto::ActionType::FileWrite,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "fs".to_string(),
+            target: ferrum_proto::RollbackTarget::FilePath {
+                path: file_path.to_str().unwrap().to_string(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: ferrum_proto::RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: prep_receipt.adapter_metadata,
+        };
+
+        adapter.execute(&contract, &payload).await.unwrap();
+        assert!(file_path.exists());
+
+        // Make file unreadable (remove read permission)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&file_path).unwrap().permissions();
+            perms.set_mode(0o000);
+            std::fs::set_permissions(&file_path, perms).unwrap();
+        }
+
+        // Verify should FAIL CLOSED: propagate I/O error rather than returning verified=false
+        // This ensures that permission denied (or other I/O errors) are treated as failures
+        // that prevent commit, not as "verification passed but content mismatch"
+        let verify_result = adapter.verify(&contract).await;
+        assert!(
+            verify_result.is_err(),
+            "verify should return Err on I/O error (fail closed), got: {:?}",
+            verify_result
+        );
+
+        // Cleanup: restore permissions so TempDir can clean up
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&file_path).unwrap().permissions();
+            perms.set_mode(0o644);
+            let _ = std::fs::set_permissions(&file_path, perms);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fs_adapter_verify_hash_mismatch_is_verified_false_not_error() {
+        // This test confirms the distinction:
+        // - Content mismatch (hash doesn't match) -> verified=false (can commit)
+        // - I/O error (can't read file) -> Err (fail closed, prevent commit)
+        // Both return different results to allow proper handling upstream.
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.txt");
+
+        let adapter = FsRollbackAdapter::new("fs");
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        // Prepare
+        let prepare_req = RollbackPrepareRequest {
+            intent_id: ferrum_proto::IntentId::new(),
+            proposal_id: ferrum_proto::ProposalId::new(),
+            execution_id,
+            action_type: ferrum_proto::ActionType::FileWrite,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "fs".to_string(),
+            target: ferrum_proto::RollbackTarget::FilePath {
+                path: file_path.to_str().unwrap().to_string(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            metadata: JsonMap::new(),
+        };
+
+        let prep_receipt = adapter.prepare(&prepare_req).await.unwrap();
+
+        // Execute (creates file with "hello world")
+        let payload = serde_json::json!({
+            "path": file_path.to_str().unwrap(),
+            "content": "hello world"
+        });
+
+        let contract = RollbackContract {
+            contract_id: ferrum_proto::RollbackContractId::new(),
+            intent_id: prepare_req.intent_id,
+            proposal_id: prepare_req.proposal_id,
+            execution_id: prepare_req.execution_id,
+            action_type: ferrum_proto::ActionType::FileWrite,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "fs".to_string(),
+            target: ferrum_proto::RollbackTarget::FilePath {
+                path: file_path.to_str().unwrap().to_string(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: ferrum_proto::RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: prep_receipt.adapter_metadata,
+        };
+
+        adapter.execute(&contract, &payload).await.unwrap();
+
+        // Manually modify the file to create content mismatch
+        std::fs::write(&file_path, "different content").unwrap();
+
+        // Verify should return Ok with verified=false (NOT Err)
+        // This is because we CAN read the file - the content just doesn't match
+        let verify_result = adapter.verify(&contract).await;
+        assert!(
+            verify_result.is_ok(),
+            "verify should return Ok even on content mismatch, got: {:?}",
+            verify_result
+        );
+        let verify_receipt = verify_result.unwrap();
+        assert!(
+            !verify_receipt.verified,
+            "verified should be false on content mismatch"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_fs_adapter_verify_file_deleted_is_verified_false_not_error() {
+        // File deletion (NotFound) should return verified=false, NOT an error.
+        // This is because NotFound is a determinate state - we know the file doesn't exist.
+        // Contrast with I/O errors (permission denied, disk error) which return Err (fail closed).
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.txt");
+
+        let adapter = FsRollbackAdapter::new("fs");
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        // Prepare
+        let prepare_req = RollbackPrepareRequest {
+            intent_id: ferrum_proto::IntentId::new(),
+            proposal_id: ferrum_proto::ProposalId::new(),
+            execution_id,
+            action_type: ferrum_proto::ActionType::FileWrite,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "fs".to_string(),
+            target: ferrum_proto::RollbackTarget::FilePath {
+                path: file_path.to_str().unwrap().to_string(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            metadata: JsonMap::new(),
+        };
+
+        let prep_receipt = adapter.prepare(&prepare_req).await.unwrap();
+
+        // Execute
+        let payload = serde_json::json!({
+            "path": file_path.to_str().unwrap(),
+            "content": "hello world"
+        });
+
+        let contract = RollbackContract {
+            contract_id: ferrum_proto::RollbackContractId::new(),
+            intent_id: prepare_req.intent_id,
+            proposal_id: prepare_req.proposal_id,
+            execution_id: prepare_req.execution_id,
+            action_type: ferrum_proto::ActionType::FileWrite,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "fs".to_string(),
+            target: ferrum_proto::RollbackTarget::FilePath {
+                path: file_path.to_str().unwrap().to_string(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: ferrum_proto::RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: prep_receipt.adapter_metadata,
+        };
+
+        adapter.execute(&contract, &payload).await.unwrap();
+
+        // Delete the file
+        std::fs::remove_file(&file_path).unwrap();
+
+        // Verify should return Ok with verified=false (NOT Err)
+        // File deletion is a determinate state we can verify - the file is gone.
+        let verify_result = adapter.verify(&contract).await;
+        assert!(
+            verify_result.is_ok(),
+            "verify should return Ok when file is deleted (NotFound), got: {:?}",
+            verify_result
+        );
+        let verify_receipt = verify_result.unwrap();
+        assert!(
+            !verify_receipt.verified,
+            "verified should be false when file is deleted"
         );
     }
 }
