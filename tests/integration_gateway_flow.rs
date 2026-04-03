@@ -20722,6 +20722,383 @@ async fn test_verify_get_transport_failure_fails_closed() {
     );
 }
 
+/// P2.5 Slice 5: Gateway-level HTTP PATCH mutation verify explicit-check mismatch test.
+///
+/// Verifies that mutation verify uses execute-time metadata crosscheck and NOT replay.
+///
+/// Flow:
+/// 1. Execute HTTP PATCH with 503 status (server error)
+/// 2. Execute captures 503 in metadata (not replaying - this is the execute result)
+/// 3. After execute, inject explicit verify_checks with HttpStatusExpected(200)
+///    into the rollback contract
+/// 4. Verify API is called
+/// 5. HTTP adapter's verify for mutations crosschecks: execute-time status (503) vs
+///    explicit check (200) → mismatch → verified=false
+/// 6. Execution state transitions to Failed
+/// 7. Commit is rejected from Failed state
+///
+/// Key semantic being tested:
+/// - For mutations, verify does NOT replay the request
+/// - Verify compares execute-time status (503) against explicit check (200)  
+/// - The mismatch proves the metadata crosscheck is being used, not replay
+/// - No network reachability manipulation needed - it's pure metadata comparison
+///
+/// This complements the adapter-level test `test_verify_mutation_patch_explicit_check_mismatch`
+/// (ferrum-adapter-http/src/lib.rs) with a full gateway API integration test.
+#[tokio::test]
+async fn test_verify_mutation_patch_explicit_check_mismatch() {
+    // Start a local HTTP server that returns 503 on PATCH request
+    let (port, server_handle) = start_local_http_server(503);
+
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Step 1: Compile intent with HTTP PATCH scope
+    let mut req = sample_intent_request();
+    req.requested_resource_scope = vec![ResourceSelector::HttpEndpoint {
+        method: ferrum_proto::HttpMethod::Patch,
+        base_url: format!("http://127.0.0.1:{}", port),
+        path_prefix: "/".to_string(),
+        mode: ResourceMode::Write,
+    }];
+    req.effect_type = Some(EffectType::ExternalApiCall);
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Step 2: Create and evaluate proposal for http.patch
+    let proposal = ActionProposal {
+        proposal_id: ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "HTTP PATCH request".to_string(),
+        tool_name: "http.patch".to_string(),
+        server_name: "http-adapter".to_string(),
+        raw_arguments: serde_json::json!({
+            "url": format!("http://127.0.0.1:{}/", port),
+            "body": {"name": "updated"}
+        }),
+        expected_effect: "update resource via HTTP PATCH".to_string(),
+        estimated_risk: RiskTier::Medium,
+        requested_rollback_class: RollbackClass::R0NativeReversible,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    // Step 3: Mint capability for HTTP PATCH
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "http-adapter".to_string(),
+            tool_name: "http.patch".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![ResourceBinding::Http {
+            method: ferrum_proto::HttpMethod::Patch,
+            base_url: format!("http://127.0.0.1:{}", port),
+            path_prefix: "/".to_string(),
+            header_allowlist: vec![],
+            mode: ResourceMode::Write,
+        }],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        policy_bundle_id: None,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    // Step 4: Authorize execution
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    // R0 with mutation returns RequireApproval, so we need to go through approval flow
+    // Step 4b: Get approval ID and resolve it
+    let (pending_approvals, _) = runtime
+        .store
+        .approvals()
+        .list_pending_cursor(100, None)
+        .await
+        .unwrap();
+    assert!(
+        !pending_approvals.is_empty(),
+        "Approval request should be created for R0 with mutation"
+    );
+    let approval_id = pending_approvals[0].approval_id;
+
+    // Step 4c: Resolve approval with approve=true
+    let app = build_router(runtime.clone());
+    let resolve_req = ferrum_proto::ApprovalResolveRequest {
+        actor: ferrum_proto::ActorRef {
+            actor_type: ferrum_proto::ActorType::User,
+            actor_id: "admin".to_string(),
+            display_name: Some("Admin".to_string()),
+        },
+        approve: true,
+        reason: Some("Approved by test".to_string()),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/approvals/{}/resolve", approval_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&resolve_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    // Step 5: Prepare execution
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    // Step 6: Execute HTTP PATCH - server returns 503
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({
+            "url": format!("http://127.0.0.1:{}/", port),
+            "body": {"name": "updated"}
+        }),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Execute should succeed (server responded, even with 503)
+    assert_eq!(
+        response.status(),
+        200,
+        "execute should succeed even when server returns 503"
+    );
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let execute_resp: ferrum_proto::ExecuteResponse = serde_json::from_slice(&body).unwrap();
+    assert!(execute_resp.executed, "executed flag should be true");
+    // result_digest should contain "503" from the server response
+    assert!(
+        execute_resp.result_digest.as_ref().unwrap().contains("503"),
+        "result_digest should contain 503"
+    );
+
+    // Step 7: Inject explicit verify_checks into the rollback contract.
+    // The contract currently has no verify_checks (empty).
+    // We inject HttpStatusExpected(200) to create a mismatch with execute-time status (503).
+    // This forces the verify API to use the explicit check path for mutations.
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    let contract_id = stored_execution.unwrap().rollback_contract_id.unwrap();
+    let mut contract = runtime
+        .store
+        .rollback_contracts()
+        .get(contract_id)
+        .await
+        .unwrap()
+        .unwrap();
+
+    // Add explicit HttpStatusExpected(200) check - this will mismatch with execute-time 503
+    let explicit_check = CheckSpec {
+        check_type: CheckType::HttpStatusExpected,
+        config: {
+            let mut m = ferrum_proto::JsonMap::new();
+            m.insert("status".to_string(), serde_json::json!(200));
+            m
+        },
+    };
+    contract.verify_checks = vec![explicit_check];
+    runtime
+        .store
+        .rollback_contracts()
+        .update(&contract)
+        .await
+        .unwrap();
+
+    // Step 8: Verify - mutation with explicit check mismatch should return verified=false
+    // This proves the verify uses execute-time metadata crosscheck, not replay.
+    // For mutations, even if we stopped the server, verify would still use metadata.
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Verify API returns 200 (not 500) - fail-closed verification failure is still 200 OK
+    assert_eq!(
+        response.status(),
+        200,
+        "verify should return 200 (not 500) for fail-closed verification"
+    );
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let verify_resp: ferrum_proto::VerifyResponse = serde_json::from_slice(&body).unwrap();
+
+    // Mismatch: execute-time (503) != explicit check (200) → verified=false
+    assert!(
+        !verify_resp.verified,
+        "verify should be false when execute-time (503) != explicit check (200)"
+    );
+    assert!(
+        verify_resp.verified_at.is_none(),
+        "verified_at should not be set when verification fails"
+    );
+
+    // Step 9: Execution state should be Failed
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored_execution.is_some());
+    let exec = stored_execution.unwrap();
+    assert!(
+        matches!(exec.state, ExecutionState::Failed),
+        "Execution should be Failed after verify mismatch, got {:?}",
+        exec.state
+    );
+
+    // Step 10: Commit should be rejected from Failed state
+    let app = build_router(runtime.clone());
+    let commit_req = ferrum_proto::CommitRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/commit", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&commit_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Commit from Failed state should be rejected (4xx or 5xx, not 2xx)
+    assert!(
+        !response.status().is_success(),
+        "commit should be rejected from Failed state, got {:?}",
+        response.status()
+    );
+
+    // Clean up server handle
+    let _ = server_handle.join();
+}
+
 /// P2.5 Slice 8: Gateway-level HTTP GET verify re-request timeout test.
 ///
 /// Verifies fail-closed behavior when HTTP GET verify re-request times out
@@ -20764,7 +21141,8 @@ async fn test_verify_get_re_request_timeout_fails_closed() {
 
                     if i == 0 {
                         // First connection (execute): respond 200 OK
-                        let response = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                        let response =
+                            "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
                         let _ = stream.write_all(response.as_bytes());
                         let _ = stream.flush();
                     } else {
@@ -21073,4 +21451,1124 @@ async fn test_verify_get_re_request_timeout_fails_closed() {
     // Clean up: unpark the hanging thread so the test can exit
     handle.thread().unpark();
     let _ = handle.join();
+}
+
+/// P2.5 Slice 6: Gateway-level HTTP PATCH mutation verify explicit-check MATCH test.
+///
+/// This is the symmetric positive counterpart to `test_verify_mutation_patch_explicit_check_mismatch`.
+///
+/// Target semantics:
+/// - PATCH execute-time metadata 200
+/// - explicit HttpStatusExpected(200) check injected
+/// - verify API returns 200 with verified=true
+/// - Execution remains in AwaitingVerification or Committed (NOT Failed)
+/// - Commit succeeds
+///
+/// Key semantic being tested:
+/// - For mutations, verify does NOT replay the request (built into adapter design)
+/// - Verify compares execute-time status (200) against explicit check (200)
+/// - The MATCH proves the metadata crosscheck is working correctly
+/// - When execute-time matches explicit check, verified=true and commit is allowed
+///
+/// This complements:
+/// - Adapter-level test `test_verify_mutation_patch_explicit_check_match`
+///   (ferrum-adapter-http/src/lib.rs) with full gateway API integration
+/// - Gateway-level mismatch test `test_verify_mutation_patch_explicit_check_mismatch`
+///   with the positive match case
+#[tokio::test]
+async fn test_verify_mutation_patch_explicit_check_match() {
+    // Start a local HTTP server that returns 200 OK on PATCH request
+    let (port, server_handle) = start_local_http_server(200);
+
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Step 1: Compile intent with HTTP PATCH scope
+    let mut req = sample_intent_request();
+    req.requested_resource_scope = vec![ResourceSelector::HttpEndpoint {
+        method: ferrum_proto::HttpMethod::Patch,
+        base_url: format!("http://127.0.0.1:{}", port),
+        path_prefix: "/".to_string(),
+        mode: ResourceMode::Write,
+    }];
+    req.effect_type = Some(EffectType::ExternalApiCall);
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Step 2: Create and evaluate proposal for http.patch
+    let proposal = ActionProposal {
+        proposal_id: ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "HTTP PATCH request".to_string(),
+        tool_name: "http.patch".to_string(),
+        server_name: "http-adapter".to_string(),
+        raw_arguments: serde_json::json!({
+            "url": format!("http://127.0.0.1:{}/", port),
+            "body": {"name": "updated"}
+        }),
+        expected_effect: "update resource via HTTP PATCH".to_string(),
+        estimated_risk: RiskTier::Medium,
+        requested_rollback_class: RollbackClass::R0NativeReversible,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    // Step 3: Mint capability for HTTP PATCH
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "http-adapter".to_string(),
+            tool_name: "http.patch".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![ResourceBinding::Http {
+            method: ferrum_proto::HttpMethod::Patch,
+            base_url: format!("http://127.0.0.1:{}", port),
+            path_prefix: "/".to_string(),
+            header_allowlist: vec![],
+            mode: ResourceMode::Write,
+        }],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        policy_bundle_id: None,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    // Step 4: Authorize execution
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    // R0 with mutation returns RequireApproval, so we need to go through approval flow
+    // Step 4b: Get approval ID and resolve it
+    let (pending_approvals, _) = runtime
+        .store
+        .approvals()
+        .list_pending_cursor(100, None)
+        .await
+        .unwrap();
+    assert!(
+        !pending_approvals.is_empty(),
+        "Approval request should be created for R0 with mutation"
+    );
+    let approval_id = pending_approvals[0].approval_id;
+
+    // Step 4c: Resolve approval with approve=true
+    let app = build_router(runtime.clone());
+    let resolve_req = ferrum_proto::ApprovalResolveRequest {
+        actor: ferrum_proto::ActorRef {
+            actor_type: ferrum_proto::ActorType::User,
+            actor_id: "admin".to_string(),
+            display_name: Some("Admin".to_string()),
+        },
+        approve: true,
+        reason: Some("Approved by test".to_string()),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/approvals/{}/resolve", approval_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&resolve_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    // Step 5: Prepare execution
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    // Step 6: Execute HTTP PATCH - server returns 200
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({
+            "url": format!("http://127.0.0.1:{}/", port),
+            "body": {"name": "updated"}
+        }),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Execute should succeed
+    assert_eq!(
+        response.status(),
+        200,
+        "execute should succeed when server returns 200"
+    );
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let execute_resp: ferrum_proto::ExecuteResponse = serde_json::from_slice(&body).unwrap();
+    assert!(execute_resp.executed, "executed flag should be true");
+    // result_digest should contain "200" from the server response
+    assert!(
+        execute_resp.result_digest.as_ref().unwrap().contains("200"),
+        "result_digest should contain 200"
+    );
+
+    // Step 7: Inject explicit verify_checks into the rollback contract.
+    // The contract currently has no verify_checks (empty).
+    // We inject HttpStatusExpected(200) to match the execute-time status.
+    // This tests the positive case: execute-time (200) == explicit check (200).
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    let contract_id = stored_execution.unwrap().rollback_contract_id.unwrap();
+    let mut contract = runtime
+        .store
+        .rollback_contracts()
+        .get(contract_id)
+        .await
+        .unwrap()
+        .unwrap();
+
+    // Add explicit HttpStatusExpected(200) check - this MATCHES execute-time 200
+    let explicit_check = CheckSpec {
+        check_type: CheckType::HttpStatusExpected,
+        config: {
+            let mut m = ferrum_proto::JsonMap::new();
+            m.insert("status".to_string(), serde_json::json!(200));
+            m
+        },
+    };
+    contract.verify_checks = vec![explicit_check];
+    runtime
+        .store
+        .rollback_contracts()
+        .update(&contract)
+        .await
+        .unwrap();
+
+    // Step 8: Verify - mutation with explicit check MATCH should return verified=true
+    // For mutations, verify uses execute-time metadata crosscheck (no replay)
+    // Compare: execute-time (200) == explicit check (200) → verified=true
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Verify API returns 200 OK
+    assert_eq!(
+        response.status(),
+        200,
+        "verify should return 200 for successful verification"
+    );
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let verify_resp: ferrum_proto::VerifyResponse = serde_json::from_slice(&body).unwrap();
+
+    // MATCH: execute-time (200) == explicit check (200) → verified=true
+    assert!(
+        verify_resp.verified,
+        "verify should be true when execute-time (200) == explicit check (200)"
+    );
+    assert!(
+        verify_resp.verified_at.is_some(),
+        "verified_at should be set when verification succeeds"
+    );
+
+    // Step 9: Execution state should be AwaitingVerification (R0) or Committed (auto-commit)
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored_execution.is_some());
+    let exec = stored_execution.unwrap();
+    assert!(
+        matches!(
+            exec.state,
+            ExecutionState::AwaitingVerification | ExecutionState::Committed
+        ),
+        "Execution should be AwaitingVerification or Committed after verify match, got {:?}",
+        exec.state
+    );
+
+    // Step 10: Commit should succeed (not rejected since verification passed)
+    let app = build_router(runtime.clone());
+    let commit_req = ferrum_proto::CommitRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/commit", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&commit_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Commit should succeed after verified=true (2xx status)
+    assert!(
+        response.status().is_success(),
+        "commit should succeed after verified=true, got {:?}",
+        response.status()
+    );
+
+    // Clean up server handle
+    let _ = server_handle.join();
+}
+
+/// P2.5 Slice 9: Gateway-level HTTP POST mutation verify explicit-check mismatch test.
+///
+/// Verifies that mutation verify uses execute-time metadata crosscheck and NOT replay
+/// for POST requests (extends PATCH coverage in Slice 5 to another mutation method).
+///
+/// Flow:
+/// 1. Execute HTTP POST with 503 status (server error)
+/// 2. Execute captures 503 in metadata (not replaying - this is the execute result)
+/// 3. After execute, inject explicit verify_checks with HttpStatusExpected(200)
+///    into the rollback contract
+/// 4. Verify API is called
+/// 5. HTTP adapter's verify for mutations crosschecks: execute-time status (503) vs
+///    explicit check (200) → mismatch → verified=false
+/// 6. Execution state transitions to Failed
+/// 7. Commit is rejected from Failed state
+///
+/// Key semantic being tested:
+/// - For mutations, verify does NOT replay the request
+/// - Verify compares execute-time status (503) against explicit check (200)
+/// - The mismatch proves the metadata crosscheck is being used, not replay
+///
+/// This extends P2.5 Slice 5 (PATCH mismatch) to POST mutations.
+#[tokio::test]
+async fn test_verify_mutation_post_explicit_check_mismatch() {
+    // Start a local HTTP server that returns 503 on POST request
+    let (port, server_handle) = start_local_http_server(503);
+
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Step 1: Compile intent with HTTP POST scope
+    let mut req = sample_intent_request();
+    req.requested_resource_scope = vec![ResourceSelector::HttpEndpoint {
+        method: ferrum_proto::HttpMethod::Post,
+        base_url: format!("http://127.0.0.1:{}", port),
+        path_prefix: "/".to_string(),
+        mode: ResourceMode::Write,
+    }];
+    req.effect_type = Some(EffectType::ExternalApiCall);
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Step 2: Create and evaluate proposal for http.post
+    let proposal = ActionProposal {
+        proposal_id: ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "HTTP POST request".to_string(),
+        tool_name: "http.post".to_string(),
+        server_name: "http-adapter".to_string(),
+        raw_arguments: serde_json::json!({
+            "url": format!("http://127.0.0.1:{}/", port),
+            "body": {"name": "created"}
+        }),
+        expected_effect: "create resource via HTTP POST".to_string(),
+        estimated_risk: RiskTier::Medium,
+        requested_rollback_class: RollbackClass::R0NativeReversible,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    // Step 3: Mint capability for HTTP POST
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "http-adapter".to_string(),
+            tool_name: "http.post".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![ResourceBinding::Http {
+            method: ferrum_proto::HttpMethod::Post,
+            base_url: format!("http://127.0.0.1:{}", port),
+            path_prefix: "/".to_string(),
+            header_allowlist: vec![],
+            mode: ResourceMode::Write,
+        }],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        policy_bundle_id: None,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    // Step 4: Authorize execution
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    // R0 with mutation returns RequireApproval, so we need to go through approval flow
+    let (pending_approvals, _) = runtime
+        .store
+        .approvals()
+        .list_pending_cursor(100, None)
+        .await
+        .unwrap();
+    assert!(
+        !pending_approvals.is_empty(),
+        "Approval request should be created for R0 with mutation"
+    );
+    let approval_id = pending_approvals[0].approval_id;
+
+    // Step 4c: Resolve approval with approve=true
+    let app = build_router(runtime.clone());
+    let resolve_req = ferrum_proto::ApprovalResolveRequest {
+        actor: ferrum_proto::ActorRef {
+            actor_type: ferrum_proto::ActorType::User,
+            actor_id: "admin".to_string(),
+            display_name: Some("Admin".to_string()),
+        },
+        approve: true,
+        reason: Some("Approved by test".to_string()),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/approvals/{}/resolve", approval_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&resolve_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    // Step 5: Prepare execution
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    // Step 6: Execute HTTP POST - server returns 503
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({
+            "url": format!("http://127.0.0.1:{}/", port),
+            "body": {"name": "created"}
+        }),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Execute should succeed (server responded, even with 503)
+    assert_eq!(
+        response.status(),
+        200,
+        "execute should succeed even when server returns 503"
+    );
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let execute_resp: ferrum_proto::ExecuteResponse = serde_json::from_slice(&body).unwrap();
+    assert!(execute_resp.executed, "executed flag should be true");
+    // result_digest should contain "503" from the server response
+    assert!(
+        execute_resp.result_digest.as_ref().unwrap().contains("503"),
+        "result_digest should contain 503"
+    );
+
+    // Step 7: Inject explicit verify_checks into the rollback contract.
+    // The contract currently has no verify_checks (empty).
+    // We inject HttpStatusExpected(200) to create a mismatch with execute-time status (503).
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    let contract_id = stored_execution.unwrap().rollback_contract_id.unwrap();
+    let mut contract = runtime
+        .store
+        .rollback_contracts()
+        .get(contract_id)
+        .await
+        .unwrap()
+        .unwrap();
+
+    // Add explicit HttpStatusExpected(200) check - this will mismatch with execute-time 503
+    let explicit_check = CheckSpec {
+        check_type: CheckType::HttpStatusExpected,
+        config: {
+            let mut m = ferrum_proto::JsonMap::new();
+            m.insert("status".to_string(), serde_json::json!(200));
+            m
+        },
+    };
+    contract.verify_checks = vec![explicit_check];
+    runtime
+        .store
+        .rollback_contracts()
+        .update(&contract)
+        .await
+        .unwrap();
+
+    // Step 8: Verify - mutation with explicit check mismatch should return verified=false
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Verify API returns 200 (not 500) - fail-closed verification failure is still 200 OK
+    assert_eq!(
+        response.status(),
+        200,
+        "verify should return 200 (not 500) for fail-closed verification"
+    );
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let verify_resp: ferrum_proto::VerifyResponse = serde_json::from_slice(&body).unwrap();
+
+    // Mismatch: execute-time (503) != explicit check (200) → verified=false
+    assert!(
+        !verify_resp.verified,
+        "verify should be false when execute-time (503) != explicit check (200)"
+    );
+    assert!(
+        verify_resp.verified_at.is_none(),
+        "verified_at should not be set when verification fails"
+    );
+
+    // Step 9: Execution state should be Failed
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored_execution.is_some());
+    let exec = stored_execution.unwrap();
+    assert!(
+        matches!(exec.state, ExecutionState::Failed),
+        "Execution should be Failed after verify mismatch, got {:?}",
+        exec.state
+    );
+
+    // Step 10: Commit should be rejected from Failed state
+    let app = build_router(runtime.clone());
+    let commit_req = ferrum_proto::CommitRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/commit", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&commit_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Commit from Failed state should be rejected (4xx or 5xx, not 2xx)
+    assert!(
+        !response.status().is_success(),
+        "commit should be rejected from Failed state, got {:?}",
+        response.status()
+    );
+
+    // Clean up server handle
+    let _ = server_handle.join();
+}
+
+/// P2.5 Slice 10: Gateway-level HTTP DELETE mutation verify explicit-check MATCH test.
+///
+/// This is the symmetric positive counterpart to the POST mismatch test,
+/// verifying DELETE mutation verify uses execute-time metadata crosscheck correctly.
+///
+/// Flow:
+/// 1. Execute HTTP DELETE with 200 status (success)
+/// 2. Execute captures 200 in metadata
+/// 3. After execute, inject explicit verify_checks with HttpStatusExpected(200)
+///    into the rollback contract
+/// 4. Verify API is called
+/// 5. HTTP adapter's verify for mutations crosschecks: execute-time status (200) vs
+///    explicit check (200) → match → verified=true
+/// 6. Execution state remains AwaitingVerification or Committed
+/// 7. Commit succeeds
+///
+/// Key semantic being tested:
+/// - For mutations, verify does NOT replay the request
+/// - Verify compares execute-time status (200) against explicit check (200)
+/// - The MATCH proves the metadata crosscheck is working correctly
+///
+/// This extends P2.5 Slice 6 (PATCH match) to DELETE mutations.
+#[tokio::test]
+async fn test_verify_mutation_delete_explicit_check_match() {
+    // Start a local HTTP server that returns 200 OK on DELETE request
+    let (port, server_handle) = start_local_http_server(200);
+
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Step 1: Compile intent with HTTP DELETE scope
+    let mut req = sample_intent_request();
+    req.requested_resource_scope = vec![ResourceSelector::HttpEndpoint {
+        method: ferrum_proto::HttpMethod::Delete,
+        base_url: format!("http://127.0.0.1:{}", port),
+        path_prefix: "/".to_string(),
+        mode: ResourceMode::Write,
+    }];
+    req.effect_type = Some(EffectType::ExternalApiCall);
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Step 2: Create and evaluate proposal for http.delete
+    let proposal = ActionProposal {
+        proposal_id: ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "HTTP DELETE request".to_string(),
+        tool_name: "http.delete".to_string(),
+        server_name: "http-adapter".to_string(),
+        raw_arguments: serde_json::json!({
+            "url": format!("http://127.0.0.1:{}/", port)
+        }),
+        expected_effect: "delete resource via HTTP DELETE".to_string(),
+        estimated_risk: RiskTier::Medium,
+        requested_rollback_class: RollbackClass::R0NativeReversible,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    // Step 3: Mint capability for HTTP DELETE
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "http-adapter".to_string(),
+            tool_name: "http.delete".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![ResourceBinding::Http {
+            method: ferrum_proto::HttpMethod::Delete,
+            base_url: format!("http://127.0.0.1:{}", port),
+            path_prefix: "/".to_string(),
+            header_allowlist: vec![],
+            mode: ResourceMode::Write,
+        }],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        policy_bundle_id: None,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    // Step 4: Authorize execution
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    // R0 with mutation returns RequireApproval, so we need to go through approval flow
+    let (pending_approvals, _) = runtime
+        .store
+        .approvals()
+        .list_pending_cursor(100, None)
+        .await
+        .unwrap();
+    assert!(
+        !pending_approvals.is_empty(),
+        "Approval request should be created for R0 with mutation"
+    );
+    let approval_id = pending_approvals[0].approval_id;
+
+    // Step 4c: Resolve approval with approve=true
+    let app = build_router(runtime.clone());
+    let resolve_req = ferrum_proto::ApprovalResolveRequest {
+        actor: ferrum_proto::ActorRef {
+            actor_type: ferrum_proto::ActorType::User,
+            actor_id: "admin".to_string(),
+            display_name: Some("Admin".to_string()),
+        },
+        approve: true,
+        reason: Some("Approved by test".to_string()),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/approvals/{}/resolve", approval_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&resolve_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    // Step 5: Prepare execution
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    // Step 6: Execute HTTP DELETE - server returns 200
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({
+            "url": format!("http://127.0.0.1:{}/", port)
+        }),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Execute should succeed
+    assert_eq!(
+        response.status(),
+        200,
+        "execute should succeed when server returns 200"
+    );
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let execute_resp: ferrum_proto::ExecuteResponse = serde_json::from_slice(&body).unwrap();
+    assert!(execute_resp.executed, "executed flag should be true");
+    // result_digest should contain "200" from the server response
+    assert!(
+        execute_resp.result_digest.as_ref().unwrap().contains("200"),
+        "result_digest should contain 200"
+    );
+
+    // Step 7: Inject explicit verify_checks into the rollback contract.
+    // The contract currently has no verify_checks (empty).
+    // We inject HttpStatusExpected(200) to match execute-time status (200).
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    let contract_id = stored_execution.unwrap().rollback_contract_id.unwrap();
+    let mut contract = runtime
+        .store
+        .rollback_contracts()
+        .get(contract_id)
+        .await
+        .unwrap()
+        .unwrap();
+
+    // Add explicit HttpStatusExpected(200) check - this will match execute-time 200
+    let explicit_check = CheckSpec {
+        check_type: CheckType::HttpStatusExpected,
+        config: {
+            let mut m = ferrum_proto::JsonMap::new();
+            m.insert("status".to_string(), serde_json::json!(200));
+            m
+        },
+    };
+    contract.verify_checks = vec![explicit_check];
+    runtime
+        .store
+        .rollback_contracts()
+        .update(&contract)
+        .await
+        .unwrap();
+
+    // Step 8: Verify - mutation with explicit check match should return verified=true
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Verify API returns 200
+    assert_eq!(response.status(), 200);
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let verify_resp: ferrum_proto::VerifyResponse = serde_json::from_slice(&body).unwrap();
+
+    // Match: execute-time (200) == explicit check (200) → verified=true
+    assert!(
+        verify_resp.verified,
+        "verify should be true when execute-time (200) == explicit check (200)"
+    );
+    assert!(
+        verify_resp.verified_at.is_some(),
+        "verified_at should be set when verification succeeds"
+    );
+
+    // Step 9: Execution state should be AwaitingVerification or Committed (NOT Failed)
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored_execution.is_some());
+    let exec = stored_execution.unwrap();
+    assert!(
+        matches!(
+            exec.state,
+            ExecutionState::AwaitingVerification | ExecutionState::Committed
+        ),
+        "Execution should be AwaitingVerification or Committed after verify match, got {:?}",
+        exec.state
+    );
+
+    // Step 10: Commit should succeed (not rejected since verification passed)
+    let app = build_router(runtime.clone());
+    let commit_req = ferrum_proto::CommitRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/commit", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&commit_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Commit should succeed after verified=true (2xx status)
+    assert!(
+        response.status().is_success(),
+        "commit should succeed after verified=true, got {:?}",
+        response.status()
+    );
+
+    // Clean up server handle
+    let _ = server_handle.join();
 }
