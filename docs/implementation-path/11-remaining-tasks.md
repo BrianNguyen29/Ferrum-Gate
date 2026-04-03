@@ -81,7 +81,7 @@ These are explicitly out of v1 scope. Do not treat as blockers.
 - [ ] Runtime Integrations — MCP / local / NemoClaw (U4)
   - Src: `docs/91-phase-success-criteria-and-kpis.md` section 8.4
 
-## Documented drift / cleanup notes (as of 2026-04-02)
+## Documented drift / cleanup notes (as of 2026-04-03)
 
 - scope mismatch deny: IMPLEMENTED in `crates/ferrum-pdp/src/engine.rs` lines 31-46
 - all Phase A/B/E items treated as complete per `docs/91-phase-success-criteria-and-kpis.md`
@@ -89,3 +89,4 @@ These are explicitly out of v1 scope. Do not treat as blockers.
 - `scripts/generate_rc_evidence.py` EXISTS and PASS — verdict is ALL GATES PASSED (2026-04-02)
 - clippy: PASS (2026-04-02) — was PASS on 2026-03-30 per artifacts
 - cargo test --workspace: PASS (2026-04-02) — was PASS on 2026-03-30 per artifacts
+- issue #97 (2026-04-03): HTTP adapter verify semantics clarified — mutations use execute-time metadata only, fail-closed on non-2xx without explicit check; gateway-level failure-mode integration test added (`test_http_post_500_verify_false_commit_rejected_from_failed_state`); broader adapter hardening remains post-v1

@@ -111,6 +111,7 @@ All P0 gates cleared as of 2026-04-02. RC sign-off can proceed.
 ### P0 — v1 RC blockers (as of 2026-04-02)
 1. (none) — all P0 gates cleared as of 2026-04-02
 2. scope-mismatch deny implemented in `crates/ferrum-pdp/src/engine.rs` lines 31-46 (DONE, not a blocker).
+3. issue #97 merged 2026-04-03: HTTP adapter verify semantics clarified and gateway integration coverage added; broader adapter hardening remains post-v1.
 
 ### P1 — v1 RC evidence
 (none) — all P1 items resolved:
@@ -137,4 +138,4 @@ All gates pass:
 Core governance loop is implemented. Scope-mismatch deny is done. P1 evidence items are complete.
 All P0 blockers resolved as of 2026-04-02.
 
-Remaining gaps are post-v1 backlog items (multi-node/HA, broader adapter hardening, U2-U4 upgrade tracks).
+Remaining gaps are post-v1 backlog items (multi-node/HA, broader adapter hardening, U2-U4 upgrade tracks). Issue #97 (2026-04-03) improved HTTP adapter verify semantics and gateway integration coverage but does not expand the supported scope beyond single-node RC-ready.

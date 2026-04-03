@@ -1,6 +1,6 @@
 # 01 — Current state
 
-Last updated: 2026-04-02
+Last updated: 2026-04-03
 Single-node v1 scope unless noted.
 
 **Release support contract**:
@@ -28,7 +28,7 @@ Single-node v1 scope unless noted.
 - `ferrum-adapter-sqlite` — SQLite adapter (single-row and atomic multi-row rollback/compensate path for bounded local table/row mutations)
 - `ferrum-adapter-maildraft` — maildraft adapter (SQLite-backed draft persistence; verify semantics implemented; send semantics explicitly out of scope)
 - `ferrum-adapter-git` — git adapter (local HEAD capture/reset and branch-create rollback path; remote workflows explicitly out of scope)
-- `ferrum-adapter-http` — HTTP adapter (bounded HTTP execute/verify with body-aware digest, header-shape binding, canonical query strings, auth support, and conservative rollback no-op; mutation recovery is R3 boundary)
+- `ferrum-adapter-http` — HTTP adapter (bounded HTTP execute/verify with body-aware digest, header-shape binding, canonical query strings, auth support, and conservative rollback no-op; mutation recovery is R3 boundary; verify semantics clarified via issue #97 — mutations use execute-time metadata only, fail-closed on non-2xx without explicit check; gateway integration coverage added)
 
 ### Binaries
 - `ferrumd` — server binary
@@ -45,7 +45,7 @@ Single-node v1 scope unless noted.
 ## What is missing
 
 ### P0 — v1 RC blockers (as of 2026-04-02)
-- (none) — all P0 blockers resolved as of 2026-04-02 gate run
+- (none) — all P0 blockers resolved as of 2026-04-02 gate run; issue #97 HTTP adapter semantics and gateway integration coverage merged 2026-04-03
 
 ### P1 — v1 RC evidence gaps
 - (none) — poisoned-context regression fixtures implemented (6 fixture tests)
