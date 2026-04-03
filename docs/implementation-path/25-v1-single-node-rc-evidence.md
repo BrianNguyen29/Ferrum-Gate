@@ -207,6 +207,7 @@ Remaining U1 backlog (not core capability gaps):
 | Multi-node/HA | P3 | read-replica support — post-v1 backlog |
 | Upgrade track U1 — core capability | P3 | Materially mature — remaining: richer expressiveness / operator ergonomics (not core gaps) |
 | Upgrade tracks U2-U4 | P3 | post-v1 backlog |
+| HTTP adapter verify semantics | P3 | issue #97 (merged 2026-04-03) clarified verify semantics and added gateway integration coverage; broader adapter hardening remains post-v1 |
 
 Full details in `docs/implementation-path/11-remaining-tasks.md`.
 
@@ -232,5 +233,7 @@ Core P0 items resolved:
 P1 items resolved: Phase F docs pack finalized, supported flows documented, gaps listed.
 
 P2: RC evidence script verdict is ALL GATES PASSED.
+
+Post-merge (2026-04-03): issue #97 improved HTTP adapter verify semantics (mutations use execute-time metadata only, fail-closed on non-2xx without explicit check) and added gateway-level failure-mode integration coverage (`test_http_post_500_verify_false_commit_rejected_from_failed_state`). This strengthens the HTTP adapter slice but does not expand supported scope beyond single-node RC-ready.
 
 Remaining gaps are post-v1 backlog (real adapters, multi-node/HA, U2-U4 upgrade tracks). U1 core capability is materially mature for current scope.
