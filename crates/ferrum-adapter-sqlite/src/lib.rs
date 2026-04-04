@@ -365,12 +365,16 @@ fn sqlite_url(db_path: &str) -> String {
     // sqlx requires proper URL format for SQLite connections
     // For URL-style connections (file:, sqlite:), pass through as-is
     // For :memory:, pass through directly
-    // For other paths (file paths), prefix with sqlite:
+    // For absolute paths, use sqlite:// prefix
+    // For relative paths, just return as-is (sqlx accepts bare relative paths)
     if db_path.starts_with("file:") || db_path.starts_with("sqlite:") || db_path == ":memory:" {
         db_path.to_string()
+    } else if db_path.starts_with('/') {
+        // Absolute path: sqlite:///absolute/path
+        format!("sqlite://{}", db_path)
     } else {
-        // For file paths, use sqlite: prefix
-        format!("sqlite:{}", db_path)
+        // Relative path: return as-is for sqlx
+        db_path.to_string()
     }
 }
 
@@ -571,6 +575,145 @@ mod tests {
             auto_commit: false,
             metadata: JsonMap::new(),
         }
+    }
+
+    // === Full lifecycle tests (file-backed) ===
+
+    #[tokio::test]
+    async fn test_sqlite_adapter_full_lifecycle_file_backed() {
+        // Deterministic file-backed test: prepare -> execute -> verify -> rollback
+        // Use tempfile like the integration tests do
+        let temp_dir = tempfile::TempDir::new().expect("failed to create temp dir");
+        let db_path = temp_dir.path().join("test_lifecycle.db");
+        let db_path_str = db_path.to_string_lossy().to_string();
+
+        // Create the file explicitly (like integration tests do)
+        std::fs::File::create(&db_path).expect("failed to create db file");
+
+        let adapter = SqliteRollbackAdapter::new(ADAPTER_KEY);
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        // 1. Prepare
+        let prepare_req = make_prepare_request(&db_path_str, execution_id);
+        let prepare_receipt = adapter.prepare(&prepare_req).await.unwrap();
+        assert!(prepare_receipt.accepted);
+
+        // 2. Execute - write a row
+        let contract = make_sqlite_contract(&db_path_str, execution_id);
+        let payload = serde_json::json!({
+            "table": "users",
+            "row_id": "user1",
+            "content": "Alice"
+        });
+        let execute_receipt = adapter.execute(&contract, &payload).await.unwrap();
+        assert!(execute_receipt.external_id.is_some());
+        assert_eq!(
+            execute_receipt.adapter_metadata.get("table").unwrap(),
+            "users"
+        );
+
+        // 3. Verify - content should match what was written
+        let verify_receipt = adapter.verify(&contract).await.unwrap();
+        assert!(verify_receipt.verified);
+        let key = "users:user1";
+        let verification = verify_receipt.adapter_metadata.get(key).unwrap();
+        assert_eq!(verification.get("matches").unwrap(), true);
+        assert_eq!(verification.get("present").unwrap(), true);
+
+        // 4. Rollback - should restore original (empty) state
+        let rollback_receipt = adapter.rollback(&contract).await.unwrap();
+        assert!(rollback_receipt.recovered);
+
+        // Verify after rollback - row should be gone (original_content was None)
+        let verify_after = adapter.verify(&contract).await.unwrap();
+        assert!(verify_after.verified);
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_adapter_multi_row_transaction_lifecycle() {
+        // Multi-row transaction lifecycle: prepare -> execute -> verify -> rollback
+        // Use tempfile like the integration tests do
+        let temp_dir = tempfile::TempDir::new().expect("failed to create temp dir");
+        let db_path = temp_dir.path().join("test_multi_row.db");
+        let db_path_str = db_path.to_string_lossy().to_string();
+
+        // Create the file explicitly (like integration tests do)
+        std::fs::File::create(&db_path).expect("failed to create db file");
+
+        let adapter = SqliteRollbackAdapter::new(ADAPTER_KEY);
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        // 1. Prepare
+        let prepare_req = make_prepare_request(&db_path_str, execution_id);
+        adapter.prepare(&prepare_req).await.unwrap();
+
+        // 2. Execute multi-row transaction
+        let contract = make_sqlite_contract(&db_path_str, execution_id);
+        let payload = serde_json::json!({
+            "rows": [
+                {"table": "accounts", "row_id": "acc1", "content": "Account-A"},
+                {"table": "accounts", "row_id": "acc2", "content": "Account-B"},
+                {"table": "ledger", "row_id": "tx1", "content": "Ledger-entry-1"}
+            ]
+        });
+        let execute_receipt = adapter.execute(&contract, &payload).await.unwrap();
+        assert!(
+            execute_receipt
+                .external_id
+                .unwrap()
+                .contains("multi-row-txn")
+        );
+
+        // 3. Verify all rows
+        let verify_receipt = adapter.verify(&contract).await.unwrap();
+        assert!(verify_receipt.verified);
+        assert!(
+            verify_receipt
+                .adapter_metadata
+                .get("accounts:acc1")
+                .is_some()
+        );
+        assert!(
+            verify_receipt
+                .adapter_metadata
+                .get("accounts:acc2")
+                .is_some()
+        );
+        assert!(verify_receipt.adapter_metadata.get("ledger:tx1").is_some());
+
+        // 4. Rollback all rows
+        let rollback_receipt = adapter.rollback(&contract).await.unwrap();
+        assert!(rollback_receipt.recovered);
+
+        // Verify after rollback - all rows gone
+        let verify_after = adapter.verify(&contract).await.unwrap();
+        assert!(verify_after.verified);
+    }
+
+    // === Error-path / fail-closed tests ===
+
+    #[tokio::test]
+    async fn test_sqlite_adapter_execute_invalid_json_payload() {
+        // Execute with malformed payload should fail closed
+        let db_path = ":memory:";
+
+        let adapter = SqliteRollbackAdapter::new(ADAPTER_KEY);
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        let prepare_req = make_prepare_request(db_path, execution_id);
+        adapter.prepare(&prepare_req).await.unwrap();
+
+        let contract = make_sqlite_contract(db_path, execution_id);
+
+        // Payload missing required 'table' field - should fail validation
+        let payload = serde_json::json!({
+            "row_id": "user1",
+            "content": "Alice"
+        });
+        let result = adapter.execute(&contract, &payload).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, AdapterError::Validation(_)));
     }
 
     // === Edge case tests ===
