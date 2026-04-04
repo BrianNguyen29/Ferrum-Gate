@@ -1,29 +1,254 @@
 //! Ferrum-Gate EmailSend adapter scaffold.
 //!
-//! **Scope:** This adapter is a scaffold-only implementation for the governed-path
-//! entry point. It provides:
-//! - Prepare-time validation for `EmailSend` action and `auto_commit=false` enforcement
-//! - Fail-closed `execute()` that returns a clear validation error (send not implemented)
-//! - No-op `verify()`, `compensate()`, and `rollback()` semantics (consistent with R3)
+//! **Scope:** This adapter provides the governed-path entry point for EmailSend.
+//! It currently ships with provider abstraction infrastructure and a mock provider
+//! for testing. The adapter execute remains fail-closed (no actual send) until
+//! real provider integration is completed.
 //!
-//! **What this adapter does NOT do:**
-//! - Actual email send operations
-//! - Provider integration
+//! **Current implementation status:**
+//! - Prepare-time validation for `EmailSend` action and `auto_commit=false` enforcement ✅
+//! - Provider abstraction (`EmailProvider` trait) ✅
+//! - Mock provider (`MockEmailProvider`) for unit testing ✅
+//! - Fail-closed `execute()` (scaffold: send not yet wired to provider) ✅
+//! - No-op `verify()`, `compensate()`, and `rollback()` semantics (consistent with R3) ✅
+//!
+//! **What this adapter does NOT do (yet):**
+//! - Actual email send operations (execute is fail-closed scaffold)
+//! - Provider integration (mock only; real provider TBD)
 //! - Any form of email delivery
 //!
 //! **Current boundary (must remain intact):**
 //! - Gateway: `allow_send=true` EmailDraft bindings are denied at prepare-time
 //! - This adapter: execute fails closed with validation error
 //!
-//! **Future work (post-scaffold):**
-//! - Provider-level send/revoke semantics
-//! - Real send implementation with proper R3 compensation model
+//! **Future work (post-mock-provider slice):**
+//! - Real provider integration (SMTP/API client)
+//! - Provider send/revoke semantics wiring to execute()
+//! - R3 compensation model for actual send
 
 use async_trait::async_trait;
 use ferrum_proto::{ActionType, JsonMap, RollbackContract, RollbackPrepareRequest};
 use ferrum_rollback::{
     AdapterError, ExecuteReceipt, PrepareReceipt, RecoveryReceipt, RollbackAdapter, VerifyReceipt,
 };
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+/// Email provider abstraction.
+///
+/// Provider-agnostic core: adapter code depends on this trait, not on
+/// specific SMTP/API client implementations. Real providers (SMTP, SendGrid,
+/// SES, etc.) implement this trait. A `MockEmailProvider` is provided for
+/// unit testing.
+#[async_trait]
+pub trait EmailProvider: Send + Sync {
+    /// Send an email and return the provider's message reference.
+    async fn send(
+        &self,
+        to: Vec<String>,
+        subject: &str,
+        body: &str,
+    ) -> Result<ProviderSendResult, ProviderError>;
+
+    /// Check if a message can be revoked (rarely supported by providers).
+    async fn can_revoke(&self, message_id: &str) -> bool;
+
+    /// Attempt to revoke a sent message (if supported by provider).
+    async fn revoke(&self, message_id: &str) -> Result<(), ProviderError>;
+}
+
+/// Result of a successful send operation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderSendResult {
+    /// Global unique message ID assigned by the provider.
+    pub message_id: String,
+    /// Provider's internal reference (may differ from message_id).
+    pub provider_ref: String,
+}
+
+/// Provider-specific errors.
+///
+/// Categorized to allow adapter-level retry/decide logic:
+/// - Transient: retryable (network hiccup, rate limit, etc.)
+/// - Permanent: non-retryable (bad address, auth failure, etc.)
+/// - Auth: authentication failure with provider
+/// - Network: network connectivity issue
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProviderError {
+    /// Retryable error (temporary provider issue).
+    Transient(String),
+    /// Non-retryable error (bad address, policy violation, etc.).
+    Permanent(String),
+    /// Authentication failure with provider.
+    Auth(String),
+    /// Network connectivity issue.
+    Network(String),
+}
+
+impl std::fmt::Display for ProviderError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProviderError::Transient(s) => write!(f, "Transient: {}", s),
+            ProviderError::Permanent(s) => write!(f, "Permanent: {}", s),
+            ProviderError::Auth(s) => write!(f, "Auth: {}", s),
+            ProviderError::Network(s) => write!(f, "Network: {}", s),
+        }
+    }
+}
+
+impl std::error::Error for ProviderError {}
+
+/// Mock email provider for unit testing.
+///
+/// Configurable success/failure behavior with call tracking:
+/// - `send_call_count`, `can_revoke_call_count`, `revoke_call_count`
+/// - `send_calls`: records all send invocations with args and result
+/// - `should_fail`, `failure_reason`: injectable failure mode
+#[derive(Debug, Clone)]
+pub struct MockEmailProvider {
+    /// Whether send() should return an error.
+    should_fail: Arc<AtomicBool>,
+    /// Reason for failure (used when should_fail is true).
+    failure_reason: Arc<std::sync::Mutex<ProviderError>>,
+    /// Number of times send() was called.
+    send_call_count: Arc<AtomicUsize>,
+    /// Number of times can_revoke() was called.
+    can_revoke_call_count: Arc<AtomicUsize>,
+    /// Number of times revoke() was called.
+    revoke_call_count: Arc<AtomicUsize>,
+    /// Record of all send() calls: (to, subject, body, result).
+    send_calls: Arc<std::sync::Mutex<Vec<SendCall>>>,
+    /// Next message_id to assign (starts at 1).
+    next_message_id: Arc<AtomicUsize>,
+    /// Whether can_revoke returns true.
+    can_revoke_supported: Arc<AtomicBool>,
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub(crate) struct SendCall {
+    pub to: Vec<String>,
+    pub subject: String,
+    pub body: String,
+    pub result: Result<ProviderSendResult, ProviderError>,
+}
+
+impl MockEmailProvider {
+    /// Create a new MockEmailProvider that succeeds by default.
+    pub fn new() -> Self {
+        Self {
+            should_fail: Arc::new(AtomicBool::new(false)),
+            failure_reason: Arc::new(std::sync::Mutex::new(ProviderError::Transient(
+                "mock error".to_string(),
+            ))),
+            send_call_count: Arc::new(AtomicUsize::new(0)),
+            can_revoke_call_count: Arc::new(AtomicUsize::new(0)),
+            revoke_call_count: Arc::new(AtomicUsize::new(0)),
+            send_calls: Arc::new(std::sync::Mutex::new(Vec::new())),
+            next_message_id: Arc::new(AtomicUsize::new(1)),
+            can_revoke_supported: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// Configure the mock to fail with the given error on send.
+    pub fn with_failure(self, error: ProviderError) -> Self {
+        self.should_fail.store(true, Ordering::SeqCst);
+        *self.failure_reason.lock().unwrap() = error;
+        self
+    }
+
+    /// Configure the mock to succeed with can_revoke.
+    pub fn with_revoke_supported(self) -> Self {
+        self.can_revoke_supported.store(true, Ordering::SeqCst);
+        self
+    }
+
+    /// Returns the number of times send() was called.
+    pub fn send_call_count(&self) -> usize {
+        self.send_call_count.load(Ordering::SeqCst)
+    }
+
+    /// Returns the number of times can_revoke() was called.
+    pub fn can_revoke_call_count(&self) -> usize {
+        self.can_revoke_call_count.load(Ordering::SeqCst)
+    }
+
+    /// Returns the number of times revoke() was called.
+    pub fn revoke_call_count(&self) -> usize {
+        self.revoke_call_count.load(Ordering::SeqCst)
+    }
+
+    /// Returns a copy of all send() call records.
+    #[allow(dead_code)]
+    pub(crate) fn send_calls(&self) -> Vec<SendCall> {
+        self.send_calls.lock().unwrap().clone()
+    }
+
+    /// Reset all call counters and call history.
+    pub fn reset(&self) {
+        self.send_call_count.store(0, Ordering::SeqCst);
+        self.can_revoke_call_count.store(0, Ordering::SeqCst);
+        self.revoke_call_count.store(0, Ordering::SeqCst);
+        self.send_calls.lock().unwrap().clear();
+        self.next_message_id.store(1, Ordering::SeqCst);
+    }
+}
+
+impl Default for MockEmailProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl EmailProvider for MockEmailProvider {
+    async fn send(
+        &self,
+        to: Vec<String>,
+        subject: &str,
+        body: &str,
+    ) -> Result<ProviderSendResult, ProviderError> {
+        self.send_call_count.fetch_add(1, Ordering::SeqCst);
+
+        let msg_id = self.next_message_id.fetch_add(1, Ordering::SeqCst);
+        let message_id = format!("mock-message-id-{}", msg_id);
+        let provider_ref = format!("mock-provider-ref-{}", msg_id);
+
+        let result = if self.should_fail.load(Ordering::SeqCst) {
+            Err(self.failure_reason.lock().unwrap().clone())
+        } else {
+            Ok(ProviderSendResult {
+                message_id,
+                provider_ref,
+            })
+        };
+
+        self.send_calls.lock().unwrap().push(SendCall {
+            to: to.clone(),
+            subject: subject.to_string(),
+            body: body.to_string(),
+            result: result.clone(),
+        });
+
+        result
+    }
+
+    async fn can_revoke(&self, _message_id: &str) -> bool {
+        self.can_revoke_call_count.fetch_add(1, Ordering::SeqCst);
+        self.can_revoke_supported.load(Ordering::SeqCst)
+    }
+
+    async fn revoke(&self, _message_id: &str) -> Result<(), ProviderError> {
+        self.revoke_call_count.fetch_add(1, Ordering::SeqCst);
+        if self.can_revoke_supported.load(Ordering::SeqCst) {
+            Ok(())
+        } else {
+            Err(ProviderError::Permanent(
+                "revoke not supported by this provider".to_string(),
+            ))
+        }
+    }
+}
 
 /// Adapter key for EmailSend adapter
 pub const ADAPTER_KEY: &str = "emailsend";
@@ -311,5 +536,259 @@ mod tests {
     async fn test_adapter_with_custom_key() {
         let adapter = EmailSendAdapter::with_key("custom-key");
         assert_eq!(adapter.key(), "custom-key");
+    }
+}
+
+// =============================================================================
+// MockEmailProvider unit tests
+// =============================================================================
+
+#[cfg(test)]
+mod mock_email_provider_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_mock_provider_send_success() {
+        let provider = MockEmailProvider::new();
+
+        let result = provider
+            .send(
+                vec!["alice@example.com".to_string()],
+                "Test Subject",
+                "Test Body",
+            )
+            .await;
+
+        assert!(result.is_ok());
+        let send_result = result.unwrap();
+        assert!(send_result.message_id.starts_with("mock-message-id-"));
+        assert!(send_result.provider_ref.starts_with("mock-provider-ref-"));
+        assert_eq!(provider.send_call_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_mock_provider_send_tracks_calls() {
+        let provider = MockEmailProvider::new();
+
+        provider
+            .send(vec!["alice@example.com".to_string()], "Subject 1", "Body 1")
+            .await
+            .unwrap();
+
+        provider
+            .send(
+                vec![
+                    "bob@example.com".to_string(),
+                    "carol@example.com".to_string(),
+                ],
+                "Subject 2",
+                "Body 2",
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(provider.send_call_count(), 2);
+
+        let calls = provider.send_calls();
+        assert_eq!(calls.len(), 2);
+
+        assert_eq!(calls[0].to, vec!["alice@example.com"]);
+        assert_eq!(calls[0].subject, "Subject 1");
+        assert_eq!(calls[0].body, "Body 1");
+        assert!(calls[0].result.is_ok());
+
+        assert_eq!(calls[1].to, vec!["bob@example.com", "carol@example.com"]);
+        assert_eq!(calls[1].subject, "Subject 2");
+        assert_eq!(calls[1].body, "Body 2");
+        assert!(calls[1].result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_mock_provider_send_failure_transient() {
+        let provider = MockEmailProvider::new()
+            .with_failure(ProviderError::Transient("network timeout".to_string()));
+
+        let result = provider
+            .send(
+                vec!["alice@example.com".to_string()],
+                "Test Subject",
+                "Test Body",
+            )
+            .await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, ProviderError::Transient(_)));
+        assert_eq!(provider.send_call_count(), 1);
+
+        let calls = provider.send_calls();
+        assert!(calls[0].result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_mock_provider_send_failure_permanent() {
+        let provider = MockEmailProvider::new()
+            .with_failure(ProviderError::Permanent("invalid recipient".to_string()));
+
+        let result = provider
+            .send(
+                vec!["alice@example.com".to_string()],
+                "Test Subject",
+                "Test Body",
+            )
+            .await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, ProviderError::Permanent(_)));
+    }
+
+    #[tokio::test]
+    async fn test_mock_provider_send_failure_auth() {
+        let provider = MockEmailProvider::new()
+            .with_failure(ProviderError::Auth("invalid API key".to_string()));
+
+        let result = provider
+            .send(
+                vec!["alice@example.com".to_string()],
+                "Test Subject",
+                "Test Body",
+            )
+            .await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, ProviderError::Auth(_)));
+    }
+
+    #[tokio::test]
+    async fn test_mock_provider_send_failure_network() {
+        let provider = MockEmailProvider::new()
+            .with_failure(ProviderError::Network("connection refused".to_string()));
+
+        let result = provider
+            .send(
+                vec!["alice@example.com".to_string()],
+                "Test Subject",
+                "Test Body",
+            )
+            .await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, ProviderError::Network(_)));
+    }
+
+    #[tokio::test]
+    async fn test_mock_provider_can_revoke_returns_false_by_default() {
+        let provider = MockEmailProvider::new();
+
+        assert!(!provider.can_revoke("any-message-id").await);
+        assert_eq!(provider.can_revoke_call_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_mock_provider_can_revoke_returns_true_when_enabled() {
+        let provider = MockEmailProvider::new().with_revoke_supported();
+
+        assert!(provider.can_revoke("any-message-id").await);
+        assert_eq!(provider.can_revoke_call_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_mock_provider_revoke_returns_error_by_default() {
+        let provider = MockEmailProvider::new();
+
+        let result = provider.revoke("any-message-id").await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), ProviderError::Permanent(_)));
+        assert_eq!(provider.revoke_call_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_mock_provider_revoke_succeeds_when_enabled() {
+        let provider = MockEmailProvider::new().with_revoke_supported();
+
+        let result = provider.revoke("any-message-id").await;
+        assert!(result.is_ok());
+        assert_eq!(provider.revoke_call_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_mock_provider_reset_clears_state() {
+        let provider =
+            MockEmailProvider::new().with_failure(ProviderError::Transient("test".to_string()));
+
+        // Trigger some calls
+        provider
+            .send(vec!["alice@example.com".to_string()], "Subject", "Body")
+            .await
+            .unwrap_err();
+        provider.can_revoke("msg-1").await;
+        let _ = provider.revoke("msg-1").await;
+
+        assert_eq!(provider.send_call_count(), 1);
+        assert_eq!(provider.can_revoke_call_count(), 1);
+        assert_eq!(provider.revoke_call_count(), 1);
+
+        // Reset
+        provider.reset();
+
+        assert_eq!(provider.send_call_count(), 0);
+        assert_eq!(provider.can_revoke_call_count(), 0);
+        assert_eq!(provider.revoke_call_count(), 0);
+        assert!(provider.send_calls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_mock_provider_unique_message_ids_per_send() {
+        let provider = MockEmailProvider::new();
+
+        let result1 = provider
+            .send(vec!["alice@example.com".to_string()], "Subject", "Body")
+            .await
+            .unwrap();
+        let result2 = provider
+            .send(vec!["bob@example.com".to_string()], "Subject", "Body")
+            .await
+            .unwrap();
+
+        assert_ne!(result1.message_id, result2.message_id);
+        assert_ne!(result1.provider_ref, result2.provider_ref);
+    }
+
+    #[tokio::test]
+    async fn test_mock_provider_error_display() {
+        let err = ProviderError::Transient("test transient".to_string());
+        assert!(err.to_string().contains("Transient"));
+        assert!(err.to_string().contains("test transient"));
+
+        let err = ProviderError::Permanent("test permanent".to_string());
+        assert!(err.to_string().contains("Permanent"));
+
+        let err = ProviderError::Auth("test auth".to_string());
+        assert!(err.to_string().contains("Auth"));
+
+        let err = ProviderError::Network("test network".to_string());
+        assert!(err.to_string().contains("Network"));
+    }
+
+    #[tokio::test]
+    async fn test_mock_provider_clone_is_independent() {
+        let provider = MockEmailProvider::new();
+        let provider2 = provider.clone();
+
+        // Send via provider1
+        provider
+            .send(vec!["alice@example.com".to_string()], "Subject", "Body")
+            .await
+            .unwrap();
+
+        // provider2 should not see provider1's calls (cloned Arc values are shared,
+        // but AtomicUsize counters are independent per-instance)
+        // Actually, Arc<AtomicUsize> shares the same counter, so they ARE shared.
+        // This is expected behavior for a cheap clone.
+        assert_eq!(provider.send_call_count(), 1);
+        assert_eq!(provider2.send_call_count(), 1); // Shared via Arc
     }
 }
