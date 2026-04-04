@@ -45,6 +45,7 @@ pub enum ActionType {
     GitCommit,
     GitBranchCreate,
     GitPush,
+    GitFetch,
     SqlMutation,
     HttpMutation,
     EmailDraftCreate,
