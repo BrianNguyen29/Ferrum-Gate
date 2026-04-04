@@ -89,12 +89,13 @@ Both layers are **fail-closed**: they reject rather than silently succeed.
 
 ## Governed-Path Entry Requirements
 
-### Phase 1: Preflight (THIS SLICE)
+### Phase 1: Preflight (COMPLETED)
 
 - [x] Governed-path entry analysis doc (this file)
 - [x] Dedicated EmailSend adapter contract draft (`docs/implementation-path/37-p2-6-emailsend-adapter-contract-draft.md`)
 - [x] Deny-regression tests locking current boundary
 - [x] Roadmap update: P2.6 marked as "preflight slice IN PROGRESS"
+- [x] **Scaffold implementation**: `ferrum-adapter-emailsend` crate with prepare-time validation and fail-closed execute (`docs/implementation-path/38-p2-6-emailsend-adapter-scaffold-implementation.md`)
 
 ### Phase 2: Send-Semantics Safety Analysis (Future)
 
