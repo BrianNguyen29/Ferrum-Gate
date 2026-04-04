@@ -182,6 +182,66 @@ impl RollbackAdapter for GitRollbackAdapter {
             }
         }
 
+        // For GitPull action, validate remote and check fast-forward possibility
+        if matches!(request.action_type, ActionType::GitPull) {
+            let remote = request
+                .metadata
+                .get("remote")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    AdapterError::Validation("GitPull requires remote in metadata".to_string())
+                })?;
+
+            let refspec = request
+                .metadata
+                .get("refspec")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    AdapterError::Validation("GitPull requires refspec in metadata".to_string())
+                })?;
+
+            // Validate remote exists
+            if !git_remote_exists(&repo_path, remote)? {
+                return Err(AdapterError::Validation(format!(
+                    "GitPull failed: remote '{}' does not exist",
+                    remote
+                )));
+            }
+
+            // Fail-closed if repo is dirty (uncommitted changes would complicate rollback)
+            if git_is_repo_dirty(&repo_path)? {
+                return Err(AdapterError::Validation(
+                    "GitPull failed: repo has uncommitted changes".to_string(),
+                ));
+            }
+
+            // Fetch the remote ref first so we can check ff possibility
+            // This doesn't merge anything, just updates remote tracking refs
+            git_fetch(&repo_path, remote, refspec)?;
+
+            // Get the remote ref we expect to pull (now available locally after fetch)
+            let remote_ref = git_remote_ref(&repo_path, remote, refspec)?;
+            let local_head = git_head(&repo_path)?;
+
+            // Fail-closed if not fast-forward (local has diverged from remote)
+            // Check if local HEAD is ancestor of remote HEAD (ff condition)
+            if !git_is_ancestor(&repo_path, &local_head, &remote_ref)? {
+                return Err(AdapterError::Validation(
+                    "GitPull failed: not fast-forward (local has diverged from remote)".to_string(),
+                ));
+            }
+
+            // Capture current branch for rollback
+            let current_branch = git_current_branch(&repo_path)?;
+            metadata.insert("remote".to_string(), serde_json::json!(remote));
+            metadata.insert("refspec".to_string(), serde_json::json!(refspec));
+            metadata.insert("remote_ref".to_string(), serde_json::json!(remote_ref));
+            metadata.insert(
+                "current_branch".to_string(),
+                serde_json::json!(current_branch),
+            );
+        }
+
         Ok(PrepareReceipt {
             accepted: true,
             adapter_metadata: metadata,
@@ -331,6 +391,50 @@ impl RollbackAdapter for GitRollbackAdapter {
             return Ok(ExecuteReceipt {
                 external_id: Some(format!("{}:{}", remote, refspec)),
                 result_digest: Some(format!("git-fetch:{}:{}", remote, fetched_ref)),
+                adapter_metadata: metadata,
+            });
+        }
+
+        // Handle GitPull action type - fetch and merge from remote (fast-forward only)
+        if matches!(contract.action_type, ActionType::GitPull) {
+            let remote = contract
+                .metadata
+                .get("remote")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    AdapterError::Validation(
+                        "GitPull execute requires remote in contract metadata".to_string(),
+                    )
+                })?;
+
+            let refspec = contract
+                .metadata
+                .get("refspec")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    AdapterError::Validation(
+                        "GitPull execute requires refspec in contract metadata".to_string(),
+                    )
+                })?;
+
+            // Perform the pull with fast-forward only semantics
+            git_pull_ff_only(&repo_path, remote, refspec)?;
+
+            // Get the post-pull HEAD for verification
+            let post_pull_head = git_head(&repo_path)?;
+
+            let mut metadata = JsonMap::new();
+            metadata.insert("repo_path".to_string(), serde_json::json!(repo_path));
+            metadata.insert("remote".to_string(), serde_json::json!(remote));
+            metadata.insert("refspec".to_string(), serde_json::json!(refspec));
+            metadata.insert(
+                "post_pull_head".to_string(),
+                serde_json::json!(post_pull_head.clone()),
+            );
+
+            return Ok(ExecuteReceipt {
+                external_id: Some(format!("{}:{}", remote, refspec)),
+                result_digest: Some(format!("git-pull:{}:{}", remote, post_pull_head)),
                 adapter_metadata: metadata,
             });
         }
@@ -616,6 +720,56 @@ impl RollbackAdapter for GitRollbackAdapter {
 
             return Ok(VerifyReceipt {
                 verified: local_ref.as_str() == expected_ref.as_str(),
+                adapter_metadata: metadata,
+            });
+        }
+
+        // For GitPull, verify the local HEAD matches the expected (remote) ref after merge
+        if matches!(contract.action_type, ActionType::GitPull) {
+            let remote_ref = match contract.metadata.get("remote_ref").and_then(|v| v.as_str()) {
+                Some(r) => r,
+                None => {
+                    let mut metadata = JsonMap::new();
+                    metadata.insert("repo_path".to_string(), serde_json::json!(repo_path));
+                    metadata.insert(
+                        "error".to_string(),
+                        serde_json::json!(
+                            "GitPull verify requires remote_ref in contract metadata"
+                        ),
+                    );
+                    metadata.insert("fail_closed".to_string(), serde_json::json!(true));
+                    return Ok(VerifyReceipt {
+                        verified: false,
+                        adapter_metadata: metadata,
+                    });
+                }
+            };
+
+            // Get the current local HEAD
+            let current_head = match git_head(&repo_path) {
+                Ok(head) => head,
+                Err(e) => {
+                    let mut metadata = JsonMap::new();
+                    metadata.insert("repo_path".to_string(), serde_json::json!(repo_path));
+                    metadata.insert("error".to_string(), serde_json::json!(e.to_string()));
+                    metadata.insert("fail_closed".to_string(), serde_json::json!(true));
+                    return Ok(VerifyReceipt {
+                        verified: false,
+                        adapter_metadata: metadata,
+                    });
+                }
+            };
+
+            let mut metadata = JsonMap::new();
+            metadata.insert("repo_path".to_string(), serde_json::json!(repo_path));
+            metadata.insert(
+                "current_head".to_string(),
+                serde_json::json!(current_head.clone()),
+            );
+            metadata.insert("remote_ref".to_string(), serde_json::json!(remote_ref));
+
+            return Ok(VerifyReceipt {
+                verified: current_head.as_str() == remote_ref,
                 adapter_metadata: metadata,
             });
         }
@@ -910,6 +1064,23 @@ fn git_push_force(repo_path: &str, remote: &str, refspec: &str) -> Result<(), Ad
 
 fn git_fetch(repo_path: &str, remote: &str, refspec: &str) -> Result<(), AdapterError> {
     run_git(repo_path, &["fetch", remote, refspec]).map(|_| ())
+}
+
+fn git_is_ancestor(
+    repo_path: &str,
+    ancestor: &str,
+    descendant: &str,
+) -> Result<bool, AdapterError> {
+    // Check if ancestor is an ancestor of descendant using git merge-base
+    // If ancestor is ancestor of descendant, merge-base(ancestor, descendant) == ancestor
+    let output = run_git(repo_path, &["merge-base", ancestor, descendant])?;
+    Ok(output.trim() == ancestor)
+}
+
+fn git_pull_ff_only(repo_path: &str, remote: &str, refspec: &str) -> Result<(), AdapterError> {
+    // Pull with fast-forward only semantics; fails if local has diverged
+    // Use git pull --ff-only <remote> <refspec>
+    run_git(repo_path, &["pull", "--ff-only", remote, refspec]).map(|_| ())
 }
 
 fn git_local_ref_exists(repo_path: &str, refspec: &str) -> Result<bool, AdapterError> {
@@ -1330,17 +1501,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_execute_rejects_mismatched_after_ref() {
-        let (_temp_dir, repo_path, before_ref) = init_temp_repo();
+    async fn test_gitpull_prepare_rejects_missing_remote() {
+        let (_main_temp, main_path, _main_head, _remote_temp, _remote_path) =
+            init_repo_with_remote();
         let adapter = GitRollbackAdapter::new(ADAPTER_KEY);
-        let contract = make_contract(&repo_path, Some(&before_ref), None);
 
         let err = adapter
-            .execute(&contract, &serde_json::json!({ "after_ref": "deadbeef" }))
+            .prepare(&make_pull_prepare_request(
+                &main_path,
+                "nonexistent",
+                "master",
+            ))
             .await
             .unwrap_err();
 
-        assert!(matches!(err, AdapterError::Validation(_)));
+        assert!(
+            matches!(err, AdapterError::Validation(ref msg) if msg.contains("does not exist") || msg.contains("does not appear")),
+            "Expected validation error for missing remote, got: {:?}",
+            err
+        );
     }
 
     #[tokio::test]
@@ -2698,6 +2877,635 @@ mod tests {
         assert!(
             !git_local_ref_exists(&main_path, "feature/fullflow").unwrap(),
             "local ref should be deleted after rollback"
+        );
+
+        drop(main_temp);
+    }
+
+    // ============ GitPull Tests ============
+
+    fn make_pull_prepare_request(
+        repo_path: &str,
+        remote: &str,
+        refspec: &str,
+    ) -> RollbackPrepareRequest {
+        let mut metadata = JsonMap::new();
+        metadata.insert("remote".to_string(), serde_json::json!(remote));
+        metadata.insert("refspec".to_string(), serde_json::json!(refspec));
+
+        RollbackPrepareRequest {
+            intent_id: IntentId::new(),
+            proposal_id: ProposalId::new(),
+            execution_id: ExecutionId::new(),
+            action_type: ActionType::GitPull,
+            rollback_class: RollbackClass::R1SnapshotRecoverable,
+            adapter_key: ADAPTER_KEY.to_string(),
+            target: RollbackTarget::GitRef {
+                repo_path: repo_path.to_string(),
+                before_ref: None,
+                after_ref: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            metadata,
+        }
+    }
+
+    fn make_pull_contract(
+        repo_path: &str,
+        remote: &str,
+        refspec: &str,
+        before_ref: &str,
+        remote_ref: &str,
+        current_branch: &str,
+    ) -> RollbackContract {
+        let mut metadata = JsonMap::new();
+        metadata.insert("repo_path".to_string(), serde_json::json!(repo_path));
+        metadata.insert("remote".to_string(), serde_json::json!(remote));
+        metadata.insert("refspec".to_string(), serde_json::json!(refspec));
+        metadata.insert("before_ref".to_string(), serde_json::json!(before_ref));
+        metadata.insert("remote_ref".to_string(), serde_json::json!(remote_ref));
+        metadata.insert(
+            "current_branch".to_string(),
+            serde_json::json!(current_branch),
+        );
+
+        RollbackContract {
+            contract_id: RollbackContractId::new(),
+            intent_id: IntentId::new(),
+            proposal_id: ProposalId::new(),
+            execution_id: ExecutionId::new(),
+            action_type: ActionType::GitPull,
+            rollback_class: RollbackClass::R1SnapshotRecoverable,
+            adapter_key: ADAPTER_KEY.to_string(),
+            target: RollbackTarget::GitRef {
+                repo_path: repo_path.to_string(),
+                before_ref: Some(before_ref.to_string()),
+                after_ref: Some(remote_ref.to_string()),
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: RollbackState::Prepared,
+            created_at: Utc::now(),
+            expires_at: None,
+            metadata,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_gitpull_prepare_captures_before_ref_and_validates() {
+        let (_main_temp, main_path, _main_head, _remote_temp, _remote_path) =
+            init_repo_with_remote();
+        let adapter = GitRollbackAdapter::new(ADAPTER_KEY);
+
+        // Push first to set up remote tracking
+        run_git(&main_path, &["push", "origin", "master"]).unwrap();
+
+        let receipt = adapter
+            .prepare(&make_pull_prepare_request(&main_path, "origin", "master"))
+            .await
+            .unwrap();
+
+        assert!(receipt.accepted);
+        assert_eq!(
+            receipt.adapter_metadata.get("remote").unwrap().as_str(),
+            Some("origin")
+        );
+        assert_eq!(
+            receipt.adapter_metadata.get("refspec").unwrap().as_str(),
+            Some("master")
+        );
+        assert!(
+            receipt.adapter_metadata.get("before_ref").is_some(),
+            "should capture before_ref"
+        );
+        assert!(
+            receipt.adapter_metadata.get("remote_ref").is_some(),
+            "should capture remote_ref"
+        );
+        assert!(
+            receipt.adapter_metadata.get("current_branch").is_some(),
+            "should capture current_branch"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_gitpull_prepare_rejects_dirty_repo() {
+        let (_main_temp, main_path, _main_head, _remote_temp, _remote_path) =
+            init_repo_with_remote();
+        let adapter = GitRollbackAdapter::new(ADAPTER_KEY);
+
+        // Make repo dirty
+        std::fs::write(Path::new(&main_path).join("uncommitted.txt"), "dirty\n").unwrap();
+
+        let err = adapter
+            .prepare(&make_pull_prepare_request(&main_path, "origin", "master"))
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(err, AdapterError::Validation(ref msg) if msg.contains("uncommitted changes")),
+            "Expected validation error for dirty repo, got: {:?}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn test_gitpull_prepare_rejects_diverged_local() {
+        let (main_temp, main_path, _main_head, _remote_temp, remote_path) = init_repo_with_remote();
+        let adapter = GitRollbackAdapter::new(ADAPTER_KEY);
+
+        // Push initial state to remote
+        run_git(&main_path, &["push", "origin", "master"]).unwrap();
+
+        // Create a divergent commit locally (not on remote)
+        commit_change(&main_path, "local_change.txt", "local changes\n");
+
+        // Create a different commit on remote via a workaround
+        // Clone remote and push a different commit
+        let temp_work = TempDir::new().unwrap();
+        let work_path = temp_work.path().to_str().unwrap();
+        run_git(work_path, &["clone", &remote_path, "."]).unwrap();
+        run_git(work_path, &["config", "user.name", "Ferrum Test"]).unwrap();
+        run_git(work_path, &["config", "user.email", "ferrum@example.com"]).unwrap();
+        run_git(work_path, &["checkout", "master"]).unwrap();
+        std::fs::write(
+            Path::new(work_path).join("remote_change.txt"),
+            "remote changes\n",
+        )
+        .unwrap();
+        run_git(work_path, &["add", "remote_change.txt"]).unwrap();
+        run_git(work_path, &["commit", "-m", "remote commit"]).unwrap();
+        run_git(work_path, &["push", "origin", "master"]).unwrap();
+        drop(temp_work);
+
+        // Now local and remote have diverged - prepare should fail
+        let err = adapter
+            .prepare(&make_pull_prepare_request(&main_path, "origin", "master"))
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(err, AdapterError::Validation(ref msg) if msg.contains("not fast-forward") || msg.contains("diverged")),
+            "Expected validation error for diverged branches, got: {:?}",
+            err
+        );
+
+        drop(main_temp);
+    }
+
+    #[tokio::test]
+    async fn test_gitpull_execute_performs_ff_pull() {
+        let (main_temp, main_path, main_head, _remote_temp, remote_path) = init_repo_with_remote();
+        let adapter = GitRollbackAdapter::new(ADAPTER_KEY);
+
+        // Push initial state
+        run_git(&main_path, &["push", "origin", "master"]).unwrap();
+
+        // Create a new commit on remote
+        let temp_work = TempDir::new().unwrap();
+        let work_path = temp_work.path().to_str().unwrap();
+        run_git(work_path, &["clone", &remote_path, "."]).unwrap();
+        run_git(work_path, &["config", "user.name", "Ferrum Test"]).unwrap();
+        run_git(work_path, &["config", "user.email", "ferrum@example.com"]).unwrap();
+        run_git(work_path, &["checkout", "master"]).unwrap();
+        std::fs::write(
+            Path::new(work_path).join("remote_update.txt"),
+            "remote update\n",
+        )
+        .unwrap();
+        run_git(work_path, &["add", "remote_update.txt"]).unwrap();
+        run_git(work_path, &["commit", "-m", "remote update"]).unwrap();
+        let remote_new_head = git_head(work_path).unwrap();
+        run_git(work_path, &["push", "origin", "master"]).unwrap();
+        drop(temp_work);
+
+        // Prepare pull
+        let prep_receipt = adapter
+            .prepare(&make_pull_prepare_request(&main_path, "origin", "master"))
+            .await
+            .unwrap();
+
+        let before_ref = prep_receipt
+            .adapter_metadata
+            .get("before_ref")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+        let remote_ref = prep_receipt
+            .adapter_metadata
+            .get("remote_ref")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+        let current_branch = prep_receipt
+            .adapter_metadata
+            .get("current_branch")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        // Create contract and execute
+        let contract = make_pull_contract(
+            &main_path,
+            "origin",
+            "master",
+            &before_ref,
+            &remote_ref,
+            &current_branch,
+        );
+
+        let exec_receipt = adapter
+            .execute(&contract, &serde_json::json!({}))
+            .await
+            .unwrap();
+
+        assert_eq!(exec_receipt.external_id.as_deref(), Some("origin:master"));
+        assert!(
+            exec_receipt
+                .result_digest
+                .as_ref()
+                .unwrap()
+                .starts_with("git-pull:origin:"),
+        );
+
+        // Verify local HEAD is now at remote's commit
+        let local_head = git_head(&main_path).unwrap();
+        assert_eq!(
+            local_head, remote_new_head,
+            "local HEAD should match remote after ff pull"
+        );
+
+        // Also verify it advanced from original
+        assert_ne!(
+            local_head, main_head,
+            "local HEAD should have advanced after pull"
+        );
+
+        drop(main_temp);
+    }
+
+    #[tokio::test]
+    async fn test_gitpull_verify_confirms_pull() {
+        let (main_temp, main_path, _main_head, _remote_temp, remote_path) = init_repo_with_remote();
+        let adapter = GitRollbackAdapter::new(ADAPTER_KEY);
+
+        // Push initial state
+        run_git(&main_path, &["push", "origin", "master"]).unwrap();
+
+        // Create a new commit on remote
+        let temp_work = TempDir::new().unwrap();
+        let work_path = temp_work.path().to_str().unwrap();
+        run_git(work_path, &["clone", &remote_path, "."]).unwrap();
+        run_git(work_path, &["config", "user.name", "Ferrum Test"]).unwrap();
+        run_git(work_path, &["config", "user.email", "ferrum@example.com"]).unwrap();
+        run_git(work_path, &["checkout", "master"]).unwrap();
+        std::fs::write(
+            Path::new(work_path).join("verify_update.txt"),
+            "verify update\n",
+        )
+        .unwrap();
+        run_git(work_path, &["add", "verify_update.txt"]).unwrap();
+        run_git(work_path, &["commit", "-m", "verify update"]).unwrap();
+        let remote_new_head = git_head(work_path).unwrap();
+        run_git(work_path, &["push", "origin", "master"]).unwrap();
+        drop(temp_work);
+
+        // Prepare and execute pull
+        let prep_receipt = adapter
+            .prepare(&make_pull_prepare_request(&main_path, "origin", "master"))
+            .await
+            .unwrap();
+
+        let before_ref = prep_receipt
+            .adapter_metadata
+            .get("before_ref")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+        let remote_ref = prep_receipt
+            .adapter_metadata
+            .get("remote_ref")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+        let current_branch = prep_receipt
+            .adapter_metadata
+            .get("current_branch")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let contract = make_pull_contract(
+            &main_path,
+            "origin",
+            "master",
+            &before_ref,
+            &remote_ref,
+            &current_branch,
+        );
+
+        adapter
+            .execute(&contract, &serde_json::json!({}))
+            .await
+            .unwrap();
+
+        // Verify should succeed
+        let verify_receipt = adapter.verify(&contract).await.unwrap();
+        assert!(
+            verify_receipt.verified,
+            "verify should confirm pull succeeded: {:?}",
+            verify_receipt.adapter_metadata
+        );
+        assert_eq!(
+            verify_receipt
+                .adapter_metadata
+                .get("current_head")
+                .unwrap()
+                .as_str()
+                .unwrap(),
+            remote_new_head.as_str()
+        );
+
+        drop(main_temp);
+    }
+
+    #[tokio::test]
+    async fn test_gitpull_rollback_resets_to_before_ref() {
+        let (main_temp, main_path, main_head, _remote_temp, remote_path) = init_repo_with_remote();
+        let adapter = GitRollbackAdapter::new(ADAPTER_KEY);
+
+        // Push initial state
+        run_git(&main_path, &["push", "origin", "master"]).unwrap();
+
+        // Create a new commit on remote
+        let temp_work = TempDir::new().unwrap();
+        let work_path = temp_work.path().to_str().unwrap();
+        run_git(work_path, &["clone", &remote_path, "."]).unwrap();
+        run_git(work_path, &["config", "user.name", "Ferrum Test"]).unwrap();
+        run_git(work_path, &["config", "user.email", "ferrum@example.com"]).unwrap();
+        run_git(work_path, &["checkout", "master"]).unwrap();
+        std::fs::write(
+            Path::new(work_path).join("rollback_update.txt"),
+            "rollback update\n",
+        )
+        .unwrap();
+        run_git(work_path, &["add", "rollback_update.txt"]).unwrap();
+        run_git(work_path, &["commit", "-m", "rollback update"]).unwrap();
+        run_git(work_path, &["push", "origin", "master"]).unwrap();
+        drop(temp_work);
+
+        // Prepare and execute pull
+        let prep_receipt = adapter
+            .prepare(&make_pull_prepare_request(&main_path, "origin", "master"))
+            .await
+            .unwrap();
+
+        let before_ref = prep_receipt
+            .adapter_metadata
+            .get("before_ref")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+        let remote_ref = prep_receipt
+            .adapter_metadata
+            .get("remote_ref")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+        let current_branch = prep_receipt
+            .adapter_metadata
+            .get("current_branch")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let contract = make_pull_contract(
+            &main_path,
+            "origin",
+            "master",
+            &before_ref,
+            &remote_ref,
+            &current_branch,
+        );
+
+        adapter
+            .execute(&contract, &serde_json::json!({}))
+            .await
+            .unwrap();
+
+        // Verify local HEAD advanced
+        let post_pull_head = git_head(&main_path).unwrap();
+        assert_ne!(
+            post_pull_head, main_head,
+            "HEAD should have advanced after pull"
+        );
+
+        // Rollback should reset to before_ref
+        let rollback_receipt = adapter.rollback(&contract).await.unwrap();
+        assert!(rollback_receipt.recovered);
+
+        // Verify HEAD is back to original
+        let after_rollback_head = git_head(&main_path).unwrap();
+        assert_eq!(
+            after_rollback_head, main_head,
+            "HEAD should be restored after rollback"
+        );
+
+        drop(main_temp);
+    }
+
+    #[tokio::test]
+    async fn test_gitpull_compensate_same_as_rollback() {
+        let (main_temp, main_path, main_head, _remote_temp, remote_path) = init_repo_with_remote();
+        let adapter = GitRollbackAdapter::new(ADAPTER_KEY);
+
+        // Push initial state
+        run_git(&main_path, &["push", "origin", "master"]).unwrap();
+
+        // Create a new commit on remote
+        let temp_work = TempDir::new().unwrap();
+        let work_path = temp_work.path().to_str().unwrap();
+        run_git(work_path, &["clone", &remote_path, "."]).unwrap();
+        run_git(work_path, &["config", "user.name", "Ferrum Test"]).unwrap();
+        run_git(work_path, &["config", "user.email", "ferrum@example.com"]).unwrap();
+        run_git(work_path, &["checkout", "master"]).unwrap();
+        std::fs::write(
+            Path::new(work_path).join("compensate_update.txt"),
+            "compensate update\n",
+        )
+        .unwrap();
+        run_git(work_path, &["add", "compensate_update.txt"]).unwrap();
+        run_git(work_path, &["commit", "-m", "compensate update"]).unwrap();
+        run_git(work_path, &["push", "origin", "master"]).unwrap();
+        drop(temp_work);
+
+        // Prepare and execute pull
+        let prep_receipt = adapter
+            .prepare(&make_pull_prepare_request(&main_path, "origin", "master"))
+            .await
+            .unwrap();
+
+        let before_ref = prep_receipt
+            .adapter_metadata
+            .get("before_ref")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+        let remote_ref = prep_receipt
+            .adapter_metadata
+            .get("remote_ref")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+        let current_branch = prep_receipt
+            .adapter_metadata
+            .get("current_branch")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let contract = make_pull_contract(
+            &main_path,
+            "origin",
+            "master",
+            &before_ref,
+            &remote_ref,
+            &current_branch,
+        );
+
+        adapter
+            .execute(&contract, &serde_json::json!({}))
+            .await
+            .unwrap();
+
+        // Compensate should work same as rollback
+        let compensate_receipt = adapter.compensate(&contract).await.unwrap();
+        assert!(compensate_receipt.recovered);
+
+        // Verify HEAD is back to original
+        let after_compensate_head = git_head(&main_path).unwrap();
+        assert_eq!(
+            after_compensate_head, main_head,
+            "HEAD should be restored after compensate"
+        );
+
+        drop(main_temp);
+    }
+
+    #[tokio::test]
+    async fn test_gitpull_happy_path_full_flow() {
+        let (main_temp, main_path, main_head, _remote_temp, remote_path) = init_repo_with_remote();
+        let adapter = GitRollbackAdapter::new(ADAPTER_KEY);
+
+        // Step 1: Push initial state
+        run_git(&main_path, &["push", "origin", "master"]).unwrap();
+
+        // Create a new commit on remote
+        let temp_work = TempDir::new().unwrap();
+        let work_path = temp_work.path().to_str().unwrap();
+        run_git(work_path, &["clone", &remote_path, "."]).unwrap();
+        run_git(work_path, &["config", "user.name", "Ferrum Test"]).unwrap();
+        run_git(work_path, &["config", "user.email", "ferrum@example.com"]).unwrap();
+        run_git(work_path, &["checkout", "master"]).unwrap();
+        std::fs::write(
+            Path::new(work_path).join("fullflow_update.txt"),
+            "fullflow update\n",
+        )
+        .unwrap();
+        run_git(work_path, &["add", "fullflow_update.txt"]).unwrap();
+        run_git(work_path, &["commit", "-m", "fullflow update"]).unwrap();
+        let remote_new_head = git_head(work_path).unwrap();
+        run_git(work_path, &["push", "origin", "master"]).unwrap();
+        drop(temp_work);
+
+        // Step 2: Prepare - captures pre-pull state
+        let prep_receipt = adapter
+            .prepare(&make_pull_prepare_request(&main_path, "origin", "master"))
+            .await
+            .unwrap();
+        assert!(prep_receipt.accepted);
+
+        let before_ref = prep_receipt
+            .adapter_metadata
+            .get("before_ref")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+        let remote_ref = prep_receipt
+            .adapter_metadata
+            .get("remote_ref")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+        let current_branch = prep_receipt
+            .adapter_metadata
+            .get("current_branch")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        // Step 3: Execute - pull from remote
+        let contract = make_pull_contract(
+            &main_path,
+            "origin",
+            "master",
+            &before_ref,
+            &remote_ref,
+            &current_branch,
+        );
+
+        let exec_receipt = adapter
+            .execute(&contract, &serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_eq!(exec_receipt.external_id.as_deref(), Some("origin:master"));
+
+        // Step 4: Verify - confirm pull succeeded
+        let verify_receipt = adapter.verify(&contract).await.unwrap();
+        assert!(
+            verify_receipt.verified,
+            "verify should succeed after pull: {:?}",
+            verify_receipt.adapter_metadata
+        );
+        assert_eq!(
+            verify_receipt
+                .adapter_metadata
+                .get("current_head")
+                .unwrap()
+                .as_str()
+                .unwrap(),
+            remote_new_head.as_str()
+        );
+
+        // Step 5: Rollback - reset to before_ref
+        let rollback_receipt = adapter.rollback(&contract).await.unwrap();
+        assert!(rollback_receipt.recovered);
+
+        // Final state: HEAD should be back at original
+        let final_head = git_head(&main_path).unwrap();
+        assert_eq!(
+            final_head, main_head,
+            "HEAD should be restored after rollback"
         );
 
         drop(main_temp);
