@@ -104,6 +104,45 @@ async fn execute(...) -> Result<ExecuteReceipt, AdapterError> {
 
 ---
 
+## Slice 40 — P2.6 Payload Parser Slice (2026-04-04)
+
+This section records the **payload parser slice** for the EmailSend adapter. A crate-private typed payload parser is added as an internal/mock-only path. Execute remains fail-closed; no send is wired.
+
+**What was added:**
+- `EmailPayload` struct (crate-private): typed representation of `to`, `subject`, `body` fields
+- `parse_email_payload()` function (crate-private): validates and parses JSON into `EmailPayload`
+- 25 new unit tests proving valid/invalid payload parsing and execute-fail-closed invariant
+- Helper functions `make_email_send_prepare_request` and `make_email_send_contract` promoted to `pub(crate)` for test reuse
+
+**What was NOT added (preserved invariant):**
+- Adapter execute remains fail-closed (execute does NOT call parse_email_payload or provider.send())
+- No real provider integration (parser is internal/mock-only)
+- Gateway deny boundary unchanged (`allow_send=true` still denied at prepare-time)
+- No send/revoke semantics wired to execute
+
+**New test coverage (25 tests):**
+- Valid payload parsing: `test_parse_payload_valid_single_recipient`, `test_parse_payload_valid_multiple_recipients`, `test_parse_payload_valid_empty_recipients_array`, `test_parse_payload_valid_unicode_in_subject_and_body`, `test_parse_payload_valid_long_content`
+- Fail-closed missing fields: `test_parse_payload_fail_closed_missing_to`, `test_parse_payload_fail_closed_missing_subject`, `test_parse_payload_fail_closed_missing_body`, `test_parse_payload_fail_closed_missing_all_fields`
+- Fail-closed wrong types: `test_parse_payload_fail_closed_to_not_array`, `test_parse_payload_fail_closed_to_element_not_string`, `test_parse_payload_fail_closed_subject_not_string`, `test_parse_payload_fail_closed_body_not_string`, `test_parse_payload_fail_closed_to_element_null`, `test_parse_payload_fail_closed_to_element_object`
+- Fail-closed not an object: `test_parse_payload_fail_closed_not_object_null`, `test_parse_payload_fail_closed_not_object_string`, `test_parse_payload_fail_closed_not_object_array`, `test_parse_payload_fail_closed_not_object_number`
+- Extra fields ignored: `test_parse_payload_ignores_extra_fields`
+- Execute remains fail-closed: `test_execute_still_fail_closed_with_valid_payload`, `test_execute_still_fail_closed_with_invalid_payload`, `test_execute_still_fail_closed_with_empty_payload`
+- Mock provider direct call: `test_mock_provider_direct_call_with_valid_payload`, `test_mock_provider_direct_call_failure_with_configured_provider`
+
+**Parser behavior summary:**
+```rust
+fn parse_email_payload(value: &serde_json::Value) -> Result<EmailPayload, AdapterError>
+// Validates: to (array of strings), subject (string), body (string)
+// Returns: Ok(EmailPayload { to, subject, body }) or AdapterError::Validation
+// Crate-private: only callable from tests or internal mock path
+```
+
+**Test output:** `cargo test -p ferrum-adapter-emailsend` — 53 tests pass (28 prior + 25 new)
+
+**Verification:** `cargo test -p ferrum-adapter-emailsend` (53 tests pass ✅); `cargo clippy -p ferrum-adapter-emailsend --tests -- -D warnings` (clean ✅); `cargo check -p ferrum-gateway` (clean ✅)
+
+---
+
 ## Current Boundary (Preserved)
 
 ### Gateway Prepare-Time Deny

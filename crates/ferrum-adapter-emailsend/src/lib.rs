@@ -68,6 +68,93 @@ pub struct ProviderSendResult {
     pub provider_ref: String,
 }
 
+/// Internal (crate-private) typed email payload parsed from JSON.
+///
+/// This struct represents the validated shape of an email send request,
+/// extracted from the raw `serde_json::Value` payload. It is used by
+/// tests and the mock provider path to prove payload parsing works
+/// correctly. It is NOT wired to execute() — execute remains fail-closed
+/// and does not invoke provider.send().
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EmailPayload {
+    /// Recipient email addresses.
+    to: Vec<String>,
+    /// Email subject line.
+    subject: String,
+    /// Email body content.
+    body: String,
+}
+
+/// Parse an email payload from a JSON value.
+///
+/// Validates the presence and types of `to`, `subject`, and `body` fields.
+/// Returns `Ok(EmailPayload)` if the payload is well-formed, or a descriptive
+/// `AdapterError::Validation` if any field is missing or has the wrong type.
+///
+/// This function is crate-private (not exposed outside the adapter) and is
+/// exercised by unit tests and the mock provider path to prove payload parsing
+/// works correctly. It is NOT called by execute() — execute remains fail-closed.
+///
+/// # Errors
+/// Returns `AdapterError::Validation` if:
+/// - `to` field is missing or not an array of strings
+/// - `subject` field is missing or not a string
+/// - `body` field is missing or not a string
+fn parse_email_payload(value: &serde_json::Value) -> Result<EmailPayload, AdapterError> {
+    let obj = value.as_object().ok_or_else(|| {
+        AdapterError::Validation("EmailSend payload must be a JSON object".to_string())
+    })?;
+
+    // Parse `to` field: must be an array of strings
+    let to_values = obj.get("to").ok_or_else(|| {
+        AdapterError::Validation("EmailSend payload missing required field: `to`".to_string())
+    })?;
+    let to_array = to_values.as_array().ok_or_else(|| {
+        AdapterError::Validation(
+            "EmailSend payload field `to` must be an array of recipient email addresses"
+                .to_string(),
+        )
+    })?;
+    let mut to = Vec::with_capacity(to_array.len());
+    for (i, item) in to_array.iter().enumerate() {
+        let s = item.as_str().ok_or_else(|| {
+            AdapterError::Validation(format!(
+                "EmailSend payload field `to`[{i}] must be a string, got {}",
+                item
+            ))
+        })?;
+        to.push(s.to_string());
+    }
+
+    // Parse `subject` field: must be a string
+    let subject = obj.get("subject").ok_or_else(|| {
+        AdapterError::Validation("EmailSend payload missing required field: `subject`".to_string())
+    })?;
+    let subject_str = subject.as_str().ok_or_else(|| {
+        AdapterError::Validation(format!(
+            "EmailSend payload field `subject` must be a string, got {}",
+            subject
+        ))
+    })?;
+
+    // Parse `body` field: must be a string
+    let body = obj.get("body").ok_or_else(|| {
+        AdapterError::Validation("EmailSend payload missing required field: `body`".to_string())
+    })?;
+    let body_str = body.as_str().ok_or_else(|| {
+        AdapterError::Validation(format!(
+            "EmailSend payload field `body` must be a string, got {}",
+            body
+        ))
+    })?;
+
+    Ok(EmailPayload {
+        to,
+        subject: subject_str.to_string(),
+        body: body_str.to_string(),
+    })
+}
+
 /// Provider-specific errors.
 ///
 /// Categorized to allow adapter-level retry/decide logic:
@@ -424,7 +511,7 @@ mod tests {
     use super::*;
     use ferrum_proto::RollbackTarget;
 
-    fn make_email_send_prepare_request() -> RollbackPrepareRequest {
+    pub(crate) fn make_email_send_prepare_request() -> RollbackPrepareRequest {
         RollbackPrepareRequest {
             intent_id: ferrum_proto::IntentId::new(),
             proposal_id: ferrum_proto::ProposalId::new(),
@@ -444,7 +531,7 @@ mod tests {
         }
     }
 
-    fn make_email_send_contract(request: &RollbackPrepareRequest) -> RollbackContract {
+    pub(crate) fn make_email_send_contract(request: &RollbackPrepareRequest) -> RollbackContract {
         RollbackContract {
             contract_id: ferrum_proto::RollbackContractId::new(),
             intent_id: request.intent_id,
@@ -648,6 +735,447 @@ mod tests {
 
         // Provider supports revoke
         assert!(adapter.provider().can_revoke("any-id").await);
+    }
+}
+
+// =============================================================================
+// Email payload parser tests (crate-private — internal/mock-only path)
+// =============================================================================
+
+#[cfg(test)]
+mod payload_parser_tests {
+    use super::*;
+    use crate::tests::{make_email_send_contract, make_email_send_prepare_request};
+
+    // Helper to parse a payload and unwrap the result or panic with the error message.
+    fn parse_payload_ok(value: serde_json::Value) -> EmailPayload {
+        parse_email_payload(&value).expect("parse_email_payload should succeed for valid payload")
+    }
+
+    // Helper to parse a payload and expect a Validation error.
+    fn parse_payload_err(value: serde_json::Value) -> String {
+        let err = parse_email_payload(&value)
+            .expect_err("parse_email_payload should fail for invalid payload");
+        err.to_string()
+    }
+
+    // -------------------------------------------------------------------------
+    // Valid payload parsing tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_payload_valid_single_recipient() {
+        let payload = serde_json::json!({
+            "to": ["alice@example.com"],
+            "subject": "Hello",
+            "body": "Hello, Alice!"
+        });
+
+        let parsed = parse_payload_ok(payload);
+        assert_eq!(parsed.to, vec!["alice@example.com"]);
+        assert_eq!(parsed.subject, "Hello");
+        assert_eq!(parsed.body, "Hello, Alice!");
+    }
+
+    #[test]
+    fn test_parse_payload_valid_multiple_recipients() {
+        let payload = serde_json::json!({
+            "to": ["alice@example.com", "bob@example.com", "carol@example.com"],
+            "subject": "Meeting Notes",
+            "body": "Here are the meeting notes."
+        });
+
+        let parsed = parse_payload_ok(payload);
+        assert_eq!(
+            parsed.to,
+            vec!["alice@example.com", "bob@example.com", "carol@example.com"]
+        );
+        assert_eq!(parsed.subject, "Meeting Notes");
+        assert_eq!(parsed.body, "Here are the meeting notes.");
+    }
+
+    #[test]
+    fn test_parse_payload_valid_empty_recipients_array() {
+        // Empty to[] is technically valid JSON (array exists and is empty) — validation
+        // of emptiness would be a business-logic concern, not a parse concern.
+        let payload = serde_json::json!({
+            "to": [],
+            "subject": "No Recipients",
+            "body": "This email has no recipients."
+        });
+
+        let parsed = parse_payload_ok(payload);
+        assert!(parsed.to.is_empty());
+        assert_eq!(parsed.subject, "No Recipients");
+    }
+
+    #[test]
+    fn test_parse_payload_valid_unicode_in_subject_and_body() {
+        let payload = serde_json::json!({
+            "to": ["日本語@example.com"],
+            "subject": "こんにちは、世界！",
+            "body": "Emoji test: 🎉 👏🏻"
+        });
+
+        let parsed = parse_payload_ok(payload);
+        assert_eq!(parsed.to, vec!["日本語@example.com"]);
+        assert_eq!(parsed.subject, "こんにちは、世界！");
+        assert_eq!(parsed.body, "Emoji test: 🎉 👏🏻");
+    }
+
+    #[test]
+    fn test_parse_payload_valid_long_content() {
+        let long_body = "A".repeat(10_000);
+        let payload = serde_json::json!({
+            "to": ["alice@example.com"],
+            "subject": "Long Email",
+            "body": long_body
+        });
+
+        let parsed = parse_payload_ok(payload);
+        assert_eq!(parsed.body.len(), 10_000);
+    }
+
+    // -------------------------------------------------------------------------
+    // Fail-closed invalid payload tests — missing fields
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_payload_fail_closed_missing_to() {
+        let payload = serde_json::json!({
+            "subject": "Hello",
+            "body": "Hello!"
+        });
+        let err = parse_payload_err(payload);
+        assert!(
+            err.contains("to"),
+            "error should mention missing `to` field: {err}"
+        );
+    }
+
+    #[test]
+    fn test_parse_payload_fail_closed_missing_subject() {
+        let payload = serde_json::json!({
+            "to": ["alice@example.com"],
+            "body": "Hello!"
+        });
+        let err = parse_payload_err(payload);
+        assert!(
+            err.contains("subject"),
+            "error should mention missing `subject` field: {err}"
+        );
+    }
+
+    #[test]
+    fn test_parse_payload_fail_closed_missing_body() {
+        let payload = serde_json::json!({
+            "to": ["alice@example.com"],
+            "subject": "Hello"
+        });
+        let err = parse_payload_err(payload);
+        assert!(
+            err.contains("body"),
+            "error should mention missing `body` field: {err}"
+        );
+    }
+
+    #[test]
+    fn test_parse_payload_fail_closed_missing_all_fields() {
+        let payload = serde_json::json!({});
+        let err = parse_payload_err(payload);
+        assert!(
+            err.contains("to"),
+            "error should mention missing `to` field first: {err}"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Fail-closed invalid payload tests — wrong types
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_payload_fail_closed_to_not_array() {
+        let payload = serde_json::json!({
+            "to": "alice@example.com", // should be array
+            "subject": "Hello",
+            "body": "Hello!"
+        });
+        let err = parse_payload_err(payload);
+        assert!(err.contains("to"), "error should mention `to` field: {err}");
+        assert!(
+            err.contains("array"),
+            "error should mention expected array: {err}"
+        );
+    }
+
+    #[test]
+    fn test_parse_payload_fail_closed_to_element_not_string() {
+        let payload = serde_json::json!({
+            "to": ["alice@example.com", 42, "bob@example.com"],
+            "subject": "Hello",
+            "body": "Hello!"
+        });
+        let err = parse_payload_err(payload);
+        assert!(err.contains("to"), "error should mention `to` field: {err}");
+        assert!(
+            err.contains("string"),
+            "error should mention expected string type: {err}"
+        );
+    }
+
+    #[test]
+    fn test_parse_payload_fail_closed_subject_not_string() {
+        let payload = serde_json::json!({
+            "to": ["alice@example.com"],
+            "subject": 123, // should be string
+            "body": "Hello!"
+        });
+        let err = parse_payload_err(payload);
+        assert!(
+            err.contains("subject"),
+            "error should mention `subject` field: {err}"
+        );
+        assert!(
+            err.contains("string"),
+            "error should mention expected string type: {err}"
+        );
+    }
+
+    #[test]
+    fn test_parse_payload_fail_closed_body_not_string() {
+        let payload = serde_json::json!({
+            "to": ["alice@example.com"],
+            "subject": "Hello",
+            "body": ["Hello!"] // should be string
+        });
+        let err = parse_payload_err(payload);
+        assert!(
+            err.contains("body"),
+            "error should mention `body` field: {err}"
+        );
+        assert!(
+            err.contains("string"),
+            "error should mention expected string type: {err}"
+        );
+    }
+
+    #[test]
+    fn test_parse_payload_fail_closed_to_element_null() {
+        let payload = serde_json::json!({
+            "to": [null],
+            "subject": "Hello",
+            "body": "Hello!"
+        });
+        let err = parse_payload_err(payload);
+        assert!(err.contains("to"), "error should mention `to` field: {err}");
+    }
+
+    #[test]
+    fn test_parse_payload_fail_closed_to_element_object() {
+        let payload = serde_json::json!({
+            "to": [{"email": "alice@example.com"}],
+            "subject": "Hello",
+            "body": "Hello!"
+        });
+        let err = parse_payload_err(payload);
+        assert!(err.contains("to"), "error should mention `to` field: {err}");
+    }
+
+    // -------------------------------------------------------------------------
+    // Fail-closed invalid payload tests — not an object
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_payload_fail_closed_not_object_null() {
+        let payload = serde_json::Value::Null;
+        let err = parse_payload_err(payload);
+        assert!(
+            err.contains("object"),
+            "error should mention expected object: {err}"
+        );
+    }
+
+    #[test]
+    fn test_parse_payload_fail_closed_not_object_string() {
+        let payload = serde_json::Value::String("not an object".to_string());
+        let err = parse_payload_err(payload);
+        assert!(
+            err.contains("object"),
+            "error should mention expected object: {err}"
+        );
+    }
+
+    #[test]
+    fn test_parse_payload_fail_closed_not_object_array() {
+        let payload = serde_json::Value::Array(vec![]);
+        let err = parse_payload_err(payload);
+        assert!(
+            err.contains("object"),
+            "error should mention expected object: {err}"
+        );
+    }
+
+    #[test]
+    fn test_parse_payload_fail_closed_not_object_number() {
+        let payload = serde_json::Value::Number(42.into());
+        let err = parse_payload_err(payload);
+        assert!(
+            err.contains("object"),
+            "error should mention expected object: {err}"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Fail-closed extra fields are ignored (not an error)
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_payload_ignores_extra_fields() {
+        let payload = serde_json::json!({
+            "to": ["alice@example.com"],
+            "subject": "Hello",
+            "body": "Hello!",
+            "extra_field": "should be ignored",
+            "cc": ["bob@example.com"],
+            "priority": "high"
+        });
+
+        let parsed = parse_payload_ok(payload);
+        assert_eq!(parsed.to, vec!["alice@example.com"]);
+        assert_eq!(parsed.subject, "Hello");
+        assert_eq!(parsed.body, "Hello!");
+    }
+
+    // -------------------------------------------------------------------------
+    // Execute remains fail-closed (proves parser is NOT wired to execute)
+    // -------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_execute_still_fail_closed_with_valid_payload() {
+        // Even a perfectly parsed valid payload should NOT enable send.
+        // execute() must remain fail-closed; the parser is internal/mock-only.
+        let adapter = EmailSendAdapter::new();
+        let request = make_email_send_prepare_request();
+        let contract = make_email_send_contract(&request);
+
+        let valid_payload = serde_json::json!({
+            "to": ["alice@example.com"],
+            "subject": "Hello",
+            "body": "Hello, Alice!"
+        });
+
+        let result = adapter.execute(&contract, &valid_payload).await;
+        assert!(
+            result.is_err(),
+            "execute must still fail closed even with valid payload"
+        );
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("not implemented"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_still_fail_closed_with_invalid_payload() {
+        // execute() must fail closed regardless of payload validity.
+        let adapter = EmailSendAdapter::new();
+        let request = make_email_send_prepare_request();
+        let contract = make_email_send_contract(&request);
+
+        let invalid_payload = serde_json::json!({
+            "not": ["a", "valid", "email", "payload"]
+        });
+
+        let result = adapter.execute(&contract, &invalid_payload).await;
+        assert!(
+            result.is_err(),
+            "execute must still fail closed even with invalid payload"
+        );
+        let err = result.unwrap_err();
+        // Should get the "not implemented" error, not a parse error,
+        // because execute() itself doesn't call the parser.
+        assert!(err.to_string().contains("not implemented"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_still_fail_closed_with_empty_payload() {
+        // execute() must fail closed with empty/null payload too.
+        let adapter = EmailSendAdapter::new();
+        let request = make_email_send_prepare_request();
+        let contract = make_email_send_contract(&request);
+
+        let result = adapter.execute(&contract, &serde_json::Value::Null).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("not implemented"));
+    }
+
+    // -------------------------------------------------------------------------
+    // Prove mock provider can be called directly with parsed payload
+    // (demonstrates the internal/mock-only path works)
+    // -------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_mock_provider_direct_call_with_valid_payload() {
+        // This proves the internal/mock-only path: parser output can be used
+        // to call provider.send() directly, but execute() remains fail-closed.
+        let provider = Arc::new(MockEmailProvider::new());
+        let adapter = EmailSendAdapter::with_provider(ADAPTER_KEY, provider.clone());
+
+        let valid_payload = serde_json::json!({
+            "to": ["alice@example.com", "bob@example.com"],
+            "subject": "Test Subject",
+            "body": "Test body content"
+        });
+
+        // Parse the payload using our parser
+        let parsed = parse_email_payload(&valid_payload).expect("payload should parse correctly");
+
+        // Call provider directly (NOT via execute)
+        let send_result = provider
+            .send(parsed.to.clone(), &parsed.subject, &parsed.body)
+            .await;
+        assert!(
+            send_result.is_ok(),
+            "provider.send should succeed: {:?}",
+            send_result
+        );
+        let result = send_result.unwrap();
+        assert!(result.message_id.starts_with("mock-message-id-"));
+
+        // Verify execute still fails closed
+        let request = make_email_send_prepare_request();
+        let contract = make_email_send_contract(&request);
+        let exec_result = adapter.execute(&contract, &valid_payload).await;
+        assert!(exec_result.is_err());
+        assert!(
+            exec_result
+                .unwrap_err()
+                .to_string()
+                .contains("not implemented")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mock_provider_direct_call_failure_with_configured_provider() {
+        // Prove mock provider can be configured to fail and that failure is
+        // returned when called directly, not via execute.
+        let failing_provider = Arc::new(
+            MockEmailProvider::new()
+                .with_failure(ProviderError::Transient("configured failure".to_string())),
+        );
+
+        let valid_payload = serde_json::json!({
+            "to": ["alice@example.com"],
+            "subject": "Hello",
+            "body": "Hello!"
+        });
+        let parsed = parse_email_payload(&valid_payload).expect("payload should parse");
+
+        let result = failing_provider
+            .send(parsed.to, &parsed.subject, &parsed.body)
+            .await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, ProviderError::Transient(msg) if msg.contains("configured failure")));
     }
 }
 
