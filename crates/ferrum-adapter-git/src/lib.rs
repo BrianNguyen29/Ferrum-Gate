@@ -164,23 +164,77 @@ impl RollbackAdapter for GitRollbackAdapter {
     }
 
     async fn verify(&self, contract: &RollbackContract) -> Result<VerifyReceipt, AdapterError> {
-        let repo_path = extract_repo_path_from_contract(contract)?;
-        let current_head = git_head(&repo_path)?;
+        // Fail-closed: extract_repo_path returns error only on malformed input;
+        // missing repo path is handled gracefully below as verified=false.
+        let repo_path = match extract_repo_path_from_contract(contract) {
+            Ok(path) => path,
+            Err(e) => {
+                let mut metadata = JsonMap::new();
+                metadata.insert("error".to_string(), serde_json::json!(e.to_string()));
+                metadata.insert("fail_closed".to_string(), serde_json::json!(true));
+                return Ok(VerifyReceipt {
+                    verified: false,
+                    adapter_metadata: metadata,
+                });
+            }
+        };
+
+        // Fail-closed: if git_head fails (repo missing, permission denied, etc.),
+        // return verified=false rather than propagating error.
+        let current_head = match git_head(&repo_path) {
+            Ok(head) => head,
+            Err(e) => {
+                let mut metadata = JsonMap::new();
+                metadata.insert("repo_path".to_string(), serde_json::json!(repo_path));
+                metadata.insert("error".to_string(), serde_json::json!(e.to_string()));
+                metadata.insert("fail_closed".to_string(), serde_json::json!(true));
+                return Ok(VerifyReceipt {
+                    verified: false,
+                    adapter_metadata: metadata,
+                });
+            }
+        };
 
         // For GitBranchCreate, verify we're on the correct branch and at expected ref
         if matches!(contract.action_type, ActionType::GitBranchCreate) {
-            let new_branch = contract
+            let new_branch = match contract
                 .metadata
                 .get("new_branch_name")
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| {
-                    AdapterError::Validation(
-                        "GitBranchCreate verify requires new_branch_name in contract metadata"
-                            .to_string(),
-                    )
-                })?;
+            {
+                Some(name) => name,
+                None => {
+                    let mut metadata = JsonMap::new();
+                    metadata.insert("repo_path".to_string(), serde_json::json!(repo_path));
+                    metadata.insert(
+                        "error".to_string(),
+                        serde_json::json!(
+                            "GitBranchCreate verify requires new_branch_name in contract metadata"
+                        ),
+                    );
+                    metadata.insert("fail_closed".to_string(), serde_json::json!(true));
+                    return Ok(VerifyReceipt {
+                        verified: false,
+                        adapter_metadata: metadata,
+                    });
+                }
+            };
 
-            let current_branch = git_current_branch(&repo_path)?;
+            // Fail-closed: if git_current_branch fails, return verified=false
+            let current_branch = match git_current_branch(&repo_path) {
+                Ok(branch) => branch,
+                Err(e) => {
+                    let mut metadata = JsonMap::new();
+                    metadata.insert("repo_path".to_string(), serde_json::json!(repo_path));
+                    metadata.insert("error".to_string(), serde_json::json!(e.to_string()));
+                    metadata.insert("fail_closed".to_string(), serde_json::json!(true));
+                    return Ok(VerifyReceipt {
+                        verified: false,
+                        adapter_metadata: metadata,
+                    });
+                }
+            };
+
             let expected_ref = expected_verify_ref(contract)?;
 
             let mut metadata = JsonMap::new();
@@ -1028,5 +1082,154 @@ mod tests {
         assert_eq!(git_current_branch(&repo_path).unwrap(), original_branch);
         assert!(!git_branch_exists(&repo_path, new_branch).unwrap());
         assert_eq!(git_head(&repo_path).unwrap(), before_ref);
+    }
+
+    // ============ Fail-Closed Verify + Noop Edge Case Tests ============
+
+    #[tokio::test]
+    async fn test_verify_repo_path_missing_is_verified_false_not_error() {
+        // Fail-closed: when repo path is missing, verify should return verified=false, not error.
+        // This ensures commit is rejected rather than ambiguous when verification fails.
+        let (_temp_dir, repo_path, _head) = init_temp_repo();
+        let adapter = GitRollbackAdapter::new(ADAPTER_KEY);
+        let contract = make_contract(&repo_path, None, Some("abc123"));
+
+        // Drop the temp directory to make repo_path invalid
+        drop(_temp_dir);
+
+        // Verify should return verified=false (fail-closed), NOT an error
+        let receipt = adapter.verify(&contract).await.unwrap();
+        assert!(
+            !receipt.verified,
+            "verify should return false when repo is inaccessible"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_verify_already_at_expected_ref_is_verified_true() {
+        // Noop edge case: verify when already at expected ref should succeed.
+        let (_temp_dir, repo_path, head) = init_temp_repo();
+        let adapter = GitRollbackAdapter::new(ADAPTER_KEY);
+
+        // Contract expects current HEAD as after_ref
+        let contract = make_contract(&repo_path, None, Some(&head));
+
+        let receipt = adapter.verify(&contract).await.unwrap();
+
+        assert!(
+            receipt.verified,
+            "verify should succeed when already at expected ref"
+        );
+        assert_eq!(
+            receipt
+                .adapter_metadata
+                .get("current_ref")
+                .unwrap()
+                .as_str(),
+            Some(head.as_str())
+        );
+        assert_eq!(
+            receipt
+                .adapter_metadata
+                .get("expected_ref")
+                .unwrap()
+                .as_str(),
+            Some(head.as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_verify_ref_mismatch_is_verified_false() {
+        // When current ref doesn't match expected, verify should return false.
+        let (_temp_dir, repo_path, before_ref) = init_temp_repo();
+        let adapter = GitRollbackAdapter::new(ADAPTER_KEY);
+        let after_ref = commit_change(&repo_path, "newfile.txt", "content\n");
+
+        // Contract expects before_ref but repo is at after_ref
+        let contract = make_contract(&repo_path, None, Some(&before_ref));
+
+        let receipt = adapter.verify(&contract).await.unwrap();
+
+        assert!(
+            !receipt.verified,
+            "verify should return false when ref mismatch"
+        );
+        assert_eq!(
+            receipt
+                .adapter_metadata
+                .get("current_ref")
+                .unwrap()
+                .as_str(),
+            Some(after_ref.as_str())
+        );
+        assert_eq!(
+            receipt
+                .adapter_metadata
+                .get("expected_ref")
+                .unwrap()
+                .as_str(),
+            Some(before_ref.as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_verify_missing_both_refs_falls_back_to_before_ref() {
+        // When after_ref is missing from contract, verify should fall back to before_ref.
+        let (_temp_dir, repo_path, head) = init_temp_repo();
+        let adapter = GitRollbackAdapter::new(ADAPTER_KEY);
+
+        // Contract with only before_ref (no after_ref)
+        let contract = make_contract(&repo_path, Some(&head), None);
+
+        let receipt = adapter.verify(&contract).await.unwrap();
+
+        // HEAD matches before_ref, so verified=true
+        assert!(
+            receipt.verified,
+            "verify should succeed when HEAD matches fallback before_ref"
+        );
+        assert_eq!(
+            receipt
+                .adapter_metadata
+                .get("expected_ref")
+                .unwrap()
+                .as_str(),
+            Some(head.as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_verify_missing_both_refs_and_head_changed_is_verified_false() {
+        // When after_ref is missing and HEAD has changed from before_ref, verify should fail.
+        let (_temp_dir, repo_path, before_ref) = init_temp_repo();
+        let adapter = GitRollbackAdapter::new(ADAPTER_KEY);
+        let after_ref = commit_change(&repo_path, "change.txt", "modification\n");
+
+        // Contract with only before_ref (no after_ref)
+        let contract = make_contract(&repo_path, Some(&before_ref), None);
+
+        let receipt = adapter.verify(&contract).await.unwrap();
+
+        // HEAD is at after_ref which differs from before_ref, so verified=false
+        assert!(
+            !receipt.verified,
+            "verify should fail when HEAD differs from before_ref fallback"
+        );
+        assert_eq!(
+            receipt
+                .adapter_metadata
+                .get("current_ref")
+                .unwrap()
+                .as_str(),
+            Some(after_ref.as_str())
+        );
+        assert_eq!(
+            receipt
+                .adapter_metadata
+                .get("expected_ref")
+                .unwrap()
+                .as_str(),
+            Some(before_ref.as_str())
+        );
     }
 }
