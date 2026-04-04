@@ -24,6 +24,42 @@ This slice implements the **initial scaffold** for a dedicated `EmailSend` adapt
 
 ---
 
+## Slice 38 Addendum — Mock Provider Foundation (2026-04-04)
+
+This section records the **mock-provider foundation slice** added to the scaffold adapter. The adapter execute remains fail-closed; no real send behavior is enabled.
+
+**What was added:**
+- `EmailProvider` trait: provider-agnostic `send()`, `can_revoke()`, `revoke()` interface
+- `ProviderSendResult` and `ProviderError` types (error categories: Transient, Permanent, Auth, Network)
+- `MockEmailProvider` struct with configurable success/failure and call tracking
+- 14 unit tests for mock provider (success, failure modes, call tracking, error display)
+- Updated scaffold doc-tests and module docs
+
+**What was NOT added (preserved from scaffold):**
+- Adapter execute remains fail-closed (still returns "not implemented" error)
+- No real provider integration (mock only; SMTP/API client TBD)
+- Gateway deny boundary unchanged
+
+**Test coverage added (14 new tests):**
+- `test_mock_provider_send_success`
+- `test_mock_provider_send_tracks_calls`
+- `test_mock_provider_send_failure_transient`
+- `test_mock_provider_send_failure_permanent`
+- `test_mock_provider_send_failure_auth`
+- `test_mock_provider_send_failure_network`
+- `test_mock_provider_can_revoke_returns_false_by_default`
+- `test_mock_provider_can_revoke_returns_true_when_enabled`
+- `test_mock_provider_revoke_returns_error_by_default`
+- `test_mock_provider_revoke_succeeds_when_enabled`
+- `test_mock_provider_reset_clears_state`
+- `test_mock_provider_unique_message_ids_per_send`
+- `test_mock_provider_error_display`
+- `test_mock_provider_clone_is_independent`
+
+**Verification:** `cargo test -p ferrum-adapter-emailsend` (23 tests pass); `cargo check -p ferrum-gateway` (clean)
+
+---
+
 ## Current Boundary (Preserved)
 
 ### Gateway Prepare-Time Deny
@@ -89,7 +125,7 @@ async fn execute(
 
 ## Implementation Notes
 
-1. **No provider integration**: The adapter does not include any email provider abstraction or SMTP/API client. This is intentional — provider integration requires separate Phase 2-3 work.
+1. **No real provider integration**: The adapter now includes a provider abstraction and mock provider for unit testing, but it still has no SMTP/API client or real send wiring. Real provider integration remains separate Phase 2-3 work.
 
 2. **Fail-closed execute**: The execute method returns a clear validation error rather than silently succeeding. This preserves the security boundary.
 
