@@ -17,6 +17,7 @@ members = [
   "crates/ferrum-adapter-sqlite",
   "crates/ferrum-adapter-http",
   "crates/ferrum-adapter-maildraft",
+  "crates/ferrum-adapter-emailsend",
   "crates/ferrum-testkit",
   "crates/ferrum-integrations-mcp",
   "tests"
