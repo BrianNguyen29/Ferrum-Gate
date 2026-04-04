@@ -66,7 +66,7 @@ These are explicitly out of v1 scope. Do not treat as blockers.
 
 - [ ] git: remote workflows and broader ref-mutation coverage (post-v1)
   - Src: `crates/ferrum-adapter-git/README.md` line 22 "All operations are local-only; no remote operations (push/fetch/pull)."
-  - Note: local HEAD restore and branch-create rollback exist; remote Git workflows remain out of scope.
+  - Note (2026-04-04): GitPush slice 1 implemented (local-to-remote push against temporary remotes); fetch/pull remain out of scope.
 
 - [ ] maildraft: send/provider integration (post-v1)
   - Src: `crates/ferrum-adapter-maildraft/src/lib.rs` line 6 "send semantics out of scope"
@@ -101,7 +101,7 @@ Grounded in `docs/implementation-path/30-production-roadmap.md` post-P3 executio
 | 2 | P2.1 fs adapter hardening (Slice 1: fail-closed verify on I/O errors ✅) | 🔄 IN PROGRESS | `30-production-roadmap.md` P2.1 |
 | 3 | P2.2 sqlite adapter hardening (Slice 1: identifier safety + rollback noop tests ✅) | 🔄 IN PROGRESS | `30-production-roadmap.md` P2.2 |
 | 4 | P2.3 git adapter hardening (Slice 1: fail-closed verify + noop edge-case tests ✅) | 🔄 IN PROGRESS | `30-production-roadmap.md` P2.3 |
-| 5 | P2.4 git remote workflows (push/fetch/pull) | ⬜ TODO | `30-production-roadmap.md` P2.4 |
+| 5 | P2.4 git remote workflows (Slice 1: GitPush against local temporary remotes ✅ 2026-04-04; fetch/pull not yet implemented) | 🔄 IN PROGRESS | `30-production-roadmap.md` P2.4 |
 | 6 | P2.6 maildraft provider send integration | ⬜ TODO | `30-production-roadmap.md` P2.6 |
 | 7 | P2.7 maildraft broader verify semantics hardening | ⬜ TODO | `30-production-roadmap.md` P2.7 |
 
