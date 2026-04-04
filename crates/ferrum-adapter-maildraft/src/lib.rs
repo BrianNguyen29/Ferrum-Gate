@@ -332,30 +332,45 @@ impl RollbackAdapter for MaildraftAdapter {
         // is used; otherwise fall back to metadata lookup.
         let execution_id = contract.execution_id.to_string();
 
-        // Extract explicit draft_id from verify_checks if EmailDraftExists is present
-        let explicit_draft_id =
-            MaildraftAdapter::extract_expected_draft_id(&contract.verify_checks)
-                .map(|s| s.to_string());
+        // Extract explicit draft_id from verify_checks if EmailDraftExists is present.
+        // Fail-closed: if EmailDraftExists check is present but draft_id is missing or
+        // non-string, return Validation error (explicit check was requested but malformed).
+        let explicit_check_result =
+            MaildraftAdapter::extract_expected_draft_id(&contract.verify_checks);
 
         // Track if explicit check was requested (before we consume explicit_draft_id)
-        let has_explicit_check = explicit_draft_id.is_some();
+        let has_explicit_check =
+            explicit_check_result.is_ok() && explicit_check_result.as_ref().unwrap().is_some();
 
-        // Get draft_id: explicit check takes precedence, then metadata, then lookup
-        let draft_id = explicit_draft_id
-            .or_else(|| {
-                contract
+        // Get draft_id: explicit check takes precedence, then metadata, then lookup.
+        // For explicit check: propagate errors (including Validation for malformed check).
+        // For fallback lookup: propagate DB/storage errors as Internal instead of swallowing.
+        let draft_id = match explicit_check_result {
+            Ok(Some(draft_id)) => Some(draft_id),
+            Ok(None) => {
+                // No explicit EmailDraftExists check in verify_checks; use metadata or lookup
+                if let Some(draft_id) = contract
                     .metadata
                     .get("draft_id")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string())
-            })
-            .or_else(|| {
-                // Fallback: look up by execution_id
-                self.store
-                    .get_draft_id_by_execution(&execution_id)
-                    .ok()
-                    .flatten()
-            });
+                {
+                    Some(draft_id)
+                } else {
+                    // Fallback: look up by execution_id.
+                    // Propagate DB/storage errors as Internal instead of swallowing.
+                    self.store
+                        .get_draft_id_by_execution(&execution_id)
+                        .map_err(|e| {
+                            AdapterError::Internal(format!(
+                                "verify failed to look up draft by execution_id: {}",
+                                e
+                            ))
+                        })?
+                }
+            }
+            Err(e) => return Err(e), // Validation error for malformed explicit check
+        };
 
         let draft_id = match draft_id {
             Some(id) => id,
@@ -444,15 +459,37 @@ impl RollbackAdapter for MaildraftAdapter {
 
 impl MaildraftAdapter {
     /// Extract expected draft_id from verify_checks if EmailDraftExists is present.
-    fn extract_expected_draft_id(checks: &[CheckSpec]) -> Option<String> {
+    ///
+    /// Returns:
+    /// - `Ok(Some(draft_id))` if EmailDraftExists check is present and draft_id is a valid string
+    /// - `Ok(None)` if no EmailDraftExists check is present
+    /// - `Err(AdapterError::Validation)` if EmailDraftExists check is present but draft_id
+    ///   is missing or non-string (fail-closed: explicit check was requested but malformed)
+    fn extract_expected_draft_id(checks: &[CheckSpec]) -> Result<Option<String>, AdapterError> {
         for check in checks {
             if matches!(check.check_type, CheckType::EmailDraftExists) {
-                if let Some(draft_id) = check.config.get("draft_id") {
-                    return draft_id.as_str().map(|s| s.to_string());
+                // EmailDraftExists check is present; require draft_id to be a string
+                match check.config.get("draft_id") {
+                    Some(draft_id_json) => {
+                        if let Some(draft_id) = draft_id_json.as_str() {
+                            return Ok(Some(draft_id.to_string()));
+                        }
+                        // draft_id is present but not a string - fail closed
+                        return Err(AdapterError::Validation(
+                            "EmailDraftExists check requires draft_id to be a string".to_string(),
+                        ));
+                    }
+                    None => {
+                        // draft_id is missing - fail closed
+                        return Err(AdapterError::Validation(
+                            "EmailDraftExists check requires draft_id but it is missing"
+                                .to_string(),
+                        ));
+                    }
                 }
             }
         }
-        None
+        Ok(None) // No EmailDraftExists check present
     }
 }
 
@@ -1249,6 +1286,216 @@ mod tests {
             err.to_string()
                 .contains("verify failed to check draft existence"),
             "error should mention 'verify failed to check draft existence', got: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn test_maildraft_adapter_verify_fallback_lookup_db_error_fails_closed() {
+        // Test that verify fails closed (returns Internal error) when:
+        // - No metadata draft_id is present
+        // - No explicit EmailDraftExists check is present
+        // - Corrupted DB causes get_draft_id_by_execution to propagate error as Internal
+        // This is P2.7 Slice 3: fallback lookup error path fail-closed regression.
+        use std::fs;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test_drafts.sqlite");
+
+        // Create store and adapter with file-backed SQLite
+        let store = SqliteMaildraftStore::new_from_file(&db_path).unwrap();
+        let adapter = MaildraftAdapter::with_store(ADAPTER_KEY, store);
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        // Prepare
+        let prepare_req = RollbackPrepareRequest {
+            intent_id: ferrum_proto::IntentId::new(),
+            proposal_id: ferrum_proto::ProposalId::new(),
+            execution_id,
+            action_type: ferrum_proto::ActionType::EmailDraftCreate,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: ADAPTER_KEY.to_string(),
+            target: RollbackTarget::EmailDraft {
+                draft_id: None,
+                recipients: vec!["alice@example.com".to_string()],
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            metadata: JsonMap::new(),
+        };
+
+        let _prep_receipt = adapter.prepare(&prepare_req).await.unwrap();
+
+        let payload = serde_json::json!({
+            "to": ["alice@example.com"],
+            "subject": "Test",
+            "body": "Hello!"
+        });
+
+        let contract = RollbackContract {
+            contract_id: ferrum_proto::RollbackContractId::new(),
+            intent_id: prepare_req.intent_id,
+            proposal_id: prepare_req.proposal_id,
+            execution_id: prepare_req.execution_id,
+            action_type: ferrum_proto::ActionType::EmailDraftCreate,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: ADAPTER_KEY.to_string(),
+            target: prepare_req.target.clone(),
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: ferrum_proto::RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: JsonMap::new(), // No draft_id in metadata - triggers fallback lookup
+        };
+
+        // Execute to create draft
+        adapter.execute(&contract, &payload).await.unwrap();
+
+        // Corrupt the database file so get_draft_id_by_execution returns an error
+        fs::write(&db_path, b"this is not a valid sqlite database file!!!").unwrap();
+
+        // Verify with no metadata draft_id and no explicit check - should hit fallback lookup
+        // and fail closed with Internal error (not swallow the DB error)
+        let verify_result = adapter.verify(&contract).await;
+        assert!(
+            verify_result.is_err(),
+            "verify should return error when fallback lookup hits corrupted database"
+        );
+        let err = verify_result.unwrap_err();
+        assert!(
+            matches!(err, AdapterError::Internal(_)),
+            "error should be AdapterError::Internal (not Validation), got: {}",
+            err
+        );
+        assert!(
+            err.to_string()
+                .contains("verify failed to look up draft by execution_id"),
+            "error should mention 'verify failed to look up draft by execution_id', got: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn test_maildraft_adapter_verify_explicit_check_missing_draft_id_fails_validation() {
+        // Test that verify fails closed with Validation error when EmailDraftExists
+        // check is present but draft_id is missing.
+        // This is P2.7 Slice 3: fail-closed on malformed explicit check (missing draft_id).
+        let store = SqliteMaildraftStore::new_in_memory().unwrap();
+        let adapter = MaildraftAdapter::with_store(ADAPTER_KEY, store);
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        // Contract with EmailDraftExists check but NO draft_id in config
+        let explicit_check_without_draft_id = CheckSpec {
+            check_type: CheckType::EmailDraftExists,
+            config: JsonMap::new(), // Missing draft_id entirely
+        };
+
+        let contract = RollbackContract {
+            contract_id: ferrum_proto::RollbackContractId::new(),
+            intent_id: ferrum_proto::IntentId::new(),
+            proposal_id: ferrum_proto::ProposalId::new(),
+            execution_id,
+            action_type: ferrum_proto::ActionType::EmailDraftCreate,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: ADAPTER_KEY.to_string(),
+            target: RollbackTarget::EmailDraft {
+                draft_id: None,
+                recipients: vec!["alice@example.com".to_string()],
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![explicit_check_without_draft_id],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: ferrum_proto::RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: JsonMap::new(),
+        };
+
+        // Verify should fail with Validation error (explicit check requested but malformed)
+        let verify_result = adapter.verify(&contract).await;
+        assert!(
+            verify_result.is_err(),
+            "verify should return error when EmailDraftExists check has missing draft_id"
+        );
+        let err = verify_result.unwrap_err();
+        assert!(
+            matches!(err, AdapterError::Validation(_)),
+            "error should be AdapterError::Validation, got: {}",
+            err
+        );
+        assert!(
+            err.to_string()
+                .contains("EmailDraftExists check requires draft_id"),
+            "error should mention 'EmailDraftExists check requires draft_id', got: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn test_maildraft_adapter_verify_explicit_check_non_string_draft_id_fails_validation() {
+        // Test that verify fails closed with Validation error when EmailDraftExists
+        // check is present but draft_id is non-string (e.g., a number).
+        // This is P2.7 Slice 3: fail-closed on malformed explicit check (non-string draft_id).
+        let store = SqliteMaildraftStore::new_in_memory().unwrap();
+        let adapter = MaildraftAdapter::with_store(ADAPTER_KEY, store);
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        // Contract with EmailDraftExists check but draft_id is a NUMBER, not a string
+        let explicit_check_with_non_string_draft_id = CheckSpec {
+            check_type: CheckType::EmailDraftExists,
+            config: {
+                let mut m = JsonMap::new();
+                // draft_id is a number, not a string - this is malformed
+                m.insert("draft_id".to_string(), serde_json::json!(12345));
+                m
+            },
+        };
+
+        let contract = RollbackContract {
+            contract_id: ferrum_proto::RollbackContractId::new(),
+            intent_id: ferrum_proto::IntentId::new(),
+            proposal_id: ferrum_proto::ProposalId::new(),
+            execution_id,
+            action_type: ferrum_proto::ActionType::EmailDraftCreate,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: ADAPTER_KEY.to_string(),
+            target: RollbackTarget::EmailDraft {
+                draft_id: None,
+                recipients: vec!["alice@example.com".to_string()],
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![explicit_check_with_non_string_draft_id],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: ferrum_proto::RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: JsonMap::new(),
+        };
+
+        // Verify should fail with Validation error (explicit check requested but malformed)
+        let verify_result = adapter.verify(&contract).await;
+        assert!(
+            verify_result.is_err(),
+            "verify should return error when EmailDraftExists check has non-string draft_id"
+        );
+        let err = verify_result.unwrap_err();
+        assert!(
+            matches!(err, AdapterError::Validation(_)),
+            "error should be AdapterError::Validation, got: {}",
+            err
+        );
+        assert!(
+            err.to_string()
+                .contains("EmailDraftExists check requires draft_id to be a string"),
+            "error should mention 'draft_id to be a string', got: {}",
             err
         );
     }
