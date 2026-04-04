@@ -72,6 +72,14 @@ impl RollbackAdapter for GitRollbackAdapter {
 
             // Capture original branch name for rollback
             let original_branch = git_current_branch(&repo_path)?;
+
+            // Fail-closed: reject detached HEAD state (original_branch is empty)
+            if original_branch.is_empty() {
+                return Err(AdapterError::Validation(
+                    "GitBranchCreate failed: repo is in detached HEAD state".to_string(),
+                ));
+            }
+
             metadata.insert(
                 "original_branch".to_string(),
                 serde_json::json!(original_branch),
@@ -1680,6 +1688,38 @@ mod tests {
             .unwrap_err();
 
         assert!(matches!(err, AdapterError::Validation(ref msg) if msg.contains("already exists")));
+    }
+
+    #[tokio::test]
+    async fn test_branch_create_prepare_rejects_detached_head() {
+        // Fail-closed: GitBranchCreate prepare must reject detached HEAD state.
+        // When in detached HEAD, git_current_branch returns empty string,
+        // which indicates we cannot capture original_branch for rollback.
+        let (_temp_dir, repo_path, _head) = init_temp_repo();
+        let adapter = GitRollbackAdapter::new(ADAPTER_KEY);
+
+        // Put repo in detached HEAD state by checking out a specific commit
+        let head_ref = git_head(&repo_path).unwrap();
+        run_git(&repo_path, &["checkout", &head_ref]).unwrap();
+
+        // Verify we're in detached HEAD
+        let branch = git_current_branch(&repo_path).unwrap();
+        assert!(branch.is_empty(), "Should be in detached HEAD state");
+
+        // Prepare should fail with validation error
+        let err = adapter
+            .prepare(&make_branch_create_prepare_request(
+                &repo_path,
+                "feature/detached-test",
+            ))
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(err, AdapterError::Validation(ref msg) if msg.contains("detached HEAD")),
+            "Expected validation error for detached HEAD, got: {:?}",
+            err
+        );
     }
 
     #[tokio::test]
