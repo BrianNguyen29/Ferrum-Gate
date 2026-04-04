@@ -1499,4 +1499,180 @@ mod tests {
             err
         );
     }
+
+    #[tokio::test]
+    async fn test_maildraft_adapter_compensate_fail_closed_on_storage_db_error() {
+        // Test that compensate fails closed with AdapterError::Internal when
+        // database/storage is corrupted during delete.
+        // This is P2.7 Slice 4: compensate/rollback fail-closed coverage on storage/db error.
+        use std::fs;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test_drafts.sqlite");
+
+        // Create store and adapter with file-backed SQLite
+        let store = SqliteMaildraftStore::new_from_file(&db_path).unwrap();
+        let adapter = MaildraftAdapter::with_store(ADAPTER_KEY, store);
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        // Prepare
+        let prepare_req = RollbackPrepareRequest {
+            intent_id: ferrum_proto::IntentId::new(),
+            proposal_id: ferrum_proto::ProposalId::new(),
+            execution_id,
+            action_type: ferrum_proto::ActionType::EmailDraftCreate,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: ADAPTER_KEY.to_string(),
+            target: RollbackTarget::EmailDraft {
+                draft_id: None,
+                recipients: vec!["alice@example.com".to_string()],
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            metadata: JsonMap::new(),
+        };
+
+        let prep_receipt = adapter.prepare(&prepare_req).await.unwrap();
+
+        let payload = serde_json::json!({
+            "to": ["alice@example.com"],
+            "subject": "Test",
+            "body": "Hello!"
+        });
+
+        let contract = RollbackContract {
+            contract_id: ferrum_proto::RollbackContractId::new(),
+            intent_id: prepare_req.intent_id,
+            proposal_id: prepare_req.proposal_id,
+            execution_id: prepare_req.execution_id,
+            action_type: ferrum_proto::ActionType::EmailDraftCreate,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: ADAPTER_KEY.to_string(),
+            target: prepare_req.target.clone(),
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: ferrum_proto::RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: prep_receipt.adapter_metadata,
+        };
+
+        // Execute to create draft
+        adapter.execute(&contract, &payload).await.unwrap();
+
+        // Corrupt the database file so delete operations will fail
+        fs::write(&db_path, b"this is not a valid sqlite database file!!!").unwrap();
+
+        // Compensate should fail closed (return Internal error) when database is corrupted
+        let compensate_result = adapter.compensate(&contract).await;
+        assert!(
+            compensate_result.is_err(),
+            "compensate should return error on database error, not succeed"
+        );
+        let err = compensate_result.unwrap_err();
+        assert!(
+            matches!(err, AdapterError::Internal(_)),
+            "error should be AdapterError::Internal, got: {}",
+            err
+        );
+        assert!(
+            err.to_string()
+                .contains("compensate failed to delete draft"),
+            "error should mention 'compensate failed to delete draft', got: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn test_maildraft_adapter_rollback_fail_closed_on_storage_db_error() {
+        // Test that rollback fails closed with AdapterError::Internal when
+        // database/storage is corrupted during delete.
+        // This is P2.7 Slice 4: compensate/rollback fail-closed coverage on storage/db error.
+        use std::fs;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test_drafts.sqlite");
+
+        // Create store and adapter with file-backed SQLite
+        let store = SqliteMaildraftStore::new_from_file(&db_path).unwrap();
+        let adapter = MaildraftAdapter::with_store(ADAPTER_KEY, store);
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        // Prepare
+        let prepare_req = RollbackPrepareRequest {
+            intent_id: ferrum_proto::IntentId::new(),
+            proposal_id: ferrum_proto::ProposalId::new(),
+            execution_id,
+            action_type: ferrum_proto::ActionType::EmailDraftCreate,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: ADAPTER_KEY.to_string(),
+            target: RollbackTarget::EmailDraft {
+                draft_id: None,
+                recipients: vec!["alice@example.com".to_string()],
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            metadata: JsonMap::new(),
+        };
+
+        let prep_receipt = adapter.prepare(&prepare_req).await.unwrap();
+
+        let payload = serde_json::json!({
+            "to": ["alice@example.com"],
+            "subject": "Test",
+            "body": "Hello!"
+        });
+
+        let contract = RollbackContract {
+            contract_id: ferrum_proto::RollbackContractId::new(),
+            intent_id: prepare_req.intent_id,
+            proposal_id: prepare_req.proposal_id,
+            execution_id: prepare_req.execution_id,
+            action_type: ferrum_proto::ActionType::EmailDraftCreate,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: ADAPTER_KEY.to_string(),
+            target: prepare_req.target.clone(),
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: ferrum_proto::RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: prep_receipt.adapter_metadata,
+        };
+
+        // Execute to create draft
+        adapter.execute(&contract, &payload).await.unwrap();
+
+        // Corrupt the database file so delete operations will fail
+        fs::write(&db_path, b"this is not a valid sqlite database file!!!").unwrap();
+
+        // Rollback should fail closed (return Internal error) when database is corrupted
+        let rollback_result = adapter.rollback(&contract).await;
+        assert!(
+            rollback_result.is_err(),
+            "rollback should return error on database error, not succeed"
+        );
+        let err = rollback_result.unwrap_err();
+        assert!(
+            matches!(err, AdapterError::Internal(_)),
+            "error should be AdapterError::Internal, got: {}",
+            err
+        );
+        assert!(
+            err.to_string()
+                .contains("compensate failed to delete draft"),
+            "error should mention 'compensate failed to delete draft' (rollback delegates to compensate), got: {}",
+            err
+        );
+    }
 }
