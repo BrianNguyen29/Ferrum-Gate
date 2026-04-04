@@ -1134,4 +1134,122 @@ mod tests {
         let verify_receipt = adapter.verify(&contract_with_explicit_check).await.unwrap();
         assert!(!verify_receipt.verified);
     }
+
+    #[tokio::test]
+    async fn test_maildraft_adapter_verify_fail_closed_on_storage_db_error() {
+        // Test that verify fails closed (returns error) when database/storage error occurs.
+        // This is P2.7 Slice 2: focused fail-closed verification coverage for storage/db errors.
+        use std::fs;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test_drafts.sqlite");
+
+        // Create store and adapter with file-backed SQLite
+        let store = SqliteMaildraftStore::new_from_file(&db_path).unwrap();
+        let adapter = MaildraftAdapter::with_store(ADAPTER_KEY, store);
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        // Prepare
+        let prepare_req = RollbackPrepareRequest {
+            intent_id: ferrum_proto::IntentId::new(),
+            proposal_id: ferrum_proto::ProposalId::new(),
+            execution_id,
+            action_type: ferrum_proto::ActionType::EmailDraftCreate,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: ADAPTER_KEY.to_string(),
+            target: RollbackTarget::EmailDraft {
+                draft_id: None,
+                recipients: vec!["alice@example.com".to_string()],
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            metadata: JsonMap::new(),
+        };
+
+        let prep_receipt = adapter.prepare(&prepare_req).await.unwrap();
+
+        let payload = serde_json::json!({
+            "to": ["alice@example.com"],
+            "subject": "Test",
+            "body": "Hello!"
+        });
+
+        let contract = RollbackContract {
+            contract_id: ferrum_proto::RollbackContractId::new(),
+            intent_id: prepare_req.intent_id,
+            proposal_id: prepare_req.proposal_id,
+            execution_id: prepare_req.execution_id,
+            action_type: ferrum_proto::ActionType::EmailDraftCreate,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: ADAPTER_KEY.to_string(),
+            target: prepare_req.target.clone(),
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: ferrum_proto::RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: prep_receipt.adapter_metadata,
+        };
+
+        // Execute to create draft
+        let exec_receipt = adapter.execute(&contract, &payload).await.unwrap();
+        let draft_id = exec_receipt.external_id.unwrap();
+
+        // Verify draft exists before we corrupt the database
+        assert!(adapter.store().draft_exists(&draft_id));
+
+        // Get the draft_id from metadata for later verification
+        let draft_id_for_verify = draft_id.clone();
+
+        // Corrupt the database file by writing garbage to it
+        // This will cause SQLite to return an error when trying to query
+        fs::write(&db_path, b"this is not a valid sqlite database file!!!").unwrap();
+
+        // Try to verify - should fail closed (return error) because database is corrupted
+        // We use the same execution_id so it will try to look up the draft
+        let contract_for_verify = RollbackContract {
+            contract_id: ferrum_proto::RollbackContractId::new(),
+            intent_id: prepare_req.intent_id,
+            proposal_id: prepare_req.proposal_id,
+            execution_id: prepare_req.execution_id,
+            action_type: ferrum_proto::ActionType::EmailDraftCreate,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: ADAPTER_KEY.to_string(),
+            target: prepare_req.target.clone(),
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: ferrum_proto::RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: {
+                let mut m = JsonMap::new();
+                m.insert(
+                    "draft_id".to_string(),
+                    serde_json::json!(draft_id_for_verify),
+                );
+                m
+            },
+        };
+
+        // Verify should fail closed (return error) when database file is corrupted
+        let verify_result = adapter.verify(&contract_for_verify).await;
+        assert!(
+            verify_result.is_err(),
+            "verify should return error on database error, not succeed"
+        );
+        let err = verify_result.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("verify failed to check draft existence"),
+            "error should mention 'verify failed to check draft existence', got: {}",
+            err
+        );
+    }
 }
