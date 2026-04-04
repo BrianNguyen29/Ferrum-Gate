@@ -344,7 +344,8 @@ impl RollbackAdapter for MaildraftAdapter {
 
         // Get draft_id: explicit check takes precedence, then metadata, then lookup.
         // For explicit check: propagate errors (including Validation for malformed check).
-        // For fallback lookup: propagate DB/storage errors as Internal instead of swallowing.
+        // For fallback lookup: DB/storage errors result in verified=false (fail-closed)
+        // rather than propagating, ensuring execution transitions to Failed at gateway level.
         let draft_id = match explicit_check_result {
             Ok(Some(draft_id)) => Some(draft_id),
             Ok(None) => {
@@ -358,15 +359,18 @@ impl RollbackAdapter for MaildraftAdapter {
                     Some(draft_id)
                 } else {
                     // Fallback: look up by execution_id.
-                    // Propagate DB/storage errors as Internal instead of swallowing.
-                    self.store
-                        .get_draft_id_by_execution(&execution_id)
-                        .map_err(|e| {
-                            AdapterError::Internal(format!(
-                                "verify failed to look up draft by execution_id: {}",
-                                e
-                            ))
-                        })?
+                    // DB/storage errors result in verified=false (fail-closed) rather than
+                    // propagating, ensuring execution transitions to Failed at gateway level.
+                    match self.store.get_draft_id_by_execution(&execution_id) {
+                        Ok(draft_id) => draft_id,
+                        Err(_) => {
+                            // Database error - fail closed by returning verified=false
+                            return Ok(VerifyReceipt {
+                                verified: false,
+                                adapter_metadata: JsonMap::new(),
+                            });
+                        }
+                    }
                 }
             }
             Err(e) => return Err(e), // Validation error for malformed explicit check
@@ -411,12 +415,14 @@ impl RollbackAdapter for MaildraftAdapter {
                     adapter_metadata: JsonMap::new(),
                 })
             }
-            Err(e) => {
-                // Database error - verification fails closed
-                Err(AdapterError::Internal(format!(
-                    "verify failed to check draft existence: {}",
-                    e
-                )))
+            Err(_e) => {
+                // Database error - verification fails closed by returning verified=false.
+                // This ensures execution transitions to Failed state at the gateway level,
+                // enabling proper commit rejection semantics.
+                Ok(VerifyReceipt {
+                    verified: false,
+                    adapter_metadata: JsonMap::new(),
+                })
             }
         }
     }
@@ -1275,27 +1281,27 @@ mod tests {
             },
         };
 
-        // Verify should fail closed (return error) when database file is corrupted
+        // Verify should fail closed (return verified=false) when database file is corrupted.
+        // This enables gateway-level execution state transition to Failed and commit rejection.
         let verify_result = adapter.verify(&contract_for_verify).await;
         assert!(
-            verify_result.is_err(),
-            "verify should return error on database error, not succeed"
+            verify_result.is_ok(),
+            "verify should return Ok on database error (fail-closed), not propagate error"
         );
-        let err = verify_result.unwrap_err();
+        let receipt = verify_result.unwrap();
         assert!(
-            err.to_string()
-                .contains("verify failed to check draft existence"),
-            "error should mention 'verify failed to check draft existence', got: {}",
-            err
+            !receipt.verified,
+            "verify should return verified=false on database corruption"
         );
     }
 
     #[tokio::test]
     async fn test_maildraft_adapter_verify_fallback_lookup_db_error_fails_closed() {
-        // Test that verify fails closed (returns Internal error) when:
+        // Test that verify fails closed (returns verified=false) when:
         // - No metadata draft_id is present
         // - No explicit EmailDraftExists check is present
-        // - Corrupted DB causes get_draft_id_by_execution to propagate error as Internal
+        // - Corrupted DB causes get_draft_id_by_execution to return error, which we convert
+        //   to verified=false (fail-closed) rather than propagating as Internal error.
         // This is P2.7 Slice 3: fallback lookup error path fail-closed regression.
         use std::fs;
         use tempfile::TempDir;
@@ -1361,23 +1367,17 @@ mod tests {
         fs::write(&db_path, b"this is not a valid sqlite database file!!!").unwrap();
 
         // Verify with no metadata draft_id and no explicit check - should hit fallback lookup
-        // and fail closed with Internal error (not swallow the DB error)
+        // and fail closed with verified=false (not propagate error).
+        // This enables gateway-level execution state transition to Failed and commit rejection.
         let verify_result = adapter.verify(&contract).await;
         assert!(
-            verify_result.is_err(),
-            "verify should return error when fallback lookup hits corrupted database"
+            verify_result.is_ok(),
+            "verify should return Ok on DB error (fail-closed), not propagate error"
         );
-        let err = verify_result.unwrap_err();
+        let receipt = verify_result.unwrap();
         assert!(
-            matches!(err, AdapterError::Internal(_)),
-            "error should be AdapterError::Internal (not Validation), got: {}",
-            err
-        );
-        assert!(
-            err.to_string()
-                .contains("verify failed to look up draft by execution_id"),
-            "error should mention 'verify failed to look up draft by execution_id', got: {}",
-            err
+            !receipt.verified,
+            "verify should return verified=false when fallback lookup hits corrupted database"
         );
     }
 

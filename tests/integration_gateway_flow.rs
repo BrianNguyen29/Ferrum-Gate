@@ -10213,6 +10213,193 @@ async fn test_email_allow_send_false_prepare_succeeds_with_maildraft_adapter() {
     );
 }
 
+/// Helper: create a test runtime with a FILE-BACKED maildraft store.
+/// This is needed for tests that need to corrupt the maildraft database after execute.
+async fn create_test_runtime_with_maildraft_file_store() -> (
+    TempDir,
+    GatewayRuntime,
+    SqliteStore,
+    ferrum_adapter_maildraft::MaildraftStore,
+    std::path::PathBuf, // path to maildraft DB file for corruption
+) {
+    let temp_dir = TempDir::new().expect("failed to create temp dir");
+    let db_path = temp_dir.path().join("store.sqlite");
+    std::fs::File::create(&db_path).expect("failed to create sqlite file");
+    let database_url = format!("sqlite://{}", db_path.display());
+    let store = SqliteStore::connect(&database_url)
+        .await
+        .expect("failed to connect to sqlite");
+    store
+        .apply_embedded_migrations()
+        .await
+        .expect("failed to apply migrations");
+
+    let pdp: Arc<dyn ferrum_pdp::PdpEngine> = Arc::new(StaticPdpEngine::default());
+    let cap: Arc<dyn CapabilityService> =
+        Arc::new(SqliteCapabilityService::new(Arc::new(store.capabilities())));
+
+    // Create FILE-BACKED maildraft store (not in-memory)
+    let maildraft_db_path = temp_dir.path().join("maildraft.sqlite");
+    std::fs::File::create(&maildraft_db_path).expect("failed to create maildraft sqlite file");
+    let maildraft_store =
+        ferrum_adapter_maildraft::SqliteMaildraftStore::new_from_file(&maildraft_db_path)
+            .expect("failed to create file-backed maildraft store");
+
+    let mut registry = AdapterRegistry::default();
+    registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
+    registry.register(Arc::new(ferrum_adapter_fs::FsRollbackAdapter::new("fs")));
+    registry.register(Arc::new(ferrum_adapter_sqlite::SqliteRollbackAdapter::new(
+        "sqlite",
+    )));
+    registry.register(Arc::new(
+        ferrum_adapter_maildraft::MaildraftAdapter::with_store(
+            "maildraft",
+            maildraft_store.clone(),
+        ),
+    ));
+    let rollback = Arc::new(RollbackService::new(Arc::new(registry)));
+
+    let firewall: Arc<dyn SemanticFirewall> = Arc::new(DefaultFirewall::new());
+    let runtime = GatewayRuntime::new(pdp, cap, rollback, Arc::new(store.clone()), firewall);
+
+    (temp_dir, runtime, store, maildraft_store, maildraft_db_path)
+}
+
+/// P2.7 Slice 5 (gateway-level): Verify fail-closed on maildraft storage/db error.
+///
+/// This test proves end-to-end fail-closed semantics through the gateway stack:
+/// 1. Execute creates draft in maildraft SQLite store
+/// 2. Maildraft DB is corrupted (simulates storage/db error)
+/// 3. Verify call returns verified=false (fail-closed)
+/// 4. Execution transitions to Failed state
+/// 5. Commit is rejected with 409 Conflict
+#[tokio::test]
+async fn test_maildraft_gateway_verify_fail_closed_on_db_error() {
+    let (_temp_dir, runtime, _store, _maildraft_store, maildraft_db_path) =
+        create_test_runtime_with_maildraft_file_store().await;
+
+    // Run email draft flow to prepared state (R2 for explicit commit/compensate)
+    let email_binding = ResourceBinding::EmailDraft {
+        recipients: vec!["alice@example.com".to_string()],
+        allow_send: false,
+        mode: ResourceMode::Write,
+    };
+
+    let (_intent_id, _proposal_id, execution_id) = run_email_flow_to_prepared_with_rollback_class(
+        &runtime,
+        email_binding,
+        RollbackClass::R2Compensatable,
+    )
+    .await;
+
+    // Execute draft creation
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({
+            "to": ["alice@example.com"],
+            "subject": "Test email",
+            "body": "Hello!"
+        }),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200, "execute should succeed");
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let exec_resp: ferrum_proto::ExecuteResponse = serde_json::from_slice(&body).unwrap();
+    assert!(exec_resp.executed, "executed flag should be true");
+
+    // Corrupt the maildraft database file to simulate storage/db error
+    std::fs::write(
+        &maildraft_db_path,
+        b"this is not a valid sqlite database!!!",
+    )
+    .expect("failed to corrupt maildraft database");
+
+    // Verify should return verified=false (fail-closed) due to DB corruption
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Verify API returns 200 (gateway handles failure via verified=false, not error response)
+    assert_eq!(
+        response.status(),
+        200,
+        "verify API should return 200 even on fail-closed"
+    );
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let verify_resp: ferrum_proto::VerifyResponse = serde_json::from_slice(&body).unwrap();
+
+    // ASSERTION 1: verify must be FALSE (fail-closed behavior for DB error)
+    assert!(
+        !verify_resp.verified,
+        "verify should be FALSE on maildraft DB corruption (fail-closed), got verified={}",
+        verify_resp.verified
+    );
+
+    // ASSERTION 2: execution must be in Failed state (not Running, not Committed)
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored_execution.is_some(), "execution should be persisted");
+    let exec = stored_execution.unwrap();
+    assert!(
+        matches!(exec.state, ExecutionState::Failed),
+        "execution must be Failed after verify returns false, got {:?}",
+        exec.state
+    );
+
+    // ASSERTION 3: commit from Failed state is rejected with 409 Conflict
+    let app = build_router(runtime.clone());
+    let commit_req = ferrum_proto::CommitRequest { execution_id };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/commit", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&commit_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(
+        status,
+        StatusCode::CONFLICT,
+        "commit from Failed state must be rejected with 409 Conflict, got {}: {:?}",
+        status,
+        String::from_utf8_lossy(&body)
+    );
+}
+
 // ============================================
 // LEDGER INTEGRATION TESTS (Slice 3)
 // ============================================
