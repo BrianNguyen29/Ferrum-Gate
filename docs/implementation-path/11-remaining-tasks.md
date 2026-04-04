@@ -65,8 +65,8 @@ These are explicitly out of v1 scope. Do not treat as blockers.
   - Note: fs/sqlite/git/maildraft now have bounded local implementations; broader hardening, remote/external integration depth, and production verification remain post-v1.
 
 - [ ] git: remote workflows and broader ref-mutation coverage (post-v1)
-  - Src: `crates/ferrum-adapter-git/README.md` line 22 "All operations are local-only; no remote operations (push/fetch/pull)."
-  - Note (2026-04-04): GitPush slice 1 implemented (local-to-remote push against temporary remotes); GitFetch slice 2 implemented (remote-to-local fetch against temporary remotes); pull remains out of scope.
+  - Src: `crates/ferrum-adapter-git/README.md` lines 22-37 "GitPush Support (P2.4 Slice 1)" and "GitFetch Support (P2.4 Slice 2)" and "GitPull Support (P2.4 Slice 3)"
+  - Note (2026-04-04): GitPush slice 1 implemented (local-to-remote push against temporary remotes); GitFetch slice 2 implemented (remote-to-local fetch against temporary remotes); GitPull slice 3 implemented (fast-forward-only pull against temporary remotes); full external remote support remains post-v1.
 
 - [ ] maildraft: send/provider integration (post-v1)
   - Src: `crates/ferrum-adapter-maildraft/src/lib.rs` line 6 "send semantics out of scope"
@@ -101,7 +101,7 @@ Grounded in `docs/implementation-path/30-production-roadmap.md` post-P3 executio
 | 2 | P2.1 fs adapter hardening (Slice 1: fail-closed verify on I/O errors ✅) | 🔄 IN PROGRESS | `30-production-roadmap.md` P2.1 |
 | 3 | P2.2 sqlite adapter hardening (Slice 1: identifier safety + rollback noop tests ✅) | 🔄 IN PROGRESS | `30-production-roadmap.md` P2.2 |
 | 4 | P2.3 git adapter hardening (Slice 1: fail-closed verify + noop edge-case tests ✅) | 🔄 IN PROGRESS | `30-production-roadmap.md` P2.3 |
-| 5 | P2.4 git remote workflows (Slice 1: GitPush ✅ 2026-04-04; Slice 2: GitFetch ✅ 2026-04-04; pull not yet implemented) | 🔄 IN PROGRESS | `30-production-roadmap.md` P2.4 |
+| 5 | P2.4 git remote workflows (Slice 1: GitPush ✅ 2026-04-04; Slice 2: GitFetch ✅ 2026-04-04; Slice 3: GitPull fast-forward-only ✅ 2026-04-04) | ✅ DONE | `30-production-roadmap.md` P2.4 |
 | 6 | P2.6 EmailSend governed-path rollout (preflight slice ✅ 2026-04-04; scaffold-only adapter slice ✅ 2026-04-04; mock-provider foundation slice ✅ 2026-04-04; real provider send integration TBD post-v1) | 🔄 IN PROGRESS | `30-production-roadmap.md` P2.6; `36-p2-6-emailsend-governed-path-entry-analysis.md`; `37-p2-6-emailsend-adapter-contract-draft.md`; `38-p2-6-emailsend-adapter-scaffold-implementation.md` (Slice 38 addendum) |
 | 7 | P2.7 maildraft broader verify semantics hardening (Slice 1: explicit EmailDraftExists verify_checks handling ✅ 2026-04-04; Slice 2: fail-closed verify on storage/db error ✅ 2026-04-04) | 🔄 IN PROGRESS | `30-production-roadmap.md` P2.7 |
 

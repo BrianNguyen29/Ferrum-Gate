@@ -2164,6 +2164,7 @@ fn infer_mutation_family(action_type: &ferrum_proto::ActionType) -> String {
         ferrum_proto::ActionType::GitBranchCreate => "git_branch_create".to_string(),
         ferrum_proto::ActionType::GitPush => "git_push".to_string(),
         ferrum_proto::ActionType::GitFetch => "git_fetch".to_string(),
+        ferrum_proto::ActionType::GitPull => "git_pull".to_string(),
         ferrum_proto::ActionType::SqlMutation => "sql_mutation".to_string(),
         ferrum_proto::ActionType::HttpMutation => "http_mutation".to_string(),
         ferrum_proto::ActionType::EmailDraftCreate => "email_draft_create".to_string(),
