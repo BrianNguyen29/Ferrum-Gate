@@ -102,7 +102,7 @@ Grounded in `docs/implementation-path/30-production-roadmap.md` post-P3 executio
 | 3 | P2.2 sqlite adapter hardening (Slice 1: identifier safety + rollback noop tests ✅) | 🔄 IN PROGRESS | `30-production-roadmap.md` P2.2 |
 | 4 | P2.3 git adapter hardening (Slice 1: fail-closed verify + noop edge-case tests ✅) | 🔄 IN PROGRESS | `30-production-roadmap.md` P2.3 |
 | 5 | P2.4 git remote workflows (Slice 1: GitPush against local temporary remotes ✅ 2026-04-04; fetch/pull not yet implemented) | 🔄 IN PROGRESS | `30-production-roadmap.md` P2.4 |
-| 6 | P2.6 maildraft provider send integration | ⬜ TODO | `30-production-roadmap.md` P2.6 |
+| 6 | P2.6 maildraft EmailSend governed-path entry (preflight slice ✅ 2026-04-04; provider send integration TBD post-v1) | 🔄 IN PROGRESS | `30-production-roadmap.md` P2.6; `36-p2-6-emailsend-governed-path-entry-analysis.md`; `37-p2-6-emailsend-adapter-contract-draft.md` |
 | 7 | P2.7 maildraft broader verify semantics hardening | ⬜ TODO | `30-production-roadmap.md` P2.7 |
 
 ### Longer-Term / Planned Tracks
