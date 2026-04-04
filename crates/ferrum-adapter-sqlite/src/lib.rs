@@ -362,14 +362,30 @@ fn ensure_safe_identifier(identifier: &str) -> Result<(), AdapterError> {
 }
 
 fn sqlite_url(db_path: &str) -> String {
-    if db_path.starts_with("sqlite:") {
+    // sqlx requires proper URL format for SQLite connections
+    // For URL-style connections (file:, sqlite:), pass through as-is
+    // For :memory:, pass through directly
+    // For other paths (file paths), prefix with sqlite:
+    if db_path.starts_with("file:") || db_path.starts_with("sqlite:") || db_path == ":memory:" {
         db_path.to_string()
     } else {
-        format!("sqlite://{}", db_path)
+        // For file paths, use sqlite: prefix
+        format!("sqlite:{}", db_path)
     }
 }
 
 async fn connect_sqlite(db_path: &str) -> Result<SqliteConnection, AdapterError> {
+    // Create parent directory if it doesn't exist (for file-based databases)
+    if db_path != ":memory:" && !db_path.starts_with("file:") && !db_path.starts_with("sqlite:") {
+        if let Some(parent) = std::path::Path::new(db_path).parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    AdapterError::Internal(format!("Failed to create directory: {}", e))
+                })?;
+            }
+        }
+    }
+
     SqliteConnection::connect(&sqlite_url(db_path))
         .await
         .map_err(|err| AdapterError::Internal(format!("Failed to connect to sqlite: {}", err)))
@@ -497,4 +513,137 @@ async fn delete_row(
         .await
         .map_err(|err| AdapterError::Internal(format!("Failed to delete sqlite row: {}", err)))?;
     Ok(())
+}
+
+// ============================================
+// Tests
+// ============================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_sqlite_contract(
+        db_path: &str,
+        execution_id: ferrum_proto::ExecutionId,
+    ) -> RollbackContract {
+        RollbackContract {
+            contract_id: ferrum_proto::RollbackContractId::new(),
+            intent_id: ferrum_proto::IntentId::new(),
+            proposal_id: ferrum_proto::ProposalId::new(),
+            execution_id,
+            action_type: ferrum_proto::ActionType::SqlMutation,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: ADAPTER_KEY.to_string(),
+            target: ferrum_proto::RollbackTarget::SqliteTxn {
+                db_path: db_path.to_string(),
+                tx_id: "test-tx".to_string(),
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: ferrum_proto::RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: JsonMap::new(),
+        }
+    }
+
+    fn make_prepare_request(
+        db_path: &str,
+        execution_id: ferrum_proto::ExecutionId,
+    ) -> RollbackPrepareRequest {
+        RollbackPrepareRequest {
+            intent_id: ferrum_proto::IntentId::new(),
+            proposal_id: ferrum_proto::ProposalId::new(),
+            execution_id,
+            action_type: ferrum_proto::ActionType::SqlMutation,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: ADAPTER_KEY.to_string(),
+            target: ferrum_proto::RollbackTarget::SqliteTxn {
+                db_path: db_path.to_string(),
+                tx_id: "test-tx".to_string(),
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            metadata: JsonMap::new(),
+        }
+    }
+
+    // === Edge case tests ===
+
+    #[tokio::test]
+    async fn test_sqlite_adapter_verify_no_snapshots_returns_true() {
+        // This test only verifies behavior when no snapshots exist
+        // The adapter should return verified=true (nothing to verify)
+        let db_path = ":memory:";
+
+        let adapter = SqliteRollbackAdapter::new(ADAPTER_KEY);
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        // Prepare
+        let prepare_req = make_prepare_request(db_path, execution_id);
+        adapter.prepare(&prepare_req).await.unwrap();
+
+        // Contract with no execute - no snapshots
+        let contract = make_sqlite_contract(db_path, execution_id);
+
+        // Verify with no snapshots should return verified=true (nothing to verify)
+        let verify_receipt = adapter.verify(&contract).await.unwrap();
+        assert!(verify_receipt.verified);
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_adapter_rollback_no_snapshots_is_noop() {
+        // This test only verifies rollback behavior when no snapshots exist
+        let db_path = ":memory:";
+
+        let adapter = SqliteRollbackAdapter::new(ADAPTER_KEY);
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        // Prepare
+        let prepare_req = make_prepare_request(db_path, execution_id);
+        adapter.prepare(&prepare_req).await.unwrap();
+
+        // Contract with no execute - no snapshots
+        let contract = make_sqlite_contract(db_path, execution_id);
+
+        // Rollback with no snapshots should succeed (noop)
+        let result = adapter.rollback(&contract).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().recovered);
+    }
+
+    // === Identifier safety tests ===
+
+    #[tokio::test]
+    async fn test_sqlite_adapter_rejects_unsafe_table_name() {
+        // This test validates SQL injection prevention via identifier safety
+        let db_path = ":memory:";
+
+        let adapter = SqliteRollbackAdapter::new(ADAPTER_KEY);
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        // Prepare
+        let prepare_req = make_prepare_request(db_path, execution_id);
+        adapter.prepare(&prepare_req).await.unwrap();
+
+        // Execute with SQL injection attempt
+        let payload = serde_json::json!({
+            "table": "users; DROP TABLE users;--",
+            "row_id": "user1",
+            "content": "Malicious"
+        });
+
+        let contract = make_sqlite_contract(db_path, execution_id);
+        let result = adapter.execute(&contract, &payload).await;
+
+        // Should fail with validation error
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, AdapterError::Validation(_)));
+    }
 }
