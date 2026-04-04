@@ -9,6 +9,7 @@
 //! - Prepare-time validation for `EmailSend` action and `auto_commit=false` enforcement ✅
 //! - Provider abstraction (`EmailProvider` trait) ✅
 //! - Mock provider (`MockEmailProvider`) for unit testing ✅
+//! - Provider injection via `with_provider()` constructor ✅
 //! - Fail-closed `execute()` (scaffold: send not yet wired to provider) ✅
 //! - No-op `verify()`, `compensate()`, and `rollback()` semantics (consistent with R3) ✅
 //!
@@ -31,6 +32,7 @@ use ferrum_proto::{ActionType, JsonMap, RollbackContract, RollbackPrepareRequest
 use ferrum_rollback::{
     AdapterError, ExecuteReceipt, PrepareReceipt, RecoveryReceipt, RollbackAdapter, VerifyReceipt,
 };
+use std::fmt::Debug;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -257,20 +259,57 @@ pub const ADAPTER_KEY: &str = "emailsend";
 ///
 /// This adapter enforces R3 prepare-time validation and fail-closed execute behavior.
 /// It is intentionally a scaffold: execute does not perform any actual send operation.
-#[derive(Debug, Clone)]
+/// A provider is stored for future send wiring but is not invoked in this scaffold.
 pub struct EmailSendAdapter {
     key: &'static str,
+    provider: Arc<dyn EmailProvider>,
+}
+
+impl Debug for EmailSendAdapter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EmailSendAdapter")
+            .field("key", &self.key)
+            .field("provider", &"<dyn EmailProvider>")
+            .finish()
+    }
+}
+
+impl Clone for EmailSendAdapter {
+    fn clone(&self) -> Self {
+        Self {
+            key: self.key,
+            provider: self.provider.clone(),
+        }
+    }
 }
 
 impl EmailSendAdapter {
-    /// Create a new EmailSendAdapter with default key
+    /// Create a new EmailSendAdapter with default key and mock provider.
+    ///
+    /// The mock provider is stored and accessible but execute remains fail-closed.
     pub fn new() -> Self {
-        Self { key: ADAPTER_KEY }
+        Self::with_provider(ADAPTER_KEY, Arc::new(MockEmailProvider::new()))
     }
 
-    /// Create a new EmailSendAdapter with a custom key
+    /// Create a new EmailSendAdapter with a custom key and mock provider.
     pub fn with_key(key: &'static str) -> Self {
-        Self { key }
+        Self::with_provider(key, Arc::new(MockEmailProvider::new()))
+    }
+
+    /// Create a new EmailSendAdapter with an injected provider.
+    ///
+    /// This constructor allows dependency injection of any `EmailProvider`
+    /// implementation (mock for tests, or a real SMTP/API client in the future).
+    /// Execute remains fail-closed regardless of the provider stored.
+    pub fn with_provider(key: &'static str, provider: Arc<dyn EmailProvider>) -> Self {
+        Self { key, provider }
+    }
+
+    /// Get the stored provider (for test inspection).
+    ///
+    /// Useful for verifying provider state and call tracking in tests.
+    pub fn provider(&self) -> &Arc<dyn EmailProvider> {
+        &self.provider
     }
 }
 
@@ -536,6 +575,79 @@ mod tests {
     async fn test_adapter_with_custom_key() {
         let adapter = EmailSendAdapter::with_key("custom-key");
         assert_eq!(adapter.key(), "custom-key");
+    }
+
+    #[tokio::test]
+    async fn test_new_adapter_has_mock_provider() {
+        let adapter = EmailSendAdapter::new();
+        // Provider should be accessible
+        let _provider = adapter.provider();
+        // Provider should be a MockEmailProvider (via Arc<dyn EmailProvider>)
+        // We can verify via can_revoke which is a no-op on mock
+        let can_revoke = adapter.provider().can_revoke("any-id").await;
+        assert!(!can_revoke); // Mock defaults to can_revoke=false
+    }
+
+    #[tokio::test]
+    async fn test_with_provider_stores_provider() {
+        let mock_provider: Arc<dyn EmailProvider> = Arc::new(MockEmailProvider::new());
+        let adapter = EmailSendAdapter::with_provider("custom-key", mock_provider.clone());
+
+        assert_eq!(adapter.key(), "custom-key");
+        // Provider should be the exact same Arc we injected
+        let stored_provider = adapter.provider();
+        assert!(Arc::ptr_eq(stored_provider, &mock_provider));
+    }
+
+    #[tokio::test]
+    async fn test_with_provider_can_use_failure_configured_provider() {
+        let failing_provider = Arc::new(
+            MockEmailProvider::new().with_failure(ProviderError::Transient("test".to_string())),
+        );
+        let adapter = EmailSendAdapter::with_provider(ADAPTER_KEY, failing_provider.clone());
+
+        // Provider is stored and accessible; we can call it directly (not via execute)
+        let result = adapter
+            .provider()
+            .send(vec!["alice@example.com".to_string()], "Subject", "Body")
+            .await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), ProviderError::Transient(_)));
+    }
+
+    #[tokio::test]
+    async fn test_execute_still_fails_closed_with_injected_provider() {
+        // Prove execute remains fail-closed even when a provider is injected.
+        // This is the core invariant: provider injection ≠ send wiring.
+        let mock_provider = Arc::new(MockEmailProvider::new());
+        let adapter = EmailSendAdapter::with_provider(ADAPTER_KEY, mock_provider);
+
+        let request = make_email_send_prepare_request();
+        let contract = make_email_send_contract(&request);
+        let payload = serde_json::json!({
+            "to": ["alice@example.com"],
+            "subject": "Test",
+            "body": "Hello!"
+        });
+
+        let result = adapter.execute(&contract, &payload).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("not implemented"));
+        assert!(err.to_string().contains("scaffold"));
+
+        // Mock provider was NOT called (execute is fail-closed)
+        // We can't easily inspect mock state here since provider is Arc<dyn>,
+        // but the fail-closed invariant is proven by the error above
+    }
+
+    #[tokio::test]
+    async fn test_with_provider_revoke_supported() {
+        let provider = Arc::new(MockEmailProvider::new().with_revoke_supported());
+        let adapter = EmailSendAdapter::with_provider(ADAPTER_KEY, provider.clone());
+
+        // Provider supports revoke
+        assert!(adapter.provider().can_revoke("any-id").await);
     }
 }
 

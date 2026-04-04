@@ -102,7 +102,7 @@ Grounded in `docs/implementation-path/30-production-roadmap.md` post-P3 executio
 | 3 | P2.2 sqlite adapter hardening (Slice 1: identifier safety + rollback noop tests ✅) | 🔄 IN PROGRESS | `30-production-roadmap.md` P2.2 |
 | 4 | P2.3 git adapter hardening (Slice 1: fail-closed verify + noop edge-case tests ✅) | 🔄 IN PROGRESS | `30-production-roadmap.md` P2.3 |
 | 5 | P2.4 git remote workflows (Slice 1: GitPush ✅ 2026-04-04; Slice 2: GitFetch ✅ 2026-04-04; Slice 3: GitPull fast-forward-only ✅ 2026-04-04) | ✅ DONE | `30-production-roadmap.md` P2.4 |
-| 6 | P2.6 EmailSend governed-path rollout (preflight slice ✅ 2026-04-04; scaffold-only adapter slice ✅ 2026-04-04; mock-provider foundation slice ✅ 2026-04-04; real provider send integration TBD post-v1) | 🔄 IN PROGRESS | `30-production-roadmap.md` P2.6; `36-p2-6-emailsend-governed-path-entry-analysis.md`; `37-p2-6-emailsend-adapter-contract-draft.md`; `38-p2-6-emailsend-adapter-scaffold-implementation.md` (Slice 38 addendum) |
+| 6 | P2.6 EmailSend governed-path rollout (preflight slice ✅ 2026-04-04; scaffold-only adapter slice ✅ 2026-04-04; mock-provider foundation slice ✅ 2026-04-04; provider-injection structural slice ✅ 2026-04-04; real provider send integration TBD post-v1) | 🔄 IN PROGRESS | `30-production-roadmap.md` P2.6; `36-p2-6-emailsend-governed-path-entry-analysis.md`; `37-p2-6-emailsend-adapter-contract-draft.md`; `38-p2-6-emailsend-adapter-scaffold-implementation.md` |
 | 7 | P2.7 maildraft broader verify semantics hardening (Slice 1: explicit EmailDraftExists verify_checks handling ✅ 2026-04-04; Slice 2: fail-closed verify on storage/db error ✅ 2026-04-04) | 🔄 IN PROGRESS | `30-production-roadmap.md` P2.7 |
 
 ### Longer-Term / Planned Tracks

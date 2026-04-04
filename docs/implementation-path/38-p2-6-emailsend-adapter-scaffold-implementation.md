@@ -60,6 +60,50 @@ This section records the **mock-provider foundation slice** added to the scaffol
 
 ---
 
+## Slice 39 — P2.6 Provider-Injection Structural Slice (2026-04-04)
+
+This section records the **provider-injection structural slice** for the EmailSend adapter. The adapter now owns injected provider state via constructors, following the `MaildraftAdapter::with_store` pattern. Execute remains fail-closed; no real send is wired.
+
+**What was added:**
+- `provider: Arc<dyn EmailProvider>` field added to `EmailSendAdapter` struct
+- `new()` now creates adapter with `MockEmailProvider::new()` as default provider
+- `with_key(key)` now creates adapter with `MockEmailProvider::new()` as default provider
+- `with_provider(key, provider)` constructor for dependency injection of any `EmailProvider`
+- `provider()` accessor for test inspection of stored provider
+- Manual `Debug` and `Clone` implementations (required because `dyn EmailProvider` doesn't derive Debug)
+- 5 new unit tests proving provider storage and execute-fail-closed invariant
+
+**What was NOT added (preserved invariant):**
+- Adapter execute remains fail-closed (execute does NOT call provider.send())
+- No real provider integration (provider stored but not invoked in execute)
+- Gateway deny boundary unchanged (`allow_send=true` still denied at prepare-time)
+- No send/revoke semantics wired to execute
+
+**New test coverage (5 tests):**
+- `test_new_adapter_has_mock_provider` — verifies default adapter has accessible mock provider
+- `test_with_provider_stores_provider` — verifies injected provider is stored via Arc::ptr_eq
+- `test_with_provider_can_use_failure_configured_provider` — verifies failing provider is usable via accessor
+- `test_execute_still_fails_closed_with_injected_provider` — proves execute returns "not implemented" error even when provider is injected
+- `test_with_provider_revoke_supported` — verifies revoke-supported provider is stored and accessible
+
+**Structural invariant (preserved):**
+```rust
+// Provider injection ≠ send wiring. Execute remains fail-closed:
+async fn execute(...) -> Result<ExecuteReceipt, AdapterError> {
+    Err(AdapterError::Validation(
+        "EmailSend adapter: execute not implemented (scaffold only). \
+         Real send requires provider integration and R3 safety analysis."
+            .to_string(),
+    ))
+}
+```
+
+**Test output:** `cargo test -p ferrum-adapter-emailsend` — 28 tests pass (23 prior + 5 new)
+
+**Verification:** `cargo test -p ferrum-adapter-emailsend` (28 tests pass); `cargo check -p ferrum-gateway` (clean)
+
+---
+
 ## Current Boundary (Preserved)
 
 ### Gateway Prepare-Time Deny
