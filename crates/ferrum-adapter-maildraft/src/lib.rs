@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 
 #[cfg(test)]
 use ferrum_proto::RollbackTarget;
-use ferrum_proto::{JsonMap, RollbackContract, RollbackPrepareRequest};
+use ferrum_proto::{CheckSpec, CheckType, JsonMap, RollbackContract, RollbackPrepareRequest};
 use ferrum_rollback::{
     AdapterError, ExecuteReceipt, PrepareReceipt, RecoveryReceipt, RollbackAdapter, VerifyReceipt,
 };
@@ -327,15 +327,28 @@ impl RollbackAdapter for MaildraftAdapter {
     }
 
     async fn verify(&self, contract: &RollbackContract) -> Result<VerifyReceipt, AdapterError> {
-        // Verify checks that the draft was actually persisted and can be retrieved
+        // Verify checks that the draft was actually persisted and can be retrieved.
+        // Explicit EmailDraftExists checks are honored: if provided, the check's draft_id
+        // is used; otherwise fall back to metadata lookup.
         let execution_id = contract.execution_id.to_string();
 
-        // Get draft_id from contract metadata (set during execute)
-        let draft_id = contract
-            .metadata
-            .get("draft_id")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
+        // Extract explicit draft_id from verify_checks if EmailDraftExists is present
+        let explicit_draft_id =
+            MaildraftAdapter::extract_expected_draft_id(&contract.verify_checks)
+                .map(|s| s.to_string());
+
+        // Track if explicit check was requested (before we consume explicit_draft_id)
+        let has_explicit_check = explicit_draft_id.is_some();
+
+        // Get draft_id: explicit check takes precedence, then metadata, then lookup
+        let draft_id = explicit_draft_id
+            .or_else(|| {
+                contract
+                    .metadata
+                    .get("draft_id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
             .or_else(|| {
                 // Fallback: look up by execution_id
                 self.store
@@ -364,6 +377,13 @@ impl RollbackAdapter for MaildraftAdapter {
                     "verified_at".to_string(),
                     serde_json::json!(chrono::Utc::now().to_rfc3339()),
                 );
+                // Record if this was an explicit check
+                if has_explicit_check {
+                    metadata.insert(
+                        "explicit_check".to_string(),
+                        serde_json::json!("EmailDraftExists"),
+                    );
+                }
                 Ok(VerifyReceipt {
                     verified: true,
                     adapter_metadata: metadata,
@@ -419,6 +439,20 @@ impl RollbackAdapter for MaildraftAdapter {
     async fn rollback(&self, contract: &RollbackContract) -> Result<RecoveryReceipt, AdapterError> {
         // Rollback and compensate are the same for draft creation - delete the draft
         self.compensate(contract).await
+    }
+}
+
+impl MaildraftAdapter {
+    /// Extract expected draft_id from verify_checks if EmailDraftExists is present.
+    fn extract_expected_draft_id(checks: &[CheckSpec]) -> Option<String> {
+        for check in checks {
+            if matches!(check.check_type, CheckType::EmailDraftExists) {
+                if let Some(draft_id) = check.config.get("draft_id") {
+                    return draft_id.as_str().map(|s| s.to_string());
+                }
+            }
+        }
+        None
     }
 }
 
@@ -912,6 +946,192 @@ mod tests {
 
         // Verify should return false for non-existent execution
         let verify_receipt = adapter.verify(&contract).await.unwrap();
+        assert!(!verify_receipt.verified);
+    }
+
+    #[tokio::test]
+    async fn test_maildraft_adapter_verify_with_explicit_email_draft_exists_check_passes() {
+        let store = SqliteMaildraftStore::new_in_memory().unwrap();
+        let adapter = MaildraftAdapter::with_store(ADAPTER_KEY, store);
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        let prepare_req = RollbackPrepareRequest {
+            intent_id: ferrum_proto::IntentId::new(),
+            proposal_id: ferrum_proto::ProposalId::new(),
+            execution_id,
+            action_type: ferrum_proto::ActionType::EmailDraftCreate,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: ADAPTER_KEY.to_string(),
+            target: RollbackTarget::EmailDraft {
+                draft_id: None,
+                recipients: vec!["alice@example.com".to_string()],
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            metadata: JsonMap::new(),
+        };
+
+        let prep_receipt = adapter.prepare(&prepare_req).await.unwrap();
+
+        let payload = serde_json::json!({
+            "to": ["alice@example.com"],
+            "subject": "Test",
+            "body": "Hello!"
+        });
+
+        let contract = RollbackContract {
+            contract_id: ferrum_proto::RollbackContractId::new(),
+            intent_id: prepare_req.intent_id,
+            proposal_id: prepare_req.proposal_id,
+            execution_id: prepare_req.execution_id,
+            action_type: ferrum_proto::ActionType::EmailDraftCreate,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: ADAPTER_KEY.to_string(),
+            target: prepare_req.target.clone(),
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: ferrum_proto::RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: prep_receipt.adapter_metadata.clone(),
+        };
+
+        let exec_receipt = adapter.execute(&contract, &payload).await.unwrap();
+        let draft_id = exec_receipt.external_id.unwrap();
+
+        // Now verify with an explicit EmailDraftExists check
+        let explicit_check = CheckSpec {
+            check_type: CheckType::EmailDraftExists,
+            config: {
+                let mut m = JsonMap::new();
+                m.insert("draft_id".to_string(), serde_json::json!(draft_id));
+                m
+            },
+        };
+
+        let contract_with_explicit_check = RollbackContract {
+            contract_id: ferrum_proto::RollbackContractId::new(),
+            intent_id: prepare_req.intent_id,
+            proposal_id: prepare_req.proposal_id,
+            execution_id: prepare_req.execution_id,
+            action_type: ferrum_proto::ActionType::EmailDraftCreate,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: ADAPTER_KEY.to_string(),
+            target: prepare_req.target.clone(),
+            prepare_checks: vec![],
+            verify_checks: vec![explicit_check],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: ferrum_proto::RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: prep_receipt.adapter_metadata,
+        };
+
+        let verify_receipt = adapter.verify(&contract_with_explicit_check).await.unwrap();
+        assert!(verify_receipt.verified);
+        // Verify that explicit_check metadata was recorded
+        assert_eq!(
+            verify_receipt
+                .adapter_metadata
+                .get("explicit_check")
+                .and_then(|v| v.as_str()),
+            Some("EmailDraftExists")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_maildraft_adapter_verify_with_explicit_email_draft_exists_check_fails() {
+        let store = SqliteMaildraftStore::new_in_memory().unwrap();
+        let adapter = MaildraftAdapter::with_store(ADAPTER_KEY, store);
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        let prepare_req = RollbackPrepareRequest {
+            intent_id: ferrum_proto::IntentId::new(),
+            proposal_id: ferrum_proto::ProposalId::new(),
+            execution_id,
+            action_type: ferrum_proto::ActionType::EmailDraftCreate,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: ADAPTER_KEY.to_string(),
+            target: RollbackTarget::EmailDraft {
+                draft_id: None,
+                recipients: vec!["alice@example.com".to_string()],
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            metadata: JsonMap::new(),
+        };
+
+        let prep_receipt = adapter.prepare(&prepare_req).await.unwrap();
+
+        let payload = serde_json::json!({
+            "to": ["alice@example.com"],
+            "subject": "Test",
+            "body": "Hello!"
+        });
+
+        let contract = RollbackContract {
+            contract_id: ferrum_proto::RollbackContractId::new(),
+            intent_id: prepare_req.intent_id,
+            proposal_id: prepare_req.proposal_id,
+            execution_id: prepare_req.execution_id,
+            action_type: ferrum_proto::ActionType::EmailDraftCreate,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: ADAPTER_KEY.to_string(),
+            target: prepare_req.target.clone(),
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: ferrum_proto::RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: prep_receipt.adapter_metadata.clone(),
+        };
+
+        adapter.execute(&contract, &payload).await.unwrap();
+
+        // Verify with an explicit EmailDraftExists check for a DIFFERENT draft_id
+        let nonexistent_draft_id = "nonexistent-draft-12345";
+        let explicit_check = CheckSpec {
+            check_type: CheckType::EmailDraftExists,
+            config: {
+                let mut m = JsonMap::new();
+                m.insert(
+                    "draft_id".to_string(),
+                    serde_json::json!(nonexistent_draft_id),
+                );
+                m
+            },
+        };
+
+        let contract_with_explicit_check = RollbackContract {
+            contract_id: ferrum_proto::RollbackContractId::new(),
+            intent_id: prepare_req.intent_id,
+            proposal_id: prepare_req.proposal_id,
+            execution_id: prepare_req.execution_id,
+            action_type: ferrum_proto::ActionType::EmailDraftCreate,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: ADAPTER_KEY.to_string(),
+            target: prepare_req.target.clone(),
+            prepare_checks: vec![],
+            verify_checks: vec![explicit_check],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: ferrum_proto::RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: prep_receipt.adapter_metadata,
+        };
+
+        // Verify should return false because the explicit draft_id doesn't exist
+        let verify_receipt = adapter.verify(&contract_with_explicit_check).await.unwrap();
         assert!(!verify_receipt.verified);
     }
 }
