@@ -3,6 +3,15 @@
 Single-node v1 scope. Last updated: 2026-04-03.
 
 > **Canonical support contract**: [19-v1-single-node-support-contract.md](./19-v1-single-node-support-contract.md)
+>
+> **RC status**: FerrumGate v1 single-node is RC-ready as of 2026-04-02 — see
+> [25-v1-single-node-rc-evidence.md](./implementation-path/25-v1-single-node-rc-evidence.md) for full evidence.
+>
+> **Broader production-ready path**: requires completing G-E1 through G-E5 per
+> [30-production-roadmap.md](./implementation-path/30-production-roadmap.md) (Priority 5).
+>
+> **Out-of-tree SQLite candidate**: NOT merged — see
+> [40-out-of-tree-sqlite-performance-candidate.md](./implementation-path/40-out-of-tree-sqlite-performance-candidate.md).
 
 ## Contract integrity
 - [x] contracts cap nhat (ran check_contract_consistency.py: VALIDATION PASSED) — evidence: `docs/artifacts/2026-03-30/05-contract-consistency.txt`

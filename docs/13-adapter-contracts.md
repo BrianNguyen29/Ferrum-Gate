@@ -1,5 +1,7 @@
 # 13 — Adapter contracts
 
+> **Role**: Adapter interface / specification contract. Defines the prepare → execute → verify → compensate/rollback cycle per adapter (FS, SQLite, Maildraft, Git, HTTP). For the runtime flow context where these adapters are invoked, see [`04-runtime-flow.md`](./04-runtime-flow.md). For HTTP-specific API route bindings, see [`14-api-and-contracts-map.md`](./14-api-and-contracts-map.md). For rollback invariants (R0–R3 classes, auto-commit rules), see [`06-constraints-and-invariants.md`](./06-constraints-and-invariants.md).
+
 ## Chu trình chuẩn
 - prepare
 - execute

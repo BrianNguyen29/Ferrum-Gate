@@ -32,6 +32,7 @@ Sau đó mới đọc:
 - `16-release-checklist.md`
 - `17-troubleshooting.md`
 - `18-phase-f-evidence-pack.md` — consolidated Phase F evidence pack (supported flows, poisoned-context status, open gaps, handoff readiness)
+- `90-docs-governance.md` — **documentation governance policy** (canonical hierarchy, doc family inventory, ownership, review cadence, deprecation/archival policy) — see this doc for all governance questions
 - `runbooks/` — operator runbooks for specific production scenarios
 
 ## Thư mục con
@@ -39,15 +40,15 @@ Sau đó mới đọc:
 - `implementation-path/` — lộ trình triển khai cực cụ thể cho agent khác
 - `diagrams/` — sơ đồ trực quan về kiến trúc, flow, state machine, constraints
 
-## Source of truth ưu tiên
+## Source-of-Truth Priority
 
-Khi có mâu thuẫn, ưu tiên theo thứ tự:
+When content conflicts, resolve in this order:
 
-1. `00-project-canon.md`
-2. `06-constraints-and-invariants.md`
-3. `09-implementation-path.md`
-4. `10-crate-by-crate-plan.md`
-5. phần còn lại của `docs/`
+1. `00-project-canon.md` — project definition and intent
+2. `06-constraints-and-invariants.md` — invariant specification
+3. `09-implementation-path.md` — build plan and phasing
+4. `10-crate-by-crate-plan.md` — crate decomposition
+5. remaining `docs/` — derivative and reference material
 
 ## Kết luận ngắn
 

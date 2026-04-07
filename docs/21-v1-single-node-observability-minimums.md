@@ -30,9 +30,14 @@ contract:
 
 [19-v1-single-node-support-contract.md](./19-v1-single-node-support-contract.md)
 
-For CLI-first operator checks and verification ladders, see:
+For CLI-first operator checks, verification ladders, and routine check
+catalogs, see:
 
 [20-v1-single-node-operator-checks.md](./20-v1-single-node-operator-checks.md)
+
+For deployment, startup, backup, restore, and recovery procedures, see:
+
+[18-single-node-operations-runbook.md](./18-single-node-operations-runbook.md)
 
 ---
 
@@ -220,7 +225,9 @@ which config was loaded.
 The only way to confirm end-to-end readiness in v1 is a functional probe.
 Neither healthz nor readyz qualifies.
 
-**Functional probe (authenticated)**:
+The functional probe is documented in full in
+[20-v1-single-node-operator-checks.md](./20-v1-single-node-operator-checks.md)
+Section 3 (Startup Health Verification Ladder). The probe is:
 
 ```bash
 curl http://127.0.0.1:8080/v1/approvals?limit=1 \
@@ -228,50 +235,17 @@ curl http://127.0.0.1:8080/v1/approvals?limit=1 \
 # Omit -H when auth_mode=disabled
 ```
 
-**Expected**: 200 OK with valid JSON envelope:
-`{"items":[...],"next_cursor":null}` or `{"items":[],"next_cursor":null}`.
-
-A 200 with valid JSON confirms:
-- HTTP server is reachable
-- SQLite store is accessible
-- Auth is correctly configured (if enabled)
-- Governance loop can query the store
+A 200 with valid JSON envelope confirms HTTP reachability, SQLite store
+access, correct auth configuration, and a functional governance loop.
 
 **Failure modes**:
 - 401 Unauthorized → auth misconfigured
 - 500 Internal Server Error → store or migration issue
 - Connection refused → server not running
 
-### 5.2 Execution Chain Signal
-
-To confirm a specific execution has progressed through the gateway:
-
-```bash
-curl http://127.0.0.1:8080/v1/executions/{execution_id} \
-  -H "Authorization: Bearer $FERRUM_BEARER_TOKEN"
-```
-
-Monitor for `ExecutionState` transitions: `Authorized` → `Prepared` →
-`Compensated`. Under the conservative v1 support contract the execution
-chain may not reliably reach the `Committed` state; the documented
-terminal state is `Compensated`.
-
-### 5.3 Provenance Completeness Signal
-
-To check lineage for a specific execution:
-
-```bash
-curl http://127.0.0.1:8080/v1/provenance/lineage/{execution_id} \
-  -H "Authorization: Bearer $FERRUM_BEARER_TOKEN"
-```
-
-A non-empty events array confirms events were emitted. An empty array may
-indicate:
-- The execution_id is not yet in the store
-- Provenance emission was silently dropped (see Section 4.2)
-
-There is no automatic completeness assertion. Manual verification against
-the expected gateway step sequence is required.
+For the full startup ladder with step-by-step commands, see
+[20-v1-single-node-operator-checks.md](./20-v1-single-node-operator-checks.md)
+Section 3.
 
 ---
 
