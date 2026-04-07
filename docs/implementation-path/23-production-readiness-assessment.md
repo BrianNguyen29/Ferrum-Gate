@@ -7,7 +7,11 @@ Single-node v1 scope. Assessment against FerrumGate v1 success criteria.
 - Partial = adapter crate surfaces (fs/sqlite/git/http) plus maildraft (SQLite-backed persistence and verify semantics implemented; send/provider integration deferred/post-v1), and a bounded `ferrumctl` operator surface.
 - Deferred/post-v1 = broader adapter hardening, multi-node/HA/read-replica, remaining U1 expressiveness/operator tooling work, and U2-U4 upgrade tracks.
 
-## Overall readiness: ALL GATES PASSED — RC-READY
+## Overall readiness: RC-READY — full evidence in `25-v1-single-node-rc-evidence.md`
+
+See [25-v1-single-node-rc-evidence.md](./25-v1-single-node-rc-evidence.md) for the
+canonical evidence record (Phase F gate 7.5 output), including all gate results,
+test verdicts, and supported-flows attestation.
 
 FerrumGate v1 single-node passed all gates as of 2026-04-02:
 1. `cargo clippy --workspace -- -D warnings` PASS
@@ -72,10 +76,10 @@ All P0 gates cleared as of 2026-04-02. RC sign-off can proceed.
 | Criterion | Status | Evidence |
 |---|---|---|
 | Project canon | PASS | `docs/00-project-canon.md` |
-| Business overview | PASS | `docs/01-business-overview.md` |
-| Runtime flow | PASS | `docs/02-runtime-flow.md` |
+| Business overview | PASS | `docs/02-project-overview.md` |
+| Runtime flow | PASS | `docs/04-runtime-flow.md` |
 | Constraints/invariants | PASS | `docs/06-constraints-and-invariants.md` |
-| Agent handoff | PASS | `docs/12-agent-handoff.md` |
+| Agent handoff | PASS | `docs/implementation-path/07-agent-handoff-prompt.md` |
 | Phase success criteria | PASS | `docs/91-phase-success-criteria-and-kpis.md` |
 | Release checklist | PASS | `docs/16-release-checklist.md` |
 | Remaining tasks | PASS | `docs/implementation-path/11-remaining-tasks.md` |
@@ -108,22 +112,30 @@ All P0 gates cleared as of 2026-04-02. RC sign-off can proceed.
 
 ## Open gaps summary
 
-### P0 — v1 RC blockers (as of 2026-04-02)
-1. (none) — all P0 gates cleared as of 2026-04-02
-2. scope-mismatch deny implemented in `crates/ferrum-pdp/src/engine.rs` lines 31-46 (DONE, not a blocker).
-3. issue #97 merged 2026-04-03: HTTP adapter verify semantics clarified and gateway integration coverage added; broader adapter hardening remains post-v1.
+### RC blockers — none (all P0 gates cleared 2026-04-02)
+- scope-mismatch deny implemented (`crates/ferrum-pdp/src/engine.rs:31-46`)
+- issue #97 merged 2026-04-03: HTTP adapter verify semantics clarified; broader adapter hardening remains post-v1
 
-### P1 — v1 RC evidence
-(none) — all P1 items resolved:
-1. Curated poisoned-context regression fixtures (6 tests).
-2. Phase F docs pack finalized as cohesive, non-contradictory set.
-3. Supported flows list documented in `25-v1-single-node-rc-evidence.md` Evidence 9.
-4. Open gaps list documented in `11-remaining-tasks.md`.
+### RC evidence — complete (all P1 items resolved 2026-04-02)
+- Curated poisoned-context regression fixtures (6 tests)
+- Phase F docs pack finalized
+- Supported flows: `25-v1-single-node-rc-evidence.md` Evidence 9
+- Open gaps: `11-remaining-tasks.md`
 
-### P2 — v1 polish
-- `scripts/generate_rc_evidence.py` exists and PASS — verdict is ALL GATES PASSED as of 2026-04-02.
-- clippy: **PASS** as of 2026-04-02 (was PASS on 2026-03-30 per artifacts).
-- `cargo test --workspace`: **PASS** as of 2026-04-02 (was PASS on 2026-03-30 per artifacts).
+### Broader production-ready — in progress via roadmap gates
+FerrumGate v1 single-node is **RC-ready** (2026-04-02). Broader production-ready
+requires completing G-E1 through G-E5 per `30-production-roadmap.md` Priority 5
+(Section "Production Evaluation and Execution Plan"). Key open items:
+- **G-E1**: P2 adapter hardening (fs, sqlite, git, http, maildraft) — 🔄 IN PROGRESS
+- **G-E2**: P2 performance baseline + benchmark suite — ⬜ TODO
+- **G-E3**: `ferrumctl` advanced operator flows — ⬜ PLANNED
+- **G-E4**: P5 Sync-1 preflight checks + decision table — ⬜ PLANNED
+- **G-E5**: Production evaluation sign-off — ⬜ PLANNED
+
+> **Out-of-tree SQLite candidate (NOT merged):** A write-queue optimization was
+> evaluated in a local workspace (Phase 1 ✅, Phase 2 deferred after regression).
+> See `40-out-of-tree-sqlite-performance-candidate.md`. This is **not repo truth**
+> and is tracked as a potential future input to P2.2 Slice 3.
 
 ---
 
@@ -131,12 +143,19 @@ All P0 gates cleared as of 2026-04-02. RC sign-off can proceed.
 
 **FerrumGate v1 is RC-ready** as of 2026-04-02.
 
-All gates pass:
+All RC gates pass:
 1. `cargo clippy --workspace -- -D warnings` PASS
 2. `cargo test --workspace` PASS
 
 Core governance loop is implemented. Scope-mismatch deny is done. P1 evidence items are complete.
 All P0 blockers resolved as of 2026-04-02.
-P3.G1-G4 live evidence all executed and attested (2026-04-03): see `docs/implementation-path/30-production-roadmap.md` Section — Priority 3 for evidence links.
+P3.G1-G4 live evidence executed and attested (2026-04-03): see `30-production-roadmap.md` Priority 3 (lines 57–77).
 
-Remaining gaps are post-v1 backlog items (multi-node/HA, broader adapter hardening, U2-U4 upgrade tracks). Issue #97 (2026-04-03) improved HTTP adapter verify semantics and gateway integration coverage but does not expand the supported scope beyond single-node RC-ready.
+**Broader production-ready** requires completing the evaluation gates G-E1 through G-E5
+defined in `30-production-roadmap.md` (Priority 5, "Production Evaluation and Execution Plan").
+Remaining gaps (multi-node/HA, broader adapter hardening, U2-U4 upgrade tracks) are post-v1 backlog.
+
+Full evidence record: [25-v1-single-node-rc-evidence.md](./25-v1-single-node-rc-evidence.md).
+
+Issue #97 (2026-04-03) improved HTTP adapter verify semantics and gateway integration
+coverage but does not expand the supported scope beyond single-node RC-ready.

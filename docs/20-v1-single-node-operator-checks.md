@@ -16,6 +16,14 @@ v1 single-node instance. For support scope, limits, and known caveats, see:
 
 [19-v1-single-node-support-contract.md](./19-v1-single-node-support-contract.md)
 
+For deployment, startup, backup, restore, and recovery procedures, see:
+
+[18-single-node-operations-runbook.md](./18-single-node-operations-runbook.md)
+
+For observability signals, log watchpoints, and alert thresholds, see:
+
+[21-v1-single-node-observability-minimums.md](./21-v1-single-node-observability-minimums.md)
+
 ---
 
 ## 2. Check Modes Matrix

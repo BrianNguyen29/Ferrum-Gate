@@ -1,5 +1,7 @@
 # 03 — Architecture
 
+> **Role**: Structural / component overview. Defines the building blocks (components, layers, dependency rules) of FerrumGate. For execution sequencing and state flow, see [`04-runtime-flow.md`](./04-runtime-flow.md). For adapter interface specs, see [`13-adapter-contracts.md`](./13-adapter-contracts.md). For API route mapping, see [`14-api-and-contracts-map.md`](./14-api-and-contracts-map.md). For invariants that govern component behavior, see [`06-constraints-and-invariants.md`](./06-constraints-and-invariants.md).
+
 ## 1. Thành phần chính
 
 ### A. Intent Compiler
@@ -30,8 +32,10 @@ Tạo `RollbackContract` và chạy:
 - compensate
 - rollback
 
+> Per-adapter rollback mechanics (FS, SQLite, Git, HTTP, Maildraft) are defined in [`13-adapter-contracts.md`](./13-adapter-contracts.md). Rollback class invariants (R0–R3, auto-commit rules) are in [`06-constraints-and-invariants.md`](./06-constraints-and-invariants.md).
+
 ### F. Gateway / Interceptor
-Chặn và điều phối tool calls trước khi forward upstream.
+Chặn và điều phối tool calls trước khi forward upstream. Routes mutating bindings to adapters and enforces scope-bounds. API surface is enumerated in [`14-api-and-contracts-map.md`](./14-api-and-contracts-map.md).
 
 ### G. Provenance + Ledger
 Ghi lineage, audit trail, reasoning trail của execution.

@@ -94,41 +94,26 @@ non-zero code and an error message to stderr.
 
 ## 4. Post-Start Verification
 
-After startup, verify the node is operational:
+After startup, confirm the node is operational by running the startup
+verification ladder documented in
+[20-v1-single-node-operator-checks.md](./20-v1-single-node-operator-checks.md)
+Section 3.
 
-```bash
-# 1. Shallow health check (server is listening)
-curl http://127.0.0.1:8080/v1/healthz
-# Expected: 200 OK, {"status":"ok"} or similar
+**Summary** (full ladder in doc 20):
 
-# 2. Readiness check (shallow — confirms HTTP endpoint is reachable; does not validate store or internal state)
-curl http://127.0.0.1:8080/v1/readyz
-# Expected: 200 OK if ready; 200 OK alone does not guarantee store or governance loop is functional
+1. `GET /v1/healthz` → 200 OK (shallow check; server is listening)
+2. `GET /v1/readyz` → 200 OK (shallow check; HTTP endpoint reachable)
+3. `GET /v1/approvals?limit=1` with bearer auth → 200 OK with valid JSON
+   (minimum functional probe — confirms store, auth, and governance loop)
+4. Optionally: `ferrumctl server inspect-execution <known_id>` to verify
+   a specific record is accessible.
 
-# 3. Required functional probe (requires bearer auth if auth_mode=bearer)
-export FERRUMCTL_SERVER_URL=http://127.0.0.1:8080
-export FERRUMCTL_BEARER_TOKEN="$FERRUM_BEARER_TOKEN"
-ferrumctl server inspect-approvals
-curl http://127.0.0.1:8080/v1/approvals?limit=1 \
-  -H "Authorization: Bearer $FERRUM_BEARER_TOKEN"
-# Expected: 200 OK with valid JSON. An empty items list is normal.
+> **Important**: healthz and readyz are shallow checks. Do not treat a 200
+> from either as end-to-end readiness. A functional probe (step 3) is
+> required before treating the node as ready for workload traffic.
 
-# 4. Required functional probe when auth_mode=disabled
-curl http://127.0.0.1:8080/v1/approvals?limit=1
-# Expected: 200 OK with valid JSON. Omit the Authorization header.
-
-# 5. Optional follow-up check when you have a known execution_id
-ferrumctl server inspect-execution 00000000-0000-0000-0000-000000000001
-# The execution inspect will return 404 for unknown IDs (expected);
-# absence of transport error confirms connectivity is functional.
-```
-
-**Important:** healthz and readyz are shallow checks. They confirm the
-server process is alive and the HTTP endpoint is reachable, but they do
-not guarantee that the governance loop or store is fully functional for
-your workload. Startup is not complete until a functional probe succeeds.
-Use `GET /v1/approvals?limit=1` or `ferrumctl server inspect-approvals` as
-the minimum readiness check, then optionally inspect a known execution.
+For the full CLI command reference and routine check catalog, see
+[20-v1-single-node-operator-checks.md](./20-v1-single-node-operator-checks.md).
 
 ---
 

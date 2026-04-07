@@ -3,6 +3,7 @@
 See also:
 - [Single-Node Operations Runbook](./18-single-node-operations-runbook.md)
 - [v1 Single-Node Operator Checks](./20-v1-single-node-operator-checks.md)
+- [v1 Single-Node Observability Minimums](./21-v1-single-node-observability-minimums.md)
 
 ## Configuration
 

@@ -1,8 +1,14 @@
 # 25 — v1 Single-Node RC Evidence
 
 Single-node v1 scope. This document is the canonical evidence record for the
-FerrumGate v1 release candidate. It is the output of the Phase F evidence gate
-from `91-phase-success-criteria-and-kpis.md` section 7.5.
+FerrumGate v1 release candidate (Phase F gate 7.5 output).
+
+> **Assessment**: [23-production-readiness-assessment.md](./23-production-readiness-assessment.md)
+>
+> **Roadmap / broader production-ready path**: [30-production-roadmap.md](./30-production-roadmap.md)
+> (G-E1 through G-E5 must complete before broader production-ready).
+>
+> **Support contract**: [19-v1-single-node-support-contract.md](../19-v1-single-node-support-contract.md)
 
 ---
 
@@ -98,7 +104,7 @@ Tests:
 - `test_scope_mismatch_deny_on_empty_scope_with_mutation` — verifies Deny on empty scope + non-R0
 - `test_r0_allowed_with_empty_scope` — verifies Allow on empty scope + R0
 
-Source: `crates/ferrum-pdp/src/engine.rs` (StaticPdpEngine::evaluate), 
+Source: `crates/ferrum-pdp/src/engine.rs` (StaticPdpEngine::evaluate),
 `crates/ferrum-integration-tests/src/integration_gateway_flow.rs`.
 
 ---
@@ -210,6 +216,8 @@ Remaining U1 backlog (not core capability gaps):
 | HTTP adapter verify semantics | P3 | issue #97 (merged 2026-04-03) clarified verify semantics and added gateway integration coverage; broader adapter hardening remains post-v1 |
 
 Full details in `docs/implementation-path/11-remaining-tasks.md`.
+For assessment and verdict, see [23-production-readiness-assessment.md](./23-production-readiness-assessment.md).
+For roadmap gates and execution path, see [30-production-roadmap.md](./30-production-roadmap.md).
 
 ---
 

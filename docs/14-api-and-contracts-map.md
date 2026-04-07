@@ -1,5 +1,7 @@
 # 14 — API and contracts map
 
+> **Role**: External API route / contract mapping. Enumerates REST endpoints, OpenAPI specs, contract files, and JSON schemas. For gateway component structure, see [`03-architecture.md`](./03-architecture.md). For per-adapter contract details (HTTP binding enforcement, auth, rollback), see [`13-adapter-contracts.md`](./13-adapter-contracts.md). For the supported v1 scope and what is/is not included, see [`00-project-canon.md`](./00-project-canon.md).
+
 ## Contracts
 - `contracts/ferrumgate-agent-contract.v1.yaml`
 - `contracts/ferrumgate-integrator-contract.v1.yaml`
@@ -33,6 +35,8 @@
 - `POST /v1/executions/{execution_id}/pause` - Pause execution in running state (Running, AwaitingVerification)
 - `POST /v1/executions/{execution_id}/resume` - Resume paused execution
 - `GET /v1/executions/{execution_id}` - Get execution record
+
+> **HTTP adapter**: HTTP binding enforcement, request digest, auth handling, and conservative rollback no-op are defined in [`13-adapter-contracts.md`](./13-adapter-contracts.md), not in this document.
 
 ### Approvals
 - `GET /v1/approvals` - List pending approvals
