@@ -289,11 +289,28 @@ async fn execute_single_row(
     })
 }
 
+/// Fail-closed recovery: if any DB error occurs during recovery, returns
+/// RecoveryReceipt with recovered=false instead of propagating the error.
+/// This matches the fail-closed pattern used in verify().
 async fn recover_snapshots(
     snapshot_store: &SqliteSnapshotStore,
     contract: &RollbackContract,
 ) -> Result<RecoveryReceipt, AdapterError> {
-    let db_path = extract_db_path_from_contract(contract)?;
+    let db_path = match extract_db_path_from_contract(contract) {
+        Ok(path) => path,
+        Err(e) => {
+            let mut metadata = JsonMap::new();
+            metadata.insert(
+                "extract_error".to_string(),
+                serde_json::Value::String(e.to_string()),
+            );
+            return Ok(RecoveryReceipt {
+                recovered: false,
+                adapter_metadata: metadata,
+            });
+        }
+    };
+
     let execution_id = contract.execution_id.to_string();
     let snapshots = snapshot_store.snapshots_for_execution(&execution_id);
 
@@ -304,32 +321,99 @@ async fn recover_snapshots(
         });
     }
 
-    let mut conn = connect_sqlite(&db_path).await?;
+    // Fail-closed: if we cannot open the DB, we cannot recover → recovered=false
+    let mut conn = match connect_sqlite(&db_path).await {
+        Ok(c) => c,
+        Err(e) => {
+            let mut metadata = JsonMap::new();
+            metadata.insert(
+                "connect_error".to_string(),
+                serde_json::Value::String(e.to_string()),
+            );
+            return Ok(RecoveryReceipt {
+                recovered: false,
+                adapter_metadata: metadata,
+            });
+        }
+    };
 
     // Begin transaction for atomic rollback
-    let mut tx = conn
-        .begin()
-        .await
-        .map_err(|err| AdapterError::Internal(format!("Failed to begin transaction: {}", err)))?;
+    // Fail-closed: if we cannot begin transaction, recovery cannot proceed
+    let mut tx = match conn.begin().await {
+        Ok(t) => t,
+        Err(e) => {
+            let mut metadata = JsonMap::new();
+            metadata.insert(
+                "begin_error".to_string(),
+                serde_json::Value::String(format!("Failed to begin transaction: {}", e)),
+            );
+            return Ok(RecoveryReceipt {
+                recovered: false,
+                adapter_metadata: metadata,
+            });
+        }
+    };
 
+    // Process each snapshot restoration
     for snapshot in &snapshots {
-        ensure_safe_identifier(&snapshot.table)?;
-        ensure_table_on_tx(&mut tx, &snapshot.table).await?;
-        match &snapshot.original_content {
+        if let Err(e) = ensure_safe_identifier(&snapshot.table) {
+            let mut metadata = JsonMap::new();
+            metadata.insert(
+                "identifier_error".to_string(),
+                serde_json::Value::String(e.to_string()),
+            );
+            return Ok(RecoveryReceipt {
+                recovered: false,
+                adapter_metadata: metadata,
+            });
+        }
+        if let Err(e) = ensure_table_on_tx(&mut tx, &snapshot.table).await {
+            let mut metadata = JsonMap::new();
+            metadata.insert(
+                "ensure_table_error".to_string(),
+                serde_json::Value::String(e.to_string()),
+            );
+            return Ok(RecoveryReceipt {
+                recovered: false,
+                adapter_metadata: metadata,
+            });
+        }
+        let op_result = match &snapshot.original_content {
             Some(original_content) => {
                 upsert_content_on_tx(&mut tx, &snapshot.table, &snapshot.row_id, original_content)
-                    .await?;
+                    .await
             }
-            None => {
-                delete_row_on_tx(&mut tx, &snapshot.table, &snapshot.row_id).await?;
-            }
+            None => delete_row_on_tx(&mut tx, &snapshot.table, &snapshot.row_id).await,
+        };
+        if let Err(e) = op_result {
+            let mut metadata = JsonMap::new();
+            metadata.insert(
+                "snapshot_restore_error".to_string(),
+                serde_json::Value::String(e.to_string()),
+            );
+            return Ok(RecoveryReceipt {
+                recovered: false,
+                adapter_metadata: metadata,
+            });
         }
     }
 
     // Commit transaction
-    tx.commit()
-        .await
-        .map_err(|err| AdapterError::Internal(format!("Failed to commit transaction: {}", err)))?;
+    // Fail-closed: if we cannot commit, recovery is not complete
+    match tx.commit().await {
+        Ok(()) => {}
+        Err(e) => {
+            let mut metadata = JsonMap::new();
+            metadata.insert(
+                "commit_error".to_string(),
+                serde_json::Value::String(format!("Failed to commit transaction: {}", e)),
+            );
+            return Ok(RecoveryReceipt {
+                recovered: false,
+                adapter_metadata: metadata,
+            });
+        }
+    }
 
     snapshot_store.clear_snapshots(&execution_id);
 
@@ -772,6 +856,272 @@ mod tests {
         // Cleanup: restore permissions so we can remove the directory
         fs::set_permissions(&dir_path, fs::Permissions::from_mode(0o755)).unwrap();
         fs::remove_dir_all(&dir_path).unwrap();
+    }
+
+    // === Fail-closed compensate/rollback on DB-error during recovery tests ===
+
+    #[tokio::test]
+    async fn test_sqlite_adapter_rollback_fail_closed_on_nonexistent_db_path() {
+        // Rollback against a nonexistent DB path should return recovered=false, not an error.
+        // This tests the fail-closed behavior when DB connection fails during recovery.
+        let temp_dir = tempfile::TempDir::new().expect("failed to create temp dir");
+        let valid_db_path = temp_dir.path().join("test_rollback_fail.db");
+        let valid_db_path_str = valid_db_path.to_string_lossy().to_string();
+
+        // Create the file explicitly
+        std::fs::File::create(&valid_db_path).expect("failed to create db file");
+
+        let adapter = SqliteRollbackAdapter::new(ADAPTER_KEY);
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        // 1. Prepare
+        let prepare_req = make_prepare_request(&valid_db_path_str, execution_id);
+        adapter.prepare(&prepare_req).await.unwrap();
+
+        // 2. Execute against VALID db to create snapshots
+        let contract = make_sqlite_contract(&valid_db_path_str, execution_id);
+        let payload = serde_json::json!({
+            "table": "users",
+            "row_id": "user1",
+            "content": "Alice"
+        });
+        adapter.execute(&contract, &payload).await.unwrap();
+
+        // 3. Now call rollback with a different (nonexistent) db path
+        // Build a new contract targeting nonexistent DB
+        let bad_contract = RollbackContract {
+            contract_id: ferrum_proto::RollbackContractId::new(),
+            intent_id: ferrum_proto::IntentId::new(),
+            proposal_id: ferrum_proto::ProposalId::new(),
+            execution_id, // Same execution_id so snapshots are found
+            action_type: ferrum_proto::ActionType::SqlMutation,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: ADAPTER_KEY.to_string(),
+            target: ferrum_proto::RollbackTarget::SqliteTxn {
+                db_path: "/nonexistent_path_12345_sqlite_rollback_test/db.sqlite".to_string(),
+                tx_id: "test-tx".to_string(),
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: ferrum_proto::RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: JsonMap::new(),
+        };
+
+        let rollback_receipt = adapter.rollback(&bad_contract).await.unwrap();
+        // Fail-closed: should return recovered=false, NOT propagate error
+        assert!(!rollback_receipt.recovered);
+        let meta = rollback_receipt.adapter_metadata;
+        assert!(meta.get("connect_error").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_adapter_rollback_fail_closed_on_permission_denied_db_path() {
+        // Rollback against an unreadable DB directory should return recovered=false, not an error.
+        use std::fs;
+
+        let temp_dir = tempfile::TempDir::new().expect("failed to create temp dir");
+        let valid_db_path = temp_dir.path().join("test_rollback_perm.db");
+        let valid_db_path_str = valid_db_path.to_string_lossy().to_string();
+
+        // Create the file explicitly
+        std::fs::File::create(&valid_db_path).expect("failed to create db file");
+
+        // Create an unreadable directory for the bad contract
+        let bad_dir_path = "/tmp/ferrum_sqlite_test_rollback_unreadable_dir";
+        // Use Command to force remove in case directory has 0o000 perms from previous run
+        let _ = std::process::Command::new("rm")
+            .args(["-rf", bad_dir_path])
+            .output();
+        fs::create_dir_all(&bad_dir_path).unwrap();
+        let bad_db_path = format!("{}/test.db", bad_dir_path);
+        fs::write(&bad_db_path, "dummy").unwrap();
+
+        let adapter = SqliteRollbackAdapter::new(ADAPTER_KEY);
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        // 1. Prepare
+        let prepare_req = make_prepare_request(&valid_db_path_str, execution_id);
+        adapter.prepare(&prepare_req).await.unwrap();
+
+        // 2. Execute against VALID db to create snapshots
+        let contract = make_sqlite_contract(&valid_db_path_str, execution_id);
+        let payload = serde_json::json!({
+            "table": "users",
+            "row_id": "user1",
+            "content": "Alice"
+        });
+        adapter.execute(&contract, &payload).await.unwrap();
+
+        // Make the bad directory unreadable
+        fs::set_permissions(&bad_dir_path, fs::Permissions::from_mode(0o000)).unwrap();
+
+        // 3. Now call rollback with an unreadable db path
+        let bad_contract = RollbackContract {
+            contract_id: ferrum_proto::RollbackContractId::new(),
+            intent_id: ferrum_proto::IntentId::new(),
+            proposal_id: ferrum_proto::ProposalId::new(),
+            execution_id, // Same execution_id so snapshots are found
+            action_type: ferrum_proto::ActionType::SqlMutation,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: ADAPTER_KEY.to_string(),
+            target: ferrum_proto::RollbackTarget::SqliteTxn {
+                db_path: bad_db_path,
+                tx_id: "test-tx".to_string(),
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: ferrum_proto::RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: JsonMap::new(),
+        };
+
+        let rollback_receipt = adapter.rollback(&bad_contract).await.unwrap();
+        // Fail-closed: should return recovered=false due to inability to open DB
+        assert!(!rollback_receipt.recovered);
+        let meta = rollback_receipt.adapter_metadata;
+        assert!(meta.get("connect_error").is_some());
+
+        // Cleanup: restore permissions so we can remove the directory
+        fs::set_permissions(&bad_dir_path, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::remove_dir_all(&bad_dir_path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_adapter_compensate_fail_closed_on_nonexistent_db_path() {
+        // Compensate against a nonexistent DB path should return recovered=false, not an error.
+        let temp_dir = tempfile::TempDir::new().expect("failed to create temp dir");
+        let valid_db_path = temp_dir.path().join("test_compensate_fail.db");
+        let valid_db_path_str = valid_db_path.to_string_lossy().to_string();
+
+        // Create the file explicitly
+        std::fs::File::create(&valid_db_path).expect("failed to create db file");
+
+        let adapter = SqliteRollbackAdapter::new(ADAPTER_KEY);
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        // 1. Prepare
+        let prepare_req = make_prepare_request(&valid_db_path_str, execution_id);
+        adapter.prepare(&prepare_req).await.unwrap();
+
+        // 2. Execute against VALID db to create snapshots
+        let contract = make_sqlite_contract(&valid_db_path_str, execution_id);
+        let payload = serde_json::json!({
+            "table": "users",
+            "row_id": "user1",
+            "content": "Alice"
+        });
+        adapter.execute(&contract, &payload).await.unwrap();
+
+        // 3. Now call compensate with a nonexistent db path
+        let bad_contract = RollbackContract {
+            contract_id: ferrum_proto::RollbackContractId::new(),
+            intent_id: ferrum_proto::IntentId::new(),
+            proposal_id: ferrum_proto::ProposalId::new(),
+            execution_id, // Same execution_id so snapshots are found
+            action_type: ferrum_proto::ActionType::SqlMutation,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: ADAPTER_KEY.to_string(),
+            target: ferrum_proto::RollbackTarget::SqliteTxn {
+                db_path: "/nonexistent_path_12345_sqlite_compensate_test/db.sqlite".to_string(),
+                tx_id: "test-tx".to_string(),
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: ferrum_proto::RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: JsonMap::new(),
+        };
+
+        let compensate_receipt = adapter.compensate(&bad_contract).await.unwrap();
+        // Fail-closed: should return recovered=false, NOT propagate error
+        assert!(!compensate_receipt.recovered);
+        let meta = compensate_receipt.adapter_metadata;
+        assert!(meta.get("connect_error").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_adapter_compensate_fail_closed_on_permission_denied_db_path() {
+        // Compensate against an unreadable DB directory should return recovered=false, not an error.
+        use std::fs;
+
+        let temp_dir = tempfile::TempDir::new().expect("failed to create temp dir");
+        let valid_db_path = temp_dir.path().join("test_compensate_perm.db");
+        let valid_db_path_str = valid_db_path.to_string_lossy().to_string();
+
+        // Create the file explicitly
+        std::fs::File::create(&valid_db_path).expect("failed to create db file");
+
+        // Create an unreadable directory for the bad contract
+        let bad_dir_path = "/tmp/ferrum_sqlite_test_compensate_unreadable_dir";
+        // Use Command to force remove in case directory has 0o000 perms from previous run
+        let _ = std::process::Command::new("rm")
+            .args(["-rf", bad_dir_path])
+            .output();
+        fs::create_dir_all(&bad_dir_path).unwrap();
+        let bad_db_path = format!("{}/test.db", bad_dir_path);
+        fs::write(&bad_db_path, "dummy").unwrap();
+
+        let adapter = SqliteRollbackAdapter::new(ADAPTER_KEY);
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        // 1. Prepare
+        let prepare_req = make_prepare_request(&valid_db_path_str, execution_id);
+        adapter.prepare(&prepare_req).await.unwrap();
+
+        // 2. Execute against VALID db to create snapshots
+        let contract = make_sqlite_contract(&valid_db_path_str, execution_id);
+        let payload = serde_json::json!({
+            "table": "users",
+            "row_id": "user1",
+            "content": "Alice"
+        });
+        adapter.execute(&contract, &payload).await.unwrap();
+
+        // Make the bad directory unreadable
+        fs::set_permissions(&bad_dir_path, fs::Permissions::from_mode(0o000)).unwrap();
+
+        // 3. Now call compensate with an unreadable db path
+        let bad_contract = RollbackContract {
+            contract_id: ferrum_proto::RollbackContractId::new(),
+            intent_id: ferrum_proto::IntentId::new(),
+            proposal_id: ferrum_proto::ProposalId::new(),
+            execution_id, // Same execution_id so snapshots are found
+            action_type: ferrum_proto::ActionType::SqlMutation,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: ADAPTER_KEY.to_string(),
+            target: ferrum_proto::RollbackTarget::SqliteTxn {
+                db_path: bad_db_path,
+                tx_id: "test-tx".to_string(),
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: ferrum_proto::RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: JsonMap::new(),
+        };
+
+        let compensate_receipt = adapter.compensate(&bad_contract).await.unwrap();
+        // Fail-closed: should return recovered=false due to inability to open DB
+        assert!(!compensate_receipt.recovered);
+        let meta = compensate_receipt.adapter_metadata;
+        assert!(meta.get("connect_error").is_some());
+
+        // Cleanup: restore permissions so we can remove the directory
+        fs::set_permissions(&bad_dir_path, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::remove_dir_all(&bad_dir_path).unwrap();
     }
 
     // === Error-path / fail-closed tests ===
