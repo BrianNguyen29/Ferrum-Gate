@@ -35,6 +35,7 @@ Any doc that describes governance expectations should link here rather than rest
 | `18-phase-f-evidence-pack.md` | Phase F consolidated evidence | Core |
 | `90-docs-governance.md` | Doc governance policy (this document) | Operations |
 | `runbooks/` | Operator runbooks | Operations |
+| `implementation-path/41-production-execution-plan.md` | Sequential production evaluation plan (G-E1 → G-E5), per-phase doc update protocol, and commit/PR merge cadence | Operations |
 | `diagrams/` | Visual assets | Core |
 | `.agents/` | Agent skill files | Tooling |
 
