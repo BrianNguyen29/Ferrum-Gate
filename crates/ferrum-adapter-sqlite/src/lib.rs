@@ -122,12 +122,39 @@ impl RollbackAdapter for SqliteRollbackAdapter {
         let snapshots = self.snapshot_store.snapshots_for_execution(&execution_id);
 
         let mut verified = true;
-        let mut conn = connect_sqlite(&db_path).await?;
         let mut metadata = JsonMap::new();
+
+        // Fail-closed: if we cannot open the DB, we cannot verify → verified=false
+        let mut conn = match connect_sqlite(&db_path).await {
+            Ok(c) => c,
+            Err(e) => {
+                metadata.insert(
+                    "connect_error".to_string(),
+                    serde_json::Value::String(e.to_string()),
+                );
+                return Ok(VerifyReceipt {
+                    verified: false,
+                    adapter_metadata: metadata,
+                });
+            }
+        };
 
         for snapshot in &snapshots {
             ensure_safe_identifier(&snapshot.table)?;
-            let current = fetch_content(&mut conn, &snapshot.table, &snapshot.row_id).await?;
+            let current = match fetch_content(&mut conn, &snapshot.table, &snapshot.row_id).await {
+                Ok(c) => c,
+                Err(e) => {
+                    verified = false;
+                    metadata.insert(
+                        format!("{}:{}", snapshot.table, snapshot.row_id),
+                        serde_json::json!({
+                            "fetch_error": e.to_string(),
+                            "present": false,
+                        }),
+                    );
+                    continue;
+                }
+            };
             let matches = current.as_deref() == Some(snapshot.current_content.as_str());
             if !matches {
                 verified = false;
@@ -526,6 +553,7 @@ async fn delete_row(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
 
     fn make_sqlite_contract(
         db_path: &str,
@@ -688,6 +716,62 @@ mod tests {
         // Verify after rollback - all rows gone
         let verify_after = adapter.verify(&contract).await.unwrap();
         assert!(verify_after.verified);
+    }
+
+    // === Fail-closed verify on DB-open error tests ===
+
+    #[tokio::test]
+    async fn test_sqlite_adapter_verify_fail_closed_on_nonexistent_db_path() {
+        // verify() against a nonexistent DB path should return verified=false, not an error
+        let db_path = "/nonexistent_path_12345_sqlite_verify_test/db.sqlite";
+        let adapter = SqliteRollbackAdapter::new(ADAPTER_KEY);
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        let prepare_req = make_prepare_request(db_path, execution_id);
+        adapter.prepare(&prepare_req).await.unwrap();
+
+        let contract = make_sqlite_contract(db_path, execution_id);
+
+        let verify_receipt = adapter.verify(&contract).await.unwrap();
+        assert!(!verify_receipt.verified);
+        let meta = verify_receipt.adapter_metadata;
+        assert!(meta.get("connect_error").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_adapter_verify_fail_closed_on_permission_denied_db_path() {
+        // verify() against an unreadable DB directory should return verified=false, not an error
+        use std::fs;
+
+        // Create a directory that we will make unreadable
+        let dir_path = "/tmp/ferrum_sqlite_test_unreadable_dir";
+        let db_path = format!("{}/test.db", dir_path);
+
+        // Clean up any previous test artifacts
+        let _ = fs::remove_dir_all(&dir_path);
+        fs::create_dir_all(&dir_path).unwrap();
+        fs::write(&db_path, "dummy content").unwrap();
+
+        let adapter = SqliteRollbackAdapter::new(ADAPTER_KEY);
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        let prepare_req = make_prepare_request(&db_path, execution_id);
+        adapter.prepare(&prepare_req).await.unwrap();
+
+        // Remove all permissions from the directory
+        fs::set_permissions(&dir_path, fs::Permissions::from_mode(0o000)).unwrap();
+
+        let contract = make_sqlite_contract(&db_path, execution_id);
+
+        let verify_receipt = adapter.verify(&contract).await.unwrap();
+        // Should fail closed: verified=false due to inability to open DB
+        assert!(!verify_receipt.verified);
+        let meta = verify_receipt.adapter_metadata;
+        assert!(meta.get("connect_error").is_some());
+
+        // Cleanup: restore permissions so we can remove the directory
+        fs::set_permissions(&dir_path, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::remove_dir_all(&dir_path).unwrap();
     }
 
     // === Error-path / fail-closed tests ===
