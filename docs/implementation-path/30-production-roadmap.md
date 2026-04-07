@@ -103,6 +103,8 @@ The following lists the remaining execution order after P3 completion (P3.G1–P
 
 **Source:** `docs/implementation-path/11-remaining-tasks.md`; execution order follows roadmap priority sequence per `docs/implementation-path/24-p1-p2-p3-execution-plan.md` lines 266–297.
 
+**Canonical execution plan:** `docs/implementation-path/41-production-execution-plan.md` — sequential phase plan with per-phase doc update protocol and commit/PR merge cadence.
+
 ---
 
 ## Priority 4 — Operator Control-Plane Completeness (`ferrumctl`)

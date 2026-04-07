@@ -33,6 +33,7 @@ Sau đó mới đọc:
 - `17-troubleshooting.md`
 - `18-phase-f-evidence-pack.md` — consolidated Phase F evidence pack (supported flows, poisoned-context status, open gaps, handoff readiness)
 - `90-docs-governance.md` — **documentation governance policy** (canonical hierarchy, doc family inventory, ownership, review cadence, deprecation/archival policy) — see this doc for all governance questions
+- `implementation-path/41-production-execution-plan.md` — sequential production evaluation plan (G-E1 → G-E5), per-phase doc update protocol, and commit/PR merge cadence
 - `runbooks/` — operator runbooks for specific production scenarios
 
 ## Thư mục con
