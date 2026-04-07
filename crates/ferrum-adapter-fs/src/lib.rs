@@ -776,6 +776,73 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_fs_adapter_compensate_deletes_new_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.txt");
+        let adapter = FsRollbackAdapter::new("fs");
+
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        // Prepare (file doesn't exist yet - no snapshot)
+        let prepare_req = RollbackPrepareRequest {
+            intent_id: ferrum_proto::IntentId::new(),
+            proposal_id: ferrum_proto::ProposalId::new(),
+            execution_id,
+            action_type: ferrum_proto::ActionType::FileWrite,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "fs".to_string(),
+            target: ferrum_proto::RollbackTarget::FilePath {
+                path: file_path.to_str().unwrap().to_string(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            metadata: JsonMap::new(),
+        };
+
+        let prep_receipt = adapter.prepare(&prepare_req).await.unwrap();
+
+        // Execute (creates new file)
+        let payload = serde_json::json!({
+            "path": file_path.to_str().unwrap(),
+            "content": "hello world"
+        });
+
+        let contract = RollbackContract {
+            contract_id: ferrum_proto::RollbackContractId::new(),
+            intent_id: prepare_req.intent_id,
+            proposal_id: prepare_req.proposal_id,
+            execution_id: prepare_req.execution_id,
+            action_type: ferrum_proto::ActionType::FileWrite,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "fs".to_string(),
+            target: ferrum_proto::RollbackTarget::FilePath {
+                path: file_path.to_str().unwrap().to_string(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: ferrum_proto::RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: prep_receipt.adapter_metadata,
+        };
+
+        adapter.execute(&contract, &payload).await.unwrap();
+        assert!(file_path.exists());
+
+        // Compensate should delete the new file (no snapshot = file didn't exist before)
+        adapter.compensate(&contract).await.unwrap();
+        assert!(!file_path.exists());
+    }
+
+    #[tokio::test]
     async fn test_fs_adapter_delete_existing_file() {
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("test.txt");
