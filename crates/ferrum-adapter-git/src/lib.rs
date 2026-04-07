@@ -2374,6 +2374,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_gitpush_rollback_noop_when_no_pre_push_ref() {
+        let (_main_temp, main_path, _main_head, _remote_temp, _remote_path) =
+            init_repo_with_remote();
+        let adapter = GitRollbackAdapter::new(ADAPTER_KEY);
+
+        // Create contract WITHOUT pre_push_ref - rollback should be a no-op
+        let contract = make_push_contract(&main_path, "origin", "master", None, None, None);
+
+        // Rollback should succeed but not perform any force-push
+        let rollback_receipt = adapter.rollback(&contract).await.unwrap();
+        assert!(rollback_receipt.recovered);
+
+        // Verify the no-op metadata is set correctly
+        let compensated_with = rollback_receipt
+            .adapter_metadata
+            .get("compensated_with")
+            .and_then(|v| v.as_str())
+            .unwrap();
+        assert_eq!(
+            compensated_with, "no-op (no pre_push_ref captured)",
+            "rollback should indicate no-op when pre_push_ref is missing"
+        );
+    }
+
+    #[tokio::test]
     async fn test_gitpush_happy_path_full_flow() {
         let (_main_temp, main_path, main_head, _remote_temp, _remote_path) =
             init_repo_with_remote();
