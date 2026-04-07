@@ -858,6 +858,60 @@ mod tests {
         fs::remove_dir_all(&dir_path).unwrap();
     }
 
+    // === Fail-closed verify on DB-corruption mid-operation tests ===
+
+    #[tokio::test]
+    async fn test_sqlite_adapter_verify_fail_closed_on_corrupted_db() {
+        // verify() when DB exists and is accessible but becomes corrupted mid-operation
+        // should return verified=false, not propagate an error (fail-closed).
+        // This is P2.2 Slice 5: DB-corruption mid-operation fail-closed test.
+        use std::fs;
+
+        let temp_dir = tempfile::TempDir::new().expect("failed to create temp dir");
+        let db_path = temp_dir.path().join("test_corrupt.db");
+        let db_path_str = db_path.to_string_lossy().to_string();
+
+        // Create the file explicitly
+        std::fs::File::create(&db_path).expect("failed to create db file");
+
+        let adapter = SqliteRollbackAdapter::new(ADAPTER_KEY);
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        // 1. Prepare
+        let prepare_req = make_prepare_request(&db_path_str, execution_id);
+        adapter.prepare(&prepare_req).await.unwrap();
+
+        // 2. Execute - write a row to create snapshots
+        let contract = make_sqlite_contract(&db_path_str, execution_id);
+        let payload = serde_json::json!({
+            "table": "users",
+            "row_id": "user1",
+            "content": "Alice"
+        });
+        let execute_receipt = adapter.execute(&contract, &payload).await.unwrap();
+        assert!(execute_receipt.external_id.is_some());
+
+        // 3. Corrupt the DB file by writing garbage to it
+        // This simulates a scenario where the DB is valid at execute time but becomes corrupted
+        fs::write(&db_path, b"this is not a valid sqlite database file!!!").unwrap();
+
+        // 4. Verify should fail closed: return verified=false, NOT an error.
+        // This proves that DB corruption during verify is handled gracefully as fail-closed.
+        let verify_receipt = adapter.verify(&contract).await.unwrap();
+        assert!(
+            !verify_receipt.verified,
+            "verify should return verified=false when DB is corrupted"
+        );
+        // The error should be a fetch error, not a connect error (since DB was opened successfully)
+        let key = "users:user1";
+        let verification = verify_receipt.adapter_metadata.get(key).unwrap();
+        assert_eq!(
+            verification.get("present").unwrap(),
+            false,
+            "DB corruption should prevent reading row"
+        );
+    }
+
     // === Fail-closed compensate/rollback on DB-error during recovery tests ===
 
     #[tokio::test]
