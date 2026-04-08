@@ -2,13 +2,17 @@ use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand, ValueEnum};
 use ferrum_proto::api::{
-    CancelExecutionRequest, CancelExecutionResponse, CompensateRequest, CompensateResponse,
-    ExecuteRequest, ExecuteResponse, LedgerVerificationResponse, PauseExecutionRequest,
-    PauseExecutionResponse, PrepareExecutionResponse, ResumeExecutionRequest,
-    ResumeExecutionResponse, RollbackRequest, RollbackResponse,
+    AuthorizeExecutionRequest, AuthorizeExecutionResponse, CancelExecutionRequest,
+    CancelExecutionResponse, CommitRequest, CommitResponse, CompensateRequest, CompensateResponse,
+    EvaluateProposalResponse, ExecuteRequest, ExecuteResponse, LedgerVerificationResponse,
+    PauseExecutionRequest, PauseExecutionResponse, PrepareExecutionResponse,
+    ResumeExecutionRequest, ResumeExecutionResponse, RollbackRequest, RollbackResponse,
+    VerifyRequest, VerifyResponse,
 };
 use ferrum_proto::approval::ApprovalResolveRequest;
+use ferrum_proto::capability::{CapabilityMintRequest, CapabilityMintResponse};
 use ferrum_proto::common::{ActorRef, ActorType};
+use ferrum_proto::intent::{IntentCompileRequest, IntentCompileResponse};
 use ferrum_proto::provenance::{
     LineageQueryRequest, LineageQueryResponse, ProvenanceEdgeType, ProvenanceEventKind,
     ProvenanceExportRequest, ProvenanceExportResponse, ProvenanceReplayRequest,
@@ -834,6 +838,78 @@ impl ServerClient {
     ) -> Result<ProvenanceStatsResponse> {
         let resp = self
             .request(reqwest::Method::POST, "/v1/provenance/stats")
+            .json(req)
+            .send()
+            .await?;
+        self.decode_json(resp).await
+    }
+
+    async fn compile_intent(&self, req: &IntentCompileRequest) -> Result<IntentCompileResponse> {
+        let resp = self
+            .request(reqwest::Method::POST, "/v1/intents/compile")
+            .json(req)
+            .send()
+            .await?;
+        self.decode_json(resp).await
+    }
+
+    async fn evaluate_proposal(
+        &self,
+        proposal_id: &str,
+        req: &ferrum_proto::ActionProposal,
+    ) -> Result<EvaluateProposalResponse> {
+        let path = format!("/v1/proposals/{}/evaluate", proposal_id);
+        let resp = self
+            .request(reqwest::Method::POST, &path)
+            .json(req)
+            .send()
+            .await?;
+        self.decode_json(resp).await
+    }
+
+    async fn mint_capability(&self, req: &CapabilityMintRequest) -> Result<CapabilityMintResponse> {
+        let resp = self
+            .request(reqwest::Method::POST, "/v1/capabilities/mint")
+            .json(req)
+            .send()
+            .await?;
+        self.decode_json(resp).await
+    }
+
+    async fn authorize_execution(
+        &self,
+        req: &AuthorizeExecutionRequest,
+    ) -> Result<AuthorizeExecutionResponse> {
+        let resp = self
+            .request(reqwest::Method::POST, "/v1/executions/authorize")
+            .json(req)
+            .send()
+            .await?;
+        self.decode_json(resp).await
+    }
+
+    async fn verify_execution(
+        &self,
+        execution_id: &str,
+        req: &VerifyRequest,
+    ) -> Result<VerifyResponse> {
+        let path = format!("/v1/executions/{}/verify", execution_id);
+        let resp = self
+            .request(reqwest::Method::POST, &path)
+            .json(req)
+            .send()
+            .await?;
+        self.decode_json(resp).await
+    }
+
+    async fn commit_execution(
+        &self,
+        execution_id: &str,
+        req: &CommitRequest,
+    ) -> Result<CommitResponse> {
+        let path = format!("/v1/executions/{}/commit", execution_id);
+        let resp = self
+            .request(reqwest::Method::POST, &path)
             .json(req)
             .send()
             .await?;
@@ -1711,6 +1787,115 @@ enum ServerCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Compile an intent from a JSON file.
+    CompileIntent {
+        /// Path to a JSON file containing IntentCompileRequest.
+        #[arg(long)]
+        file: PathBuf,
+
+        /// Server base URL (e.g. http://127.0.0.1:8080).
+        #[arg(long, env = "FERRUMCTL_SERVER_URL")]
+        server_url: Option<String>,
+
+        /// Bearer token for authentication.
+        #[arg(long, env = "FERRUMCTL_BEARER_TOKEN")]
+        bearer_token: Option<String>,
+
+        /// Output as JSON instead of human-readable.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Evaluate a proposal from a JSON file.
+    EvaluateProposal {
+        /// Proposal ID (UUID).
+        proposal_id: String,
+
+        /// Path to a JSON file containing ActionProposal.
+        #[arg(long)]
+        file: PathBuf,
+
+        /// Server base URL (e.g. http://127.0.0.1:8080).
+        #[arg(long, env = "FERRUMCTL_SERVER_URL")]
+        server_url: Option<String>,
+
+        /// Bearer token for authentication.
+        #[arg(long, env = "FERRUMCTL_BEARER_TOKEN")]
+        bearer_token: Option<String>,
+
+        /// Output as JSON instead of human-readable.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Mint a capability from a JSON file.
+    MintCapability {
+        /// Path to a JSON file containing CapabilityMintRequest.
+        #[arg(long)]
+        file: PathBuf,
+
+        /// Server base URL (e.g. http://127.0.0.1:8080).
+        #[arg(long, env = "FERRUMCTL_SERVER_URL")]
+        server_url: Option<String>,
+
+        /// Bearer token for authentication.
+        #[arg(long, env = "FERRUMCTL_BEARER_TOKEN")]
+        bearer_token: Option<String>,
+
+        /// Output as JSON instead of human-readable.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Authorize execution from a JSON file.
+    AuthorizeExecution {
+        /// Path to a JSON file containing AuthorizeExecutionRequest.
+        #[arg(long)]
+        file: PathBuf,
+
+        /// Server base URL (e.g. http://127.0.0.1:8080).
+        #[arg(long, env = "FERRUMCTL_SERVER_URL")]
+        server_url: Option<String>,
+
+        /// Bearer token for authentication.
+        #[arg(long, env = "FERRUMCTL_BEARER_TOKEN")]
+        bearer_token: Option<String>,
+
+        /// Output as JSON instead of human-readable.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Verify execution (transition from Running to AwaitingVerification).
+    VerifyExecution {
+        /// Execution ID (UUID).
+        execution_id: String,
+
+        /// Server base URL (e.g. http://127.0.0.1:8080).
+        #[arg(long, env = "FERRUMCTL_SERVER_URL")]
+        server_url: Option<String>,
+
+        /// Bearer token for authentication.
+        #[arg(long, env = "FERRUMCTL_BEARER_TOKEN")]
+        bearer_token: Option<String>,
+
+        /// Output as JSON instead of human-readable.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Commit execution (transition from AwaitingVerification to Committed).
+    CommitExecution {
+        /// Execution ID (UUID).
+        execution_id: String,
+
+        /// Server base URL (e.g. http://127.0.0.1:8080).
+        #[arg(long, env = "FERRUMCTL_SERVER_URL")]
+        server_url: Option<String>,
+
+        /// Bearer token for authentication.
+        #[arg(long, env = "FERRUMCTL_BEARER_TOKEN")]
+        bearer_token: Option<String>,
+
+        /// Output as JSON instead of human-readable.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -2258,6 +2443,197 @@ async fn run_inspect_capability(
             lease.tool_binding.server_name, lease.tool_binding.tool_name
         );
         println!("  Resources: {}", lease.resource_bindings.len());
+    }
+    Ok(())
+}
+
+async fn run_compile_intent(
+    file: &Path,
+    url: Option<String>,
+    token: Option<String>,
+    as_json: bool,
+) -> Result<()> {
+    let req: IntentCompileRequest = serde_json::from_str(
+        &std::fs::read_to_string(file)
+            .with_context(|| format!("failed to read {}", file.display()))?,
+    )
+    .with_context(|| format!("failed to parse JSON from {}", file.display()))?;
+
+    let url = resolve_server_url(url)?;
+    let client = ServerClient::new(&url, token);
+    let resp = client.compile_intent(&req).await?;
+
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&resp)?);
+    } else {
+        println!("Intent compiled: {}", resp.envelope.intent_id);
+        println!("  Goal: {}", resp.envelope.goal);
+        println!("  Risk tier: {:?}", resp.envelope.risk_tier);
+        if !resp.warnings.is_empty() {
+            println!("  Warnings:");
+            for w in &resp.warnings {
+                println!("    - {}", w);
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn run_evaluate_proposal(
+    proposal_id: &str,
+    file: &Path,
+    url: Option<String>,
+    token: Option<String>,
+    as_json: bool,
+) -> Result<()> {
+    let req: ferrum_proto::ActionProposal = serde_json::from_str(
+        &std::fs::read_to_string(file)
+            .with_context(|| format!("failed to read {}", file.display()))?,
+    )
+    .with_context(|| format!("failed to parse JSON from {}", file.display()))?;
+
+    let url = resolve_server_url(url)?;
+    let client = ServerClient::new(&url, token);
+    let resp = client.evaluate_proposal(proposal_id, &req).await?;
+
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&resp)?);
+    } else {
+        println!("Proposal {} evaluated: {:?}", proposal_id, resp.decision);
+        println!("  Reason: {}", resp.reason);
+        if !resp.matched_rule_ids.is_empty() {
+            println!("  Matched rules: {}", resp.matched_rule_ids.join(", "));
+        }
+        if !resp.warnings.is_empty() {
+            println!("  Warnings:");
+            for w in &resp.warnings {
+                println!("    - {}", w);
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn run_mint_capability(
+    file: &Path,
+    url: Option<String>,
+    token: Option<String>,
+    as_json: bool,
+) -> Result<()> {
+    let req: CapabilityMintRequest = serde_json::from_str(
+        &std::fs::read_to_string(file)
+            .with_context(|| format!("failed to read {}", file.display()))?,
+    )
+    .with_context(|| format!("failed to parse JSON from {}", file.display()))?;
+
+    let url = resolve_server_url(url)?;
+    let client = ServerClient::new(&url, token);
+    let resp = client.mint_capability(&req).await?;
+
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&resp)?);
+    } else {
+        println!("Capability minted: {}", resp.lease.capability_id);
+        println!("  Intent:    {}", resp.lease.intent_id);
+        println!("  Proposal: {}", resp.lease.proposal_id);
+        println!(
+            "  Tool:     {}.{}",
+            resp.lease.tool_binding.server_name, resp.lease.tool_binding.tool_name
+        );
+        if !resp.warnings.is_empty() {
+            println!("  Warnings:");
+            for w in &resp.warnings {
+                println!("    - {}", w);
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn run_authorize_execution(
+    file: &Path,
+    url: Option<String>,
+    token: Option<String>,
+    as_json: bool,
+) -> Result<()> {
+    let req: AuthorizeExecutionRequest = serde_json::from_str(
+        &std::fs::read_to_string(file)
+            .with_context(|| format!("failed to read {}", file.display()))?,
+    )
+    .with_context(|| format!("failed to parse JSON from {}", file.display()))?;
+
+    let url = resolve_server_url(url)?;
+    let client = ServerClient::new(&url, token);
+    let resp = client.authorize_execution(&req).await?;
+
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&resp)?);
+    } else {
+        println!("Execution authorized: {}", resp.execution.execution_id);
+        println!("  State:    {:?}", resp.execution.state);
+        println!("  Decision: {:?}", resp.execution.decision);
+        println!("  Intent:   {}", resp.execution.intent_id);
+        println!("  Proposal: {}", resp.execution.proposal_id);
+        if !resp.warnings.is_empty() {
+            println!("  Warnings:");
+            for w in &resp.warnings {
+                println!("    - {}", w);
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn run_verify_execution(
+    execution_id: &str,
+    url: Option<String>,
+    token: Option<String>,
+    as_json: bool,
+) -> Result<()> {
+    let exec_id = ExecutionId(execution_id.parse().context("invalid execution_id UUID")?);
+    let req = VerifyRequest {
+        execution_id: exec_id,
+    };
+
+    let url = resolve_server_url(url)?;
+    let client = ServerClient::new(&url, token);
+    let resp = client.verify_execution(execution_id, &req).await?;
+
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&resp)?);
+    } else {
+        println!("Verify requested for execution: {}", resp.execution_id);
+        println!("  Verified: {}", resp.verified);
+        if let Some(ts) = resp.verified_at {
+            println!("  Verified at: {}", ts);
+        }
+    }
+    Ok(())
+}
+
+async fn run_commit_execution(
+    execution_id: &str,
+    url: Option<String>,
+    token: Option<String>,
+    as_json: bool,
+) -> Result<()> {
+    let exec_id = ExecutionId(execution_id.parse().context("invalid execution_id UUID")?);
+    let req = CommitRequest {
+        execution_id: exec_id,
+    };
+
+    let url = resolve_server_url(url)?;
+    let client = ServerClient::new(&url, token);
+    let resp = client.commit_execution(execution_id, &req).await?;
+
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&resp)?);
+    } else {
+        println!("Commit requested for execution: {}", resp.execution_id);
+        println!("  Committed: {}", resp.committed);
+        if let Some(ts) = resp.committed_at {
+            println!("  Committed at: {}", ts);
+        }
     }
     Ok(())
 }
@@ -4104,6 +4480,55 @@ async fn main() -> Result<()> {
             } => {
                 run_inspect_capability(&capability_id, server_url, bearer_token, json).await?;
             }
+            ServerCommand::CompileIntent {
+                file,
+                server_url,
+                bearer_token,
+                json,
+            } => {
+                run_compile_intent(&file, server_url, bearer_token, json).await?;
+            }
+            ServerCommand::EvaluateProposal {
+                proposal_id,
+                file,
+                server_url,
+                bearer_token,
+                json,
+            } => {
+                run_evaluate_proposal(&proposal_id, &file, server_url, bearer_token, json).await?;
+            }
+            ServerCommand::MintCapability {
+                file,
+                server_url,
+                bearer_token,
+                json,
+            } => {
+                run_mint_capability(&file, server_url, bearer_token, json).await?;
+            }
+            ServerCommand::AuthorizeExecution {
+                file,
+                server_url,
+                bearer_token,
+                json,
+            } => {
+                run_authorize_execution(&file, server_url, bearer_token, json).await?;
+            }
+            ServerCommand::VerifyExecution {
+                execution_id,
+                server_url,
+                bearer_token,
+                json,
+            } => {
+                run_verify_execution(&execution_id, server_url, bearer_token, json).await?;
+            }
+            ServerCommand::CommitExecution {
+                execution_id,
+                server_url,
+                bearer_token,
+                json,
+            } => {
+                run_commit_execution(&execution_id, server_url, bearer_token, json).await?;
+            }
         },
         Command::Debug { sub } => match sub {
             DebugCommand::RepoRoot => {
@@ -5605,5 +6030,215 @@ mod tests {
             resp.error,
             Some(LedgerVerificationError::EmptyLedger)
         ));
+    }
+
+    // ---------------------------------------------------------------------------
+    // Advanced flow command type tests
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn test_verify_request_serialization() {
+        use ferrum_proto::api::VerifyRequest;
+        let exec_id = ferrum_proto::ExecutionId(
+            uuid::Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap(),
+        );
+        let req = VerifyRequest {
+            execution_id: exec_id,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("11111111-1111-1111-1111-111111111111"));
+    }
+
+    #[test]
+    fn test_commit_request_serialization() {
+        use ferrum_proto::api::CommitRequest;
+        let exec_id = ferrum_proto::ExecutionId(
+            uuid::Uuid::parse_str("22222222-2222-2222-2222-222222222222").unwrap(),
+        );
+        let req = CommitRequest {
+            execution_id: exec_id,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("22222222-2222-2222-2222-222222222222"));
+    }
+
+    #[test]
+    fn test_authorize_execution_request_serialization() {
+        use ferrum_proto::api::AuthorizeExecutionRequest;
+        let proposal_id = ferrum_proto::ProposalId(
+            uuid::Uuid::parse_str("33333333-3333-3333-3333-333333333333").unwrap(),
+        );
+        let capability_id = ferrum_proto::CapabilityId(
+            uuid::Uuid::parse_str("44444444-4444-4444-4444-444444444444").unwrap(),
+        );
+        let req = AuthorizeExecutionRequest {
+            proposal_id,
+            capability_id,
+            dry_run: true,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("33333333-3333-3333-3333-333333333333"));
+        assert!(json.contains("44444444-4444-4444-4444-444444444444"));
+        assert!(json.contains("\"dry_run\":true"));
+    }
+
+    #[test]
+    fn test_authorize_execution_request_dry_run_false() {
+        use ferrum_proto::api::AuthorizeExecutionRequest;
+        let proposal_id = ferrum_proto::ProposalId(
+            uuid::Uuid::parse_str("55555555-5555-5555-5555-555555555555").unwrap(),
+        );
+        let capability_id = ferrum_proto::CapabilityId(
+            uuid::Uuid::parse_str("66666666-6666-6666-6666-666666666666").unwrap(),
+        );
+        let req = AuthorizeExecutionRequest {
+            proposal_id,
+            capability_id,
+            dry_run: false,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"dry_run\":false"));
+    }
+
+    #[test]
+    fn test_intent_compile_request_minimal() {
+        use ferrum_proto::JsonMap;
+        use ferrum_proto::intent::IntentCompileRequest;
+        let req = IntentCompileRequest {
+            principal_id: ferrum_proto::PrincipalId::new(),
+            session_id: None,
+            channel_id: None,
+            title: "Test intent".to_string(),
+            goal: "Test goal".to_string(),
+            agent_plan_summary: None,
+            trusted_context: JsonMap::new(),
+            raw_inputs: vec![],
+            requested_resource_scope: vec![],
+            requested_risk_tier: None,
+            effect_type: None,
+            allowed_outcomes: None,
+            forbidden_outcomes: None,
+            metadata: JsonMap::new(),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"title\":\"Test intent\""));
+        assert!(json.contains("\"goal\":\"Test goal\""));
+    }
+
+    #[test]
+    fn test_capability_mint_request_structure() {
+        use ferrum_proto::JsonMap;
+        use ferrum_proto::capability::CapabilityMintRequest;
+        let req = CapabilityMintRequest {
+            intent_id: ferrum_proto::IntentId(
+                uuid::Uuid::parse_str("77777777-7777-7777-7777-777777777777").unwrap(),
+            ),
+            proposal_id: ferrum_proto::ProposalId(
+                uuid::Uuid::parse_str("88888888-8888-8888-8888-888888888888").unwrap(),
+            ),
+            tool_binding: ferrum_proto::capability::ToolBinding {
+                server_name: "test-server".to_string(),
+                tool_name: "test-tool".to_string(),
+                tool_version: None,
+            },
+            resource_bindings: vec![],
+            argument_constraints: vec![],
+            taint_budget: ferrum_proto::capability::TaintBudget {
+                max_taint_score: 100,
+                allow_external_tool_output: false,
+                allow_external_metadata: false,
+                allow_untrusted_text: false,
+            },
+            approval_binding: None,
+            requested_ttl_secs: 3600,
+            policy_bundle_id: None,
+            metadata: JsonMap::new(),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("77777777-7777-7777-7777-777777777777"));
+        assert!(json.contains("88888888-8888-8888-8888-888888888888"));
+        assert!(json.contains("\"server_name\":\"test-server\""));
+        assert!(json.contains("\"tool_name\":\"test-tool\""));
+        assert!(json.contains("\"requested_ttl_secs\":3600"));
+    }
+
+    #[test]
+    fn test_verify_response_serialization() {
+        use ferrum_proto::api::VerifyResponse;
+        let exec_id = ferrum_proto::ExecutionId(
+            uuid::Uuid::parse_str("99999999-9999-9999-9999-999999999999").unwrap(),
+        );
+        let resp = VerifyResponse {
+            execution_id: exec_id,
+            verified: true,
+            verified_at: None,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("99999999-9999-9999-9999-999999999999"));
+        assert!(json.contains("\"verified\":true"));
+    }
+
+    #[test]
+    fn test_commit_response_serialization() {
+        use ferrum_proto::api::CommitResponse;
+        let exec_id = ferrum_proto::ExecutionId(
+            uuid::Uuid::parse_str("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa").unwrap(),
+        );
+        let resp = CommitResponse {
+            execution_id: exec_id,
+            committed: true,
+            committed_at: None,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"));
+        assert!(json.contains("\"committed\":true"));
+    }
+
+    #[test]
+    fn test_evaluate_proposal_response_serialization() {
+        use ferrum_proto::api::EvaluateProposalResponse;
+        let resp = EvaluateProposalResponse {
+            decision: ferrum_proto::Decision::Allow,
+            reason: "test reason".to_string(),
+            matched_rule_ids: vec!["rule-1".to_string()],
+            warnings: vec!["warning-1".to_string()],
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"Allow\""));
+        assert!(json.contains("\"test reason\""));
+        assert!(json.contains("\"matched_rule_ids\""));
+        assert!(json.contains("\"warnings\""));
+    }
+
+    #[test]
+    fn test_authorize_execution_response_execution_record() {
+        use ferrum_proto::api::AuthorizeExecutionResponse;
+        let resp = AuthorizeExecutionResponse {
+            execution: ferrum_proto::ExecutionRecord {
+                execution_id: ferrum_proto::ExecutionId(
+                    uuid::Uuid::parse_str("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb").unwrap(),
+                ),
+                proposal_id: ferrum_proto::ProposalId(
+                    uuid::Uuid::parse_str("cccccccc-cccc-cccc-cccc-cccccccccccc").unwrap(),
+                ),
+                intent_id: ferrum_proto::IntentId(
+                    uuid::Uuid::parse_str("dddddddd-dddd-dddd-dddd-dddddddddddd").unwrap(),
+                ),
+                capability_id: ferrum_proto::CapabilityId(
+                    uuid::Uuid::parse_str("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee").unwrap(),
+                ),
+                rollback_contract_id: None,
+                decision: ferrum_proto::Decision::Allow,
+                state: ferrum_proto::ExecutionState::Authorized,
+                started_at: chrono::Utc::now(),
+                finished_at: None,
+                result_digest: None,
+                metadata: ferrum_proto::JsonMap::new(),
+            },
+            warnings: vec![],
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"));
+        assert!(json.contains("\"Authorized\""));
     }
 }
