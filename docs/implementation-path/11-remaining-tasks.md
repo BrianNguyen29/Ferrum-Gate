@@ -107,6 +107,10 @@ Grounded in `docs/implementation-path/30-production-roadmap.md` post-P3 executio
 
 ### Longer-Term / Planned Tracks
 
+G-E2 benchmark baseline is now captured in repo truth via
+`docs/implementation-path/42-p2-performance-baseline-evidence.md`; the next
+active broader production-ready track is G-E3 / P4.
+
 | Order | Item | Status | Source |
 |-------|------|--------|--------|
 | 8 | P4.1 `ferrumctl` advanced operator flows | ⬜ TODO | `30-production-roadmap.md` P4.1 |

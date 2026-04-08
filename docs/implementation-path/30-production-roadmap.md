@@ -176,7 +176,7 @@ production-ready status. These are execution milestones, not additional RC gates
 | Gate | Description | Owner | Status |
 |------|-------------|-------|--------|
 | G-E1 | **P2 adapter hardening complete** — all P2 slices (P2.1, P2.2, P2.3, P2.6 scaffold, P2.7) pass their slice criteria; P2.6 real provider send integration explicitly post-v1 | Engineering | ✅ DONE 2026-04-08 (P2.1 ✅; P2.2 ✅; P2.3 ✅; P2.5 ✅; P2.6 scaffold ✅ 2026-04-04; P2.7 ✅; real provider send remains post-v1/non-blocking by gate definition) |
-| G-E2 | **P2 performance baseline established** — benchmark suite covers key SQLite and adapter paths under concurrent load | Engineering | ⬜ TODO |
+| G-E2 | **P2 performance baseline established** — benchmark suite covers key SQLite and adapter paths under concurrent load | Engineering | ✅ DONE 2026-04-08 (`benches/` benchmark harness merged; evidence: `42-p2-performance-baseline-evidence.md`) |
 | G-E3 | **P4 `ferrumctl` advanced flows complete** — remaining REST surface accessible via CLI | Engineering | ⬜ PLANNED |
 | G-E4 | **P5 resilience design ratified** — Sync-1 preflight checks + decision table implemented and reviewed | Engineering | ⬜ PLANNED |
 | G-E5 | **Production evaluation sign-off** — documented assessment confirming all T1/T2 surface is production-hardened per support contract | Team | ⬜ PLANNED |
@@ -200,8 +200,8 @@ production-ready targeted after G-E1 through G-E5 complete.
 
 | Order | Item | Gate | Status |
 |-------|------|------|--------|
-| 1 | Complete P2 adapter hardening (P2.1, P2.2, P2.3, P2.6, P2.7) | G-E1 | 🔄 IN PROGRESS |
-| 2 | Establish P2 performance baseline + benchmark suite | G-E2 | ⬜ TODO |
+| 1 | Complete P2 adapter hardening (P2.1, P2.2, P2.3, P2.6, P2.7) | G-E1 | ✅ DONE |
+| 2 | Establish P2 performance baseline + benchmark suite | G-E2 | ✅ DONE |
 | 3 | Complete P4 `ferrumctl` advanced operator flows | G-E3 | ⬜ PLANNED |
 | 4 | Ratify P5 Sync-1 preflight checks + decision table | G-E4 | ⬜ PLANNED |
 | 5 | Production evaluation sign-off and broader production-ready declaration | G-E5 | ⬜ PLANNED |
