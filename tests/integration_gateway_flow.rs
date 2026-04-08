@@ -10255,6 +10255,902 @@ async fn test_adapter_backed_sqlite_compensate_restores_updated_row() {
     assert!(!all_events.is_empty());
 }
 
+/// Integration test: sqlite gateway-level verify false transitions to Failed and rejects commit.
+///
+/// Flow: execute -> tamper with row content (outside interference) -> verify mismatch ->
+///       execution becomes Failed -> commit rejected.
+///
+/// This mirrors test_fs_verify_hash_mismatch_transitions_to_failed_and_rejects_commit
+/// but for the sqlite adapter. Uses a tempfile-backed sqlite DB with snapshot-based verify.
+#[tokio::test]
+async fn test_sqlite_verify_false_transitions_to_failed_and_rejects_commit() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    let db_path = std::env::temp_dir().join("test_sqlite_verify_false_commit_test.db");
+    std::fs::File::create(&db_path).expect("failed to create sqlite db file");
+    let db_path_str = db_path.to_string_lossy().to_string();
+
+    let table = "users";
+    let row_id = "user1";
+
+    // Seed initial row content
+    seed_sqlite_row(&db_path, table, row_id, "original content").await;
+
+    // Step 1: Compile intent with SqliteDatabase scope
+    let sqlite_scope = ferrum_proto::ResourceSelector::SqliteDatabase {
+        db_path: db_path_str.clone(),
+        tables: vec![table.to_string()],
+        mode: ferrum_proto::ResourceMode::ReadWrite,
+    };
+    let app = build_router(runtime.clone());
+    let mut req = sample_intent_request_with_effect(EffectType::DatabaseMutation);
+    req.requested_resource_scope = vec![sqlite_scope];
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Step 2: Evaluate proposal with R2 (requires explicit commit)
+    let proposal = ActionProposal {
+        proposal_id: ferrum_proto::ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Update sqlite row".to_string(),
+        tool_name: "db.update".to_string(),
+        server_name: "database".to_string(),
+        raw_arguments: serde_json::json!({
+            "db_path": db_path_str,
+            "table": table,
+            "row_id": row_id,
+            "content": "updated by execute"
+        }),
+        expected_effect: "update a sqlite row".to_string(),
+        estimated_risk: RiskTier::Medium,
+        requested_rollback_class: RollbackClass::R2Compensatable,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 3: Mint capability
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "database".to_string(),
+            tool_name: "db.update".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![ResourceBinding::Sqlite {
+            db_path: db_path_str.clone(),
+            tables: vec![table.to_string()],
+            mode: ResourceMode::ReadWrite,
+        }],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        policy_bundle_id: None,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    // Step 4: Authorize execution
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    // Step 5: Prepare execution
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 6: Execute sqlite mutation
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({
+            "db_path": db_path_str,
+            "sql": format!("UPDATE {} SET content = 'updated by execute' WHERE id = 'user1'", table),
+            "table": table,
+            "row_id": row_id,
+            "content": "updated by execute"
+        }),
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Verify row was updated by execute
+    let updated_content = fetch_sqlite_row_content(&db_path, table, row_id).await;
+    assert_eq!(updated_content.as_deref(), Some("updated by execute"));
+
+    // Step 7: Tamper with the row after execution (simulates outside interference)
+    // Change the row content to something different from what execute wrote
+    seed_sqlite_row(&db_path, table, row_id, "tampered by outside").await;
+    let tampered_content = fetch_sqlite_row_content(&db_path, table, row_id).await;
+    assert_eq!(tampered_content.as_deref(), Some("tampered by outside"));
+
+    // Step 8: Verify → content mismatch → verified=false
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Verify returns 200 (fail-closed: verification failure is not an error response)
+    assert_eq!(
+        response.status(),
+        200,
+        "verify should return 200 (not 500) for fail-closed verification"
+    );
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let verify_resp: ferrum_proto::VerifyResponse = serde_json::from_slice(&body).unwrap();
+
+    // Content mismatch: current content != snapshot content → verified=false
+    assert!(
+        !verify_resp.verified,
+        "verify should be false when current content != snapshot (row was tampered)"
+    );
+    assert!(
+        verify_resp.verified_at.is_none(),
+        "verified_at should not be set when verification fails"
+    );
+
+    // Step 9: Execution state should transition to Failed
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored_execution.is_some());
+    let exec = stored_execution.unwrap();
+    assert!(
+        matches!(exec.state, ExecutionState::Failed),
+        "Execution should be Failed after verify mismatch, got {:?}",
+        exec.state
+    );
+
+    // Step 10: Commit should be rejected from Failed state
+    let app = build_router(runtime.clone());
+    let commit_req = ferrum_proto::CommitRequest { execution_id };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/commit", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&commit_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Commit from Failed state should be rejected (4xx or 5xx, not 2xx)
+    assert!(
+        !response.status().is_success(),
+        "commit should be rejected from Failed state, got {:?}",
+        response.status()
+    );
+
+    // Clean up: restore row so subsequent tests are not affected
+    seed_sqlite_row(&db_path, table, row_id, "original content").await;
+}
+
+/// Integration test: sqlite gateway-level rollback drill after verify failure.
+///
+/// Flow: execute -> verify false (due to outside interference) -> rollback ->
+///       assert RolledBack + sqlite state restored.
+///
+/// This mirrors test_fs_verify_false_triggers_rollback_drill but for sqlite adapter.
+#[tokio::test]
+async fn test_sqlite_verify_false_triggers_rollback_drill() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    let db_path = std::env::temp_dir().join("test_sqlite_rollback_drill.db");
+    std::fs::File::create(&db_path).expect("failed to create sqlite db file");
+    let db_path_str = db_path.to_string_lossy().to_string();
+
+    let table = "accounts";
+    let row_id = "acc_1";
+
+    // Seed initial row content
+    seed_sqlite_row(&db_path, table, row_id, "initial balance: 100").await;
+
+    // Step 1: Compile intent with SqliteDatabase scope
+    let sqlite_scope = ferrum_proto::ResourceSelector::SqliteDatabase {
+        db_path: db_path_str.clone(),
+        tables: vec![table.to_string()],
+        mode: ferrum_proto::ResourceMode::ReadWrite,
+    };
+    let app = build_router(runtime.clone());
+    let mut req = sample_intent_request_with_effect(EffectType::DatabaseMutation);
+    req.requested_resource_scope = vec![sqlite_scope];
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Step 2: Evaluate proposal with R2 (requires explicit rollback)
+    let proposal = ActionProposal {
+        proposal_id: ferrum_proto::ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Update account balance".to_string(),
+        tool_name: "db.update".to_string(),
+        server_name: "database".to_string(),
+        raw_arguments: serde_json::json!({
+            "db_path": db_path_str,
+            "table": table,
+            "row_id": row_id,
+            "content": "balance after tx: 150"
+        }),
+        expected_effect: "update account balance".to_string(),
+        estimated_risk: RiskTier::Medium,
+        requested_rollback_class: RollbackClass::R2Compensatable,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 3: Mint capability
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "database".to_string(),
+            tool_name: "db.update".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![ResourceBinding::Sqlite {
+            db_path: db_path_str.clone(),
+            tables: vec![table.to_string()],
+            mode: ResourceMode::ReadWrite,
+        }],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        policy_bundle_id: None,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    // Step 4: Authorize execution
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    // Step 5: Prepare execution
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 6: Execute sqlite mutation
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({
+            "db_path": db_path_str,
+            "sql": format!("UPDATE {} SET content = 'balance after tx: 150' WHERE id = 'acc_1'", table),
+            "table": table,
+            "row_id": row_id,
+            "content": "balance after tx: 150"
+        }),
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Verify row was updated
+    let updated_content = fetch_sqlite_row_content(&db_path, table, row_id).await;
+    assert_eq!(updated_content.as_deref(), Some("balance after tx: 150"));
+
+    // Step 7: Tamper with the row after execution (simulates outside interference)
+    seed_sqlite_row(&db_path, table, row_id, "tampered balance: 999").await;
+    let tampered_content = fetch_sqlite_row_content(&db_path, table, row_id).await;
+    assert_eq!(tampered_content.as_deref(), Some("tampered balance: 999"));
+
+    // Step 8: Verify → content mismatch → verified=false
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let verify_resp: ferrum_proto::VerifyResponse = serde_json::from_slice(&body).unwrap();
+    assert!(
+        !verify_resp.verified,
+        "verify should be false after outside interference"
+    );
+
+    // Execution state should be Failed
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(
+        matches!(stored_execution.unwrap().state, ExecutionState::Failed),
+        "execution should be Failed after verify mismatch"
+    );
+
+    // Step 9: Now rollback the execution
+    let app = build_router(runtime.clone());
+    let rollback_req = ferrum_proto::RollbackRequest { execution_id };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/rollback", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&rollback_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        200,
+        "rollback should return 200 even after verify failure"
+    );
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let rollback_resp: ferrum_proto::RollbackResponse = serde_json::from_slice(&body).unwrap();
+    assert!(
+        rollback_resp.rolled_back,
+        "rollback should succeed after verify failure"
+    );
+
+    // Verify execution state is RolledBack
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(
+        matches!(stored_execution.unwrap().state, ExecutionState::RolledBack),
+        "execution should be RolledBack after rollback"
+    );
+
+    // Verify sqlite state: row should be restored to original content
+    let restored_content = fetch_sqlite_row_content(&db_path, table, row_id).await;
+    assert_eq!(
+        restored_content.as_deref(),
+        Some("initial balance: 100"),
+        "row content should be restored to original after rollback"
+    );
+
+    // Verify SideEffectRolledBack provenance event was emitted
+    let events = runtime
+        .store
+        .provenance()
+        .query(&ferrum_proto::ProvenanceQueryRequest {
+            intent_id: None,
+            proposal_id: None,
+            execution_id: Some(execution_id),
+            capability_id: None,
+            event_kind: Some(ProvenanceEventKind::SideEffectRolledBack),
+            terminal_only: None,
+            since: None,
+            until: None,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(
+        !events.is_empty(),
+        "SideEffectRolledBack provenance event should be emitted after rollback"
+    );
+
+    // Clean up
+    let _ = std::fs::remove_file(&db_path);
+}
+
+/// Integration test: sqlite gateway-level compensate drill after verify failure.
+///
+/// Flow: execute -> verify false (due to outside interference) -> compensate ->
+///       assert Compensated + sqlite state restored.
+///
+/// This mirrors test_fs_verify_false_triggers_compensate_drill but for sqlite adapter.
+#[tokio::test]
+async fn test_sqlite_verify_false_triggers_compensate_drill() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    let db_path = std::env::temp_dir().join("test_sqlite_compensate_drill.db");
+    std::fs::File::create(&db_path).expect("failed to create sqlite db file");
+    let db_path_str = db_path.to_string_lossy().to_string();
+
+    let table = "inventory";
+    let row_id = "item_1";
+
+    // Seed initial row content
+    seed_sqlite_row(&db_path, table, row_id, "stock: 50").await;
+
+    // Step 1: Compile intent with SqliteDatabase scope
+    let sqlite_scope = ferrum_proto::ResourceSelector::SqliteDatabase {
+        db_path: db_path_str.clone(),
+        tables: vec![table.to_string()],
+        mode: ferrum_proto::ResourceMode::ReadWrite,
+    };
+    let app = build_router(runtime.clone());
+    let mut req = sample_intent_request_with_effect(EffectType::DatabaseMutation);
+    req.requested_resource_scope = vec![sqlite_scope];
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Step 2: Evaluate proposal with R2 (requires explicit compensate)
+    let proposal = ActionProposal {
+        proposal_id: ferrum_proto::ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Update inventory stock".to_string(),
+        tool_name: "db.update".to_string(),
+        server_name: "database".to_string(),
+        raw_arguments: serde_json::json!({
+            "db_path": db_path_str,
+            "table": table,
+            "row_id": row_id,
+            "content": "stock after order: 45"
+        }),
+        expected_effect: "decrement inventory stock".to_string(),
+        estimated_risk: RiskTier::Medium,
+        requested_rollback_class: RollbackClass::R2Compensatable,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 3: Mint capability
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "database".to_string(),
+            tool_name: "db.update".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![ResourceBinding::Sqlite {
+            db_path: db_path_str.clone(),
+            tables: vec![table.to_string()],
+            mode: ResourceMode::ReadWrite,
+        }],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        policy_bundle_id: None,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    // Step 4: Authorize execution
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    // Step 5: Prepare execution
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 6: Execute sqlite mutation
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({
+            "db_path": db_path_str,
+            "sql": format!("UPDATE {} SET content = 'stock after order: 45' WHERE id = 'item_1'", table),
+            "table": table,
+            "row_id": row_id,
+            "content": "stock after order: 45"
+        }),
+    };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Verify row was updated
+    let updated_content = fetch_sqlite_row_content(&db_path, table, row_id).await;
+    assert_eq!(updated_content.as_deref(), Some("stock after order: 45"));
+
+    // Step 7: Tamper with the row after execution (simulates outside interference)
+    seed_sqlite_row(&db_path, table, row_id, "stock tampered: 9999").await;
+    let tampered_content = fetch_sqlite_row_content(&db_path, table, row_id).await;
+    assert_eq!(tampered_content.as_deref(), Some("stock tampered: 9999"));
+
+    // Step 8: Verify → content mismatch → verified=false
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let verify_resp: ferrum_proto::VerifyResponse = serde_json::from_slice(&body).unwrap();
+    assert!(
+        !verify_resp.verified,
+        "verify should be false after outside interference"
+    );
+
+    // Execution state should be Failed
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(
+        matches!(stored_execution.unwrap().state, ExecutionState::Failed),
+        "execution should be Failed after verify mismatch"
+    );
+
+    // Step 9: Now compensate the execution
+    let app = build_router(runtime.clone());
+    let compensate_req = ferrum_proto::CompensateRequest { execution_id };
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/compensate", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&compensate_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        200,
+        "compensate should return 200 even after verify failure"
+    );
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compensate_resp: ferrum_proto::CompensateResponse = serde_json::from_slice(&body).unwrap();
+    assert!(
+        compensate_resp.compensated,
+        "compensate should succeed after verify failure"
+    );
+
+    // Verify execution state is Compensated
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(
+        matches!(stored_execution.unwrap().state, ExecutionState::Compensated),
+        "execution should be Compensated after compensate"
+    );
+
+    // Verify sqlite state: row should be restored to original content
+    let restored_content = fetch_sqlite_row_content(&db_path, table, row_id).await;
+    assert_eq!(
+        restored_content.as_deref(),
+        Some("stock: 50"),
+        "row content should be restored to original after compensate"
+    );
+
+    // Verify SideEffectCompensated provenance event was emitted
+    let events = runtime
+        .store
+        .provenance()
+        .query(&ferrum_proto::ProvenanceQueryRequest {
+            intent_id: None,
+            proposal_id: None,
+            execution_id: Some(execution_id),
+            capability_id: None,
+            event_kind: Some(ProvenanceEventKind::SideEffectCompensated),
+            terminal_only: None,
+            since: None,
+            until: None,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(
+        !events.is_empty(),
+        "SideEffectCompensated provenance event should be emitted after compensate"
+    );
+
+    // Clean up
+    let _ = std::fs::remove_file(&db_path);
+}
+
 // ============================================
 // MAILDRAFT ADAPTER INTEGRATION TESTS
 // ============================================
@@ -23509,4 +24405,599 @@ async fn test_fs_verify_hash_mismatch_transitions_to_failed_and_rejects_commit()
 
     // Clean up: restore file to allow subsequent tests to delete it via rollback
     std::fs::write(file_path, "hello").expect("failed to restore file for rollback");
+}
+
+/// Integration test: gateway-level fs rollback drill after verify failure.
+///
+/// Flow: execute -> verify false (due to outside interference) -> rollback -> assert RolledBack + fs state restored.
+/// Uses /tmp filesystem with snapshot-based rollback.
+/// Rollback is the native-reversible path; validates it works for fs after verify failure.
+#[tokio::test]
+async fn test_fs_verify_false_triggers_rollback_drill() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    let file_path = "/tmp/test_fs_rollback_drill.txt";
+
+    // Step 1: Compile intent with FileMutation effect and fs write scope
+    let mut req = sample_intent_request_with_effect(EffectType::FileMutation);
+    req.requested_resource_scope = vec![ResourceSelector::FilesystemPath {
+        path: "/tmp".to_string(),
+        mode: ResourceMode::Write,
+        content_hash: None,
+    }];
+    let app = build_router(runtime.clone());
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Step 2: Evaluate proposal with R2 (requires explicit rollback, not auto-rollback)
+    let proposal = ActionProposal {
+        proposal_id: ferrum_proto::ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Write file".to_string(),
+        tool_name: "fs.write".to_string(),
+        server_name: "workspace".to_string(),
+        raw_arguments: serde_json::json!({"path": file_path, "content": "hello"}),
+        expected_effect: "write a file".to_string(),
+        estimated_risk: RiskTier::Medium,
+        requested_rollback_class: RollbackClass::R2Compensatable,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    // Step 3: Mint capability
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "workspace".to_string(),
+            tool_name: "fs.write".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![ResourceBinding::File {
+            path: file_path.to_string(),
+            mode: ResourceMode::Write,
+            required_hash: None,
+        }],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        policy_bundle_id: None,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    // Step 4: Authorize execution
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    // Step 5: Prepare execution (snapshots existing file state - none here, so snapshot is empty)
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    // Step 6: Execute fs.write → creates file with "hello"
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({"path": file_path, "content": "hello"}),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let execute_resp: ferrum_proto::ExecuteResponse = serde_json::from_slice(&body).unwrap();
+    assert!(execute_resp.executed);
+
+    // Verify file was created with correct content
+    let path = std::path::Path::new(file_path);
+    assert!(path.exists(), "file should exist after execute");
+    let content = std::fs::read_to_string(path).unwrap();
+    assert_eq!(content, "hello", "file should contain 'hello'");
+
+    // Step 7: Tamper with the file after execution (simulates outside interference)
+    std::fs::write(path, "tampered").expect("failed to tamper with file");
+    let tampered_content = std::fs::read_to_string(path).unwrap();
+    assert_eq!(tampered_content, "tampered", "file should be tampered");
+
+    // Step 8: Verify → fs adapter detects hash mismatch → verified=false
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let verify_resp: ferrum_proto::VerifyResponse = serde_json::from_slice(&body).unwrap();
+    assert!(
+        !verify_resp.verified,
+        "verify should be false after outside interference"
+    );
+
+    // Execution state should be Failed after verify mismatch
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(
+        matches!(stored_execution.unwrap().state, ExecutionState::Failed),
+        "execution should be Failed after verify mismatch"
+    );
+
+    // Step 9: Now rollback the execution
+    let app = build_router(runtime.clone());
+    let rollback_req = ferrum_proto::RollbackRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/rollback", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&rollback_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        200,
+        "rollback should return 200 even after verify failure"
+    );
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let rollback_resp: ferrum_proto::RollbackResponse = serde_json::from_slice(&body).unwrap();
+    assert!(
+        rollback_resp.rolled_back,
+        "rollback should succeed after verify failure"
+    );
+
+    // Verify execution state is RolledBack
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(
+        matches!(stored_execution.unwrap().state, ExecutionState::RolledBack),
+        "execution should be RolledBack after rollback"
+    );
+
+    // Verify fs state: file should be deleted (rollback of new file creation)
+    let file_exists_after = std::path::Path::new(file_path).exists();
+    assert!(
+        !file_exists_after,
+        "file should be deleted after rollback (fs rollback of new file = delete)"
+    );
+
+    // Verify SideEffectRolledBack provenance event was emitted
+    let events = runtime
+        .store
+        .provenance()
+        .query(&ferrum_proto::ProvenanceQueryRequest {
+            intent_id: None,
+            proposal_id: None,
+            execution_id: Some(execution_id),
+            capability_id: None,
+            event_kind: Some(ProvenanceEventKind::SideEffectRolledBack),
+            terminal_only: None,
+            since: None,
+            until: None,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(
+        !events.is_empty(),
+        "SideEffectRolledBack provenance event should be emitted after rollback"
+    );
+}
+
+/// Integration test: gateway-level fs compensate drill after verify failure.
+///
+/// Flow: execute -> verify false (due to outside interference) -> compensate -> assert Compensated + fs state restored.
+/// Uses /tmp filesystem with snapshot-based compensate.
+/// Compensate is the primary recovery endpoint; this validates it works identically to rollback for fs.
+#[tokio::test]
+async fn test_fs_verify_false_triggers_compensate_drill() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    let file_path = "/tmp/test_fs_compensate_drill.txt";
+
+    // Step 1: Compile intent with FileMutation effect and fs write scope
+    let mut req = sample_intent_request_with_effect(EffectType::FileMutation);
+    req.requested_resource_scope = vec![ResourceSelector::FilesystemPath {
+        path: "/tmp".to_string(),
+        mode: ResourceMode::Write,
+        content_hash: None,
+    }];
+    let app = build_router(runtime.clone());
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Step 2: Evaluate proposal with R2 (requires explicit compensate)
+    let proposal = ActionProposal {
+        proposal_id: ferrum_proto::ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Write file".to_string(),
+        tool_name: "fs.write".to_string(),
+        server_name: "workspace".to_string(),
+        raw_arguments: serde_json::json!({"path": file_path, "content": "hello"}),
+        expected_effect: "write a file".to_string(),
+        estimated_risk: RiskTier::Medium,
+        requested_rollback_class: RollbackClass::R2Compensatable,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    // Step 3: Mint capability
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "workspace".to_string(),
+            tool_name: "fs.write".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![ResourceBinding::File {
+            path: file_path.to_string(),
+            mode: ResourceMode::Write,
+            required_hash: None,
+        }],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        policy_bundle_id: None,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    // Step 4: Authorize execution
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    // Step 5: Prepare execution
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    // Step 6: Execute fs.write → creates file with "hello"
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({"path": file_path, "content": "hello"}),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    // Verify file was created
+    let path = std::path::Path::new(file_path);
+    assert!(path.exists(), "file should exist after execute");
+    let content = std::fs::read_to_string(path).unwrap();
+    assert_eq!(content, "hello", "file should contain 'hello'");
+
+    // Step 7: Tamper with the file (simulates outside interference)
+    std::fs::write(path, "tampered").expect("failed to tamper with file");
+
+    // Step 8: Verify → mismatch → verified=false
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let verify_resp: ferrum_proto::VerifyResponse = serde_json::from_slice(&body).unwrap();
+    assert!(
+        !verify_resp.verified,
+        "verify should be false after outside interference"
+    );
+
+    // Execution state should be Failed
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(
+        matches!(stored_execution.unwrap().state, ExecutionState::Failed),
+        "execution should be Failed after verify mismatch"
+    );
+
+    // Step 9: Now compensate the execution
+    let app = build_router(runtime.clone());
+    let compensate_req = ferrum_proto::CompensateRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/compensate", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&compensate_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        200,
+        "compensate should return 200 even after verify failure"
+    );
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compensate_resp: ferrum_proto::CompensateResponse = serde_json::from_slice(&body).unwrap();
+    assert!(
+        compensate_resp.compensated,
+        "compensate should succeed after verify failure"
+    );
+
+    // Verify execution state is Compensated
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(
+        matches!(stored_execution.unwrap().state, ExecutionState::Compensated),
+        "execution should be Compensated after compensate"
+    );
+
+    // Verify fs state: file should be deleted (compensate of new file creation = delete)
+    let file_exists_after = std::path::Path::new(file_path).exists();
+    assert!(
+        !file_exists_after,
+        "file should be deleted after compensate (fs compensate of new file = delete)"
+    );
+
+    // Verify SideEffectCompensated provenance event was emitted
+    let events = runtime
+        .store
+        .provenance()
+        .query(&ferrum_proto::ProvenanceQueryRequest {
+            intent_id: None,
+            proposal_id: None,
+            execution_id: Some(execution_id),
+            capability_id: None,
+            event_kind: Some(ProvenanceEventKind::SideEffectCompensated),
+            terminal_only: None,
+            since: None,
+            until: None,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(
+        !events.is_empty(),
+        "SideEffectCompensated provenance event should be emitted after compensate"
+    );
 }
