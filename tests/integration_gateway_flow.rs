@@ -22564,6 +22564,7 @@ async fn test_verify_mutation_delete_explicit_check_match() {
     let execution_id = auth_resp.execution.execution_id;
 
     // R0 with mutation returns RequireApproval, so we need to go through approval flow
+    // Step 4b: Get approval ID and resolve it
     let (pending_approvals, _) = runtime
         .store
         .approvals()
@@ -22758,4 +22759,294 @@ async fn test_verify_mutation_delete_explicit_check_match() {
 
     // Clean up server handle
     let _ = server_handle.join();
+}
+
+/// P2.1 Slice 4: Gateway-level fs adapter verify hash mismatch → Failed → commit rejected.
+///
+/// Verifies the fail-closed integration slice for fs adapter:
+/// - execute creates a file with content "hello"
+/// - tamper with file after execution (modify content to "tampered")
+/// - verify compares current hash against stored after_hash → mismatch → verified=false
+/// - execution transitions to Failed state
+/// - commit is rejected from Failed state
+///
+/// This is the deterministic hash-mismatch scenario proving verify failure transitions
+/// execution to Failed and commit is rejected.
+///
+/// Flow:
+/// 1. Compile intent with fs.write scope + FileMutation effect
+/// 2. Evaluate, mint, authorize, prepare (R2 to require explicit commit)
+/// 3. Execute fs.write → creates /tmp/test_fs_hash_mismatch.txt with "hello"
+/// 4. Tampers with file: writes "tampered" to the same path (simulates outside interference)
+/// 5. Verify → fs adapter computes current hash vs stored after_hash → mismatch → verified=false
+/// 6. Execution state transitions to Failed
+/// 7. Commit is rejected from Failed state
+#[tokio::test]
+async fn test_fs_verify_hash_mismatch_transitions_to_failed_and_rejects_commit() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Step 1: Compile intent with FileMutation effect and fs write scope
+    let mut req = sample_intent_request_with_effect(EffectType::FileMutation);
+    req.requested_resource_scope = vec![ResourceSelector::FilesystemPath {
+        path: "/tmp".to_string(),
+        mode: ResourceMode::Write,
+        content_hash: None,
+    }];
+    let app = build_router(runtime.clone());
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Step 2: Evaluate proposal with fs.write (R2 to require explicit commit)
+    let proposal = ActionProposal {
+        proposal_id: ferrum_proto::ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Write file".to_string(),
+        tool_name: "fs.write".to_string(),
+        server_name: "workspace".to_string(),
+        raw_arguments: serde_json::json!({"path": "/tmp/test_fs_hash_mismatch.txt", "content": "hello"}),
+        expected_effect: "write a file".to_string(),
+        estimated_risk: RiskTier::Medium,
+        requested_rollback_class: RollbackClass::R2Compensatable, // Requires explicit commit
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    // Step 3: Mint capability
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "workspace".to_string(),
+            tool_name: "fs.write".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![ResourceBinding::File {
+            path: "/tmp/test_fs_hash_mismatch.txt".to_string(),
+            mode: ResourceMode::Write,
+            required_hash: None,
+        }],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        policy_bundle_id: None,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    // Step 4: Authorize execution
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    // Step 5: Prepare execution
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    // Step 6: Execute fs.write → creates file with "hello"
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({"path": "/tmp/test_fs_hash_mismatch.txt", "content": "hello"}),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let execute_resp: ferrum_proto::ExecuteResponse = serde_json::from_slice(&body).unwrap();
+    assert!(execute_resp.executed, "executed flag should be true");
+
+    // Verify file was created with correct content
+    let file_path = std::path::Path::new("/tmp/test_fs_hash_mismatch.txt");
+    assert!(file_path.exists(), "file should exist after execute");
+    let content = std::fs::read_to_string(file_path).unwrap();
+    assert_eq!(content, "hello", "file should contain 'hello'");
+
+    // Step 7: Tamper with the file after execution (simulates outside interference)
+    // Write different content to create a hash mismatch
+    std::fs::write(file_path, "tampered").expect("failed to tamper with file");
+    let tampered_content = std::fs::read_to_string(file_path).unwrap();
+    assert_eq!(tampered_content, "tampered", "file should be tampered");
+
+    // Step 8: Verify → fs adapter computes current hash vs stored after_hash → mismatch
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Verify returns 200 (fail-closed: verification failure is not an error response)
+    assert_eq!(
+        response.status(),
+        200,
+        "verify should return 200 (not 500) for fail-closed verification"
+    );
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let verify_resp: ferrum_proto::VerifyResponse = serde_json::from_slice(&body).unwrap();
+
+    // Hash mismatch: current hash ("tampered") != after_hash ("hello") → verified=false
+    assert!(
+        !verify_resp.verified,
+        "verify should be false when current hash != after_hash (file was tampered)"
+    );
+    assert!(
+        verify_resp.verified_at.is_none(),
+        "verified_at should not be set when verification fails"
+    );
+
+    // Step 9: Execution state should transition to Failed
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored_execution.is_some());
+    let exec = stored_execution.unwrap();
+    assert!(
+        matches!(exec.state, ExecutionState::Failed),
+        "Execution should be Failed after verify mismatch, got {:?}",
+        exec.state
+    );
+
+    // Step 10: Commit should be rejected from Failed state
+    let app = build_router(runtime.clone());
+    let commit_req = ferrum_proto::CommitRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/commit", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&commit_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Commit from Failed state should be rejected (4xx or 5xx, not 2xx)
+    assert!(
+        !response.status().is_success(),
+        "commit should be rejected from Failed state, got {:?}",
+        response.status()
+    );
+
+    // Clean up: restore file to allow subsequent tests to delete it via rollback
+    std::fs::write(file_path, "hello").expect("failed to restore file for rollback");
 }
