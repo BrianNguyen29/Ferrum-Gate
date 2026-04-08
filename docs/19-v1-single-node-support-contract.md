@@ -19,7 +19,7 @@ It defines what is fully supported, partially supported, and out-of-scope.
 |------|----------|--------|-------|
 | **T1 — Supported** | Single-node governance core + SQLite persistence | ✅ SUPPORTED | Core loop, evaluate/mint/authorize/prepare/execute/verify/compensate |
 | **T1 — Supported** | Defined REST route surface (Section 1.2) | ✅ SUPPORTED | All listed endpoints; commit route exposed but optional for single-node |
-| **T1 — Supported** | `ferrumctl` operator surface (Section 1.3) | ✅ SUPPORTED | High-use read/control flows CLI-covered |
+| **T1 — Supported** | `ferrumctl` operator surface (Section 1.3) | ✅ SUPPORTED | Read/control plus advanced authoring/control flows CLI-covered |
 | **T1 — Supported** | Provenance / lineage / approvals | ✅ SUPPORTED | Full pagination and filter support |
 | **T2 — Partial** | Adapter-backed integrations | ⚠️ PARTIAL | Bounded local implementations only; broader hardening post-v1 |
 | **T2 — Partial** | U1 core capability | ⚠️ PARTIAL | Materially mature for current scope; richer expressiveness post-v1 |
@@ -28,7 +28,7 @@ It defines what is fully supported, partially supported, and out-of-scope.
 | **T3 — Out of Scope** | SLA-backed availability guarantees | ❌ NOT SUPPORTED | No HA; RPO owned by operator |
 | **T3 — Out of Scope** | Automated backup / restore | ❌ NOT SUPPORTED | Manual SQLite file-level only |
 
-**Bottom line**: FerrumGate v1 single-node is RC-ready. It is production-supported for single-node SQLite-backed deployments with the T1 surface. It is NOT production-ready for multi-node, HA, or broadly-hardened adapter integrations.
+**Bottom line**: FerrumGate v1 single-node is broader production-ready as of 2026-04-08 for the supported single-node SQLite-backed deployment model. T1 is production-supported; T2 remains PARTIAL but hardened to that partial contract level; T3 remains out of scope. It is NOT production-ready for multi-node, HA, or broadly production-verified external adapter integrations.
 
 ---
 
@@ -50,6 +50,7 @@ The following REST endpoints are in the v1 single-node support contract:
 |---|---|---|
 | GET | /v1/healthz | Shallow health check |
 | GET | /v1/readyz | Shallow readiness check |
+| POST | /v1/intents/compile | Compile an intent from a structured request |
 | POST | /v1/proposals/{proposal_id}/evaluate | Evaluate proposal via policy |
 | POST | /v1/capabilities/mint | Mint a capability lease |
 | GET | /v1/capabilities/{capability_id} | Inspect a capability lease |
@@ -57,6 +58,7 @@ The following REST endpoints are in the v1 single-node support contract:
 | POST | /v1/executions/{execution_id}/prepare | Prepare rollback/preflight |
 | POST | /v1/executions/{execution_id}/execute | Execute the prepared operation |
 | POST | /v1/executions/{execution_id}/verify | Verify execution result against intent and policy |
+| POST | /v1/executions/{execution_id}/commit | Commit execution after verification |
 | POST | /v1/executions/{execution_id}/cancel | Cancel execution in pre-execute state (Proposed, Authorized, Prepared) |
 | POST | /v1/executions/{execution_id}/pause | Pause execution in running state (Running, AwaitingVerification) |
 | POST | /v1/executions/{execution_id}/resume | Resume paused execution |
@@ -88,6 +90,10 @@ The following `ferrumctl` commands are in the v1 single-node support contract:
 - `ferrumctl server inspect-lineage-query` — multi-hop lineage query via `--ancestry`/`--descendants` flags
 
 **Mutating:**
+- `ferrumctl server compile-intent --file <path>` — compile an intent from a JSON request
+- `ferrumctl server evaluate-proposal <proposal_id> --file <path>` — evaluate a proposal from a JSON request
+- `ferrumctl server mint-capability --file <path>` — mint a capability from a JSON request
+- `ferrumctl server authorize-execution --file <path>` — authorize execution from a JSON request
 - `ferrumctl server revoke-capability <capability_id>` — revoke a capability
 - `ferrumctl server resolve-approval <approval_id> --approve|--deny` — resolve a pending approval
 - `ferrumctl server cancel-execution <execution_id>` — cancel an execution in pre-execute state
@@ -95,6 +101,8 @@ The following `ferrumctl` commands are in the v1 single-node support contract:
 - `ferrumctl server resume-execution <execution_id>` — resume a paused execution
 - `ferrumctl server prepare-execution <execution_id>` — prepare an execution for execution
 - `ferrumctl server execute-execution <execution_id>` — execute a prepared execution
+- `ferrumctl server verify-execution <execution_id>` — verify an execution result
+- `ferrumctl server commit-execution <execution_id>` — commit an execution after verification
 - `ferrumctl server compensate-execution <execution_id>` — trigger compensation on an execution
 - `ferrumctl server rollback-execution <execution_id>` — trigger rollback on an execution
 

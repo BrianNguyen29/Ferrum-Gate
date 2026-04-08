@@ -37,6 +37,19 @@ FerrumGate giai bai toan **execution governance** chu khong phai thay the agent.
 
 ## 4. Pham vi v1 va support contract
 
+### Production-ready status (2026-04-08)
+
+FerrumGate v1 single-node is now **broader production-ready** with an explicit
+scope boundary:
+
+- **T1**: production-supported
+- **T2**: partial, but hardened to the partial contract level
+- **T3**: deferred / out of scope
+
+This declaration does not claim multi-node / HA readiness, broadly production-
+verified external adapter integrations, or completion of the U2-U4 upgrade
+tracks.
+
 ### Supported — single-node governance core with SQLite-backed persistence
 
 > **Canonical reference**: [19-v1-single-node-support-contract.md](./19-v1-single-node-support-contract.md)
@@ -49,17 +62,18 @@ FerrumGate v1 Supported scope:
 - Trust labels, taint scoring, scope-bounds enforcement
 - R0/R1/R2/R3 rollback contract classes with auto_commit semantics
 
-### Partial — adapter surfaces (crate/API shape only, not production-verified side-effect integrations)
+### Partial — adapter surfaces (bounded local implementations hardened to the partial contract level, not promoted to full production-verified external integrations)
 
-- `ferrum-adapter-fs` — filesystem adapter (local file write/delete with hash-based verify; broader hardening deferred)
+- `ferrum-adapter-fs` — filesystem adapter (local file write/delete with hash-based verify; broader external/integration hardening deferred)
 - `ferrum-adapter-sqlite` — SQLite adapter (bounded local row mutation rollback, including atomic multi-row support)
 - `ferrum-adapter-maildraft` — maildraft adapter (SQLite-backed draft persistence and verify semantics; send/provider integration deferred)
-- `ferrum-adapter-git` — git adapter (local HEAD capture/reset and branch-create rollback; remote workflows deferred)
+- `ferrum-adapter-git` — git adapter (local HEAD capture/reset and branch-create rollback; broader remote/external workflows deferred)
 - `ferrum-adapter-http` — HTTP adapter (bounded HTTP execute/verify with body-aware digest, header-shape binding, canonical query strings, auth support, and conservative rollback no-op; mutation recovery is R3 boundary)
 
 ### Deferred / post-v1
 
-- broader production-verified adapter integrations and hardening (fs, sqlite, maildraft, git, http)
+- broader production-verified external adapter integrations and hardening beyond the T2 partial contract (fs, sqlite, maildraft, git, http)
+- policy bundle lifecycle tooling
 - multi-node / HA / read-replica
 - deeper U1-U4 upgrade-track work (Outcome-aware Governance, Reversible Execution Planner, Cross-runtime Provenance Fabric, MCP/local/NemoClaw runtime integrations)
 

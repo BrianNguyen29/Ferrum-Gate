@@ -79,7 +79,7 @@
 
 ## Post-P3 Execution Order
 
-The following lists the remaining execution order after P3 completion (P3.G1–P3.G4 ✅ DONE 2026-04-03), grounded in roadmap priority order. Single-node v1 RC-ready; broader production-ready still incomplete.
+The following lists the executed production-evaluation order after P3 completion (P3.G1–P3.G4 ✅ DONE 2026-04-03), grounded in roadmap priority order. Single-node v1 RC-ready; broader production-ready is now ratified through G-E5.
 
 ### Immediate Next Slice (P2 adapter hardening — in progress / todo)
 
@@ -161,12 +161,13 @@ FerrumGate v1 single-node is **RC-ready** (2026-04-02). RC gates passed:
 - `cargo test --workspace` ✅ PASS
 - All P0 gates cleared
 
-FerrumGate v1 single-node is **NOT yet broader production-ready**. The following
-remain in progress or planned:
-- P2 adapter hardening (fs, sqlite, git, http, maildraft) — in progress
-- P4 `ferrumctl` operator surface completeness — planned
-- P5 resilience architecture (HA/multi-node) — planned
-- P6 upgrade tracks (U2/U3/U4) — planned
+FerrumGate v1 single-node is **broader production-ready** within the scoped T1/T2/T3
+support-contract boundary. The following remain post-v1 backlog items rather than
+blockers to the current declaration:
+- broader external adapter verification / integration depth
+- P4.2 policy bundle lifecycle tooling
+- P5 resilience expansion (HA/multi-node)
+- P6 upgrade tracks (U2/U3/U4)
 
 ### Production Evaluation Gates
 
@@ -179,7 +180,7 @@ production-ready status. These are execution milestones, not additional RC gates
 | G-E2 | **P2 performance baseline established** — benchmark suite covers key SQLite and adapter paths under concurrent load | Engineering | ✅ DONE 2026-04-08 (`benches/` benchmark harness merged; evidence: `42-p2-performance-baseline-evidence.md`) |
 | G-E3 | **P4 `ferrumctl` advanced flows complete** — remaining REST surface accessible via CLI | Engineering | ✅ DONE 2026-04-08 (`compile-intent`, `evaluate-proposal`, `mint-capability`, `authorize-execution`, `verify-execution`, `commit-execution` added to `ferrumctl`) |
 | G-E4 | **P5 resilience design ratified** — Sync-1 preflight checks + decision table implemented and reviewed | Engineering | ✅ DONE 2026-04-08 (`ferrum-sync` + `ferrum-store` sync tests re-run; PF1–PF8, decision table, and live readiness orchestration all verified) |
-| G-E5 | **Production evaluation sign-off** — documented assessment confirming all T1/T2 surface is production-hardened per support contract | Team | ⬜ PLANNED |
+| G-E5 | **Production evaluation sign-off** — documented assessment confirming T1 is production-supported and T2 is hardened to the partial contract level per support contract | Team | ✅ DONE 2026-04-08 (`43-production-readiness-signoff.md`) |
 
 ### Out-of-Tree SQLite Performance Candidate
 
@@ -195,8 +196,8 @@ regression is resolved and the approach is validated through proper review.
 
 ### Execution Sequence (Production Evaluation Path)
 
-Grounded in roadmap priority order. Single-node v1 RC-ready now; broader
-production-ready targeted after G-E1 through G-E5 complete.
+Grounded in roadmap priority order. Single-node v1 RC-ready first; broader
+production-ready is now declared after G-E1 through G-E5 completion.
 
 | Order | Item | Gate | Status |
 |-------|------|------|--------|
@@ -204,7 +205,7 @@ production-ready targeted after G-E1 through G-E5 complete.
 | 2 | Establish P2 performance baseline + benchmark suite | G-E2 | ✅ DONE |
 | 3 | Complete P4 `ferrumctl` advanced operator flows | G-E3 | ✅ DONE |
 | 4 | Ratify P5 Sync-1 preflight checks + decision table | G-E4 | ✅ DONE |
-| 5 | Production evaluation sign-off and broader production-ready declaration | G-E5 | ⬜ PLANNED |
+| 5 | Production evaluation sign-off and broader production-ready declaration | G-E5 | ✅ DONE |
 
 **Note:** This execution path is the current best estimate. Adjustments may be
 made as P2 adapter hardening progresses and new information becomes available.

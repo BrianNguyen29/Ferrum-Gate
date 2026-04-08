@@ -59,10 +59,11 @@ These are explicitly out of v1 scope. Do not treat as blockers.
 - Source of truth for P3 track status: `docs/implementation-path/30-production-roadmap.md` Section — Priority 3
 
 **Remaining post-v1 adapter and integration work:**
-- [ ] broader production-verified adapter integrations and hardening (fs, sqlite, git, http)
+- [x] adapter hardening to the current T2 partial-contract boundary completed via G-E1
+- [ ] broader production-verified external adapter integrations and hardening (fs, sqlite, git, http)
   - Src: `docs/00-project-canon.md` line 62 "broader production-verified adapter integrations and hardening (fs, sqlite, maildraft, git, http)"
   - Src: `docs/implementation-path/01-current-state.md` lines 26-31
-  - Note: fs/sqlite/git/maildraft now have bounded local implementations; broader hardening, remote/external integration depth, and production verification remain post-v1.
+  - Note: fs/sqlite/git/maildraft now have bounded local implementations and G-E1 hardening evidence; broader external integration depth and production verification remain post-v1.
 
 - [ ] git: remote workflows and broader ref-mutation coverage (post-v1)
   - Src: `crates/ferrum-adapter-git/README.md` lines 22-37 "GitPush Support (P2.4 Slice 1)" and "GitFetch Support (P2.4 Slice 2)" and "GitPull Support (P2.4 Slice 3)"
@@ -91,7 +92,7 @@ These are explicitly out of v1 scope. Do not treat as blockers.
 
 ## Execution Sequence
 
-Grounded in `docs/implementation-path/30-production-roadmap.md` post-P3 execution order. Single-node v1 RC-ready; broader production-ready still incomplete.
+Grounded in `docs/implementation-path/30-production-roadmap.md` post-P3 execution order. Single-node v1 RC-ready first; broader production-ready is now declared through G-E5.
 
 ### Immediate Next Slices (P2 adapter hardening)
 

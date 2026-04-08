@@ -122,15 +122,15 @@ All P0 gates cleared as of 2026-04-02. RC sign-off can proceed.
 - Supported flows: `25-v1-single-node-rc-evidence.md` Evidence 9
 - Open gaps: `11-remaining-tasks.md`
 
-### Broader production-ready — in progress via roadmap gates
-FerrumGate v1 single-node is **RC-ready** (2026-04-02). Broader production-ready
-requires completing G-E1 through G-E5 per `30-production-roadmap.md` Priority 5
-(Section "Production Evaluation and Execution Plan"). Key open items:
-- **G-E1**: P2 adapter hardening (fs, sqlite, git, http, maildraft) — 🔄 IN PROGRESS
-- **G-E2**: P2 performance baseline + benchmark suite — ⬜ TODO
-- **G-E3**: `ferrumctl` advanced operator flows — ⬜ PLANNED
-- **G-E4**: P5 Sync-1 preflight checks + decision table — ⬜ PLANNED
-- **G-E5**: Production evaluation sign-off — ⬜ PLANNED
+### Broader production-ready — completed via roadmap gates
+FerrumGate v1 single-node is **RC-ready** (2026-04-02) and **broader production-ready**
+as of 2026-04-08. The production evaluation gates G-E1 through G-E5 are now complete
+per `30-production-roadmap.md` Priority 5:
+- **G-E1**: P2 adapter hardening — ✅ DONE
+- **G-E2**: P2 performance baseline + benchmark suite — ✅ DONE
+- **G-E3**: `ferrumctl` advanced operator flows — ✅ DONE
+- **G-E4**: P5 Sync-1 preflight checks + decision table — ✅ DONE
+- **G-E5**: Production evaluation sign-off — ✅ DONE
 
 > **Out-of-tree SQLite candidate (NOT merged):** A write-queue optimization was
 > evaluated in a local workspace (Phase 1 ✅, Phase 2 deferred after regression).
@@ -141,7 +141,7 @@ requires completing G-E1 through G-E5 per `30-production-roadmap.md` Priority 5
 
 ## Verdict
 
-**FerrumGate v1 is RC-ready** as of 2026-04-02.
+**FerrumGate v1 is RC-ready** as of 2026-04-02 and **broader production-ready** as of 2026-04-08.
 
 All RC gates pass:
 1. `cargo clippy --workspace -- -D warnings` PASS
@@ -151,11 +151,12 @@ Core governance loop is implemented. Scope-mismatch deny is done. P1 evidence it
 All P0 blockers resolved as of 2026-04-02.
 P3.G1-G4 live evidence executed and attested (2026-04-03): see `30-production-roadmap.md` Priority 3 (lines 57–77).
 
-**Broader production-ready** requires completing the evaluation gates G-E1 through G-E5
-defined in `30-production-roadmap.md` (Priority 5, "Production Evaluation and Execution Plan").
-Remaining gaps (multi-node/HA, broader adapter hardening, U2-U4 upgrade tracks) are post-v1 backlog.
+**Broader production-ready** has now been achieved via G-E1 through G-E5.
+Remaining gaps (multi-node/HA, broader external adapter verification, policy bundle lifecycle tooling, and U2-U4 upgrade tracks) remain post-v1 backlog.
 
-Full evidence record: [25-v1-single-node-rc-evidence.md](./25-v1-single-node-rc-evidence.md).
+Full evidence record: [25-v1-single-node-rc-evidence.md](./25-v1-single-node-rc-evidence.md),
+[42-p2-performance-baseline-evidence.md](./42-p2-performance-baseline-evidence.md), and
+[43-production-readiness-signoff.md](./43-production-readiness-signoff.md).
 
 Issue #97 (2026-04-03) improved HTTP adapter verify semantics and gateway integration
 coverage but does not expand the supported scope beyond single-node RC-ready.
