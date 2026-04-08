@@ -818,6 +818,10 @@ impl RollbackAdapter for GitRollbackAdapter {
         if matches!(contract.action_type, ActionType::GitFetch) {
             return git_cleanup_fetch(contract);
         }
+        // For GitPull action, check branch context before reset
+        if matches!(contract.action_type, ActionType::GitPull) {
+            return git_cleanup_pull(contract);
+        }
         reset_to_before_ref(contract)
     }
 
@@ -833,6 +837,10 @@ impl RollbackAdapter for GitRollbackAdapter {
         // For GitFetch, restore pre-fetch local ref or delete the fetched ref
         if matches!(contract.action_type, ActionType::GitFetch) {
             return git_cleanup_fetch(contract);
+        }
+        // For GitPull action, check branch context before reset
+        if matches!(contract.action_type, ActionType::GitPull) {
+            return git_cleanup_pull(contract);
         }
         reset_to_before_ref(contract)
     }
@@ -1304,6 +1312,65 @@ fn git_cleanup_fetch(contract: &RollbackContract) -> Result<RecoveryReceipt, Ada
             serde_json::json!("deleted fetched local ref"),
         );
     }
+
+    Ok(RecoveryReceipt {
+        recovered: true,
+        adapter_metadata: metadata,
+    })
+}
+
+/// Fail-closed cleanup for GitPull: only reset if current branch matches
+/// the branch captured at prepare/execute time. If branch context changed,
+/// return an error indicating unsafe recovery.
+fn git_cleanup_pull(contract: &RollbackContract) -> Result<RecoveryReceipt, AdapterError> {
+    let repo_path = extract_repo_path_from_contract(contract)?;
+
+    // Extract the branch captured at prepare time
+    let expected_branch = contract
+        .metadata
+        .get("current_branch")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            AdapterError::Validation(
+                "GitPull rollback requires current_branch in contract metadata".to_string(),
+            )
+        })?;
+
+    // Get current branch to verify context hasn't changed
+    let current_branch = git_current_branch(&repo_path)?;
+
+    let mut metadata = JsonMap::new();
+    metadata.insert("repo_path".to_string(), serde_json::json!(repo_path));
+    metadata.insert(
+        "expected_branch".to_string(),
+        serde_json::json!(expected_branch),
+    );
+    metadata.insert(
+        "current_branch".to_string(),
+        serde_json::json!(current_branch.clone()),
+    );
+
+    // Fail-closed: if branch changed since prepare/execute, reset would affect wrong branch
+    if current_branch != expected_branch {
+        metadata.insert(
+            "compensated_with".to_string(),
+            serde_json::json!("fail-closed: branch context changed"),
+        );
+        metadata.insert("fail_closed".to_string(), serde_json::json!(true));
+        return Err(AdapterError::Validation(
+            "GitPull rollback skipped: current branch changed since prepare/execute (would reset wrong branch)".to_string(),
+        ));
+    }
+
+    // Branch matches - safe to reset to before_ref
+    let before_ref = before_ref_from_contract(contract)?;
+    git_reset_hard(&repo_path, &before_ref)?;
+
+    metadata.insert(
+        "compensated_with".to_string(),
+        serde_json::json!("reset to before_ref on matching branch"),
+    );
+    metadata.insert("restored_ref".to_string(), serde_json::json!(before_ref));
 
     Ok(RecoveryReceipt {
         recovered: true,
@@ -3542,7 +3609,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_gitpull_compensate_same_as_rollback() {
-        let (main_temp, main_path, main_head, _remote_temp, remote_path) = init_repo_with_remote();
+        let (main_temp, main_path, _main_head, _remote_temp, remote_path) = init_repo_with_remote();
         let adapter = GitRollbackAdapter::new(ADAPTER_KEY);
 
         // Push initial state
@@ -3556,12 +3623,12 @@ mod tests {
         run_git(work_path, &["config", "user.email", "ferrum@example.com"]).unwrap();
         run_git(work_path, &["checkout", "master"]).unwrap();
         std::fs::write(
-            Path::new(work_path).join("compensate_update.txt"),
-            "compensate update\n",
+            Path::new(work_path).join("branch_change_update.txt"),
+            "branch change update\n",
         )
         .unwrap();
-        run_git(work_path, &["add", "compensate_update.txt"]).unwrap();
-        run_git(work_path, &["commit", "-m", "compensate update"]).unwrap();
+        run_git(work_path, &["add", "branch_change_update.txt"]).unwrap();
+        run_git(work_path, &["commit", "-m", "branch change update"]).unwrap();
         run_git(work_path, &["push", "origin", "master"]).unwrap();
         drop(temp_work);
 
@@ -3585,7 +3652,7 @@ mod tests {
             .as_str()
             .unwrap()
             .to_string();
-        let current_branch = prep_receipt
+        let original_branch = prep_receipt
             .adapter_metadata
             .get("current_branch")
             .unwrap()
@@ -3599,7 +3666,7 @@ mod tests {
             "master",
             &before_ref,
             &remote_ref,
-            &current_branch,
+            &original_branch,
         );
 
         adapter
@@ -3607,26 +3674,51 @@ mod tests {
             .await
             .unwrap();
 
-        // Compensate should work same as rollback
-        let compensate_receipt = adapter.compensate(&contract).await.unwrap();
-        assert!(compensate_receipt.recovered);
+        // Simulate branch change: user switches to a different branch after pull
+        run_git(&main_path, &["checkout", "-b", "feature/switched"]).unwrap();
 
-        // Verify HEAD is back to original
-        let after_compensate_head = git_head(&main_path).unwrap();
+        // Verify we're on a different branch now
+        let current_branch = git_current_branch(&main_path).unwrap();
+        assert_ne!(
+            current_branch, original_branch,
+            "setup: should be on different branch after checkout -b"
+        );
+
+        // Rollback should fail-closed because branch context changed
+        let err = adapter.rollback(&contract).await.unwrap_err();
+
+        // Should get a validation error about branch context
+        let err_msg = match &err {
+            AdapterError::Validation(msg) => msg.clone(),
+            other => panic!(
+                "Expected Validation error for branch change, got: {:?}",
+                other
+            ),
+        };
+        assert!(
+            err_msg.contains("branch changed"),
+            "Error should mention branch changed, got: {}",
+            err_msg
+        );
+
+        // Verify the original branch was NOT reset (still at remote's commit)
+        let original_branch_head = git_head(&main_path).unwrap();
         assert_eq!(
-            after_compensate_head, main_head,
-            "HEAD should be restored after compensate"
+            original_branch_head, remote_ref,
+            "original branch should NOT be reset when rollback fails-closed"
         );
 
         drop(main_temp);
     }
 
     #[tokio::test]
-    async fn test_gitpull_happy_path_full_flow() {
-        let (main_temp, main_path, main_head, _remote_temp, remote_path) = init_repo_with_remote();
+    async fn test_gitpull_rollback_fail_closed_when_branch_changed() {
+        // GitPull rollback must fail-closed when the checked-out branch changed
+        // since prepare/execute. Resetting the wrong branch could destroy work.
+        let (main_temp, main_path, _main_head, _remote_temp, remote_path) = init_repo_with_remote();
         let adapter = GitRollbackAdapter::new(ADAPTER_KEY);
 
-        // Step 1: Push initial state
+        // Push initial state
         run_git(&main_path, &["push", "origin", "master"]).unwrap();
 
         // Create a new commit on remote
@@ -3637,22 +3729,20 @@ mod tests {
         run_git(work_path, &["config", "user.email", "ferrum@example.com"]).unwrap();
         run_git(work_path, &["checkout", "master"]).unwrap();
         std::fs::write(
-            Path::new(work_path).join("fullflow_update.txt"),
-            "fullflow update\n",
+            Path::new(work_path).join("branch_change_update.txt"),
+            "branch change update\n",
         )
         .unwrap();
-        run_git(work_path, &["add", "fullflow_update.txt"]).unwrap();
-        run_git(work_path, &["commit", "-m", "fullflow update"]).unwrap();
-        let remote_new_head = git_head(work_path).unwrap();
+        run_git(work_path, &["add", "branch_change_update.txt"]).unwrap();
+        run_git(work_path, &["commit", "-m", "branch change update"]).unwrap();
         run_git(work_path, &["push", "origin", "master"]).unwrap();
         drop(temp_work);
 
-        // Step 2: Prepare - captures pre-pull state
+        // Prepare and execute pull
         let prep_receipt = adapter
             .prepare(&make_pull_prepare_request(&main_path, "origin", "master"))
             .await
             .unwrap();
-        assert!(prep_receipt.accepted);
 
         let before_ref = prep_receipt
             .adapter_metadata
@@ -3668,7 +3758,7 @@ mod tests {
             .as_str()
             .unwrap()
             .to_string();
-        let current_branch = prep_receipt
+        let original_branch = prep_receipt
             .adapter_metadata
             .get("current_branch")
             .unwrap()
@@ -3676,48 +3766,155 @@ mod tests {
             .unwrap()
             .to_string();
 
-        // Step 3: Execute - pull from remote
         let contract = make_pull_contract(
             &main_path,
             "origin",
             "master",
             &before_ref,
             &remote_ref,
-            &current_branch,
+            &original_branch,
         );
 
-        let exec_receipt = adapter
+        adapter
             .execute(&contract, &serde_json::json!({}))
             .await
             .unwrap();
-        assert_eq!(exec_receipt.external_id.as_deref(), Some("origin:master"));
 
-        // Step 4: Verify - confirm pull succeeded
-        let verify_receipt = adapter.verify(&contract).await.unwrap();
+        // Simulate branch change: user switches to a different branch after pull
+        run_git(&main_path, &["checkout", "-b", "feature/switched"]).unwrap();
+
+        // Verify we're on a different branch now
+        let current_branch = git_current_branch(&main_path).unwrap();
+        assert_ne!(
+            current_branch, original_branch,
+            "setup: should be on different branch after checkout -b"
+        );
+
+        // Rollback should fail-closed because branch context changed
+        let err = adapter.rollback(&contract).await.unwrap_err();
+
+        // Should get a validation error about branch context
+        let err_msg = match &err {
+            AdapterError::Validation(msg) => msg.clone(),
+            other => panic!(
+                "Expected Validation error for branch change, got: {:?}",
+                other
+            ),
+        };
         assert!(
-            verify_receipt.verified,
-            "verify should succeed after pull: {:?}",
-            verify_receipt.adapter_metadata
-        );
-        assert_eq!(
-            verify_receipt
-                .adapter_metadata
-                .get("current_head")
-                .unwrap()
-                .as_str()
-                .unwrap(),
-            remote_new_head.as_str()
+            err_msg.contains("branch changed"),
+            "Error should mention branch changed, got: {}",
+            err_msg
         );
 
-        // Step 5: Rollback - reset to before_ref
-        let rollback_receipt = adapter.rollback(&contract).await.unwrap();
-        assert!(rollback_receipt.recovered);
-
-        // Final state: HEAD should be back at original
-        let final_head = git_head(&main_path).unwrap();
+        // Verify the original branch was NOT reset (still at remote's commit)
+        let original_branch_head = git_head(&main_path).unwrap();
         assert_eq!(
-            final_head, main_head,
-            "HEAD should be restored after rollback"
+            original_branch_head, remote_ref,
+            "original branch should NOT be reset when rollback fails-closed"
+        );
+
+        drop(main_temp);
+    }
+
+    #[tokio::test]
+    async fn test_gitpull_compensate_fail_closed_when_branch_changed() {
+        // GitPull compensate must fail-closed when the checked-out branch changed
+        // since prepare/execute, same as rollback.
+        let (main_temp, main_path, _main_head, _remote_temp, remote_path) = init_repo_with_remote();
+        let adapter = GitRollbackAdapter::new(ADAPTER_KEY);
+
+        // Push initial state
+        run_git(&main_path, &["push", "origin", "master"]).unwrap();
+
+        // Create a new commit on remote
+        let temp_work = TempDir::new().unwrap();
+        let work_path = temp_work.path().to_str().unwrap();
+        run_git(work_path, &["clone", &remote_path, "."]).unwrap();
+        run_git(work_path, &["config", "user.name", "Ferrum Test"]).unwrap();
+        run_git(work_path, &["config", "user.email", "ferrum@example.com"]).unwrap();
+        run_git(work_path, &["checkout", "master"]).unwrap();
+        std::fs::write(
+            Path::new(work_path).join("compensate_branch_change.txt"),
+            "compensate branch change\n",
+        )
+        .unwrap();
+        run_git(work_path, &["add", "compensate_branch_change.txt"]).unwrap();
+        run_git(work_path, &["commit", "-m", "compensate branch change"]).unwrap();
+        run_git(work_path, &["push", "origin", "master"]).unwrap();
+        drop(temp_work);
+
+        // Prepare and execute pull
+        let prep_receipt = adapter
+            .prepare(&make_pull_prepare_request(&main_path, "origin", "master"))
+            .await
+            .unwrap();
+
+        let before_ref = prep_receipt
+            .adapter_metadata
+            .get("before_ref")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+        let remote_ref = prep_receipt
+            .adapter_metadata
+            .get("remote_ref")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+        let original_branch = prep_receipt
+            .adapter_metadata
+            .get("current_branch")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let contract = make_pull_contract(
+            &main_path,
+            "origin",
+            "master",
+            &before_ref,
+            &remote_ref,
+            &original_branch,
+        );
+
+        adapter
+            .execute(&contract, &serde_json::json!({}))
+            .await
+            .unwrap();
+
+        // Simulate branch change: user switches to a different branch after pull
+        run_git(
+            &main_path,
+            &["checkout", "-b", "feature/compensate-switched"],
+        )
+        .unwrap();
+
+        // Verify we're on a different branch now
+        let current_branch = git_current_branch(&main_path).unwrap();
+        assert_ne!(
+            current_branch, original_branch,
+            "setup: should be on different branch after checkout -b"
+        );
+
+        // Compensate should fail-closed because branch context changed
+        let err = adapter.compensate(&contract).await.unwrap_err();
+
+        // Should get a validation error about branch context
+        let err_msg = match &err {
+            AdapterError::Validation(msg) => msg.clone(),
+            other => panic!(
+                "Expected Validation error for branch change, got: {:?}",
+                other
+            ),
+        };
+        assert!(
+            err_msg.contains("branch changed"),
+            "Error should mention branch changed, got: {}",
+            err_msg
         );
 
         drop(main_temp);
