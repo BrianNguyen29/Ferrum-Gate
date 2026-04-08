@@ -19,7 +19,7 @@ block v1 RC sign-off. See Section 6 for the complete v1 scope-freeze list.
 
 | Phase | Name | Status |
 |-------|------|--------|
-| P1 | Single-node production hardening | **Done** (pilot-ready; not production-ready — distributed trace + alerting remain P2) |
+| P1 | Single-node production hardening | **Done** (single-node production baseline established; later roadmap tracks remain for broader platform expansion) |
 | P2 | Provenance tooling + sync prep | **Planned** |
 | P3 | Sync implementation | **Planned** |
 
