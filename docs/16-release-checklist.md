@@ -7,8 +7,9 @@ Single-node v1 scope. Last updated: 2026-04-03.
 > **RC status**: FerrumGate v1 single-node is RC-ready as of 2026-04-02 — see
 > [25-v1-single-node-rc-evidence.md](./implementation-path/25-v1-single-node-rc-evidence.md) for full evidence.
 >
-> **Broader production-ready path**: requires completing G-E1 through G-E5 per
-> [30-production-roadmap.md](./implementation-path/30-production-roadmap.md) (Priority 5).
+> **Broader production-ready status**: achieved 2026-04-08 via G-E1 through G-E5 —
+> see [43-production-readiness-signoff.md](./implementation-path/43-production-readiness-signoff.md)
+> and [30-production-roadmap.md](./implementation-path/30-production-roadmap.md).
 >
 > **Out-of-tree SQLite candidate**: NOT merged — see
 > [40-out-of-tree-sqlite-performance-candidate.md](./implementation-path/40-out-of-tree-sqlite-performance-candidate.md).
@@ -44,3 +45,10 @@ Single-node v1 scope. Last updated: 2026-04-03.
 - [x] approval flow documented (GET /v1/approvals, GET /v1/approvals/{approval_id} implemented)
 - [x] startup SOP requires a functional readiness probe after healthz/readyz; shallow checks alone are not sufficient
 - [x] backup/restore drill procedure and evidence template documented in 18-single-node-operations-runbook.md Section 6.4; operator backup cadence and RPO guidance documented in Sections 5.3 and 5.4
+
+## Broader production-ready sign-off
+- [x] G-E1 adapter hardening complete — evidence: `docs/implementation-path/30-production-roadmap.md`
+- [x] G-E2 performance baseline captured — evidence: `docs/implementation-path/42-p2-performance-baseline-evidence.md`
+- [x] G-E3 ferrumctl advanced operator coverage complete — evidence: `bins/ferrumctl/src/main.rs`, roadmap G-E3 row
+- [x] G-E4 sync preflight / decision ratified — evidence: roadmap P5.4/P5.5 + G-E4 row
+- [x] G-E5 production evaluation sign-off completed — evidence: `docs/implementation-path/43-production-readiness-signoff.md`

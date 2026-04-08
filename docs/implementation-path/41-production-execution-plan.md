@@ -144,11 +144,11 @@ When G-E1 is complete:
 
 ## Gate G-E5 — Production Evaluation Sign-off
 
-**Goal:** Documented assessment confirming all T1/T2 surface is production-hardened per support contract.
+**Goal:** Documented assessment confirming T1 is production-supported and T2 is hardened to the partial contract level per support contract.
 
 **Owner:** Team
 
-**Status:** ⬜ PLANNED
+**Status:** ✅ DONE 2026-04-08
 
 **Source:** `30-production-roadmap.md` lines 180, 204–205; `16-release-checklist.md`
 
@@ -207,7 +207,7 @@ When any gate phase completes, apply this checklist:
 | G-E2 | P2 Performance Baseline Established | ✅ DONE | 2026-04-08 | `42-p2-performance-baseline-evidence.md` | Standalone `benches/` harness merged; release baseline captured for S4-S7 concurrent workloads |
 | G-E3 | P4 ferrumctl Advanced Flows Complete | ✅ DONE | 2026-04-08 | `bins/ferrumctl/src/main.rs` | Added CLI coverage for compile/evaluate/mint/authorize/verify/commit; P4.2 deferred as separate post-G-E3 scope |
 | G-E4 | P5 Sync-1 Preflight + Decision Ratified | ✅ DONE | 2026-04-08 | `30-production-roadmap.md` | Re-ran `ferrum-sync`/`ferrum-store` sync test suites covering PF1-PF8, decision table, abort mapping, and live readiness orchestration |
-| G-E5 | Production Evaluation Sign-off | ⬜ PLANNED | — | — | Team sign-off required |
+| G-E5 | Production Evaluation Sign-off | ✅ DONE | 2026-04-08 | `43-production-readiness-signoff.md` | Broader production-ready declared with explicit T1/T2/T3 scope boundaries |
 
 ---
 
