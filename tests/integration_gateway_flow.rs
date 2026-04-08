@@ -7686,6 +7686,312 @@ async fn test_git_verify_false_transitions_to_failed_and_rejects_commit() {
     );
 }
 
+/// Integration test: gateway-level git rollback drill after verify failure.
+///
+/// Flow: execute -> verify false (due to outside interference) -> rollback -> assert RolledBack + git state restored.
+/// Uses deterministic local temp git repo (no remotes).
+#[tokio::test]
+async fn test_git_verify_false_triggers_rollback_drill() {
+    let (_git_temp_dir, repo_path) = init_temp_git_repo();
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Capture HEAD before the flow
+    let head_before_flow = git_head(&repo_path);
+
+    // Run flow to prepared with R2 (compensatable, requires explicit rollback)
+    let (_intent_id, _proposal_id, execution_id, before_ref) =
+        run_git_flow_to_prepared_with_real_repo(&runtime, repo_path.clone()).await;
+
+    // Verify before_ref was captured at prepare time
+    assert_eq!(
+        before_ref, head_before_flow,
+        "before_ref should match HEAD at prepare time"
+    );
+
+    // Execute with payload.after_ref matching current HEAD
+    let head_at_execute = git_head(&repo_path);
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({"after_ref": head_at_execute}),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Simulate interference: make a NEW commit OUTSIDE the execution flow
+    // This advances HEAD past the after_ref captured during execute
+    let head_after_interference =
+        git_commit_change(&repo_path, "interference.txt", "outside change\n");
+    assert_ne!(
+        head_after_interference, head_at_execute,
+        "interference commit should have changed HEAD"
+    );
+
+    // Verify → git adapter checks current HEAD vs stored after_ref → mismatch → verified=false
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let verify_resp: ferrum_proto::VerifyResponse = serde_json::from_slice(&body).unwrap();
+    assert!(
+        !verify_resp.verified,
+        "verify should be false after outside interference"
+    );
+
+    // Execution state should be Failed after verify mismatch
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(
+        matches!(stored_execution.unwrap().state, ExecutionState::Failed),
+        "execution should be Failed after verify mismatch"
+    );
+
+    // Now rollback the execution
+    let app = build_router(runtime.clone());
+    let rollback_req = ferrum_proto::RollbackRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/rollback", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&rollback_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        200,
+        "rollback should return 200 even after verify failure"
+    );
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let rollback_resp: ferrum_proto::RollbackResponse = serde_json::from_slice(&body).unwrap();
+    assert!(
+        rollback_resp.rolled_back,
+        "rollback should succeed after verify failure"
+    );
+
+    // Verify execution state is RolledBack
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(
+        matches!(stored_execution.unwrap().state, ExecutionState::RolledBack),
+        "execution should be RolledBack after rollback"
+    );
+
+    // Verify git state was restored to before_ref
+    let current_head = git_head(&repo_path);
+    assert_eq!(
+        current_head, before_ref,
+        "git HEAD should be restored to before_ref ({}) after rollback, but is {}",
+        before_ref, current_head
+    );
+
+    // Verify SideEffectRolledBack provenance event was emitted
+    let events = runtime
+        .store
+        .provenance()
+        .query(&ferrum_proto::ProvenanceQueryRequest {
+            intent_id: None,
+            proposal_id: None,
+            execution_id: Some(execution_id),
+            capability_id: None,
+            event_kind: Some(ProvenanceEventKind::SideEffectRolledBack),
+            terminal_only: None,
+            since: None,
+            until: None,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(
+        !events.is_empty(),
+        "SideEffectRolledBack provenance event should be emitted after rollback"
+    );
+}
+
+/// Integration test: gateway-level git compensate drill after verify failure.
+///
+/// Flow: execute -> verify false (due to outside interference) -> compensate -> assert Compensated + git state restored.
+/// Uses deterministic local temp git repo (no remotes).
+/// Compensate is the primary recovery endpoint; this validates it works identically to rollback for git.
+#[tokio::test]
+async fn test_git_verify_false_triggers_compensate_drill() {
+    let (_git_temp_dir, repo_path) = init_temp_git_repo();
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Capture HEAD before the flow
+    let head_before_flow = git_head(&repo_path);
+
+    // Run flow to prepared with R2 (compensatable, requires explicit compensate)
+    let (_intent_id, _proposal_id, execution_id, before_ref) =
+        run_git_flow_to_prepared_with_real_repo(&runtime, repo_path.clone()).await;
+
+    // Verify before_ref was captured at prepare time
+    assert_eq!(
+        before_ref, head_before_flow,
+        "before_ref should match HEAD at prepare time"
+    );
+
+    // Execute with payload.after_ref matching current HEAD
+    let head_at_execute = git_head(&repo_path);
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({"after_ref": head_at_execute}),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Simulate interference: make a NEW commit OUTSIDE the execution flow
+    let head_after_interference =
+        git_commit_change(&repo_path, "interference2.txt", "another change\n");
+    assert_ne!(
+        head_after_interference, head_at_execute,
+        "interference commit should have changed HEAD"
+    );
+
+    // Verify → mismatch → verified=false
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let verify_resp: ferrum_proto::VerifyResponse = serde_json::from_slice(&body).unwrap();
+    assert!(
+        !verify_resp.verified,
+        "verify should be false after outside interference"
+    );
+
+    // Execution state should be Failed after verify mismatch
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(
+        matches!(stored_execution.unwrap().state, ExecutionState::Failed),
+        "execution should be Failed after verify mismatch"
+    );
+
+    // Now compensate the execution
+    let app = build_router(runtime.clone());
+    let compensate_req = ferrum_proto::CompensateRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/compensate", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&compensate_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        200,
+        "compensate should return 200 even after verify failure"
+    );
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compensate_resp: ferrum_proto::CompensateResponse = serde_json::from_slice(&body).unwrap();
+    assert!(
+        compensate_resp.compensated,
+        "compensate should succeed after verify failure"
+    );
+
+    // Verify execution state is Compensated
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(
+        matches!(stored_execution.unwrap().state, ExecutionState::Compensated),
+        "execution should be Compensated after compensate"
+    );
+
+    // Verify git state was restored to before_ref
+    let current_head = git_head(&repo_path);
+    assert_eq!(
+        current_head, before_ref,
+        "git HEAD should be restored to before_ref ({}) after compensate, but is {}",
+        before_ref, current_head
+    );
+
+    // Verify SideEffectCompensated provenance event was emitted
+    let events = runtime
+        .store
+        .provenance()
+        .query(&ferrum_proto::ProvenanceQueryRequest {
+            intent_id: None,
+            proposal_id: None,
+            execution_id: Some(execution_id),
+            capability_id: None,
+            event_kind: Some(ProvenanceEventKind::SideEffectCompensated),
+            terminal_only: None,
+            since: None,
+            until: None,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(
+        !events.is_empty(),
+        "SideEffectCompensated provenance event should be emitted after compensate"
+    );
+}
+
 // ============================================
 // EXECUTION-TIME EMAIL DRAFT BINDING ENFORCEMENT TESTS (Phase C3)
 // ============================================

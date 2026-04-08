@@ -1295,6 +1295,7 @@ fn git_cleanup_fetch(contract: &RollbackContract) -> Result<RecoveryReceipt, Ada
         if let Some(pre_ref) = pre_fetch_ref {
             // Use git branch -f to force-update the local branch ref to pre_ref
             // This works even if the branch is not currently checked out
+            // Fail-closed: if force-update fails, return recovered=false rather than Err
             let branch_name = if local_ref_name.starts_with("refs/heads/") {
                 local_ref_name
                     .strip_prefix("refs/heads/")
@@ -1303,7 +1304,21 @@ fn git_cleanup_fetch(contract: &RollbackContract) -> Result<RecoveryReceipt, Ada
             } else {
                 local_ref_name.clone()
             };
-            run_git(&repo_path, &["branch", "-f", &branch_name, pre_ref])?;
+            if let Err(e) = run_git(&repo_path, &["branch", "-f", &branch_name, pre_ref]) {
+                metadata.insert(
+                    "compensated_with".to_string(),
+                    serde_json::json!("force-update FAILED"),
+                );
+                metadata.insert(
+                    "force_update_error".to_string(),
+                    serde_json::json!(e.to_string()),
+                );
+                metadata.insert("pre_fetch_ref".to_string(), serde_json::json!(pre_ref));
+                return Ok(RecoveryReceipt {
+                    recovered: false,
+                    adapter_metadata: metadata,
+                });
+            }
             metadata.insert(
                 "compensated_with".to_string(),
                 serde_json::json!("force-updated local ref to pre_fetch_ref"),
@@ -3143,6 +3158,82 @@ mod tests {
         assert_eq!(
             restored_ref, initial_ref,
             "local ref should be restored to pre-fetch ref after rollback"
+        );
+
+        drop(main_temp);
+    }
+
+    /// Slice 8: GitFetch rollback fail-closed when force-update fails.
+    /// When restoring an existing local ref, if `git branch -f` fails (e.g., pre_fetch_ref
+    /// is invalid/non-existent), rollback returns `recovered=false` with metadata rather
+    /// than propagating the error — matching the GitPush fail-closed pattern.
+    #[tokio::test]
+    async fn test_gitfetch_rollback_fail_closed_when_force_update_fails() {
+        let (main_temp, main_path, _main_head, _remote_temp, _remote_path) =
+            init_repo_with_remote();
+        let adapter = GitRollbackAdapter::new(ADAPTER_KEY);
+
+        // Push master first
+        run_git(&main_path, &["push", "origin", "master"]).unwrap();
+
+        // Create a feature branch and push it
+        run_git(&main_path, &["checkout", "-b", "feature/failforce"]).unwrap();
+        std::fs::write(Path::new(&main_path).join("failforce.txt"), "failforce\n").unwrap();
+        run_git(&main_path, &["add", "failforce.txt"]).unwrap();
+        run_git(&main_path, &["commit", "-m", "failforce commit"]).unwrap();
+        let current_ref = git_head(&main_path).unwrap();
+        run_git(&main_path, &["push", "origin", "feature/failforce"]).unwrap();
+
+        // Checkout master to avoid "refusing to fetch into checked out branch" error
+        run_git(&main_path, &["checkout", "master"]).unwrap();
+
+        // Use explicit refspec mapping
+        let refspec = "feature/failforce:refs/heads/feature/failforce";
+
+        // Prepare fetch
+        let _prep_receipt = adapter
+            .prepare(&make_fetch_prepare_request(&main_path, "origin", refspec))
+            .await
+            .unwrap();
+
+        // Create contract with an INVALID pre_fetch_ref (non-existent SHA)
+        // that will cause `git branch -f` to fail
+        let fake_sha = "0000000000000000000000000000000000000000";
+        let contract = make_fetch_contract(
+            &main_path,
+            "origin",
+            refspec,
+            true,           // local ref existed
+            Some(fake_sha), // INVALID pre-fetch ref (will cause force-update to fail)
+            Some(&current_ref),
+        );
+
+        // Rollback should NOT error — it should return recovered=false
+        let rollback_receipt = adapter.rollback(&contract).await.unwrap();
+        assert!(
+            !rollback_receipt.recovered,
+            "rollback should return recovered=false when force-update fails"
+        );
+
+        // Verify the error metadata is set correctly
+        let compensated_with = rollback_receipt
+            .adapter_metadata
+            .get("compensated_with")
+            .and_then(|v| v.as_str())
+            .unwrap();
+        assert!(
+            compensated_with.contains("FAILED"),
+            "compensated_with should indicate force-update failed: {}",
+            compensated_with
+        );
+
+        let force_update_error = rollback_receipt
+            .adapter_metadata
+            .get("force_update_error")
+            .is_some();
+        assert!(
+            force_update_error,
+            "rollback metadata should contain force_update_error when force-update fails"
         );
 
         drop(main_temp);
