@@ -7532,6 +7532,160 @@ async fn test_git_verify_uses_persisted_after_ref_not_stale_before_ref() {
     );
 }
 
+/// Integration test: git verify false transitions execution to Failed and commit is rejected.
+///
+/// Scenario (deterministic local-temp-repo ref-mismatch):
+/// 1. Prepare captures before_ref (HEAD at prepare time)
+/// 2. Execute is called with after_ref = current HEAD (succeeds)
+/// 3. After execute, a NEW commit is made OUTSIDE the execution flow (simulates interference)
+/// 4. Verify checks current HEAD vs stored after_ref → mismatch → verified=false
+/// 5. Execution transitions to Failed state
+/// 6. Commit is rejected from Failed state (4xx)
+///
+/// This proves the fail-closed behavior: when verify returns false, the execution
+/// becomes Failed and cannot be committed.
+#[tokio::test]
+async fn test_git_verify_false_transitions_to_failed_and_rejects_commit() {
+    let (_git_temp_dir, repo_path) = init_temp_git_repo();
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Run flow to prepared with R2 (requires explicit commit, not auto-commit)
+    let (_intent_id, _proposal_id, execution_id, _before_ref) =
+        run_git_flow_to_prepared_with_real_repo(&runtime, repo_path.clone()).await;
+
+    // Get current HEAD before execute
+    let head_at_execute = git_head(&repo_path);
+
+    // Execute with payload.after_ref matching current HEAD
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({"after_ref": head_at_execute}),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let execute_resp: ferrum_proto::ExecuteResponse = serde_json::from_slice(&body).unwrap();
+    assert!(execute_resp.executed, "executed flag should be true");
+
+    // Simulate interference: make a NEW commit OUTSIDE the execution flow
+    // This advances HEAD past the after_ref captured during execute
+    let _head_after_interference =
+        git_commit_change(&repo_path, "interference.txt", "outside change\n");
+    let current_head_after_interference = git_head(&repo_path);
+    assert_ne!(
+        current_head_after_interference, head_at_execute,
+        "interference commit should have changed HEAD"
+    );
+
+    // Verify → git adapter checks current HEAD vs stored after_ref → mismatch
+    let app = build_router(runtime.clone());
+    let verify_req = ferrum_proto::VerifyRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/verify", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&verify_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Verify returns 200 (fail-closed: verification failure is not an error response)
+    assert_eq!(
+        response.status(),
+        200,
+        "verify should return 200 (not 500) for fail-closed verification"
+    );
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let verify_resp: ferrum_proto::VerifyResponse = serde_json::from_slice(&body).unwrap();
+
+    // Ref mismatch: current HEAD ({}) != after_ref ({}) → verified=false
+    assert!(
+        !verify_resp.verified,
+        "verify should be false when current HEAD ({}) != after_ref ({}) due to interference",
+        current_head_after_interference, head_at_execute
+    );
+    assert!(
+        verify_resp.verified_at.is_none(),
+        "verified_at should not be set when verification fails"
+    );
+
+    // Execution state should transition to Failed
+    let stored_execution = runtime.store.executions().get(execution_id).await.unwrap();
+    assert!(stored_execution.is_some());
+    let exec = stored_execution.unwrap();
+    assert!(
+        matches!(exec.state, ExecutionState::Failed),
+        "Execution should be Failed after verify mismatch, got {:?}",
+        exec.state
+    );
+
+    // Commit should be rejected from Failed state
+    let app = build_router(runtime.clone());
+    let commit_req = ferrum_proto::CommitRequest { execution_id };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/commit", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&commit_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Commit from Failed state should be rejected (4xx or 5xx, not 2xx)
+    assert!(
+        !response.status().is_success(),
+        "commit should be rejected from Failed state, got {:?}",
+        response.status()
+    );
+
+    // Verify SideEffectVerified provenance event was emitted with verified=false
+    let events = runtime
+        .store
+        .provenance()
+        .query(&ferrum_proto::ProvenanceQueryRequest {
+            intent_id: None,
+            proposal_id: None,
+            execution_id: Some(execution_id),
+            capability_id: None,
+            event_kind: Some(ProvenanceEventKind::SideEffectVerified),
+            terminal_only: None,
+            since: None,
+            until: None,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(
+        !events.is_empty(),
+        "SideEffectVerified provenance event should be emitted even for verified=false"
+    );
+}
+
 // ============================================
 // EXECUTION-TIME EMAIL DRAFT BINDING ENFORCEMENT TESTS (Phase C3)
 // ============================================
