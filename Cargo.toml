@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "benches",
   "bins/ferrumd",
   "bins/ferrumctl",
   "crates/ferrum-proto",
