@@ -1093,11 +1093,18 @@ fn git_pull_ff_only(repo_path: &str, remote: &str, refspec: &str) -> Result<(), 
 
 fn git_local_ref_exists(repo_path: &str, refspec: &str) -> Result<bool, AdapterError> {
     // Check if a local ref exists (branch or tag)
-    // Try as branch first
-    let branch_ref = if refspec.starts_with("refs/") {
-        refspec.to_string()
+    // Extract local ref name from refspec (handles "src:dst" format)
+    let local_ref_name = if refspec.contains(':') {
+        refspec.split(':').nth(1).unwrap_or(refspec).to_string()
     } else {
-        format!("refs/heads/{}", refspec)
+        refspec.to_string()
+    };
+
+    // Try as branch first
+    let branch_ref = if local_ref_name.starts_with("refs/") {
+        local_ref_name.clone()
+    } else {
+        format!("refs/heads/{}", local_ref_name)
     };
 
     let result = run_git(repo_path, &["show-ref", "--verify", &branch_ref]);
@@ -1106,7 +1113,7 @@ fn git_local_ref_exists(repo_path: &str, refspec: &str) -> Result<bool, AdapterE
     }
 
     // Try as tag
-    let tag_ref = format!("refs/tags/{}", refspec);
+    let tag_ref = format!("refs/tags/{}", local_ref_name);
     let result = run_git(repo_path, &["show-ref", "--verify", &tag_ref]);
     if result.is_ok() && !result.as_ref().unwrap().trim().is_empty() {
         return Ok(true);
@@ -1116,24 +1123,31 @@ fn git_local_ref_exists(repo_path: &str, refspec: &str) -> Result<bool, AdapterE
 }
 
 fn git_local_ref(repo_path: &str, refspec: &str) -> Result<String, AdapterError> {
+    // Extract local ref name from refspec (handles "src:dst" format)
+    let local_ref_name = if refspec.contains(':') {
+        refspec.split(':').nth(1).unwrap_or(refspec).to_string()
+    } else {
+        refspec.to_string()
+    };
+
     // Resolve the local ref to its commit hash
     // If already a full ref, try directly
-    if refspec.starts_with("refs/") {
-        let result = run_git(repo_path, &["rev-parse", refspec]);
+    if local_ref_name.starts_with("refs/") {
+        let result = run_git(repo_path, &["rev-parse", &local_ref_name]);
         if result.is_ok() && !result.as_ref().unwrap().trim().is_empty() {
             return result;
         }
     }
 
     // Try as branch first (refs/heads/<refspec>)
-    let branch_ref = format!("refs/heads/{}", refspec);
+    let branch_ref = format!("refs/heads/{}", local_ref_name);
     let result = run_git(repo_path, &["rev-parse", &branch_ref]);
     if result.is_ok() && !result.as_ref().unwrap().trim().is_empty() {
         return result;
     }
 
     // Try as tag (refs/tags/<refspec>)
-    let tag_ref = format!("refs/tags/{}", refspec);
+    let tag_ref = format!("refs/tags/{}", local_ref_name);
     run_git(repo_path, &["rev-parse", &tag_ref])
 }
 
@@ -1257,13 +1271,22 @@ fn git_cleanup_fetch(contract: &RollbackContract) -> Result<RecoveryReceipt, Ada
     );
 
     if ref_existed_before {
-        // Ref existed before - restore it via reset
+        // Ref existed before - restore it via update-ref (works regardless of checked-out branch)
         if let Some(pre_ref) = pre_fetch_ref {
-            // Reset the local branch to its pre-fetch state
-            git_reset_hard(&repo_path, pre_ref)?;
+            // Use git branch -f to force-update the local branch ref to pre_ref
+            // This works even if the branch is not currently checked out
+            let branch_name = if local_ref_name.starts_with("refs/heads/") {
+                local_ref_name
+                    .strip_prefix("refs/heads/")
+                    .unwrap()
+                    .to_string()
+            } else {
+                local_ref_name.clone()
+            };
+            run_git(&repo_path, &["branch", "-f", &branch_name, pre_ref])?;
             metadata.insert(
                 "compensated_with".to_string(),
-                serde_json::json!("reset to pre_fetch_ref"),
+                serde_json::json!("force-updated local ref to pre_fetch_ref"),
             );
             metadata.insert("pre_fetch_ref".to_string(), serde_json::json!(pre_ref));
         } else {
@@ -2862,6 +2885,130 @@ mod tests {
         assert!(
             !git_local_ref_exists(&main_path, "feature/rollback").unwrap(),
             "local ref should be deleted after rollback"
+        );
+
+        drop(main_temp);
+    }
+
+    #[tokio::test]
+    async fn test_gitfetch_rollback_restores_existing_local_ref() {
+        // Test that rollback restores the pre-fetch ref when a local ref existed before fetch.
+        // This is the counterpart to test_gitfetch_rollback_deletes_new_local_ref which covers
+        // the case where the ref did NOT exist before fetch.
+        let (main_temp, main_path, _main_head, _remote_temp, remote_path) = init_repo_with_remote();
+        let adapter = GitRollbackAdapter::new(ADAPTER_KEY);
+
+        // Push master first
+        run_git(&main_path, &["push", "origin", "master"]).unwrap();
+
+        // Create a feature branch on main repo with initial commit
+        run_git(&main_path, &["checkout", "-b", "feature/restore"]).unwrap();
+        std::fs::write(Path::new(&main_path).join("initial.txt"), "initial\n").unwrap();
+        run_git(&main_path, &["add", "initial.txt"]).unwrap();
+        run_git(&main_path, &["commit", "-m", "initial commit"]).unwrap();
+        let initial_ref = git_head(&main_path).unwrap();
+        run_git(&main_path, &["push", "origin", "feature/restore"]).unwrap();
+
+        // Create a different commit on the same branch in a work clone
+        // The work clone must track the remote's branch to ensure linear history
+        let temp_work = TempDir::new().unwrap();
+        let work_path = temp_work.path().to_str().unwrap();
+        run_git(work_path, &["clone", &remote_path, "."]).unwrap();
+        run_git(work_path, &["config", "user.name", "Ferrum Test"]).unwrap();
+        run_git(work_path, &["config", "user.email", "ferrum@example.com"]).unwrap();
+        // Track the remote's branch so our push is a fast-forward
+        run_git(
+            work_path,
+            &[
+                "checkout",
+                "-b",
+                "feature/restore",
+                "-t",
+                "origin/feature/restore",
+            ],
+        )
+        .unwrap();
+        std::fs::write(Path::new(work_path).join("updated.txt"), "updated\n").unwrap();
+        run_git(work_path, &["add", "updated.txt"]).unwrap();
+        run_git(work_path, &["commit", "-m", "updated commit"]).unwrap();
+        let updated_ref = git_head(work_path).unwrap();
+        run_git(work_path, &["push", "origin"]).unwrap();
+        drop(temp_work);
+
+        // At this point:
+        // - main repo has feature/restore pointing to initial_ref (commit A)
+        // - remote has feature/restore pointing to updated_ref (commit B)
+        assert_ne!(
+            initial_ref, updated_ref,
+            "setup check: initial and updated refs should be different"
+        );
+
+        // Checkout master to avoid "refusing to fetch into checked out branch" error
+        // The feature/restore branch still exists in refs, just not checked out
+        run_git(&main_path, &["checkout", "master"]).unwrap();
+
+        // Use explicit refspec mapping to update local branch: source:dest
+        let refspec = "feature/restore:refs/heads/feature/restore";
+
+        // Prepare fetch (ref exists locally before fetch, even though not checked out)
+        let prep_receipt = adapter
+            .prepare(&make_fetch_prepare_request(&main_path, "origin", refspec))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            prep_receipt
+                .adapter_metadata
+                .get("local_ref_existed")
+                .unwrap()
+                .as_bool(),
+            Some(true),
+            "local ref should exist before fetch"
+        );
+
+        // Execute fetch - this will update local feature/restore to updated_ref
+        let contract = make_fetch_contract(
+            &main_path,
+            "origin",
+            refspec,
+            true,               // local ref existed
+            Some(&initial_ref), // pre-fetch ref (original local branch)
+            Some(&updated_ref), // expected remote ref
+        );
+
+        adapter
+            .execute(&contract, &serde_json::json!({}))
+            .await
+            .unwrap();
+
+        // Verify local ref now points to the updated ref
+        let post_fetch_ref = git_local_ref(&main_path, "feature/restore").unwrap();
+        assert_eq!(
+            post_fetch_ref, updated_ref,
+            "local ref should be updated to remote's ref after fetch"
+        );
+
+        // Rollback should restore the pre-fetch ref
+        let rollback_receipt = adapter.rollback(&contract).await.unwrap();
+        assert!(rollback_receipt.recovered);
+
+        let compensated_with = rollback_receipt
+            .adapter_metadata
+            .get("compensated_with")
+            .unwrap()
+            .as_str()
+            .unwrap();
+        assert!(
+            compensated_with.contains("force-updated local ref"),
+            "rollback should force-update local ref, got: {}",
+            compensated_with
+        );
+
+        // Local ref should be restored to its original pre-fetch state
+        let restored_ref = git_local_ref(&main_path, "feature/restore").unwrap();
+        assert_eq!(
+            restored_ref, initial_ref,
+            "local ref should be restored to pre-fetch ref after rollback"
         );
 
         drop(main_temp);
