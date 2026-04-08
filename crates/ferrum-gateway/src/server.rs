@@ -3339,10 +3339,11 @@ async fn compensate_execution(
         })?;
 
     // State guard: reject if already in a terminal state that cannot be compensated
-    // Note: Committed is allowed (can undo after commit), but Compensated/RolledBack/Denied/Failed/Quarantined are terminal
+    // Note: Committed is allowed (can undo after commit). Failed is allowed for git-backed
+    // executions since git rollback/compensate can recover from verify mismatches.
     use ferrum_proto::ExecutionState::*;
     match existing.state {
-        Compensated | RolledBack | Denied | Failed | Quarantined => {
+        Compensated | RolledBack | Denied | Quarantined => {
             return Err(ApiProblem::new(
                 StatusCode::CONFLICT,
                 ApiErrorCode::Conflict,
@@ -3458,10 +3459,11 @@ async fn rollback_execution(
         })?;
 
     // State guard: reject if already in a terminal state that cannot be rolled back
-    // Note: Committed is allowed (can undo after commit), but Compensated/RolledBack/Denied/Failed/Quarantined are terminal
+    // Note: Committed is allowed (can undo after commit). Failed is allowed for git-backed
+    // executions since git rollback/compensate can recover from verify mismatches.
     use ferrum_proto::ExecutionState::*;
     match existing.state {
-        Compensated | RolledBack | Denied | Failed | Quarantined => {
+        Compensated | RolledBack | Denied | Quarantined => {
             return Err(ApiProblem::new(
                 StatusCode::CONFLICT,
                 ApiErrorCode::Conflict,
