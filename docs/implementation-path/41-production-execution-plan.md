@@ -63,7 +63,7 @@ When G-E1 is complete:
 
 **Owner:** Engineering
 
-**Status:** ⬜ TODO
+**Status:** ✅ DONE 2026-04-08
 
 **Source:** `30-production-roadmap.md` lines 177–178; `40-out-of-tree-sqlite-performance-candidate.md` (out-of-tree — not merged)
 
@@ -203,8 +203,8 @@ When any gate phase completes, apply this checklist:
 
 | Gate | Phase Name | Status | Completion Date | Evidence Doc | Notes |
 |------|-----------|--------|-----------------|--------------|-------|
-| G-E1 | P2 Adapter Hardening Complete | 🔄 IN PROGRESS (P2.6 scaffold ✅ 2026-04-04) | — | `30-production-roadmap.md` line 48 | P2.5 ✅ DONE; P2.6 scaffold ✅ DONE; P2.7 ✅ DONE; P2.1/P2.2/P2.3 🔄 IN PROGRESS; real provider send post-v1/non-blocking |
-| G-E2 | P2 Performance Baseline Established | ⬜ TODO | — | — | Benchmarks TBD |
+| G-E1 | P2 Adapter Hardening Complete | ✅ DONE | 2026-04-08 | `30-production-roadmap.md` | P2.1/P2.2/P2.3/P2.5/P2.6 scaffold/P2.7 ratified; real provider send remains post-v1/non-blocking by gate definition |
+| G-E2 | P2 Performance Baseline Established | ✅ DONE | 2026-04-08 | `42-p2-performance-baseline-evidence.md` | Standalone `benches/` harness merged; release baseline captured for S4-S7 concurrent workloads |
 | G-E3 | P4 ferrumctl Advanced Flows Complete | ⬜ PLANNED | — | — | |
 | G-E4 | P5 Sync-1 Preflight + Decision Ratified | ⬜ PLANNED | — | — | |
 | G-E5 | Production Evaluation Sign-off | ⬜ PLANNED | — | — | Team sign-off required |
