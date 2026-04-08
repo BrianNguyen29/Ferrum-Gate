@@ -109,14 +109,15 @@ Grounded in `docs/implementation-path/30-production-roadmap.md` post-P3 executio
 
 G-E2 benchmark baseline is now captured in repo truth via
 `docs/implementation-path/42-p2-performance-baseline-evidence.md`. G-E3 is now
-closed via the remaining `ferrumctl` operator-surface commands; the next active
-broader production-ready track is G-E4 / P5.
+closed via the remaining `ferrumctl` operator-surface commands. G-E4 is now
+ratified from the existing sync/preflight implementation and test evidence; the
+next active broader production-ready track is G-E5.
 
 | Order | Item | Status | Source |
 |-------|------|--------|--------|
 | 8 | P4.1 `ferrumctl` advanced operator flows | ✅ DONE | `30-production-roadmap.md` P4.1 |
 | 9 | P4.2 Policy bundle lifecycle tooling | ⏸ DEFERRED (post-G-E3) | `30-production-roadmap.md` P4.2 |
-| 10 | P5.4–P5.5 Sync-1 preflight checks + decision table | ⬜ TODO | `30-production-roadmap.md` P5.4–P5.5 |
+| 10 | P5.4–P5.5 Sync-1 preflight checks + decision table | ✅ DONE | `30-production-roadmap.md` P5.4–P5.5 |
 | 11 | P5.7 HA / multi-leader replication | ⬜ PLANNED | `30-production-roadmap.md` P5.7 |
 | 12 | U1.1–U1.2 Outcome-aware Governance (remaining backlog) | ⬜ PLANNED | `30-production-roadmap.md` U1.1–U1.2; Outcome-aware Governance backlog note above |
 | 13 | U2 Reversible Execution Planner | ⬜ PLANNED | `30-production-roadmap.md` U2 |

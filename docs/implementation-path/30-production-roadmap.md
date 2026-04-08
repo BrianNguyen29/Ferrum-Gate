@@ -129,8 +129,8 @@ The following lists the remaining execution order after P3 completion (P3.G1–P
 | P5.1 | SQLite read-replica use-case analysis | ✅ DONE | Analysis doc |
 | P5.2 | Leader-election requirements analysis | ✅ DONE | Analysis doc |
 | P5.3 | Sync-0 safety contract plan | ✅ DONE | Design doc |
-| P5.4 | Sync-1 preflight checks (PF1–PF8) | ⬜ TODO | Integration test |
-| P5.5 | Sync-1 decision table + abort semantics | ⬜ TODO | Integration test |
+| P5.4 | Sync-1 preflight checks (PF1–PF8) | ✅ DONE 2026-04-08 | `cargo test -p ferrum-store --lib sync_preflight`; `cargo test -p ferrum-store --lib sync_service` |
+| P5.5 | Sync-1 decision table + abort semantics | ✅ DONE 2026-04-08 | `cargo test -p ferrum-sync --lib`; `cargo test -p ferrum-store --lib sync_service` |
 | P5.6 | Sync-2 read-only preflight sketch | ✅ DONE | Design doc |
 | P5.7 | HA / multi-leader replication | ⬜ PLANNED | Post-P2 |
 
@@ -178,7 +178,7 @@ production-ready status. These are execution milestones, not additional RC gates
 | G-E1 | **P2 adapter hardening complete** — all P2 slices (P2.1, P2.2, P2.3, P2.6 scaffold, P2.7) pass their slice criteria; P2.6 real provider send integration explicitly post-v1 | Engineering | ✅ DONE 2026-04-08 (P2.1 ✅; P2.2 ✅; P2.3 ✅; P2.5 ✅; P2.6 scaffold ✅ 2026-04-04; P2.7 ✅; real provider send remains post-v1/non-blocking by gate definition) |
 | G-E2 | **P2 performance baseline established** — benchmark suite covers key SQLite and adapter paths under concurrent load | Engineering | ✅ DONE 2026-04-08 (`benches/` benchmark harness merged; evidence: `42-p2-performance-baseline-evidence.md`) |
 | G-E3 | **P4 `ferrumctl` advanced flows complete** — remaining REST surface accessible via CLI | Engineering | ✅ DONE 2026-04-08 (`compile-intent`, `evaluate-proposal`, `mint-capability`, `authorize-execution`, `verify-execution`, `commit-execution` added to `ferrumctl`) |
-| G-E4 | **P5 resilience design ratified** — Sync-1 preflight checks + decision table implemented and reviewed | Engineering | ⬜ PLANNED |
+| G-E4 | **P5 resilience design ratified** — Sync-1 preflight checks + decision table implemented and reviewed | Engineering | ✅ DONE 2026-04-08 (`ferrum-sync` + `ferrum-store` sync tests re-run; PF1–PF8, decision table, and live readiness orchestration all verified) |
 | G-E5 | **Production evaluation sign-off** — documented assessment confirming all T1/T2 surface is production-hardened per support contract | Team | ⬜ PLANNED |
 
 ### Out-of-Tree SQLite Performance Candidate
@@ -203,7 +203,7 @@ production-ready targeted after G-E1 through G-E5 complete.
 | 1 | Complete P2 adapter hardening (P2.1, P2.2, P2.3, P2.6, P2.7) | G-E1 | ✅ DONE |
 | 2 | Establish P2 performance baseline + benchmark suite | G-E2 | ✅ DONE |
 | 3 | Complete P4 `ferrumctl` advanced operator flows | G-E3 | ✅ DONE |
-| 4 | Ratify P5 Sync-1 preflight checks + decision table | G-E4 | ⬜ PLANNED |
+| 4 | Ratify P5 Sync-1 preflight checks + decision table | G-E4 | ✅ DONE |
 | 5 | Production evaluation sign-off and broader production-ready declaration | G-E5 | ⬜ PLANNED |
 
 **Note:** This execution path is the current best estimate. Adjustments may be

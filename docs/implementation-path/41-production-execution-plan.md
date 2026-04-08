@@ -120,7 +120,7 @@ When G-E1 is complete:
 
 **Owner:** Engineering
 
-**Status:** ⬜ PLANNED
+**Status:** ✅ DONE 2026-04-08
 
 **Source:** `30-production-roadmap.md` lines 179, 130–133; `11-remaining-tasks.md` line 114; `24-p1-p2-p3-execution-plan.md` lines 204–214
 
@@ -206,7 +206,7 @@ When any gate phase completes, apply this checklist:
 | G-E1 | P2 Adapter Hardening Complete | ✅ DONE | 2026-04-08 | `30-production-roadmap.md` | P2.1/P2.2/P2.3/P2.5/P2.6 scaffold/P2.7 ratified; real provider send remains post-v1/non-blocking by gate definition |
 | G-E2 | P2 Performance Baseline Established | ✅ DONE | 2026-04-08 | `42-p2-performance-baseline-evidence.md` | Standalone `benches/` harness merged; release baseline captured for S4-S7 concurrent workloads |
 | G-E3 | P4 ferrumctl Advanced Flows Complete | ✅ DONE | 2026-04-08 | `bins/ferrumctl/src/main.rs` | Added CLI coverage for compile/evaluate/mint/authorize/verify/commit; P4.2 deferred as separate post-G-E3 scope |
-| G-E4 | P5 Sync-1 Preflight + Decision Ratified | ⬜ PLANNED | — | — | |
+| G-E4 | P5 Sync-1 Preflight + Decision Ratified | ✅ DONE | 2026-04-08 | `30-production-roadmap.md` | Re-ran `ferrum-sync`/`ferrum-store` sync test suites covering PF1-PF8, decision table, abort mapping, and live readiness orchestration |
 | G-E5 | Production Evaluation Sign-off | ⬜ PLANNED | — | — | Team sign-off required |
 
 ---
