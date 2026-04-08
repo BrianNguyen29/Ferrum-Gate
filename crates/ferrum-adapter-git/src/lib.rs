@@ -1220,7 +1220,19 @@ fn git_cleanup_push(contract: &RollbackContract) -> Result<RecoveryReceipt, Adap
 
     if let Some(pre_ref) = pre_push_ref {
         // Force-push the pre-push ref back to restore remote state
-        git_push_force(&repo_path, remote, &format!("{}:{}", pre_ref, refspec))?;
+        // Fail-closed: if recovery push fails, return recovered=false rather than Err
+        if let Err(e) = git_push_force(&repo_path, remote, &format!("{}:{}", pre_ref, refspec)) {
+            metadata.insert(
+                "compensated_with".to_string(),
+                serde_json::json!("force-push pre_push_ref FAILED"),
+            );
+            metadata.insert("push_error".to_string(), serde_json::json!(e.to_string()));
+            metadata.insert("pre_push_ref".to_string(), serde_json::json!(pre_ref));
+            return Ok(RecoveryReceipt {
+                recovered: false,
+                adapter_metadata: metadata,
+            });
+        }
         metadata.insert(
             "compensated_with".to_string(),
             serde_json::json!("force-push pre_push_ref"),
@@ -2485,6 +2497,61 @@ mod tests {
         assert_eq!(
             compensated_with, "no-op (no pre_push_ref captured)",
             "rollback should indicate no-op when pre_push_ref is missing"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_gitpush_rollback_fail_closed_when_force_push_fails() {
+        let (_main_temp, main_path, _main_head, _remote_temp, _remote_path) =
+            init_repo_with_remote();
+        let adapter = GitRollbackAdapter::new(ADAPTER_KEY);
+
+        // Push initial state to remote
+        run_git(&main_path, &["push", "origin", "master"]).unwrap();
+
+        // Make a new commit and push it
+        commit_change(&main_path, "newfile.txt", "content\n");
+        let new_head = git_head(&main_path).unwrap();
+        run_git(&main_path, &["push", "origin", "master"]).unwrap();
+
+        // Create contract with an INVALID pre_push_ref (non-existent SHA)
+        // that will cause git_push_force to fail
+        let fake_sha = "0000000000000000000000000000000000000000";
+        let contract = make_push_contract(
+            &main_path,
+            "origin",
+            "master",
+            Some(fake_sha),
+            Some(&new_head),
+            None,
+        );
+
+        // Rollback should NOT error - it should return recovered=false
+        let rollback_receipt = adapter.rollback(&contract).await.unwrap();
+        assert!(
+            !rollback_receipt.recovered,
+            "rollback should return recovered=false when force-push fails"
+        );
+
+        // Verify the error metadata is set correctly
+        let compensated_with = rollback_receipt
+            .adapter_metadata
+            .get("compensated_with")
+            .and_then(|v| v.as_str())
+            .unwrap();
+        assert!(
+            compensated_with.contains("FAILED"),
+            "compensated_with should indicate force-push failed: {}",
+            compensated_with
+        );
+
+        let push_error = rollback_receipt
+            .adapter_metadata
+            .get("push_error")
+            .is_some();
+        assert!(
+            push_error,
+            "rollback metadata should contain push_error when force-push fails"
         );
     }
 
