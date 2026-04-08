@@ -61,13 +61,13 @@ All P0 gates cleared as of 2026-04-02. RC sign-off can proceed.
 | Criterion | Status | Evidence |
 |---|---|---|
 | SQLite persistence | PASS | `ferrum-store` with embedded migrations |
-| CLI usable for inspection and targeted operator control | PARTIAL | See `docs/19-v1-single-node-support-contract.md` Section 1.3 for the current `ferrumctl` surface |
+| CLI usable for inspection and targeted operator control | PASS | `ferrumctl` now covers the remaining operator-facing REST surface, including compile/evaluate/mint/authorize/verify/commit flows |
 | Config docs | PASS | `docs/15-deployment-and-operations.md` |
 | Approval workflow | PASS | GET /v1/approvals with pagination/filter |
 | Provenance query | PASS | GET/POST /v1/provenance/lineage, POST /v1/provenance/query |
 
 **Known gaps**:
-- `ferrumctl` covers the high-use operator surface but not every REST endpoint; some advanced or intent-authoring flows still require direct HTTP/OpenAPI usage. The primary operator-facing flows (inspect, watch, resolve, cancel, pause, resume, prepare, execute, compensate, rollback) are all CLI-covered.
+- Policy bundle lifecycle tooling remains a post-G-E3 backlog item; it is not required for the current operator-surface CLI closure.
 
 ---
 
