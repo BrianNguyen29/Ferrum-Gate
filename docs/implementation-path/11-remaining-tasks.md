@@ -98,7 +98,7 @@ Grounded in `docs/implementation-path/30-production-roadmap.md` post-P3 executio
 | Order | Item | Status | Source |
 |-------|------|--------|--------|
 | 1 | P2.5 http adapter hardening (Slice 1–10: all slices ✅ DONE 2026-04-04; adapter suite passes; gateway integration tests for slices 1,2,5,6,7,8,9,10 re-run successfully) | ✅ DONE | `30-production-roadmap.md` P2.5 |
-| 2 | P2.1 fs adapter hardening (Slice 1: fail-closed verify on I/O errors ✅; Slice 2: compensate deletes new file when no snapshot ✅ 2026-04-07) | 🔄 IN PROGRESS | `30-production-roadmap.md` P2.1 |
+| 2 | P2.1 fs adapter hardening (Slice 1: fail-closed verify on I/O errors ✅; Slice 2: compensate deletes new file when no snapshot ✅ 2026-04-07; Slice 3: fail-closed compensate/rollback on I/O error during recovery ✅ 2026-04-08) | 🔄 IN PROGRESS | `30-production-roadmap.md` P2.1 |
 | 3 | P2.2 sqlite adapter hardening (Slice 1: identifier safety + rollback noop tests ✅ 2026-04-04; Slice 2: file-backed lifecycle + error-path tests ✅ 2026-04-04; Slice 3: fail-closed verify on DB-open error ✅ 2026-04-07; Slice 4: fail-closed compensate/rollback on DB error during recovery ✅ 2026-04-07; Slice 5: fail-closed verify on DB-corruption mid-operation ✅ 2026-04-07) | 🔄 IN PROGRESS | `30-production-roadmap.md` P2.2 |
 | 4 | P2.3 git adapter hardening (Slice 1: fail-closed verify + noop edge-case tests ✅; Slice 2: GitBranchCreate prepare fails closed on detached HEAD ✅ 2026-04-04; Slice 3: GitPush rollback no-op when no pre_push_ref ✅ 2026-04-07) | 🔄 IN PROGRESS | `30-production-roadmap.md` P2.3 |
 | 5 | P2.4 git remote workflows (Slice 1: GitPush ✅ 2026-04-04; Slice 2: GitFetch ✅ 2026-04-04; Slice 3: GitPull fast-forward-only ✅ 2026-04-04) | ✅ DONE | `30-production-roadmap.md` P2.4 |

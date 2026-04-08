@@ -443,15 +443,24 @@ impl RollbackAdapter for FsRollbackAdapter {
                 AdapterError::Validation("Missing file_path in contract metadata".to_string())
             })?;
 
+        let mut metadata = JsonMap::new();
+        let mut recovered = true;
+
         match contract.action_type {
             ferrum_proto::ActionType::FileDelete => {
                 // For FileDelete: restore file if it existed before (has snapshot)
                 if let Some(original_content) =
                     self.snapshot_store.get_snapshot(&execution_id, file_path)
                 {
-                    std::fs::write(file_path, original_content).map_err(|e| {
-                        AdapterError::Internal(format!("Failed to restore deleted file: {}", e))
-                    })?;
+                    if let Err(e) = std::fs::write(file_path, original_content) {
+                        // Fail closed: I/O error during recovery means we couldn't restore.
+                        // Return recovered=false instead of propagating the error.
+                        metadata.insert(
+                            "recovery_error".to_string(),
+                            serde_json::Value::String(format!("io_error: {}", e)),
+                        );
+                        recovered = false;
+                    }
                 }
                 // If no snapshot, file didn't exist before delete - nothing to compensate
             }
@@ -460,15 +469,27 @@ impl RollbackAdapter for FsRollbackAdapter {
                 if let Some(original_content) =
                     self.snapshot_store.get_snapshot(&execution_id, file_path)
                 {
-                    std::fs::write(file_path, original_content).map_err(|e| {
-                        AdapterError::Internal(format!("Failed to restore file: {}", e))
-                    })?;
+                    if let Err(e) = std::fs::write(file_path, original_content) {
+                        // Fail closed: I/O error during recovery means we couldn't restore.
+                        // Return recovered=false instead of propagating the error.
+                        metadata.insert(
+                            "recovery_error".to_string(),
+                            serde_json::Value::String(format!("io_error: {}", e)),
+                        );
+                        recovered = false;
+                    }
                 } else {
                     // No snapshot means file didn't exist before - delete it if it exists now
                     if Path::new(file_path).exists() {
-                        std::fs::remove_file(file_path).map_err(|e| {
-                            AdapterError::Internal(format!("Failed to delete new file: {}", e))
-                        })?;
+                        if let Err(e) = std::fs::remove_file(file_path) {
+                            // Fail closed: I/O error during recovery means we couldn't delete.
+                            // Return recovered=false instead of propagating the error.
+                            metadata.insert(
+                                "recovery_error".to_string(),
+                                serde_json::Value::String(format!("io_error: {}", e)),
+                            );
+                            recovered = false;
+                        }
                     }
                 }
             }
@@ -478,8 +499,8 @@ impl RollbackAdapter for FsRollbackAdapter {
         self.snapshot_store.clear_hashes(&execution_id);
 
         Ok(RecoveryReceipt {
-            recovered: true,
-            adapter_metadata: JsonMap::new(),
+            recovered,
+            adapter_metadata: metadata,
         })
     }
 
@@ -495,15 +516,24 @@ impl RollbackAdapter for FsRollbackAdapter {
                 AdapterError::Validation("Missing file_path in contract metadata".to_string())
             })?;
 
+        let mut metadata = JsonMap::new();
+        let mut recovered = true;
+
         match contract.action_type {
             ferrum_proto::ActionType::FileDelete => {
                 // For FileDelete: restore file if it existed before (has snapshot)
                 if let Some(original_content) =
                     self.snapshot_store.get_snapshot(&execution_id, file_path)
                 {
-                    std::fs::write(file_path, original_content).map_err(|e| {
-                        AdapterError::Internal(format!("Failed to restore deleted file: {}", e))
-                    })?;
+                    if let Err(e) = std::fs::write(file_path, original_content) {
+                        // Fail closed: I/O error during recovery means we couldn't restore.
+                        // Return recovered=false instead of propagating the error.
+                        metadata.insert(
+                            "recovery_error".to_string(),
+                            serde_json::Value::String(format!("io_error: {}", e)),
+                        );
+                        recovered = false;
+                    }
                 }
                 // If no snapshot, file didn't exist before delete - nothing to rollback
             }
@@ -518,16 +548,28 @@ impl RollbackAdapter for FsRollbackAdapter {
                     if let Some(original_content) =
                         self.snapshot_store.get_snapshot(&execution_id, file_path)
                     {
-                        std::fs::write(file_path, original_content).map_err(|e| {
-                            AdapterError::Internal(format!("Failed to restore file: {}", e))
-                        })?;
+                        if let Err(e) = std::fs::write(file_path, original_content) {
+                            // Fail closed: I/O error during recovery means we couldn't restore.
+                            // Return recovered=false instead of propagating the error.
+                            metadata.insert(
+                                "recovery_error".to_string(),
+                                serde_json::Value::String(format!("io_error: {}", e)),
+                            );
+                            recovered = false;
+                        }
                     }
                 } else {
                     // File was newly created - delete it
                     if Path::new(file_path).exists() {
-                        std::fs::remove_file(file_path).map_err(|e| {
-                            AdapterError::Internal(format!("Failed to delete file: {}", e))
-                        })?;
+                        if let Err(e) = std::fs::remove_file(file_path) {
+                            // Fail closed: I/O error during recovery means we couldn't delete.
+                            // Return recovered=false instead of propagating the error.
+                            metadata.insert(
+                                "recovery_error".to_string(),
+                                serde_json::Value::String(format!("io_error: {}", e)),
+                            );
+                            recovered = false;
+                        }
                     }
                 }
             }
@@ -537,8 +579,8 @@ impl RollbackAdapter for FsRollbackAdapter {
         self.snapshot_store.clear_hashes(&execution_id);
 
         Ok(RecoveryReceipt {
-            recovered: true,
-            adapter_metadata: JsonMap::new(),
+            recovered,
+            adapter_metadata: metadata,
         })
     }
 }
@@ -1991,5 +2033,430 @@ mod tests {
             !verify_receipt.verified,
             "verified should be false when file is deleted"
         );
+    }
+
+    // === Fail-closed compensate/rollback I/O error tests ===
+
+    #[tokio::test]
+    async fn test_fs_adapter_compensate_fail_closed_on_permission_denied() {
+        // Test that compensate returns recovered=false (not Err) when I/O fails
+        // due to permission denied. This is fail-closed: we cannot confirm recovery
+        // succeeded, so we report recovery failure.
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.txt");
+
+        // Create original file
+        std::fs::write(&file_path, "original content").unwrap();
+
+        let adapter = FsRollbackAdapter::new("fs");
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        // Prepare (file exists - will snapshot)
+        let prepare_req = RollbackPrepareRequest {
+            intent_id: ferrum_proto::IntentId::new(),
+            proposal_id: ferrum_proto::ProposalId::new(),
+            execution_id,
+            action_type: ferrum_proto::ActionType::FileWrite,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "fs".to_string(),
+            target: ferrum_proto::RollbackTarget::FilePath {
+                path: file_path.to_str().unwrap().to_string(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            metadata: JsonMap::new(),
+        };
+
+        let prep_receipt = adapter.prepare(&prepare_req).await.unwrap();
+
+        // Execute (overwrites)
+        let payload = serde_json::json!({
+            "path": file_path.to_str().unwrap(),
+            "content": "new content"
+        });
+
+        let contract = RollbackContract {
+            contract_id: ferrum_proto::RollbackContractId::new(),
+            intent_id: prepare_req.intent_id,
+            proposal_id: prepare_req.proposal_id,
+            execution_id: prepare_req.execution_id,
+            action_type: ferrum_proto::ActionType::FileWrite,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "fs".to_string(),
+            target: ferrum_proto::RollbackTarget::FilePath {
+                path: file_path.to_str().unwrap().to_string(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: ferrum_proto::RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: prep_receipt.adapter_metadata,
+        };
+
+        adapter.execute(&contract, &payload).await.unwrap();
+
+        // Remove all permissions to make file unwritable
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&file_path).unwrap().permissions();
+            perms.set_mode(0o000);
+            std::fs::set_permissions(&file_path, perms).unwrap();
+        }
+
+        // Compensate should return Ok with recovered=false (fail closed)
+        // NOT Err - we report recovery failure, not propagate the I/O error
+        let result = adapter.compensate(&contract).await;
+        assert!(
+            result.is_ok(),
+            "compensate should return Ok even on I/O error, got: {:?}",
+            result
+        );
+        let receipt = result.unwrap();
+        assert!(
+            !receipt.recovered,
+            "compensate should report recovered=false on I/O failure"
+        );
+        // Should have error metadata
+        assert!(
+            receipt.adapter_metadata.contains_key("recovery_error"),
+            "compensate should include recovery_error in metadata"
+        );
+
+        // Cleanup: restore permissions so TempDir can clean up
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&file_path).unwrap().permissions();
+            perms.set_mode(0o644);
+            let _ = std::fs::set_permissions(&file_path, perms);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fs_adapter_rollback_fail_closed_on_permission_denied() {
+        // Test that rollback returns recovered=false (not Err) when I/O fails
+        // due to permission denied. This is fail-closed: we cannot confirm recovery
+        // succeeded, so we report recovery failure.
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.txt");
+
+        // Create original file
+        std::fs::write(&file_path, "original content").unwrap();
+
+        let adapter = FsRollbackAdapter::new("fs");
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        // Prepare (file exists - will snapshot)
+        let prepare_req = RollbackPrepareRequest {
+            intent_id: ferrum_proto::IntentId::new(),
+            proposal_id: ferrum_proto::ProposalId::new(),
+            execution_id,
+            action_type: ferrum_proto::ActionType::FileWrite,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "fs".to_string(),
+            target: ferrum_proto::RollbackTarget::FilePath {
+                path: file_path.to_str().unwrap().to_string(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            metadata: JsonMap::new(),
+        };
+
+        let prep_receipt = adapter.prepare(&prepare_req).await.unwrap();
+
+        // Execute (overwrites)
+        let payload = serde_json::json!({
+            "path": file_path.to_str().unwrap(),
+            "content": "new content"
+        });
+
+        let contract = RollbackContract {
+            contract_id: ferrum_proto::RollbackContractId::new(),
+            intent_id: prepare_req.intent_id,
+            proposal_id: prepare_req.proposal_id,
+            execution_id: prepare_req.execution_id,
+            action_type: ferrum_proto::ActionType::FileWrite,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "fs".to_string(),
+            target: ferrum_proto::RollbackTarget::FilePath {
+                path: file_path.to_str().unwrap().to_string(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: ferrum_proto::RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: prep_receipt.adapter_metadata,
+        };
+
+        adapter.execute(&contract, &payload).await.unwrap();
+
+        // Remove all permissions to make file unwritable
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&file_path).unwrap().permissions();
+            perms.set_mode(0o000);
+            std::fs::set_permissions(&file_path, perms).unwrap();
+        }
+
+        // Rollback should return Ok with recovered=false (fail closed)
+        // NOT Err - we report recovery failure, not propagate the I/O error
+        let result = adapter.rollback(&contract).await;
+        assert!(
+            result.is_ok(),
+            "rollback should return Ok even on I/O error, got: {:?}",
+            result
+        );
+        let receipt = result.unwrap();
+        assert!(
+            !receipt.recovered,
+            "rollback should report recovered=false on I/O failure"
+        );
+        // Should have error metadata
+        assert!(
+            receipt.adapter_metadata.contains_key("recovery_error"),
+            "rollback should include recovery_error in metadata"
+        );
+
+        // Cleanup: restore permissions so TempDir can clean up
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&file_path).unwrap().permissions();
+            perms.set_mode(0o644);
+            let _ = std::fs::set_permissions(&file_path, perms);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fs_adapter_compensate_fail_closed_on_delete_permission_denied() {
+        // Test compensate when trying to delete a newly-created file but permission denied.
+        // Should return recovered=false, not Err.
+        // Note: This test is environment-dependent (root can bypass permissions).
+        // The primary fail-closed tests are the write/restore permission denied tests.
+        // This test verifies the behavior when deletion fails.
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.txt");
+
+        let adapter = FsRollbackAdapter::new("fs");
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        // Prepare (file doesn't exist - no snapshot)
+        let prepare_req = RollbackPrepareRequest {
+            intent_id: ferrum_proto::IntentId::new(),
+            proposal_id: ferrum_proto::ProposalId::new(),
+            execution_id,
+            action_type: ferrum_proto::ActionType::FileWrite,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "fs".to_string(),
+            target: ferrum_proto::RollbackTarget::FilePath {
+                path: file_path.to_str().unwrap().to_string(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            metadata: JsonMap::new(),
+        };
+
+        let prep_receipt = adapter.prepare(&prepare_req).await.unwrap();
+
+        // Execute (creates new file)
+        let payload = serde_json::json!({
+            "path": file_path.to_str().unwrap(),
+            "content": "hello world"
+        });
+
+        let contract = RollbackContract {
+            contract_id: ferrum_proto::RollbackContractId::new(),
+            intent_id: prepare_req.intent_id,
+            proposal_id: prepare_req.proposal_id,
+            execution_id: prepare_req.execution_id,
+            action_type: ferrum_proto::ActionType::FileWrite,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "fs".to_string(),
+            target: ferrum_proto::RollbackTarget::FilePath {
+                path: file_path.to_str().unwrap().to_string(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: ferrum_proto::RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: prep_receipt.adapter_metadata,
+        };
+
+        adapter.execute(&contract, &payload).await.unwrap();
+        assert!(file_path.exists());
+
+        // Make file read-only (no write permission) - this doesn't prevent deletion
+        // but on some systems, removing write permission from parent can fail deletion.
+        // The key is: if deletion fails for ANY reason (permission or otherwise),
+        // we should return recovered=false.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let parent = temp_dir.path();
+            let mut perms = std::fs::metadata(&parent).unwrap().permissions();
+            // Remove write permission from parent - deletion should fail
+            let mode = perms.mode();
+            perms.set_mode(mode & !0o200); // Remove write permission
+            std::fs::set_permissions(&parent, perms).unwrap();
+        }
+
+        // Compensate should return Ok with recovered=false when delete fails
+        let result = adapter.compensate(&contract).await;
+        assert!(
+            result.is_ok(),
+            "compensate should return Ok even on I/O error, got: {:?}",
+            result
+        );
+        let receipt = result.unwrap();
+        // If we're running as root or in a permissive environment, deletion might succeed.
+        // In that case, recovered=true is correct. Otherwise, it should be false.
+        if !receipt.recovered {
+            assert!(
+                receipt.adapter_metadata.contains_key("recovery_error"),
+                "compensate should include recovery_error in metadata when recovery fails"
+            );
+        }
+
+        // Cleanup: restore permissions so TempDir can clean up
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&temp_dir.path()).unwrap().permissions();
+            perms.set_mode(0o755);
+            let _ = std::fs::set_permissions(&temp_dir.path(), perms);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fs_adapter_rollback_fail_closed_on_delete_permission_denied() {
+        // Test rollback when trying to delete a newly-created file but permission denied.
+        // Should return recovered=false, not Err.
+        // Note: This test is environment-dependent (root can bypass permissions).
+        // The primary fail-closed tests are the write/restore permission denied tests.
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.txt");
+
+        let adapter = FsRollbackAdapter::new("fs");
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        // Prepare (file doesn't exist - no snapshot)
+        let prepare_req = RollbackPrepareRequest {
+            intent_id: ferrum_proto::IntentId::new(),
+            proposal_id: ferrum_proto::ProposalId::new(),
+            execution_id,
+            action_type: ferrum_proto::ActionType::FileWrite,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "fs".to_string(),
+            target: ferrum_proto::RollbackTarget::FilePath {
+                path: file_path.to_str().unwrap().to_string(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            metadata: JsonMap::new(),
+        };
+
+        let prep_receipt = adapter.prepare(&prepare_req).await.unwrap();
+
+        // Execute (creates new file)
+        let payload = serde_json::json!({
+            "path": file_path.to_str().unwrap(),
+            "content": "hello world"
+        });
+
+        let contract = RollbackContract {
+            contract_id: ferrum_proto::RollbackContractId::new(),
+            intent_id: prepare_req.intent_id,
+            proposal_id: prepare_req.proposal_id,
+            execution_id: prepare_req.execution_id,
+            action_type: ferrum_proto::ActionType::FileWrite,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "fs".to_string(),
+            target: ferrum_proto::RollbackTarget::FilePath {
+                path: file_path.to_str().unwrap().to_string(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: ferrum_proto::RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: prep_receipt.adapter_metadata,
+        };
+
+        adapter.execute(&contract, &payload).await.unwrap();
+        assert!(file_path.exists());
+
+        // Make parent dir read-only (remove write permission)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let parent = temp_dir.path();
+            let mut perms = std::fs::metadata(&parent).unwrap().permissions();
+            let mode = perms.mode();
+            perms.set_mode(mode & !0o200); // Remove write permission
+            std::fs::set_permissions(&parent, perms).unwrap();
+        }
+
+        // Rollback should return Ok with recovered=false when delete fails
+        let result = adapter.rollback(&contract).await;
+        assert!(
+            result.is_ok(),
+            "rollback should return Ok even on I/O error, got: {:?}",
+            result
+        );
+        let receipt = result.unwrap();
+        // If we're running as root or in a permissive environment, deletion might succeed.
+        // In that case, recovered=true is correct. Otherwise, it should be false.
+        if !receipt.recovered {
+            assert!(
+                receipt.adapter_metadata.contains_key("recovery_error"),
+                "rollback should include recovery_error in metadata when recovery fails"
+            );
+        }
+
+        // Cleanup: restore permissions so TempDir can clean up
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&temp_dir.path()).unwrap().permissions();
+            perms.set_mode(0o755);
+            let _ = std::fs::set_permissions(&temp_dir.path(), perms);
+        }
     }
 }
