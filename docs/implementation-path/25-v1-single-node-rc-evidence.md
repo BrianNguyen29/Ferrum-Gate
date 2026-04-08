@@ -6,7 +6,7 @@ FerrumGate v1 release candidate (Phase F gate 7.5 output).
 > **Assessment**: [23-production-readiness-assessment.md](./23-production-readiness-assessment.md)
 >
 > **Roadmap / broader production-ready path**: [30-production-roadmap.md](./30-production-roadmap.md)
-> (G-E1 through G-E5 must complete before broader production-ready).
+> (G-E1 through G-E5 completed on 2026-04-08; see `43-production-readiness-signoff.md`).
 >
 > **Support contract**: [19-v1-single-node-support-contract.md](../19-v1-single-node-support-contract.md)
 

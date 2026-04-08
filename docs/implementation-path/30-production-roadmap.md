@@ -1,7 +1,7 @@
 # 30 — Production Roadmap
 
-**Last updated:** 2026-04-07
-**Current truth:** Single-node v1 is RC-ready (2026-04-02). Broader production-ready is **not yet complete**.
+**Last updated:** 2026-04-08
+**Current truth:** Single-node v1 is RC-ready (2026-04-02) and broader production-ready is declared (2026-04-08) within the scoped T1/T2/T3 support boundary.
 
 ---
 
@@ -12,7 +12,7 @@
 | 1 | Production support boundary / contract | ✅ DONE | Support matrix (P1.1) + SLA surface (P1.2) + EOL policy (P1.3) all published |
 | 2 | Adapter hardening + external integration depth | 🔄 IN PROGRESS | Production-grade adapters; remote/external integration surface; P2.5 bounded HTTP hardening slice matrix ✅ DONE 2026-04-04 |
 | 3 | Operational hardening / release evidence | ✅ DONE | Ship-worthy packaging, observability, runbooks |
-| 4 | Operator control-plane completeness (`ferrumctl`) | ⬜ PLANNED | Full operator-driven workflows; policy bundle authoring |
+| 4 | Operator control-plane completeness (`ferrumctl`) | ✅ DONE / ⏸ PARTIAL FOLLOW-UP | Full operator-driven workflows complete; policy bundle authoring remains deferred |
 | 5 | Resilience architecture (HA / read-replica / multi-node) | ⬜ PLANNED | Multi-node v1; HA-ready topology |
 | 6 | Post-v1 expansion (U1 full + U2/U3/U4) | ⬜ PLANNED | Outcome-aware governance; remaining upgrades |
 
@@ -91,15 +91,14 @@ The following lists the executed production-evaluation order after P3 completion
 6. **P2.6** — maildraft EmailSend governed-path entry + adapter scaffold (G-E1 boundary satisfied; real provider send integration post-v1/non-blocking) ✅ DONE 2026-04-04
 7. **P2.7** — maildraft broader verify semantics hardening (Slice 1–5 ✅ 2026-04-04)
 
-### Longer-Term / Planned Tracks
+### Remaining Longer-Term / Planned Tracks
 
-8. **P4.1–P4.2** — `ferrumctl` advanced operator flows + policy bundle lifecycle tooling
-9. **P5.4–P5.5** — Sync-1 preflight checks (PF1–PF8) + decision table + abort semantics
-10. **P5.7** — HA / multi-leader replication
-11. **U1.1–U1.2** — Outcome-aware Governance (remaining backlog: richer clause expressiveness, policy bundle authoring tooling)
-12. **U2** — Reversible Execution Planner
-13. **U3** — Cross-runtime Provenance Fabric
-14. **U4** — Runtime Integrations (MCP / local / NemoClaw)
+8. **P4.2** — policy bundle lifecycle tooling
+9. **P5.7** — HA / multi-leader replication
+10. **U1.1–U1.2** — Outcome-aware Governance (remaining backlog: richer clause expressiveness, policy bundle authoring tooling)
+11. **U2** — Reversible Execution Planner
+12. **U3** — Cross-runtime Provenance Fabric
+13. **U4** — Runtime Integrations (MCP / local / NemoClaw)
 
 **Source:** `docs/implementation-path/11-remaining-tasks.md`; execution order follows roadmap priority sequence per `docs/implementation-path/24-p1-p2-p3-execution-plan.md` lines 266–297.
 

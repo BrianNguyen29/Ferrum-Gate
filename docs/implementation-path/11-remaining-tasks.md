@@ -109,10 +109,10 @@ Grounded in `docs/implementation-path/30-production-roadmap.md` post-P3 executio
 ### Longer-Term / Planned Tracks
 
 G-E2 benchmark baseline is now captured in repo truth via
-`docs/implementation-path/42-p2-performance-baseline-evidence.md`. G-E3 is now
-closed via the remaining `ferrumctl` operator-surface commands. G-E4 is now
-ratified from the existing sync/preflight implementation and test evidence; the
-next active broader production-ready track is G-E5.
+`docs/implementation-path/42-p2-performance-baseline-evidence.md`. G-E3 closed
+the remaining `ferrumctl` operator-surface commands, G-E4 ratified the existing
+sync/preflight implementation, and G-E5 declared broader production-ready. The
+remaining items below are post-signoff backlog, not active broader-production gates.
 
 | Order | Item | Status | Source |
 |-------|------|--------|--------|
