@@ -207,10 +207,10 @@ rough next-step estimate:
 
 | Slice | Description | Status | Verification |
 |-------|-------------|--------|--------------|
-| P3.1a | Implement Sync-1 preflight checks (PF1-PF8) | **TODO** | `Sync1Protocol::preflight()` returns `PreflightResult` |
-| P3.1b | Implement Sync-1 decision table | **TODO** | `Sync1Protocol::decide()` maps DiffClass to Sync1Decision |
-| P3.1c | Implement abort semantics (A1-A8, S1-S2) | **TODO** | All abort triggers return `Sync1AbortCode`; local chain unchanged |
-| P3.1d | Integration tests with `FakeLeaderTransport` | **TODO** | `ferrum-sync` tests pass with `FakeLeaderTransport` injected |
+| P3.1a | Implement Sync-1 preflight checks (PF1-PF8) | **DONE** | `run_preflight()` + SQLite-backed `SyncPreflightRepo` cover PF1-PF8 |
+| P3.1b | Implement Sync-1 decision table | **DONE** | `decide()` + `diff_class_to_decision()` map DiffClass to Sync1Decision |
+| P3.1c | Implement abort semantics (A1-A8, S1-S2) | **DONE** | `Sync1AbortCode` + fail-closed mapping/tests cover the in-scope abort surface |
+| P3.1d | Integration tests with `FakeLeaderTransport` | **DONE** | `ferrum-store::sync_service` tests pass with fake transport-backed live readiness orchestration |
 
 **Dependencies:** P2.3e.
 
@@ -224,8 +224,8 @@ rough next-step estimate:
 
 | Slice | Description | Status | Verification |
 |-------|-------------|--------|--------------|
-| P3.2a | Implement `DiffClassifier::classify()` | **TODO** | Unit tests cover all DiffClass variants |
-| P3.2b | Implement extended preflight (PF5-PF8) | **TODO** | All checks are local-only queries; no network calls |
+| P3.2a | Implement `DiffClassifier::classify()` | **DONE** | Unit tests cover all DiffClass variants |
+| P3.2b | Implement extended preflight (PF5-PF8) | **DONE** | All checks are local-only queries; no network calls |
 
 **Dependencies:** P3.1a.
 
