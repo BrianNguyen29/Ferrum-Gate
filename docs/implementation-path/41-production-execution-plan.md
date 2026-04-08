@@ -88,11 +88,11 @@ When G-E1 is complete:
 
 ## Gate G-E3 — P4 `ferrumctl` Advanced Flows Complete
 
-**Goal:** Remaining REST surface accessible via `ferrumctl` CLI; policy bundle lifecycle tooling available.
+**Goal:** Remaining operator-facing REST surface accessible via `ferrumctl` CLI. Policy bundle lifecycle tooling may land as a separate post-G-E3 scope if not required for REST-surface closure.
 
 **Owner:** Engineering
 
-**Status:** ⬜ PLANNED
+**Status:** ✅ DONE 2026-04-08
 
 **Source:** `30-production-roadmap.md` lines 178, 108–118; `11-remaining-tasks.md` line 112–113
 
@@ -101,8 +101,8 @@ When G-E1 is complete:
 | Step | Action | File(s) Updated | Commit Scope |
 |------|--------|-----------------|--------------|
 | 1 | Update `30-production-roadmap.md` G-E3 row: `⬜ PLANNED` → `🔄 IN PROGRESS` → `✅ DONE`, add date | `docs/implementation-path/30-production-roadmap.md` | Single commit |
-| 2 | Update P4.1 and P4.2 rows in `30-production-roadmap.md`: `⬜ TODO` → `✅ DONE` | `docs/implementation-path/30-production-roadmap.md` | Same commit |
-| 3 | Update `11-remaining-tasks.md` execution sequence: P4.1, P4.2 → `✅ DONE` | `docs/implementation-path/11-remaining-tasks.md` | Same commit |
+| 2 | Update P4.1 in `30-production-roadmap.md` to `✅ DONE`; explicitly defer P4.2 if kept post-G-E3 | `docs/implementation-path/30-production-roadmap.md` | Same commit |
+| 3 | Update `11-remaining-tasks.md` execution sequence: P4.1 → `✅ DONE`, P4.2 defer note if applicable | `docs/implementation-path/11-remaining-tasks.md` | Same commit |
 | 4 | Record final evidence in this doc's G-E3 completion row | `docs/implementation-path/41-production-execution-plan.md` | Same commit |
 | 5 | Update `docs/README.md` index if a new doc was added | `docs/README.md` | Separate commit |
 
@@ -205,7 +205,7 @@ When any gate phase completes, apply this checklist:
 |------|-----------|--------|-----------------|--------------|-------|
 | G-E1 | P2 Adapter Hardening Complete | ✅ DONE | 2026-04-08 | `30-production-roadmap.md` | P2.1/P2.2/P2.3/P2.5/P2.6 scaffold/P2.7 ratified; real provider send remains post-v1/non-blocking by gate definition |
 | G-E2 | P2 Performance Baseline Established | ✅ DONE | 2026-04-08 | `42-p2-performance-baseline-evidence.md` | Standalone `benches/` harness merged; release baseline captured for S4-S7 concurrent workloads |
-| G-E3 | P4 ferrumctl Advanced Flows Complete | ⬜ PLANNED | — | — | |
+| G-E3 | P4 ferrumctl Advanced Flows Complete | ✅ DONE | 2026-04-08 | `bins/ferrumctl/src/main.rs` | Added CLI coverage for compile/evaluate/mint/authorize/verify/commit; P4.2 deferred as separate post-G-E3 scope |
 | G-E4 | P5 Sync-1 Preflight + Decision Ratified | ⬜ PLANNED | — | — | |
 | G-E5 | Production Evaluation Sign-off | ⬜ PLANNED | — | — | Team sign-off required |
 

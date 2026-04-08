@@ -109,14 +109,14 @@ The following lists the remaining execution order after P3 completion (P3.G1–P
 
 ## Priority 4 — Operator Control-Plane Completeness (`ferrumctl`)
 
-**Goal:** Close remaining `ferrumctl` gaps; policy bundle lifecycle tooling.
+**Goal:** Close remaining `ferrumctl` operator-surface gaps; keep policy bundle lifecycle tooling as post-G-E3 backlog unless separately scoped.
 
 > Per `23-production-readiness-assessment.md` Dimension 3: `ferrumctl` covers the high-use operator surface; some advanced/intent-authoring flows still require direct HTTP/OpenAPI. Per `11-remaining-tasks.md` P3: policy bundle migration tooling (CLI authoring workflows) is post-v1 backlog.
 
 | Item | Description | Status | Verification |
 |------|-------------|--------|--------------|
-| P4.1 | `ferrumctl` advanced operator flows (remaining REST surface) | ⬜ TODO | CLI test |
-| P4.2 | Policy bundle lifecycle tooling | ⬜ TODO | CLI + unit test |
+| P4.1 | `ferrumctl` advanced operator flows (remaining REST surface) | ✅ DONE 2026-04-08 | `cargo test -p ferrumctl`; `ferrumctl server compile-intent --help`; `ferrumctl server commit-execution --help` |
+| P4.2 | Policy bundle lifecycle tooling | ⏸ DEFERRED (post-G-E3) | Separate scope required |
 
 ---
 
@@ -177,7 +177,7 @@ production-ready status. These are execution milestones, not additional RC gates
 |------|-------------|-------|--------|
 | G-E1 | **P2 adapter hardening complete** — all P2 slices (P2.1, P2.2, P2.3, P2.6 scaffold, P2.7) pass their slice criteria; P2.6 real provider send integration explicitly post-v1 | Engineering | ✅ DONE 2026-04-08 (P2.1 ✅; P2.2 ✅; P2.3 ✅; P2.5 ✅; P2.6 scaffold ✅ 2026-04-04; P2.7 ✅; real provider send remains post-v1/non-blocking by gate definition) |
 | G-E2 | **P2 performance baseline established** — benchmark suite covers key SQLite and adapter paths under concurrent load | Engineering | ✅ DONE 2026-04-08 (`benches/` benchmark harness merged; evidence: `42-p2-performance-baseline-evidence.md`) |
-| G-E3 | **P4 `ferrumctl` advanced flows complete** — remaining REST surface accessible via CLI | Engineering | ⬜ PLANNED |
+| G-E3 | **P4 `ferrumctl` advanced flows complete** — remaining REST surface accessible via CLI | Engineering | ✅ DONE 2026-04-08 (`compile-intent`, `evaluate-proposal`, `mint-capability`, `authorize-execution`, `verify-execution`, `commit-execution` added to `ferrumctl`) |
 | G-E4 | **P5 resilience design ratified** — Sync-1 preflight checks + decision table implemented and reviewed | Engineering | ⬜ PLANNED |
 | G-E5 | **Production evaluation sign-off** — documented assessment confirming all T1/T2 surface is production-hardened per support contract | Team | ⬜ PLANNED |
 
@@ -202,7 +202,7 @@ production-ready targeted after G-E1 through G-E5 complete.
 |-------|------|------|--------|
 | 1 | Complete P2 adapter hardening (P2.1, P2.2, P2.3, P2.6, P2.7) | G-E1 | ✅ DONE |
 | 2 | Establish P2 performance baseline + benchmark suite | G-E2 | ✅ DONE |
-| 3 | Complete P4 `ferrumctl` advanced operator flows | G-E3 | ⬜ PLANNED |
+| 3 | Complete P4 `ferrumctl` advanced operator flows | G-E3 | ✅ DONE |
 | 4 | Ratify P5 Sync-1 preflight checks + decision table | G-E4 | ⬜ PLANNED |
 | 5 | Production evaluation sign-off and broader production-ready declaration | G-E5 | ⬜ PLANNED |
 
