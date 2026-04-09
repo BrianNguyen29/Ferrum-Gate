@@ -29,12 +29,34 @@ use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
 use ferrum_store::SqliteStore;
 use reqwest::Client;
 use std::env;
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tempfile::TempDir;
 use tokio::net::TcpListener;
 use tokio::spawn;
 use tokio::time::{Duration, sleep};
+
+// ---------------------------------------------------------------------------
+// Test isolation: unique file path generation to avoid parallel test interference
+// ---------------------------------------------------------------------------
+
+/// Process-wide counter for generating unique test file paths.
+static TEST_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Generates a unique test file path using a process-wide counter.
+/// This avoids test interference when tests run in parallel.
+fn next_test_file_path() -> PathBuf {
+    let counter = TEST_FILE_COUNTER.fetch_add(1, Ordering::SeqCst);
+    PathBuf::from(format!("/tmp/ferrum_test_{}.txt", counter))
+}
+
+/// Holds the result of seeding an execution with its associated test file path.
+struct SeedResult {
+    execution_id: ferrum_proto::ExecutionId,
+    test_file_path: PathBuf,
+}
 
 // ---------------------------------------------------------------------------
 // Test runtime bootstrap (reused from process_approval.rs)
@@ -97,11 +119,21 @@ async fn start_local_server(runtime: GatewayRuntime) -> (String, tokio::task::Jo
 ///
 /// The execution is in Committed state after this, which is required for
 /// compensate/rollback operations.
+///
+/// Uses a unique test file path to avoid test interference when tests run in parallel.
 async fn seed_committed_execution(
     client: &Client,
     server_url: &str,
     rollback_class: RollbackClass,
 ) -> ferrum_proto::ExecutionId {
+    // Generate unique file path for this execution to avoid parallel test interference
+    let test_file_path = next_test_file_path();
+    let test_file_str = test_file_path.to_string_lossy();
+    let test_dir = test_file_path
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|| "/tmp".to_string());
+
     // Step 1: Compile intent
     let req = IntentCompileRequest {
         principal_id: ferrum_proto::PrincipalId::new(),
@@ -113,7 +145,7 @@ async fn seed_committed_execution(
         trusted_context: ferrum_proto::JsonMap::new(),
         raw_inputs: vec![],
         requested_resource_scope: vec![ResourceSelector::FilesystemPath {
-            path: "/tmp".to_string(),
+            path: test_dir,
             mode: ResourceMode::Write,
             content_hash: None,
         }],
@@ -141,7 +173,7 @@ async fn seed_committed_execution(
         title: "Execute mutation".to_string(),
         tool_name: "fs.write".to_string(),
         server_name: "workspace".to_string(),
-        raw_arguments: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        raw_arguments: serde_json::json!({"path": test_file_str, "content": "hello"}),
         expected_effect: "write a file".to_string(),
         estimated_risk: RiskTier::Medium,
         requested_rollback_class: rollback_class,
@@ -173,7 +205,7 @@ async fn seed_committed_execution(
             tool_version: None,
         },
         resource_bindings: vec![ResourceBinding::File {
-            path: "/tmp/test.txt".to_string(),
+            path: test_file_str.to_string(),
             mode: ResourceMode::Write,
             required_hash: None,
         }],
@@ -233,7 +265,7 @@ async fn seed_committed_execution(
     // Step 6: Execute
     let exec_req = ExecuteRequest {
         execution_id,
-        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        payload: serde_json::json!({"path": test_file_str, "content": "hello"}),
     };
     let resp = client
         .post(&format!(
@@ -622,6 +654,14 @@ async fn test_process_rollback_execution_already_rolled_back() {
 /// Helper: seeds an execution and cancels it at the Authorized state.
 /// Returns the execution_id.
 async fn seed_authorized_execution(client: &Client, server_url: &str) -> ferrum_proto::ExecutionId {
+    // Generate unique file path for this execution to avoid parallel test interference
+    let test_file_path = next_test_file_path();
+    let test_file_str = test_file_path.to_string_lossy();
+    let test_dir = test_file_path
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|| "/tmp".to_string());
+
     // Step 1: Compile intent
     let req = IntentCompileRequest {
         principal_id: ferrum_proto::PrincipalId::new(),
@@ -633,7 +673,7 @@ async fn seed_authorized_execution(client: &Client, server_url: &str) -> ferrum_
         trusted_context: ferrum_proto::JsonMap::new(),
         raw_inputs: vec![],
         requested_resource_scope: vec![ResourceSelector::FilesystemPath {
-            path: "/tmp".to_string(),
+            path: test_dir,
             mode: ResourceMode::Write,
             content_hash: None,
         }],
@@ -661,7 +701,7 @@ async fn seed_authorized_execution(client: &Client, server_url: &str) -> ferrum_
         title: "Execute mutation".to_string(),
         tool_name: "fs.write".to_string(),
         server_name: "workspace".to_string(),
-        raw_arguments: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        raw_arguments: serde_json::json!({"path": test_file_str, "content": "hello"}),
         expected_effect: "write a file".to_string(),
         estimated_risk: RiskTier::Medium,
         requested_rollback_class: RollbackClass::R2Compensatable,
@@ -693,7 +733,7 @@ async fn seed_authorized_execution(client: &Client, server_url: &str) -> ferrum_
             tool_version: None,
         },
         resource_bindings: vec![ResourceBinding::File {
-            path: "/tmp/test.txt".to_string(),
+            path: test_file_str.to_string(),
             mode: ResourceMode::Write,
             required_hash: None,
         }],
@@ -882,6 +922,14 @@ async fn seed_running_execution(
     server_url: &str,
     rollback_class: RollbackClass,
 ) -> ferrum_proto::ExecutionId {
+    // Generate unique file path for this execution to avoid parallel test interference
+    let test_file_path = next_test_file_path();
+    let test_file_str = test_file_path.to_string_lossy();
+    let test_dir = test_file_path
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|| "/tmp".to_string());
+
     // Step 1: Compile intent
     let req = IntentCompileRequest {
         principal_id: ferrum_proto::PrincipalId::new(),
@@ -893,7 +941,7 @@ async fn seed_running_execution(
         trusted_context: ferrum_proto::JsonMap::new(),
         raw_inputs: vec![],
         requested_resource_scope: vec![ResourceSelector::FilesystemPath {
-            path: "/tmp".to_string(),
+            path: test_dir,
             mode: ResourceMode::Write,
             content_hash: None,
         }],
@@ -921,7 +969,7 @@ async fn seed_running_execution(
         title: "Execute mutation".to_string(),
         tool_name: "fs.write".to_string(),
         server_name: "workspace".to_string(),
-        raw_arguments: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        raw_arguments: serde_json::json!({"path": test_file_str, "content": "hello"}),
         expected_effect: "write a file".to_string(),
         estimated_risk: RiskTier::Medium,
         requested_rollback_class: rollback_class,
@@ -953,7 +1001,7 @@ async fn seed_running_execution(
             tool_version: None,
         },
         resource_bindings: vec![ResourceBinding::File {
-            path: "/tmp/test.txt".to_string(),
+            path: test_file_str.to_string(),
             mode: ResourceMode::Write,
             required_hash: None,
         }],
@@ -1013,7 +1061,7 @@ async fn seed_running_execution(
     // Step 6: Execute (stop here - execution is now in Running state)
     let exec_req = ExecuteRequest {
         execution_id,
-        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        payload: serde_json::json!({"path": test_file_str, "content": "hello"}),
     };
     let resp = client
         .post(&format!(
@@ -1096,8 +1144,9 @@ async fn test_process_pause_execution_from_prepared_conflict() {
     let client = Client::new();
 
     // Seed a prepared execution (stops at Prepared state after prepare step)
-    let execution_id =
+    let seed_result =
         seed_prepared_execution(&client, &server_url, RollbackClass::R1SnapshotRecoverable).await;
+    let execution_id = seed_result.execution_id;
 
     // Verify the execution is in Prepared state
     let resp = client
@@ -1414,7 +1463,15 @@ async fn seed_prepared_execution(
     client: &Client,
     server_url: &str,
     rollback_class: RollbackClass,
-) -> ferrum_proto::ExecutionId {
+) -> SeedResult {
+    // Generate unique file path for this execution to avoid parallel test interference
+    let test_file_path = next_test_file_path();
+    let test_file_str = test_file_path.to_string_lossy();
+    let test_dir = test_file_path
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|| "/tmp".to_string());
+
     // Step 1: Compile intent
     let req = IntentCompileRequest {
         principal_id: ferrum_proto::PrincipalId::new(),
@@ -1426,7 +1483,7 @@ async fn seed_prepared_execution(
         trusted_context: ferrum_proto::JsonMap::new(),
         raw_inputs: vec![],
         requested_resource_scope: vec![ResourceSelector::FilesystemPath {
-            path: "/tmp".to_string(),
+            path: test_dir,
             mode: ResourceMode::Write,
             content_hash: None,
         }],
@@ -1454,7 +1511,7 @@ async fn seed_prepared_execution(
         title: "Execute mutation".to_string(),
         tool_name: "fs.write".to_string(),
         server_name: "workspace".to_string(),
-        raw_arguments: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        raw_arguments: serde_json::json!({"path": test_file_str, "content": "hello"}),
         expected_effect: "write a file".to_string(),
         estimated_risk: RiskTier::Medium,
         requested_rollback_class: rollback_class,
@@ -1486,7 +1543,7 @@ async fn seed_prepared_execution(
             tool_version: None,
         },
         resource_bindings: vec![ResourceBinding::File {
-            path: "/tmp/test.txt".to_string(),
+            path: test_file_str.to_string(),
             mode: ResourceMode::Write,
             required_hash: None,
         }],
@@ -1543,7 +1600,10 @@ async fn seed_prepared_execution(
         .expect("execution prepare failed");
     assert_eq!(resp.status(), 200);
 
-    execution_id
+    SeedResult {
+        execution_id,
+        test_file_path,
+    }
 }
 
 /// Test: `ferrumctl server execute-execution` transitions prepared execution
@@ -1557,11 +1617,13 @@ async fn test_process_execute_execution_via_binary() {
     let client = Client::new();
 
     // Seed a prepared execution
-    let execution_id =
+    let seed_result =
         seed_prepared_execution(&client, &server_url, RollbackClass::R1SnapshotRecoverable).await;
+    let execution_id = seed_result.execution_id;
+    let test_file_path = seed_result.test_file_path.to_string_lossy();
 
-    // Execute via CLI
-    let payload = serde_json::json!({"path": "/tmp/test.txt", "content": "hello"});
+    // Execute via CLI - use the same path that was used during prepare
+    let payload = serde_json::json!({"path": test_file_path, "content": "hello"});
     let output = run_ferrumctl(
         &server_url,
         [
