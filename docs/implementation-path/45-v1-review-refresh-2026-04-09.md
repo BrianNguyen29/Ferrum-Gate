@@ -74,7 +74,7 @@ Per `44-v1-review-readiness-template.md`:
 - **Docs Alignment** — ✅ PASS
 - **Technical Verification** — ⚠️ INHERITED
 - **Performance** — ⚠️ INHERITED
-- **Security** — ⚠️ INHERITED
+- **Security** — ✅ PASS (narrowed from ⚠️ INHERITED)
 - **Stability** — ⚠️ INHERITED
 
 Interpretation:
@@ -82,8 +82,10 @@ Interpretation:
 - No new blocker was found at the v1 support-boundary level.
 - The 2026-04-08 broader-production declaration remains intact **within the
   documented v1 single-node scope**.
-- This refresh is still conservative: several rows remain inherited because they
-  rely on prior-cycle evidence rather than fresh targeted reruns in this cycle.
+- Security row "Bearer-token auth enforced on mutating endpoints" now has fresh
+  targeted evidence: 8 request-level tests verify 401 responses on
+  missing/invalid/malformed bearer tokens and pass-through on health endpoints.
+  Other security rows remain inherited from prior-cycle evidence.
 
 ---
 

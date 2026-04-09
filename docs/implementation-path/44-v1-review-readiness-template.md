@@ -186,7 +186,7 @@
 
 | Check | Result | Evidence | Status |
 |-------|--------|----------|--------|
-| Bearer-token auth enforced on mutating endpoints | Auth-aware router applies bearer middleware to all non-health endpoints | `crates/ferrum-gateway/src/server.rs:107-110`; `docs/14-api-and-contracts-map.md:91-95`; `19-v1-single-node-support-contract.md:39-43` | ✅ PASS |
+| Bearer-token auth enforced on mutating endpoints | Auth-aware router applies bearer middleware to all non-health endpoints; 8 request-level auth tests verify 401 on missing/invalid/malformed tokens and pass-through on health endpoints | `crates/ferrum-gateway/src/server.rs:107-110`; `crates/ferrum-gateway/src/server.rs:5948-6029`; `docs/14-api-and-contracts-map.md:91-95`; `19-v1-single-node-support-contract.md:39-43` | ✅ PASS |
 | No raw internal control data leaked to user plane | Canon hard rule remains part of support boundary; no fresh leak-oriented test was run in this cycle | `00-project-canon.md:104-109`; `43-production-readiness-signoff.md:15-20` | ⚠️ INHERITED |
 | No bypass gateway for mutation (hard rule in canon) | Explicit canon rule remains in force | `00-project-canon.md:102-105` | ✅ PASS |
 

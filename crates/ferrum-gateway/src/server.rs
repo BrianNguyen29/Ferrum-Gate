@@ -5947,6 +5947,90 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn authenticated_router_allows_readyz_without_bearer_token() {
+        // readyz is a health endpoint and must remain accessible without auth
+        let app = build_authenticated_router(
+            create_test_runtime().await,
+            ServerConfig {
+                auth_mode: AuthMode::Bearer,
+                bearer_token: Some("test-token".to_string()),
+            },
+        );
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/readyz")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn authenticated_router_rejects_invalid_bearer_token() {
+        // Wrong token must be rejected with 401 PolicyDenied
+        let app = build_authenticated_router(
+            create_test_runtime().await,
+            ServerConfig {
+                auth_mode: AuthMode::Bearer,
+                bearer_token: Some("test-token".to_string()),
+            },
+        );
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header(AUTHORIZATION, "Bearer wrong-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let body = body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let error: ApiError = serde_json::from_slice(&body).unwrap();
+        assert!(matches!(error.code, ApiErrorCode::PolicyDenied));
+    }
+
+    #[tokio::test]
+    async fn authenticated_router_rejects_malformed_auth_header() {
+        // Auth header without "Bearer " prefix must be rejected with 401
+        let app = build_authenticated_router(
+            create_test_runtime().await,
+            ServerConfig {
+                auth_mode: AuthMode::Bearer,
+                bearer_token: Some("test-token".to_string()),
+            },
+        );
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header(AUTHORIZATION, "test-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let body = body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let error: ApiError = serde_json::from_slice(&body).unwrap();
+        assert!(matches!(error.code, ApiErrorCode::PolicyDenied));
+    }
+
+    #[tokio::test]
     async fn metrics_endpoint_returns_prometheus_text_format() {
         let app = build_router(create_test_runtime().await);
 
