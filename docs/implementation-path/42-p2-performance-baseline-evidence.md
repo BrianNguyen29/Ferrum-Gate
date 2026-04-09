@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-04-08  
 **Gate:** G-E2 — P2 performance baseline established  
-**Status:** Evidence captured; cross-doc consolidation still required before ratifying `G-E2 = ✅ DONE`
+**Status:** ✅ DONE 2026-04-08 — evidence captured and ratified via cross-doc sign-off (`30-production-roadmap.md`, `41-production-execution-plan.md`, `43-production-readiness-signoff.md`)
 
 ---
 
@@ -87,10 +87,9 @@ cargo run --release -p ferrum-perf-baseline -- --concurrency 5 --iterations 5
 ## Gate Conclusion
 
 The benchmark harness required for G-E2 is implemented and benchmark results are
-captured in repo docs. Remaining work for formal gate ratification is limited to
-cross-doc consolidation per `41-production-execution-plan.md`:
+captured in repo docs. G-E2 was subsequently ratified on 2026-04-08 via the
+roadmap/execution-plan/sign-off doc set:
 
-- update `30-production-roadmap.md`
-- update `11-remaining-tasks.md` if needed
-- update `41-production-execution-plan.md`
-- update `docs/README.md`
+- `30-production-roadmap.md`
+- `41-production-execution-plan.md`
+- `43-production-readiness-signoff.md`
