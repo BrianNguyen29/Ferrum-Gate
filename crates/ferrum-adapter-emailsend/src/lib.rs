@@ -68,93 +68,6 @@ pub struct ProviderSendResult {
     pub provider_ref: String,
 }
 
-/// Internal (crate-private) typed email payload parsed from JSON.
-///
-/// This struct represents the validated shape of an email send request,
-/// extracted from the raw `serde_json::Value` payload. It is used by
-/// tests and the mock provider path to prove payload parsing works
-/// correctly. It is NOT wired to execute() — execute remains fail-closed
-/// and does not invoke provider.send().
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct EmailPayload {
-    /// Recipient email addresses.
-    to: Vec<String>,
-    /// Email subject line.
-    subject: String,
-    /// Email body content.
-    body: String,
-}
-
-/// Parse an email payload from a JSON value.
-///
-/// Validates the presence and types of `to`, `subject`, and `body` fields.
-/// Returns `Ok(EmailPayload)` if the payload is well-formed, or a descriptive
-/// `AdapterError::Validation` if any field is missing or has the wrong type.
-///
-/// This function is crate-private (not exposed outside the adapter) and is
-/// exercised by unit tests and the mock provider path to prove payload parsing
-/// works correctly. It is NOT called by execute() — execute remains fail-closed.
-///
-/// # Errors
-/// Returns `AdapterError::Validation` if:
-/// - `to` field is missing or not an array of strings
-/// - `subject` field is missing or not a string
-/// - `body` field is missing or not a string
-fn parse_email_payload(value: &serde_json::Value) -> Result<EmailPayload, AdapterError> {
-    let obj = value.as_object().ok_or_else(|| {
-        AdapterError::Validation("EmailSend payload must be a JSON object".to_string())
-    })?;
-
-    // Parse `to` field: must be an array of strings
-    let to_values = obj.get("to").ok_or_else(|| {
-        AdapterError::Validation("EmailSend payload missing required field: `to`".to_string())
-    })?;
-    let to_array = to_values.as_array().ok_or_else(|| {
-        AdapterError::Validation(
-            "EmailSend payload field `to` must be an array of recipient email addresses"
-                .to_string(),
-        )
-    })?;
-    let mut to = Vec::with_capacity(to_array.len());
-    for (i, item) in to_array.iter().enumerate() {
-        let s = item.as_str().ok_or_else(|| {
-            AdapterError::Validation(format!(
-                "EmailSend payload field `to`[{i}] must be a string, got {}",
-                item
-            ))
-        })?;
-        to.push(s.to_string());
-    }
-
-    // Parse `subject` field: must be a string
-    let subject = obj.get("subject").ok_or_else(|| {
-        AdapterError::Validation("EmailSend payload missing required field: `subject`".to_string())
-    })?;
-    let subject_str = subject.as_str().ok_or_else(|| {
-        AdapterError::Validation(format!(
-            "EmailSend payload field `subject` must be a string, got {}",
-            subject
-        ))
-    })?;
-
-    // Parse `body` field: must be a string
-    let body = obj.get("body").ok_or_else(|| {
-        AdapterError::Validation("EmailSend payload missing required field: `body`".to_string())
-    })?;
-    let body_str = body.as_str().ok_or_else(|| {
-        AdapterError::Validation(format!(
-            "EmailSend payload field `body` must be a string, got {}",
-            body
-        ))
-    })?;
-
-    Ok(EmailPayload {
-        to,
-        subject: subject_str.to_string(),
-        body: body_str.to_string(),
-    })
-}
-
 /// Provider-specific errors.
 ///
 /// Categorized to allow adapter-level retry/decide logic:
@@ -746,6 +659,95 @@ mod tests {
 mod payload_parser_tests {
     use super::*;
     use crate::tests::{make_email_send_contract, make_email_send_prepare_request};
+
+    /// Internal typed email payload parsed from JSON.
+    ///
+    /// This struct represents the validated shape of an email send request,
+    /// extracted from the raw `serde_json::Value` payload. It is used by
+    /// tests and the mock provider path to prove payload parsing works
+    /// correctly. It is NOT wired to execute() — execute remains fail-closed
+    /// and does not invoke provider.send().
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct EmailPayload {
+        /// Recipient email addresses.
+        to: Vec<String>,
+        /// Email subject line.
+        subject: String,
+        /// Email body content.
+        body: String,
+    }
+
+    /// Parse an email payload from a JSON value.
+    ///
+    /// Validates the presence and types of `to`, `subject`, and `body` fields.
+    /// Returns `Ok(EmailPayload)` if the payload is well-formed, or a descriptive
+    /// `AdapterError::Validation` if any field is missing or has the wrong type.
+    ///
+    /// This function is exercised by unit tests and the mock provider path to
+    /// prove payload parsing works correctly. It is NOT called by execute() —
+    /// execute remains fail-closed.
+    ///
+    /// # Errors
+    /// Returns `AdapterError::Validation` if:
+    /// - `to` field is missing or not an array of strings
+    /// - `subject` field is missing or not a string
+    /// - `body` field is missing or not a string
+    fn parse_email_payload(value: &serde_json::Value) -> Result<EmailPayload, AdapterError> {
+        let obj = value.as_object().ok_or_else(|| {
+            AdapterError::Validation("EmailSend payload must be a JSON object".to_string())
+        })?;
+
+        // Parse `to` field: must be an array of strings
+        let to_values = obj.get("to").ok_or_else(|| {
+            AdapterError::Validation("EmailSend payload missing required field: `to`".to_string())
+        })?;
+        let to_array = to_values.as_array().ok_or_else(|| {
+            AdapterError::Validation(
+                "EmailSend payload field `to` must be an array of recipient email addresses"
+                    .to_string(),
+            )
+        })?;
+        let mut to = Vec::with_capacity(to_array.len());
+        for (i, item) in to_array.iter().enumerate() {
+            let s = item.as_str().ok_or_else(|| {
+                AdapterError::Validation(format!(
+                    "EmailSend payload field `to`[{i}] must be a string, got {}",
+                    item
+                ))
+            })?;
+            to.push(s.to_string());
+        }
+
+        // Parse `subject` field: must be a string
+        let subject = obj.get("subject").ok_or_else(|| {
+            AdapterError::Validation(
+                "EmailSend payload missing required field: `subject`".to_string(),
+            )
+        })?;
+        let subject_str = subject.as_str().ok_or_else(|| {
+            AdapterError::Validation(format!(
+                "EmailSend payload field `subject` must be a string, got {}",
+                subject
+            ))
+        })?;
+
+        // Parse `body` field: must be a string
+        let body = obj.get("body").ok_or_else(|| {
+            AdapterError::Validation("EmailSend payload missing required field: `body`".to_string())
+        })?;
+        let body_str = body.as_str().ok_or_else(|| {
+            AdapterError::Validation(format!(
+                "EmailSend payload field `body` must be a string, got {}",
+                body
+            ))
+        })?;
+
+        Ok(EmailPayload {
+            to,
+            subject: subject_str.to_string(),
+            body: body_str.to_string(),
+        })
+    }
 
     // Helper to parse a payload and unwrap the result or panic with the error message.
     fn parse_payload_ok(value: serde_json::Value) -> EmailPayload {

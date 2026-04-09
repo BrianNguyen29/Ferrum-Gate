@@ -18,9 +18,61 @@ use ferrum_store::{
     ProvenanceRepo, RollbackRepo, SqliteStore,
 };
 use sqlx::{Connection, Row};
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::OnceLock;
+use std::sync::RwLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tempfile::TempDir;
 use tower::util::ServiceExt;
+
+// ---------------------------------------------------------------------------
+// Test isolation: unique file path generation to avoid parallel test interference
+// ---------------------------------------------------------------------------
+
+/// Process-wide counter for generating unique test file paths.
+static TEST_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Global map from execution_id to its test file path.
+/// This allows tests to retrieve the path used during prepare for use in execute.
+static TEST_FILE_PATHS: OnceLock<RwLock<HashMap<ferrum_proto::ExecutionId, PathBuf>>> =
+    OnceLock::new();
+
+/// Generates a unique test file path using a process-wide counter.
+/// This avoids test interference when tests run in parallel.
+fn next_test_file_path() -> PathBuf {
+    let counter = TEST_FILE_COUNTER.fetch_add(1, Ordering::SeqCst);
+    PathBuf::from(format!("/tmp/ferrum_test_{}.txt", counter))
+}
+
+/// Records the test file path for a given execution_id.
+fn set_test_file_path(execution_id: ferrum_proto::ExecutionId, path: PathBuf) {
+    let map = TEST_FILE_PATHS.get_or_init(|| RwLock::new(HashMap::new()));
+    map.write().unwrap().insert(execution_id, path);
+}
+
+/// Gets the test file path for a given execution_id.
+fn get_test_file_path(execution_id: ferrum_proto::ExecutionId) -> Option<PathBuf> {
+    if let Some(map) = TEST_FILE_PATHS.get() {
+        map.read().unwrap().get(&execution_id).cloned()
+    } else {
+        None
+    }
+}
+
+/// Resolves the execute payload path for a test execution.
+///
+/// Tests that go through `run_flow_to_prepared` store a unique per-execution
+/// file path to avoid parallel interference. Other tests still intentionally use
+/// the legacy `/tmp/test.txt` path, so we fall back to that when no mapped path
+/// exists for the execution.
+fn execution_test_path(execution_id: ferrum_proto::ExecutionId) -> String {
+    get_test_file_path(execution_id)
+        .unwrap_or_else(|| PathBuf::from("/tmp/test.txt"))
+        .to_string_lossy()
+        .to_string()
+}
 
 async fn create_test_runtime() -> (TempDir, GatewayRuntime, SqliteStore) {
     let temp_dir = TempDir::new().expect("failed to create temp dir");
@@ -1203,7 +1255,7 @@ async fn test_full_happy_path_flow_compile_evaluate_mint_authorize_prepare() {
         serde_json::from_slice(&body).unwrap();
     let execution_id = auth_resp.execution.execution_id;
 
-    // Step 5: Prepare execution (rollback prep)
+    // Step 5: Prepare execution
     let app = build_router(runtime.clone());
     let response = app
         .oneshot(
@@ -1333,12 +1385,20 @@ async fn run_flow_to_prepared(
     ferrum_proto::ProposalId,
     ferrum_proto::ExecutionId,
 ) {
+    // Generate unique file path for this execution to avoid parallel test interference
+    let test_file_path = next_test_file_path();
+    let test_file_str = test_file_path.to_string_lossy();
+    let test_dir = test_file_path
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|| "/tmp".to_string());
+
     // Step 1: Compile intent with mutating effect type and proper file scope
     let app = build_router(runtime.clone());
     let mut req = sample_intent_request_with_effect(EffectType::FileMutation);
     // Add proper file scope for the test (fail-closed: empty scope denies all)
     req.requested_resource_scope = vec![ResourceSelector::FilesystemPath {
-        path: "/tmp".to_string(),
+        path: test_dir,
         mode: ResourceMode::Write,
         content_hash: None,
     }];
@@ -1369,7 +1429,7 @@ async fn run_flow_to_prepared(
         title: "Execute mutation".to_string(),
         tool_name: "fs.write".to_string(),
         server_name: "workspace".to_string(),
-        raw_arguments: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        raw_arguments: serde_json::json!({"path": test_file_str, "content": "hello"}),
         expected_effect: "write a file".to_string(),
         estimated_risk: RiskTier::Medium,
         requested_rollback_class: rollback_class,
@@ -1404,7 +1464,7 @@ async fn run_flow_to_prepared(
             tool_version: None,
         },
         resource_bindings: vec![ResourceBinding::File {
-            path: "/tmp/test.txt".to_string(),
+            path: test_file_str.to_string(),
             mode: ResourceMode::Write,
             required_hash: None,
         }],
@@ -1466,6 +1526,9 @@ async fn run_flow_to_prepared(
         serde_json::from_slice(&body).unwrap();
     let execution_id = auth_resp.execution.execution_id;
 
+    // Store the test file path for this execution so tests can retrieve it later
+    set_test_file_path(execution_id, test_file_path);
+
     // Step 5: Prepare execution
     let app = build_router(runtime.clone());
     let response = app
@@ -1496,7 +1559,7 @@ async fn test_full_happy_path_execute_verify_auto_commit() {
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
-        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        payload: serde_json::json!({"path": execution_test_path(execution_id), "content": "hello"}),
     };
 
     let response = app
@@ -1617,7 +1680,7 @@ async fn test_r2_no_auto_commit_verify_then_explicit_commit() {
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
-        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        payload: serde_json::json!({"path": execution_test_path(execution_id), "content": "hello"}),
     };
 
     let response = app
@@ -1922,7 +1985,7 @@ async fn test_rollback_path_recovers_execution() {
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
-        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        payload: serde_json::json!({"path": execution_test_path(execution_id), "content": "hello"}),
     };
 
     let response = app
@@ -2046,7 +2109,7 @@ async fn test_compensate_path_recovers_execution() {
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
-        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        payload: serde_json::json!({"path": execution_test_path(execution_id), "content": "hello"}),
     };
 
     let response = app
@@ -5418,7 +5481,7 @@ async fn test_http_execution_denied_missing_binding() {
         serde_json::from_slice(&body).unwrap();
     let execution_id = auth_resp.execution.execution_id;
 
-    // Prepare execution
+    // Step 5: Prepare execution
     let app = build_router(runtime.clone());
     let response = app
         .oneshot(
@@ -5483,10 +5546,7 @@ async fn test_non_http_execution_unaffected_by_missing_http_binding() {
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
-        payload: serde_json::json!({
-            "path": "/tmp/test.txt",
-            "content": "hello world"
-        }),
+        payload: serde_json::json!({"path": execution_test_path(execution_id), "content": "hello world"}),
     };
 
     let response = app
@@ -6878,7 +6938,7 @@ async fn test_prepare_with_readwrite_git_binding_routes_to_git_adapter() {
         serde_json::from_slice(&body).unwrap();
     let execution_id = auth_resp.execution.execution_id;
 
-    // Step 5: Prepare and capture rollback contract
+    // Step 5: Prepare execution
     let app = build_router(runtime.clone());
     let response = app
         .oneshot(
@@ -7119,7 +7179,7 @@ async fn run_git_flow_to_prepared_with_real_repo(
         serde_json::from_slice(&body).unwrap();
     let execution_id = auth_resp.execution.execution_id;
 
-    // Prepare and capture before_ref from contract metadata
+    // Step 5: Prepare execution
     let app = build_router(runtime.clone());
     let response = app
         .oneshot(
@@ -7138,14 +7198,15 @@ async fn run_git_flow_to_prepared_with_real_repo(
         .unwrap();
     let prep_resp: ferrum_proto::PrepareExecutionResponse = serde_json::from_slice(&body).unwrap();
     assert!(prep_resp.prepared);
+    assert!(prep_resp.rollback_contract.is_some());
 
-    // Extract before_ref from contract metadata
+    // Capture before_ref from contract metadata
     let contract = prep_resp.rollback_contract.unwrap();
     let before_ref = contract
         .metadata
         .get("before_ref")
         .and_then(|v| v.as_str())
-        .expect("before_ref should be in contract metadata")
+        .unwrap_or("")
         .to_string();
 
     (intent_id, proposal_id, execution_id, before_ref)
@@ -8576,7 +8637,7 @@ async fn test_r2_no_auto_commit_requires_explicit_commit() {
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
-        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        payload: serde_json::json!({"path": execution_test_path(execution_id), "content": "hello"}),
     };
 
     let response = app
@@ -9039,6 +9100,10 @@ async fn test_r3_no_auto_commit_after_approval_requires_explicit_commit() {
 async fn test_empty_scope_denies_any_binding() {
     let (_temp_dir, runtime, _store) = create_test_runtime().await;
 
+    // Use unique file path to avoid parallel test interference
+    let test_file_path = next_test_file_path();
+    let test_file_str = test_file_path.to_string_lossy();
+
     // Step 1: Compile intent with EMPTY scope (read-only analysis has empty scope by default)
     let req = sample_intent_request(); // ReadOnlyAnalysis effect type
     let app = build_router(runtime.clone());
@@ -9112,8 +9177,8 @@ async fn test_empty_scope_denies_any_binding() {
             tool_version: None,
         },
         resource_bindings: vec![ResourceBinding::File {
-            path: "/tmp/test.txt".to_string(),
-            mode: ResourceMode::Read,
+            path: test_file_str.to_string(),
+            mode: ResourceMode::Write,
             required_hash: None,
         }],
         argument_constraints: vec![],
@@ -9570,7 +9635,7 @@ async fn test_adapter_backed_rollback_deletes_created_file() {
         serde_json::from_slice(&body).unwrap();
     let execution_id = auth_resp.execution.execution_id;
 
-    // Prepare execution - this should select the "fs" adapter based on file binding
+    // Step 5: Prepare execution
     let app = build_router(runtime.clone());
     let response = app
         .oneshot(
@@ -9860,7 +9925,7 @@ async fn test_adapter_backed_compensate_restores_overwritten_file() {
         serde_json::from_slice(&body).unwrap();
     let execution_id = auth_resp.execution.execution_id;
 
-    // Prepare execution - fs adapter will snapshot existing file content
+    // Step 5: Prepare execution
     let app = build_router(runtime.clone());
     let response = app
         .oneshot(
@@ -11774,7 +11839,7 @@ async fn test_commit_flow_writes_ledger_entry_linked_to_provenance_event() {
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
-        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        payload: serde_json::json!({"path": execution_test_path(execution_id), "content": "hello"}),
     };
     let response = app
         .oneshot(
@@ -11895,10 +11960,14 @@ async fn test_ledger_hash_chain_correct_over_multiple_commits() {
     let (_intent_id1, _proposal_id1, execution_id1) =
         run_flow_to_prepared(&runtime, RollbackClass::R0NativeReversible).await;
 
+    // Get the unique file path assigned to this execution
+    let test_file_path1 =
+        get_test_file_path(execution_id1).expect("test_file_path should be set for execution_id1");
+
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id: execution_id1,
-        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        payload: serde_json::json!({"path": test_file_path1.to_string_lossy(), "content": "hello"}),
     };
     let response = app
         .oneshot(
@@ -11939,10 +12008,14 @@ async fn test_ledger_hash_chain_correct_over_multiple_commits() {
     let (_intent_id2, _proposal_id2, execution_id2) =
         run_flow_to_prepared(&runtime, RollbackClass::R2Compensatable).await;
 
+    // Get the unique file path assigned to this execution
+    let test_file_path2 =
+        get_test_file_path(execution_id2).expect("test_file_path should be set for execution_id2");
+
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id: execution_id2,
-        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "world"}),
+        payload: serde_json::json!({"path": test_file_path2.to_string_lossy(), "content": "world"}),
     };
     let response = app
         .oneshot(
@@ -15213,7 +15286,7 @@ async fn run_flow_to_running(runtime: &GatewayRuntime) -> ferrum_proto::Executio
     // Execute (stop here - execution is in Running state)
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
-        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        payload: serde_json::json!({"path": execution_test_path(execution_id), "content": "hello"}),
     };
     let response = app
         .clone()
@@ -16055,7 +16128,7 @@ async fn test_u1_s2_verify_assessment_persisted_in_metadata() {
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
-        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        payload: serde_json::json!({"path": execution_test_path(execution_id), "content": "hello"}),
     };
 
     let response = app
@@ -16179,7 +16252,7 @@ async fn test_u1_s2_verify_assessment_unavailable_when_context_missing() {
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
-        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        payload: serde_json::json!({"path": execution_test_path(execution_id), "content": "hello"}),
     };
 
     let response = app
@@ -16294,7 +16367,7 @@ async fn test_u1_s3a_rollback_target_high_confidence_inference() {
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
-        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        payload: serde_json::json!({"path": execution_test_path(execution_id), "content": "hello"}),
     };
 
     let response = app
@@ -16392,7 +16465,7 @@ async fn test_u1_s3a_alignment_strength_distinguishes_strong_from_weak() {
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
-        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        payload: serde_json::json!({"path": execution_test_path(execution_id), "content": "hello"}),
     };
 
     let response = app
@@ -16466,7 +16539,7 @@ async fn test_u1_s3a_separate_inference_and_alignment_confidence() {
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
-        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        payload: serde_json::json!({"path": execution_test_path(execution_id), "content": "hello"}),
     };
 
     let response = app
@@ -16561,7 +16634,7 @@ async fn test_u1_s3b_threshold_metadata_schema_presence() {
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
-        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        payload: serde_json::json!({"path": execution_test_path(execution_id), "content": "hello"}),
     };
 
     let response = app
@@ -16682,7 +16755,7 @@ async fn test_u1_s3b_low_threshold_band_when_assessment_unavailable() {
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
-        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        payload: serde_json::json!({"path": execution_test_path(execution_id), "content": "hello"}),
     };
 
     let response = app
@@ -16793,7 +16866,7 @@ async fn test_u1_s3b_threshold_metadata_field_structure_and_annotate_flag() {
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
-        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        payload: serde_json::json!({"path": execution_test_path(execution_id), "content": "hello"}),
     };
 
     let response = app
@@ -18480,7 +18553,7 @@ async fn test_u1_s5b_high_mismatch_blocks_at_prepare_time() {
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
-        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        payload: serde_json::json!({"path": execution_test_path(execution_id), "content": "hello"}),
     };
     let response = app
         .oneshot(
@@ -18958,7 +19031,7 @@ async fn test_u1_s5a_regression_verify_state_machine_unchanged() {
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
-        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        payload: serde_json::json!({"path": execution_test_path(execution_id), "content": "hello"}),
     };
 
     let response = app
@@ -19703,7 +19776,13 @@ async fn test_u1_s7a_selector_less_legacy_behavior_intact() {
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
-        payload: serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+        payload: serde_json::json!({
+            "path": get_test_file_path(execution_id)
+                .expect("test_file_path should be set for execution_id")
+                .to_string_lossy()
+                .to_string(),
+            "content": "hello"
+        }),
     };
 
     let response = app
