@@ -82,10 +82,12 @@ Interpretation:
 - No new blocker was found at the v1 support-boundary level.
 - The 2026-04-08 broader-production declaration remains intact **within the
   documented v1 single-node scope**.
-- Security row "Bearer-token auth enforced on mutating endpoints" now has fresh
-  targeted evidence: 8 request-level tests verify 401 responses on
-  missing/invalid/malformed bearer tokens and pass-through on health endpoints.
-  Other security rows remain inherited from prior-cycle evidence.
+- Security now has fresh targeted evidence in two places:
+  - 8 request-level auth tests verify 401 responses on missing/invalid/malformed
+    bearer tokens and pass-through on health endpoints.
+  - an internal-error sanitization test verifies 500 responses do not echo raw
+    file paths, SQL fragments, or internal error strings back to the user plane.
+  Remaining input-validation rows still rely on prior-cycle evidence.
 
 ---
 
@@ -93,10 +95,11 @@ Interpretation:
 
 The next formal review cycle should prioritize:
 
-1. targeted evidence for the canon rule **"Khong tra raw internal control data ra user plane"**,
-2. normalized performance regression comparison against the established G-E2 baseline,
-3. optional rerun of P3.G1–P3.G4 live drills if the deployment environment or
+1. normalized performance regression comparison against the established G-E2 baseline,
+2. optional rerun of P3.G1–P3.G4 live drills if the deployment environment or
    operating procedures changed since 2026-04-03.
+3. targeted refresh for inherited input-validation rows (SQLite identifier safety,
+   lineage invalid UUID handling, maildraft malformed verify_checks).
 
 ---
 

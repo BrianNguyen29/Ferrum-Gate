@@ -4949,12 +4949,13 @@ impl ApiProblem {
         )
     }
 
-    fn internal(err: anyhow::Error) -> Self {
+    fn internal(_err: anyhow::Error) -> Self {
+        let correlation_id = uuid::Uuid::new_v4().to_string();
         Self(
             ApiError {
                 code: ApiErrorCode::Internal,
-                message: err.to_string(),
-                correlation_id: uuid::Uuid::new_v4().to_string(),
+                message: format!("internal server error (see correlation_id: {correlation_id})"),
+                correlation_id,
                 retriable: false,
                 details: serde_json::json!({}),
             },
@@ -5538,12 +5539,14 @@ fn convert_store_error_to_ledger_error(e: &ferrum_store::StoreError) -> LedgerVe
 #[cfg(test)]
 mod tests {
     use super::{
-        build_authenticated_router, determine_adapter_key_from_bindings,
+        ApiProblem, build_authenticated_router, determine_adapter_key_from_bindings,
         determine_rollback_target_from_bindings, infer_rollback_class,
     };
     use axum::{
+        Router,
         body::{self, Body},
         http::{Request, StatusCode, header::AUTHORIZATION},
+        routing::get,
     };
     use ferrum_cap::{CapabilityService, InMemoryCapabilityService};
     use ferrum_firewall::{DefaultFirewall, SemanticFirewall};
@@ -6028,6 +6031,36 @@ mod tests {
             .unwrap();
         let error: ApiError = serde_json::from_slice(&body).unwrap();
         assert!(matches!(error.code, ApiErrorCode::PolicyDenied));
+    }
+
+    #[tokio::test]
+    async fn internal_errors_are_sanitized_before_returning_to_user_plane() {
+        let app = Router::new().route(
+            "/boom",
+            get(|| async {
+                Err::<(), ApiProblem>(ApiProblem::internal(anyhow::anyhow!(
+                    "sqlite failure on /tmp/ferrumgate.db: SELECT * FROM secrets"
+                )))
+            }),
+        );
+
+        let response = app
+            .oneshot(Request::builder().uri("/boom").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let body = body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let error: ApiError = serde_json::from_slice(&body).unwrap();
+
+        assert!(matches!(error.code, ApiErrorCode::Internal));
+        assert!(error.message.contains("internal server error"));
+        assert!(!error.message.contains("/tmp/ferrumgate.db"));
+        assert!(!error.message.contains("SELECT * FROM secrets"));
+        assert!(!error.message.contains("sqlite failure"));
+        assert!(!error.correlation_id.is_empty());
     }
 
     #[tokio::test]

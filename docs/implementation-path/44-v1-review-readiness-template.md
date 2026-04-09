@@ -187,7 +187,7 @@
 | Check | Result | Evidence | Status |
 |-------|--------|----------|--------|
 | Bearer-token auth enforced on mutating endpoints | Auth-aware router applies bearer middleware to all non-health endpoints; 8 request-level auth tests verify 401 on missing/invalid/malformed tokens and pass-through on health endpoints | `crates/ferrum-gateway/src/server.rs:107-110`; `crates/ferrum-gateway/src/server.rs:5948-6029`; `docs/14-api-and-contracts-map.md:91-95`; `19-v1-single-node-support-contract.md:39-43` | ✅ PASS |
-| No raw internal control data leaked to user plane | Canon hard rule remains part of support boundary; no fresh leak-oriented test was run in this cycle | `00-project-canon.md:104-109`; `43-production-readiness-signoff.md:15-20` | ⚠️ INHERITED |
+| No raw internal control data leaked to user plane | Internal 500 responses are sanitized before returning to user plane; raw file path/SQL/internal error strings are not echoed back | `00-project-canon.md:104-109`; `crates/ferrum-gateway/src/server.rs:4952-4962`; `crates/ferrum-gateway/src/server.rs:6033-6061` | ✅ PASS |
 | No bypass gateway for mutation (hard rule in canon) | Explicit canon rule remains in force | `00-project-canon.md:102-105` | ✅ PASS |
 
 ### 4.2 Input Validation
@@ -232,7 +232,7 @@
 | Docs Alignment | ✅ PASS | Section 1; `00-project-canon.md`, `19-v1-single-node-support-contract.md`, `30-production-roadmap.md`, `41-production-execution-plan.md` refreshed/aligned | Keep API map synced when non-contract routes change |
 | Technical Verification | ⚠️ INHERITED | Section 0.1 fresh workspace checks + Section 2 row-by-row evidence | Adapter/integration negative-path rows are inherited from 2026-04-02 to 2026-04-08 evidence cycle |
 | Performance | ⚠️ INHERITED | Section 3; `42-p2-performance-baseline-evidence.md` + refreshed dev/release reruns | No normalized regression comparison performed this cycle |
-| Security | ⚠️ INHERITED | Section 4; auth/no-bypass doc+code inspection, remaining validation from prior-cycle evidence | No fresh targeted test for "no raw internal control data leaked" |
+| Security | ✅ PASS | Section 4; fresh auth-boundary tests plus internal-error sanitization test | Remaining input-validation rows still inherited from prior-cycle evidence |
 | Stability | ⚠️ INHERITED | Section 5; runbook inspection + P3.G1-G4 evidence docs | Live drill evidence remains inherited from 2026-04-03 |
 
 ### 6.2 Support Tier Alignment
@@ -258,7 +258,7 @@
 | Prior review date | 2026-04-08 (G-E5 sign-off) |
 | Prior review doc | `43-production-readiness-signoff.md` |
 | New blockers found | None at the v1 support-boundary level; this cycle found and corrected docs drift in `14-api-and-contracts-map.md`, `41-production-execution-plan.md`, and `42-p2-performance-baseline-evidence.md` |
-| Items requiring next-cycle refresh | Targeted security evidence for "no raw internal control data leaked"; optional live rerun of P3.G1-G4 drills if environment changed; normalized perf regression comparison |
+| Items requiring next-cycle refresh | Optional live rerun of P3.G1-G4 drills if environment changed; normalized perf regression comparison; targeted refresh for inherited input-validation rows |
 
 ---
 
