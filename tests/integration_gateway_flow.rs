@@ -74,6 +74,14 @@ fn execution_test_path(execution_id: ferrum_proto::ExecutionId) -> String {
         .to_string()
 }
 
+/// Constructs a file-system execute payload using the resolved test file path.
+fn fs_execute_payload(execution_id: ferrum_proto::ExecutionId, content: &str) -> serde_json::Value {
+    serde_json::json!({
+        "path": execution_test_path(execution_id),
+        "content": content
+    })
+}
+
 async fn create_test_runtime() -> (TempDir, GatewayRuntime, SqliteStore) {
     let temp_dir = TempDir::new().expect("failed to create temp dir");
     let db_path = temp_dir.path().join("store.sqlite");
@@ -1559,7 +1567,7 @@ async fn test_full_happy_path_execute_verify_auto_commit() {
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
-        payload: serde_json::json!({"path": execution_test_path(execution_id), "content": "hello"}),
+        payload: fs_execute_payload(execution_id, "hello"),
     };
 
     let response = app
@@ -1680,7 +1688,7 @@ async fn test_r2_no_auto_commit_verify_then_explicit_commit() {
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
-        payload: serde_json::json!({"path": execution_test_path(execution_id), "content": "hello"}),
+        payload: fs_execute_payload(execution_id, "hello"),
     };
 
     let response = app
@@ -1985,7 +1993,7 @@ async fn test_rollback_path_recovers_execution() {
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
-        payload: serde_json::json!({"path": execution_test_path(execution_id), "content": "hello"}),
+        payload: fs_execute_payload(execution_id, "hello"),
     };
 
     let response = app
@@ -2109,7 +2117,7 @@ async fn test_compensate_path_recovers_execution() {
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
-        payload: serde_json::json!({"path": execution_test_path(execution_id), "content": "hello"}),
+        payload: fs_execute_payload(execution_id, "hello"),
     };
 
     let response = app
@@ -5546,7 +5554,7 @@ async fn test_non_http_execution_unaffected_by_missing_http_binding() {
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
-        payload: serde_json::json!({"path": execution_test_path(execution_id), "content": "hello world"}),
+        payload: fs_execute_payload(execution_id, "hello world"),
     };
 
     let response = app
@@ -8637,7 +8645,7 @@ async fn test_r2_no_auto_commit_requires_explicit_commit() {
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
-        payload: serde_json::json!({"path": execution_test_path(execution_id), "content": "hello"}),
+        payload: fs_execute_payload(execution_id, "hello"),
     };
 
     let response = app
@@ -11839,7 +11847,7 @@ async fn test_commit_flow_writes_ledger_entry_linked_to_provenance_event() {
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
-        payload: serde_json::json!({"path": execution_test_path(execution_id), "content": "hello"}),
+        payload: fs_execute_payload(execution_id, "hello"),
     };
     let response = app
         .oneshot(
@@ -15286,7 +15294,7 @@ async fn run_flow_to_running(runtime: &GatewayRuntime) -> ferrum_proto::Executio
     // Execute (stop here - execution is in Running state)
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
-        payload: serde_json::json!({"path": execution_test_path(execution_id), "content": "hello"}),
+        payload: fs_execute_payload(execution_id, "hello"),
     };
     let response = app
         .clone()
@@ -16128,7 +16136,7 @@ async fn test_u1_s2_verify_assessment_persisted_in_metadata() {
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
-        payload: serde_json::json!({"path": execution_test_path(execution_id), "content": "hello"}),
+        payload: fs_execute_payload(execution_id, "hello"),
     };
 
     let response = app
@@ -16252,7 +16260,7 @@ async fn test_u1_s2_verify_assessment_unavailable_when_context_missing() {
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
-        payload: serde_json::json!({"path": execution_test_path(execution_id), "content": "hello"}),
+        payload: fs_execute_payload(execution_id, "hello"),
     };
 
     let response = app
@@ -16367,7 +16375,7 @@ async fn test_u1_s3a_rollback_target_high_confidence_inference() {
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
-        payload: serde_json::json!({"path": execution_test_path(execution_id), "content": "hello"}),
+        payload: fs_execute_payload(execution_id, "hello"),
     };
 
     let response = app
@@ -16465,7 +16473,7 @@ async fn test_u1_s3a_alignment_strength_distinguishes_strong_from_weak() {
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
-        payload: serde_json::json!({"path": execution_test_path(execution_id), "content": "hello"}),
+        payload: fs_execute_payload(execution_id, "hello"),
     };
 
     let response = app
@@ -16539,7 +16547,7 @@ async fn test_u1_s3a_separate_inference_and_alignment_confidence() {
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
-        payload: serde_json::json!({"path": execution_test_path(execution_id), "content": "hello"}),
+        payload: fs_execute_payload(execution_id, "hello"),
     };
 
     let response = app
@@ -16634,7 +16642,7 @@ async fn test_u1_s3b_threshold_metadata_schema_presence() {
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
-        payload: serde_json::json!({"path": execution_test_path(execution_id), "content": "hello"}),
+        payload: fs_execute_payload(execution_id, "hello"),
     };
 
     let response = app
@@ -16755,7 +16763,7 @@ async fn test_u1_s3b_low_threshold_band_when_assessment_unavailable() {
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
-        payload: serde_json::json!({"path": execution_test_path(execution_id), "content": "hello"}),
+        payload: fs_execute_payload(execution_id, "hello"),
     };
 
     let response = app
@@ -16866,7 +16874,7 @@ async fn test_u1_s3b_threshold_metadata_field_structure_and_annotate_flag() {
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
-        payload: serde_json::json!({"path": execution_test_path(execution_id), "content": "hello"}),
+        payload: fs_execute_payload(execution_id, "hello"),
     };
 
     let response = app
@@ -18553,7 +18561,7 @@ async fn test_u1_s5b_high_mismatch_blocks_at_prepare_time() {
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
-        payload: serde_json::json!({"path": execution_test_path(execution_id), "content": "hello"}),
+        payload: fs_execute_payload(execution_id, "hello"),
     };
     let response = app
         .oneshot(
@@ -19031,7 +19039,7 @@ async fn test_u1_s5a_regression_verify_state_machine_unchanged() {
     let app = build_router(runtime.clone());
     let execute_req = ferrum_proto::ExecuteRequest {
         execution_id,
-        payload: serde_json::json!({"path": execution_test_path(execution_id), "content": "hello"}),
+        payload: fs_execute_payload(execution_id, "hello"),
     };
 
     let response = app
