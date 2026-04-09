@@ -76,25 +76,25 @@
 
 | Check | Result | Evidence | Status |
 |-------|--------|----------|--------|
-| Support contract (`19-v1-single-node-support-contract.md`) exists | — | — | ⬜ |
-| Support contract Section 0 matches `00-project-canon.md` T1/T2/T3 boundaries | — | — | ⬜ |
-| Supported routes (Section 1.2) match actual router implementation | — | — | ⬜ |
-| CLI surface (Section 1.3) matches `ferrumctl` actual commands | — | — | ⬜ |
-| T2 partial adapters listed match `30-production-roadmap.md` P2 items | — | — | ⬜ |
-| T3 out-of-scope items match `30-production-roadmap.md` and `11-remaining-tasks.md` | — | — | ⬜ |
-| SLA surface (Section 7) is consistent with known limitations (Section 3) | — | — | ⬜ |
-| EOL policy (Section 9) is present and unambiguous | — | — | ⬜ |
+| Support contract (`19-v1-single-node-support-contract.md`) exists | Canonical support contract present and current | `19-v1-single-node-support-contract.md:1-9` | ✅ PASS |
+| Support contract Section 0 matches `00-project-canon.md` T1/T2/T3 boundaries | T1/T2/T3 language aligned | `19-v1-single-node-support-contract.md:13-31`; `00-project-canon.md:40-47` | ✅ PASS |
+| Supported routes (Section 1.2) match actual router implementation | All v1 contract routes present in router; extra non-contract routes remain outside T1 | `19-v1-single-node-support-contract.md:45-73`; `crates/ferrum-gateway/src/server.rs:118-185` | ✅ PASS |
+| CLI surface (Section 1.3) matches `ferrumctl` actual commands | Core contract surface previously ratified; spot-checks refreshed today | `19-v1-single-node-support-contract.md:75-108`; Section 0.1 rows for `compile-intent`/`commit-execution` help | ⚠️ INHERITED |
+| T2 partial adapters listed match `30-production-roadmap.md` P2 items | fs/sqlite/git/http/maildraft boundaries align with P2 hardening track | `00-project-canon.md:65-72`; `30-production-roadmap.md:35-49` | ✅ PASS |
+| T3 out-of-scope items match `30-production-roadmap.md` and `11-remaining-tasks.md` | Multi-node/HA, policy bundle lifecycle, U2-U4 remain deferred | `19-v1-single-node-support-contract.md:111-139`; `30-production-roadmap.md:122-148` | ✅ PASS |
+| SLA surface (Section 7) is consistent with known limitations (Section 3) | Availability/recovery/response caveats match shallow probes and manual backup model | `19-v1-single-node-support-contract.md:142-178`; `19-v1-single-node-support-contract.md:241-299` | ✅ PASS |
+| EOL policy (Section 9) is present and unambiguous | EOL/deprecation process explicitly defined | `19-v1-single-node-support-contract.md:313-394` | ✅ PASS |
 
 ### 1.2 Cross-Doc Consistency
 
 | Check | Result | Evidence | Status |
 |-------|--------|----------|--------|
-| `00-project-canon.md` hard rules (Section 5) consistent with PDP/engine behavior | — | — | ⬜ |
-| `16-release-checklist.md` checklist items reflect current repo state | — | — | ⬜ |
-| `23-production-readiness-assessment.md` verdicts consistent with `25-v1-single-node-rc-evidence.md` | — | — | ⬜ |
-| `30-production-roadmap.md` gate statuses current (G-E1 through G-E5) | — | — | ⬜ |
-| `41-production-execution-plan.md` phase tracking consistent with `30-production-roadmap.md` | — | — | ⬜ |
-| No doc claims multi-node/HA support (all v1 docs scoped to single-node) | — | — | ⬜ |
+| `00-project-canon.md` hard rules (Section 5) consistent with PDP/engine behavior | Scope mismatch, no capability reuse, and R3 approval/auto-commit boundaries are backed by live code; raw-data leakage rule remains inherited architectural guidance | `00-project-canon.md:102-109`; `crates/ferrum-pdp/src/engine.rs:211-268`; `crates/ferrum-cap/src/service.rs:106-127`; `crates/ferrum-rollback/src/service.rs:109-127` | ⚠️ INHERITED |
+| `16-release-checklist.md` checklist items reflect current repo state | Core workspace checks refreshed 2026-04-09; broader checklist still grounded in prior evidence set | `16-release-checklist.md:17-54`; Section 0.1 | ⚠️ INHERITED |
+| `23-production-readiness-assessment.md` verdicts consistent with `25-v1-single-node-rc-evidence.md` | Assessment doc points to RC evidence and repeats same gate outcome | `23-production-readiness-assessment.md:10-21`; `25-v1-single-node-rc-evidence.md:224-247` | ✅ PASS |
+| `30-production-roadmap.md` gate statuses current (G-E1 through G-E5) | Gate table remains aligned with sign-off set | `30-production-roadmap.md:171-182`; `43-production-readiness-signoff.md:62-77` | ✅ PASS |
+| `41-production-execution-plan.md` phase tracking consistent with `30-production-roadmap.md` | G-E1 wording refreshed in this review; execution plan now aligns with roadmap/sign-off | `41-production-execution-plan.md:30-39`; `30-production-roadmap.md:176-182` | ✅ PASS |
+| No doc claims multi-node/HA support (all v1 docs scoped to single-node) | All governing docs explicitly keep multi-node/HA out of scope | `00-project-canon.md:49-51`; `19-v1-single-node-support-contract.md:115-120`; `43-production-readiness-signoff.md:19-20` | ✅ PASS |
 
 ---
 
@@ -104,63 +104,63 @@
 
 | Check | Result | Evidence | Status |
 |-------|--------|----------|--------|
-| `cargo check --workspace` passes | — | — | ⬜ |
-| `cargo fmt --all -- --check` passes | — | — | ⬜ |
-| `cargo clippy --workspace -- -D warnings` passes | — | — | ⬜ |
-| `cargo test --workspace` passes | — | — | ⬜ |
-| `python3 scripts/check_contract_consistency.py` passes | — | — | ⬜ |
-| OpenAPI spec (`openapi.yaml` or equivalent) exists and matches supported routes | — | — | ⬜ |
+| `cargo check --workspace` passes | Re-verified today | Section 0.1 row `Cargo check` | ✅ PASS |
+| `cargo fmt --all -- --check` passes | Re-verified today | Section 0.1 row `Cargo fmt` | ✅ PASS |
+| `cargo clippy --workspace -- -D warnings` passes | Re-verified today | Section 0.1 row `Cargo clippy` | ✅ PASS |
+| `cargo test --workspace` passes | Re-verified today | Section 0.1 row `Cargo test` | ✅ PASS |
+| `python3 scripts/check_contract_consistency.py` passes | Re-verified today | Section 0.1 row `Contract consistency` | ✅ PASS |
+| OpenAPI spec (`openapi.yaml` or equivalent) exists and matches supported routes | OpenAPI file exists; contract consistency check passed | `docs/14-api-and-contracts-map.md:10-12`; `16-release-checklist.md:18-22`; Section 0.1 contract consistency row | ✅ PASS |
 
 ### 2.2 Gateway Flow
 
 | Check | Result | Evidence | Status |
 |-------|--------|----------|--------|
-| evaluate → mint → authorize → prepare → execute → verify → compensate flow is wired | — | — | ⬜ |
-| scope-mismatch deny implemented (empty scope + non-R0 = Deny) | — | — | ⬜ |
-| single-use capability (cap marked Used → AlreadyUsed on reuse) | — | — | ⬜ |
-| R3 no auto-commit (R3 contracts have auto_commit=false) | — | — | ⬜ |
-| compensate and rollback are distinct adapter operations | — | — | ⬜ |
-| high taint (>=70) triggers Quarantine for non-R0 | — | — | ⬜ |
-| R3 requires approval (RequireApproval decision) | — | — | ⬜ |
+| evaluate → mint → authorize → prepare → execute → verify → compensate flow is wired | Core gateway flow previously ratified and still covered by workspace/integration evidence | `25-v1-single-node-rc-evidence.md:71-92`; `23-production-readiness-assessment.md:25-38` | ⚠️ INHERITED |
+| scope-mismatch deny implemented (empty scope + non-R0 = Deny) | PDP deny path confirmed in code | `crates/ferrum-pdp/src/engine.rs:211-226`; `25-v1-single-node-rc-evidence.md:96-108` | ✅ PASS |
+| single-use capability (cap marked Used → AlreadyUsed on reuse) | Single-use mark_used guard implemented; regression previously covered | `crates/ferrum-cap/src/service.rs:106-127`; `25-v1-single-node-rc-evidence.md:35-44` | ⚠️ INHERITED |
+| R3 no auto-commit (R3 contracts have auto_commit=false) | Auto-commit only enabled for R0 in rollback prepare path | `crates/ferrum-rollback/src/service.rs:109-127`; `25-v1-single-node-rc-evidence.md:37-39` | ✅ PASS |
+| compensate and rollback are distinct adapter operations | Service exposes distinct compensate/rollback calls; regression evidence inherited | `crates/ferrum-rollback/src/service.rs:88-106`; `23-production-readiness-assessment.md:37`; `16-release-checklist.md:34` | ⚠️ INHERITED |
+| high taint (>=70) triggers Quarantine for non-R0 | PDP quarantine branch confirmed in code | `crates/ferrum-pdp/src/engine.rs:243-256`; `25-v1-single-node-rc-evidence.md:85-91` | ✅ PASS |
+| R3 requires approval (RequireApproval decision) | PDP approval branch confirmed in code | `crates/ferrum-pdp/src/engine.rs:258-268`; `23-production-readiness-assessment.md:51-53` | ✅ PASS |
 
 ### 2.3 Adapter Surfaces (T2 — Partial)
 
 | Check | Result | Evidence | Status |
 |-------|--------|----------|--------|
-| fs adapter: fail-closed verify on I/O errors | — | — | ⬜ |
-| fs adapter: compensate deletes new file (when no snapshot) | — | — | ⬜ |
-| sqlite adapter: identifier safety (SQL injection prevention) | — | — | ⬜ |
-| sqlite adapter: fail-closed verify on corruption | — | — | ⬜ |
-| git adapter: fail-closed verify on I/O errors | — | — | ⬜ |
-| git adapter: GitPull rollback fail-closed when branch changed | — | — | ⬜ |
-| http adapter: fail-closed on transport failure and timeout | — | — | ⬜ |
-| http adapter: verify_checks mismatch → verified=false → commit rejected | — | — | ⬜ |
-| maildraft adapter: fail-closed on storage/db error | — | — | ⬜ |
+| fs adapter: fail-closed verify on I/O errors | P2.1 slice ratified in roadmap | `30-production-roadmap.md:43`; `43-production-readiness-signoff.md:41-45` | ⚠️ INHERITED |
+| fs adapter: compensate deletes new file (when no snapshot) | P2.1 slice ratified in roadmap | `30-production-roadmap.md:43` | ⚠️ INHERITED |
+| sqlite adapter: identifier safety (SQL injection prevention) | P2.2 slice ratified in roadmap | `30-production-roadmap.md:44` | ⚠️ INHERITED |
+| sqlite adapter: fail-closed verify on corruption | P2.2 slice ratified in roadmap | `30-production-roadmap.md:44`; `43-production-readiness-signoff.md:41-45` | ⚠️ INHERITED |
+| git adapter: fail-closed verify on I/O errors | P2.3 slice ratified in roadmap | `30-production-roadmap.md:45` | ⚠️ INHERITED |
+| git adapter: GitPull rollback fail-closed when branch changed | P2.3 slice ratified in roadmap | `30-production-roadmap.md:45` | ⚠️ INHERITED |
+| http adapter: fail-closed on transport failure and timeout | P2.5 slices ratified in roadmap | `30-production-roadmap.md:47`; `43-production-readiness-signoff.md:41-45` | ⚠️ INHERITED |
+| http adapter: verify_checks mismatch → verified=false → commit rejected | Gateway-level verify-false coverage ratified | `30-production-roadmap.md:47`; `43-production-readiness-signoff.md:42-44` | ⚠️ INHERITED |
+| maildraft adapter: fail-closed on storage/db error | P2.7 slice ratified in roadmap | `30-production-roadmap.md:49`; `43-production-readiness-signoff.md:41-45` | ⚠️ INHERITED |
 
 ### 2.4 API Surface (T1)
 
 | Check | Result | Evidence | Status |
 |-------|--------|----------|--------|
-| GET /v1/healthz — shallow health check | — | — | ⬜ |
-| GET /v1/readyz — shallow readiness check | — | — | ⬜ |
-| POST /v1/intents/compile | — | — | ⬜ |
-| POST /v1/proposals/{id}/evaluate | — | — | ⬜ |
-| POST /v1/capabilities/mint | — | — | ⬜ |
-| GET /v1/capabilities/{id} | — | — | ⬜ |
-| POST /v1/executions/authorize | — | — | ⬜ |
-| POST /v1/executions/{id}/prepare | — | — | ⬜ |
-| POST /v1/executions/{id}/execute | — | — | ⬜ |
-| POST /v1/executions/{id}/verify | — | — | ⬜ |
-| POST /v1/executions/{id}/commit | — | — | ⬜ |
-| POST /v1/executions/{id}/compensate | — | — | ⬜ |
-| POST /v1/executions/{id}/rollback | — | — | ⬜ |
-| GET /v1/executions/{id} | — | — | ⬜ |
-| GET /v1/approvals (pagination, filter) | — | — | ⬜ |
-| GET /v1/approvals/{id} | — | — | ⬜ |
-| POST /v1/approvals/{id}/resolve | — | — | ⬜ |
-| GET /v1/provenance/lineage/{id} | — | — | ⬜ |
-| POST /v1/provenance/lineage | — | — | ⬜ |
-| POST /v1/provenance/query | — | — | ⬜ |
+| GET /v1/healthz — shallow health check | Route present in live router | `crates/ferrum-gateway/src/server.rs:118-120`; `19-v1-single-node-support-contract.md:51-52` | ✅ PASS |
+| GET /v1/readyz — shallow readiness check | Route present in live router | `crates/ferrum-gateway/src/server.rs:119-120`; `19-v1-single-node-support-contract.md:51-52` | ✅ PASS |
+| POST /v1/intents/compile | Route present in live router | `crates/ferrum-gateway/src/server.rs:122`; `19-v1-single-node-support-contract.md:53` | ✅ PASS |
+| POST /v1/proposals/{id}/evaluate | Route present in live router | `crates/ferrum-gateway/src/server.rs:123-126`; `19-v1-single-node-support-contract.md:54` | ✅ PASS |
+| POST /v1/capabilities/mint | Route present in live router | `crates/ferrum-gateway/src/server.rs:127`; `19-v1-single-node-support-contract.md:55` | ✅ PASS |
+| GET /v1/capabilities/{id} | Route present in live router | `crates/ferrum-gateway/src/server.rs:132`; `19-v1-single-node-support-contract.md:56` | ✅ PASS |
+| POST /v1/executions/authorize | Route present in live router | `crates/ferrum-gateway/src/server.rs:133`; `19-v1-single-node-support-contract.md:57` | ✅ PASS |
+| POST /v1/executions/{id}/prepare | Route present in live router | `crates/ferrum-gateway/src/server.rs:134-137`; `19-v1-single-node-support-contract.md:58` | ✅ PASS |
+| POST /v1/executions/{id}/execute | Route present in live router | `crates/ferrum-gateway/src/server.rs:138-141`; `19-v1-single-node-support-contract.md:59` | ✅ PASS |
+| POST /v1/executions/{id}/verify | Route present in live router | `crates/ferrum-gateway/src/server.rs:142-145`; `19-v1-single-node-support-contract.md:60` | ✅ PASS |
+| POST /v1/executions/{id}/commit | Route present in live router | `crates/ferrum-gateway/src/server.rs:146-149`; `19-v1-single-node-support-contract.md:61` | ✅ PASS |
+| POST /v1/executions/{id}/compensate | Route present in live router | `crates/ferrum-gateway/src/server.rs:150-153`; `19-v1-single-node-support-contract.md:65` | ✅ PASS |
+| POST /v1/executions/{id}/rollback | Route present in live router | `crates/ferrum-gateway/src/server.rs:154-157`; `19-v1-single-node-support-contract.md:66` | ✅ PASS |
+| GET /v1/executions/{id} | Route present in live router | `crates/ferrum-gateway/src/server.rs:167`; `19-v1-single-node-support-contract.md:67` | ✅ PASS |
+| GET /v1/approvals (pagination, filter) | Route present in live router | `crates/ferrum-gateway/src/server.rs:168`; `19-v1-single-node-support-contract.md:68` | ✅ PASS |
+| GET /v1/approvals/{id} | Route present in live router | `crates/ferrum-gateway/src/server.rs:169`; `19-v1-single-node-support-contract.md:69` | ✅ PASS |
+| POST /v1/approvals/{id}/resolve | Route present in live router | `crates/ferrum-gateway/src/server.rs:170-172`; `19-v1-single-node-support-contract.md:70` | ✅ PASS |
+| GET /v1/provenance/lineage/{id} | Route present in live router | `crates/ferrum-gateway/src/server.rs:178-180`; `19-v1-single-node-support-contract.md:71` | ✅ PASS |
+| POST /v1/provenance/lineage | Route present in live router | `crates/ferrum-gateway/src/server.rs:182`; `19-v1-single-node-support-contract.md:72` | ✅ PASS |
+| POST /v1/provenance/query | Route present in live router | `crates/ferrum-gateway/src/server.rs:183`; `19-v1-single-node-support-contract.md:73` | ✅ PASS |
 
 ---
 
@@ -170,13 +170,13 @@
 
 | Check | Result | Evidence | Status |
 |-------|--------|----------|--------|
-| `benches/` harness exists and builds | — | — | ⬜ |
-| S4 intent-compile baseline captured | — | — | ⬜ |
-| S5 execution-pipeline baseline captured | — | — | ⬜ |
-| S6 capability-cycle baseline captured | — | — | ⬜ |
-| S7 sqlite-contention baseline captured | — | — | ⬜ |
-| Baseline results documented in `42-p2-performance-baseline-evidence.md` | — | — | ⬜ |
-| No benchmark regression vs prior baseline (if re-running) | — | — | ⬜ |
+| `benches/` harness exists and builds | Harness builds and test binary passes | `42-p2-performance-baseline-evidence.md:17-20`; Section 0.1 rows `Perf baseline build` and `ferrum-perf-baseline test` | ✅ PASS |
+| S4 intent-compile baseline captured | Baseline doc includes S4 result; dev/release reruns executed today | `42-p2-performance-baseline-evidence.md:31-36`; Section 0.1 row `Perf baseline run` | ⚠️ INHERITED |
+| S5 execution-pipeline baseline captured | Baseline doc includes S5 result with contention caveat | `42-p2-performance-baseline-evidence.md:31-36`; `42-p2-performance-baseline-evidence.md:63-80` | ⚠️ INHERITED |
+| S6 capability-cycle baseline captured | Baseline doc includes S6 result; rerun captured today | `42-p2-performance-baseline-evidence.md:31-36`; Section 0.1 row `Perf baseline run` | ⚠️ INHERITED |
+| S7 sqlite-contention baseline captured | Baseline doc includes S7 result; rerun captured today | `42-p2-performance-baseline-evidence.md:31-36`; Section 0.1 row `Perf baseline run` | ⚠️ INHERITED |
+| Baseline results documented in `42-p2-performance-baseline-evidence.md` | G-E2 evidence doc exists and was refreshed for current ratified status | `42-p2-performance-baseline-evidence.md:1-15`; `42-p2-performance-baseline-evidence.md:87-95` | ✅ PASS |
+| No benchmark regression vs prior baseline (if re-running) | Fresh rerun confirms harness still works, but no normalized apples-to-apples regression analysis was performed | Section 0.1 row `Perf baseline run`; `42-p2-performance-baseline-evidence.md:72-83` | ⬜ NEEDS_REFRESH |
 
 ---
 
@@ -186,17 +186,17 @@
 
 | Check | Result | Evidence | Status |
 |-------|--------|----------|--------|
-| Bearer-token auth enforced on mutating endpoints | — | — | ⬜ |
-| No raw internal control data leaked to user plane | — | — | ⬜ |
-| No bypass gateway for mutation (hard rule in canon) | — | — | ⬜ |
+| Bearer-token auth enforced on mutating endpoints | Auth-aware router applies bearer middleware to all non-health endpoints | `crates/ferrum-gateway/src/server.rs:107-110`; `docs/14-api-and-contracts-map.md:91-95`; `19-v1-single-node-support-contract.md:39-43` | ✅ PASS |
+| No raw internal control data leaked to user plane | Canon hard rule remains part of support boundary; no fresh leak-oriented test was run in this cycle | `00-project-canon.md:104-109`; `43-production-readiness-signoff.md:15-20` | ⚠️ INHERITED |
+| No bypass gateway for mutation (hard rule in canon) | Explicit canon rule remains in force | `00-project-canon.md:102-105` | ✅ PASS |
 
 ### 4.2 Input Validation
 
 | Check | Result | Evidence | Status |
 |-------|--------|----------|--------|
-| SQLite adapter rejects unsafe table names (SQL injection) | — | — | ⬜ |
-| Invalid UUIDs rejected with 400 on lineage endpoints | — | — | ⬜ |
-| Malformed verify_checks fail closed on maildraft adapter | — | — | ⬜ |
+| SQLite adapter rejects unsafe table names (SQL injection) | P2.2 identifier-safety slice previously ratified | `30-production-roadmap.md:44`; `16-release-checklist.md:17-22` | ⚠️ INHERITED |
+| Invalid UUIDs rejected with 400 on lineage endpoints | RC evidence explicitly records 400 behavior | `25-v1-single-node-rc-evidence.md:55-63`; `25-v1-single-node-rc-evidence.md:118-120` | ⚠️ INHERITED |
+| Malformed verify_checks fail closed on maildraft adapter | P2.7 malformed explicit-check strictness ratified | `30-production-roadmap.md:49`; `43-production-readiness-signoff.md:41-45` | ⚠️ INHERITED |
 
 ---
 
@@ -206,20 +206,20 @@
 
 | Check | Result | Evidence | Status |
 |-------|--------|----------|--------|
-| Deployment config docs (`15-deployment-and-operations.md`) exist and are current | — | — | ⬜ |
-| Operations runbook (`18-single-node-operations-runbook.md`) exists | — | — | ⬜ |
-| Backup/restore drill procedure documented (runbook Section 6.4) | — | — | ⬜ |
-| RPO/RTO ownership documented (operator responsibilities clear) | — | — | ⬜ |
-| Functional readiness probe guidance documented (not just healthz/readyz) | — | — | ⬜ |
+| Deployment config docs (`15-deployment-and-operations.md`) exist and are current | Config/auth/TLS guidance present and linked from runbook set | `15-deployment-and-operations.md:3-39`; `16-release-checklist.md:41-48` | ✅ PASS |
+| Operations runbook (`18-single-node-operations-runbook.md`) exists | Single-node runbook present | `18-single-node-operations-runbook.md:1-6` | ✅ PASS |
+| Backup/restore drill procedure documented (runbook Section 6.4) | Quarterly restore drill procedure and evidence template documented | `18-single-node-operations-runbook.md:242-299`; `16-release-checklist.md:46-47` | ✅ PASS |
+| RPO/RTO ownership documented (operator responsibilities clear) | Operator-owned recovery boundaries explicitly documented | `19-v1-single-node-support-contract.md:263-277`; `18-single-node-operations-runbook.md:173-184` | ✅ PASS |
+| Functional readiness probe guidance documented (not just healthz/readyz) | Runbook requires approvals/inspect probe after healthz/readyz | `18-single-node-operations-runbook.md:95-116`; `19-v1-single-node-support-contract.md:147-153` | ✅ PASS |
 
 ### 5.2 Live Smoke / Drill Evidence (if available)
 
 | Check | Result | Evidence | Status |
 |-------|--------|----------|--------|
-| P3.G1 functional readiness walkthrough evidence | — | — | ⬜ |
-| P3.G2 smoke stability evidence | — | — | ⬜ |
-| P3.G3 backup/restore drill evidence | — | — | ⬜ |
-| P3.G4 observability verification evidence | — | — | ⬜ |
+| P3.G1 functional readiness walkthrough evidence | Live walkthrough evidence exists from prior cycle | `30-production-roadmap.md:71`; Quick Reference table | ⚠️ INHERITED |
+| P3.G2 smoke stability evidence | Live smoke evidence exists from prior cycle | `30-production-roadmap.md:72`; Quick Reference table | ⚠️ INHERITED |
+| P3.G3 backup/restore drill evidence | Live drill evidence exists from prior cycle | `30-production-roadmap.md:73`; Quick Reference table | ⚠️ INHERITED |
+| P3.G4 observability verification evidence | Live observability evidence exists from prior cycle | `30-production-roadmap.md:74`; Quick Reference table | ⚠️ INHERITED |
 
 ---
 
@@ -229,19 +229,19 @@
 
 | Dimension | Overall Status | Key Evidence | Outstanding Items |
 |-----------|---------------|--------------|-------------------|
-| Docs Alignment | ⬜ | — | — |
-| Technical Verification | ⬜ | — | — |
-| Performance | ⬜ | — | — |
-| Security | ⬜ | — | — |
-| Stability | ⬜ | — | — |
+| Docs Alignment | ✅ PASS | Section 1; `00-project-canon.md`, `19-v1-single-node-support-contract.md`, `30-production-roadmap.md`, `41-production-execution-plan.md` refreshed/aligned | Keep API map synced when non-contract routes change |
+| Technical Verification | ⚠️ INHERITED | Section 0.1 fresh workspace checks + Section 2 row-by-row evidence | Adapter/integration negative-path rows are inherited from 2026-04-02 to 2026-04-08 evidence cycle |
+| Performance | ⚠️ INHERITED | Section 3; `42-p2-performance-baseline-evidence.md` + refreshed dev/release reruns | No normalized regression comparison performed this cycle |
+| Security | ⚠️ INHERITED | Section 4; auth/no-bypass doc+code inspection, remaining validation from prior-cycle evidence | No fresh targeted test for "no raw internal control data leaked" |
+| Stability | ⚠️ INHERITED | Section 5; runbook inspection + P3.G1-G4 evidence docs | Live drill evidence remains inherited from 2026-04-03 |
 
 ### 6.2 Support Tier Alignment
 
 | Tier | Surface | Status | Notes |
 |------|---------|--------|-------|
-| T1 — Supported | Governance core + SQLite + REST/CLI surface | ⬜ | — |
-| T2 — Partial | fs/sqlite/git/http/maildraft adapters (bounded local) | ⬜ | — |
-| T3 — Out of Scope | multi-node/HA, U2-U4, policy bundle lifecycle tooling | ⬜ | — |
+| T1 — Supported | Governance core + SQLite + REST/CLI surface | ✅ PASS | Boundary unchanged; reaffirmed by `19-v1-single-node-support-contract.md:18-23` and `43-production-readiness-signoff.md:24-35` |
+| T2 — Partial | fs/sqlite/git/http/maildraft adapters (bounded local) | ✅ PASS | Hardened to partial-contract boundary, not promoted to T1; see `43-production-readiness-signoff.md:36-48` |
+| T3 — Out of Scope | multi-node/HA, U2-U4, policy bundle lifecycle tooling | ✅ PASS | Still deferred per `19-v1-single-node-support-contract.md:115-139` and `43-production-readiness-signoff.md:50-58` |
 
 ### 6.3 Declaration
 
@@ -253,12 +253,12 @@
 
 | Field | Value |
 |-------|-------|
-| Review date | — |
-| Reviewer(s) | — |
+| Review date | 2026-04-09 |
+| Reviewer(s) | AI-assisted draft review; human sign-off pending |
 | Prior review date | 2026-04-08 (G-E5 sign-off) |
 | Prior review doc | `43-production-readiness-signoff.md` |
-| New blockers found | — |
-| Items requiring next-cycle refresh | — |
+| New blockers found | None at the v1 support-boundary level; this cycle found and corrected docs drift in `14-api-and-contracts-map.md`, `41-production-execution-plan.md`, and `42-p2-performance-baseline-evidence.md` |
+| Items requiring next-cycle refresh | Targeted security evidence for "no raw internal control data leaked"; optional live rerun of P3.G1-G4 drills if environment changed; normalized perf regression comparison |
 
 ---
 

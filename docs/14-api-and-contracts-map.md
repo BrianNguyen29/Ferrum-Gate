@@ -30,7 +30,9 @@
 - `POST /v1/executions/{execution_id}/prepare` - Prepare rollback/preflight
 - `POST /v1/executions/{execution_id}/execute` - Execute the prepared operation
 - `POST /v1/executions/{execution_id}/verify` - Verify execution result against intent and policy
+- `POST /v1/executions/{execution_id}/commit` - Commit a verified execution
 - `POST /v1/executions/{execution_id}/compensate` - Compensate execution (may be noop-backed)
+- `POST /v1/executions/{execution_id}/rollback` - Rollback/compensate via rollback contract
 - `POST /v1/executions/{execution_id}/cancel` - Cancel execution in pre-execute state (Proposed, Authorized, Prepared)
 - `POST /v1/executions/{execution_id}/pause` - Pause execution in running state (Running, AwaitingVerification)
 - `POST /v1/executions/{execution_id}/resume` - Resume paused execution
@@ -47,6 +49,21 @@
 - `POST /v1/provenance/query` - Query provenance events
 - `GET /v1/provenance/lineage/{execution_id}` - Get lineage for execution
 - `POST /v1/provenance/lineage` - Multi-hop lineage query from seed event (supports ancestors, descendants, both directions with bounded depth)
+
+### Additional implemented routes (outside the v1 single-node support contract)
+
+These routes exist in the live router but are not part of the v1 single-node T1
+support surface described in `19-v1-single-node-support-contract.md`.
+
+- `GET /metrics` - metrics scrape endpoint
+- `GET /v1/provenance/events/{event_id}` - inspect a single provenance event
+- `POST /v1/provenance/replay` - replay/export-oriented provenance operation
+- `POST /v1/provenance/export` - export provenance data
+- `POST /v1/provenance/stats` - provenance statistics/diagnostics
+- `POST /v1/provenance/events/external` - external provenance ingest surface
+- `GET /v1/sync/leader/tip` - leader-side sync probe
+- `GET /v1/sync/leader/tip/proof` - leader-side sync proof probe
+- `GET /v1/ledger/verify` - ledger verification diagnostics
 
 > **CLI Export**: `ferrumctl server inspect-lineage <execution_id>` supports `--format text|json|dot` and `--output <path>` for exporting lineage as Graphviz DOT format without any API changes.
 

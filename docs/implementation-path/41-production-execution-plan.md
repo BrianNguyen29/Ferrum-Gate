@@ -33,7 +33,7 @@ G-E5 (Production Sign-off)
 
 **Owner:** Engineering
 
-**Status:** 🔄 IN PROGRESS (P2.5 ✅ DONE; P2.6 scaffold ✅ DONE 2026-04-04 (real provider send integration TBD post-v1/non-blocking); P2.7 ✅ DONE; P2.1, P2.2, P2.3 🔄 IN PROGRESS)
+**Status:** ✅ DONE 2026-04-08 (P2.1 ✅ DONE; P2.2 ✅ DONE; P2.3 ✅ DONE; P2.5 ✅ DONE; P2.6 scaffold ✅ DONE 2026-04-04 (real provider send integration TBD post-v1/non-blocking); P2.7 ✅ DONE)
 
 **Note:** P2.6 scaffold completion (slices 1–5, all ✅) satisfies the current G-E1 boundary. Real provider send integration is explicitly post-v1/non-blocking and does not block G-E1.
 

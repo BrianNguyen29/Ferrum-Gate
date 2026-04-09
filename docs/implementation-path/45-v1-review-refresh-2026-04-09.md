@@ -1,0 +1,107 @@
+# 45 — v1 Review Refresh (2026-04-09)
+
+Single-node v1 scope. This document records the 2026-04-09 readiness-review
+refresh pass using `44-v1-review-readiness-template.md`.
+
+> **Review template**: [44-v1-review-readiness-template.md](./44-v1-review-readiness-template.md)
+>
+> **Prior sign-off**: [43-production-readiness-signoff.md](./43-production-readiness-signoff.md)
+>
+> **Support contract**: [19-v1-single-node-support-contract.md](../19-v1-single-node-support-contract.md)
+
+---
+
+## Purpose
+
+This refresh does **not** issue a new broader-production sign-off. It records a
+post-sign-off review cycle that:
+
+1. refreshes current workspace-quality evidence,
+2. rechecks key sign-off-linked commands,
+3. reconciles narrow docs drift discovered during the review, and
+4. captures what remains inherited from the 2026-04-02 to 2026-04-08 evidence set.
+
+The scoped T1/T2/T3 declaration from `43-production-readiness-signoff.md`
+remains unchanged.
+
+---
+
+## Refreshed on 2026-04-09
+
+### Workspace and sign-off-linked checks
+
+The following were rerun successfully on 2026-04-09:
+
+- `cargo check --workspace`
+- `cargo fmt --all -- --check`
+- `cargo clippy --workspace -- -D warnings`
+- `cargo test --workspace`
+- `python3 scripts/check_contract_consistency.py`
+- `cargo build -p ferrum-perf-baseline`
+- `cargo test -p ferrum-perf-baseline`
+- `cargo run -p ferrum-perf-baseline -- --concurrency 2 --iterations 2`
+- `cargo run --release -p ferrum-perf-baseline -- --concurrency 5 --iterations 5`
+- `cargo check -p ferrumctl`
+- `cargo test -p ferrumctl`
+- `cargo run -p ferrumctl -- server compile-intent --help`
+- `cargo run -p ferrumctl -- server commit-execution --help`
+- `cargo test -p ferrum-sync --lib`
+- `cargo test -p ferrum-store --lib sync_preflight`
+- `cargo test -p ferrum-store --lib sync_service`
+- `cargo test -p ferrum-gateway --lib`
+
+Full row-by-row evidence is recorded in
+`44-v1-review-readiness-template.md` Section 0.
+
+### Docs alignment corrections made in this refresh
+
+The review found and corrected narrow docs drift:
+
+- `14-api-and-contracts-map.md` now includes the v1 execution routes for
+  `commit` and `rollback`, and explicitly separates additional implemented
+  non-contract routes from the v1 support surface.
+- `41-production-execution-plan.md` G-E1 status now matches the already-ratified
+  DONE state from the roadmap/sign-off doc set.
+- `42-p2-performance-baseline-evidence.md` now reflects the already-ratified
+  G-E2 DONE status instead of implying ratification was still pending.
+
+---
+
+## Current Review Outcome
+
+Per `44-v1-review-readiness-template.md`:
+
+- **Docs Alignment** — ✅ PASS
+- **Technical Verification** — ⚠️ INHERITED
+- **Performance** — ⚠️ INHERITED
+- **Security** — ⚠️ INHERITED
+- **Stability** — ⚠️ INHERITED
+
+Interpretation:
+
+- No new blocker was found at the v1 support-boundary level.
+- The 2026-04-08 broader-production declaration remains intact **within the
+  documented v1 single-node scope**.
+- This refresh is still conservative: several rows remain inherited because they
+  rely on prior-cycle evidence rather than fresh targeted reruns in this cycle.
+
+---
+
+## Remaining Next-Cycle Refresh Targets
+
+The next formal review cycle should prioritize:
+
+1. targeted evidence for the canon rule **"Khong tra raw internal control data ra user plane"**,
+2. normalized performance regression comparison against the established G-E2 baseline,
+3. optional rerun of P3.G1–P3.G4 live drills if the deployment environment or
+   operating procedures changed since 2026-04-03.
+
+---
+
+## Conclusion
+
+**The 2026-04-09 review refresh found no new v1 support-boundary blocker and no
+reason to retract the scoped broader-production declaration from 2026-04-08.**
+
+This document is an evidence-refresh companion to `44-v1-review-readiness-template.md`,
+not a replacement for `43-production-readiness-signoff.md`.
