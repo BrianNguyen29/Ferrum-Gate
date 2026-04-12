@@ -39,9 +39,23 @@ Sau đó mới đọc:
 - `runbooks/` — operator runbooks for specific production scenarios
 
 ## Thư mục con
-- .agents - các kĩ năng chuyên biệt về rust, hãy luôn sử dụng trong quá trình làm việc, và yêu cầu các sub-agents cũng sử dụng khi cần
+- .agents - các kĩ thuật chuyên biệt về rust, hãy luôn sử dụng trong quá trình làm việc, và yêu cầu các sub-agents cũng sử dụng khi cần
 - `implementation-path/` — lộ trình triển khai cực cụ thể cho agent khác
 - `diagrams/` — sơ đồ trực quan về kiến trúc, flow, state machine, constraints
+- `artifacts/2026-04-09/` — fs-first beta slice evidence bundle (before_hash/after_hash wiring closure)
+
+## Fast Status Index
+
+For a quick orientation on current production state, start here:
+
+| Topic | File | What it tells you |
+|-------|------|-------------------|
+| Support contract (T1/T2/T3) | `19-v1-single-node-support-contract.md` | What's supported, partially supported, out-of-scope |
+| Production sign-off | `implementation-path/43-production-readiness-signoff.md` | G-E5 DONE — broader production-ready declaration |
+| Current state | `implementation-path/01-current-state.md` | Where the project stands now |
+| Remaining tasks | `implementation-path/11-remaining-tasks.md` | P0/P1/P2 done; P3 post-v1 backlog; post-#165 fs-first note |
+| Production roadmap | `implementation-path/30-production-roadmap.md` | Priority 1–6 tracks, all P2 slices ✅ DONE |
+| fs-first artifact | `artifacts/2026-04-09/closure-note.txt` | Narrow PR #165 evidence: fs before_hash/after_hash wiring closed |
 
 ## Source-of-Truth Priority
 

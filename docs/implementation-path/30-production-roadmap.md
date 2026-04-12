@@ -10,7 +10,7 @@
 | Priority | Track | Status | Target Outcome |
 |----------|-------|--------|----------------|
 | 1 | Production support boundary / contract | ✅ DONE | Support matrix (P1.1) + SLA surface (P1.2) + EOL policy (P1.3) all published |
-| 2 | Adapter hardening + external integration depth | 🔄 IN PROGRESS | Production-grade adapters; remote/external integration surface; P2.5 bounded HTTP hardening slice matrix ✅ DONE 2026-04-04 |
+| 2 | Adapter hardening + external integration depth | ✅ DONE (scoped) | Bounded adapter hardening complete for current declaration; broader external integration depth remains post-v1 |
 | 3 | Operational hardening / release evidence | ✅ DONE | Ship-worthy packaging, observability, runbooks |
 | 4 | Operator control-plane completeness (`ferrumctl`) | ✅ DONE / ⏸ PARTIAL FOLLOW-UP | Full operator-driven workflows complete; policy bundle authoring remains deferred |
 | 5 | Resilience architecture (HA / read-replica / multi-node) | ⬜ PLANNED | Multi-node v1; HA-ready topology |
@@ -81,7 +81,13 @@
 
 The following lists the executed production-evaluation order after P3 completion (P3.G1–P3.G4 ✅ DONE 2026-04-03), grounded in roadmap priority order. Single-node v1 RC-ready; broader production-ready is now ratified through G-E5.
 
-### Immediate Next Slice (P2 adapter hardening — in progress / todo)
+### Immediate Next Slice (P2 adapter hardening — completed)
+
+> All P2 slices (P2.1, P2.2, P2.3, P2.5, P2.6 scaffold, P2.7) are ✅ DONE as of
+> 2026-04-08 per G-E1 gate. The fs-first `before_hash`/`after_hash` wiring
+> (narrow follow-on evidence from `docs/artifacts/2026-04-09/closure-note.txt`)
+> was added via PR #165 after G-E5 sign-off; it does not alter the T1/T2/T3
+> boundary and is recorded for completeness only.
 
 1. **P2.5** — http adapter hardening (Slice 1–10 ✅ DONE 2026-04-04; broader production hardening continues)
 2. **P2.1** — fs adapter hardening + production verification

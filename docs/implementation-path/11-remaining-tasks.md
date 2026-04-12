@@ -37,6 +37,15 @@ Scope is single-node v1 unless labeled post-v1.
   - Src: `docs/91-phase-success-criteria-and-kpis.md` 7.5 evidence "open gaps list"
   - Status: DONE — this file serves as the gaps list. Remaining gaps are P3 post-v1 backlog items.
 
+> **Post-signoff (2026-04-09) — narrow fs-first evidence slice**: PR #165 added
+> two integration tests confirming `before_hash`/`after_hash` wiring on the fs
+> adapter rollback path (`tests/integration_gateway_flow.rs`:
+> `test_new_file_before_hash_none_after_prepare_after_hash_some_after_execute`,
+> `test_existing_file_before_hash_some_after_prepare_before_hash_ne_after_hash_after_execute`).
+> This is a narrow follow-on evidence slice that does not alter the T1/T2/T3
+> declaration from `43-production-readiness-signoff.md` and does not create a new
+> blocker or roadmap track. See `docs/artifacts/2026-04-09/closure-note.txt`.
+
 ## P2 — v1 polish (not blockers for RC but needed before v1 stable)
 
 - [x] clippy cleanup: `cargo clippy --workspace -- -D warnings` PASS (as of 2026-04-02) — P0 resolved; was PASS on 2026-03-30

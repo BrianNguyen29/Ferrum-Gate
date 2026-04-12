@@ -110,3 +110,18 @@ reason to retract the scoped broader-production declaration from 2026-04-08.**
 
 This document is an evidence-refresh companion to `44-v1-review-readiness-template.md`,
 not a replacement for `43-production-readiness-signoff.md`.
+
+---
+
+### Post-merge addendum — PR #165 (2026-04-09)
+
+PR #165 merged a narrow fs-first `before_hash`/`after_hash` evidence slice after
+this refresh was conducted. The slice added two integration tests
+(`test_new_file_before_hash_none_after_prepare_after_hash_some_after_execute`,
+`test_existing_file_before_hash_some_after_prepare_before_hash_ne_after_hash_after_execute`)
+confirming the fs adapter rollback-path wiring.
+
+**This PR did not alter the T1/T2/T3 declaration** from `43-production-readiness-signoff.md`
+and did not introduce a new blocker or new roadmap track. It is recorded here
+as evidence that the fs-first beta slice wiring is closed; it supersedes no
+prior sign-off and creates no new production claim.

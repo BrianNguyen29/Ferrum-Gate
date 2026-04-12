@@ -18,13 +18,14 @@ Muc tieu la de **AI agents hoac engineers khac co the bam vao va hoan thien tiep
 
 ## Bat dau tu dau
 
-1. `docs/00-repo-map.md`
-2. `docs/01-business-overview.md`
-3. `docs/02-runtime-flow.md`
-4. `docs/06-constraints-and-invariants.md`
-5. `docs/12-agent-handoff.md`
-6. `contracts/ferrumgate-agent-contract.v1.yaml`
-7. `prompts/agent_system.md`
+1. `docs/README.md` — doc index and reading order
+2. `docs/00-project-canon.md` — project definition and intent
+3. `docs/02-project-overview.md` — business overview
+4. `docs/04-runtime-flow.md` — runtime flow
+5. `docs/06-constraints-and-invariants.md` — constraints and invariants
+6. `docs/implementation-path/07-agent-handoff-prompt.md` — agent handoff
+7. `contracts/ferrumgate-agent-contract.v1.yaml`
+8. `prompts/agent_system.md`
 
 ## Trang thai hien tai
 

@@ -1,7 +1,9 @@
 # 01 — Current state
 
-Last updated: 2026-04-03
+Last updated: 2026-04-12
 Single-node v1 scope unless noted.
+
+**Note on fs-first hash slice (2026-04-09)**: The fs-first `before_hash`/`after_hash` wiring for the fs adapter and gateway rollback path was completed as a **T2/partial beta-slice hardening step**. This is a narrow internal wiring improvement; it does not change the T1/T2/T3 support contract boundaries declared in `43-production-readiness-signoff.md`. See `docs/artifacts/2026-04-09/closure-note.txt` for evidence.
 
 **Release support contract**:
 - Supported = SQLite-backed single-node governance core.
