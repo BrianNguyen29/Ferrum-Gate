@@ -35,12 +35,12 @@ Sau đó mới đọc:
 - `90-docs-governance.md` — **documentation governance policy** (canonical hierarchy, doc family inventory, ownership, review cadence, deprecation/archival policy) — see this doc for all governance questions
 - `implementation-path/41-production-execution-plan.md` — sequential production evaluation plan (G-E1 → G-E5), per-phase doc update protocol, and commit/PR merge cadence
 - `implementation-path/44-v2-production-execution-plan.md` — v2 production scope and execution plan (Phase 1–6)
-- `implementation-path/45-v2-adapter-promotion-criteria.md` — **DRAFT** concrete per-adapter T2→T1 promotion gates (fs/sqlite/git/http; maildraft T2-only)
+- `implementation-path/45-v2-adapter-promotion-criteria.md` — **✅ RATIFIED** concrete per-adapter T2→T1 promotion gates (fs/sqlite/git/http; maildraft T2-only)
 - `implementation-path/50-post-v2-roadmap.md` — post-v2 backlog structured as Horizons H1/H2/H3 (policy tooling, U1 backlog, HA, U2/U3/U4)
 - `implementation-path/60-long-term-vision.md` — **non-binding** long-term strategic intent; maps future planes to FerrumGate invariants; distinct from contract (v1/v2) and roadmap (30/50) docs
 - `implementation-path/42-p2-performance-baseline-evidence.md` — in-repo G-E2 benchmark baseline evidence for SQLite/store and adapter paths under concurrent load
 - `implementation-path/43-production-readiness-signoff.md` — G-E5 sign-off declaring broader production-ready with explicit T1/T2/T3 scope boundaries (v1 ✅ RATIFIED)
-- `implementation-path/46-v2-readiness-signoff.md` — **⏸ PENDING** Stage A pre-ratification sign-off; v2 NOT yet ratified
+- `implementation-path/46-v2-readiness-signoff.md` — **✅ RATIFIED** v2 sign-off artifact
 - `runbooks/` — operator runbooks for specific production scenarios
 
 ## Thư mục con
@@ -56,11 +56,11 @@ For a quick orientation on current production state, start here:
 | Topic | File | What it tells you |
 |-------|------|-------------------|
 | Support contract (T1/T2/T3) | `19-v1-single-node-support-contract.md` | What's supported, partially supported, out-of-scope (v1) |
-| Support contract (T1/T2/T3) | `20-v2-single-node-production-support-contract.md` | **DRAFT** — target scope for v2, not yet ratified (v1 is current authority) |
+| Support contract (T1/T2/T3) | `20-v2-single-node-production-support-contract.md` | **✅ RATIFIED** — canonical v2 single-node support contract |
 | Production sign-off (v1) | `implementation-path/43-production-readiness-signoff.md` | G-E5 ✅ DONE — broader production-ready declaration |
-| v2 sign-off (pending) | `implementation-path/46-v2-readiness-signoff.md` | ⏸ PENDING — Stage A input; v2 NOT ratified |
-| v2 execution plan | `implementation-path/44-v2-production-execution-plan.md` | **DRAFT** — forward-looking Phase 1–6 plan; not yet ratified |
-| v2 adapter promotion criteria | `implementation-path/45-v2-adapter-promotion-criteria.md` | **DRAFT** — concrete T2→T1 gates per adapter; wires into Phase 3 and Phase 5 |
+| v2 sign-off | `implementation-path/46-v2-readiness-signoff.md` | **✅ RATIFIED** — v2 production-ready declared |
+| v2 execution plan | `implementation-path/44-v2-production-execution-plan.md` | **✅ RATIFIED** — all phases complete |
+| v2 adapter promotion criteria | `implementation-path/45-v2-adapter-promotion-criteria.md` | **✅ RATIFIED** — concrete T2→T1 gates confirmed |
 | Current state | `implementation-path/01-current-state.md` | Where the project stands now |
 | Remaining tasks | `implementation-path/11-remaining-tasks.md` | P0/P1/P2 done; P3 post-v1 backlog now indexed to roadmap doc |
 | Production roadmap | `implementation-path/30-production-roadmap.md` | Priority 1–6 tracks, all P2 slices ✅ DONE |

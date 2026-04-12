@@ -61,8 +61,8 @@ Scope is single-node v1 unless labeled post-v1.
 **No blockers.** v2 scope (per `44-v2-production-execution-plan.md` lines 27–41) explicitly
 excludes all P3 items: multi-node/HA, U2/U3/U4, broader external adapter integrations
 (remote git, external http, real mail send), and policy authoring tooling. All prior
-v1 gates (G-E1 through G-E5, 2026-04-08) pass. Stage A scope-lock checkpoint is
-confirmed; v2 itself remains DRAFT / PROPOSED.
+v1 gates (G-E1 through G-E5, 2026-04-08) pass. v2 scope-lock checkpoint is
+confirmed; **v2 is now ✅ RATIFIED** per `46-v2-readiness-signoff.md`.
 
 ## P3 — post-v1 backlog (not in v1 scope)
 

@@ -34,14 +34,14 @@ Any doc that describes governance expectations should link here rather than rest
 | `17-troubleshooting.md` | Known issues and fixes | Operations |
 | `18-phase-f-evidence-pack.md` | Phase F consolidated evidence | Core |
 | `19-v1-single-node-support-contract.md` | v1 single-node support contract | Operations |
-| `20-v2-single-node-production-support-contract.md` | v2 single-node support contract (**DRAFT — proposed, not ratified**) | Operations |
+| `20-v2-single-node-production-support-contract.md` | v2 single-node support contract (**✅ RATIFIED**) | Operations |
 | `implementation-path/60-long-term-vision.md` | Long-term strategic intent (**non-binding**; maps future planes to invariants; distinct from contract and roadmap docs) | Strategy |
 | `90-docs-governance.md` | Doc governance policy (this document) | Operations |
 | `runbooks/` | Operator runbooks | Operations |
 | `implementation-path/41-production-execution-plan.md` | Sequential production evaluation plan (G-E1 → G-E5), per-phase doc update protocol, and commit/PR merge cadence | Operations |
-| `implementation-path/44-v2-production-execution-plan.md` | v2 production scope and execution plan (Phase 1–6) (**DRAFT — proposed, not ratified**) | Operations |
-| `implementation-path/45-v2-adapter-promotion-criteria.md` | v2 adapter T2→T1 promotion gates per adapter (**DRAFT — proposed, not ratified**) | Operations |
-| `implementation-path/46-v2-readiness-signoff.md` | v2 Stage A pre-ratification sign-off artifact (**⏸ PENDING — v2 NOT ratified; v1 is current authority**) | Operations |
+| `implementation-path/44-v2-production-execution-plan.md` | v2 production scope and execution plan (Phase 1–6) (**✅ RATIFIED**) | Operations |
+| `implementation-path/45-v2-adapter-promotion-criteria.md` | v2 adapter T2→T1 promotion gates per adapter (**✅ RATIFIED**) | Operations |
+| `implementation-path/46-v2-readiness-signoff.md` | v2 sign-off artifact (**✅ RATIFIED**) | Operations |
 | `implementation-path/50-post-v2-roadmap.md` | Post-v2 backlog structured as Horizons H1/H2/H3 (near-term policy tooling, U1 backlog, HA, U2/U3/U4) | Operations |
 | `diagrams/` | Visual assets | Core |
 | `.agents/` | Agent skill files | Tooling |

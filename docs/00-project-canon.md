@@ -52,16 +52,14 @@ tracks.
 
 ### v2 planning status
 
-FerrumGate v2 single-node is **planned / proposed**, not yet ratified. Draft docs
-exist at:
-- `docs/20-v2-single-node-production-support-contract.md` — proposed v2 scope
-- `docs/implementation-path/44-v2-production-execution-plan.md` — proposed v2 execution plan
-- `docs/implementation-path/45-v2-adapter-promotion-criteria.md` — **DRAFT** concrete T2→T1 promotion gates per adapter (fs/sqlite/git/http; maildraft T2-only)
-- `docs/implementation-path/46-v2-readiness-signoff.md` — **⏸ PENDING** Stage A pre-ratification sign-off artifact (v2 is NOT ratified; v1 is current authority)
+FerrumGate v2 single-node is **✅ RATIFIED**. Confirmed docs exist at:
+- `docs/20-v2-single-node-production-support-contract.md` — canonical v2 scope
+- `docs/implementation-path/44-v2-production-execution-plan.md` — v2 execution plan (**✅ RATIFIED**)
+- `docs/implementation-path/45-v2-adapter-promotion-criteria.md` — **✅ RATIFIED** concrete T2→T1 promotion gates per adapter (fs/sqlite/git/http; maildraft T2-only)
+- `docs/implementation-path/46-v2-readiness-signoff.md` — **✅ RATIFIED** v2 sign-off artifact
 
-The v2 docs describe a **target state** for single-node production support,
-predicated on successful completion of the v2 execution plan and Stage A ratification.
-v1 remains the authoritative support contract until v2 is formally ratified.
+The v2 docs describe the **confirmed state** for single-node production support.
+v1 remains ratified for v1 scope. Both v1 and v2 support contracts coexist with clear scope boundaries.
 
 ### Supported — single-node governance core with SQLite-backed persistence
 

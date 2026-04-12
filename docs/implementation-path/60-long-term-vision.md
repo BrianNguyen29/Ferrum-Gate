@@ -14,12 +14,12 @@ This document describes FerrumGate's **long-term strategic intent** — where th
 This document is **explicitly non-binding**. It does not:
 - Ratify any feature or milestone
 - Create a commitment or roadmap item
-- Override the v1 support contract or v2 draft contract
+- Override the v1 support contract or the v2 ratified contract
 - Alter support boundaries or scope classifications
 
 It is distinct from:
 - **`19-v1-single-node-support-contract.md`** — what is supported today (contract, binding)
-- **`20-v2-single-node-production-support-contract.md`** — proposed v2 scope (contract draft, pending ratification)
+- **`20-v2-single-node-production-support-contract.md`** — v2 scope (contract, ratified)
 - **`50-post-v2-roadmap.md`** — sequenced backlog of near/mid/long-term items (roadmap, non-binding)
 - **`30-production-roadmap.md`** — current execution plan for v1/v2 (roadmap, near-term)
 
@@ -31,8 +31,8 @@ This vision doc describes the **end state capability plane** FerrumGate is build
 
 | Doc | Role | Binding? |
 |-----|------|----------|
-| `19-v1-single-node-support-contract.md` | Today's support contract | **Yes — current authority** |
-| `20-v2-single-node-production-support-contract.md` | Proposed v2 scope | **Draft — pending ratification** |
+| `19-v1-single-node-support-contract.md` | Today's support contract | **Yes — ratified for v1 scope** |
+| `20-v2-single-node-production-support-contract.md` | v2 scope | **Ratified** |
 | `30-production-roadmap.md` | Near-term execution plan (v1/v2) | No — current execution |
 | `50-post-v2-roadmap.md` | Post-v2 backlog with Horizons H1/H2/H3 | No — sequencing, not promises |
 | **This doc** | Long-term end-state vision | **No — direction, not commitment** |
@@ -184,9 +184,8 @@ each Horizon advances:
 
 ## What This Document Does Not Change
 
-- **v1 support contract** (`19-v1-single-node-support-contract.md`) — unchanged; current authority
-- **v2 draft contract** (`20-v2-single-node-production-support-contract.md`) — unchanged; DRAFT pending ratification
-- **v2 ratification path** — this vision does not accelerate or alter v2 Stage A sign-off
+- **v1 support contract** (`19-v1-single-node-support-contract.md`) — unchanged; **✅ RATIFIED for v1 scope**
+- **v2 support contract** (`20-v2-single-node-production-support-contract.md`) — unchanged; **✅ RATIFIED for v2 single-node scope**
 - **roadmap execution order** — Horizons in `50-post-v2-roadmap.md` are not reordered by this doc
 - **support tier boundaries** — T1/T2/T3 scope is unchanged
 
@@ -206,8 +205,8 @@ precedence.
 
 | Topic | File | Status |
 |-------|------|--------|
-| v1 support contract (current authority) | `19-v1-single-node-support-contract.md` | ✅ RATIFIED |
-| v2 support contract (DRAFT) | `20-v2-single-node-production-support-contract.md` | DRAFT — not ratified |
+| v1 support contract | `19-v1-single-node-support-contract.md` | ✅ RATIFIED for v1 scope |
+| v2 support contract | `20-v2-single-node-production-support-contract.md` | ✅ RATIFIED for v2 single-node scope |
 | Production roadmap (v1/v2) | `30-production-roadmap.md` | Current execution |
 | Post-v2 roadmap (H1/H2/H3) | `50-post-v2-roadmap.md` | Post-v2 backlog |
 | Project canon (invariants) | `00-project-canon.md` Section 5 | Source of truth for invariants |

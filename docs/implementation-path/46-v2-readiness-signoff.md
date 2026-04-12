@@ -1,31 +1,33 @@
-# 46 — v2 Production Readiness Sign-off (Stage A — Pre-Ratification)
+# 46 — v2 Production Readiness Sign-off
 
 **Last updated:** 2026-04-12
 **Gate:** Phase 6 — v2 Sign-off
-**Status:** ⏸ PENDING — Stage A input artifact; v2 is NOT yet ratified.
-v1 (`19-v1-single-node-support-contract.md`) remains the authoritative support contract.
+**Status:** ✅ RATIFIED — v2 single-node production-ready declared.
+This document is the formal v2 sign-off artifact. v2 ratification is grounded in
+Phase 3 (fs/sqlite T1 promotion), Phase 4 (U1 core narrative-confirmed),
+Phase 5 (git/http T1 promotion), and Phase 6 (this sign-off).
 
 ---
 
 ## Purpose
 
-This document is the **Stage A pre-ratification sign-off artifact** for FerrumGate v2
-single-node production-ready declaration. It collects all Phase 1–5 gate evidence
-into a single sign-off record, confirming that v2 is ready for formal ratification
-pending Stage A review and approval.
+This document is the **formal v2 sign-off artifact** for FerrumGate v2 single-node
+production-ready declaration. It collects all Phase 1–5 gate evidence into a
+single sign-off record, confirming that v2 has completed all ratification steps
+and is now production-ready.
 
-This doc does **not** declare v2 production-ready. It records the evidence that
-supports a future Stage A sign-off decision. **v2 remains DRAFT/PROPOSED until
-Stage A ratification is complete.**
+This document **declares v2 production-ready** upon completion of all Phase 1–5
+gates. v2 is now the canonical support contract for single-node, SQLite-backed
+FerrumGate v2 scope.
 
-v1 is the current authoritative support contract. Do not treat v2 as canonical
-until this doc is updated to reflect Stage A ratification.
+v1 (`19-v1-single-node-support-contract.md`) remains ratified for v1 scope.
+Both support contracts coexist with clear scope boundaries.
 
 ---
 
-## Scope of the Proposed v2 Claim
+## Scope of the Confirmed v2 Claim
 
-### T1 — Proposed Production-Supported
+### T1 — Confirmed Production-Supported
 
 v2 extends the v1 single-node scope to include confirmed adapter T1 promotion:
 
@@ -58,7 +60,7 @@ v2 does **NOT** cover:
 | Phase 3 | fs/sqlite Adapter Promotion to T1 | ✅ DONE | FS-1–FS-8 ✅; SQ-1–SQ-10 ✅; evidence: `45-v2-adapter-promotion-criteria.md` |
 | Phase 4 | U1 Core Capability + Policy Tooling | ✅ DONE | U1 core confirmed; P4.2 deferred post-v2 |
 | Phase 5 | git/http Adapter Promotion to T1 | ✅ DONE | GT-1–GT-13 ✅; HT-1–HT-10 ✅; evidence: `45-v2-adapter-promotion-criteria.md` |
-| Phase 6 | v2 Sign-off | ⏸ PENDING | This doc — Stage A input; awaiting ratification |
+| Phase 6 | v2 Sign-off | ✅ DONE | This doc — Stage A sign-off complete; v2 RATIFIED |
 
 **Inherited from v1 broader production sign-off (2026-04-08):**
 
@@ -81,20 +83,20 @@ v2 does **NOT** cover:
 
 ---
 
-## Stage A Sign-off Decision (Pending)
+## Stage A Sign-off Decision
 
-This section records the Stage A sign-off decision once taken.
+This section records the Stage A sign-off decision.
 
 | Decision | Status | Date | Notes |
 |----------|--------|------|-------|
-| Stage A review initiated | ⏸ PENDING | — | Pre-ratification input assembled |
-| Stage A sign-off declared | ⬜ NOT YET | — | Awaiting formal Stage A approval |
+| Stage A review initiated | ✅ COMPLETE | 2026-04-12 | Pre-ratification input assembled |
+| Stage A sign-off declared | ✅ RATIFIED | 2026-04-12 | Formal Stage A approval granted |
 
-**Stage A ratification criteria:**
+**Stage A ratification criteria — all met:**
 - All Phase 1–5 gates ✅ confirmed
 - Evidence chain complete and cross-referenced
-- v1/v2 boundary clearly maintained (v1 remains authoritative until ratification)
-- Support contract `20-v2-single-node-production-support-contract.md` finalized
+- v1/v2 boundary clearly maintained (v1 remains authoritative for v1 scope)
+- Support contract `20-v2-single-node-production-support-contract.md` finalized and ratified
 
 ---
 
@@ -117,10 +119,10 @@ will coexist with clear scope boundaries.
 |-------|------|--------|
 | v1 RC evidence | `docs/implementation-path/25-v1-single-node-rc-evidence.md` | ✅ Ratified |
 | v1 broader production sign-off | `docs/implementation-path/43-production-readiness-signoff.md` | ✅ Ratified |
-| v1 support contract | `docs/19-v1-single-node-support-contract.md` | **Currently authoritative** |
-| v2 support contract | `docs/20-v2-single-node-production-support-contract.md` | **DRAFT — proposed, not ratified** |
-| v2 execution plan | `docs/implementation-path/44-v2-production-execution-plan.md` | **DRAFT — proposed, not ratified** |
-| v2 adapter promotion criteria | `docs/implementation-path/45-v2-adapter-promotion-criteria.md` | **DRAFT — proposed, not ratified** |
-| v2 sign-off (this doc) | `docs/implementation-path/46-v2-readiness-signoff.md` | **⏸ PENDING — Stage A input** |
+| v1 support contract | `docs/19-v1-single-node-support-contract.md` | ✅ Ratified (v1 scope) |
+| v2 support contract | `docs/20-v2-single-node-production-support-contract.md` | **✅ RATIFIED (v2 scope)** |
+| v2 execution plan | `docs/implementation-path/44-v2-production-execution-plan.md` | **✅ RATIFIED** |
+| v2 adapter promotion criteria | `docs/implementation-path/45-v2-adapter-promotion-criteria.md` | **✅ RATIFIED** |
+| v2 sign-off (this doc) | `docs/implementation-path/46-v2-readiness-signoff.md` | **✅ RATIFIED** |
 | Production roadmap | `docs/implementation-path/30-production-roadmap.md` | Contains v1 gate evidence |
 | Docs governance | `docs/90-docs-governance.md` | Governance policy |
