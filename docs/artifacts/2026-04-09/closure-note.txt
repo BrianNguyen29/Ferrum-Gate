@@ -1,0 +1,74 @@
+# Ferrum-Gate fs-first Beta Slice Closure Note
+# Generated: 2026-04-09 (rewritten at 2026-04-12 to match actual repo contents)
+# Purpose: Evidence of fs-first before_hash/after_hash wiring completion
+
+## Closure Statement
+
+The fs-first `before_hash`/`after_hash` wiring is **complete** for this beta slice only.
+This slice covers the Ferrum-Gate fs-adapter rollback path and gateway wiring for:
+- `before_hash` = prepare-time file content hash (if file existed, otherwise None)
+- `after_hash` = post-execute file content hash
+- Both surfaced onto persisted `RollbackContract.target` for FilePath variants
+
+This statement applies **only to the fs-first beta slice** and the state of this repository
+at the 2026-04-09 bundle. It does not claim completion for git-first, sqlite-first, or
+general production readiness.
+
+## Evidence Files
+
+| Evidence | File | Validation |
+|----------|------|------------|
+| Gateway wiring: prepare surfaces before_hash | `crates/ferrum-gateway/src/server.rs:1751-1758` | PASS |
+| Gateway wiring: execute surfaces after_hash | `crates/ferrum-gateway/src/server.rs:1933-1945` | PASS |
+| Helper function for target hash update | `crates/ferrum-gateway/src/server.rs:2182-2201` | PASS |
+| RollbackTarget::FilePath with before_hash/after_hash | `crates/ferrum-proto/src/rollback.rs:61-65` | PASS |
+| Integration test: new-file before_hash=None after prepare, after_hash=Some after execute | `tests/integration_gateway_flow.rs:test_new_file_before_hash_none_after_prepare_after_hash_some_after_execute` | NEW |
+| Integration test: existing-file before_hash=Some after prepare, before!=after after execute | `tests/integration_gateway_flow.rs:test_existing_file_before_hash_some_after_prepare_before_hash_ne_after_hash_after_execute` | NEW |
+| Workspace compiles | `cargo check --workspace` | PASS |
+
+## Commands Run
+
+| Command | Package | Status |
+|---------|---------|--------|
+| `cargo test --package ferrum-gateway --test integration_gateway_flow -- before_hash` | ferrum-gateway | PASS (2 new tests added) |
+| `cargo check --package ferrum-gateway --package ferrum-adapter-fs` | ferrum-gateway, ferrum-adapter-fs | PASS |
+
+## Changes Summary
+
+### crates/ferrum-gateway/src/server.rs
+- No changes needed: before_hash and after_hash wiring already in place
+
+### crates/ferrum-proto/src/rollback.rs
+- No changes needed: RollbackTarget::FilePath already has before_hash and after_hash fields
+
+### tests/integration_gateway_flow.rs (NEW integration coverage added)
+- Added `test_new_file_before_hash_none_after_prepare_after_hash_some_after_execute`
+  - Proves new-file flow: before_hash=None after prepare, after_hash=Some after execute
+- Added `test_existing_file_before_hash_some_after_prepare_before_hash_ne_after_hash_after_execute`
+  - Proves overwrite flow: before_hash=Some after prepare, before!=after after execute
+
+## Remaining Gaps
+
+The following are outside this fs-first beta slice:
+
+1. **Git adapter**: present in the repo, but not advanced as part of this fs-first beta slice
+2. **SQLite adapter**: present in the repo, but not advanced as part of this fs-first beta slice
+3. **execute/verify idempotency**: not specified or verified in this slice
+4. **atomic cleanup on mid-execute failure**: not implemented in this slice
+
+## Conservative Wording
+
+This is a **beta slice** for **fs-first** use case only. Do not claim:
+- Full Q2/v2 completion (not yet)
+- Production-ready (requires integration testing and hardening)
+- Complete for all adapters (only fs adapter is wired in this slice)
+- Git/sqlite adapter readiness from this note (they are outside this slice)
+
+## Citation
+
+Primary code evidence (all paths relative to repo root):
+- `crates/ferrum-gateway/src/server.rs:1751-1758` - prepare-time before_hash wiring
+- `crates/ferrum-gateway/src/server.rs:1933-1945` - execute-time after_hash wiring
+- `crates/ferrum-gateway/src/server.rs:2182-2201` - update_file_target_hashes helper
+- `crates/ferrum-proto/src/rollback.rs:61-65` - RollbackTarget::FilePath definition
+- `tests/integration_gateway_flow.rs` - integration tests (lines added at end of file)

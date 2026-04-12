@@ -1,0 +1,43 @@
+# Ferrum Gate fs-first Beta Slice Evidence Bundle
+# Generated: 2026-04-09 (rewritten at 2026-04-12 to match actual bundle contents)
+# Purpose: Timestamped evidence for fs-first before_hash/after_hash wiring completion
+
+## Artifact Index
+
+| File | Description | Status |
+|------|-------------|--------|
+| closure-note.txt | fs-first beta slice closure statement | PRESENT |
+| manifest.txt | This file - bundle contents index | PRESENT |
+
+## Evidence Summary
+
+- fs-first before_hash/after_hash wiring: COMPLETE (beta slice only)
+- Workspace compiles: PASS
+- Integration tests pass: PASS (2 new tests added covering new-file and overwrite flows)
+- Gateway wiring: PASS (server.rs:1751-1758 prepare, server.rs:1933-1945 execute)
+- Helper function: PASS (server.rs:2182-2201 update_file_target_hashes)
+
+## Notes
+
+- This is a **beta slice** for **fs-first** only
+- Only FilePath target hash wiring is implemented (git/sqlite/HTTP not in scope)
+- Conservative wording: does not claim full Q2/v2 completion
+- Remaining gaps explicitly listed in closure-note.txt
+
+## Changes Are Production Code
+
+This bundle includes actual Rust code changes to:
+- `crates/ferrum-adapter-fs/src/lib.rs` - prepare metadata now surfaces before_hash
+- `crates/ferrum-gateway/src/server.rs` - persisted FilePath target wiring for before_hash/after_hash
+- `tests/integration_gateway_flow.rs` - integration tests for hash semantics
+
+## Evidence Files (Concrete Paths in Repo)
+
+| File | What It Shows |
+|------|---------------|
+| `crates/ferrum-adapter-fs/src/lib.rs:174-185` | prepare returns before_hash in adapter metadata |
+| `crates/ferrum-gateway/src/server.rs:1751-1758` | prepare surfaces before_hash onto FilePath target |
+| `crates/ferrum-gateway/src/server.rs:1933-1945` | execute surfaces after_hash onto FilePath target |
+| `crates/ferrum-gateway/src/server.rs:2182-2201` | update_file_target_hashes helper function |
+| `crates/ferrum-proto/src/rollback.rs:61-65` | RollbackTarget::FilePath with before_hash/after_hash fields |
+| `tests/integration_gateway_flow.rs` | Integration tests for new-file and overwrite hash flows |

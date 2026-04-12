@@ -1748,6 +1748,15 @@ async fn prepare_execution(
         ));
     }
 
+    // Surface fs adapter's before_hash onto the contract target for persistence.
+    // The fs adapter computes before_hash at prepare-time and returns it in adapter_metadata.
+    // This enables offline verification and audit without re-reading the file system.
+    let before_hash = contract
+        .metadata
+        .get("before_hash")
+        .and_then(|v| v.as_str().map(|s| s.to_string()));
+    update_file_target_hashes(&mut contract.target, before_hash, None);
+
     if let Err(e) = runtime.store.rollback_contracts().insert(&contract).await {
         tracing::warn!("failed to persist rollback contract: {}", e);
     } else {
@@ -1920,6 +1929,21 @@ async fn execute_execution(
     for (key, value) in &receipt.adapter_metadata {
         updated_contract.metadata.insert(key.clone(), value.clone());
     }
+
+    // Surface fs adapter's after_hash onto the contract target for persistence.
+    // The fs adapter computes after_hash at execute-time and returns it in adapter_metadata.
+    // This enables offline verification and audit without re-reading the file system.
+    // Also retain before_hash if already present (survives from prepare via adapter metadata merge).
+    let after_hash = updated_contract
+        .metadata
+        .get("after_hash")
+        .and_then(|v| v.as_str().map(|s| s.to_string()));
+    let before_hash = updated_contract
+        .metadata
+        .get("before_hash")
+        .and_then(|v| v.as_str().map(|s| s.to_string()));
+    update_file_target_hashes(&mut updated_contract.target, before_hash, after_hash);
+
     updated_contract.state = RollbackState::ExecutedAwaitingVerify;
     if let Err(e) = runtime
         .store
@@ -2152,6 +2176,30 @@ fn infer_target_family(target: &ferrum_proto::RollbackTarget) -> String {
         ferrum_proto::RollbackTarget::HttpRequest { .. } => "http".to_string(),
         ferrum_proto::RollbackTarget::EmailDraft { .. } => "email".to_string(),
         ferrum_proto::RollbackTarget::Generic { .. } => "generic".to_string(),
+    }
+}
+
+/// Update FilePath target with before_hash and/or after_hash values from metadata.
+/// This surfaces the fs adapter's computed hashes onto the persisted contract target,
+/// enabling offline verification and audit without re-reading the file system.
+fn update_file_target_hashes(
+    target: &mut RollbackTarget,
+    new_before_hash: Option<String>,
+    new_after_hash: Option<String>,
+) {
+    if let RollbackTarget::FilePath {
+        path: _,
+        before_hash,
+        after_hash,
+    } = target
+    {
+        // Note: before_hash and after_hash are &mut Option<String> due to implicit borrowing
+        if let Some(before) = new_before_hash {
+            *before_hash = Some(before);
+        }
+        if let Some(after) = new_after_hash {
+            *after_hash = Some(after);
+        }
     }
 }
 

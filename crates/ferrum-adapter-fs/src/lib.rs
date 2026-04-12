@@ -161,6 +161,8 @@ impl RollbackAdapter for FsRollbackAdapter {
         // Extract file path from target or metadata
         let file_path = extract_file_path(request);
 
+        let mut metadata = JsonMap::new();
+
         // If file exists, snapshot its current content for compensation
         // and compute before_hash for verification
         if let Some(ref path) = file_path {
@@ -172,13 +174,17 @@ impl RollbackAdapter for FsRollbackAdapter {
                             path,
                             content,
                         );
-                        // Compute and store before_hash
+                        // Compute and store before_hash; also return it in metadata
+                        // so the gateway can surface it onto the persisted contract target
                         if let Ok(Some(hash)) = compute_file_hash(path) {
                             self.snapshot_store.set_before_hash(
                                 &request.execution_id.to_string(),
                                 path,
-                                hash,
+                                hash.clone(),
                             );
+                            // Return before_hash in adapter_metadata for contract target update
+                            metadata
+                                .insert("before_hash".to_string(), serde_json::Value::String(hash));
                         }
                     }
                     Err(e) => {
@@ -191,7 +197,6 @@ impl RollbackAdapter for FsRollbackAdapter {
             }
         }
 
-        let mut metadata = JsonMap::new();
         if let Some(path) = file_path {
             metadata.insert("file_path".to_string(), serde_json::Value::String(path));
         }
@@ -1336,7 +1341,7 @@ mod tests {
             metadata: JsonMap::new(),
         };
 
-        adapter.prepare(&prepare_req).await.unwrap();
+        let prep_receipt = adapter.prepare(&prepare_req).await.unwrap();
 
         // before_hash should be stored in snapshot store
         let before_hash = adapter
@@ -1353,6 +1358,16 @@ mod tests {
         assert!(
             hash.chars().all(|c| c.is_ascii_hexdigit()),
             "Hash should be hex"
+        );
+
+        // before_hash should also be returned in prepare receipt metadata for gateway wiring
+        let before_hash_in_metadata = prep_receipt
+            .adapter_metadata
+            .get("before_hash")
+            .and_then(|v| v.as_str());
+        assert!(
+            before_hash_in_metadata.is_some(),
+            "before_hash should be in prepare receipt metadata for gateway wiring"
         );
     }
 

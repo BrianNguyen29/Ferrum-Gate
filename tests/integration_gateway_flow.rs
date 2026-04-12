@@ -7355,8 +7355,580 @@ async fn test_git_verify_succeeds_after_execute() {
         .unwrap();
     assert!(
         !events.is_empty(),
-        "SideEffectVerified provenance event should be emitted"
+        "SideEffectVerified provenance event should be emitted after compensate"
     );
+}
+
+// ============================================
+// FS ADAPTER BEFORE_HASH / AFTER_HASH INTEGRATION TESTS
+// ============================================
+
+/// Integration test: new-file flow — before_hash is None after prepare,
+/// after_hash is Some after execute.
+///
+/// Semantics:
+/// - prepare: file does not exist yet, so before_hash stays None on the persisted contract target
+/// - execute: file is created, so after_hash becomes Some on the persisted contract target
+#[tokio::test]
+async fn test_new_file_before_hash_none_after_prepare_after_hash_some_after_execute() {
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Use unique path so we know file does not exist
+    let test_file_path = next_test_file_path();
+    let test_file_str = test_file_path.to_string_lossy().to_string();
+    let test_dir = test_file_path
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|| "/tmp".to_string());
+
+    // Verify file does not exist
+    assert!(
+        !test_file_path.exists(),
+        "precondition: test file should not exist before test"
+    );
+
+    // Step 1: Compile intent with FileMutation effect type
+    let app = build_router(runtime.clone());
+    let mut req = sample_intent_request_with_effect(EffectType::FileMutation);
+    req.requested_resource_scope = vec![ResourceSelector::FilesystemPath {
+        path: test_dir,
+        mode: ResourceMode::Write,
+        content_hash: None,
+    }];
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Step 2: Evaluate proposal
+    let app = build_router(runtime.clone());
+    let proposal = ActionProposal {
+        proposal_id: ferrum_proto::ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Write new file".to_string(),
+        tool_name: "fs.write".to_string(),
+        server_name: "workspace".to_string(),
+        raw_arguments: serde_json::json!({"path": test_file_str, "content": "hello"}),
+        expected_effect: "write a file".to_string(),
+        estimated_risk: RiskTier::Medium,
+        requested_rollback_class: RollbackClass::R0NativeReversible,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 3: Mint capability
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "workspace".to_string(),
+            tool_name: "fs.write".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![ResourceBinding::File {
+            path: test_file_str.clone(),
+            mode: ResourceMode::Write,
+            required_hash: None,
+        }],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        policy_bundle_id: None,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    // Step 4: Authorize execution
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    // Store test file path
+    set_test_file_path(execution_id, test_file_path);
+
+    // Step 5: Prepare execution
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let prep_resp: ferrum_proto::PrepareExecutionResponse = serde_json::from_slice(&body).unwrap();
+    assert!(prep_resp.prepared);
+
+    // === ASSERTION: before_hash should be None on persisted contract target after prepare ===
+    let stored_execution = runtime
+        .store
+        .executions()
+        .get(execution_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let contract_id = stored_execution.rollback_contract_id.unwrap();
+    let stored_contract = runtime
+        .store
+        .rollback_contracts()
+        .get(contract_id)
+        .await
+        .unwrap()
+        .unwrap();
+
+    match &stored_contract.target {
+        RollbackTarget::FilePath {
+            path,
+            before_hash,
+            after_hash,
+        } => {
+            assert_eq!(
+                path.as_str(),
+                test_file_str.as_str(),
+                "target path should match"
+            );
+            assert!(
+                before_hash.is_none(),
+                "before_hash should be None after prepare for new file (file did not exist)"
+            );
+            assert!(
+                after_hash.is_none(),
+                "after_hash should be None after prepare (execute has not happened)"
+            );
+        }
+        other => panic!("expected FilePath target for fs.write, got {:?}", other),
+    }
+
+    // Step 6: Execute
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({
+            "path": test_file_str,
+            "content": "hello"
+        }),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // === ASSERTION: after_hash should be Some on persisted contract target after execute ===
+    let updated_contract = runtime
+        .store
+        .rollback_contracts()
+        .get(contract_id)
+        .await
+        .unwrap()
+        .unwrap();
+
+    match &updated_contract.target {
+        RollbackTarget::FilePath {
+            path: _,
+            before_hash,
+            after_hash,
+        } => {
+            assert!(
+                before_hash.is_none(),
+                "before_hash should still be None after execute for new file"
+            );
+            assert!(
+                after_hash.is_some(),
+                "after_hash should be Some after execute for new file (file was created)"
+            );
+            let after = after_hash.as_ref().unwrap();
+            assert!(
+                !after.is_empty(),
+                "after_hash should not be empty string after execute"
+            );
+        }
+        other => panic!("expected FilePath target, got {:?}", other),
+    }
+}
+
+/// Integration test: existing-file overwrite flow — before_hash is Some after prepare,
+/// after_hash is Some after execute, and before_hash != after_hash.
+///
+/// Semantics:
+/// - prepare: file exists, so before_hash is captured from file content
+/// - execute: file content changes, so after_hash differs from before_hash
+#[tokio::test]
+async fn test_existing_file_before_hash_some_after_prepare_before_hash_ne_after_hash_after_execute()
+{
+    let (_temp_dir, runtime, _store) = create_test_runtime().await;
+
+    // Use unique path
+    let test_file_path = next_test_file_path();
+    let test_file_str = test_file_path.to_string_lossy().to_string();
+    let test_dir = test_file_path
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|| "/tmp".to_string());
+
+    // Pre-create the file with initial content
+    std::fs::write(&test_file_path, "original content").expect("failed to create test file");
+    assert!(
+        test_file_path.exists(),
+        "precondition: test file should exist before test"
+    );
+
+    // Step 1: Compile intent with FileMutation effect type
+    let app = build_router(runtime.clone());
+    let mut req = sample_intent_request_with_effect(EffectType::FileMutation);
+    req.requested_resource_scope = vec![ResourceSelector::FilesystemPath {
+        path: test_dir,
+        mode: ResourceMode::Write,
+        content_hash: None,
+    }];
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/intents/compile")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let compile_resp: IntentCompileResponse = serde_json::from_slice(&body).unwrap();
+    let intent_id = compile_resp.envelope.intent_id;
+
+    // Step 2: Evaluate proposal
+    let app = build_router(runtime.clone());
+    let proposal = ActionProposal {
+        proposal_id: ferrum_proto::ProposalId::new(),
+        intent_id,
+        step_index: 1,
+        title: "Overwrite existing file".to_string(),
+        tool_name: "fs.write".to_string(),
+        server_name: "workspace".to_string(),
+        raw_arguments: serde_json::json!({"path": test_file_str, "content": "new content"}),
+        expected_effect: "overwrite a file".to_string(),
+        estimated_risk: RiskTier::Medium,
+        requested_rollback_class: RollbackClass::R0NativeReversible,
+        decision: None,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    let proposal_id = proposal.proposal_id;
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/proposals/{}/evaluate", proposal_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&proposal).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Step 3: Mint capability
+    let app = build_router(runtime.clone());
+    let mint_req = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "workspace".to_string(),
+            tool_name: "fs.write".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: vec![ResourceBinding::File {
+            path: test_file_str.clone(),
+            mode: ResourceMode::Write,
+            required_hash: None,
+        }],
+        argument_constraints: vec![],
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        policy_bundle_id: None,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/capabilities/mint")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&mint_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mint_resp: ferrum_proto::CapabilityMintResponse = serde_json::from_slice(&body).unwrap();
+    let capability_id = mint_resp.lease.capability_id;
+
+    // Step 4: Authorize execution
+    let app = build_router(runtime.clone());
+    let auth_req = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/executions/authorize")
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&auth_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let auth_resp: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).unwrap();
+    let execution_id = auth_resp.execution.execution_id;
+
+    // Store test file path
+    set_test_file_path(execution_id, test_file_path);
+
+    // Step 5: Prepare execution
+    let app = build_router(runtime.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/prepare", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body("{}".to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let prep_resp: ferrum_proto::PrepareExecutionResponse = serde_json::from_slice(&body).unwrap();
+    assert!(prep_resp.prepared);
+
+    // === ASSERTION: before_hash should be Some on persisted contract target after prepare ===
+    let stored_execution = runtime
+        .store
+        .executions()
+        .get(execution_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let contract_id = stored_execution.rollback_contract_id.unwrap();
+    let stored_contract = runtime
+        .store
+        .rollback_contracts()
+        .get(contract_id)
+        .await
+        .unwrap()
+        .unwrap();
+
+    match &stored_contract.target {
+        RollbackTarget::FilePath {
+            path,
+            before_hash,
+            after_hash,
+        } => {
+            assert_eq!(
+                path.as_str(),
+                test_file_str.as_str(),
+                "target path should match"
+            );
+            assert!(
+                before_hash.is_some(),
+                "before_hash should be Some after prepare for existing file (file existed)"
+            );
+            let before = before_hash.as_ref().unwrap();
+            assert!(!before.is_empty(), "before_hash should not be empty string");
+            assert!(
+                after_hash.is_none(),
+                "after_hash should be None after prepare (execute has not happened)"
+            );
+        }
+        other => panic!("expected FilePath target for fs.write, got {:?}", other),
+    }
+
+    // Capture before_hash value for later comparison
+    let before_hash_value = match &stored_contract.target {
+        RollbackTarget::FilePath {
+            before_hash: Some(h),
+            ..
+        } => h.clone(),
+        _ => panic!("before_hash should be Some"),
+    };
+
+    // Step 6: Execute with NEW content that differs from original
+    let app = build_router(runtime.clone());
+    let execute_req = ferrum_proto::ExecuteRequest {
+        execution_id,
+        payload: serde_json::json!({
+            "path": test_file_str,
+            "content": "completely different new content"
+        }),
+    };
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(&format!("/v1/executions/{}/execute", execution_id))
+                .method(axum::http::Method::POST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&execute_req).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // === ASSERTION: after_hash should be Some and different from before_hash after execute ===
+    let updated_contract = runtime
+        .store
+        .rollback_contracts()
+        .get(contract_id)
+        .await
+        .unwrap()
+        .unwrap();
+
+    match &updated_contract.target {
+        RollbackTarget::FilePath {
+            path: _,
+            before_hash,
+            after_hash,
+        } => {
+            // before_hash should still be preserved from prepare
+            assert!(
+                before_hash.is_some(),
+                "before_hash should still be Some after execute"
+            );
+            let after = after_hash
+                .as_ref()
+                .expect("after_hash should be Some after execute for existing file");
+            assert!(
+                !after.is_empty(),
+                "after_hash should not be empty string after execute"
+            );
+            // before_hash and after_hash should differ (content changed)
+            assert_ne!(
+                before_hash_value.as_str(),
+                after.as_str(),
+                "before_hash and after_hash should differ for overwritten file content"
+            );
+        }
+        other => panic!("expected FilePath target, got {:?}", other),
+    }
 }
 
 #[tokio::test]
@@ -7510,7 +8082,7 @@ async fn test_git_rollback_restores_repo_head_to_before_ref() {
         .unwrap();
     assert!(
         !events.is_empty(),
-        "SideEffectRolledBack provenance event should be emitted"
+        "SideEffectVerified provenance event should be emitted after compensate"
     );
 }
 
