@@ -24,6 +24,70 @@ phase is marked DONE in `44-v2-production-execution-plan.md`.
 
 ---
 
+## Sign-off Checklist (Phase 3 and Phase 5 Gates)
+
+This section provides a quick sign-off view. Each gate must be verified ✅ before
+the corresponding phase is marked DONE in `44-v2-production-execution-plan.md`.
+
+**Phase 3 — fs/sqlite → T1:**
+
+| Gate | Description | Status |
+|------|-------------|--------|
+| FS-1 | Adapter compiles; `cargo check --workspace` clean | ✅ DONE |
+| FS-2 | Fail-closed verify on I/O errors | ✅ DONE |
+| FS-3 | Compensate deletes new file when no snapshot | ✅ DONE |
+| FS-4 | Fail-closed compensate/rollback on I/O error during recovery | ✅ DONE |
+| FS-5 | Gateway-level verify: hash mismatch → Failed → commit rejected | ✅ DONE |
+| FS-6 | Gateway-level rollback drill after verify false | ✅ DONE |
+| FS-7 | Gateway-level compensate drill after verify false | ✅ DONE |
+| FS-8 | `before_hash`/`after_hash` wiring (PR #165) | ✅ DONE |
+| SQ-1 | Adapter compiles; `cargo check --workspace` clean | ✅ DONE |
+| SQ-2 | Identifier safety: rollback on duplicate/malformed identifier | ✅ DONE |
+| SQ-3 | File-backed lifecycle persists | ✅ DONE |
+| SQ-4 | Error-path tests: graceful error propagation | ✅ DONE |
+| SQ-5 | Fail-closed verify on DB-open error | ✅ DONE |
+| SQ-6 | Fail-closed compensate/rollback on DB error during recovery | ✅ DONE |
+| SQ-7 | Fail-closed verify on DB-corruption mid-operation | ✅ DONE |
+| SQ-8 | Gateway-level verify false → Failed → commit rejected | ✅ DONE |
+| SQ-9 | Gateway-level rollback drill after verify false | ✅ DONE |
+| SQ-10 | Gateway-level compensate drill after verify false | ✅ DONE |
+
+**Phase 5 — git/http → T1:**
+
+| Gate | Description | Status |
+|------|-------------|--------|
+| GT-1 | Adapter compiles; `cargo check` clean | ✅ DONE |
+| GT-2 | Fail-closed verify on I/O errors; noop edge-case | ✅ DONE |
+| GT-3 | GitBranchCreate prepare fails closed on detached HEAD | ✅ DONE |
+| GT-4 | GitPush rollback no-op when no `pre_push_ref` | ✅ DONE |
+| GT-5 | GitFetch rollback restores existing local ref | ✅ DONE |
+| GT-6 | GitPull compensate/rollback fail-closed when branch changed | ✅ DONE |
+| GT-7 | Gateway-level verify false → Failed → commit rejected | ✅ DONE |
+| GT-8 | GitPush/GitFetch rollback fail-closed when force-push/force-update fails | ✅ DONE |
+| GT-9 | Gateway-level rollback drill after verify false | ✅ DONE |
+| GT-10 | Gateway-level compensate drill after verify false | ✅ DONE |
+| GT-11 | GitPush local workflow (bounded local) | ✅ DONE |
+| GT-12 | GitFetch local workflow (bounded local) | ✅ DONE |
+| GT-13 | GitPull fast-forward-only workflow (bounded local) | ✅ DONE |
+| HT-1 | Adapter compiles; `cargo check --workspace` clean | ✅ DONE |
+| HT-2 | Fail-closed on transport errors (connection-refused, timeout) | ✅ DONE |
+| HT-3 | Explicit check mismatch/matches: verify returns false on mismatch | ✅ DONE |
+| HT-4 | Gateway-level verify false → Failed → commit rejected | ✅ DONE |
+| HT-5 | Bounded HTTP execute/verify with body-aware digest | ✅ DONE |
+| HT-6 | Header-shape binding and canonical query string support | ✅ DONE |
+| HT-7 | Auth support (credentials, token) | ✅ DONE |
+| HT-8 | Conservative rollback no-op for R3 mutation boundary | ✅ DONE |
+| HT-9 | Gateway-level rollback drill after verify false | ✅ DONE |
+| HT-10 | Gateway-level compensate drill after verify false | ✅ DONE |
+
+**Phase 3 sign-off:** All FS-1–FS-8 and SQ-1–SQ-10 = ✅ → Phase 3 may be marked DONE
+in `44-v2-production-execution-plan.md`.
+
+**Phase 5 sign-off:** All GT-1–GT-13 and HT-1–HT-10 = ✅ → Phase 5 may be marked DONE
+in `44-v2-production-execution-plan.md`.
+
+---
+
 ## Gate Notation
 
 | Symbol | Meaning |
@@ -143,10 +207,10 @@ post-v2 backlog per `44-v2-production-execution-plan.md` Phase 5 note and
 
 | Adapter | Target Phase | T2 Partial ✅ | T1 Promotion Gate | v2 T1 Status |
 |---------|-------------|---------------|-------------------|--------------|
-| fs | Phase 3 | ✅ | FS-1–FS-8 all ✅ | **Promoted to T1 in v2** |
-| sqlite | Phase 3 | ✅ | SQ-1–SQ-10 all ✅ | **Promoted to T1 in v2** |
-| git | Phase 5 | ✅ | GT-1–GT-13 all ✅ | **Promoted to T1 in v2** |
-| http | Phase 5 | ✅ | HT-1–HT-10 all ✅ | **Promoted to T1 in v2** |
+| fs | Phase 3 | ✅ | FS-1–FS-8 all ✅ | **T1 upon Phase 3 sign-off** |
+| sqlite | Phase 3 | ✅ | SQ-1–SQ-10 all ✅ | **T1 upon Phase 3 sign-off** |
+| git | Phase 5 | ✅ | GT-1–GT-13 all ✅ | **T1 upon Phase 5 sign-off** |
+| http | Phase 5 | ✅ | HT-1–HT-10 all ✅ | **T1 upon Phase 5 sign-off** |
 | maildraft | — | ✅ | MD-1–MD-5 all ✅ | **T2 partial only (v2)** |
 
 ---

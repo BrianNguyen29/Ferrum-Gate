@@ -94,22 +94,35 @@ this update.
 
 ## Phase 2 — Promotion Criteria Confirmation
 
-**Goal:** Confirm all promotion criteria from the v1 broader production-ready declaration
-are met for v2 scope, and cross-reference evidence.
+**Goal:** Confirm that the G-E gates from the v1 broader production-ready declaration
+(G-E1–G-E5, all ✅ DONE 2026-04-08) apply to v2 scope. This is a **checklist
+confirmation checkpoint** — no new gates are created here. The per-adapter promotion
+gates (FS-1–FS-8, SQ-1–SQ-10, GT-1–GT-13, HT-1–HT-10) are confirmed in Phases 3 and 5.
+v2 ratification itself occurs at Phase 6.
 
 **Owner:** Engineering
 
-**Status:** 📋 PLANNED
+**Status:** ✅ DONE — G-E1–G-E5 inherited from v1 broader production sign-off 2026-04-08;
+confirmed as applicable to v2 scope in this checkpoint.
 
-**Criteria confirmed:**
+**Inherited evidence (G-E1–G-E5 — from v1 broader production sign-off, 2026-04-08):**
 
-| Gate | Description | Status | Evidence |
-|------|-------------|--------|----------|
+| Gate | Description | v1 Status | Evidence |
+|------|-------------|-----------|----------|
 | G-E1 | P2 adapter hardening complete | ✅ DONE 2026-04-08 | P2.1/P2.2/P2.3/P2.5/P2.6 scaffold/P2.7 ✅; `30-production-roadmap.md` lines 43-49 |
 | G-E2 | P2 performance baseline established | ✅ DONE 2026-04-08 | `42-p2-performance-baseline-evidence.md`; `30-production-roadmap.md` line 178 |
 | G-E3 | P4 ferrumctl advanced flows complete | ✅ DONE 2026-04-08 | `bins/ferrumctl/src/main.rs`; `30-production-roadmap.md` line 179 |
 | G-E4 | P5 Sync-1 preflight + decision table ratified | ✅ DONE 2026-04-08 | `ferrum-sync`/`ferrum-store` sync tests; `30-production-roadmap.md` line 179 |
 | G-E5 | Production evaluation sign-off | ✅ DONE 2026-04-08 | `43-production-readiness-signoff.md` |
+
+**Per-adapter promotion gates (confirmed in Phases 3 and 5, not Phase 2):**
+
+- Phase 3: fs (FS-1–FS-8) and sqlite (SQ-1–SQ-10) → T1 promotion gates
+- Phase 5: git (GT-1–GT-13) and http (HT-1–HT-10) → T1 promotion gates
+- Full per-adapter gate sheet: `45-v2-adapter-promotion-criteria.md`
+
+**What still needs sign-off:** Phase 6 (v2 Sign-off) is the formal ratification step.
+Phase 2 is the pre-Phase-3 checklist confirming inherited gates apply to v2 scope.
 
 **Source:** `30-production-roadmap.md` Phase Completion Tracking (lines 204–210);
 `43-production-readiness-signoff.md`; `45-v2-adapter-promotion-criteria.md`
@@ -275,7 +288,7 @@ When any phase completes, apply this checklist:
 | Phase | Phase Name | Status | Target Completion | Exit Criteria | Evidence Doc |
 |-------|-----------|--------|-------------------|--------------|--------------|
 | Phase 1 | v2 Scope Lock | 🔒 SCOPE LOCKED (checkpoint ✅; v2 DRAFT/PROPOSED — not ratified) | TBD | v2 scope definition locked; no T3 overclaim | `44-v2-production-execution-plan.md` |
-| Phase 2 | Promotion Criteria Confirmation | 📋 PLANNED | TBD | All G-E gates confirmed for v2 scope; adapter criteria doc indexed | `30-production-roadmap.md` lines 204–210; `45-v2-adapter-promotion-criteria.md` |
+| Phase 2 | Promotion Criteria Confirmation | ✅ DONE (inherited G-E gates) | 2026-04-08 | G-E1–G-E5 confirmed for v2 scope; adapter criteria doc indexed | `30-production-roadmap.md` lines 204–210; `45-v2-adapter-promotion-criteria.md` |
 | Phase 3 | fs/sqlite Adapter Promotion | 📋 PLANNED | TBD | P2.1 and P2.2 slices confirmed; FS-1–FS-8 and SQ-1–SQ-10 all ✅ | `30-production-roadmap.md` P2.1/P2.2; `45-v2-adapter-promotion-criteria.md` |
 | Phase 4 | U1 Core Capability + Policy Tooling | 📋 PLANNED | TBD | U1 core maturity confirmed; P4.2 deferred post-v2 | `11-remaining-tasks.md` line 88; `30-production-roadmap.md` P4.2 |
 | Phase 5 | git/http Adapter Promotion | 📋 PLANNED | TBD | P2.3, P2.4, P2.5, P2.6, P2.7 confirmed; GT-1–GT-13 and HT-1–HT-10 all ✅ | `30-production-roadmap.md` P2.3/P2.4/P2.5; `45-v2-adapter-promotion-criteria.md` |
