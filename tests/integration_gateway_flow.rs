@@ -7355,7 +7355,7 @@ async fn test_git_verify_succeeds_after_execute() {
         .unwrap();
     assert!(
         !events.is_empty(),
-        "SideEffectVerified provenance event should be emitted after compensate"
+        "SideEffectRolledBack provenance event should be emitted after rollback"
     );
 }
 
@@ -8082,7 +8082,7 @@ async fn test_git_rollback_restores_repo_head_to_before_ref() {
         .unwrap();
     assert!(
         !events.is_empty(),
-        "SideEffectVerified provenance event should be emitted after compensate"
+        "SideEffectRolledBack provenance event should be emitted after rollback"
     );
 }
 
@@ -8323,7 +8323,7 @@ async fn test_git_verify_false_transitions_to_failed_and_rejects_commit() {
         .unwrap();
     assert!(
         !events.is_empty(),
-        "SideEffectVerified provenance event should be emitted even for verified=false"
+        "SideEffectRolledBack provenance event should be emitted after compensate"
     );
 }
 
