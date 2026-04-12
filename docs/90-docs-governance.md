@@ -35,6 +35,7 @@ Any doc that describes governance expectations should link here rather than rest
 | `18-phase-f-evidence-pack.md` | Phase F consolidated evidence | Core |
 | `19-v1-single-node-support-contract.md` | v1 single-node support contract | Operations |
 | `20-v2-single-node-production-support-contract.md` | v2 single-node support contract (**DRAFT — proposed, not ratified**) | Operations |
+| `implementation-path/60-long-term-vision.md` | Long-term strategic intent (**non-binding**; maps future planes to invariants; distinct from contract and roadmap docs) | Strategy |
 | `90-docs-governance.md` | Doc governance policy (this document) | Operations |
 | `runbooks/` | Operator runbooks | Operations |
 | `implementation-path/41-production-execution-plan.md` | Sequential production evaluation plan (G-E1 → G-E5), per-phase doc update protocol, and commit/PR merge cadence | Operations |
@@ -80,6 +81,7 @@ Ownership covers canonical hierarchy docs and any domain-specific derivative doc
 | @qa-team | Quality | `11-testing-strategy` |
 | @onboarding | Onboarding | `01-quickstart`, `02-project-overview` |
 | @tooling | Tooling | `.agents/`, `diagrams/` |
+| @core-team | Strategy | `60-long-term-vision.md` |
 
 Ownership responsibilities:
 - **Accuracy**: Owner reviews doc changes touching their domain before merge.
