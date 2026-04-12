@@ -209,7 +209,7 @@ source references). Neither overrides the v1 support contract or the v2 ratified
 - **Roadmap** (this doc): describes concrete backlog items with sequencing — more concrete,
   still non-binding
 - **Contract** (`19-v1-single-node-support-contract.md`, `20-v2-*.md`): describes what
-  is supported or proposed — binding (v1) or pending (v2)
+  is supported or proposed — binding (v1) or RATIFIED (v2)
 
 ### Backlog Classification Principles
 

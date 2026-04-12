@@ -1,6 +1,6 @@
 # 16 — Release checklist
 
-Single-node v1 scope. Last updated: 2026-04-03.
+v2 RATIFIED. Single-node v2 scope. Last updated: 2026-04-12.
 
 > **Canonical support contract**: [19-v1-single-node-support-contract.md](./19-v1-single-node-support-contract.md)
 >

@@ -1,7 +1,7 @@
 # 01 — Current state
 
 Last updated: 2026-04-12
-Single-node v1 scope unless noted.
+Single-node v2 RATIFIED (2026-04-12). Scope: v2 single-node production per `44-v2-production-execution-plan.md`.
 
 **Note on fs-first hash slice (2026-04-09)**: The fs-first `before_hash`/`after_hash` wiring for the fs adapter and gateway rollback path was completed as a **T2/partial beta-slice hardening step**. This is a narrow internal wiring improvement; it does not change the T1/T2/T3 support contract boundaries declared in `43-production-readiness-signoff.md`. See `docs/artifacts/2026-04-09/closure-note.txt` for evidence.
 

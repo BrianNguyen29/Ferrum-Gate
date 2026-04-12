@@ -256,5 +256,5 @@ Example:
 | Remaining tasks | `11-remaining-tasks.md` |
 | Release checklist | `16-release-checklist.md` |
 | Out-of-tree SQLite perf candidate | `40-out-of-tree-sqlite-performance-candidate.md` |
-| v2 sign-off (pending) | `46-v2-readiness-signoff.md` |
+| v2 sign-off (✅ RATIFIED) | `46-v2-readiness-signoff.md` |
 | Post-v2 roadmap (H1/H2/H3) | `50-post-v2-roadmap.md` |
