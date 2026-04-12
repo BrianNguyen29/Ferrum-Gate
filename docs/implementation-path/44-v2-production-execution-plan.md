@@ -67,11 +67,16 @@ proposed canonical support boundary.
 
 **Status:** 📋 PLANNED
 
-**What this phase confirms:**
+**What this phase confirms (scope-lock checkpoint ✅):**
 - v2 = v1 + adapter hardening (P2.1/P2.2/P2.3/P2.5/P2.7) + ferrumctl advanced (P4.1) +
   Sync-1 ratified (P5.4/P5.5) + broader production-ready declaration (G-E5)
 - No multi-node/HA claims in v2 scope
 - T3 items (multi-node, U2/U3/U4, SLA guarantees) remain out of scope
+
+**Scope-lock checkpoint note:** Phase 1 scope-confirmation work is done. v2 scope
+definition is locked and verified against prior v1 evidence. This is a
+documentation checkpoint — v2 remains DRAFT / PROPOSED and is not ratified by
+this update.
 
 **Source:** `30-production-roadmap.md` Priority 1–6 status; `43-production-readiness-signoff.md`;
 `11-remaining-tasks.md` P3.G live evidence (G-E1 through G-E5 all ✅)
@@ -269,7 +274,7 @@ When any phase completes, apply this checklist:
 
 | Phase | Phase Name | Status | Target Completion | Exit Criteria | Evidence Doc |
 |-------|-----------|--------|-------------------|--------------|--------------|
-| Phase 1 | v2 Scope Lock | 📋 PLANNED | TBD | v2 scope definition locked; no T3 overclaim | `44-v2-production-execution-plan.md` |
+| Phase 1 | v2 Scope Lock | 🔒 SCOPE LOCKED (checkpoint ✅; v2 DRAFT/PROPOSED — not ratified) | TBD | v2 scope definition locked; no T3 overclaim | `44-v2-production-execution-plan.md` |
 | Phase 2 | Promotion Criteria Confirmation | 📋 PLANNED | TBD | All G-E gates confirmed for v2 scope; adapter criteria doc indexed | `30-production-roadmap.md` lines 204–210; `45-v2-adapter-promotion-criteria.md` |
 | Phase 3 | fs/sqlite Adapter Promotion | 📋 PLANNED | TBD | P2.1 and P2.2 slices confirmed; FS-1–FS-8 and SQ-1–SQ-10 all ✅ | `30-production-roadmap.md` P2.1/P2.2; `45-v2-adapter-promotion-criteria.md` |
 | Phase 4 | U1 Core Capability + Policy Tooling | 📋 PLANNED | TBD | U1 core maturity confirmed; P4.2 deferred post-v2 | `11-remaining-tasks.md` line 88; `30-production-roadmap.md` P4.2 |
