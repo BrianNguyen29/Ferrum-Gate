@@ -99,14 +99,17 @@ The following lists the executed production-evaluation order after P3 completion
 
 ### Remaining Longer-Term / Planned Tracks
 
-8. **P4.2** — policy bundle lifecycle tooling
-9. **P5.7** — HA / multi-leader replication
-10. **U1.1–U1.2** — Outcome-aware Governance (remaining backlog: richer clause expressiveness, policy bundle authoring tooling)
-11. **U2** — Reversible Execution Planner
-12. **U3** — Cross-runtime Provenance Fabric
-13. **U4** — Runtime Integrations (MCP / local / NemoClaw)
+Post-P3 tracks are indexed in `50-post-v2-roadmap.md` (Horizons H1/H2/H3) rather
+than duplicated here. Brief reference:
 
-**Source:** `docs/implementation-path/11-remaining-tasks.md`; execution order follows roadmap priority sequence per `docs/implementation-path/24-p1-p2-p3-execution-plan.md` lines 266–297.
+8. **P4.2** — policy bundle lifecycle tooling (H1.1)
+9. **P5.7** — HA / multi-leader replication (H2.1)
+10. **U1 remaining backlog** — expressiveness + authoring tooling (H1.2)
+11. **U2** — Reversible Execution Planner (H2.2)
+12. **U3** — Cross-runtime Provenance Fabric (H3.1)
+13. **U4** — Runtime Integrations (H3.2)
+
+**Source:** `docs/implementation-path/11-remaining-tasks.md`; `docs/implementation-path/50-post-v2-roadmap.md`; execution order follows roadmap priority sequence per `docs/implementation-path/24-p1-p2-p3-execution-plan.md` lines 266–297.
 
 **Canonical execution plan:** `docs/implementation-path/41-production-execution-plan.md` — sequential phase plan with per-phase doc update protocol and commit/PR merge cadence.
 
@@ -129,6 +132,10 @@ The following lists the executed production-evaluation order after P3 completion
 
 **Goal:** Multi-node v1 with HA-ready topology.
 
+> P5.1–P5.6 analysis/design complete. P5.7 HA/multi-leader implementation is post-v2
+> backlog — indexed as **H2.1** in `50-post-v2-roadmap.md` (Horizon 2). Full distributed
+> deployment (beyond HA) is **H3.4** (Horizon 3), which depends on H2.1 completion.
+
 | Item | Description | Status | Verification |
 |------|-------------|--------|--------------|
 | P5.1 | SQLite read-replica use-case analysis | ✅ DONE | Analysis doc |
@@ -137,7 +144,7 @@ The following lists the executed production-evaluation order after P3 completion
 | P5.4 | Sync-1 preflight checks (PF1–PF8) | ✅ DONE 2026-04-08 | `cargo test -p ferrum-store --lib sync_preflight`; `cargo test -p ferrum-store --lib sync_service` |
 | P5.5 | Sync-1 decision table + abort semantics | ✅ DONE 2026-04-08 | `cargo test -p ferrum-sync --lib`; `cargo test -p ferrum-store --lib sync_service` |
 | P5.6 | Sync-2 read-only preflight sketch | ✅ DONE | Design doc |
-| P5.7 | HA / multi-leader replication | ⬜ PLANNED | Post-P2 |
+| P5.7 | HA / multi-leader replication | ⬜ PLANNED (post-v2) | Post-P3; see `50-post-v2-roadmap.md` H2.1 |
 
 ---
 
@@ -145,15 +152,20 @@ The following lists the executed production-evaluation order after P3 completion
 
 **Goal:** Complete U1 and kick off U2 / U3 / U4.
 
+> U1 core (S1–S8a) is ✅ DONE in v1/v2 scope. Remaining U1 backlog (expressiveness +
+> authoring tooling) is **H1.2** in `50-post-v2-roadmap.md` (Horizon 1). U2/U3/U4 are
+> **H2.2**, **H3.1**, **H3.2** (Horizons 2 and 3). Full detail with sequencing guidance
+> is in `50-post-v2-roadmap.md`.
+
 | Item | Description | Status | Verification |
 |------|-------------|--------|--------------|
-| U1.1 | Richer outcome clause expressiveness (nested selectors, temporal) | ⬜ PLANNED | Test suite |
-| U1.2 | Policy bundle migration / authoring tooling | ⬜ PLANNED | CLI test |
-| U2 | Reversible Execution Planner | ⬜ PLANNED | Design doc |
-| U3 | Cross-runtime Provenance Fabric | ⬜ PLANNED | Design doc |
-| U4 | Runtime Integrations (MCP / local / NemoClaw) | ⬜ PLANNED | Integration test |
+| U1.1 | Richer outcome clause expressiveness (nested selectors, temporal) | ⬜ PLANNED (H1) | `50-post-v2-roadmap.md` H1.2a |
+| U1.2 | Policy bundle migration / authoring tooling | ⬜ PLANNED (H1) | `50-post-v2-roadmap.md` H1.1, H1.2b |
+| U2 | Reversible Execution Planner | ⬜ PLANNED (H2) | `50-post-v2-roadmap.md` H2.2; `91-phase-success-criteria-and-kpis.md` section 8.2 |
+| U3 | Cross-runtime Provenance Fabric | ⬜ PLANNED (H3) | `50-post-v2-roadmap.md` H3.1; `91-phase-success-criteria-and-kpis.md` section 8.3 |
+| U4 | Runtime Integrations (MCP / local / NemoClaw) | ⬜ PLANNED (H3) | `50-post-v2-roadmap.md` H3.2; `91-phase-success-criteria-and-kpis.md` section 8.4 |
 
-**Cross-link:** `docs/implementation-path/11-remaining-tasks.md`
+**Cross-link:** `docs/implementation-path/11-remaining-tasks.md`; `docs/implementation-path/50-post-v2-roadmap.md`
 
 ---
 
@@ -245,3 +257,4 @@ Example:
 | Release checklist | `16-release-checklist.md` |
 | Out-of-tree SQLite perf candidate | `40-out-of-tree-sqlite-performance-candidate.md` |
 | v2 sign-off (pending) | `46-v2-readiness-signoff.md` |
+| Post-v2 roadmap (H1/H2/H3) | `50-post-v2-roadmap.md` |

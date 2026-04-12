@@ -67,6 +67,7 @@ confirmed; v2 itself remains DRAFT / PROPOSED.
 ## P3 — post-v1 backlog (not in v1 scope)
 
 These are explicitly out of v1 scope. Do not treat as blockers.
+Structured backlog is in **`50-post-v2-roadmap.md`** with Horizons H1/H2/H3.
 
 **P3.G live evidence — all complete (single-node scope):**
 - P3.G1 ✅ DONE — functional readiness proof (end-to-end walkthrough): `docs/implementation-path/34-p3-g1-executed-evidence.md`
@@ -76,22 +77,18 @@ These are explicitly out of v1 scope. Do not treat as blockers.
 - Source of truth for P3 track status: `docs/implementation-path/30-production-roadmap.md` Section — Priority 3
 
 **Remaining post-v1 adapter and integration work:**
-- [x] adapter hardening to the current T2 partial-contract boundary completed via G-E1
-- [ ] broader production-verified external adapter integrations and hardening (fs, sqlite, git, http)
-  - Src: `docs/00-project-canon.md` line 62 "broader production-verified adapter integrations and hardening (fs, sqlite, maildraft, git, http)"
-  - Src: `docs/implementation-path/01-current-state.md` lines 26-31
-  - Note: fs/sqlite/git/maildraft now have bounded local implementations and G-E1 hardening evidence; broader external integration depth and production verification remain post-v1.
 
-- [ ] git: remote workflows and broader ref-mutation coverage (post-v1)
-  - Src: `crates/ferrum-adapter-git/README.md` lines 22-37 "GitPush Support (P2.4 Slice 1)" and "GitFetch Support (P2.4 Slice 2)" and "GitPull Support (P2.4 Slice 3)"
-  - Note (2026-04-04): GitPush slice 1 implemented (local-to-remote push against temporary remotes); GitFetch slice 2 implemented (remote-to-local fetch against temporary remotes); GitPull slice 3 implemented (fast-forward-only pull against temporary remotes); full external remote support remains post-v1.
+See **`50-post-v2-roadmap.md`** for structured backlog with Horizons H1/H2/H3.
+Brief classification of items from this backlog:
 
-- [ ] maildraft: send/provider integration (post-v1)
-  - Src: `crates/ferrum-adapter-maildraft/src/lib.rs` line 6 "send semantics out of scope"
-  - Note: maildraft durable persistence and verify semantics implemented in v1; actual mail send to external provider remains post-v1.
+- **H1 (near-term post-v2):** Policy bundle tooling (P4.2), U1 remaining expressiveness
+  backlog, deeper git/fs/sqlite/http adapter hardening — build on v1/v2 single-node base
+- **H2 (next capability):** HA/multi-leader replication (P5.7), U2 Reversible Execution Planner
+- **H3 (long-term/deferred):** U3 Cross-runtime Provenance Fabric, U4 Runtime Integrations,
+  mail provider send integration, full distributed multi-node deployment
 
-- [ ] multi-node / HA / read-replica support
-  - Src: `docs/00-project-canon.md` line 56 "full distributed deployment"
+Longer-term / planned items (from Execution Sequence below) are indexed in the roadmap
+doc. Priority order from this file remains the source for sequencing guidance.
 
 - [x] Outcome-aware Governance (U1) — CORE CAPABILITY DONE
   - Src: `docs/91-phase-success-criteria-and-kpis.md` section 8.1
@@ -123,24 +120,22 @@ Grounded in `docs/implementation-path/30-production-roadmap.md` post-P3 executio
 | 6 | P2.6 EmailSend governed-path rollout (scaffold ✅ 2026-04-04; governed-path entry analysis ✅; adapter contract draft ✅; scaffold-only adapter ✅; mock-provider foundation ✅; provider-injection structural ✅; internal typed payload parser ✅; real provider send integration TBD post-v1/non-blocking — G-E1 boundary satisfied by scaffold completion) | ✅ DONE | `30-production-roadmap.md` P2.6; `36-p2-6-emailsend-governed-path-entry-analysis.md`; `37-p2-6-emailsend-adapter-contract-draft.md`; `38-p2-6-emailsend-adapter-scaffold-implementation.md` |
 | 7 | P2.7 maildraft broader verify semantics hardening (Slice 1: explicit EmailDraftExists verify_checks handling ✅ 2026-04-04; Slice 2: fail-closed verify on storage/db error ✅ 2026-04-04; Slice 3: malformed explicit check fail-closed strictness ✅ 2026-04-04; Slice 4: compensate/rollback fail-closed on storage/db error during delete ✅ 2026-04-04; Slice 5: gateway-level fail-closed on storage/db error ✅ 2026-04-04) | ✅ DONE | `30-production-roadmap.md` P2.7 |
 
-### Longer-Term / Planned Tracks
+### Post-v1 Backlog Index
 
-G-E2 benchmark baseline is now captured in repo truth via
-`docs/implementation-path/42-p2-performance-baseline-evidence.md`. G-E3 closed
-the remaining `ferrumctl` operator-surface commands, G-E4 ratified the existing
-sync/preflight implementation, and G-E5 declared broader production-ready. The
-remaining items below are post-signoff backlog, not active broader-production gates.
+Post-v1 backlog is now structured in **`50-post-v2-roadmap.md`** (Horizons H1/H2/H3).
+Longer-term planned tracks from this file are indexed below for reference only —
+full detail is in the roadmap doc.
 
-| Order | Item | Status | Source |
-|-------|------|--------|--------|
-| 8 | P4.1 `ferrumctl` advanced operator flows | ✅ DONE | `30-production-roadmap.md` P4.1 |
-| 9 | P4.2 Policy bundle lifecycle tooling | ⏸ DEFERRED (post-G-E3) | `30-production-roadmap.md` P4.2 |
-| 10 | P5.4–P5.5 Sync-1 preflight checks + decision table | ✅ DONE | `30-production-roadmap.md` P5.4–P5.5 |
-| 11 | P5.7 HA / multi-leader replication | ⬜ PLANNED | `30-production-roadmap.md` P5.7 |
-| 12 | U1.1–U1.2 Outcome-aware Governance (remaining backlog) | ⬜ PLANNED | `30-production-roadmap.md` U1.1–U1.2; Outcome-aware Governance backlog note above |
-| 13 | U2 Reversible Execution Planner | ⬜ PLANNED | `30-production-roadmap.md` U2 |
-| 14 | U3 Cross-runtime Provenance Fabric | ⬜ PLANNED | `30-production-roadmap.md` U3 |
-| 15 | U4 Runtime Integrations (MCP / local / NemoClaw) | ⬜ PLANNED | `30-production-roadmap.md` U4 |
+| Item | Status | Horizon | Roadmap ref |
+|------|--------|---------|-------------|
+| P4.1 `ferrumctl` advanced operator flows | ✅ DONE | — | `30-production-roadmap.md` P4.1 |
+| P4.2 Policy bundle lifecycle tooling | ⏸ DEFERRED | H1 | `50-post-v2-roadmap.md` H1.1 |
+| P5.4–P5.5 Sync-1 preflight + decision table | ✅ DONE | — | `30-production-roadmap.md` P5.4–P5.5 |
+| P5.7 HA / multi-leader replication | ⬜ PLANNED | H2 | `50-post-v2-roadmap.md` H2.1 |
+| U1 remaining backlog (expressiveness + authoring CLI) | ⬜ PLANNED | H1 | `50-post-v2-roadmap.md` H1.2 |
+| U2 Reversible Execution Planner | ⬜ PLANNED | H2 | `50-post-v2-roadmap.md` H2.2 |
+| U3 Cross-runtime Provenance Fabric | ⬜ PLANNED | H3 | `50-post-v2-roadmap.md` H3.1 |
+| U4 Runtime Integrations (MCP / local / NemoClaw) | ⬜ PLANNED | H3 | `50-post-v2-roadmap.md` H3.2 |
 
 **Note:** Execution order follows roadmap priority sequence per `docs/implementation-path/24-p1-p2-p3-execution-plan.md` lines 266–297.
 

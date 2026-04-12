@@ -36,6 +36,7 @@ Sau đó mới đọc:
 - `implementation-path/41-production-execution-plan.md` — sequential production evaluation plan (G-E1 → G-E5), per-phase doc update protocol, and commit/PR merge cadence
 - `implementation-path/44-v2-production-execution-plan.md` — v2 production scope and execution plan (Phase 1–6)
 - `implementation-path/45-v2-adapter-promotion-criteria.md` — **DRAFT** concrete per-adapter T2→T1 promotion gates (fs/sqlite/git/http; maildraft T2-only)
+- `implementation-path/50-post-v2-roadmap.md` — post-v2 backlog structured as Horizons H1/H2/H3 (policy tooling, U1 backlog, HA, U2/U3/U4)
 - `implementation-path/42-p2-performance-baseline-evidence.md` — in-repo G-E2 benchmark baseline evidence for SQLite/store and adapter paths under concurrent load
 - `implementation-path/43-production-readiness-signoff.md` — G-E5 sign-off declaring broader production-ready with explicit T1/T2/T3 scope boundaries (v1 ✅ RATIFIED)
 - `implementation-path/46-v2-readiness-signoff.md` — **⏸ PENDING** Stage A pre-ratification sign-off; v2 NOT yet ratified
@@ -60,8 +61,9 @@ For a quick orientation on current production state, start here:
 | v2 execution plan | `implementation-path/44-v2-production-execution-plan.md` | **DRAFT** — forward-looking Phase 1–6 plan; not yet ratified |
 | v2 adapter promotion criteria | `implementation-path/45-v2-adapter-promotion-criteria.md` | **DRAFT** — concrete T2→T1 gates per adapter; wires into Phase 3 and Phase 5 |
 | Current state | `implementation-path/01-current-state.md` | Where the project stands now |
-| Remaining tasks | `implementation-path/11-remaining-tasks.md` | P0/P1/P2 done; P3 post-v1 backlog; post-#165 fs-first note |
+| Remaining tasks | `implementation-path/11-remaining-tasks.md` | P0/P1/P2 done; P3 post-v1 backlog now indexed to roadmap doc |
 | Production roadmap | `implementation-path/30-production-roadmap.md` | Priority 1–6 tracks, all P2 slices ✅ DONE |
+| Post-v2 roadmap (H1/H2/H3) | `implementation-path/50-post-v2-roadmap.md` | Structured backlog: near-term H1, next-capability H2, long-term H3 |
 | fs-first artifact | `artifacts/2026-04-09/closure-note.txt` | Narrow PR #165 evidence: fs before_hash/after_hash wiring closed |
 
 ## Source-of-Truth Priority
