@@ -1,6 +1,6 @@
 # 30 — Production Roadmap
 
-**Last updated:** 2026-04-08
+**Last updated:** 2026-04-12
 **Current truth:** Single-node v1 is RC-ready (2026-04-02) and broader production-ready is declared (2026-04-08) within the scoped T1/T2/T3 support boundary.
 
 ---
@@ -48,7 +48,12 @@
 | P2.6 | maildraft — EmailSend governed-path entry + adapter scaffold (G-E1 boundary satisfied; real provider send integration post-v1/non-blocking) | ✅ DONE (scaffold) 2026-04-04 (Slice 1: governed-path entry analysis ✅; Slice 2: scaffold-only `ferrum-adapter-emailsend` implementation ✅; Slice 3: provider abstraction + mock provider foundation ✅; Slice 4: provider-injection structural slice ✅; Slice 5: internal typed payload parser ✅; real provider send integration TBD post-v1) | `docs/implementation-path/36-p2-6-emailsend-governed-path-entry-analysis.md`; `docs/implementation-path/37-p2-6-emailsend-adapter-contract-draft.md`; `docs/implementation-path/38-p2-6-emailsend-adapter-scaffold-implementation.md`; deny-regression tests: `test_email_allow_send_true_prepare_denied_with_explicit_error`, `test_maildraft_adapter_rejects_send_payload`; scaffold tests: `test_prepare_accepts_email_send_with_auto_commit_false`, `test_execute_fails_closed_with_validation_error`; mock provider tests: `test_mock_provider_send_success`, `test_mock_provider_send_tracks_calls`, `test_mock_provider_send_failure_*` (14 tests); provider injection tests: `test_new_adapter_has_mock_provider`, `test_with_provider_stores_provider`, `test_execute_still_fails_closed_with_injected_provider`; payload parser tests: `test_parse_payload_valid_*` (5 tests), `test_parse_payload_fail_closed_*` (14 tests), `test_execute_still_fail_closed_with_*` (3 tests), `test_mock_provider_direct_call_*` (2 tests); total: 53 tests ✅ |
 | P2.7 | maildraft — broader verify semantics hardening | ✅ DONE (Slice 1: explicit EmailDraftExists verify_checks handling ✅ 2026-04-04; Slice 2: fail-closed verify on storage/db error ✅ 2026-04-04; Slice 3: malformed explicit check fail-closed strictness ✅ 2026-04-04; Slice 4: compensate/rollback fail-closed on storage/db error during delete ✅ 2026-04-04; Slice 5: gateway-level fail-closed on storage/db error ✅ 2026-04-04) | `ferrum-adapter-maildraft`: `test_maildraft_adapter_verify_with_explicit_email_draft_exists_check_passes`, `test_maildraft_adapter_verify_with_explicit_email_draft_exists_check_fails`, `test_maildraft_adapter_verify_fail_closed_on_storage_db_error` (updated: returns `verified=false` for proper gateway integration), `test_maildraft_adapter_verify_explicit_check_missing_draft_id_fails_validation`, `test_maildraft_adapter_verify_explicit_check_non_string_draft_id_fails_validation`, `test_maildraft_adapter_compensate_fail_closed_on_storage_db_error`, `test_maildraft_adapter_rollback_fail_closed_on_storage_db_error`; integration test: `test_maildraft_gateway_verify_fail_closed_on_db_error` (gateway API: execute→corrupt DB→verify returns `verified=false`→execution becomes `Failed`→commit rejected 409) |
 
-> **Out-of-tree candidate (NOT merged):** A Phase 1 write-queue optimization was evaluated in a local workspace, showing S4–S7 gains. A Phase 2 batching experiment was deferred after perf regression. See `40-out-of-tree-sqlite-performance-candidate.md` for full evidence. Do NOT treat as repo truth until validated and merged.
+> **Out-of-tree sqlite performance candidate (NOT merged):** A write-queue
+> optimization was evaluated in a local workspace (Phase 1 showed S4–S7 gains;
+> Phase 2 deferred after perf regression under high load). Do NOT treat as
+> repo truth until validated and merged. If eventually merged, would inform
+> H1.4 sqlite WAL-mode production tuning as a potential input — not a
+> replacement for the current P2.2 bounded hardening scope.
 
 **Source:** `11-remaining-tasks.md` P3; `01-current-state.md` lines 26-31
 
@@ -209,8 +214,9 @@ An out-of-tree SQLite write-queue optimization was evaluated in a local workspac
 
 This candidate is **NOT merged** into the repo. See
 `40-out-of-tree-sqlite-performance-candidate.md` for full evidence and caveats.
-It is tracked here as a potential future input to P2.2 Slice 3 if the Phase 2
-regression is resolved and the approach is validated through proper review.
+If eventually validated and merged, it would be a potential input to **H1.4**
+(sqlite WAL-mode production tuning) — not a replacement for the P2.2 bounded
+hardening scope already completed.
 
 ### Execution Sequence (Production Evaluation Path)
 

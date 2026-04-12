@@ -2,7 +2,7 @@
 
 Prioritized checklist of incomplete work, grounded in existing docs.
 Do not invent scope; all items cite source docs.
-Scope is single-node v1 unless labeled post-v1.
+Scope is single-node v1/v2 unless labeled post-v1 or post-v2.
 
 ## P0 — Must fix before v1 RC
 
@@ -56,13 +56,12 @@ Scope is single-node v1 unless labeled post-v1.
   - Src: `scripts/generate_rc_evidence.py` exists and runs the RC gate bundle
   - Note: RC evidence generation is automated; 2026-04-02 verdict is ALL GATES PASSED.
 
-## Stage A — v2 Ratification Blockers
+## Stage A — v2 Ratification
 
-**No blockers.** v2 scope (per `44-v2-production-execution-plan.md` lines 27–41) explicitly
-excludes all P3 items: multi-node/HA, U2/U3/U4, broader external adapter integrations
-(remote git, external http, real mail send), and policy authoring tooling. All prior
-v1 gates (G-E1 through G-E5, 2026-04-08) pass. v2 scope-lock checkpoint is
-confirmed; **v2 is now ✅ RATIFIED** per `46-v2-readiness-signoff.md`.
+**Complete.** v2 RATIFIED 2026-04-12 per `46-v2-readiness-signoff.md`. No blockers.
+v2 scope (per `44-v2-production-execution-plan.md` lines 27–41) explicitly excludes
+all P3 items: multi-node/HA, U2/U3/U4, broader external adapter integrations
+(remote git, external http, real mail send), and policy authoring tooling.
 
 ## P3 — post-v1 backlog (not in v1 scope)
 
