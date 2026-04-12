@@ -1,0 +1,416 @@
+# 20 — v2 Single-Node Production Support Contract
+
+> **Status**: DRAFT / PROPOSED — not yet ratified. This document describes the
+> **target scope** for FerrumGate v2 single-node production support. It is a
+> planning artifact, not a ratified support contract. Until formally ratified,
+> the v1 single-node support contract (`19-v1-single-node-support-contract.md`)
+> remains the authoritative reference.
+
+FerrumGate v2 single-node proposed production support contract. This document
+outlines the target scope for what is and is not intended to be supported in the
+FerrumGate v2 single-node release, once the v2 execution plan is complete and
+v2 sign-off is granted. All other docs should link here rather than restating
+support scope — but only after v2 is formally ratified.
+
+**Target scope**: single-node, SQLite-backed, v2 only.
+**Status**: DRAFT — pending completion of `docs/implementation-path/44-v2-production-execution-plan.md`
+
+---
+
+## 0. Support Tier Summary — Production Boundary at a Glance
+
+This table is the compact published support matrix for FerrumGate v2 single-node.
+It defines what is fully supported, partially supported, and out-of-scope.
+
+| Tier | Category | Status | Notes |
+|------|----------|--------|-------|
+| **T1 — Supported** | Single-node governance core + SQLite persistence | ✅ SUPPORTED | Core loop, evaluate/mint/authorize/prepare/execute/verify/compensate |
+| **T1 — Supported** | Defined REST route surface (Section 1.2) | ✅ SUPPORTED | All listed endpoints; commit route exposed but optional for single-node |
+| **T1 — Supported** | `ferrumctl` operator surface (Section 1.3) | ✅ SUPPORTED | Full read/control and advanced authoring/control flows CLI-covered |
+| **T1 — Supported** | Provenance / lineage / approvals | ✅ SUPPORTED | Full pagination and filter support |
+| **T1 — Supported** | Adapter-backed integrations — fs, sqlite, git, http | ✅ SUPPORTED | Bounded local implementations per `45-v2-adapter-promotion-criteria.md`; T1 promotion gates are defined there; broader production-verified external integrations are post-v2 backlog |
+| **T2 — Partial** | maildraft | ⚠️ PARTIAL | T2 partial in v2; real provider send is post-v2 backlog |
+| **T2 — Partial** | U1 core capability | ⚠️ PARTIAL | Materially mature; richer expressiveness post-v2 |
+| **T2 — Partial** | Policy bundle authoring / migration tooling | ⚠️ PARTIAL | Post-v2 backlog |
+| **T3 — Out of Scope** | Multi-node / HA / read-replica | ❌ NOT SUPPORTED | Post-v2 backlog |
+| **T3 — Out of Scope** | Upgrade tracks U2 / U3 / U4 | ❌ NOT SUPPORTED | Post-v2 backlog |
+| **T3 — Out of Scope** | SLA-backed availability guarantees | ❌ NOT SUPPORTED | No HA; RPO owned by operator |
+
+**Target outcome**: FerrumGate v2 single-node targets production-ready status upon
+successful completion of all phases in `44-v2-production-execution-plan.md`. The
+target boundary is: T1 is production-supported; T2 remains PARTIAL but hardened to
+that partial contract level; T3 remains out of scope. The v2 target is NOT
+multi-node, HA, or broadly production-verified external adapter integrations
+beyond the bounded local implementations described in the v2 execution plan.
+
+---
+
+## 1. Supported
+
+### 1.1 Deployment model
+
+- Single-node governance core with SQLite-backed persistence.
+- SQLite store via `ferrum-store` with embedded migrations.
+- Config file, environment variable, and CLI argument configuration.
+- Bearer-token authentication mode.
+- Manual file-level SQLite backup and restore.
+
+### 1.2 Supported routes
+
+The following REST endpoints are in the v2 single-node support contract:
+
+| Method | Route | Description |
+|---|---|---|
+| GET | /v1/healthz | Shallow health check |
+| GET | /v1/readyz | Shallow readiness check |
+| POST | /v1/intents/compile | Compile an intent from a structured request |
+| POST | /v1/proposals/{proposal_id}/evaluate | Evaluate proposal via policy |
+| POST | /v1/capabilities/mint | Mint a capability lease |
+| GET | /v1/capabilities/{capability_id} | Inspect a capability lease |
+| POST | /v1/executions/authorize | Authorize execution |
+| POST | /v1/executions/{execution_id}/prepare | Prepare rollback/preflight |
+| POST | /v1/executions/{execution_id}/execute | Execute the prepared operation |
+| POST | /v1/executions/{execution_id}/verify | Verify execution result against intent and policy |
+| POST | /v1/executions/{execution_id}/commit | Commit execution after verification |
+| POST | /v1/executions/{execution_id}/cancel | Cancel execution in pre-execute state (Proposed, Authorized, Prepared) |
+| POST | /v1/executions/{execution_id}/pause | Pause execution in running state (Running, AwaitingVerification) |
+| POST | /v1/executions/{execution_id}/resume | Resume paused execution |
+| POST | /v1/executions/{execution_id}/compensate | Compensate execution (may be noop-backed) |
+| POST | /v1/executions/{execution_id}/rollback | Rollback/compensate via rollback contract |
+| GET | /v1/executions/{execution_id} | Inspect execution record |
+| GET | /v1/approvals | List pending approvals (pagination, filter by proposal_id) |
+| GET | /v1/approvals/{approval_id} | Get specific approval |
+| POST | /v1/approvals/{approval_id}/resolve | Resolve a pending approval (approve or deny) |
+| GET | /v1/provenance/lineage/{execution_id} | Get lineage for execution |
+| POST | /v1/provenance/lineage | Multi-hop lineage query (ancestors/descendants/both, bounded depth) |
+| POST | /v1/provenance/query | Query provenance events (intent_id, execution_id, capability_id, event_kind, time range) |
+
+### 1.3 CLI surface
+
+The following `ferrumctl` commands are in the v2 single-node support contract:
+
+**Read-only:**
+- `ferrumctl server health` — shallow health probe
+- `ferrumctl server ready` — shallow readiness probe
+- `ferrumctl server inspect-capability <capability_id>` — fetch a capability record
+- `ferrumctl server inspect-execution <execution_id>` — fetch execution record
+- `ferrumctl server inspect-approvals` — list approvals with CLI pagination/filtering (`--limit`, `--cursor`, `--proposal-id`, `--execution-id`)
+- `ferrumctl server inspect-approval <approval_id>` — fetch single approval
+- `ferrumctl server inspect-lineage <execution_id>` — fetch lineage for execution
+- `ferrumctl server inspect-provenance` — query provenance events with CLI filters for intent/proposal/execution/capability/event kind/time range, plus pagination and export-all support
+- `ferrumctl server watch-execution <execution_id>` — bounded polling for execution terminal state
+- `ferrumctl server watch-approvals` — bounded polling for approval changes
+- `ferrumctl server inspect-lineage-query` — multi-hop lineage query via `--ancestry`/`--descendants` flags
+
+**Mutating:**
+- `ferrumctl server compile-intent --file <path>` — compile an intent from a JSON request
+- `ferrumctl server evaluate-proposal <proposal_id> --file <path>` — evaluate a proposal from a JSON request
+- `ferrumctl server mint-capability --file <path>` — mint a capability from a JSON request
+- `ferrumctl server authorize-execution --file <path>` — authorize execution from a JSON request
+- `ferrumctl server revoke-capability <capability_id>` — revoke a capability
+- `ferrumctl server resolve-approval <approval_id> --approve|--deny` — resolve a pending approval
+- `ferrumctl server cancel-execution <execution_id>` — cancel an execution in pre-execute state
+- `ferrumctl server pause-execution <execution_id>` — pause an execution in running state
+- `ferrumctl server resume-execution <execution_id>` — resume a paused execution
+- `ferrumctl server prepare-execution <execution_id>` — prepare an execution for execution
+- `ferrumctl server execute-execution <execution_id>` — execute a prepared execution
+- `ferrumctl server verify-execution <execution_id>` — verify an execution result
+- `ferrumctl server commit-execution <execution_id>` — commit an execution after verification
+- `ferrumctl server compensate-execution <execution_id>` — trigger compensation on an execution
+- `ferrumctl server rollback-execution <execution_id>` — trigger rollback on an execution
+
+---
+
+## 2. Not Supported
+
+The following are explicitly out of scope for FerrumGate v2 single-node:
+
+### 2.1 Deployment
+
+- Multi-node deployments of any kind.
+- High-availability (HA) configurations.
+- Read-replica configurations.
+- Any deployment model other than single-node SQLite.
+
+### 2.2 Adapter-backed integrations
+
+- `ferrum-adapter-fs`, `ferrum-adapter-sqlite`, `ferrum-adapter-git`, `ferrum-adapter-http` have bounded local implementations confirmed in v2 at T2 partial-contract level for fs/sqlite/git/http; maildraft remains T2 partial only (real provider send is post-v2 backlog). Broader production hardening for remote/external integration depth and verified side-effect undo are post-v2 backlog.
+- Guaranteed external undo via adapter is not guaranteed in v2. Compensate may be noop-backed depending on adapter and rollback class.
+
+### 2.3 U1 core capability
+
+- U1 (Outcome-aware Governance) core capability is materially mature for v2 single-node scope. Remaining backlog includes: richer outcome clause expressiveness (nested selectors, temporal constraints); policy bundle migration tooling (CLI authoring workflows).
+
+### 2.4 Upgrade tracks
+
+- U1 — Outcome-aware Governance: remaining backlog per above.
+- U2 — Reversible Execution Planner.
+- U3 — Cross-runtime Provenance Fabric.
+- U4 — MCP/local/NemoClaw runtime integrations.
+
+---
+
+## 3. Known Limitations
+
+These limitations are intrinsic to the v2 single-node design and are not
+expected to be resolved in v2:
+
+### 3.1 healthz and readyz are shallow
+
+`GET /v1/healthz` and `GET /v1/readyz` confirm the server process is alive
+and the HTTP endpoint is reachable. They do **not** validate that the store,
+migrations, or governance loop are fully functional. A functional probe
+(e.g., `ferrumctl server inspect-execution` or `GET /v1/approvals`) is
+required after startup to confirm end-to-end readiness.
+
+### 3.2 Compensate may be noop-backed
+
+`POST /v1/executions/{execution_id}/compensate` is the only provided recovery
+endpoint in v2. Depending on the adapter implementation and rollback class
+(R0/R1/R2/R3), compensate() may return HTTP 200 without performing any
+external undo action. Always verify resource state manually after compensate.
+
+### 3.3 Backup and restore are manual SQLite procedures
+
+There is no built-in backup command. The operator must perform manual
+file-level backup by copying the SQLite database file. There is no
+incremental backup, no automated scheduling, and no backup retention
+policy built into FerrumGate.
+
+**RPO ownership**: RPO is owned entirely by the operator. The operator
+must define an acceptable data-loss window, schedule manual backups
+at intervals consistent with that RPO, and periodically verify
+restore capability through drills. Support cannot backstop an RPO
+the operator has not defined or enforced.
+
+**Recommended minimum cadence**: one backup every 24 hours, plus a
+backup before any major operator-initiated action, plus a backup after
+any unplanned outage. Adjust based on operational risk tolerance.
+Retain at least three daily backups and one weekly backup.
+
+### 3.4 Restore causes data loss after backup timestamp
+
+Restoring from a backup overwrites the entire store. Any executions,
+intents, approvals, or provenance events created after the backup
+timestamp are permanently lost. There is no incremental restore in v2.
+
+### 3.5 Mutating CLI commands exist alongside REST API
+
+`ferrumctl` provides both read/inspect commands and mutating execution-control
+commands. All mutating operations are also available via the REST API. The CLI
+wrappers (cancel-execution, pause-execution, resume-execution, prepare-execution,
+execute-execution, compensate-execution, rollback-execution, resolve-approval)
+invoke the same underlying gateway endpoints as their REST counterparts.
+
+---
+
+## 4. Accepted Risks
+
+These risks are acknowledged based on current implementation and test evidence.
+
+### 4.1 Restore causes data loss after backup timestamp
+
+Any state created after a backup's timestamp is lost when restoring.
+There is no incremental or point-in-time restore in v2. **Mitigation**:
+Operator must coordinate backup scheduling with acceptable recovery
+point objective (RPO).
+
+---
+
+## 5. Verification References (Target Evidence)
+
+> **Note:** This section describes the **target evidence** that will be required to
+> ratify v2. It is not a claim that all items below currently pass.
+
+Evidence required to ratify v2:
+
+| Check | Evidence | Status |
+|---|---|---|
+| Workspace compiles | `cargo check --workspace` | 📋 Planned (v1 evidence: `25-v1-single-node-rc-evidence.md`) |
+| fmt pass | `cargo fmt --all -- --check` | 📋 Planned (v1 evidence: `25-v1-single-node-rc-evidence.md`) |
+| clippy pass | `cargo clippy --workspace -- -D warnings` | 📋 Planned (v1 evidence: `25-v1-single-node-rc-evidence.md`) |
+| cargo test pass | `cargo test --workspace` | 📋 Planned (v1 evidence: `25-v1-single-node-rc-evidence.md`) |
+| Contract consistency | `python3 scripts/check_contract_consistency.py` | 📋 Planned (v1 evidence: `25-v1-single-node-rc-evidence.md`) |
+| RC evidence script | `python3 scripts/generate_rc_evidence.py` | 📋 Planned (v1 evidence: `25-v1-single-node-rc-evidence.md`) |
+| Scope-mismatch deny | `crates/ferrum-pdp/src/engine.rs:31-46`; `16-release-checklist.md:18` | 📋 Planned (v1 evidence: `25-v1-single-node-rc-evidence.md`) |
+| Single-use capability | `crates/ferrum-cap/src/service.rs:101-122`; `16-release-checklist.md:19` | 📋 Planned (v1 evidence: `25-v1-single-node-rc-evidence.md`) |
+| R3 no auto-commit | `crates/ferrum-rollback/src/service.rs:93-112`; `16-release-checklist.md:20` | 📋 Planned (v1 evidence: `25-v1-single-node-rc-evidence.md`) |
+| Compensate end-to-end | `integration_gateway_flow.rs:compensate_execution_flow`; `16-release-checklist.md:23` | 📋 Planned (v1 evidence: `25-v1-single-node-rc-evidence.md`) |
+| Provenance endpoint shape | `integration_lineage_chain.rs`; `16-release-checklist.md:26` | 📋 Planned (v1 evidence: `25-v1-single-node-rc-evidence.md`) |
+| Approvals pagination/filter | `integration_gateway_flow.rs`; `16-release-checklist.md:24-25` | 📋 Planned (v1 evidence: `25-v1-single-node-rc-evidence.md`) |
+| Adapter hardening (fs) | `30-production-roadmap.md` P2.1 slices 1–6 | 📋 Planned (per `44-v2-production-execution-plan.md` Phase 3) |
+| Adapter hardening (sqlite) | `30-production-roadmap.md` P2.2 slices 1–8 | 📋 Planned (per `44-v2-production-execution-plan.md` Phase 3) |
+| Adapter hardening (git) | `30-production-roadmap.md` P2.3 slices 1–10 | 📋 Planned (per `44-v2-production-execution-plan.md` Phase 5) |
+| Adapter hardening (http) | `30-production-roadmap.md` P2.5 slices 1–10 | 📋 Planned (per `44-v2-production-execution-plan.md` Phase 5) |
+| Adapter hardening (maildraft) | `30-production-roadmap.md` P2.7 slices 1–5 | 📋 Planned (per `44-v2-production-execution-plan.md` Phase 5) |
+| P4 ferrumctl advanced flows | `30-production-roadmap.md` P4.1 | 📋 Planned (per `44-v2-production-execution-plan.md` Phase 4) |
+| Sync-1 preflight + decision | `30-production-roadmap.md` P5.4–P5.5 | 📋 Planned (per `44-v2-production-execution-plan.md` Phase 4) |
+| fs before_hash/after_hash wiring | PR #165; `artifacts/2026-04-09/closure-note.txt` | 📋 Planned (per `44-v2-production-execution-plan.md` Phase 3) |
+
+**Source docs (v1 ratified — this doc is v2 draft):
+- `docs/00-project-canon.md` — project scope and hard rules
+- `docs/18-single-node-operations-runbook.md` — operator guide
+- `docs/14-api-and-contracts-map.md` — API endpoint reference
+- `docs/19-v1-single-node-support-contract.md` — v1 ratified support contract (current authority)
+- `docs/implementation-path/25-v1-single-node-rc-evidence.md` — v1 RC evidence
+- `docs/implementation-path/30-production-roadmap.md` — production roadmap
+- `docs/implementation-path/41-production-execution-plan.md` — v1 G-E1→G-E5 execution plan
+- `docs/implementation-path/43-production-readiness-signoff.md` — v1 G-E5 sign-off
+- `docs/implementation-path/44-v2-production-execution-plan.md` — **v2 DRAFT** execution plan (this doc's parent)
+
+---
+
+## 6. SLA Surface
+
+This section defines the availability, recovery, and response boundaries for
+FerrumGate v2 single-node, distinguishing operator-owned obligations from
+FerrumGate-supported behavior. It is conservative: it makes no promise that
+is not backed by current implementation or explicit contract language.
+
+### 6.1 Availability
+
+| Boundary | Owner | Detail |
+|---|---|---|
+| Process uptime | Operator | No built-in process supervisor or auto-restart. Operator must provide external supervision (systemd, container restart policy, etc.). |
+| Node availability | Operator | Single-node only. No HA, no multi-node failover. If the node goes down, the operator must restart it manually. |
+| Network reachability | Operator | Operator controls network exposure, firewall, and bind address. |
+| Health/readiness probes | FerrumGate | `GET /v1/healthz` and `GET /v1/readyz` return 200 when the HTTP server is reachable. These are shallow checks; they do not validate store or governance loop state. |
+| Functional readiness | Operator | After startup, operator must run a functional probe (e.g., `GET /v1/approvals?limit=1`) to confirm end-to-end readiness. Shallow probes alone are insufficient. |
+
+**What is not guaranteed:**
+- No uptime SLO or availability percentage commitment for FerrumGate v2 single-node.
+- No HA, no automatic failover, no read-replica.
+- healthz/readyz do not guarantee store connectivity or governance loop health.
+
+### 6.2 Recovery
+
+| Boundary | Owner | Detail |
+|---|---|---|
+| Recovery Point Objective (RPO) | **Operator** | RPO is owned entirely by the operator. FerrumGate provides no automatic backup, no incremental backup, no backup scheduler, and no point-in-time restore. The operator must define a data-loss tolerance, schedule manual SQLite file backups at intervals consistent with that tolerance, and periodically verify restore capability. |
+| Recovery Time Objective (RTO) | **Operator** | RTO is determined by operator's backup cadence, restore drill frequency, and manual restore procedure execution time. FerrumGate provides no automated recovery path. |
+| Compensate endpoint | FerrumGate | `POST /v1/executions/{id}/compensate` is the primary recovery endpoint in v2. It returns HTTP 200 on success; however, depending on the adapter and rollback class (R0/R1/R2/R3), compensate may be a no-op. Always verify external resource state after compensate. |
+| Rollback contract | FerrumGate | Rollback contracts (R0/R1/R2/R3) with `auto_commit=false` for R3 are enforced. Compensate triggers the adapter's rollback handler if one is registered. |
+| Manual restore | **Operator** | Restore is a manual SQLite file-level copy. Restoring overwrites the entire store; any state created after the backup timestamp is permanently lost. |
+| Restore drill | **Operator** | Operator must periodically verify (at minimum quarterly and after any backup infrastructure change) that backups are restorable. See runbook Section 6.4. |
+
+**What is not guaranteed:**
+- Compensate is not guaranteed to produce an external undo action. It may return 200 with no observable side effect depending on adapter implementation.
+- No automated backup, no incremental restore, no built-in backup retention policy.
+- No RTO commitment — recovery time depends entirely on operator-defined backup cadence and manual restore speed.
+
+### 6.3 Response
+
+| Boundary | Owner | Detail |
+|---|---|---|
+| Bug response | FerrumGate | FerrumGate supports the T1 surface (Section 1). Bugs in implemented behavior will be addressed per the support contract. |
+| Scope boundary | Operator | Issues arising from deployment outside the supported scope (multi-node, HA, non-SQLite stores, adapter configurations beyond bounded local implementations) are operator-owned. |
+| Adapter external side effects | **Operator** | Adapters (fs, sqlite, git, http, maildraft) have bounded local implementations confirmed in v2. Broader production hardening for remote/external integration depth and verified external undo are post-v2 backlog. The operator is responsible for verifying adapter behavior in their target environment. |
+| Upgrade path | FerrumGate | Upgrade tracks U2/U3/U4 and multi-node are post-v2. No in-place upgrade mechanism exists in v2. |
+
+**What is not guaranteed:**
+- No response-time SLO for issue resolution.
+- No advisory SLA for multi-node or HA configurations (they are out of scope for v2).
+- No guaranteed external undo via adapter (compensate may be noop-backed; external undo verification is operator responsibility).
+
+### 6.4 Summary
+
+| Category | FerrumGate supports | Operator owns |
+|---|---|---|
+| Availability | HTTP probe endpoints (shallow); single-node process lifecycle | Node supervision, process restart, failover, network |
+| Recovery | Compensate endpoint (best-effort; may be noop); rollback contracts | RPO definition, manual backup cadence, restore procedure, restore drills |
+| Response | T1 surface bug response; scope boundary enforcement | Adapter behavior in target environment, upgrade paths, backup integrity verification |
+
+---
+
+## 7. Change Control
+
+Upon ratification, this document becomes the canonical support contract for FerrumGate v2 single-node.
+Any doc that describes FerrumGate v2 single-node support scope should link to
+this document rather than restating the support boundaries. Changes to
+supported routes, known limitations, or accepted risks must be reflected
+here first and then propagated to the linked docs.
+
+---
+
+## 8. EOL / Deprecation Policy
+
+This section defines how the v2 single-node support contract is deprecated,
+how supported surface (routes, CLI commands) is retired, and how changes to
+the support boundary are announced. It is intentionally conservative: no
+support window duration or version schedule is implied beyond what is
+explicitly stated elsewhere in this document.
+
+### 8.1 Scope
+
+This policy applies to:
+- **Supported routes** listed in Section 1.2
+- **Supported CLI commands** listed in Section 1.3
+- **Deployment model** (single-node, SQLite-backed, v2)
+- **Support tier assignments** (T1/T2/T3) and their boundaries
+
+This policy does **not** apply to multi-node, HA, or post-v2 upgrade tracks;
+those are out-of-scope for v2 and have no support commitment.
+
+### 8.2 Change classification
+
+| Class | Description | Examples |
+|-------|-------------|----------|
+| **Material scope change** | Removes or reclassifies a previously supported route, CLI command, or deployment model; tightens T1/T2 boundary in a way that may break existing workflows | Removing a supported route from the contract; changing single-node to multi-node-only; promoting a T2 adapter to T1 |
+| **Clarifying change** | Fixes typos, updates evidence links, refines descriptions without changing supported surface or operator obligations | Correcting a CLI command description; adding a missing pagination flag to a CLI command; updating evidence file paths |
+
+### 8.3 Deprecation announcement process (material scope changes)
+
+For any material scope change:
+
+1. **Advance notice**: A deprecation notice is published in the project's
+   release notes or equivalent public record **before** the change takes
+   effect. The notice describes what is changing, why, and the effective date.
+2. **Minimum notice period**: The change does not take effect sooner than
+   **30 days** after the deprecation notice is published. This gives operators
+   time to assess impact and plan migration.
+3. **Contract update**: The support contract (this document) is updated to
+   reflect the deprecation at the time of announcement, with the effective
+   date noted. The deprecated item remains in the contract with a
+   `DEPRECATED` marker until the effective date.
+4. **No automatic migration**: FerrumGate does not provide automated migration
+   tooling for deprecated surface. Operators are responsible for their own
+   migration planning.
+
+**What this policy does not require:**
+- A fixed support window (e.g., "12 months of support after deprecation").
+  Such commitments are not made in this document and would require a separate
+  explicit agreement.
+- A semantic-versioning policy. No semantic-versioning policy is defined for
+  FerrumGate v2 in this document.
+
+### 8.4 Route and CLI removal
+
+A supported route or CLI command is **never removed** without:
+1. First being marked `DEPRECATED` in this document with an effective date.
+2. The deprecation notice process in Section 9.3 being followed.
+
+After the effective date, the deprecated route or CLI command may be removed
+from the implementation without further notice.
+
+### 8.5 Supported-surface additions
+
+New routes, CLI commands, or deployment models may be added to the support
+contract at any time. Additions do not require a deprecation period but do
+require this document to be updated first (per Section 8).
+
+### 8.6 EOL of v2 single-node support
+
+"FerrumGate v2 single-node end-of-life" means the point at which all support
+for the v2 single-node scope (Section 0) ceases. This document does **not**
+define an EOL date for v2 single-node. An EOL date, if set, will be
+announced with the same process as a material scope change (Section 9.3).
+
+Until an EOL date is formally announced, the v2 single-node support contract
+remains in effect. Operators should monitor release notes for announcements.
+
+### 8.7 Relationship to upgrade tracks
+
+U2, U3, U4, and multi-node topologies are out-of-scope for v2 single-node
+support (Section 2.4). The availability of a successor version or upgrade
+track does not, by itself, constitute EOL of v2 single-node. An explicit
+EOL announcement is required to retire v2 single-node support.

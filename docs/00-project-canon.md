@@ -50,6 +50,18 @@ This declaration does not claim multi-node / HA readiness, broadly production-
 verified external adapter integrations, or completion of the U2-U4 upgrade
 tracks.
 
+### v2 planning status
+
+FerrumGate v2 single-node is **planned / proposed**, not yet ratified. Draft docs
+exist at:
+- `docs/20-v2-single-node-production-support-contract.md` — proposed v2 scope
+- `docs/implementation-path/44-v2-production-execution-plan.md` — proposed v2 execution plan
+- `docs/implementation-path/45-v2-adapter-promotion-criteria.md` — **DRAFT** concrete T2→T1 promotion gates per adapter (fs/sqlite/git/http; maildraft T2-only)
+
+The v2 docs describe a **target state** for single-node production support,
+predicated on successful completion of the v2 execution plan. v1 remains the
+authoritative support contract until v2 is formally ratified.
+
 ### Supported — single-node governance core with SQLite-backed persistence
 
 > **Canonical reference**: [19-v1-single-node-support-contract.md](./19-v1-single-node-support-contract.md)

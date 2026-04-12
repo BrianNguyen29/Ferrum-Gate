@@ -33,9 +33,13 @@ Any doc that describes governance expectations should link here rather than rest
 | `16-release-checklist.md` | Release process | Operations |
 | `17-troubleshooting.md` | Known issues and fixes | Operations |
 | `18-phase-f-evidence-pack.md` | Phase F consolidated evidence | Core |
+| `19-v1-single-node-support-contract.md` | v1 single-node support contract | Operations |
+| `20-v2-single-node-production-support-contract.md` | v2 single-node support contract (**DRAFT — proposed, not ratified**) | Operations |
 | `90-docs-governance.md` | Doc governance policy (this document) | Operations |
 | `runbooks/` | Operator runbooks | Operations |
 | `implementation-path/41-production-execution-plan.md` | Sequential production evaluation plan (G-E1 → G-E5), per-phase doc update protocol, and commit/PR merge cadence | Operations |
+| `implementation-path/44-v2-production-execution-plan.md` | v2 production scope and execution plan (Phase 1–6) (**DRAFT — proposed, not ratified**) | Operations |
+| `implementation-path/45-v2-adapter-promotion-criteria.md` | v2 adapter T2→T1 promotion gates per adapter (**DRAFT — proposed, not ratified**) | Operations |
 | `diagrams/` | Visual assets | Core |
 | `.agents/` | Agent skill files | Tooling |
 
