@@ -1,8 +1,7 @@
 # 45 — v2 Adapter T2→T1 Promotion Criteria
 
-**Status:** DRAFT / PROPOSED — not yet ratified. Criteria are forward-looking;
-per-adapter promotion is gated on Phase 3 and Phase 5 completion per
-`44-v2-production-execution-plan.md`.
+**Status:** ✅ RATIFIED — All adapter promotion gates confirmed; all adapters verified
+per Phase 3 and Phase 5 completion in `44-v2-production-execution-plan.md`.
 
 ---
 
@@ -219,6 +218,6 @@ post-v2 backlog per `44-v2-production-execution-plan.md` Phase 5 note and
 
 - `docs/implementation-path/44-v2-production-execution-plan.md` — phase sequencing
 - `docs/implementation-path/30-production-roadmap.md` — P2.1/P2.2/P2.3/P2.4/P2.5/P2.7 slices
-- `docs/20-v2-single-node-production-support-contract.md` — v2 support contract (DRAFT)
+- `docs/20-v2-single-node-production-support-contract.md` — v2 support contract (**✅ RATIFIED**)
 - `docs/implementation-path/11-remaining-tasks.md` — remaining task evidence
 - `docs/artifacts/2026-04-09/closure-note.txt` — PR #165 closure evidence

@@ -3,8 +3,8 @@
 **Last updated:** 2026-04-12
 **Status:** PLANNED — post-v2 backlog, not yet started
 **Owner:** Engineering
-**Scope:** Post-ratification FerrumGate capability expansion. v1 is current authority;
-v2 is DRAFT/PROPOSED pending Stage A sign-off. This roadmap is grounded in the
+**Scope:** Post-ratification FerrumGate capability expansion. v1 is ratified for v1 scope;
+v2 is **✅ RATIFIED** for v2 single-node scope. This roadmap is grounded in the
 post-v1 backlog from `11-remaining-tasks.md` and the Priority 5/6 tracks in
 `30-production-roadmap.md`.
 
@@ -18,8 +18,6 @@ This document splits the post-v1 backlog into explicit Horizons so that:
 3. Roadmap docs (`30-production-roadmap.md`) remain internally consistent and non-overclaiming
 
 **What this does NOT do:**
-- Does not ratify v2 (Stage A sign-off is pending)
-- Does not change v1 current authority
 - Does not create new commitments — Horizons describe rough sequencing, not promises
 
 **Source of truth for v1/v2 status:** `00-project-canon.md` Section "v2 planning status";
@@ -30,7 +28,7 @@ This document splits the post-v1 backlog into explicit Horizons so that:
 ## Horizon Map
 
 ```
-v1 (authoritative)  →  v2 (DRAFT — pending Stage A sign-off)
+v1 (ratified)  →  v2 (✅ RATIFIED)
                                          │
                     ┌────────────────────┴────────────────────┐
                     │         Post-v2 Backlog                  │
@@ -203,7 +201,7 @@ structure**, not part of the v2 ratification path.
 The Horizons in this roadmap (H1/H2/H3) are the **execution path** toward the capability
 planes described in `60-long-term-vision.md`. The vision doc is **non-binding** strategic
 intent; this roadmap is **non-binding** but more concrete (near-term work items with
-source references). Neither overrides the v1 support contract or the v2 draft contract.
+source references). Neither overrides the v1 support contract or the v2 ratified contract.
 
 **Vision vs. Roadmap distinction:**
 - **Vision** (`60-long-term-vision.md`): describes end-state capability planes grounded
@@ -239,10 +237,10 @@ source references). Neither overrides the v1 support contract or the v2 draft co
 
 | Topic | File | Status |
 |-------|------|--------|
-| v1 support contract (current authority) | `docs/19-v1-single-node-support-contract.md` | ✅ RATIFIED |
-| v2 support contract (DRAFT) | `docs/20-v2-single-node-production-support-contract.md` | DRAFT — not ratified |
-| v2 execution plan | `docs/implementation-path/44-v2-production-execution-plan.md` | Phase 1–6; v2 DRAFT |
-| v2 sign-off (pending) | `docs/implementation-path/46-v2-readiness-signoff.md` | ⏸ PENDING Stage A |
+| v1 support contract (ratified) | `docs/19-v1-single-node-support-contract.md` | ✅ RATIFIED |
+| v2 support contract | `docs/20-v2-single-node-production-support-contract.md` | **✅ RATIFIED** |
+| v2 execution plan | `docs/implementation-path/44-v2-production-execution-plan.md` | **✅ RATIFIED** |
+| v2 sign-off | `docs/implementation-path/46-v2-readiness-signoff.md` | **✅ RATIFIED** |
 | Production roadmap (v1/v2) | `docs/implementation-path/30-production-roadmap.md` | Contains P1–P6 status |
 | Remaining tasks (backlog) | `docs/implementation-path/11-remaining-tasks.md` | Source for this roadmap |
 | v1 RC evidence | `docs/implementation-path/25-v1-single-node-rc-evidence.md` | ✅ RATIFIED |

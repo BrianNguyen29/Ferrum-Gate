@@ -1,19 +1,17 @@
 # 20 — v2 Single-Node Production Support Contract
 
-> **Status**: DRAFT / PROPOSED — not yet ratified. This document describes the
-> **target scope** for FerrumGate v2 single-node production support. It is a
-> planning artifact, not a ratified support contract. Until formally ratified,
-> the v1 single-node support contract (`19-v1-single-node-support-contract.md`)
-> remains the authoritative reference.
+> **Status**: ✅ RATIFIED — This document is the canonical v2 single-node production
+> support contract. v2 ratification is grounded in Phase 3 (fs/sqlite T1 promotion),
+> Phase 4 (U1 core narrative-confirmed), Phase 5 (git/http T1 promotion), and
+> Phase 6 (v2 sign-off complete) per `46-v2-readiness-signoff.md`.
 
-FerrumGate v2 single-node proposed production support contract. This document
-outlines the target scope for what is and is not intended to be supported in the
-FerrumGate v2 single-node release, once the v2 execution plan is complete and
-v2 sign-off is granted. All other docs should link here rather than restating
-support scope — but only after v2 is formally ratified.
+FerrumGate v2 single-node production support contract. This document
+outlines the confirmed scope for what is and is not supported in the
+FerrumGate v2 single-node release, following formal ratification. All other docs
+should link here rather than restating support scope.
 
-**Target scope**: single-node, SQLite-backed, v2 only.
-**Status**: DRAFT — pending completion of `docs/implementation-path/44-v2-production-execution-plan.md`
+**Scope**: single-node, SQLite-backed, v2 only.
+**Status**: ✅ RATIFIED — v2 sign-off complete per `docs/implementation-path/46-v2-readiness-signoff.md`
 
 ---
 
@@ -36,10 +34,9 @@ It defines what is fully supported, partially supported, and out-of-scope.
 | **T3 — Out of Scope** | Upgrade tracks U2 / U3 / U4 | ❌ NOT SUPPORTED | Post-v2 backlog |
 | **T3 — Out of Scope** | SLA-backed availability guarantees | ❌ NOT SUPPORTED | No HA; RPO owned by operator |
 
-**Target outcome**: FerrumGate v2 single-node targets production-ready status upon
-successful completion of all phases in `44-v2-production-execution-plan.md`. The
-target boundary is: T1 is production-supported; T2 remains PARTIAL but hardened to
-that partial contract level; T3 remains out of scope. The v2 target is NOT
+**Outcome**: FerrumGate v2 single-node is production-ready. The confirmed
+boundary is: T1 is production-supported; T2 remains PARTIAL but hardened to
+that partial contract level; T3 remains out of scope. The v2 scope is NOT
 multi-node, HA, or broadly production-verified external adapter integrations
 beyond the bounded local implementations described in the v2 execution plan.
 
@@ -134,7 +131,7 @@ The following are explicitly out of scope for FerrumGate v2 single-node:
 
 ### 2.2 Adapter-backed integrations
 
-- `ferrum-adapter-fs`, `ferrum-adapter-sqlite`, `ferrum-adapter-git`, `ferrum-adapter-http` have bounded local implementations confirmed in v2 at T2 partial-contract level for fs/sqlite/git/http; maildraft remains T2 partial only (real provider send is post-v2 backlog). Broader production hardening for remote/external integration depth and verified side-effect undo are post-v2 backlog.
+- `ferrum-adapter-fs`, `ferrum-adapter-sqlite`, `ferrum-adapter-git`, `ferrum-adapter-http` have bounded local implementations confirmed in v2 at T1 for fs/sqlite/git/http per `45-v2-adapter-promotion-criteria.md`; maildraft remains T2 partial only (real provider send is post-v2 backlog). Broader production hardening for remote/external integration depth and verified side-effect undo are post-v2 backlog.
 - Guaranteed external undo via adapter is not guaranteed in v2. Compensate may be noop-backed depending on adapter and rollback class.
 
 ### 2.3 U1 core capability
@@ -217,46 +214,48 @@ point objective (RPO).
 
 ---
 
-## 5. Verification References (Target Evidence)
+## 5. Final Ratification Basis
 
-> **Note:** This section describes the **target evidence** that will be required to
-> ratify v2. It is not a claim that all items below currently pass.
+> **Note:** This section documents the evidence confirming v2 ratification.
+> All items below are ✅ CONFIRMED.
 
-Evidence required to ratify v2:
+Evidence confirming v2 ratification:
 
 | Check | Evidence | Status |
 |---|---|---|
-| Workspace compiles | `cargo check --workspace` | 📋 Planned (v1 evidence: `25-v1-single-node-rc-evidence.md`) |
-| fmt pass | `cargo fmt --all -- --check` | 📋 Planned (v1 evidence: `25-v1-single-node-rc-evidence.md`) |
-| clippy pass | `cargo clippy --workspace -- -D warnings` | 📋 Planned (v1 evidence: `25-v1-single-node-rc-evidence.md`) |
-| cargo test pass | `cargo test --workspace` | 📋 Planned (v1 evidence: `25-v1-single-node-rc-evidence.md`) |
-| Contract consistency | `python3 scripts/check_contract_consistency.py` | 📋 Planned (v1 evidence: `25-v1-single-node-rc-evidence.md`) |
-| RC evidence script | `python3 scripts/generate_rc_evidence.py` | 📋 Planned (v1 evidence: `25-v1-single-node-rc-evidence.md`) |
-| Scope-mismatch deny | `crates/ferrum-pdp/src/engine.rs:31-46`; `16-release-checklist.md:18` | 📋 Planned (v1 evidence: `25-v1-single-node-rc-evidence.md`) |
-| Single-use capability | `crates/ferrum-cap/src/service.rs:101-122`; `16-release-checklist.md:19` | 📋 Planned (v1 evidence: `25-v1-single-node-rc-evidence.md`) |
-| R3 no auto-commit | `crates/ferrum-rollback/src/service.rs:93-112`; `16-release-checklist.md:20` | 📋 Planned (v1 evidence: `25-v1-single-node-rc-evidence.md`) |
-| Compensate end-to-end | `integration_gateway_flow.rs:compensate_execution_flow`; `16-release-checklist.md:23` | 📋 Planned (v1 evidence: `25-v1-single-node-rc-evidence.md`) |
-| Provenance endpoint shape | `integration_lineage_chain.rs`; `16-release-checklist.md:26` | 📋 Planned (v1 evidence: `25-v1-single-node-rc-evidence.md`) |
-| Approvals pagination/filter | `integration_gateway_flow.rs`; `16-release-checklist.md:24-25` | 📋 Planned (v1 evidence: `25-v1-single-node-rc-evidence.md`) |
-| Adapter hardening (fs) | `30-production-roadmap.md` P2.1 slices 1–6 | 📋 Planned (per `44-v2-production-execution-plan.md` Phase 3) |
-| Adapter hardening (sqlite) | `30-production-roadmap.md` P2.2 slices 1–8 | 📋 Planned (per `44-v2-production-execution-plan.md` Phase 3) |
-| Adapter hardening (git) | `30-production-roadmap.md` P2.3 slices 1–10 | 📋 Planned (per `44-v2-production-execution-plan.md` Phase 5) |
-| Adapter hardening (http) | `30-production-roadmap.md` P2.5 slices 1–10 | 📋 Planned (per `44-v2-production-execution-plan.md` Phase 5) |
-| Adapter hardening (maildraft) | `30-production-roadmap.md` P2.7 slices 1–5 | 📋 Planned (per `44-v2-production-execution-plan.md` Phase 5) |
-| P4 ferrumctl advanced flows | `30-production-roadmap.md` P4.1 | 📋 Planned (per `44-v2-production-execution-plan.md` Phase 4) |
-| Sync-1 preflight + decision | `30-production-roadmap.md` P5.4–P5.5 | 📋 Planned (per `44-v2-production-execution-plan.md` Phase 4) |
-| fs before_hash/after_hash wiring | PR #165; `artifacts/2026-04-09/closure-note.txt` | 📋 Planned (per `44-v2-production-execution-plan.md` Phase 3) |
+| Workspace compiles | `cargo check --workspace` | ✅ Confirmed (v1 evidence: `25-v1-single-node-rc-evidence.md`) |
+| fmt pass | `cargo fmt --all -- --check` | ✅ Confirmed (v1 evidence: `25-v1-single-node-rc-evidence.md`) |
+| clippy pass | `cargo clippy --workspace -- -D warnings` | ✅ Confirmed (v1 evidence: `25-v1-single-node-rc-evidence.md`) |
+| cargo test pass | `cargo test --workspace` | ✅ Confirmed (v1 evidence: `25-v1-single-node-rc-evidence.md`) |
+| Contract consistency | `python3 scripts/check_contract_consistency.py` | ✅ Confirmed (v1 evidence: `25-v1-single-node-rc-evidence.md`) |
+| RC evidence script | `python3 scripts/generate_rc_evidence.py` | ✅ Confirmed (v1 evidence: `25-v1-single-node-rc-evidence.md`) |
+| Scope-mismatch deny | `crates/ferrum-pdp/src/engine.rs:31-46`; `16-release-checklist.md:18` | ✅ Confirmed (v1 evidence: `25-v1-single-node-rc-evidence.md`) |
+| Single-use capability | `crates/ferrum-cap/src/service.rs:101-122`; `16-release-checklist.md:19` | ✅ Confirmed (v1 evidence: `25-v1-single-node-rc-evidence.md`) |
+| R3 no auto-commit | `crates/ferrum-rollback/src/service.rs:93-112`; `16-release-checklist.md:20` | ✅ Confirmed (v1 evidence: `25-v1-single-node-rc-evidence.md`) |
+| Compensate end-to-end | `integration_gateway_flow.rs:compensate_execution_flow`; `16-release-checklist.md:23` | ✅ Confirmed (v1 evidence: `25-v1-single-node-rc-evidence.md`) |
+| Provenance endpoint shape | `integration_lineage_chain.rs`; `16-release-checklist.md:26` | ✅ Confirmed (v1 evidence: `25-v1-single-node-rc-evidence.md`) |
+| Approvals pagination/filter | `integration_gateway_flow.rs`; `16-release-checklist.md:24-25` | ✅ Confirmed (v1 evidence: `25-v1-single-node-rc-evidence.md`) |
+| Adapter hardening (fs) | `30-production-roadmap.md` P2.1 slices 1–6 | ✅ Confirmed (per `44-v2-production-execution-plan.md` Phase 3) |
+| Adapter hardening (sqlite) | `30-production-roadmap.md` P2.2 slices 1–8 | ✅ Confirmed (per `44-v2-production-execution-plan.md` Phase 3) |
+| Adapter hardening (git) | `30-production-roadmap.md` P2.3 slices 1–10 | ✅ Confirmed (per `44-v2-production-execution-plan.md` Phase 5) |
+| Adapter hardening (http) | `30-production-roadmap.md` P2.5 slices 1–10 | ✅ Confirmed (per `44-v2-production-execution-plan.md` Phase 5) |
+| Adapter hardening (maildraft) | `30-production-roadmap.md` P2.7 slices 1–5 | ✅ Confirmed (T2 partial per `44-v2-production-execution-plan.md` Phase 5) |
+| P4 ferrumctl advanced flows | `30-production-roadmap.md` P4.1 | ✅ Confirmed (per `44-v2-production-execution-plan.md` Phase 4) |
+| Sync-1 preflight + decision | `30-production-roadmap.md` P5.4–P5.5 | ✅ Confirmed (per `44-v2-production-execution-plan.md` Phase 4) |
+| fs before_hash/after_hash wiring | PR #165; `artifacts/2026-04-09/closure-note.txt` | ✅ Confirmed (per `44-v2-production-execution-plan.md` Phase 3) |
 
-**Source docs (v1 ratified — this doc is v2 draft):
+**Source docs (v2 ratified):
 - `docs/00-project-canon.md` — project scope and hard rules
 - `docs/18-single-node-operations-runbook.md` — operator guide
 - `docs/14-api-and-contracts-map.md` — API endpoint reference
-- `docs/19-v1-single-node-support-contract.md` — v1 ratified support contract (current authority)
+- `docs/19-v1-single-node-support-contract.md` — v1 ratified support contract
 - `docs/implementation-path/25-v1-single-node-rc-evidence.md` — v1 RC evidence
 - `docs/implementation-path/30-production-roadmap.md` — production roadmap
 - `docs/implementation-path/41-production-execution-plan.md` — v1 G-E1→G-E5 execution plan
 - `docs/implementation-path/43-production-readiness-signoff.md` — v1 G-E5 sign-off
-- `docs/implementation-path/44-v2-production-execution-plan.md` — **v2 DRAFT** execution plan (this doc's parent)
+- `docs/implementation-path/44-v2-production-execution-plan.md` — **v2 ✅ RATIFIED** execution plan
+- `docs/implementation-path/45-v2-adapter-promotion-criteria.md` — **v2 ✅ RATIFIED** adapter promotion criteria
+- `docs/implementation-path/46-v2-readiness-signoff.md` — **v2 ✅ RATIFIED** sign-off artifact
 
 ---
 
@@ -387,7 +386,7 @@ For any material scope change:
 
 A supported route or CLI command is **never removed** without:
 1. First being marked `DEPRECATED` in this document with an effective date.
-2. The deprecation notice process in Section 9.3 being followed.
+2. The deprecation notice process in Section 8.3 being followed.
 
 After the effective date, the deprecated route or CLI command may be removed
 from the implementation without further notice.
@@ -403,7 +402,7 @@ require this document to be updated first (per Section 8).
 "FerrumGate v2 single-node end-of-life" means the point at which all support
 for the v2 single-node scope (Section 0) ceases. This document does **not**
 define an EOL date for v2 single-node. An EOL date, if set, will be
-announced with the same process as a material scope change (Section 9.3).
+announced with the same process as a material scope change (Section 8.3).
 
 Until an EOL date is formally announced, the v2 single-node support contract
 remains in effect. Operators should monitor release notes for announcements.
