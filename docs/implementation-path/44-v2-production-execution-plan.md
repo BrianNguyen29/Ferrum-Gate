@@ -120,7 +120,7 @@ confirmed as applicable to v2 scope in this checkpoint.
 - Phase 5: git (GT-1–GT-13) and http (HT-1–HT-10) → T1 promotion gates
 - Full per-adapter gate sheet: `45-v2-adapter-promotion-criteria.md`
 
-**What still needs sign-off:** Phase 6 (v2 Sign-off) is the formal ratification step.
+**Sign-off status:** Phase 6 (v2 Sign-off) is ✅ RATIFIED as of 2026-04-12 — all phases complete.
 Phase 2 is the pre-Phase-3 checklist confirming inherited gates apply to v2 scope.
 
 **Source:** `30-production-roadmap.md` Phase Completion Tracking (lines 204–210);

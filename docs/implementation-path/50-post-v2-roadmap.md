@@ -77,10 +77,23 @@ requiring new architectural work.
 ### H1.4 — fs/sqlite — Broader Production-Verified Integration
 
 - **Source:** `00-project-canon.md` line 88; `11-remaining-tasks.md` lines 79-83
-- **What:** Beyond bounded local T2→T1 current state (per `30-production-roadmap.md` P2.1/P2.2):
-  - fs: networked/storage-area-attached filesystem integration, permission boundary hardening
-  - sqlite: WAL-mode production tuning, backup/restore automation, larger-than-memory dataset handling
 - **Status:** ⬜ PLANNED
+- **Constraint:** Builds on P2.1/P2.2 bounded hardening already completed; does not revisit scope boundaries already declared in v2 sign-off.
+
+Sub-slices (bounded; not all required for H1 completion):
+
+| Sub-slice | What | Bounded scope |
+|-----------|------|---------------|
+| **H1.4a** — sqlite WAL-mode production tuning | Write-ahead log parameterization, durability vs. throughput tradeoffs, checkpoint automation | Single-node SQLite; does not include HA replication |
+| **H1.4b** — sqlite backup/restore automation | Tooling for point-in-time backup and restore under live execution | Single-node; does not include multi-node snapshotting |
+| **H1.4c** — sqlite larger-than-memory dataset handling | Streaming/chunked query patterns, pagination across large intent/execution tables | Single-node; does not include sharding |
+| **H1.4d** — fs permission boundary hardening | Permission boundary verification in multi-tenant local filesystem contexts | Local fs adapter only; does not include networked/SAN attachment |
+| **H1.4e** — fs networked/storage-area-attached integration |SAN/NFS-mounted filesystem adapter integration with digest/verify semantics | Out-of-scope for v2 single-node; flagged for H2+ if value justifies |
+
+- **Note:** H1.4a–H1.4c are the primary sqlite sub-slices and are order-independent.
+  H1.4d is the primary fs sub-slice. H1.4e is explicitly optional and lower priority.
+  The out-of-tree sqlite perf candidate (`40-out-of-tree-sqlite-performance-candidate.md`)
+  may inform H1.4a if Phase 2 regression is resolved and the approach is validated.
 
 ### H1.5 — http Adapter — Broader External HTTP Integration
 
@@ -209,7 +222,7 @@ source references). Neither overrides the v1 support contract or the v2 ratified
 - **Roadmap** (this doc): describes concrete backlog items with sequencing — more concrete,
   still non-binding
 - **Contract** (`19-v1-single-node-support-contract.md`, `20-v2-*.md`): describes what
-  is supported or proposed — binding (v1) or pending (v2)
+  is supported or proposed — binding (v1) or RATIFIED (v2)
 
 ### Backlog Classification Principles
 

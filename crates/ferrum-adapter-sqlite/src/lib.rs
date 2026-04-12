@@ -12,9 +12,13 @@ use ferrum_proto::{JsonMap, RollbackContract, RollbackPrepareRequest, RollbackTa
 use ferrum_rollback::{
     AdapterError, ExecuteReceipt, PrepareReceipt, RecoveryReceipt, RollbackAdapter, VerifyReceipt,
 };
+use sqlx::ConnectOptions;
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
 use sqlx::{Connection, Row, Sqlite, SqliteConnection, Transaction};
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::Mutex;
+use std::time::Duration;
 
 pub const ADAPTER_KIND: &str = "ferrum-adapter-sqlite";
 pub const ADAPTER_KEY: &str = "sqlite";
@@ -501,7 +505,14 @@ async fn connect_sqlite(db_path: &str) -> Result<SqliteConnection, AdapterError>
         }
     }
 
-    SqliteConnection::connect(&sqlite_url(db_path))
+    let url = sqlite_url(db_path);
+    let options = SqliteConnectOptions::from_str(&url)
+        .map_err(|e| AdapterError::Internal(format!("Failed to parse sqlite URL: {}", e)))?
+        .journal_mode(SqliteJournalMode::Wal)
+        .busy_timeout(Duration::from_millis(5000))
+        .create_if_missing(true);
+    options
+        .connect()
         .await
         .map_err(|err| AdapterError::Internal(format!("Failed to connect to sqlite: {}", err)))
 }

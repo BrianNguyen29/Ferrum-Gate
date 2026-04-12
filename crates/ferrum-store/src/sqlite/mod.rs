@@ -25,7 +25,9 @@ pub use provenance::SqliteProvenanceRepo;
 pub use rollback::SqliteRollbackRepo;
 pub use sync_preflight::SqliteSyncPreflightRepo;
 
-use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions};
+use std::str::FromStr;
+use std::time::Duration;
 
 use crate::{CapabilityRepo, ExecutionRepo, Result};
 
@@ -36,10 +38,21 @@ pub struct SqliteStore {
 
 impl SqliteStore {
     pub async fn connect(database_url: &str) -> Result<Self> {
-        let pool = SqlitePoolOptions::new()
-            .max_connections(5)
-            .connect(database_url)
-            .await?;
+        let pool = if database_url == ":memory:" {
+            SqlitePoolOptions::new()
+                .max_connections(5)
+                .connect(database_url)
+                .await?
+        } else {
+            let options = SqliteConnectOptions::from_str(database_url)?
+                .journal_mode(SqliteJournalMode::Wal)
+                .busy_timeout(Duration::from_millis(5000))
+                .create_if_missing(true);
+            SqlitePoolOptions::new()
+                .max_connections(5)
+                .connect_with(options)
+                .await?
+        };
 
         Ok(Self { pool })
     }
