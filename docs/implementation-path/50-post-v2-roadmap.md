@@ -198,6 +198,21 @@ v2 is a ratification target (single-node, production-verified) with its own phas
 plan (Phases 1–6). This roadmap begins where v2 ends — it is the **post-v2 backlog
 structure**, not part of the v2 ratification path.
 
+### Relationship to the Long-Term Vision Doc
+
+The Horizons in this roadmap (H1/H2/H3) are the **execution path** toward the capability
+planes described in `60-long-term-vision.md`. The vision doc is **non-binding** strategic
+intent; this roadmap is **non-binding** but more concrete (near-term work items with
+source references). Neither overrides the v1 support contract or the v2 draft contract.
+
+**Vision vs. Roadmap distinction:**
+- **Vision** (`60-long-term-vision.md`): describes end-state capability planes grounded
+  in the four invariants — direction, not commitment
+- **Roadmap** (this doc): describes concrete backlog items with sequencing — more concrete,
+  still non-binding
+- **Contract** (`19-v1-single-node-support-contract.md`, `20-v2-*.md`): describes what
+  is supported or proposed — binding (v1) or pending (v2)
+
 ### Backlog Classification Principles
 
 - **Horizon 1 (H1):** Builds on existing v1/v2 single-node base. Does not require new runtime architecture. Near-term value.

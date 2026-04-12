@@ -37,6 +37,7 @@ Sau đó mới đọc:
 - `implementation-path/44-v2-production-execution-plan.md` — v2 production scope and execution plan (Phase 1–6)
 - `implementation-path/45-v2-adapter-promotion-criteria.md` — **DRAFT** concrete per-adapter T2→T1 promotion gates (fs/sqlite/git/http; maildraft T2-only)
 - `implementation-path/50-post-v2-roadmap.md` — post-v2 backlog structured as Horizons H1/H2/H3 (policy tooling, U1 backlog, HA, U2/U3/U4)
+- `implementation-path/60-long-term-vision.md` — **non-binding** long-term strategic intent; maps future planes to FerrumGate invariants; distinct from contract (v1/v2) and roadmap (30/50) docs
 - `implementation-path/42-p2-performance-baseline-evidence.md` — in-repo G-E2 benchmark baseline evidence for SQLite/store and adapter paths under concurrent load
 - `implementation-path/43-production-readiness-signoff.md` — G-E5 sign-off declaring broader production-ready with explicit T1/T2/T3 scope boundaries (v1 ✅ RATIFIED)
 - `implementation-path/46-v2-readiness-signoff.md` — **⏸ PENDING** Stage A pre-ratification sign-off; v2 NOT yet ratified
