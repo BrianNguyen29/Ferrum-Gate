@@ -57,10 +57,11 @@ exist at:
 - `docs/20-v2-single-node-production-support-contract.md` — proposed v2 scope
 - `docs/implementation-path/44-v2-production-execution-plan.md` — proposed v2 execution plan
 - `docs/implementation-path/45-v2-adapter-promotion-criteria.md` — **DRAFT** concrete T2→T1 promotion gates per adapter (fs/sqlite/git/http; maildraft T2-only)
+- `docs/implementation-path/46-v2-readiness-signoff.md` — **⏸ PENDING** Stage A pre-ratification sign-off artifact (v2 is NOT ratified; v1 is current authority)
 
 The v2 docs describe a **target state** for single-node production support,
-predicated on successful completion of the v2 execution plan. v1 remains the
-authoritative support contract until v2 is formally ratified.
+predicated on successful completion of the v2 execution plan and Stage A ratification.
+v1 remains the authoritative support contract until v2 is formally ratified.
 
 ### Supported — single-node governance core with SQLite-backed persistence
 

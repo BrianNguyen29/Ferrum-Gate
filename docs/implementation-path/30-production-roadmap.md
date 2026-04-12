@@ -186,6 +186,7 @@ production-ready status. These are execution milestones, not additional RC gates
 | G-E3 | **P4 `ferrumctl` advanced flows complete** — remaining REST surface accessible via CLI | Engineering | ✅ DONE 2026-04-08 (`compile-intent`, `evaluate-proposal`, `mint-capability`, `authorize-execution`, `verify-execution`, `commit-execution` added to `ferrumctl`) |
 | G-E4 | **P5 resilience design ratified** — Sync-1 preflight checks + decision table implemented and reviewed | Engineering | ✅ DONE 2026-04-08 (`ferrum-sync` + `ferrum-store` sync tests re-run; PF1–PF8, decision table, and live readiness orchestration all verified) |
 | G-E5 | **Production evaluation sign-off** — documented assessment confirming T1 is production-supported and T2 is hardened to the partial contract level per support contract | Team | ✅ DONE 2026-04-08 (`43-production-readiness-signoff.md`) |
+| Phase 6 | **v2 sign-off** — Stage A pre-ratification sign-off artifact assembled; awaiting formal ratification | Team | ⏸ PENDING (`46-v2-readiness-signoff.md` — Stage A input; v2 NOT yet ratified) |
 
 ### Out-of-Tree SQLite Performance Candidate
 
@@ -243,3 +244,4 @@ Example:
 | Remaining tasks | `11-remaining-tasks.md` |
 | Release checklist | `16-release-checklist.md` |
 | Out-of-tree SQLite perf candidate | `40-out-of-tree-sqlite-performance-candidate.md` |
+| v2 sign-off (pending) | `46-v2-readiness-signoff.md` |
