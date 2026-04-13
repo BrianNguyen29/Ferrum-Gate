@@ -7,6 +7,8 @@ Mục tiêu của bộ docs này:
 - giúp AI agents hoặc engineers khác có thể bám vào để triển khai
 - tránh phải tra cứu rời rạc giữa nhiều file/spec khác nhau
 
+**H1 completion snapshot:** 6/17 slices done (H1.1a, H1.2b, H1.3a, H1.4b, H1.4c, H1.5a) ✅ 2026-04-13; remaining ⬜ PLANNED — full detail in `50-post-v2-roadmap.md`
+
 ## Cách dùng
 
 Nếu bạn chỉ có thời gian đọc ít tài liệu, hãy đọc theo đúng thứ tự sau:
