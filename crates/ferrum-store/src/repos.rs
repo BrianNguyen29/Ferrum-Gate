@@ -195,12 +195,15 @@ pub trait LedgerRepo: Send + Sync {
 /// - Register a new bundle (idempotent by derived bundle_id)
 /// - Fetch a bundle by its deterministic id
 /// - List all bundles with cursor-based pagination
+/// - Update bundle metadata (name, description, version) preserving created_at
+/// - Delete a bundle by its deterministic bundle_id
 ///
 /// No engine swap, no policy evaluation changes, single-node/local-only storage.
 #[async_trait]
 pub trait PolicyBundleRepo: Send + Sync {
     /// Register (upsert) a policy bundle. If a bundle with the same bundle_id
     /// already exists, update its metadata (name, description, version).
+    /// The created_at timestamp is preserved from the existing record.
     async fn upsert(&self, bundle: &PolicyBundle) -> Result<()>;
 
     /// Fetch a bundle by its deterministic bundle_id.
@@ -213,4 +216,19 @@ pub trait PolicyBundleRepo: Send + Sync {
         limit: u32,
         after_cursor: Option<&str>,
     ) -> Result<(Vec<PolicyBundle>, Option<String>)>;
+
+    /// Update metadata for an existing bundle (name, description, version).
+    /// The bundle_id and created_at are preserved; updated_at is set to now.
+    /// Returns Ok(()) if the bundle was updated, Err if the bundle was not found.
+    async fn update_metadata(
+        &self,
+        bundle_id: PolicyBundleId,
+        name: &str,
+        description: &str,
+        version: &str,
+    ) -> Result<()>;
+
+    /// Delete a bundle by its deterministic bundle_id.
+    /// Returns Ok(()) if the bundle was deleted, Err if the bundle was not found.
+    async fn delete(&self, bundle_id: PolicyBundleId) -> Result<()>;
 }

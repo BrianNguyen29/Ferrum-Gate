@@ -954,6 +954,29 @@ impl ServerClient {
         self.decode_json(resp).await
     }
 
+    async fn update_policy_bundle(
+        &self,
+        bundle_id: &str,
+        req: &ferrum_proto::PolicyBundleMetadataUpdateRequest,
+    ) -> Result<ferrum_proto::PolicyBundleResponse> {
+        let path = format!("/v1/policy-bundles/{}", bundle_id);
+        let resp = self
+            .request(reqwest::Method::PUT, &path)
+            .json(req)
+            .send()
+            .await?;
+        self.decode_json(resp).await
+    }
+
+    async fn delete_policy_bundle(
+        &self,
+        bundle_id: &str,
+    ) -> Result<ferrum_proto::PolicyBundleDeleteResponse> {
+        let path = format!("/v1/policy-bundles/{}", bundle_id);
+        let resp = self.request(reqwest::Method::DELETE, &path).send().await?;
+        self.decode_json(resp).await
+    }
+
     async fn decode_json<T: DeserializeOwned>(&self, resp: reqwest::Response) -> Result<T> {
         if !resp.status().is_success() {
             return self.render_error(resp).await;
@@ -2115,6 +2138,53 @@ enum ServerCommand {
         /// Cursor from a previous listing's next_cursor.
         #[arg(long)]
         cursor: Option<String>,
+
+        /// Server base URL (e.g. http://127.0.0.1:8080).
+        #[arg(long, env = "FERRUMCTL_SERVER_URL")]
+        server_url: Option<String>,
+
+        /// Bearer token for authentication.
+        #[arg(long, env = "FERRUMCTL_BEARER_TOKEN")]
+        bearer_token: Option<String>,
+
+        /// Output as JSON instead of human-readable.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Update metadata of an existing policy bundle (name, description, version).
+    /// Bundle_id and created_at are preserved; updated_at is set automatically.
+    UpdatePolicyBundle {
+        /// Policy bundle ID (UUID derived from bundle content fingerprint).
+        bundle_id: String,
+
+        /// Human-readable name for the bundle.
+        #[arg(long)]
+        name: String,
+
+        /// Free-form description of what this bundle governs.
+        #[arg(long)]
+        description: String,
+
+        /// Semantic version tag (e.g. "1.0.0").
+        #[arg(long)]
+        version: String,
+
+        /// Server base URL (e.g. http://127.0.0.1:8080).
+        #[arg(long, env = "FERRUMCTL_SERVER_URL")]
+        server_url: Option<String>,
+
+        /// Bearer token for authentication.
+        #[arg(long, env = "FERRUMCTL_BEARER_TOKEN")]
+        bearer_token: Option<String>,
+
+        /// Output as JSON instead of human-readable.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Delete an existing policy bundle by its bundle_id.
+    DeletePolicyBundle {
+        /// Policy bundle ID (UUID derived from bundle content fingerprint).
+        bundle_id: String,
 
         /// Server base URL (e.g. http://127.0.0.1:8080).
         #[arg(long, env = "FERRUMCTL_SERVER_URL")]
@@ -3641,6 +3711,66 @@ async fn run_list_policy_bundles(
         if let Some(next_cursor) = resp.next_cursor {
             println!("Next cursor: {}", next_cursor);
         }
+    }
+    Ok(())
+}
+
+async fn run_update_policy_bundle(
+    bundle_id: &str,
+    name: &str,
+    description: &str,
+    version: &str,
+    url: Option<String>,
+    token: Option<String>,
+    as_json: bool,
+) -> Result<()> {
+    // Validate bundle_id format before sending
+    let _ = bundle_id
+        .parse::<ferrum_proto::PolicyBundleId>()
+        .map_err(|_| anyhow::anyhow!("invalid bundle_id format: must be a valid UUID"))?;
+
+    let req = ferrum_proto::PolicyBundleMetadataUpdateRequest {
+        name: name.to_string(),
+        description: description.to_string(),
+        version: version.to_string(),
+    };
+
+    let url = resolve_server_url(url)?;
+    let client = ServerClient::new(&url, token);
+    let resp = client.update_policy_bundle(bundle_id, &req).await?;
+
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&resp)?);
+    } else {
+        println!("Policy bundle updated: {}", resp.bundle.bundle_id);
+        println!("  Name:        {}", resp.bundle.name);
+        println!("  Description: {}", resp.bundle.description);
+        println!("  Version:     {}", resp.bundle.version);
+        println!("  Created:     {}", resp.bundle.created_at);
+        println!("  Updated:     {}", resp.bundle.updated_at);
+    }
+    Ok(())
+}
+
+async fn run_delete_policy_bundle(
+    bundle_id: &str,
+    url: Option<String>,
+    token: Option<String>,
+    as_json: bool,
+) -> Result<()> {
+    // Validate bundle_id format before sending
+    let _ = bundle_id
+        .parse::<ferrum_proto::PolicyBundleId>()
+        .map_err(|_| anyhow::anyhow!("invalid bundle_id format: must be a valid UUID"))?;
+
+    let url = resolve_server_url(url)?;
+    let client = ServerClient::new(&url, token);
+    let resp = client.delete_policy_bundle(bundle_id).await?;
+
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&resp)?);
+    } else {
+        println!("Policy bundle deleted: {}", resp.bundle_id);
     }
     Ok(())
 }
@@ -5572,6 +5702,34 @@ async fn main() -> Result<()> {
                 json,
             } => {
                 run_list_policy_bundles(limit, cursor, server_url, bearer_token, json).await?;
+            }
+            ServerCommand::UpdatePolicyBundle {
+                bundle_id,
+                name,
+                description,
+                version,
+                server_url,
+                bearer_token,
+                json,
+            } => {
+                run_update_policy_bundle(
+                    &bundle_id,
+                    &name,
+                    &description,
+                    &version,
+                    server_url,
+                    bearer_token,
+                    json,
+                )
+                .await?;
+            }
+            ServerCommand::DeletePolicyBundle {
+                bundle_id,
+                server_url,
+                bearer_token,
+                json,
+            } => {
+                run_delete_policy_bundle(&bundle_id, server_url, bearer_token, json).await?;
             }
         },
         Command::Debug { sub } => match sub {

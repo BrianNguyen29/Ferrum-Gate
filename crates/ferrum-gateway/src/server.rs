@@ -3,7 +3,7 @@ use axum::{
     extract::{Path, Query, State},
     http::{StatusCode, header::AUTHORIZATION},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{delete, get, post, put},
 };
 use chrono::{Duration, Utc};
 use ferrum_graph::LineageGraph;
@@ -197,6 +197,11 @@ fn build_router_inner(runtime: GatewayRuntime, auth_config: Option<ServerConfig>
         // H1.1a: Policy bundle lifecycle endpoints
         .route("/v1/policy-bundles", post(register_policy_bundle))
         .route("/v1/policy-bundles/{bundle_id}", get(get_policy_bundle))
+        .route("/v1/policy-bundles/{bundle_id}", put(update_policy_bundle))
+        .route(
+            "/v1/policy-bundles/{bundle_id}",
+            delete(delete_policy_bundle),
+        )
         .route("/v1/policy-bundles", get(list_policy_bundles))
         .with_state(Arc::new(runtime))
         .layer(Extension(metrics))
@@ -5635,6 +5640,101 @@ async fn list_policy_bundles(
     Ok(Json(ferrum_proto::PolicyBundleListResponse {
         items,
         next_cursor,
+    }))
+}
+
+/// PUT /v1/policy-bundles/{bundle_id}
+///
+/// Update metadata of an existing policy bundle. Only name, description,
+/// and version can be updated; bundle_id and created_at are preserved.
+async fn update_policy_bundle(
+    State(runtime): State<Arc<GatewayRuntime>>,
+    Path(bundle_id_str): Path<String>,
+    Json(req): Json<ferrum_proto::PolicyBundleMetadataUpdateRequest>,
+) -> Result<Json<ferrum_proto::PolicyBundleResponse>, ApiProblem> {
+    let bundle_id = bundle_id_str
+        .parse::<ferrum_proto::PolicyBundleId>()
+        .map_err(|_| {
+            ApiProblem::new(
+                StatusCode::BAD_REQUEST,
+                ApiErrorCode::ValidationError,
+                format!("invalid bundle_id format: {}", bundle_id_str),
+            )
+        })?;
+
+    // Check bundle exists first (NotFound if missing)
+    let _existing = runtime
+        .store
+        .policy_bundles()
+        .get(bundle_id)
+        .await
+        .map_err(|e| ApiProblem::internal(e.into()))?
+        .ok_or_else(|| {
+            ApiProblem::new(
+                StatusCode::NOT_FOUND,
+                ApiErrorCode::NotFound,
+                format!("policy bundle {} not found", bundle_id),
+            )
+        })?;
+
+    runtime
+        .store
+        .policy_bundles()
+        .update_metadata(bundle_id, &req.name, &req.description, &req.version)
+        .await
+        .map_err(|e| ApiProblem::internal(e.into()))?;
+
+    // Fetch updated bundle to return current state
+    let updated_bundle = runtime
+        .store
+        .policy_bundles()
+        .get(bundle_id)
+        .await
+        .map_err(|e| ApiProblem::internal(e.into()))?
+        .expect("bundle was just updated; qed");
+
+    Ok(Json(ferrum_proto::PolicyBundleResponse {
+        bundle: updated_bundle,
+    }))
+}
+
+/// DELETE /v1/policy-bundles/{bundle_id}
+///
+/// Delete an existing policy bundle by its deterministic bundle_id.
+async fn delete_policy_bundle(
+    State(runtime): State<Arc<GatewayRuntime>>,
+    Path(bundle_id_str): Path<String>,
+) -> Result<Json<ferrum_proto::PolicyBundleDeleteResponse>, ApiProblem> {
+    let bundle_id = bundle_id_str
+        .parse::<ferrum_proto::PolicyBundleId>()
+        .map_err(|_| {
+            ApiProblem::new(
+                StatusCode::BAD_REQUEST,
+                ApiErrorCode::ValidationError,
+                format!("invalid bundle_id format: {}", bundle_id_str),
+            )
+        })?;
+
+    runtime
+        .store
+        .policy_bundles()
+        .delete(bundle_id)
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("not found") {
+                ApiProblem::new(
+                    StatusCode::NOT_FOUND,
+                    ApiErrorCode::NotFound,
+                    format!("policy bundle {} not found", bundle_id),
+                )
+            } else {
+                ApiProblem::internal(e.into())
+            }
+        })?;
+
+    Ok(Json(ferrum_proto::PolicyBundleDeleteResponse {
+        deleted: true,
+        bundle_id,
     }))
 }
 

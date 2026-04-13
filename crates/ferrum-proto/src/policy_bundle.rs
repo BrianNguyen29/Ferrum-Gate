@@ -55,10 +55,39 @@ pub struct PolicyBundleResponse {
     pub bundle: PolicyBundle,
 }
 
+/// Request to update the metadata of an existing policy bundle.
+/// Only name, description, and version can be updated — bundle_id and
+/// created_at are immutable and preserved across updates.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct PolicyBundleMetadataUpdateRequest {
+    /// Human-readable name (unique per bundle_id).
+    pub name: String,
+    /// Free-form description.
+    pub description: String,
+    /// Semantic version tag (e.g. "1.0.0").
+    pub version: String,
+}
+
 /// Response for a list of bundles (paginated).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PolicyBundleListResponse {
     pub items: Vec<PolicyBundle>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
+}
+
+/// Request for cursor-based pagination when listing policy bundles.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct PolicyBundleListRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+}
+
+/// Empty response for delete operations.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct PolicyBundleDeleteResponse {
+    pub deleted: bool,
+    pub bundle_id: PolicyBundleId,
 }
