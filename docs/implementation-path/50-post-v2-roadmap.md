@@ -72,8 +72,15 @@ requiring new architectural work.
 - **What:** Two distinct sub-items:
   - **H1.2a:** Richer outcome clause expressiveness — nested selectors, temporal constraints
   - **H1.2b:** Policy bundle authoring CLI (distinct from H1.1 bundle lifecycle tooling — focuses on intent/policy creation rather than migration)
-- **Status:** ⬜ PLANNED
+- **Status:** 🏗 IN PROGRESS — H1.2b delivered; H1.2a remains
 - **Note:** U1 core (S1–S8a) is ✅ DONE in v1/v2 scope. H1.2 covers the remaining expressiveness backlog and the authoring CLI gap.
+
+**H1.2 sub-slice status:**
+
+| Sub-slice | What | Status |
+|-----------|------|--------|
+| H1.2a | Richer outcome clause expressiveness — nested selectors, temporal constraints | ⬜ PLANNED |
+| **H1.2b** | Policy bundle authoring CLI — `ferrumctl author intent generate|validate`, `ferrumctl author bundle generate|validate` for local intent/policy payload authoring and validation without server | ✅ DONE |
 
 ### H1.3 — git Adapter — Deeper Remote Integration Hardening
 

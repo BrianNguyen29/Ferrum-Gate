@@ -1052,6 +1052,125 @@ enum Command {
         #[command(subcommand)]
         sub: ValidateCommand,
     },
+    /// Author commands for local intent/policy bundle creation and validation (H1.2b).
+    Author {
+        #[command(subcommand)]
+        sub: AuthorCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum AuthorCommand {
+    /// Generate or validate an intent compile payload.
+    Intent {
+        #[command(subcommand)]
+        sub: IntentAuthorCommand,
+    },
+    /// Generate or validate a policy bundle.
+    Bundle {
+        #[command(subcommand)]
+        sub: BundleAuthorCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum IntentAuthorCommand {
+    /// Generate a starter IntentCompileRequest JSON template.
+    Generate {
+        /// Output file path. Use - for stdout.
+        #[arg(long, default_value = "-")]
+        output: PathBuf,
+
+        /// Effect type for the intent template.
+        #[arg(long, value_enum, default_value = "read-only-analysis")]
+        effect_type: IntentEffectType,
+
+        /// Include example outcome clauses in the template.
+        #[arg(long)]
+        with_outcomes: bool,
+    },
+    /// Validate an IntentCompileRequest JSON/YAML file locally (no server required).
+    Validate {
+        /// Path to the IntentCompileRequest file to validate.
+        file: PathBuf,
+
+        /// Validate as YAML instead of JSON.
+        #[arg(long)]
+        yaml: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum BundleAuthorCommand {
+    /// Generate a starter policy bundle YAML template.
+    Generate {
+        /// Output file path. Use - for stdout.
+        #[arg(long, default_value = "-")]
+        output: PathBuf,
+
+        /// Human-readable name for the bundle.
+        #[arg(long, default_value = "my-policy-bundle")]
+        name: String,
+
+        /// Semantic version tag for the bundle.
+        #[arg(long, default_value = "0.1.0")]
+        version: String,
+
+        /// Include example rules in the template.
+        #[arg(long)]
+        with_rules: bool,
+    },
+    /// Validate a policy bundle YAML file locally (no server required).
+    Validate {
+        /// Path to the policy bundle file to validate.
+        file: PathBuf,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum IntentEffectType {
+    /// Read-only analysis (no side effects).
+    ReadOnlyAnalysis,
+    /// Create a draft that requires explicit commit.
+    DraftCreation,
+    /// Mutate files on disk.
+    FileMutation,
+    /// Mutate a git repository.
+    GitMutation,
+    /// Mutate a SQLite database.
+    DatabaseMutation,
+    /// Call an external HTTP API.
+    ExternalApiCall,
+    /// Send an external communication (email, etc.).
+    ExternalCommunication,
+    /// Schedule a task for later execution.
+    Scheduling,
+    /// Make an administrative change.
+    AdministrativeChange,
+}
+
+impl IntentEffectType {
+    fn to_effect_type(self) -> ferrum_proto::intent::EffectType {
+        match self {
+            IntentEffectType::ReadOnlyAnalysis => {
+                ferrum_proto::intent::EffectType::ReadOnlyAnalysis
+            }
+            IntentEffectType::DraftCreation => ferrum_proto::intent::EffectType::DraftCreation,
+            IntentEffectType::FileMutation => ferrum_proto::intent::EffectType::FileMutation,
+            IntentEffectType::GitMutation => ferrum_proto::intent::EffectType::GitMutation,
+            IntentEffectType::DatabaseMutation => {
+                ferrum_proto::intent::EffectType::DatabaseMutation
+            }
+            IntentEffectType::ExternalApiCall => ferrum_proto::intent::EffectType::ExternalApiCall,
+            IntentEffectType::ExternalCommunication => {
+                ferrum_proto::intent::EffectType::ExternalCommunication
+            }
+            IntentEffectType::Scheduling => ferrum_proto::intent::EffectType::Scheduling,
+            IntentEffectType::AdministrativeChange => {
+                ferrum_proto::intent::EffectType::AdministrativeChange
+            }
+        }
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -2031,6 +2150,393 @@ enum InspectCommand {
 enum ValidateCommand {
     /// Run repository validation using check_contract_consistency.py.
     Repo,
+}
+
+// =============================================================================
+// Local author commands (H1.2b)
+// =============================================================================
+
+/// Generates a starter IntentCompileRequest JSON template.
+fn run_author_intent_generate(
+    output: &Path,
+    effect_type: IntentEffectType,
+    with_outcomes: bool,
+) -> Result<()> {
+    let effect = effect_type.to_effect_type();
+    let effect_str = match effect {
+        ferrum_proto::intent::EffectType::ReadOnlyAnalysis => "ReadOnlyAnalysis",
+        ferrum_proto::intent::EffectType::DraftCreation => "DraftCreation",
+        ferrum_proto::intent::EffectType::FileMutation => "FileMutation",
+        ferrum_proto::intent::EffectType::GitMutation => "GitMutation",
+        ferrum_proto::intent::EffectType::DatabaseMutation => "DatabaseMutation",
+        ferrum_proto::intent::EffectType::ExternalApiCall => "ExternalApiCall",
+        ferrum_proto::intent::EffectType::ExternalCommunication => "ExternalCommunication",
+        ferrum_proto::intent::EffectType::Scheduling => "Scheduling",
+        ferrum_proto::intent::EffectType::AdministrativeChange => "AdministrativeChange",
+    };
+
+    let allowed_outcomes = if with_outcomes {
+        Some(vec![ferrum_proto::intent::OutcomeClause {
+            id: "allow-read".to_string(),
+            description: "Allow read-only analysis operations".to_string(),
+            effect_type: effect.clone(),
+            required: false,
+            selectors: None,
+        }])
+    } else {
+        None
+    };
+
+    let forbidden_outcomes = if with_outcomes {
+        Some(vec![ferrum_proto::intent::OutcomeClause {
+            id: "forbid-destructive".to_string(),
+            description: "Forbid irreversible destructive operations".to_string(),
+            effect_type: ferrum_proto::intent::EffectType::FileMutation,
+            required: true,
+            selectors: None,
+        }])
+    } else {
+        None
+    };
+
+    let req = ferrum_proto::intent::IntentCompileRequest {
+        title: "<intent title>".to_string(),
+        goal: "<describe what this intent accomplishes>".to_string(),
+        effect_type: Some(effect.clone()),
+        requested_risk_tier: Some(ferrum_proto::RiskTier::Medium),
+        allowed_outcomes,
+        forbidden_outcomes,
+        ..Default::default()
+    };
+
+    let json =
+        serde_json::to_string_pretty(&req).context("failed to serialize IntentCompileRequest")?;
+
+    // Only include comments when writing to stdout (not to files, since JSON doesn't support comments)
+    let content = if output.as_os_str() == "-" {
+        // The with_outcomes flag affects the JSON content, not the comment
+        format!(
+            r#"# FerrumGate IntentCompileRequest starter template
+# Effect type: {}
+# Edit the values below and submit via: ferrumctl server compile-intent --file <path>
+#
+# Required fields: title, goal, principal_id
+# Optional fields: effect_type, allowed_outcomes, forbidden_outcomes,
+#                   requested_resource_scope, requested_risk_tier, metadata
+#
+{}
+"#,
+            effect_str, json
+        )
+    } else {
+        // File output: raw JSON without comments
+        json
+    };
+
+    if output.as_os_str() == "-" {
+        println!("{}", content);
+    } else {
+        std::fs::write(output, &content)
+            .with_context(|| format!("failed to write to {}", output.display()))?;
+        println!(
+            "Intent template written to {} (effect_type={})",
+            output.display(),
+            effect_str
+        );
+    }
+    Ok(())
+}
+
+/// Validates an IntentCompileRequest JSON/YAML file locally.
+fn run_author_intent_validate(file: &Path, as_yaml: bool) -> Result<()> {
+    let content = std::fs::read_to_string(file)
+        .with_context(|| format!("failed to read {}", file.display()))?;
+
+    let req: ferrum_proto::intent::IntentCompileRequest = if as_yaml {
+        serde_yaml::from_str(&content)
+            .with_context(|| format!("failed to parse YAML from {}", file.display()))?
+    } else {
+        serde_json::from_str(&content)
+            .with_context(|| format!("failed to parse JSON from {}", file.display()))?
+    };
+
+    // Validate required fields
+    let mut errors: Vec<String> = Vec::new();
+
+    if req.title.is_empty() || req.title.starts_with('<') {
+        errors.push("title is required and must not be empty or a placeholder".to_string());
+    }
+    if req.goal.is_empty() || req.goal.starts_with('<') {
+        errors.push("goal is required and must not be empty or a placeholder".to_string());
+    }
+
+    // Validate outcome clauses if present
+    if let Some(ref allowed) = req.allowed_outcomes {
+        for (i, clause) in allowed.iter().enumerate() {
+            if clause.id.is_empty() {
+                errors.push(format!("allowed_outcomes[{}].id is required", i));
+            }
+            if clause.description.is_empty() {
+                errors.push(format!("allowed_outcomes[{}].description is required", i));
+            }
+        }
+    }
+    if let Some(ref forbidden) = req.forbidden_outcomes {
+        for (i, clause) in forbidden.iter().enumerate() {
+            if clause.id.is_empty() {
+                errors.push(format!("forbidden_outcomes[{}].id is required", i));
+            }
+            if clause.description.is_empty() {
+                errors.push(format!("forbidden_outcomes[{}].description is required", i));
+            }
+        }
+    }
+
+    if errors.is_empty() {
+        println!(
+            "IntentCompileRequest validation PASSED for {}",
+            file.display()
+        );
+        if req.allowed_outcomes.is_some() || req.forbidden_outcomes.is_some() {
+            println!("  Has explicit outcome clauses");
+        }
+        if !req.requested_resource_scope.is_empty() {
+            println!(
+                "  Resource scope: {} selectors",
+                req.requested_resource_scope.len()
+            );
+        }
+        if let Some(ref tier) = req.requested_risk_tier {
+            println!("  Risk tier: {:?}", tier);
+        }
+        if let Some(ref eff) = req.effect_type {
+            println!("  Effect type: {:?}", eff);
+        }
+        Ok(())
+    } else {
+        println!(
+            "IntentCompileRequest validation FAILED for {}",
+            file.display()
+        );
+        for err in &errors {
+            println!("  - {}", err);
+        }
+        bail!("validation failed with {} error(s)", errors.len());
+    }
+}
+
+/// Generates a starter policy bundle YAML template.
+fn run_author_bundle_generate(
+    output: &Path,
+    name: &str,
+    version: &str,
+    with_rules: bool,
+) -> Result<()> {
+    let rules_yaml: &str = if with_rules {
+        r#"rules:
+  - id: "deny.scope.mismatch"
+    description: "Deny when requested resources are outside intent scope"
+    decision: "Deny"
+    priority: 100
+    matchers:
+      - type: "scope_mismatch"
+
+  - id: "approval.high.risk"
+    description: "Require approval for high-risk operations"
+    decision: "RequireApproval"
+    priority: 90
+    matchers:
+      - type: "risk_tier_at_least"
+        value: "High"
+
+  - id: "allow.read.only"
+    description: "Allow read-only operations"
+    decision: "Allow"
+    priority: 10
+    matchers:
+      - type: "effect_type_equals"
+        value: "ReadOnlyAnalysis"
+"#
+    } else {
+        "rules: []"
+    };
+
+    let yaml = format!(
+        r#"# FerrumGate Policy Bundle starter template
+# Generated by ferrumctl author bundle generate
+# Edit the values below and register via: ferrumctl server register-policy-bundle ...
+#
+version: "0.1.0"
+bundle_id: "{}"
+name: "{}"
+description: "<describe what this policy bundle governs>"
+{}
+"#,
+        uuid::Uuid::new_v4(),
+        name,
+        rules_yaml
+    );
+
+    if output.as_os_str() == "-" {
+        println!("{}", yaml);
+    } else {
+        std::fs::write(output, &yaml)
+            .with_context(|| format!("failed to write to {}", output.display()))?;
+        println!(
+            "Policy bundle template written to {} (name={}, version={})",
+            output.display(),
+            name,
+            version
+        );
+    }
+    Ok(())
+}
+
+/// Validates a policy bundle YAML file locally.
+fn run_author_bundle_validate(file: &Path) -> Result<()> {
+    let content = std::fs::read_to_string(file)
+        .with_context(|| format!("failed to read {}", file.display()))?;
+
+    // Parse as YAML
+    let value: serde_yaml::Value = serde_yaml::from_str(&content)
+        .with_context(|| format!("failed to parse YAML from {}", file.display()))?;
+
+    let mut errors: Vec<String> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+
+    // Check required top-level fields
+    if let Some(v) = value.get("version") {
+        if v.as_str().map(|s| s.is_empty()).unwrap_or(true) {
+            errors.push("version is required and must be a non-empty string".to_string());
+        }
+    } else {
+        errors.push("version is required".to_string());
+    }
+
+    if let Some(v) = value.get("bundle_id") {
+        if v.as_str().map(|s| s.is_empty()).unwrap_or(true) {
+            errors.push("bundle_id is required and must be a non-empty string".to_string());
+        }
+        // Try to parse as UUID
+        if let Some(s) = v.as_str() {
+            if uuid::Uuid::parse_str(s).is_err() {
+                errors.push(format!("bundle_id '{}' is not a valid UUID", s));
+            }
+        }
+    } else {
+        errors.push("bundle_id is required".to_string());
+    }
+
+    if let Some(v) = value.get("name") {
+        if v.as_str().map(|s| s.is_empty()).unwrap_or(true) {
+            errors.push("name is required and must be a non-empty string".to_string());
+        }
+        if let Some(s) = v.as_str() {
+            if s.starts_with('<') {
+                errors.push(format!(
+                    "name '{}' appears to be a placeholder - please replace with a real name",
+                    s
+                ));
+            }
+        }
+    } else {
+        errors.push("name is required".to_string());
+    }
+
+    if let Some(v) = value.get("description") {
+        if !v.is_string() {
+            errors.push("description must be a string".to_string());
+        } else if let Some(s) = v.as_str() {
+            if s.starts_with('<') {
+                warnings.push(
+                    "description appears to be a placeholder - consider replacing".to_string(),
+                );
+            }
+        }
+    }
+
+    // Validate rules array if present
+    if let Some(rules) = value.get("rules") {
+        if let Some(arr) = rules.as_sequence() {
+            for (i, rule) in arr.iter().enumerate() {
+                if !rule.is_mapping() {
+                    errors.push(format!("rules[{}] must be a mapping", i));
+                    continue;
+                }
+                let map = rule.as_mapping().unwrap();
+
+                // Check required rule fields
+                let required_fields = ["id", "description", "decision", "priority", "matchers"];
+                for field in &required_fields {
+                    if !map.contains_key(serde_yaml::Value::from(*field)) {
+                        errors.push(format!("rules[{}].{} is required", i, field));
+                    }
+                }
+
+                // Validate decision value
+                let decision_key = serde_yaml::Value::from("decision");
+                if let Some(decision) = map.get(&decision_key) {
+                    if let Some(s) = decision.as_str() {
+                        let valid_decisions = [
+                            "Allow",
+                            "Deny",
+                            "Quarantine",
+                            "RequireApproval",
+                            "AllowDraftOnly",
+                        ];
+                        if !valid_decisions.contains(&s) {
+                            errors.push(format!(
+                                "rules[{}].decision '{}' is not valid (must be one of: {:?})",
+                                i, s, valid_decisions
+                            ));
+                        }
+                    }
+                }
+
+                // Validate priority is a number
+                let priority_key = serde_yaml::Value::from("priority");
+                if let Some(priority) = map.get(&priority_key) {
+                    if !priority.is_number() {
+                        errors.push(format!(
+                            "rules[{}].priority must be a number, got {:?}",
+                            i, priority
+                        ));
+                    }
+                }
+
+                // Validate matchers is an array
+                let matchers_key = serde_yaml::Value::from("matchers");
+                if let Some(matchers) = map.get(&matchers_key) {
+                    if !matchers.is_sequence() {
+                        errors.push(format!("rules[{}].matchers must be an array", i));
+                    }
+                }
+            }
+        } else {
+            errors.push("rules must be an array".to_string());
+        }
+    } else {
+        warnings.push("rules array is missing - this bundle has no rules".to_string());
+    }
+
+    if errors.is_empty() {
+        println!("Policy bundle validation PASSED for {}", file.display());
+        if !warnings.is_empty() {
+            for w in &warnings {
+                println!("  Warning: {}", w);
+            }
+        }
+        if let Some(rules) = value.get("rules").and_then(|v| v.as_sequence()) {
+            println!("  Rules count: {}", rules.len());
+        }
+        Ok(())
+    } else {
+        println!("Policy bundle validation FAILED for {}", file.display());
+        for err in &errors {
+            println!("  - {}", err);
+        }
+        bail!("validation failed with {} error(s)", errors.len());
+    }
 }
 
 // =============================================================================
@@ -4807,6 +5313,33 @@ async fn main() -> Result<()> {
                 run_contract_check()?;
                 println!("ValidateRepo: OK");
             }
+        },
+        Command::Author { sub } => match sub {
+            AuthorCommand::Intent { sub } => match sub {
+                IntentAuthorCommand::Generate {
+                    output,
+                    effect_type,
+                    with_outcomes,
+                } => {
+                    run_author_intent_generate(&output, effect_type, with_outcomes)?;
+                }
+                IntentAuthorCommand::Validate { file, yaml } => {
+                    run_author_intent_validate(&file, yaml)?;
+                }
+            },
+            AuthorCommand::Bundle { sub } => match sub {
+                BundleAuthorCommand::Generate {
+                    output,
+                    name,
+                    version,
+                    with_rules,
+                } => {
+                    run_author_bundle_generate(&output, &name, &version, with_rules)?;
+                }
+                BundleAuthorCommand::Validate { file } => {
+                    run_author_bundle_validate(&file)?;
+                }
+            },
         },
     }
     Ok(())

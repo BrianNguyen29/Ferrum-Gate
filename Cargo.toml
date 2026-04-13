@@ -54,3 +54,4 @@ clap = { version = "4", features = ["derive"] }
 indexmap = { version = "1", features = ["serde"] }
 tempfile = "3"
 regex = "1"
+serde_yaml = "0.9"
