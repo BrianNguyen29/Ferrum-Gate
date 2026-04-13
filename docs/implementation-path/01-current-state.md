@@ -76,6 +76,8 @@ The following H1 sub-slices completed post-v2-ratification (2026-04-12):
 | Sub-slice | What | Status |
 |-----------|------|--------|
 | **H1.1a** | Policy bundle persistence API + `PolicyBundleRepo` storage + `ferrumctl` surface (`register-policy-bundle`, `inspect-policy-bundle`, `list-policy-bundles`) | ✅ DONE |
+| **H1.1b** | Policy bundle metadata update/delete (`PUT /v1/policy-bundles/{id}`, `DELETE /v1/policy-bundles/{id}`) + created_at preservation on re-registration | ✅ DONE |
+| **H1.1c** | Policy bundle lineage via optional supersedes relationship — `supersedes_bundle_id`, `GET /v1/policy-bundles/{id}/successors`, `list-policy-bundle-successors` CLI, delete-referenced-blocked | ✅ DONE |
 | **H1.2b** | Policy bundle authoring CLI — `ferrumctl author intent generate\|validate`, `ferrumctl author bundle generate\|validate` | ✅ DONE |
 | **H1.3a** | Persistent named-remote configuration — `GitRemoteStore` with add/get/list/update/remove; remotes persist in git config | ✅ DONE |
 | **H1.4b** | `ferrumctl store backup` / `restore` for local SQLite backup/restore automation | ✅ DONE |

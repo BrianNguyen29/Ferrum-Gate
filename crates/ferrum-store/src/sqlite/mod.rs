@@ -49,7 +49,8 @@ impl SqliteStore {
             let options = SqliteConnectOptions::from_str(database_url)?
                 .journal_mode(SqliteJournalMode::Wal)
                 .busy_timeout(Duration::from_millis(5000))
-                .create_if_missing(true);
+                .create_if_missing(true)
+                .foreign_keys(true);
             SqlitePoolOptions::new()
                 .max_connections(5)
                 .connect_with(options)
@@ -64,6 +65,11 @@ impl SqliteStore {
     }
 
     pub async fn apply_embedded_migrations(&self) -> Result<()> {
+        // Enable foreign key enforcement for this connection.
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&self.pool)
+            .await?;
+
         let mut tx = self.pool.begin().await?;
         let mut statement = String::new();
 

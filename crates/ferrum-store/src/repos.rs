@@ -198,12 +198,17 @@ pub trait LedgerRepo: Send + Sync {
 /// - Update bundle metadata (name, description, version) preserving created_at
 /// - Delete a bundle by its deterministic bundle_id
 ///
+/// H1.1c: Adds supersedes_bundle_id for lineage tracking:
+/// - list_successors: fetch bundles that directly supersede a given bundle
+/// - has_successors: check if any bundle supersedes a given bundle (for delete gating)
+///
 /// No engine swap, no policy evaluation changes, single-node/local-only storage.
 #[async_trait]
 pub trait PolicyBundleRepo: Send + Sync {
     /// Register (upsert) a policy bundle. If a bundle with the same bundle_id
     /// already exists, update its metadata (name, description, version).
     /// The created_at timestamp is preserved from the existing record.
+    /// H1.1c: supersedes_bundle_id is stored as part of the bundle.
     async fn upsert(&self, bundle: &PolicyBundle) -> Result<()>;
 
     /// Fetch a bundle by its deterministic bundle_id.
@@ -229,6 +234,16 @@ pub trait PolicyBundleRepo: Send + Sync {
     ) -> Result<()>;
 
     /// Delete a bundle by its deterministic bundle_id.
-    /// Returns Ok(()) if the bundle was deleted, Err if the bundle was not found.
+    /// H1.1c: Returns Err if the bundle is referenced by another bundle's supersedes_bundle_id.
+    /// Returns Ok(()) if the bundle was deleted, Err if the bundle was not found
+    /// or blocked by referential integrity.
     async fn delete(&self, bundle_id: PolicyBundleId) -> Result<()>;
+
+    /// H1.1c: List bundles that directly supersede the given bundle.
+    /// Returns bundles whose supersedes_bundle_id equals the provided bundle_id.
+    async fn list_successors(&self, bundle_id: PolicyBundleId) -> Result<Vec<PolicyBundle>>;
+
+    /// H1.1c: Check whether any bundle directly supersedes the given bundle.
+    /// Used for delete referential integrity gating.
+    async fn has_successors(&self, bundle_id: PolicyBundleId) -> Result<bool>;
 }
