@@ -33,6 +33,11 @@
 - `verify` doi chieu `after_ref` da duoc persist tu execute-time metadata; voi `GitBranchCreate` xac nhan current branch va current `HEAD` khop state expected
 - `rollback` / `compensate` reset repo ve `before_ref`; voi `GitBranchCreate` thi checkout lai original branch va xoa branch moi vua tao
 - gateway `prepare` da route mutating `Git` binding sang git adapter va tao `RollbackTarget::GitRef`
+- **H1.3a Named Remote Configuration** (out-of-band, separate from rollback cycle):
+  - `GitRemoteStore` provides persistent named-remote management: add/get/list/update/remove
+  - Remotes persist in local git config and are available to all git operations
+  - H1.3a scope: single-node local usage, no auth storage
+  - Remaining H1.3: H1.3b (authenticated remotes), H1.3c (multi-remote mirroring)
 
 ## HTTP
 - `prepare` capture bound method/url/request_digest cho `HttpRequest`
