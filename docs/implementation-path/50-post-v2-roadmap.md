@@ -128,7 +128,16 @@ Sub-slices (bounded; not all required for H1 completion):
   - Client certificate / mTLS authentication
   - OAuth2 / bearer token refresh flows
   - Retry/backoff with idempotency key management
-- **Status:** ⬜ PLANNED
+- **Status:** 🏗 IN PROGRESS — H1.5a delivered; H1.5b (mTLS client cert) and H1.5c (OAuth2 refresh) remain
+- **Note:** H1.5a provides bounded retry/backoff and idempotency key support for mutation methods. H1.5b and H1.5c are out of scope for this slice.
+
+**H1.5 sub-slice status:**
+
+| Sub-slice | What | Status |
+|-----------|------|--------|
+| **H1.5a** | Retry/backoff with idempotency key management — bounded retry on transient errors (timeout, connection refused/reset), idempotency key header for mutation methods (POST/PUT/PATCH/DELETE) using execution_id | ✅ DONE |
+| H1.5b | Client certificate / mTLS authentication | ⬜ PLANNED |
+| H1.5c | OAuth2 / bearer token refresh flows | ⬜ PLANNED |
 
 ---
 

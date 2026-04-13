@@ -10,7 +10,9 @@ use ferrum_rollback::{
 use reqwest::{Client, Url, header::HeaderName};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap};
+use std::time::Duration;
 use thiserror::Error;
+use tokio::time::sleep;
 
 pub const ADAPTER_KEY: &str = "http";
 const APPROVED_HTTP_REQUEST_METADATA_KEY: &str = "approved_http_request";
@@ -141,6 +143,59 @@ impl HttpAuth {
             HttpAuth::ApiKey { .. } => "api_key",
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Retry helpers (H1.5a: bounded retry/backoff)
+// ---------------------------------------------------------------------------
+
+/// Returns true if the error is transient and retryable for HTTP adapter.
+///
+/// Retryable: request timeout, connection refused/reset.
+/// Non-retryable: validation errors, non-2xx responses (these are already
+/// mapped to appropriate AdapterError variants).
+fn is_http_retryable_error(err: &HttpAdapterError) -> bool {
+    match err {
+        // Request timeout - transient, retry
+        HttpAdapterError::RequestFailed(msg) if msg.contains("request timed out") => true,
+        // Connection refused/reset - transient, retry
+        HttpAdapterError::RequestFailed(msg)
+            if msg.contains("connection refused")
+                || msg.contains("connection reset")
+                || msg.contains("connect error")
+                || msg.contains("Connection closed")
+                || msg.contains("connection timed out") =>
+        {
+            true
+        }
+        // All other errors are non-retryable (validation, etc.)
+        _ => false,
+    }
+}
+
+/// Execute a fallible HTTP request with at most one retry on transient errors.
+///
+/// - First attempt is always made.
+/// - On transient error (timeout, connection issues), waits `backoff_ms` then retries once.
+/// - On non-transient error, returns immediately.
+/// - Max total attempts: 2.
+///
+/// This is a bounded retry policy suitable for local HTTP adapter use.
+async fn http_with_retry<F, Fut, T>(mut f: F, backoff_ms: u64) -> Result<T, HttpAdapterError>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, HttpAdapterError>>,
+{
+    // First attempt
+    match f().await {
+        Ok(result) => return Ok(result),
+        Err(ref err) if is_http_retryable_error(err) => { /* fall through to retry */ }
+        Err(err) => return Err(err),
+    }
+
+    // Retry after backoff (only for transient errors)
+    sleep(Duration::from_millis(backoff_ms)).await;
+    f().await
 }
 
 impl HttpRollbackAdapter {
@@ -840,31 +895,73 @@ impl RollbackAdapter for HttpRollbackAdapter {
             }
         }
 
-        // Execute the HTTP request with the appropriate method.
-        // For mutation-capable methods, body is sent as canonical JSON when present.
-        let mut request = match executed_method {
-            HttpMethod::Get => self.client.get(&executed_url),
-            HttpMethod::Post => self.client.post(&executed_url),
-            HttpMethod::Put => self.client.put(&executed_url),
-            HttpMethod::Patch => self.client.patch(&executed_url),
-            HttpMethod::Delete => self.client.delete(&executed_url),
+        // H1.5a: For mutations, generate idempotency key to make retries safe.
+        // The key is based on execution_id to ensure uniqueness across executions.
+        let idempotency_key = if Self::is_mutation_method(&executed_method) {
+            Some(format!("fg-idempotency-{}", contract.execution_id))
+        } else {
+            None
         };
-        if Self::is_mutation_method(&executed_method) && !executed_body.is_null() {
-            request = request.json(&executed_body);
-        }
-        // Apply headers to the request if provided (includes bearer auth if specified via auth field).
-        // Header validation against allowlist is performed by the firewall before this adapter executes.
-        if let Some(ref headers) = headers_for_request {
-            for (name, value) in headers {
-                let header_name = HeaderName::try_from(name.as_str()).map_err(|e| {
-                    HttpAdapterError::Validation(format!("invalid header name '{}': {}", name, e))
-                })?;
-                request = request.header(header_name, value);
-            }
-        }
-        let response = request.send().await.map_err(|e| {
-            HttpAdapterError::RequestFailed(format!("{:?} request failed: {}", executed_method, e))
-        })?;
+
+        // H1.5a: Build the request first so we can reconstruct it for retries.
+        // reqwest::RequestBuilder doesn't implement Clone, so we build fresh per attempt.
+        let client = self.client.clone();
+        let headers_for_request_clone = headers_for_request.clone();
+        let body_for_retry = executed_body.clone();
+        let url_for_retry = executed_url.clone();
+        let method_for_retry = executed_method.clone();
+
+        // Execute the HTTP request with retry (H1.5a: bounded retry/backoff).
+        // For mutation-capable methods, body is sent as canonical JSON when present.
+        // Idempotency-Key header is added for mutations to make retries safe.
+        let response = http_with_retry(
+            || {
+                let client = client.clone();
+                let headers = headers_for_request_clone.clone();
+                let body = body_for_retry.clone();
+                let url = url_for_retry.clone();
+                let method = method_for_retry.clone();
+                let idempotency = idempotency_key.clone();
+
+                async move {
+                    let mut request = match method {
+                        HttpMethod::Get => client.get(&url),
+                        HttpMethod::Post => client.post(&url),
+                        HttpMethod::Put => client.put(&url),
+                        HttpMethod::Patch => client.patch(&url),
+                        HttpMethod::Delete => client.delete(&url),
+                    };
+                    if Self::is_mutation_method(&method) && !body.is_null() {
+                        request = request.json(&body);
+                    }
+                    // H1.5a: Apply idempotency key header for mutations
+                    if let Some(ref key) = idempotency {
+                        request = request.header("Idempotency-Key", key);
+                    }
+                    // Apply headers (includes bearer auth if specified via auth field).
+                    // Header validation against allowlist is performed by the firewall before this adapter executes.
+                    if let Some(headers) = headers {
+                        for (name, value) in headers {
+                            let header_name = HeaderName::try_from(name.as_str()).map_err(|e| {
+                                HttpAdapterError::Validation(format!(
+                                    "invalid header name '{}': {}",
+                                    name, e
+                                ))
+                            })?;
+                            request = request.header(header_name, value);
+                        }
+                    }
+                    request.send().await.map_err(|e| {
+                        HttpAdapterError::RequestFailed(format!(
+                            "{:?} request failed: {}",
+                            method, e
+                        ))
+                    })
+                }
+            },
+            100, // 100ms backoff before retry
+        )
+        .await?;
         let status = response.status().as_u16();
 
         let mut metadata = JsonMap::new();
@@ -926,6 +1023,11 @@ impl RollbackAdapter for HttpRollbackAdapter {
                 serde_json::json!(auth.kind_str()),
             );
         }
+        // H1.5a: Store idempotency key presence for mutations (key itself not stored - contains execution_id)
+        metadata.insert(
+            "executed_idempotency_key_present".to_string(),
+            serde_json::json!(idempotency_key.is_some()),
+        );
 
         Ok(ExecuteReceipt {
             external_id: None,
@@ -1229,6 +1331,58 @@ mod tests {
                 );
                 let _ = stream.write_all(status_line.as_bytes());
                 let _ = stream.flush();
+            }
+        });
+        // Give server a moment to start
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        (port, handle)
+    }
+
+    /// Start a local HTTP server that handles multiple requests.
+    /// Returns (port, join_handle).
+    /// The `response_status` is returned for every request.
+    /// Server exits after handling `max_requests` or after `max_duration`.
+    fn start_multi_request_server_with_limit(
+        response_status: u16,
+        max_requests: usize,
+        max_duration_ms: u64,
+    ) -> (u16, std::thread::JoinHandle<()>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener
+            .set_nonblocking(true)
+            .expect("Cannot set non-blocking mode");
+        let port = listener.local_addr().unwrap().port();
+        let handle = std::thread::spawn(move || {
+            let start = std::time::Instant::now();
+            let mut request_count = 0;
+
+            // Handle up to max_requests connections OR until max_duration expires
+            while request_count < max_requests
+                && start.elapsed() < std::time::Duration::from_millis(max_duration_ms)
+            {
+                // Use a short sleep to avoid busy waiting while checking time
+                std::thread::sleep(std::time::Duration::from_millis(10));
+
+                // Try to accept a connection (non-blocking)
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        request_count += 1;
+                        // Read request headers
+                        let mut buf = [0u8; 1024];
+                        let _ = stream.read(&mut buf);
+                        // Send HTTP response with configurable status
+                        let status_line = format!(
+                            "HTTP/1.1 {} {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                            response_status,
+                            status_text(response_status)
+                        );
+                        let _ = stream.write_all(status_line.as_bytes());
+                        let _ = stream.flush();
+                    }
+                    Err(_) => {
+                        // No connection ready, continue checking time
+                    }
+                }
             }
         });
         // Give server a moment to start
@@ -4283,5 +4437,304 @@ mod tests {
             "execute-time metadata",
             "should indicate execute-time metadata was used (no replay)"
         );
+    }
+
+    // =========================================================================
+    // H1.5a: Retry/Backoff + Idempotency Key Tests
+    // =========================================================================
+
+    /// Test: is_http_retryable_error returns true for timeout errors.
+    #[test]
+    fn test_is_http_retryable_error_timeout() {
+        let err = HttpAdapterError::RequestFailed("request timed out after 30s".to_string());
+        assert!(is_http_retryable_error(&err), "timeout should be retryable");
+    }
+
+    /// Test: is_http_retryable_error returns true for connection refused.
+    #[test]
+    fn test_is_http_retryable_error_connection_refused() {
+        // reqwest may use "connection refused" or "Connection refused"
+        let err = HttpAdapterError::RequestFailed("connection refused".to_string());
+        assert!(
+            is_http_retryable_error(&err),
+            "connection refused should be retryable"
+        );
+    }
+
+    /// Test: is_http_retryable_error returns true for connection reset.
+    #[test]
+    fn test_is_http_retryable_error_connection_reset() {
+        // reqwest uses "connection reset" for reset errors
+        let err = HttpAdapterError::RequestFailed("connection reset by peer".to_string());
+        assert!(
+            is_http_retryable_error(&err),
+            "connection reset should be retryable"
+        );
+    }
+
+    /// Test: is_http_retryable_error returns true for connection closed.
+    #[test]
+    fn test_is_http_retryable_error_connection_closed() {
+        let err = HttpAdapterError::RequestFailed("Connection closed".to_string());
+        assert!(
+            is_http_retryable_error(&err),
+            "connection closed should be retryable"
+        );
+    }
+
+    /// Test: is_http_retryable_error returns true for connection timed out.
+    #[test]
+    fn test_is_http_retryable_error_connection_timed_out() {
+        let err = HttpAdapterError::RequestFailed("connection timed out".to_string());
+        assert!(
+            is_http_retryable_error(&err),
+            "connection timed out should be retryable"
+        );
+    }
+
+    /// Test: is_http_retryable_error returns false for non-retryable errors.
+    #[test]
+    fn test_is_http_retryable_error_non_retryable() {
+        let err = HttpAdapterError::RequestFailed("400 Bad Request".to_string());
+        assert!(
+            !is_http_retryable_error(&err),
+            "400 error should not be retryable"
+        );
+
+        let err = HttpAdapterError::Validation("invalid URL".to_string());
+        assert!(
+            !is_http_retryable_error(&err),
+            "validation error should not be retryable"
+        );
+
+        let err = HttpAdapterError::Internal("internal error".to_string());
+        assert!(
+            !is_http_retryable_error(&err),
+            "internal error should not be retryable"
+        );
+    }
+
+    /// Test: execute succeeds with idempotency key for POST mutation.
+    #[tokio::test]
+    async fn test_execute_with_idempotency_key_for_post() {
+        let (port, handle) = start_local_server(201);
+        let adapter = HttpRollbackAdapter::new();
+
+        let bound_url = format!("http://127.0.0.1:{}/api", port);
+        let target = make_http_target(HttpMethod::Post, &bound_url);
+        let mut metadata = JsonMap::new();
+        metadata.insert(
+            "approved_request_digest".to_string(),
+            serde_json::json!(HttpRollbackAdapter::compute_body_aware_digest(
+                &HttpMethod::Post,
+                &bound_url,
+                &serde_json::json!({"name": "test"}),
+                None,
+            )),
+        );
+        let contract = make_contract(target, metadata, vec![]);
+        let payload = serde_json::json!({
+            "body": {"name": "test"}
+        });
+
+        let receipt = adapter.execute(&contract, &payload).await.unwrap();
+
+        assert!(receipt.result_digest.is_some());
+        assert_eq!(receipt.result_digest.unwrap(), "201");
+        // H1.5a: idempotency key should be present for mutations
+        assert_eq!(
+            receipt
+                .adapter_metadata
+                .get("executed_idempotency_key_present")
+                .unwrap()
+                .as_bool(),
+            Some(true),
+            "POST should have idempotency key present"
+        );
+        let _ = handle.join();
+    }
+
+    /// Test: execute succeeds with idempotency key for PUT mutation.
+    #[tokio::test]
+    async fn test_execute_with_idempotency_key_for_put() {
+        let (port, handle) = start_local_server(200);
+        let adapter = HttpRollbackAdapter::new();
+
+        let bound_url = format!("http://127.0.0.1:{}/api/users/1", port);
+        let target = make_http_target(HttpMethod::Put, &bound_url);
+        let mut metadata = JsonMap::new();
+        metadata.insert(
+            "approved_request_digest".to_string(),
+            serde_json::json!(HttpRollbackAdapter::compute_body_aware_digest(
+                &HttpMethod::Put,
+                &bound_url,
+                &serde_json::json!({"name": "updated"}),
+                None,
+            )),
+        );
+        let contract = make_contract(target, metadata, vec![]);
+        let payload = serde_json::json!({
+            "body": {"name": "updated"}
+        });
+
+        let receipt = adapter.execute(&contract, &payload).await.unwrap();
+
+        assert!(receipt.result_digest.is_some());
+        assert_eq!(receipt.result_digest.unwrap(), "200");
+        assert_eq!(
+            receipt
+                .adapter_metadata
+                .get("executed_idempotency_key_present")
+                .unwrap()
+                .as_bool(),
+            Some(true),
+            "PUT should have idempotency key present"
+        );
+        let _ = handle.join();
+    }
+
+    /// Test: execute succeeds with idempotency key for DELETE mutation.
+    #[tokio::test]
+    async fn test_execute_with_idempotency_key_for_delete() {
+        let (port, handle) = start_local_server(204);
+        let adapter = HttpRollbackAdapter::new();
+
+        let bound_url = format!("http://127.0.0.1:{}/api/users/1", port);
+        let target = make_http_target(HttpMethod::Delete, &bound_url);
+        let metadata = JsonMap::new();
+        let contract = make_contract(target, metadata, vec![]);
+        let payload = serde_json::json!({});
+
+        let receipt = adapter.execute(&contract, &payload).await.unwrap();
+
+        assert!(receipt.result_digest.is_some());
+        assert_eq!(receipt.result_digest.unwrap(), "204");
+        assert_eq!(
+            receipt
+                .adapter_metadata
+                .get("executed_idempotency_key_present")
+                .unwrap()
+                .as_bool(),
+            Some(true),
+            "DELETE should have idempotency key present"
+        );
+        let _ = handle.join();
+    }
+
+    /// Test: execute does NOT have idempotency key for GET.
+    #[tokio::test]
+    async fn test_execute_no_idempotency_key_for_get() {
+        let (port, handle) = start_local_server(200);
+        let adapter = HttpRollbackAdapter::new();
+
+        let bound_url = format!("http://127.0.0.1:{}/api", port);
+        let target = make_http_target(HttpMethod::Get, &bound_url);
+        let metadata = JsonMap::new();
+        let contract = make_contract(target, metadata, vec![]);
+        let payload = serde_json::json!({});
+
+        let receipt = adapter.execute(&contract, &payload).await.unwrap();
+
+        assert!(receipt.result_digest.is_some());
+        assert_eq!(receipt.result_digest.unwrap(), "200");
+        assert_eq!(
+            receipt
+                .adapter_metadata
+                .get("executed_idempotency_key_present")
+                .unwrap()
+                .as_bool(),
+            Some(false),
+            "GET should NOT have idempotency key present"
+        );
+        let _ = handle.join();
+    }
+
+    /// Test: execute fails when connecting to an unreachable address.
+    /// Uses 127.0.0.1:0 which immediately refuses connections.
+    #[tokio::test]
+    async fn test_execute_fails_to_unreachable_address() {
+        let adapter = HttpRollbackAdapter::new();
+
+        // Use 127.0.0.1:0 which immediately refuses connections (nothing listening)
+        let bound_url = "http://127.0.0.1:0/api";
+        let target = make_http_target(HttpMethod::Get, bound_url);
+        let metadata = JsonMap::new();
+        let contract = make_contract(target, metadata, vec![]);
+        let payload = serde_json::json!({});
+
+        let err = adapter.execute(&contract, &payload).await.unwrap_err();
+
+        // Should fail with a request failed error
+        match err {
+            AdapterError::Internal(msg) => {
+                assert!(
+                    msg.contains("request failed"),
+                    "expected request failed error, got: {}",
+                    msg
+                );
+            }
+            other => panic!("expected internal error, got {:?}", other),
+        }
+    }
+
+    /// Test: execute succeeds when server responds on first attempt.
+    #[tokio::test]
+    async fn test_execute_succeeds_without_retry_on_first_attempt() {
+        let (port, handle) = start_multi_request_server_with_limit(200, 5, 5000);
+        let adapter = HttpRollbackAdapter::new();
+
+        let bound_url = format!("http://127.0.0.1:{}/api", port);
+        let target = make_http_target(HttpMethod::Get, &bound_url);
+        let metadata = JsonMap::new();
+        let contract = make_contract(target, metadata, vec![]);
+        let payload = serde_json::json!({});
+
+        let receipt = adapter.execute(&contract, &payload).await.unwrap();
+
+        assert!(receipt.result_digest.is_some());
+        assert_eq!(receipt.result_digest.unwrap(), "200");
+        let _ = handle.join();
+    }
+
+    /// Test: idempotency key is present in metadata for mutations.
+    /// This verifies H1.5a idempotency key handling without testing retries.
+    #[tokio::test]
+    async fn test_execute_idempotency_key_in_metadata_for_mutation() {
+        let (port, handle) = start_local_server(201);
+        let adapter = HttpRollbackAdapter::new();
+
+        let bound_url = format!("http://127.0.0.1:{}/api", port);
+        let target = make_http_target(HttpMethod::Post, &bound_url);
+        let mut metadata = JsonMap::new();
+        metadata.insert(
+            "approved_request_digest".to_string(),
+            serde_json::json!(HttpRollbackAdapter::compute_body_aware_digest(
+                &HttpMethod::Post,
+                &bound_url,
+                &serde_json::json!({"name": "test"}),
+                None,
+            )),
+        );
+        let contract = make_contract(target, metadata, vec![]);
+        let payload = serde_json::json!({
+            "body": {"name": "test"}
+        });
+
+        let receipt = adapter.execute(&contract, &payload).await.unwrap();
+
+        assert!(receipt.result_digest.is_some());
+        assert_eq!(receipt.result_digest.unwrap(), "201");
+
+        // H1.5a: Idempotency key should be present for mutations
+        assert_eq!(
+            receipt
+                .adapter_metadata
+                .get("executed_idempotency_key_present")
+                .unwrap()
+                .as_bool(),
+            Some(true),
+            "POST should have idempotency key present in metadata"
+        );
+        let _ = handle.join();
     }
 }
