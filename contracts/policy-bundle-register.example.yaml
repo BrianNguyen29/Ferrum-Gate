@@ -1,0 +1,40 @@
+# FerrumGate PolicyBundleRegisterRequest Example
+# H1.1d: Registration payload format for policy bundle authoring workflow
+#
+# Use: ferrumctl server register-policy-bundle --request-file <this-file>
+# Or:  ferrumctl author request validate <this-file>
+#
+# NOTE: fingerprint is intentionally omitted — server computes it deterministically
+# at registration time from the outcome clauses. Do NOT set fingerprint manually.
+
+name: "example-policy-bundle"
+description: "Example policy bundle governing file system and git operations"
+version: "0.1.0"
+
+# Optional: explicit outcome clauses for the policy bundle
+# When provided, server uses these for fingerprint computation
+allowed_outcomes:
+  - id: "allow.read.only"
+    description: "Allow read-only analysis operations"
+    effect_type: "ReadOnlyAnalysis"
+    required: true
+    selectors:
+      adapter_family: "analysis"
+      request_class: "ReadOnlyAnalysis"
+
+  - id: "allow.git.read"
+    description: "Allow read-only git operations"
+    effect_type: "GitMutation"
+    required: false
+    selectors:
+      mutation_family: "git_read"
+
+forbidden_outcomes:
+  - id: "forbid.file.mutation"
+    description: "Forbid direct file system mutations without approval"
+    effect_type: "FileMutation"
+    required: true
+
+# H1.1c: Optional lineage — bundle_id of predecessor this one supersedes
+# Uncomment and set to establish direct lineage
+# supersedes_bundle_id: "00000000-0000-0000-0000-000000000000"

@@ -52,7 +52,7 @@ requiring new architectural work.
 
 - **Source:** `30-production-roadmap.md` Priority 4 (P4.2); `11-remaining-tasks.md` line 124
 - **What:** CLI authoring workflows for policy bundle creation, migration, and versioning
-- **Status:** 🏗 IN PROGRESS — H1.1a (API + storage foundation + ferrumctl surface) delivered; H1.1b (metadata update/delete + created_at preservation) delivered; H1.1c (lineage via supersedes) delivered; H1.1d remains
+- **Status:** ✅ DONE — H1.1a (API + storage foundation + ferrumctl surface) delivered; H1.1b (metadata update/delete + created_at preservation) delivered; H1.1c (lineage via supersedes) delivered; H1.1d (register-request authoring CLI) delivered
 - **Constraint:** Requires v2 sign-off before starting; does not block v2 ratification
 
 **H1.1 sub-slice status:**
@@ -62,16 +62,16 @@ requiring new architectural work.
 | **H1.1a** | Policy bundle persistence API (`POST /v1/policy-bundles`, `GET /v1/policy-bundles/{id}`, `GET /v1/policy-bundles`) + `PolicyBundleRepo` storage + ferrumctl surface (`ferrumctl server register-policy-bundle`, `inspect-policy-bundle`, `list-policy-bundles`) | ✅ DONE |
 | **H1.1b** | Policy bundle metadata update/delete (`PUT /v1/policy-bundles/{id}`, `DELETE /v1/policy-bundles/{id}`) + created_at preservation on re-registration | ✅ DONE |
 | **H1.1c** | Policy bundle lineage via optional supersedes relationship — `supersedes_bundle_id` on register/response, `GET /v1/policy-bundles/{id}/successors`, CLI `--supersedes` flag, `ferrumctl server list-policy-bundle-successors`, delete-referenced-blocked | ✅ DONE |
-| H1.1d | Policy bundle authoring CLI (intent/policy creation workflow — distinct from H1.1a infrastructure) | ⬜ PLANNED |
+| **H1.1d** | Policy bundle authoring CLI for `PolicyBundleRegisterRequest` payloads — `ferrumctl author request generate|validate|bump` (distinct from H1.2b rules-format YAML authoring); `ferrumctl server register-policy-bundle --request-file` for full payload registration | ✅ DONE |
 
-**Note:** H1.1a provides the foundational CRUD+storage layer. H1.1b–H1.1d are the remaining authoring/migration slices that build on it.
+**Note:** H1.1a provides the foundational CRUD+storage layer. H1.1b–H1.1d are the authoring/migration slices that build on it. H1.1d operates on registration payload format (name/description/version/outcomes), distinct from H1.2b which operates on rules-format YAML.
 
 ### H1.2 — U1 Remaining Backlog (Expressiveness + Authoring Tooling)
 
 - **Source:** `11-remaining-tasks.md` lines 88-91; `30-production-roadmap.md` Priority 6 (U1.1/U1.2)
 - **What:** Two distinct sub-items:
   - **H1.2a:** Richer outcome clause expressiveness — nested selectors, temporal constraints
-  - **H1.2b:** Policy bundle authoring CLI (distinct from H1.1 bundle lifecycle tooling — focuses on intent/policy creation rather than migration)
+  - **H1.2b:** Policy bundle authoring CLI for rules-format YAML (distinct from H1.1d registration-payload authoring — H1.1d operates on `PolicyBundleRegisterRequest` format; H1.2b operates on rules-format YAML with `rules:` array)
 - **Status:** 🏗 IN PROGRESS — H1.2b delivered; H1.2a remains
 - **Note:** U1 core (S1–S8a) is ✅ DONE in v1/v2 scope. H1.2 covers the remaining expressiveness backlog and the authoring CLI gap.
 

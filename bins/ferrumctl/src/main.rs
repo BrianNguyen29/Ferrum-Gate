@@ -1104,10 +1104,16 @@ enum AuthorCommand {
         #[command(subcommand)]
         sub: IntentAuthorCommand,
     },
-    /// Generate or validate a policy bundle.
+    /// Generate or validate a policy bundle (rules-format YAML).
     Bundle {
         #[command(subcommand)]
         sub: BundleAuthorCommand,
+    },
+    /// H1.1d: Generate, validate, or bump a PolicyBundleRegisterRequest payload.
+    /// Distinct from Bundle subcommand which operates on rules-format YAML.
+    Request {
+        #[command(subcommand)]
+        sub: RequestAuthorCommand,
     },
 }
 
@@ -1163,6 +1169,74 @@ enum BundleAuthorCommand {
         /// Path to the policy bundle file to validate.
         file: PathBuf,
     },
+}
+
+/// H1.1d: Authoring commands for PolicyBundleRegisterRequest payloads.
+/// Operates on registration payload format (name/description/version/outcomes),
+/// distinct from Bundle subcommand which operates on rules-format YAML.
+#[derive(Debug, Subcommand)]
+enum RequestAuthorCommand {
+    /// Generate a starter PolicyBundleRegisterRequest YAML/JSON template.
+    Generate {
+        /// Output file path. Use - for stdout.
+        #[arg(long, default_value = "-")]
+        output: PathBuf,
+
+        /// Output format (YAML or JSON). YAML is default.
+        #[arg(long, value_enum, default_value = "yaml")]
+        format: OutputFormat,
+
+        /// Human-readable name for the bundle.
+        #[arg(long, default_value = "my-policy-bundle")]
+        name: String,
+
+        /// Semantic version tag for the bundle.
+        #[arg(long, default_value = "0.1.0")]
+        version: String,
+
+        /// Include example outcome clauses in the template.
+        #[arg(long)]
+        with_outcomes: bool,
+
+        /// H1.1c: bundle_id of the predecessor bundle this one supersedes.
+        #[arg(long)]
+        supersedes: Option<String>,
+    },
+    /// Validate a PolicyBundleRegisterRequest YAML/JSON file locally (no server required).
+    Validate {
+        /// Path to the PolicyBundleRegisterRequest file to validate.
+        file: PathBuf,
+
+        /// Validate as JSON instead of YAML.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Bump the semantic version in a PolicyBundleRegisterRequest file.
+    Bump {
+        /// Path to the PolicyBundleRegisterRequest file to bump.
+        file: PathBuf,
+
+        /// Part of version to bump: major, minor, or patch.
+        #[arg(long, value_enum, default_value = "patch")]
+        part: VersionBumpPart,
+
+        /// Write to output file instead of modifying in place.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum OutputFormat {
+    Yaml,
+    Json,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum VersionBumpPart {
+    Major,
+    Minor,
+    Patch,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -2092,18 +2166,25 @@ enum ServerCommand {
     },
     /// Register a policy bundle (idempotent upsert by content fingerprint).
     /// H1.1c: Supports `--supersedes` to establish lineage against an existing bundle.
+    /// H1.1d: Supports `--request-file` to load a full PolicyBundleRegisterRequest
+    /// from YAML or JSON, mutually exclusive with individual name/description/version flags.
     RegisterPolicyBundle {
-        /// Human-readable name for the bundle.
+        /// H1.1d: Path to a PolicyBundleRegisterRequest YAML/JSON file.
+        /// When provided, individual name/description/version flags are ignored.
         #[arg(long)]
-        name: String,
+        request_file: Option<PathBuf>,
 
-        /// Free-form description of what this bundle governs.
-        #[arg(long)]
-        description: String,
+        /// Human-readable name for the bundle (ignored if --request-file is provided).
+        #[arg(long, default_value = None)]
+        name: Option<String>,
 
-        /// Semantic version tag (e.g. "1.0.0").
-        #[arg(long)]
-        version: String,
+        /// Free-form description of what this bundle governs (ignored if --request-file is provided).
+        #[arg(long, default_value = None)]
+        description: Option<String>,
+
+        /// Semantic version tag (e.g. "1.0.0", ignored if --request-file is provided).
+        #[arg(long, default_value = None)]
+        version: Option<String>,
 
         /// Path to a JSON file containing OutcomeClause arrays
         /// (optional, for bundle fingerprint verification).
@@ -2692,6 +2773,331 @@ fn run_author_bundle_validate(file: &Path) -> Result<()> {
         }
         bail!("validation failed with {} error(s)", errors.len());
     }
+}
+
+// =============================================================================
+// H1.1d: PolicyBundleRegisterRequest authoring commands
+// =============================================================================
+
+/// Generates a starter PolicyBundleRegisterRequest YAML/JSON template.
+fn run_author_request_generate(
+    output: &Path,
+    format: OutputFormat,
+    name: &str,
+    version: &str,
+    with_outcomes: bool,
+    supersedes: Option<&str>,
+) -> Result<()> {
+    let outcomes_yaml: &str = if with_outcomes {
+        r#"allowed_outcomes:
+  - id: "allow.read.only"
+    description: "Allow read-only analysis operations"
+    effect_type: "ReadOnlyAnalysis"
+    required: true
+    selectors:
+      adapter_family: "analysis"
+      request_class: "ReadOnlyAnalysis"
+
+forbidden_outcomes:
+  - id: "forbid.file.mutation"
+    description: "Forbid direct file system mutations"
+    effect_type: "FileMutation"
+    required: true
+"#
+    } else {
+        ""
+    };
+
+    let supersedes_yaml: String = if let Some(sid) = supersedes {
+        format!(
+            r#"supersedes_bundle_id: "{}"
+"#,
+            sid
+        )
+    } else {
+        String::new()
+    };
+
+    let content = format!(
+        r#"# FerrumGate PolicyBundleRegisterRequest starter template
+# Generated by ferrumctl author request generate
+# H1.1d: For registration via: ferrumctl server register-policy-bundle --request-file <file>
+#
+# NOTE: fingerprint is intentionally omitted — server computes it deterministically
+# at registration time from the outcome clauses.
+#
+name: "{}"
+description: "<describe what this policy bundle governs>"
+version: "{}"
+{}{}"#,
+        name, version, outcomes_yaml, supersedes_yaml
+    );
+
+    match format {
+        OutputFormat::Yaml => {
+            if output.as_os_str() == "-" {
+                println!("{}", content);
+            } else {
+                std::fs::write(output, &content)
+                    .with_context(|| format!("failed to write to {}", output.display()))?;
+                println!(
+                    "PolicyBundleRegisterRequest template written to {} (name={}, version={})",
+                    output.display(),
+                    name,
+                    version
+                );
+            }
+        }
+        OutputFormat::Json => {
+            // Parse YAML to JSON
+            let value: serde_yaml::Value =
+                serde_yaml::from_str(&content).context("failed to parse generated YAML")?;
+            let json =
+                serde_json::to_string_pretty(&value).context("failed to serialize to JSON")?;
+            if output.as_os_str() == "-" {
+                println!("{}", json);
+            } else {
+                std::fs::write(output, &json)
+                    .with_context(|| format!("failed to write to {}", output.display()))?;
+                println!(
+                    "PolicyBundleRegisterRequest template written to {} (name={}, version={})",
+                    output.display(),
+                    name,
+                    version
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Validates a PolicyBundleRegisterRequest YAML/JSON file locally.
+fn run_author_request_validate(file: &Path, as_json: bool) -> Result<()> {
+    let content = std::fs::read_to_string(file)
+        .with_context(|| format!("failed to read {}", file.display()))?;
+
+    // Parse based on format
+    let value: serde_yaml::Value = if as_json {
+        serde_json::from_str(&content)
+            .with_context(|| format!("failed to parse JSON from {}", file.display()))?
+    } else {
+        serde_yaml::from_str(&content)
+            .with_context(|| format!("failed to parse YAML from {}", file.display()))?
+    };
+
+    let mut errors: Vec<String> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+
+    // Check required top-level fields
+    if let Some(v) = value.get("name") {
+        if v.as_str().map(|s| s.is_empty()).unwrap_or(true) {
+            errors.push("name is required and must be a non-empty string".to_string());
+        } else if let Some(s) = v.as_str() {
+            if s.starts_with('<') {
+                errors.push(format!(
+                    "name '{}' appears to be a placeholder - please replace with a real name",
+                    s
+                ));
+            }
+        }
+    } else {
+        errors.push("name is required".to_string());
+    }
+
+    if let Some(v) = value.get("description") {
+        if !v.is_string() {
+            errors.push("description must be a string".to_string());
+        } else if let Some(s) = v.as_str() {
+            if s.starts_with('<') {
+                warnings.push(
+                    "description appears to be a placeholder - consider replacing".to_string(),
+                );
+            }
+        }
+    }
+
+    if let Some(v) = value.get("version") {
+        if v.as_str().map(|s| s.is_empty()).unwrap_or(true) {
+            errors.push("version is required and must be a non-empty string".to_string());
+        } else if let Some(s) = v.as_str() {
+            // Validate semver format
+            let parts: Vec<&str> = s.split('.').collect();
+            if parts.len() != 3 {
+                warnings.push(format!(
+                    "version '{}' does not look like semver (expected major.minor.patch)",
+                    s
+                ));
+            }
+        }
+    } else {
+        errors.push("version is required".to_string());
+    }
+
+    // fingerprint should NOT be set (server computes it)
+    if value.get("fingerprint").is_some() {
+        warnings.push(
+            "fingerprint is set — this should be omitted; server computes it deterministically"
+                .to_string(),
+        );
+    }
+
+    // Validate supersedes_bundle_id if present
+    if let Some(v) = value.get("supersedes_bundle_id") {
+        if let Some(s) = v.as_str() {
+            if uuid::Uuid::parse_str(s).is_err() {
+                errors.push(format!("supersedes_bundle_id '{}' is not a valid UUID", s));
+            }
+        } else {
+            errors.push("supersedes_bundle_id must be a string".to_string());
+        }
+    }
+
+    // Validate outcome clauses if present
+    for clause_type in &["allowed_outcomes", "forbidden_outcomes"] {
+        if let Some(v) = value.get(*clause_type) {
+            if let Some(arr) = v.as_sequence() {
+                for (i, clause) in arr.iter().enumerate() {
+                    if !clause.is_mapping() {
+                        errors.push(format!("{} must be an array of objects", *clause_type));
+                        break;
+                    }
+                    let map = clause.as_mapping().unwrap();
+
+                    // Check required fields
+                    for field in &["id", "description", "effect_type"] {
+                        let key = serde_yaml::Value::from(*field);
+                        if !map.contains_key(&key) {
+                            errors.push(format!("{}[{}].{} is required", *clause_type, i, field));
+                        }
+                    }
+
+                    // Validate effect_type
+                    let effect_key = serde_yaml::Value::from("effect_type");
+                    if let Some(effect) = map.get(&effect_key) {
+                        if let Some(s) = effect.as_str() {
+                            let valid_effects = [
+                                "ReadOnlyAnalysis",
+                                "DraftCreation",
+                                "FileMutation",
+                                "GitMutation",
+                                "DatabaseMutation",
+                                "ExternalApiCall",
+                                "ExternalCommunication",
+                                "Scheduling",
+                                "AdministrativeChange",
+                            ];
+                            if !valid_effects.contains(&s) {
+                                errors.push(format!(
+                                    "{}[{}].effect_type '{}' is not valid",
+                                    *clause_type, i, s
+                                ));
+                            }
+                        }
+                    }
+                }
+            } else {
+                errors.push(format!("{} must be an array", *clause_type));
+            }
+        }
+    }
+
+    if errors.is_empty() {
+        println!(
+            "PolicyBundleRegisterRequest validation PASSED for {}",
+            file.display()
+        );
+        if !warnings.is_empty() {
+            for w in &warnings {
+                println!("  Warning: {}", w);
+            }
+        }
+        if value.get("allowed_outcomes").is_some() || value.get("forbidden_outcomes").is_some() {
+            println!("  Has explicit outcome clauses");
+        }
+        Ok(())
+    } else {
+        println!(
+            "PolicyBundleRegisterRequest validation FAILED for {}",
+            file.display()
+        );
+        for err in &errors {
+            println!("  - {}", err);
+        }
+        bail!("validation failed with {} error(s)", errors.len());
+    }
+}
+
+/// Bumps the semantic version in a PolicyBundleRegisterRequest file.
+fn run_author_request_bump(
+    file: &Path,
+    part: VersionBumpPart,
+    output: Option<&Path>,
+) -> Result<()> {
+    let content = std::fs::read_to_string(file)
+        .with_context(|| format!("failed to read {}", file.display()))?;
+
+    // Parse YAML to get current version
+    let mut value: serde_yaml::Value = serde_yaml::from_str(&content)
+        .with_context(|| format!("failed to parse YAML from {}", file.display()))?;
+
+    let version_key = serde_yaml::Value::from("version");
+    // Extract current version as owned String to avoid borrow conflicts
+    let current_version = value
+        .get(&version_key)
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("version field is required"))?
+        .to_string();
+
+    let parts: Vec<&str> = current_version.split('.').collect();
+    if parts.len() != 3 {
+        anyhow::bail!(
+            "version '{}' does not match semver format (major.minor.patch)",
+            current_version
+        );
+    }
+
+    let major: u32 = parts[0]
+        .parse()
+        .map_err(|_| anyhow::anyhow!("invalid major version: {}", parts[0]))?;
+    let minor: u32 = parts[1]
+        .parse()
+        .map_err(|_| anyhow::anyhow!("invalid minor version: {}", parts[1]))?;
+    let patch: u32 = parts[2]
+        .parse()
+        .map_err(|_| anyhow::anyhow!("invalid patch version: {}", parts[2]))?;
+
+    let (major, minor, patch) = match part {
+        VersionBumpPart::Major => (major + 1, 0, 0),
+        VersionBumpPart::Minor => (major, minor + 1, 0),
+        VersionBumpPart::Patch => (major, minor, patch + 1),
+    };
+
+    let new_version = format!("{}.{}.{}", major, minor, patch);
+    value[&version_key] = serde_yaml::Value::from(new_version.as_str());
+
+    let output_content =
+        serde_yaml::to_string(&value).context("failed to serialize updated YAML")?;
+
+    let dest: &Path = output.map(Path::new).unwrap_or(file);
+    if output.is_some() {
+        std::fs::write(dest, &output_content)
+            .with_context(|| format!("failed to write to {}", dest.display()))?;
+        println!(
+            "Version bumped: {} -> {} (written to {})",
+            current_version,
+            new_version,
+            dest.display()
+        );
+    } else {
+        std::fs::write(dest, &output_content)
+            .with_context(|| format!("failed to write to {}", dest.display()))?;
+        println!(
+            "Version bumped: {} -> {} (in place)",
+            current_version, new_version
+        );
+    }
+
+    Ok(())
 }
 
 // =============================================================================
@@ -3643,33 +4049,66 @@ async fn run_commit_execution(
 }
 
 async fn run_register_policy_bundle(
-    name: &str,
-    description: &str,
-    version: &str,
+    request_file: Option<&Path>,
+    name: Option<&str>,
+    description: Option<&str>,
+    version: Option<&str>,
     outcomes_file: Option<&Path>,
     supersedes: Option<&str>,
     url: Option<String>,
     token: Option<String>,
     as_json: bool,
 ) -> Result<()> {
-    let (allowed_outcomes, forbidden_outcomes) = if let Some(path) = outcomes_file {
-        #[derive(serde::Deserialize)]
-        struct OutcomesFile {
-            allowed_outcomes: Option<Vec<ferrum_proto::intent::OutcomeClause>>,
-            forbidden_outcomes: Option<Vec<ferrum_proto::intent::OutcomeClause>>,
-        }
+    // H1.1d: Build request from --request-file if provided
+    let req = if let Some(path) = request_file {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("failed to read {}", path.display()))?;
-        let parsed: OutcomesFile = serde_json::from_str(&content)
-            .with_context(|| format!("failed to parse JSON from {}", path.display()))?;
-        (parsed.allowed_outcomes, parsed.forbidden_outcomes)
-    } else {
-        (None, None)
-    };
 
-    // H1.1c: Parse supersedes_bundle_id if provided
-    let supersedes_bundle_id =
-        if let Some(sid) = supersedes {
+        // Try JSON first, then YAML
+        let parsed: ferrum_proto::PolicyBundleRegisterRequest = serde_json::from_str(&content)
+            .or_else(|_| serde_yaml::from_str(&content).with_context(|| "failed to parse YAML"))
+            .with_context(|| {
+                format!(
+                    "failed to parse PolicyBundleRegisterRequest from {}",
+                    path.display()
+                )
+            })?;
+
+        // Validate that fingerprint is not set (server computes it)
+        if parsed.fingerprint.is_some() {
+            println!(
+                "Warning: fingerprint is set in {} — server will recompute it",
+                path.display()
+            );
+        }
+
+        parsed
+    } else {
+        // Use individual fields — validate they are all provided
+        let name =
+            name.ok_or_else(|| anyhow::anyhow!("--name is required (or use --request-file)"))?;
+        let description = description
+            .ok_or_else(|| anyhow::anyhow!("--description is required (or use --request-file)"))?;
+        let version = version
+            .ok_or_else(|| anyhow::anyhow!("--version is required (or use --request-file)"))?;
+
+        let (allowed_outcomes, forbidden_outcomes) = if let Some(path) = outcomes_file {
+            #[derive(serde::Deserialize)]
+            struct OutcomesFile {
+                allowed_outcomes: Option<Vec<ferrum_proto::intent::OutcomeClause>>,
+                forbidden_outcomes: Option<Vec<ferrum_proto::intent::OutcomeClause>>,
+            }
+            let content = std::fs::read_to_string(path)
+                .with_context(|| format!("failed to read {}", path.display()))?;
+            let parsed: OutcomesFile = serde_json::from_str(&content)
+                .with_context(|| format!("failed to parse JSON from {}", path.display()))?;
+            (parsed.allowed_outcomes, parsed.forbidden_outcomes)
+        } else {
+            (None, None)
+        };
+
+        // H1.1c: Parse supersedes_bundle_id if provided
+        let supersedes_bundle_id = if let Some(sid) = supersedes {
             Some(sid.parse::<ferrum_proto::PolicyBundleId>().map_err(|_| {
                 anyhow::anyhow!("invalid supersedes bundle_id: must be a valid UUID")
             })?)
@@ -3677,14 +4116,15 @@ async fn run_register_policy_bundle(
             None
         };
 
-    let req = ferrum_proto::PolicyBundleRegisterRequest {
-        name: name.to_string(),
-        description: description.to_string(),
-        version: version.to_string(),
-        fingerprint: None,
-        allowed_outcomes,
-        forbidden_outcomes,
-        supersedes_bundle_id,
+        ferrum_proto::PolicyBundleRegisterRequest {
+            name: name.to_string(),
+            description: description.to_string(),
+            version: version.to_string(),
+            fingerprint: None,
+            allowed_outcomes,
+            forbidden_outcomes,
+            supersedes_bundle_id,
+        }
     };
 
     let url = resolve_server_url(url)?;
@@ -5756,6 +6196,7 @@ async fn main() -> Result<()> {
                 run_commit_execution(&execution_id, server_url, bearer_token, json).await?;
             }
             ServerCommand::RegisterPolicyBundle {
+                request_file,
                 name,
                 description,
                 version,
@@ -5766,9 +6207,10 @@ async fn main() -> Result<()> {
                 json,
             } => {
                 run_register_policy_bundle(
-                    &name,
-                    &description,
-                    &version,
+                    request_file.as_deref(),
+                    name.as_deref(),
+                    description.as_deref(),
+                    version.as_deref(),
                     outcomes_file.as_deref(),
                     supersedes.as_deref(),
                     server_url,
@@ -5882,6 +6324,32 @@ async fn main() -> Result<()> {
                 }
                 BundleAuthorCommand::Validate { file } => {
                     run_author_bundle_validate(&file)?;
+                }
+            },
+            // H1.1d: PolicyBundleRegisterRequest authoring
+            AuthorCommand::Request { sub } => match sub {
+                RequestAuthorCommand::Generate {
+                    output,
+                    format,
+                    name,
+                    version,
+                    with_outcomes,
+                    supersedes,
+                } => {
+                    run_author_request_generate(
+                        &output,
+                        format,
+                        &name,
+                        &version,
+                        with_outcomes,
+                        supersedes.as_deref(),
+                    )?;
+                }
+                RequestAuthorCommand::Validate { file, json } => {
+                    run_author_request_validate(&file, json)?;
+                }
+                RequestAuthorCommand::Bump { file, part, output } => {
+                    run_author_request_bump(&file, part, output.as_deref())?;
                 }
             },
         },
