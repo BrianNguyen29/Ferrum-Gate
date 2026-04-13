@@ -28,7 +28,8 @@ use ferrum_proto::{
     TrustContextSummary, TrustLabel, VerifyRequest, VerifyResponse,
 };
 use ferrum_store::{
-    ApprovalRepo, ExecutionRepo, IntentRepo, LedgerRepo, ProposalRepo, ProvenanceRepo, RollbackRepo,
+    ApprovalRepo, ExecutionRepo, IntentRepo, LedgerRepo, PolicyBundleRepo, ProposalRepo,
+    ProvenanceRepo, RollbackRepo,
 };
 use prometheus::Encoder;
 use serde::Deserialize;
@@ -193,6 +194,10 @@ fn build_router_inner(runtime: GatewayRuntime, auth_config: Option<ServerConfig>
         .route("/v1/sync/leader/tip/proof", get(get_leader_tip_proof))
         // Ledger verification endpoint (operator diagnostics)
         .route("/v1/ledger/verify", get(verify_ledger))
+        // H1.1a: Policy bundle lifecycle endpoints
+        .route("/v1/policy-bundles", post(register_policy_bundle))
+        .route("/v1/policy-bundles/{bundle_id}", get(get_policy_bundle))
+        .route("/v1/policy-bundles", get(list_policy_bundles))
         .with_state(Arc::new(runtime))
         .layer(Extension(metrics))
         .layer(metrics_layer)
@@ -5506,6 +5511,131 @@ async fn verify_ledger(
             Ok(Json(resp))
         }
     }
+}
+
+// =============================================================================
+// H1.1a: Policy bundle lifecycle handlers
+// =============================================================================
+
+/// POST /v1/policy-bundles
+///
+/// Register a new policy bundle. The bundle_id is derived deterministically
+/// from the outcome contract content (allowed_outcomes/forbidden_outcomes).
+/// If a bundle with the same fingerprint already exists, this is an idempotent
+/// upsert that updates the metadata (name, description, version).
+async fn register_policy_bundle(
+    State(runtime): State<Arc<GatewayRuntime>>,
+    Json(req): Json<ferrum_proto::PolicyBundleRegisterRequest>,
+) -> Result<Json<ferrum_proto::PolicyBundleResponse>, ApiProblem> {
+    // If fingerprint provided, validate it matches the derived fingerprint
+    let (allowed_outcomes, forbidden_outcomes) = (
+        req.allowed_outcomes.clone().unwrap_or_default(),
+        req.forbidden_outcomes.clone().unwrap_or_default(),
+    );
+
+    let computed_fingerprint = if !allowed_outcomes.is_empty() || !forbidden_outcomes.is_empty() {
+        Some(compute_policy_bundle_fingerprint(
+            &allowed_outcomes,
+            &forbidden_outcomes,
+        ))
+    } else {
+        None
+    };
+
+    // Validate fingerprint if provided
+    if let Some(ref provided_fp) = req.fingerprint {
+        if let Some(ref computed) = computed_fingerprint {
+            if provided_fp != computed {
+                return Err(ApiProblem::new(
+                    StatusCode::BAD_REQUEST,
+                    ApiErrorCode::ValidationError,
+                    format!(
+                        "fingerprint mismatch: provided '{}' but computed '{}'",
+                        provided_fp, computed
+                    ),
+                ));
+            }
+        }
+    }
+
+    let now = Utc::now();
+    let bundle_id = computed_fingerprint
+        .as_ref()
+        .map(|fp| ferrum_proto::PolicyBundleId::derive(fp))
+        .unwrap_or_else(ferrum_proto::PolicyBundleId::new);
+
+    let bundle = ferrum_proto::PolicyBundle {
+        bundle_id,
+        name: req.name,
+        description: req.description,
+        version: req.version,
+        created_at: now,
+        updated_at: now,
+    };
+
+    runtime
+        .store
+        .policy_bundles()
+        .upsert(&bundle)
+        .await
+        .map_err(|e| ApiProblem::internal(e.into()))?;
+
+    Ok(Json(ferrum_proto::PolicyBundleResponse { bundle }))
+}
+
+/// GET /v1/policy-bundles/{bundle_id}
+///
+/// Fetch a policy bundle by its deterministic bundle_id.
+async fn get_policy_bundle(
+    State(runtime): State<Arc<GatewayRuntime>>,
+    Path(bundle_id_str): Path<String>,
+) -> Result<Json<ferrum_proto::PolicyBundleResponse>, ApiProblem> {
+    let bundle_id = bundle_id_str
+        .parse::<ferrum_proto::PolicyBundleId>()
+        .map_err(|_| {
+            ApiProblem::new(
+                StatusCode::BAD_REQUEST,
+                ApiErrorCode::ValidationError,
+                format!("invalid bundle_id format: {}", bundle_id_str),
+            )
+        })?;
+
+    let bundle = runtime
+        .store
+        .policy_bundles()
+        .get(bundle_id)
+        .await
+        .map_err(|e| ApiProblem::internal(e.into()))?
+        .ok_or_else(|| {
+            ApiProblem::new(
+                StatusCode::NOT_FOUND,
+                ApiErrorCode::NotFound,
+                format!("policy bundle {} not found", bundle_id),
+            )
+        })?;
+
+    Ok(Json(ferrum_proto::PolicyBundleResponse { bundle }))
+}
+
+/// GET /v1/policy-bundles
+///
+/// List all policy bundles with cursor-based pagination.
+async fn list_policy_bundles(
+    State(runtime): State<Arc<GatewayRuntime>>,
+    Query(params): Query<ferrum_proto::PolicyBundleListRequest>,
+) -> Result<Json<ferrum_proto::PolicyBundleListResponse>, ApiProblem> {
+    let limit = params.limit.unwrap_or(20).min(100);
+    let (items, next_cursor) = runtime
+        .store
+        .policy_bundles()
+        .list_cursor(limit, params.cursor.as_deref())
+        .await
+        .map_err(|e| ApiProblem::internal(e.into()))?;
+
+    Ok(Json(ferrum_proto::PolicyBundleListResponse {
+        items,
+        next_cursor,
+    }))
 }
 
 /// Converts a store error to a LedgerVerificationError for API responses.

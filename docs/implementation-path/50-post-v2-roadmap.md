@@ -52,8 +52,19 @@ requiring new architectural work.
 
 - **Source:** `30-production-roadmap.md` Priority 4 (P4.2); `11-remaining-tasks.md` line 124
 - **What:** CLI authoring workflows for policy bundle creation, migration, and versioning
-- **Status:** ⏸ DEFERRED (post-G-E3) — separate scope required
+- **Status:** 🏗 IN PROGRESS — H1.1a (API + storage foundation + ferrumctl surface) delivered; H1.1 completion requires remaining sub-slices (see below)
 - **Constraint:** Requires v2 sign-off before starting; does not block v2 ratification
+
+**H1.1 sub-slice status:**
+
+| Sub-slice | What | Status |
+|-----------|------|--------|
+| **H1.1a** | Policy bundle persistence API (`POST /v1/policy-bundles`, `GET /v1/policy-bundles/{id}`, `GET /v1/policy-bundles`) + `PolicyBundleRepo` storage + ferrumctl surface (`ferrumctl server register-policy-bundle`, `inspect-policy-bundle`, `list-policy-bundles`) | ✅ DONE |
+| H1.1b | Policy bundle update/put semantics (idempotent update with version bumping) | ⬜ PLANNED |
+| H1.1c | Policy bundle migration CLI (rename, re-version, diff against registry) | ⬜ PLANNED |
+| H1.1d | Policy bundle authoring CLI (intent/policy creation workflow — distinct from H1.1a infrastructure) | ⬜ PLANNED |
+
+**Note:** H1.1a provides the foundational CRUD+storage layer. H1.1b–H1.1d are the remaining authoring/migration slices that build on it.
 
 ### H1.2 — U1 Remaining Backlog (Expressiveness + Authoring Tooling)
 

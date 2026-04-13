@@ -916,6 +916,43 @@ impl ServerClient {
         self.decode_json(resp).await
     }
 
+    async fn register_policy_bundle(
+        &self,
+        req: &ferrum_proto::PolicyBundleRegisterRequest,
+    ) -> Result<ferrum_proto::PolicyBundleResponse> {
+        let resp = self
+            .request(reqwest::Method::POST, "/v1/policy-bundles")
+            .json(req)
+            .send()
+            .await?;
+        self.decode_json(resp).await
+    }
+
+    async fn get_policy_bundle(
+        &self,
+        bundle_id: &str,
+    ) -> Result<ferrum_proto::PolicyBundleResponse> {
+        let path = format!("/v1/policy-bundles/{}", bundle_id);
+        let resp = self.request(reqwest::Method::GET, &path).send().await?;
+        self.decode_json(resp).await
+    }
+
+    async fn list_policy_bundles(
+        &self,
+        limit: Option<u32>,
+        cursor: Option<&str>,
+    ) -> Result<ferrum_proto::PolicyBundleListResponse> {
+        let mut req = self.request(reqwest::Method::GET, "/v1/policy-bundles");
+        if let Some(l) = limit {
+            req = req.query(&[("limit", l.to_string())]);
+        }
+        if let Some(c) = cursor {
+            req = req.query(&[("cursor", c)]);
+        }
+        let resp = req.send().await?;
+        self.decode_json(resp).await
+    }
+
     async fn decode_json<T: DeserializeOwned>(&self, resp: reqwest::Response) -> Result<T> {
         if !resp.status().is_success() {
             return self.render_error(resp).await;
@@ -1896,6 +1933,76 @@ enum ServerCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Register a policy bundle (idempotent upsert by content fingerprint).
+    RegisterPolicyBundle {
+        /// Human-readable name for the bundle.
+        #[arg(long)]
+        name: String,
+
+        /// Free-form description of what this bundle governs.
+        #[arg(long)]
+        description: String,
+
+        /// Semantic version tag (e.g. "1.0.0").
+        #[arg(long)]
+        version: String,
+
+        /// Path to a JSON file containing OutcomeClause arrays
+        /// (optional, for bundle fingerprint verification).
+        #[arg(long)]
+        outcomes_file: Option<PathBuf>,
+
+        /// Server base URL (e.g. http://127.0.0.1:8080).
+        #[arg(long, env = "FERRUMCTL_SERVER_URL")]
+        server_url: Option<String>,
+
+        /// Bearer token for authentication.
+        #[arg(long, env = "FERRUMCTL_BEARER_TOKEN")]
+        bearer_token: Option<String>,
+
+        /// Output as JSON instead of human-readable.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Inspect a policy bundle by its deterministic bundle_id.
+    InspectPolicyBundle {
+        /// Policy bundle ID (UUID derived from bundle content fingerprint).
+        bundle_id: String,
+
+        /// Server base URL (e.g. http://127.0.0.1:8080).
+        #[arg(long, env = "FERRUMCTL_SERVER_URL")]
+        server_url: Option<String>,
+
+        /// Bearer token for authentication.
+        #[arg(long, env = "FERRUMCTL_BEARER_TOKEN")]
+        bearer_token: Option<String>,
+
+        /// Output as JSON instead of human-readable.
+        #[arg(long)]
+        json: bool,
+    },
+    /// List all policy bundles with cursor-based pagination.
+    ListPolicyBundles {
+        /// Maximum number of bundles to return (1-100, default 20).
+        #[arg(long)]
+        limit: Option<u32>,
+
+        /// Cursor from a previous listing's next_cursor.
+        #[arg(long)]
+        cursor: Option<String>,
+
+        /// Server base URL (e.g. http://127.0.0.1:8080).
+        #[arg(long, env = "FERRUMCTL_SERVER_URL")]
+        server_url: Option<String>,
+
+        /// Bearer token for authentication.
+        #[arg(long, env = "FERRUMCTL_BEARER_TOKEN")]
+        bearer_token: Option<String>,
+
+        /// Output as JSON instead of human-readable.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -2633,6 +2740,114 @@ async fn run_commit_execution(
         println!("  Committed: {}", resp.committed);
         if let Some(ts) = resp.committed_at {
             println!("  Committed at: {}", ts);
+        }
+    }
+    Ok(())
+}
+
+async fn run_register_policy_bundle(
+    name: &str,
+    description: &str,
+    version: &str,
+    outcomes_file: Option<&Path>,
+    url: Option<String>,
+    token: Option<String>,
+    as_json: bool,
+) -> Result<()> {
+    let (allowed_outcomes, forbidden_outcomes) = if let Some(path) = outcomes_file {
+        #[derive(serde::Deserialize)]
+        struct OutcomesFile {
+            allowed_outcomes: Option<Vec<ferrum_proto::intent::OutcomeClause>>,
+            forbidden_outcomes: Option<Vec<ferrum_proto::intent::OutcomeClause>>,
+        }
+        let content = std::fs::read_to_string(path)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        let parsed: OutcomesFile = serde_json::from_str(&content)
+            .with_context(|| format!("failed to parse JSON from {}", path.display()))?;
+        (parsed.allowed_outcomes, parsed.forbidden_outcomes)
+    } else {
+        (None, None)
+    };
+
+    let req = ferrum_proto::PolicyBundleRegisterRequest {
+        name: name.to_string(),
+        description: description.to_string(),
+        version: version.to_string(),
+        fingerprint: None,
+        allowed_outcomes,
+        forbidden_outcomes,
+    };
+
+    let url = resolve_server_url(url)?;
+    let client = ServerClient::new(&url, token);
+    let resp = client.register_policy_bundle(&req).await?;
+
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&resp)?);
+    } else {
+        println!("Policy bundle registered: {}", resp.bundle.bundle_id);
+        println!("  Name:    {}", resp.bundle.name);
+        println!("  Version: {}", resp.bundle.version);
+        println!("  Created: {}", resp.bundle.created_at);
+    }
+    Ok(())
+}
+
+async fn run_inspect_policy_bundle(
+    bundle_id: &str,
+    url: Option<String>,
+    token: Option<String>,
+    as_json: bool,
+) -> Result<()> {
+    // Validate bundle_id format before sending
+    let _ = bundle_id
+        .parse::<ferrum_proto::PolicyBundleId>()
+        .map_err(|_| anyhow::anyhow!("invalid bundle_id format: must be a valid UUID"))?;
+
+    let url = resolve_server_url(url)?;
+    let client = ServerClient::new(&url, token);
+    let resp = client.get_policy_bundle(bundle_id).await?;
+
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&resp)?);
+    } else {
+        println!("Policy bundle: {}", resp.bundle.bundle_id);
+        println!("  Name:        {}", resp.bundle.name);
+        println!("  Description: {}", resp.bundle.description);
+        println!("  Version:     {}", resp.bundle.version);
+        println!("  Created:     {}", resp.bundle.created_at);
+        println!("  Updated:     {}", resp.bundle.updated_at);
+    }
+    Ok(())
+}
+
+async fn run_list_policy_bundles(
+    limit: Option<u32>,
+    cursor: Option<String>,
+    url: Option<String>,
+    token: Option<String>,
+    as_json: bool,
+) -> Result<()> {
+    let url = resolve_server_url(url)?;
+    let client = ServerClient::new(&url, token);
+    let resp = client.list_policy_bundles(limit, cursor.as_deref()).await?;
+
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&resp)?);
+    } else {
+        if resp.items.is_empty() {
+            println!("No policy bundles found.");
+            return Ok(());
+        }
+        println!("Policy bundles ({}):", resp.items.len());
+        for bundle in resp.items {
+            println!(
+                "  {}  {}  v{}",
+                bundle.bundle_id, bundle.name, bundle.version
+            );
+        }
+        if let Some(next_cursor) = resp.next_cursor {
+            println!("Next cursor: {}", next_cursor);
         }
     }
     Ok(())
@@ -4528,6 +4743,43 @@ async fn main() -> Result<()> {
                 json,
             } => {
                 run_commit_execution(&execution_id, server_url, bearer_token, json).await?;
+            }
+            ServerCommand::RegisterPolicyBundle {
+                name,
+                description,
+                version,
+                outcomes_file,
+                server_url,
+                bearer_token,
+                json,
+            } => {
+                run_register_policy_bundle(
+                    &name,
+                    &description,
+                    &version,
+                    outcomes_file.as_deref(),
+                    server_url,
+                    bearer_token,
+                    json,
+                )
+                .await?;
+            }
+            ServerCommand::InspectPolicyBundle {
+                bundle_id,
+                server_url,
+                bearer_token,
+                json,
+            } => {
+                run_inspect_policy_bundle(&bundle_id, server_url, bearer_token, json).await?;
+            }
+            ServerCommand::ListPolicyBundles {
+                limit,
+                cursor,
+                server_url,
+                bearer_token,
+                json,
+            } => {
+                run_list_policy_bundles(limit, cursor, server_url, bearer_token, json).await?;
             }
         },
         Command::Debug { sub } => match sub {

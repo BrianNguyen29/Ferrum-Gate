@@ -5,6 +5,7 @@ pub mod common;
 pub mod execution;
 pub mod ids;
 pub mod intent;
+pub mod policy_bundle;
 pub mod provenance;
 pub mod rollback;
 
@@ -15,5 +16,6 @@ pub use common::*;
 pub use execution::*;
 pub use ids::*;
 pub use intent::*;
+pub use policy_bundle::*;
 pub use provenance::*;
 pub use rollback::*;
