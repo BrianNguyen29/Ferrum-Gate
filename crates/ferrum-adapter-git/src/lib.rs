@@ -1431,6 +1431,233 @@ fn run_git(repo_path: &str, args: &[&str]) -> Result<String, AdapterError> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+// =============================================================================
+// H1.3a: Persistent Named Remote Configuration
+// =============================================================================
+// This module provides persistent named-remote configuration for single-node
+// git workflows. It allows adding, getting, listing, updating, and removing
+// named remotes that persist in the local git config.
+//
+// Scope (H1.3a):
+//   - Named remote configuration persistence via git config
+//   - add/get/list/update/remove operations for single-node usage
+//   - No auth secrets storage (deferred to H1.3b)
+//   - No multi-remote mirroring (deferred to H1.3c)
+//
+// Remaining H1.3 work:
+//   - H1.3b: Authenticated remote support (HTTPS credentials, SSH keys)
+//   - H1.3c: Multi-remote mirroring
+
+/// Represents a named remote configuration.
+/// H1.3a stores only name and URL - auth is deferred to H1.3b.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NamedRemote {
+    /// The remote name (e.g., "origin", "upstream")
+    pub name: String,
+    /// The remote URL (e.g., "https://github.com/user/repo.git")
+    pub url: String,
+}
+
+/// Errors specific to named remote operations.
+#[derive(Debug, Clone)]
+pub enum RemoteConfigError {
+    /// Remote with this name already exists
+    AlreadyExists(String),
+    /// Remote with this name does not exist
+    NotFound(String),
+    /// Invalid remote name or URL
+    InvalidInput(String),
+}
+
+impl std::fmt::Display for RemoteConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RemoteConfigError::AlreadyExists(name) => {
+                write!(f, "remote '{}' already exists", name)
+            }
+            RemoteConfigError::NotFound(name) => {
+                write!(f, "remote '{}' not found", name)
+            }
+            RemoteConfigError::InvalidInput(msg) => {
+                write!(f, "invalid remote configuration: {}", msg)
+            }
+        }
+    }
+}
+
+impl From<RemoteConfigError> for AdapterError {
+    fn from(err: RemoteConfigError) -> Self {
+        match err {
+            RemoteConfigError::AlreadyExists(name) => {
+                AdapterError::Validation(format!("remote '{}' already exists", name))
+            }
+            RemoteConfigError::NotFound(name) => {
+                AdapterError::Validation(format!("remote '{}' not found", name))
+            }
+            RemoteConfigError::InvalidInput(msg) => {
+                AdapterError::Validation(format!("invalid remote configuration: {}", msg))
+            }
+        }
+    }
+}
+
+/// GitRemoteStore manages persistent named remote configurations for a repository.
+/// It uses git's native remote management, making remotes available to all git
+/// operations and ensuring they persist across FerrumGate restarts.
+///
+/// H1.3a scope: single-node local usage, no auth storage
+pub struct GitRemoteStore {
+    repo_path: String,
+}
+
+impl GitRemoteStore {
+    /// Creates a new GitRemoteStore for the given repository path.
+    pub fn new(repo_path: &str) -> Self {
+        Self {
+            repo_path: repo_path.to_string(),
+        }
+    }
+
+    /// Adds a new named remote.
+    ///
+    /// # Errors
+    /// Returns `RemoteConfigError::AlreadyExists` if a remote with this name exists.
+    /// Returns `RemoteConfigError::InvalidInput` if the name or URL is empty.
+    pub fn add_remote(&self, name: &str, url: &str) -> Result<NamedRemote, RemoteConfigError> {
+        if name.is_empty() {
+            return Err(RemoteConfigError::InvalidInput(
+                "remote name cannot be empty".to_string(),
+            ));
+        }
+        if url.is_empty() {
+            return Err(RemoteConfigError::InvalidInput(
+                "remote URL cannot be empty".to_string(),
+            ));
+        }
+
+        // Check if remote already exists
+        if git_remote_exists(&self.repo_path, name).unwrap_or(false) {
+            return Err(RemoteConfigError::AlreadyExists(name.to_string()));
+        }
+
+        // Add the remote using git remote add
+        run_git(&self.repo_path, &["remote", "add", name, url])
+            .map_err(|e| RemoteConfigError::InvalidInput(e.to_string()))?;
+
+        Ok(NamedRemote {
+            name: name.to_string(),
+            url: url.to_string(),
+        })
+    }
+
+    /// Gets a named remote by name.
+    ///
+    /// # Errors
+    /// Returns `RemoteConfigError::NotFound` if no remote with this name exists.
+    pub fn get_remote(&self, name: &str) -> Result<NamedRemote, RemoteConfigError> {
+        // Get the URL using git remote get-url
+        let output = run_git(&self.repo_path, &["remote", "get-url", name]).map_err(|e| {
+            // git remote get-url returns error if remote doesn't exist
+            if e.to_string().contains("No such remote") {
+                RemoteConfigError::NotFound(name.to_string())
+            } else {
+                RemoteConfigError::InvalidInput(e.to_string())
+            }
+        })?;
+
+        Ok(NamedRemote {
+            name: name.to_string(),
+            url: output,
+        })
+    }
+
+    /// Lists all configured named remotes.
+    ///
+    /// Returns an empty vector if no remotes are configured.
+    pub fn list_remotes(&self) -> Result<Vec<NamedRemote>, RemoteConfigError> {
+        // Use git remote -v to get all remotes with their URLs
+        // Output format: "origin\t<url> (fetch)" per line
+        let output = run_git(&self.repo_path, &["remote", "-v"])
+            .map_err(|e| RemoteConfigError::InvalidInput(e.to_string()))?;
+
+        let mut remotes = Vec::new();
+        let mut seen_names = std::collections::HashSet::new();
+
+        for line in output.lines() {
+            // Each line is: "name\turl (fetch)" or "name\turl (push)"
+            // We only want the fetch lines
+            if let Some((name, rest)) = line.split_once('\t') {
+                if rest.contains("(push)") {
+                    continue;
+                }
+                if let Some((url, _)) = rest.split_once(' ') {
+                    let url = url.trim();
+                    if !seen_names.contains(name) {
+                        seen_names.insert(name.to_string());
+                        remotes.push(NamedRemote {
+                            name: name.to_string(),
+                            url: url.to_string(),
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(remotes)
+    }
+
+    /// Updates the URL of an existing named remote.
+    ///
+    /// # Errors
+    /// Returns `RemoteConfigError::NotFound` if no remote with this name exists.
+    /// Returns `RemoteConfigError::InvalidInput` if the new URL is empty.
+    pub fn update_remote(
+        &self,
+        name: &str,
+        new_url: &str,
+    ) -> Result<NamedRemote, RemoteConfigError> {
+        if new_url.is_empty() {
+            return Err(RemoteConfigError::InvalidInput(
+                "remote URL cannot be empty".to_string(),
+            ));
+        }
+
+        // First verify the remote exists
+        if !git_remote_exists(&self.repo_path, name).unwrap_or(false) {
+            return Err(RemoteConfigError::NotFound(name.to_string()));
+        }
+
+        // Update the URL using git remote set-url
+        run_git(&self.repo_path, &["remote", "set-url", name, new_url])
+            .map_err(|e| RemoteConfigError::InvalidInput(e.to_string()))?;
+
+        Ok(NamedRemote {
+            name: name.to_string(),
+            url: new_url.to_string(),
+        })
+    }
+
+    /// Removes a named remote.
+    ///
+    /// # Errors
+    /// Returns `RemoteConfigError::NotFound` if no remote with this name exists.
+    pub fn remove_remote(&self, name: &str) -> Result<(), RemoteConfigError> {
+        // First verify the remote exists
+        if !git_remote_exists(&self.repo_path, name).unwrap_or(false) {
+            return Err(RemoteConfigError::NotFound(name.to_string()));
+        }
+
+        // Remove the remote using git remote remove
+        run_git(&self.repo_path, &["remote", "remove", name])
+            .map_err(|e| RemoteConfigError::InvalidInput(e.to_string()))?;
+
+        Ok(())
+    }
+}
+
+// Re-export for convenience
+pub use GitRemoteStore as NamedRemoteStore;
+
 pub fn register_git_adapter(registry: &mut AdapterRegistry) {
     registry.register(std::sync::Arc::new(GitRollbackAdapter::new(ADAPTER_KEY)));
 }
@@ -4076,5 +4303,330 @@ mod tests {
         );
 
         drop(main_temp);
+    }
+
+    // ============ H1.3a Named Remote Configuration Tests ============
+    // Persistent named-remote configuration for single-node git workflows.
+    // Scope: add/get/list/update/remove operations, no auth storage.
+
+    fn init_temp_repo_with_remote() -> (TempDir, String, TempDir, String) {
+        // Create the main repo
+        let main_temp = TempDir::new().unwrap();
+        let main_path = main_temp.path().to_str().unwrap().to_string();
+        run_git(&main_path, &["init"]).unwrap();
+        run_git(&main_path, &["config", "user.name", "Ferrum Test"]).unwrap();
+        run_git(&main_path, &["config", "user.email", "ferrum@example.com"]).unwrap();
+
+        std::fs::write(main_temp.path().join("README.md"), "hello\n").unwrap();
+        run_git(&main_path, &["add", "README.md"]).unwrap();
+        run_git(&main_path, &["commit", "-m", "initial"]).unwrap();
+
+        // Create a bare repo to act as remote
+        let remote_temp = TempDir::new().unwrap();
+        let remote_path = remote_temp.path().to_str().unwrap().to_string();
+        run_git(&remote_path, &["init", "--bare"]).unwrap();
+
+        (main_temp, main_path, remote_temp, remote_path)
+    }
+
+    #[test]
+    fn test_named_remote_add_and_get() {
+        let (main_temp, main_path, remote_temp, remote_path) = init_temp_repo_with_remote();
+        let store = GitRemoteStore::new(&main_path);
+        let remote_url = format!("file://{}", remote_path);
+
+        // Add a new remote
+        let remote = store.add_remote("origin", &remote_url).unwrap();
+        assert_eq!(remote.name, "origin");
+        assert_eq!(remote.url, remote_url);
+
+        // Get the remote
+        let retrieved = store.get_remote("origin").unwrap();
+        assert_eq!(retrieved.name, "origin");
+        assert_eq!(retrieved.url, remote_url);
+
+        drop(main_temp);
+        drop(remote_temp);
+    }
+
+    #[test]
+    fn test_named_remote_add_rejects_duplicate() {
+        let (main_temp, main_path, remote_temp, remote_path) = init_temp_repo_with_remote();
+        let store = GitRemoteStore::new(&main_path);
+        let remote_url = format!("file://{}", remote_path);
+
+        // Add first remote
+        store.add_remote("origin", &remote_url).unwrap();
+
+        // Attempting to add duplicate should fail
+        let err = store.add_remote("origin", &remote_url).unwrap_err();
+        assert!(
+            matches!(err, RemoteConfigError::AlreadyExists(ref name) if name == "origin"),
+            "Expected AlreadyExists error, got: {:?}",
+            err
+        );
+
+        drop(main_temp);
+        drop(remote_temp);
+    }
+
+    #[test]
+    fn test_named_remote_add_rejects_empty_name() {
+        let (main_temp, main_path, _remote_temp, _remote_path) = init_temp_repo_with_remote();
+        let store = GitRemoteStore::new(&main_path);
+
+        let err = store
+            .add_remote("", "https://example.com/repo.git")
+            .unwrap_err();
+        assert!(
+            matches!(err, RemoteConfigError::InvalidInput(ref msg) if msg.contains("name cannot be empty")),
+            "Expected InvalidInput error for empty name, got: {:?}",
+            err
+        );
+
+        drop(main_temp);
+    }
+
+    #[test]
+    fn test_named_remote_add_rejects_empty_url() {
+        let (main_temp, main_path, _remote_temp, _remote_path) = init_temp_repo_with_remote();
+        let store = GitRemoteStore::new(&main_path);
+
+        let err = store.add_remote("origin", "").unwrap_err();
+        assert!(
+            matches!(err, RemoteConfigError::InvalidInput(ref msg) if msg.contains("URL cannot be empty")),
+            "Expected InvalidInput error for empty URL, got: {:?}",
+            err
+        );
+
+        drop(main_temp);
+    }
+
+    #[test]
+    fn test_named_remote_list_empty() {
+        let (main_temp, main_path, _remote_temp, _remote_path) = init_temp_repo_with_remote();
+        let store = GitRemoteStore::new(&main_path);
+
+        let remotes = store.list_remotes().unwrap();
+        assert!(
+            remotes.is_empty(),
+            "Expected no remotes, got: {:?}",
+            remotes
+        );
+
+        drop(main_temp);
+    }
+
+    #[test]
+    fn test_named_remote_list_after_add() {
+        let (main_temp, main_path, remote_temp, remote_path) = init_temp_repo_with_remote();
+        let store = GitRemoteStore::new(&main_path);
+        let remote_url = format!("file://{}", remote_path);
+
+        // Add two remotes
+        store.add_remote("origin", &remote_url).unwrap();
+        store.add_remote("backup", &remote_url).unwrap();
+
+        let remotes = store.list_remotes().unwrap();
+        assert_eq!(remotes.len(), 2);
+
+        // Check both remotes are present
+        let names: Vec<&str> = remotes.iter().map(|r| r.name.as_str()).collect();
+        assert!(names.contains(&"origin"));
+        assert!(names.contains(&"backup"));
+
+        drop(main_temp);
+        drop(remote_temp);
+    }
+
+    #[test]
+    fn test_named_remote_get_nonexistent() {
+        let (main_temp, main_path, _remote_temp, _remote_path) = init_temp_repo_with_remote();
+        let store = GitRemoteStore::new(&main_path);
+
+        let err = store.get_remote("nonexistent").unwrap_err();
+        assert!(
+            matches!(err, RemoteConfigError::NotFound(ref name) if name == "nonexistent"),
+            "Expected NotFound error, got: {:?}",
+            err
+        );
+
+        drop(main_temp);
+    }
+
+    #[test]
+    fn test_named_remote_update() {
+        let (main_temp, main_path, remote_temp, remote_path) = init_temp_repo_with_remote();
+        let store = GitRemoteStore::new(&main_path);
+        let remote_url = format!("file://{}", remote_path);
+
+        // Add remote
+        store.add_remote("origin", &remote_url).unwrap();
+
+        // Update the URL
+        let new_url = format!("file://{}/updated", remote_path);
+        let updated = store.update_remote("origin", &new_url).unwrap();
+        assert_eq!(updated.name, "origin");
+        assert_eq!(updated.url, new_url);
+
+        // Verify update persisted
+        let retrieved = store.get_remote("origin").unwrap();
+        assert_eq!(retrieved.url, new_url);
+
+        drop(main_temp);
+        drop(remote_temp);
+    }
+
+    #[test]
+    fn test_named_remote_update_nonexistent() {
+        let (main_temp, main_path, _remote_temp, _remote_path) = init_temp_repo_with_remote();
+        let store = GitRemoteStore::new(&main_path);
+
+        let err = store
+            .update_remote("nonexistent", "https://example.com/repo.git")
+            .unwrap_err();
+        assert!(
+            matches!(err, RemoteConfigError::NotFound(ref name) if name == "nonexistent"),
+            "Expected NotFound error, got: {:?}",
+            err
+        );
+
+        drop(main_temp);
+    }
+
+    #[test]
+    fn test_named_remote_update_rejects_empty_url() {
+        let (main_temp, main_path, remote_temp, remote_path) = init_temp_repo_with_remote();
+        let store = GitRemoteStore::new(&main_path);
+        let remote_url = format!("file://{}", remote_path);
+
+        store.add_remote("origin", &remote_url).unwrap();
+
+        let err = store.update_remote("origin", "").unwrap_err();
+        assert!(
+            matches!(err, RemoteConfigError::InvalidInput(ref msg) if msg.contains("URL cannot be empty")),
+            "Expected InvalidInput error for empty URL, got: {:?}",
+            err
+        );
+
+        drop(main_temp);
+        drop(remote_temp);
+    }
+
+    #[test]
+    fn test_named_remote_remove() {
+        let (main_temp, main_path, remote_temp, remote_path) = init_temp_repo_with_remote();
+        let store = GitRemoteStore::new(&main_path);
+        let remote_url = format!("file://{}", remote_path);
+
+        // Add remote
+        store.add_remote("origin", &remote_url).unwrap();
+
+        // Verify it exists
+        assert!(store.get_remote("origin").is_ok());
+
+        // Remove it
+        store.remove_remote("origin").unwrap();
+
+        // Verify it's gone
+        let err = store.get_remote("origin").unwrap_err();
+        assert!(
+            matches!(err, RemoteConfigError::NotFound(ref name) if name == "origin"),
+            "Expected NotFound after removal, got: {:?}",
+            err
+        );
+
+        // Verify list is empty
+        assert!(store.list_remotes().unwrap().is_empty());
+
+        drop(main_temp);
+        drop(remote_temp);
+    }
+
+    #[test]
+    fn test_named_remote_remove_nonexistent() {
+        let (main_temp, main_path, _remote_temp, _remote_path) = init_temp_repo_with_remote();
+        let store = GitRemoteStore::new(&main_path);
+
+        let err = store.remove_remote("nonexistent").unwrap_err();
+        assert!(
+            matches!(err, RemoteConfigError::NotFound(ref name) if name == "nonexistent"),
+            "Expected NotFound error, got: {:?}",
+            err
+        );
+
+        drop(main_temp);
+    }
+
+    #[test]
+    fn test_named_remote_persistence_across_operations() {
+        // Verify that adding a remote persists and it's available for push/fetch operations
+        let (main_temp, main_path, remote_temp, remote_path) = init_temp_repo_with_remote();
+        let store = GitRemoteStore::new(&main_path);
+        let remote_url = format!("file://{}", remote_path);
+
+        // Add remote via store
+        store.add_remote("origin", &remote_url).unwrap();
+
+        // Verify the remote is recognized by git
+        assert!(git_remote_exists(&main_path, "origin").unwrap());
+
+        // Verify push works with the configured remote
+        git_push(&main_path, "origin", "master").unwrap();
+
+        // Verify the push actually happened
+        let remote_ref = git_remote_ref(&main_path, "origin", "master").unwrap();
+        let local_head = git_head(&main_path).unwrap();
+        assert_eq!(remote_ref, local_head);
+
+        drop(main_temp);
+        drop(remote_temp);
+    }
+
+    #[test]
+    fn test_named_remote_multiple_remotes() {
+        // Test managing multiple remotes simultaneously
+        let (main_temp, main_path, remote_temp, remote_path) = init_temp_repo_with_remote();
+        let store = GitRemoteStore::new(&main_path);
+        let remote_url = format!("file://{}", remote_path);
+
+        // Create a second bare repo for the second remote
+        let remote2_temp = TempDir::new().unwrap();
+        let remote2_path = remote2_temp.path().to_str().unwrap().to_string();
+        run_git(&remote2_path, &["init", "--bare"]).unwrap();
+        let remote2_url = format!("file://{}", remote2_path);
+
+        // Add two remotes
+        store.add_remote("primary", &remote_url).unwrap();
+        store.add_remote("secondary", &remote2_url).unwrap();
+
+        // List should show both
+        let remotes = store.list_remotes().unwrap();
+        assert_eq!(remotes.len(), 2);
+
+        // Push to primary
+        git_push(&main_path, "primary", "master").unwrap();
+
+        // Push to secondary
+        git_push(&main_path, "secondary", "master").unwrap();
+
+        // Verify both have the commit
+        let primary_ref = git_remote_ref(&main_path, "primary", "master").unwrap();
+        let secondary_ref = git_remote_ref(&main_path, "secondary", "master").unwrap();
+        let local_head = git_head(&main_path).unwrap();
+        assert_eq!(primary_ref, local_head);
+        assert_eq!(secondary_ref, local_head);
+
+        // Remove primary
+        store.remove_remote("primary").unwrap();
+
+        // List should only show secondary
+        let remotes = store.list_remotes().unwrap();
+        assert_eq!(remotes.len(), 1);
+        assert_eq!(remotes[0].name, "secondary");
+
+        drop(main_temp);
+        drop(remote_temp);
+        drop(remote2_temp);
     }
 }

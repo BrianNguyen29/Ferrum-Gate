@@ -89,8 +89,16 @@ requiring new architectural work.
   - Authenticated remote support (HTTPS with credentials, SSH with key)
   - Non-temporary remote tracking (persist remote config across executions)
   - Multi-remote support and remote mirroring
-- **Status:** ⬜ PLANNED
+- **Status:** 🏗 IN PROGRESS — H1.3a delivered; H1.3b (auth) and H1.3c (mirroring) remain
 - **Note:** Current P2.4 git remote workflows use local temporary remotes only. Broader remote/external workflows are post-v1 backlog.
+
+**H1.3 sub-slice status:**
+
+| Sub-slice | What | Status |
+|-----------|------|--------|
+| **H1.3a** | Persistent named-remote configuration — `GitRemoteStore` with add/get/list/update/remove operations for single-node local usage; remotes persist in git config | ✅ DONE |
+| H1.3b | Authenticated remote support (HTTPS credentials, SSH keys) | ⬜ PLANNED |
+| H1.3c | Multi-remote support and remote mirroring | ⬜ PLANNED |
 
 ### H1.4 — fs/sqlite — Broader Production-Verified Integration
 
@@ -254,7 +262,7 @@ source references). Neither overrides the v1 support contract or the v2 ratified
 |------|-----------|-------|
 | H1.1 Policy bundle tooling | `30-production-roadmap.md` P4.2 | ⏸ DEFERRED post-G-E3 |
 | H1.2 U1 remaining backlog | `11-remaining-tasks.md` lines 88-91 | U1 core ✅ DONE |
-| H1.3 git deeper integration | `11-remaining-tasks.md` lines 83-87 | P2.4 ✅ bounded local |
+| H1.3 git deeper integration | `11-remaining-tasks.md` lines 83-87 | H1.3a ✅ DONE (remote config); H1.3b/c remain |
 | H2.1 HA / multi-leader | `30-production-roadmap.md` P5.7 | post-P2 |
 | H2.2 U2 Reversible Planner | `11-remaining-tasks.md` line 93 | |
 | H3.1 U3 Provenance Fabric | `11-remaining-tasks.md` line 96 | |
