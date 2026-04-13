@@ -128,7 +128,7 @@ full detail is in the roadmap doc.
 | Item | Status | Horizon | Roadmap ref |
 |------|--------|---------|-------------|
 | P4.1 `ferrumctl` advanced operator flows | ✅ DONE | — | `30-production-roadmap.md` P4.1 |
-| P4.2 Policy bundle lifecycle tooling | ⏸ DEFERRED | H1 | `50-post-v2-roadmap.md` H1.1 |
+| P4.2 Policy bundle lifecycle tooling | 🏗 IN PROGRESS — H1.1a foundation DONE (API + storage + ferrumctl surface); H1.1b–H1.1d remaining | H1 | `50-post-v2-roadmap.md` H1.1 |
 | P5.4–P5.5 Sync-1 preflight + decision table | ✅ DONE | — | `30-production-roadmap.md` P5.4–P5.5 |
 | P5.7 HA / multi-leader replication | ⬜ PLANNED | H2 | `50-post-v2-roadmap.md` H2.1 |
 | U1 remaining backlog (expressiveness + authoring CLI) | ⬜ PLANNED | H1 | `50-post-v2-roadmap.md` H1.2 |

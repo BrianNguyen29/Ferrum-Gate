@@ -4,5 +4,6 @@ pub mod sqlite;
 pub mod sync_service;
 
 pub use error::{Result, StoreError};
+pub use repos::PolicyBundleRepo;
 pub use repos::*;
 pub use sqlite::SqliteStore;

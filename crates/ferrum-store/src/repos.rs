@@ -3,9 +3,9 @@ use ferrum_ledger::LedgerEntry;
 use ferrum_proto::{
     ActionProposal, ApprovalId, ApprovalRequest, ApprovalState, CapabilityId, CapabilityLease,
     CapabilityStatus, EventId, ExecutionId, ExecutionRecord, ExecutionState, IntentEnvelope,
-    IntentId, IntentStatus, ProposalId, ProvenanceEdge, ProvenanceEvent, ProvenanceQueryRequest,
-    ProvenanceStatsRequest, ProvenanceStatsResponse, RollbackContract, RollbackContractId,
-    RollbackState,
+    IntentId, IntentStatus, PolicyBundle, PolicyBundleId, ProposalId, ProvenanceEdge,
+    ProvenanceEvent, ProvenanceQueryRequest, ProvenanceStatsRequest, ProvenanceStatsResponse,
+    RollbackContract, RollbackContractId, RollbackState,
 };
 
 use crate::Result;
@@ -171,4 +171,30 @@ pub trait LedgerRepo: Send + Sync {
     /// Lists all ledger entries ordered by entry_id ASC (chronological order).
     /// Used for chain verification after loading from persistence.
     async fn list_all(&self) -> Result<Vec<LedgerEntry>>;
+}
+
+/// Repository trait for policy bundle persistence.
+///
+/// H1.1a: Provides bounded CRUD operations for policy bundle lifecycle management:
+/// - Register a new bundle (idempotent by derived bundle_id)
+/// - Fetch a bundle by its deterministic id
+/// - List all bundles with cursor-based pagination
+///
+/// No engine swap, no policy evaluation changes, single-node/local-only storage.
+#[async_trait]
+pub trait PolicyBundleRepo: Send + Sync {
+    /// Register (upsert) a policy bundle. If a bundle with the same bundle_id
+    /// already exists, update its metadata (name, description, version).
+    async fn upsert(&self, bundle: &PolicyBundle) -> Result<()>;
+
+    /// Fetch a bundle by its deterministic bundle_id.
+    async fn get(&self, bundle_id: PolicyBundleId) -> Result<Option<PolicyBundle>>;
+
+    /// List all bundles ordered by created_at DESC with cursor-based pagination.
+    /// Returns (items, next_cursor) where next_cursor is None if this is the last page.
+    async fn list_cursor(
+        &self,
+        limit: u32,
+        after_cursor: Option<&str>,
+    ) -> Result<(Vec<PolicyBundle>, Option<String>)>;
 }

@@ -7,6 +7,7 @@ mod leader_allowlist;
 pub mod leader_tip_cache;
 mod ledger;
 mod migrations;
+mod policy_bundles;
 mod proposals;
 mod provenance;
 mod rollback;
@@ -20,6 +21,7 @@ pub use capabilities::SqliteCapabilityRepo;
 pub use executions::SqliteExecutionRepo;
 pub use intents::SqliteIntentRepo;
 pub use ledger::SqliteLedgerRepo;
+pub use policy_bundles::SqlitePolicyBundleRepo;
 pub use proposals::SqliteProposalRepo;
 pub use provenance::SqliteProvenanceRepo;
 pub use rollback::SqliteRollbackRepo;
@@ -117,6 +119,10 @@ impl SqliteStore {
 
     pub fn ledger(&self) -> SqliteLedgerRepo {
         SqliteLedgerRepo::new(self.pool.clone())
+    }
+
+    pub fn policy_bundles(&self) -> SqlitePolicyBundleRepo {
+        SqlitePolicyBundleRepo::new(self.pool.clone())
     }
 
     /// Create a `SqliteSyncPreflightRepo` backed by this store.
