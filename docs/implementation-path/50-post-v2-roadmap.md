@@ -100,13 +100,13 @@ requiring new architectural work.
 
 Sub-slices (bounded; not all required for H1 completion):
 
-| Sub-slice | What | Bounded scope |
-|-----------|------|---------------|
-| **H1.4a** — sqlite WAL-mode production tuning | Write-ahead log parameterization, durability vs. throughput tradeoffs, checkpoint automation | Single-node SQLite; does not include HA replication |
-| **H1.4b** — sqlite backup/restore automation | Tooling for point-in-time backup and restore under live execution | Single-node; does not include multi-node snapshotting |
-| **H1.4c** — sqlite larger-than-memory dataset handling | Streaming/chunked query patterns, pagination across large intent/execution tables | Single-node; does not include sharding |
-| **H1.4d** — fs permission boundary hardening | Permission boundary verification in multi-tenant local filesystem contexts | Local fs adapter only; does not include networked/SAN attachment |
-| **H1.4e** — fs networked/storage-area-attached integration |SAN/NFS-mounted filesystem adapter integration with digest/verify semantics | Out-of-scope for v2 single-node; flagged for H2+ if value justifies |
+| Sub-slice | What | Bounded scope | Status |
+|-----------|------|---------------|--------|
+| **H1.4a** — sqlite WAL-mode production tuning | Write-ahead log parameterization, durability vs. throughput tradeoffs, checkpoint automation | Single-node SQLite; does not include HA replication | ⬜ PLANNED |
+| **H1.4b** — sqlite backup/restore automation | `ferrumctl store backup` and `ferrumctl store restore` for local SQLite backup/restore automation; uses sqlite3 CLI with online backup support | Single-node; does not include multi-node snapshotting | ✅ DONE |
+| **H1.4c** — sqlite larger-than-memory dataset handling | Streaming/chunked query patterns, pagination across large intent/execution tables | Single-node; does not include sharding | ⬜ PLANNED |
+| **H1.4d** — fs permission boundary hardening | Permission boundary verification in multi-tenant local filesystem contexts | Local fs adapter only; does not include networked/SAN attachment | ⬜ PLANNED |
+| **H1.4e** — fs networked/storage-area-attached integration |SAN/NFS-mounted filesystem adapter integration with digest/verify semantics | Out-of-scope for v2 single-node; flagged for H2+ if value justifies | ⬜ PLANNED |
 
 - **Note:** H1.4a–H1.4c are the primary sqlite sub-slices and are order-independent.
   H1.4d is the primary fs sub-slice. H1.4e is explicitly optional and lower priority.

@@ -39,9 +39,29 @@ These are documented in [15-deployment-and-operations.md](../15-deployment-and-o
   # If you see "memory" in the DSN, backup is not needed (ephemeral state).
   ```
 
+## CLI Automation (H1.4b)
+
+The `ferrumctl store` command provides local SQLite backup/restore automation:
+
+```sh
+# Check sqlite3 CLI availability
+ferrumctl store check-sqlite3
+
+# Backup (online — ferrumd can keep running)
+ferrumctl store backup
+ferrumctl store backup --db-path /opt/ferrumgate/ferrumgate.prod.db
+ferrumctl store backup --output /opt/ferrumgate/backups/my-backup.db --verify
+
+# Restore (safety confirmation gate unless --yes)
+ferrumctl store restore /opt/ferrumgate/backups/my-backup.db
+ferrumctl store restore /opt/ferrumgate/backups/my-backup.db --yes --verify
+```
+
+All backup and restore operations require the `sqlite3` CLI. See `ferrumctl store --help` for full options.
+
 ---
 
-## Backup
+## Manual Backup (without ferrumctl store)
 
 ### Online backup with ferrumd running (preferred)
 

@@ -22,6 +22,7 @@ use ferrum_proto::{CapabilityId, ExecutionId, IntentId, ProposalId};
 use reqwest::Client;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 use uuid::Uuid;
@@ -1056,6 +1057,11 @@ enum Command {
     Author {
         #[command(subcommand)]
         sub: AuthorCommand,
+    },
+    /// Store commands for local SQLite backup/restore automation (H1.4b).
+    Store {
+        #[command(subcommand)]
+        sub: StoreCommand,
     },
 }
 
@@ -2153,6 +2159,50 @@ enum ValidateCommand {
 }
 
 // =============================================================================
+// Local store commands (H1.4b)
+// =============================================================================
+
+#[derive(Debug, Subcommand)]
+enum StoreCommand {
+    /// Create an online backup of the SQLite database using the sqlite3 CLI.
+    Backup {
+        /// Path to the SQLite database file (e.g. ferrumgate.prod.db).
+        /// If not specified, resolves from FERRUMD_STORE_DSN or store.dsn config.
+        #[arg(long)]
+        db_path: Option<PathBuf>,
+
+        /// Output path for the backup file.
+        /// Defaults to {db_path}.{timestamp}.backup in the same directory.
+        #[arg(long)]
+        output: Option<PathBuf>,
+
+        /// Verify the backup with PRAGMA integrity_check after creation.
+        #[arg(long)]
+        verify: bool,
+    },
+    /// Restore the SQLite database from a backup file.
+    Restore {
+        /// Path to the backup file to restore from.
+        backup_file: PathBuf,
+
+        /// Path to the SQLite database file to restore to.
+        /// Defaults to the path resolved from FERRUMD_STORE_DSN or store.dsn.
+        #[arg(long)]
+        db_path: Option<PathBuf>,
+
+        /// Skip confirmation prompt. USE WITH CAUTION — this will overwrite the current database.
+        #[arg(long)]
+        yes: bool,
+
+        /// Verify the backup file with PRAGMA integrity_check before restoring.
+        #[arg(long)]
+        verify: bool,
+    },
+    /// Check if the sqlite3 CLI is available and print its version.
+    CheckSqlite3,
+}
+
+// =============================================================================
 // Local author commands (H1.2b)
 // =============================================================================
 
@@ -2537,6 +2587,242 @@ fn run_author_bundle_validate(file: &Path) -> Result<()> {
         }
         bail!("validation failed with {} error(s)", errors.len());
     }
+}
+
+// =============================================================================
+// Local store commands — SQLite backup/restore (H1.4b)
+// =============================================================================
+
+/// Check if sqlite3 CLI is available and return its version string.
+fn check_sqlite3_available() -> Result<String> {
+    let output = ProcessCommand::new("sqlite3")
+        .arg("--version")
+        .output()
+        .context("sqlite3 CLI not found — install sqlite3 to use store backup/restore commands")?;
+    if !output.status.success() {
+        bail!("sqlite3 --version returned non-zero exit code");
+    }
+    let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    Ok(version)
+}
+
+/// Verifies a SQLite database file with PRAGMA integrity_check.
+fn verify_sqlite_db(db_path: &Path) -> Result<()> {
+    let output = ProcessCommand::new("sqlite3")
+        .arg(db_path)
+        .arg("PRAGMA integrity_check;")
+        .output()
+        .with_context(|| format!("failed to run integrity_check on {}", db_path.display()))?;
+    if !output.status.success() {
+        bail!(
+            "integrity_check failed for {}: {}",
+            db_path.display(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let result = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if result == "ok" {
+        Ok(())
+    } else {
+        bail!(
+            "integrity_check returned: {} — database may be corrupted",
+            result
+        );
+    }
+}
+
+/// Resolves the database path from FERRUMD_STORE_DSN env var or falls back to a default.
+/// Returns the filesystem path for file-based SQLite DSNs.
+fn resolve_db_path_from_env() -> Result<PathBuf> {
+    let dsn = std::env::var("FERRUMD_STORE_DSN")
+        .ok()
+        .or_else(|| Some("sqlite://ferrumgate.dev.db".to_string())) // fallback to dev default
+        .context("no store DSN found in FERRUMD_STORE_DSN")?;
+
+    // Parse sqlite://... DSN — strip scheme prefix
+    let path_str = dsn.strip_prefix("sqlite://").unwrap_or(&dsn);
+
+    let path = PathBuf::from(path_str);
+    if path.exists() {
+        Ok(path)
+    } else {
+        // If the resolved path doesn't exist, still return it — it may be the target
+        // for a restore or a path that will be created
+        Ok(path)
+    }
+}
+
+/// Creates an online backup of the SQLite database using sqlite3 CLI.
+/// The backup is performed while ferrumd is running (SQLite's .backup is consistent).
+fn run_store_backup(db_path: Option<PathBuf>, output: Option<PathBuf>, verify: bool) -> Result<()> {
+    let sqlite_version = check_sqlite3_available()?;
+    println!("sqlite3 version: {}", sqlite_version);
+
+    let resolved_db = match db_path {
+        Some(p) => p,
+        None => resolve_db_path_from_env()?,
+    };
+
+    if !resolved_db.exists() {
+        bail!(
+            "database file not found: {} — cannot back up non-existent database",
+            resolved_db.display()
+        );
+    }
+
+    let resolved_output = match output {
+        Some(p) => p,
+        None => {
+            let timestamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
+            let stem = resolved_db
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("ferrumgate");
+            let parent = resolved_db.parent().unwrap_or(std::path::Path::new("."));
+            parent.join(format!("{}.{}.backup", stem, timestamp))
+        }
+    };
+
+    println!(
+        "Backing up {} to {} (ferrumd can remain running)...",
+        resolved_db.display(),
+        resolved_output.display()
+    );
+
+    // Create parent directory if needed
+    if let Some(parent) = resolved_output.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create directory {}", parent.display()))?;
+        }
+    }
+
+    // Run online backup via sqlite3 CLI
+    let output_cmd = ProcessCommand::new("sqlite3")
+        .arg(&resolved_db)
+        .arg(format!(".backup '{}'", resolved_output.display()))
+        .output()
+        .with_context(|| {
+            format!(
+                "failed to run sqlite3 backup command for {}",
+                resolved_db.display()
+            )
+        })?;
+
+    if !output_cmd.status.success() {
+        bail!(
+            "sqlite3 .backup failed: {}",
+            String::from_utf8_lossy(&output_cmd.stderr)
+        );
+    }
+
+    // Verify backup if requested
+    if verify {
+        println!("Verifying backup...");
+        verify_sqlite_db(&resolved_output)?;
+        println!("Backup verified OK.");
+    } else {
+        // Always do a quick sanity check (non-zero means corrupted or not a valid SQLite)
+        let check_output = ProcessCommand::new("sqlite3")
+            .arg(&resolved_output)
+            .arg("SELECT 1;")
+            .output()
+            .context("backup sanity check failed")?;
+        if !check_output.status.success() {
+            bail!("backup sanity check failed — file may not be a valid SQLite database");
+        }
+    }
+
+    println!("Backup complete: {}", resolved_output.display());
+    Ok(())
+}
+
+/// Restores the SQLite database from a backup file.
+/// This is a destructive operation that replaces the current database.
+fn run_store_restore(
+    backup_file: &Path,
+    db_path: Option<PathBuf>,
+    yes: bool,
+    verify: bool,
+) -> Result<()> {
+    let sqlite_version = check_sqlite3_available()?;
+    println!("sqlite3 version: {}", sqlite_version);
+
+    if !backup_file.exists() {
+        bail!("backup file not found: {}", backup_file.display());
+    }
+
+    // Verify backup file first if requested
+    if verify {
+        println!("Verifying backup file...");
+        verify_sqlite_db(backup_file)?;
+        println!("Backup file verified OK.");
+    } else {
+        // Quick sanity check even without --verify
+        let check_output = ProcessCommand::new("sqlite3")
+            .arg(backup_file)
+            .arg("SELECT 1;")
+            .output()
+            .context("backup file sanity check failed")?;
+        if !check_output.status.success() {
+            bail!("backup file does not appear to be a valid SQLite database");
+        }
+    }
+
+    let resolved_db = match db_path {
+        Some(p) => p,
+        None => resolve_db_path_from_env()?,
+    };
+
+    // Confirmation gate unless --yes
+    if !yes {
+        println!();
+        println!("WARNING: This will OVERWRITE the current database:");
+        println!("  Target:  {}", resolved_db.display());
+        println!("  Source:  {}", backup_file.display());
+        println!();
+        println!("ferrumd should be stopped before restoring to avoid corruption.");
+        println!();
+        print!("Type 'yes' to confirm: ");
+        if std::io::stdout().flush().is_err() {
+            // stdout may already be redirected; skip confirmation in that case
+        }
+        let mut input = String::new();
+        let read_result = std::io::stdin().read_line(&mut input);
+        if read_result.is_err() {
+            println!("Restore aborted — could not read confirmation (non-interactive mode?).");
+            bail!("restore aborted — confirmation not received");
+        }
+        let input = input.trim().to_lowercase();
+        if input != "yes" {
+            println!("Restore aborted.");
+            bail!("restore aborted — confirmation not received");
+        }
+    } else {
+        println!("Skipping confirmation (--yes set).");
+        println!();
+        println!("WARNING: Restoring database:");
+        println!("  Target:  {}", resolved_db.display());
+        println!("  Source:  {}", backup_file.display());
+        println!();
+    }
+
+    // Copy backup to target
+    std::fs::copy(backup_file, &resolved_db).with_context(|| {
+        format!(
+            "failed to copy {} to {}",
+            backup_file.display(),
+            resolved_db.display()
+        )
+    })?;
+
+    // Post-restore integrity check
+    println!("Verifying restored database...");
+    verify_sqlite_db(&resolved_db)?;
+    println!("Restore verified OK.");
+
+    println!("Restore complete: {}", resolved_db.display());
+    Ok(())
 }
 
 // =============================================================================
@@ -5340,6 +5626,27 @@ async fn main() -> Result<()> {
                     run_author_bundle_validate(&file)?;
                 }
             },
+        },
+        Command::Store { sub } => match sub {
+            StoreCommand::CheckSqlite3 => {
+                let version = check_sqlite3_available()?;
+                println!("sqlite3 is available: {}", version);
+            }
+            StoreCommand::Backup {
+                db_path,
+                output,
+                verify,
+            } => {
+                run_store_backup(db_path, output, verify)?;
+            }
+            StoreCommand::Restore {
+                backup_file,
+                db_path,
+                yes,
+                verify,
+            } => {
+                run_store_restore(&backup_file, db_path, yes, verify)?;
+            }
         },
     }
     Ok(())
