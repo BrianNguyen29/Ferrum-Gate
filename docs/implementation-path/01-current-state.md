@@ -78,13 +78,14 @@ The following H1 sub-slices completed post-v2-ratification (2026-04-12):
 | **H1.1a** | Policy bundle persistence API + `PolicyBundleRepo` storage + `ferrumctl` surface (`register-policy-bundle`, `inspect-policy-bundle`, `list-policy-bundles`) | ✅ DONE |
 | **H1.1b** | Policy bundle metadata update/delete (`PUT /v1/policy-bundles/{id}`, `DELETE /v1/policy-bundles/{id}`) + created_at preservation on re-registration | ✅ DONE |
 | **H1.1c** | Policy bundle lineage via optional supersedes relationship — `supersedes_bundle_id`, `GET /v1/policy-bundles/{id}/successors`, `list-policy-bundle-successors` CLI, delete-referenced-blocked | ✅ DONE |
-| **H1.2b** | Policy bundle authoring CLI — `ferrumctl author intent generate\|validate`, `ferrumctl author bundle generate\|validate` | ✅ DONE |
+| **H1.1d** | Policy bundle authoring CLI for registration payloads — `ferrumctl author request generate\|validate\|bump` + `ferrumctl server register-policy-bundle --request-file` | ✅ DONE |
+| **H1.2b** | Policy bundle authoring CLI for rules-format YAML — `ferrumctl author intent generate\|validate`, `ferrumctl author bundle generate\|validate` | ✅ DONE |
 | **H1.3a** | Persistent named-remote configuration — `GitRemoteStore` with add/get/list/update/remove; remotes persist in git config | ✅ DONE |
 | **H1.4b** | `ferrumctl store backup` / `restore` for local SQLite backup/restore automation | ✅ DONE |
 | **H1.4c** | Streaming/chunked query patterns for larger-than-memory dataset handling (single-node) | ✅ DONE |
 | **H1.5a** | Retry/backoff with idempotency key management for mutation methods | ✅ DONE |
 
-Remaining H1 sub-slices (H1.1b–H1.1d, H1.2a, H1.3b–H1.3c, H1.4a, H1.4d–H1.4e, H1.5b–H1.5c) are ⬜ PLANNED.
+Remaining H1 sub-slices (H1.2a, H1.3b–H1.3c, H1.4a, H1.4d–H1.4e, H1.5b–H1.5c) are ⬜ PLANNED.
 
 Full per-slice detail: **`50-post-v2-roadmap.md`** (Horizons H1/H2/H3).
 

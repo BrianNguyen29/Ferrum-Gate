@@ -33,15 +33,18 @@ FerrumGate is at **v2 RATIFIED** (2026-04-12) for single-node production. v1 RC 
 
 ### H1 delivery (post-v2 ratification)
 
-Six H1 sub-slices shipped since v2 ratification:
+Nine H1 sub-slices shipped since v2 ratification:
 - **H1.1a** — policy bundle persistence API + `PolicyBundleRepo` storage + `ferrumctl` surface
-- **H1.2b** — policy bundle authoring CLI (`ferrumctl author intent|bundle generate|validate`)
+- **H1.1b** — policy bundle metadata update/delete (`PUT/DELETE /v1/policy-bundles/{id}`) + created_at preservation
+- **H1.1c** — policy bundle lineage via `supersedes_bundle_id` + successor listing
+- **H1.1d** — policy bundle authoring CLI for registration payloads (`ferrumctl author request generate|validate|bump`) — distinct from H1.2b rules-format authoring
+- **H1.2b** — policy bundle authoring CLI for rules-format YAML (`ferrumctl author intent|bundle generate|validate`)
 - **H1.3a** — persistent named-remote configuration (`GitRemoteStore`)
 - **H1.4b** — `ferrumctl store backup`/`restore` for SQLite automation
 - **H1.4c** — streaming/chunked query patterns for larger-than-memory datasets
 - **H1.5a** — retry/backoff with idempotency key management for HTTP mutations
 
-Remaining H1.1b–H1.1d, H1.2a, H1.3b–H1.3c, H1.4a, H1.4d–H1.4e, H1.5b–H1.5c are planned. Full detail in `docs/implementation-path/50-post-v2-roadmap.md`.
+Remaining H1.2a, H1.3b–H1.3c, H1.4a, H1.4d–H1.4e, H1.5b–H1.5c are planned. Full detail in `docs/implementation-path/50-post-v2-roadmap.md`.
 
 ### Support contract (v2)
 
