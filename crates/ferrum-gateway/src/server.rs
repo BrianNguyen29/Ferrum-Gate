@@ -203,6 +203,11 @@ fn build_router_inner(runtime: GatewayRuntime, auth_config: Option<ServerConfig>
             delete(delete_policy_bundle),
         )
         .route("/v1/policy-bundles", get(list_policy_bundles))
+        // H1.1c: Direct lineage read surface — list successors of a bundle
+        .route(
+            "/v1/policy-bundles/{bundle_id}/successors",
+            get(get_policy_bundle_successors),
+        )
         .with_state(Arc::new(runtime))
         .layer(Extension(metrics))
         .layer(metrics_layer)
@@ -5528,6 +5533,11 @@ async fn verify_ledger(
 /// from the outcome contract content (allowed_outcomes/forbidden_outcomes).
 /// If a bundle with the same fingerprint already exists, this is an idempotent
 /// upsert that updates the metadata (name, description, version).
+///
+/// H1.1c: If `supersedes_bundle_id` is provided, validates that:
+/// - The referenced predecessor bundle exists
+/// - The predecessor's fingerprint differs from the new bundle's fingerprint
+///   (same-content supersede is rejected to ensure distinct bundle_id)
 async fn register_policy_bundle(
     State(runtime): State<Arc<GatewayRuntime>>,
     Json(req): Json<ferrum_proto::PolicyBundleRegisterRequest>,
@@ -5563,6 +5573,53 @@ async fn register_policy_bundle(
         }
     }
 
+    // H1.1c: Validate supersedes_bundle_id if provided.
+    // - Must refer to an existing bundle.
+    // - Must NOT have the same fingerprint as the predecessor (same-content supersede blocked).
+    if let Some(ref supersedes_id) = req.supersedes_bundle_id {
+        // Check predecessor exists
+        let predecessor = runtime
+            .store
+            .policy_bundles()
+            .get(*supersedes_id)
+            .await
+            .map_err(|e| ApiProblem::internal(e.into()))?;
+
+        let predecessor = match predecessor {
+            Some(p) => p,
+            None => {
+                return Err(ApiProblem::new(
+                    StatusCode::BAD_REQUEST,
+                    ApiErrorCode::ValidationError,
+                    format!("supersedes_bundle_id '{}' does not exist", supersedes_id),
+                ));
+            }
+        };
+
+        // H1.1c: Compute predecessor fingerprint to compare content.
+        // We need to fetch the predecessor's fingerprint. Since we store
+        // content-less bundles, we use the bundle_id as a stand-in for
+        // same-content check. If the bundle_ids match, content is same.
+        // A more precise check would require content storage, which is out of H1.1c scope.
+        // Reject if predecessor bundle_id == new bundle_id (same fingerprint => same content).
+        let new_bundle_id = computed_fingerprint
+            .as_ref()
+            .map(|fp| ferrum_proto::PolicyBundleId::derive(fp))
+            .unwrap_or_else(ferrum_proto::PolicyBundleId::new);
+
+        if new_bundle_id == predecessor.bundle_id {
+            return Err(ApiProblem::new(
+                StatusCode::BAD_REQUEST,
+                ApiErrorCode::ValidationError,
+                format!(
+                    "same-content supersede is not allowed: predecessor bundle '{}' has identical content fingerprint; \
+                     a new bundle must have distinct content to receive a distinct bundle_id",
+                    supersedes_id
+                ),
+            ));
+        }
+    }
+
     let now = Utc::now();
     let bundle_id = computed_fingerprint
         .as_ref()
@@ -5576,6 +5633,7 @@ async fn register_policy_bundle(
         version: req.version,
         created_at: now,
         updated_at: now,
+        supersedes_bundle_id: req.supersedes_bundle_id,
     };
 
     runtime
@@ -5701,6 +5759,7 @@ async fn update_policy_bundle(
 /// DELETE /v1/policy-bundles/{bundle_id}
 ///
 /// Delete an existing policy bundle by its deterministic bundle_id.
+/// H1.1c: Delete is blocked if another bundle supersedes this one.
 async fn delete_policy_bundle(
     State(runtime): State<Arc<GatewayRuntime>>,
     Path(bundle_id_str): Path<String>,
@@ -5721,11 +5780,18 @@ async fn delete_policy_bundle(
         .delete(bundle_id)
         .await
         .map_err(|e| {
-            if e.to_string().contains("not found") {
+            let msg = e.to_string();
+            if msg.contains("not found") {
                 ApiProblem::new(
                     StatusCode::NOT_FOUND,
                     ApiErrorCode::NotFound,
                     format!("policy bundle {} not found", bundle_id),
+                )
+            } else if msg.contains("constraint violation") {
+                ApiProblem::new(
+                    StatusCode::CONFLICT,
+                    ApiErrorCode::Conflict,
+                    format!("cannot delete policy bundle {}: it is referenced by another bundle's supersedes_bundle_id", bundle_id),
                 )
             } else {
                 ApiProblem::internal(e.into())
@@ -5735,6 +5801,54 @@ async fn delete_policy_bundle(
     Ok(Json(ferrum_proto::PolicyBundleDeleteResponse {
         deleted: true,
         bundle_id,
+    }))
+}
+
+/// GET /v1/policy-bundles/{bundle_id}/successors
+///
+/// H1.1c: Fetch the direct lineage successors of a policy bundle.
+/// Returns bundles whose `supersedes_bundle_id` field points to the given bundle.
+/// Empty list indicates no bundles supersede the given bundle.
+async fn get_policy_bundle_successors(
+    State(runtime): State<Arc<GatewayRuntime>>,
+    Path(bundle_id_str): Path<String>,
+) -> Result<Json<ferrum_proto::PolicyBundleSuccessorsResponse>, ApiProblem> {
+    let bundle_id = bundle_id_str
+        .parse::<ferrum_proto::PolicyBundleId>()
+        .map_err(|_| {
+            ApiProblem::new(
+                StatusCode::BAD_REQUEST,
+                ApiErrorCode::ValidationError,
+                format!("invalid bundle_id format: {}", bundle_id_str),
+            )
+        })?;
+
+    // Verify the predecessor exists
+    let predecessor = runtime
+        .store
+        .policy_bundles()
+        .get(bundle_id)
+        .await
+        .map_err(|e| ApiProblem::internal(e.into()))?;
+
+    if predecessor.is_none() {
+        return Err(ApiProblem::new(
+            StatusCode::NOT_FOUND,
+            ApiErrorCode::NotFound,
+            format!("policy bundle {} not found", bundle_id),
+        ));
+    }
+
+    let successors = runtime
+        .store
+        .policy_bundles()
+        .list_successors(bundle_id)
+        .await
+        .map_err(|e| ApiProblem::internal(e.into()))?;
+
+    Ok(Json(ferrum_proto::PolicyBundleSuccessorsResponse {
+        predecessor_bundle_id: bundle_id,
+        successors,
     }))
 }
 

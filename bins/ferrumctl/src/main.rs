@@ -938,6 +938,15 @@ impl ServerClient {
         self.decode_json(resp).await
     }
 
+    async fn list_policy_bundle_successors(
+        &self,
+        bundle_id: &str,
+    ) -> Result<ferrum_proto::PolicyBundleSuccessorsResponse> {
+        let path = format!("/v1/policy-bundles/{}/successors", bundle_id);
+        let resp = self.request(reqwest::Method::GET, &path).send().await?;
+        self.decode_json(resp).await
+    }
+
     async fn list_policy_bundles(
         &self,
         limit: Option<u32>,
@@ -2082,6 +2091,7 @@ enum ServerCommand {
         json: bool,
     },
     /// Register a policy bundle (idempotent upsert by content fingerprint).
+    /// H1.1c: Supports `--supersedes` to establish lineage against an existing bundle.
     RegisterPolicyBundle {
         /// Human-readable name for the bundle.
         #[arg(long)]
@@ -2099,6 +2109,12 @@ enum ServerCommand {
         /// (optional, for bundle fingerprint verification).
         #[arg(long)]
         outcomes_file: Option<PathBuf>,
+
+        /// H1.1c: bundle_id of the predecessor bundle this one supersedes.
+        /// Establishes direct lineage. The predecessor must exist and
+        /// must have a distinct content fingerprint (same-content supersede is rejected).
+        #[arg(long)]
+        supersedes: Option<String>,
 
         /// Server base URL (e.g. http://127.0.0.1:8080).
         #[arg(long, env = "FERRUMCTL_SERVER_URL")]
@@ -2182,8 +2198,27 @@ enum ServerCommand {
         json: bool,
     },
     /// Delete an existing policy bundle by its bundle_id.
+    /// H1.1c: Blocked if another bundle supersedes this one.
     DeletePolicyBundle {
         /// Policy bundle ID (UUID derived from bundle content fingerprint).
+        bundle_id: String,
+
+        /// Server base URL (e.g. http://127.0.0.1:8080).
+        #[arg(long, env = "FERRUMCTL_SERVER_URL")]
+        server_url: Option<String>,
+
+        /// Bearer token for authentication.
+        #[arg(long, env = "FERRUMCTL_BEARER_TOKEN")]
+        bearer_token: Option<String>,
+
+        /// Output as JSON instead of human-readable.
+        #[arg(long)]
+        json: bool,
+    },
+    /// H1.1c: List bundles that directly supersede a given bundle.
+    /// Returns direct lineage successors (bundles whose supersedes_bundle_id = given bundle_id).
+    ListPolicyBundleSuccessors {
+        /// Policy bundle ID of the predecessor bundle.
         bundle_id: String,
 
         /// Server base URL (e.g. http://127.0.0.1:8080).
@@ -3612,6 +3647,7 @@ async fn run_register_policy_bundle(
     description: &str,
     version: &str,
     outcomes_file: Option<&Path>,
+    supersedes: Option<&str>,
     url: Option<String>,
     token: Option<String>,
     as_json: bool,
@@ -3631,6 +3667,16 @@ async fn run_register_policy_bundle(
         (None, None)
     };
 
+    // H1.1c: Parse supersedes_bundle_id if provided
+    let supersedes_bundle_id =
+        if let Some(sid) = supersedes {
+            Some(sid.parse::<ferrum_proto::PolicyBundleId>().map_err(|_| {
+                anyhow::anyhow!("invalid supersedes bundle_id: must be a valid UUID")
+            })?)
+        } else {
+            None
+        };
+
     let req = ferrum_proto::PolicyBundleRegisterRequest {
         name: name.to_string(),
         description: description.to_string(),
@@ -3638,6 +3684,7 @@ async fn run_register_policy_bundle(
         fingerprint: None,
         allowed_outcomes,
         forbidden_outcomes,
+        supersedes_bundle_id,
     };
 
     let url = resolve_server_url(url)?;
@@ -3651,6 +3698,9 @@ async fn run_register_policy_bundle(
         println!("  Name:    {}", resp.bundle.name);
         println!("  Version: {}", resp.bundle.version);
         println!("  Created: {}", resp.bundle.created_at);
+        if let Some(ref sid) = resp.bundle.supersedes_bundle_id {
+            println!("  Supersedes: {}", sid);
+        }
     }
     Ok(())
 }
@@ -3674,11 +3724,16 @@ async fn run_inspect_policy_bundle(
         println!("{}", serde_json::to_string_pretty(&resp)?);
     } else {
         println!("Policy bundle: {}", resp.bundle.bundle_id);
-        println!("  Name:        {}", resp.bundle.name);
-        println!("  Description: {}", resp.bundle.description);
-        println!("  Version:     {}", resp.bundle.version);
-        println!("  Created:     {}", resp.bundle.created_at);
-        println!("  Updated:     {}", resp.bundle.updated_at);
+        println!("  Name:            {}", resp.bundle.name);
+        println!("  Description:    {}", resp.bundle.description);
+        println!("  Version:         {}", resp.bundle.version);
+        println!("  Created:         {}", resp.bundle.created_at);
+        println!("  Updated:         {}", resp.bundle.updated_at);
+        if let Some(ref sid) = resp.bundle.supersedes_bundle_id {
+            println!("  Supersedes:     {}", sid);
+        } else {
+            println!("  Supersedes:     (none)");
+        }
     }
     Ok(())
 }
@@ -3710,6 +3765,40 @@ async fn run_list_policy_bundles(
         }
         if let Some(next_cursor) = resp.next_cursor {
             println!("Next cursor: {}", next_cursor);
+        }
+    }
+    Ok(())
+}
+
+async fn run_list_policy_bundle_successors(
+    bundle_id: &str,
+    url: Option<String>,
+    token: Option<String>,
+    as_json: bool,
+) -> Result<()> {
+    // Validate bundle_id format before sending
+    let _ = bundle_id
+        .parse::<ferrum_proto::PolicyBundleId>()
+        .map_err(|_| anyhow::anyhow!("invalid bundle_id format: must be a valid UUID"))?;
+
+    let url = resolve_server_url(url)?;
+    let client = ServerClient::new(&url, token);
+    let resp = client.list_policy_bundle_successors(bundle_id).await?;
+
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&resp)?);
+    } else {
+        println!("Predecessor: {}", resp.predecessor_bundle_id);
+        if resp.successors.is_empty() {
+            println!("Successors: (none)");
+        } else {
+            println!("Successors ({}):", resp.successors.len());
+            for bundle in resp.successors {
+                println!(
+                    "  {}  {}  v{}",
+                    bundle.bundle_id, bundle.name, bundle.version
+                );
+            }
         }
     }
     Ok(())
@@ -5671,6 +5760,7 @@ async fn main() -> Result<()> {
                 description,
                 version,
                 outcomes_file,
+                supersedes,
                 server_url,
                 bearer_token,
                 json,
@@ -5680,6 +5770,7 @@ async fn main() -> Result<()> {
                     &description,
                     &version,
                     outcomes_file.as_deref(),
+                    supersedes.as_deref(),
                     server_url,
                     bearer_token,
                     json,
@@ -5730,6 +5821,15 @@ async fn main() -> Result<()> {
                 json,
             } => {
                 run_delete_policy_bundle(&bundle_id, server_url, bearer_token, json).await?;
+            }
+            ServerCommand::ListPolicyBundleSuccessors {
+                bundle_id,
+                server_url,
+                bearer_token,
+                json,
+            } => {
+                run_list_policy_bundle_successors(&bundle_id, server_url, bearer_token, json)
+                    .await?;
             }
         },
         Command::Debug { sub } => match sub {

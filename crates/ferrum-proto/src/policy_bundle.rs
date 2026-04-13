@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 /// H1.1a: Policy bundle lifecycle tooling — persistence, inspection, and management
 /// of authored intent outcome contracts (allowed_outcomes / forbidden_outcomes).
 ///
+/// H1.1c: Adds optional `supersedes_bundle_id` for direct lineage tracking.
+///
 /// Policy bundles are derived deterministically from their content fingerprint
 /// (see [`PolicyBundleId::derive`]), enabling same-input same-id behavior for
 /// policy bundle identity propagation across intent compilations.
@@ -24,6 +26,11 @@ pub struct PolicyBundle {
     pub created_at: Timestamp,
     /// When this bundle was last updated (Same as created_at if never updated).
     pub updated_at: Timestamp,
+    /// H1.1c: Optional reference to the bundle this one supersedes.
+    /// Used for direct lineage tracking. A bundle can only be deleted if
+    /// no other bundle supersedes it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub supersedes_bundle_id: Option<PolicyBundleId>,
 }
 
 /// Request to register a new policy bundle.
@@ -47,6 +54,12 @@ pub struct PolicyBundleRegisterRequest {
     pub allowed_outcomes: Option<Vec<OutcomeClause>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub forbidden_outcomes: Option<Vec<OutcomeClause>>,
+    /// H1.1c: Optional reference to a predecessor bundle that this bundle supersedes.
+    /// Must be a valid bundle_id of an existing registered bundle.
+    /// Same-content supersede is rejected: if content fingerprint matches the
+    /// predecessor, registration fails to ensure distinct bundle_id.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub supersedes_bundle_id: Option<PolicyBundleId>,
 }
 
 /// Response when a policy bundle is registered or fetched.
@@ -90,4 +103,13 @@ pub struct PolicyBundleListRequest {
 pub struct PolicyBundleDeleteResponse {
     pub deleted: bool,
     pub bundle_id: PolicyBundleId,
+}
+
+/// H1.1c: Response for direct lineage — list of bundles that supersede a given bundle.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct PolicyBundleSuccessorsResponse {
+    pub predecessor_bundle_id: PolicyBundleId,
+    /// Direct successors — bundles whose supersedes_bundle_id points to this bundle.
+    /// Empty if no bundle supersedes the given bundle.
+    pub successors: Vec<PolicyBundle>,
 }

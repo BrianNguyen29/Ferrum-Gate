@@ -10,8 +10,8 @@ use ferrum_proto::{
 use tempfile::TempDir;
 
 use crate::{
-    ApprovalRepo, CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo, ProposalRepo,
-    ProvenanceRepo, RollbackRepo, SqliteStore,
+    ApprovalRepo, CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo, PolicyBundleRepo,
+    ProposalRepo, ProvenanceRepo, RollbackRepo, SqliteStore,
 };
 
 async fn create_test_store() -> (TempDir, SqliteStore) {
@@ -1705,4 +1705,327 @@ async fn ledger_list_cursor_boundary_at_exactly_full_pages() {
     assert_eq!(page2[1].sequence, 2);
     assert_eq!(page3[0].sequence, 1);
     assert_eq!(page3[1].sequence, 0);
+}
+
+// ---------------------------------------------------------------------------
+// H1.1c: Policy bundle lineage (supersedes) tests
+// ---------------------------------------------------------------------------
+
+fn sample_policy_bundle() -> ferrum_proto::PolicyBundle {
+    let now = chrono::Utc::now();
+    ferrum_proto::PolicyBundle {
+        bundle_id: ferrum_proto::PolicyBundleId::new(),
+        name: "Test Bundle".to_string(),
+        description: "A test policy bundle".to_string(),
+        version: "1.0.0".to_string(),
+        created_at: now,
+        updated_at: now,
+        supersedes_bundle_id: None,
+    }
+}
+
+fn sample_policy_bundle_with_supersedes(supersedes: PolicyBundleId) -> ferrum_proto::PolicyBundle {
+    let now = chrono::Utc::now();
+    ferrum_proto::PolicyBundle {
+        bundle_id: PolicyBundleId::new(),
+        name: "Successor Bundle".to_string(),
+        description: "A bundle that supersedes another".to_string(),
+        version: "2.0.0".to_string(),
+        created_at: now,
+        updated_at: now,
+        supersedes_bundle_id: Some(supersedes),
+    }
+}
+
+#[tokio::test]
+async fn policy_bundle_upsert_with_lineage() {
+    // Test that a bundle can be upserted with a supersedes reference
+    let (_temp_dir, store) = create_test_store().await;
+
+    let parent = sample_policy_bundle();
+    let parent_id = parent.bundle_id;
+    store
+        .policy_bundles()
+        .upsert(&parent)
+        .await
+        .expect("insert parent bundle");
+
+    let child = sample_policy_bundle_with_supersedes(parent_id);
+    store
+        .policy_bundles()
+        .upsert(&child)
+        .await
+        .expect("insert child bundle with supersedes");
+
+    // Verify child is stored correctly
+    let loaded = store
+        .policy_bundles()
+        .get(child.bundle_id)
+        .await
+        .expect("load child bundle")
+        .expect("child bundle should exist");
+    assert_eq!(loaded.supersedes_bundle_id, Some(parent_id));
+}
+
+#[tokio::test]
+async fn policy_bundle_list_successors() {
+    // Test list_successors returns bundles that supersede a given bundle
+    let (_temp_dir, store) = create_test_store().await;
+
+    let parent = sample_policy_bundle();
+    let parent_id = parent.bundle_id;
+    store
+        .policy_bundles()
+        .upsert(&parent)
+        .await
+        .expect("insert parent bundle");
+
+    // Insert two children that supersede the parent
+    let child1 = sample_policy_bundle_with_supersedes(parent_id);
+    let child1_id = child1.bundle_id;
+    store
+        .policy_bundles()
+        .upsert(&child1)
+        .await
+        .expect("insert child1");
+
+    let child2 = sample_policy_bundle_with_supersedes(parent_id);
+    store
+        .policy_bundles()
+        .upsert(&child2)
+        .await
+        .expect("insert child2");
+
+    let successors = store
+        .policy_bundles()
+        .list_successors(parent_id)
+        .await
+        .expect("list_successors should succeed");
+
+    assert_eq!(successors.len(), 2, "parent should have 2 successors");
+    let successor_ids: Vec<_> = successors.iter().map(|b| b.bundle_id).collect();
+    assert!(successor_ids.contains(&child1_id));
+}
+
+#[tokio::test]
+async fn policy_bundle_has_successors() {
+    // Test has_successors returns true when successors exist
+    let (_temp_dir, store) = create_test_store().await;
+
+    let parent = sample_policy_bundle();
+    let parent_id = parent.bundle_id;
+    store
+        .policy_bundles()
+        .upsert(&parent)
+        .await
+        .expect("insert parent bundle");
+
+    // Initially no successors
+    let has_succ = store
+        .policy_bundles()
+        .has_successors(parent_id)
+        .await
+        .expect("has_successors should succeed");
+    assert!(!has_succ, "parent should have no successors initially");
+
+    // Add a successor
+    let child = sample_policy_bundle_with_supersedes(parent_id);
+    store
+        .policy_bundles()
+        .upsert(&child)
+        .await
+        .expect("insert child");
+
+    let has_succ = store
+        .policy_bundles()
+        .has_successors(parent_id)
+        .await
+        .expect("has_successors should succeed");
+    assert!(has_succ, "parent should now have successors");
+}
+
+#[tokio::test]
+async fn policy_bundle_delete_blocked_when_successors_exist() {
+    // Test that deleting a bundle with successors is blocked
+    let (_temp_dir, store) = create_test_store().await;
+
+    let parent = sample_policy_bundle();
+    let parent_id = parent.bundle_id;
+    store
+        .policy_bundles()
+        .upsert(&parent)
+        .await
+        .expect("insert parent bundle");
+
+    // Add a successor to create the blocking condition
+    let child = sample_policy_bundle_with_supersedes(parent_id);
+    store
+        .policy_bundles()
+        .upsert(&child)
+        .await
+        .expect("insert child");
+
+    // Attempt to delete the parent — must be rejected
+    let err = store
+        .policy_bundles()
+        .delete(parent_id)
+        .await
+        .expect_err("delete should fail when successors exist");
+
+    let err_msg = format!("{}", err);
+    assert!(
+        err_msg.contains("referenced by another bundle"),
+        "error should mention referenced by another bundle: {}",
+        err_msg
+    );
+
+    // Verify parent still exists
+    let loaded = store
+        .policy_bundles()
+        .get(parent_id)
+        .await
+        .expect("load parent bundle")
+        .expect("parent should still exist");
+    assert_eq!(loaded.bundle_id, parent_id);
+}
+
+#[tokio::test]
+async fn policy_bundle_delete_succeeds_without_successors() {
+    // Test that deleting a bundle with no successors succeeds
+    let (_temp_dir, store) = create_test_store().await;
+
+    let bundle = sample_policy_bundle();
+    let bundle_id = bundle.bundle_id;
+    store
+        .policy_bundles()
+        .upsert(&bundle)
+        .await
+        .expect("insert bundle");
+
+    // Delete should succeed (no successors)
+    store
+        .policy_bundles()
+        .delete(bundle_id)
+        .await
+        .expect("delete should succeed without successors");
+
+    // Verify it's gone
+    let loaded = store
+        .policy_bundles()
+        .get(bundle_id)
+        .await
+        .expect("load bundle");
+    assert!(loaded.is_none(), "bundle should be deleted");
+}
+
+#[tokio::test]
+async fn policy_bundle_lineage_preserved_on_upsert() {
+    // Test that upserting a bundle preserves supersedes relationship
+    let (_temp_dir, store) = create_test_store().await;
+
+    let parent = sample_policy_bundle();
+    let parent_id = parent.bundle_id;
+    store
+        .policy_bundles()
+        .upsert(&parent)
+        .await
+        .expect("insert parent bundle");
+
+    let mut child = sample_policy_bundle_with_supersedes(parent_id);
+    store
+        .policy_bundles()
+        .upsert(&child)
+        .await
+        .expect("insert child");
+
+    // Re-upsert child with same supersedes (no actual change)
+    store
+        .policy_bundles()
+        .upsert(&child)
+        .await
+        .expect("re-upsert child should succeed");
+
+    // Verify supersedes is still correct
+    let loaded = store
+        .policy_bundles()
+        .get(child.bundle_id)
+        .await
+        .expect("load child")
+        .expect("child should exist");
+    assert_eq!(loaded.supersedes_bundle_id, Some(parent_id));
+
+    // Verify successor relationship still blocks parent deletion
+    let err = store
+        .policy_bundles()
+        .delete(parent_id)
+        .await
+        .expect_err("delete should still be blocked");
+    assert!(
+        format!("{}", err).contains("referenced by another bundle"),
+        "error should mention referenced by another bundle: {}",
+        err
+    );
+}
+
+#[tokio::test]
+async fn policy_bundle_self_supersede_rejected() {
+    // H1.1c: A bundle cannot supersede itself — enforced at upsert time.
+    let (_temp_dir, store) = create_test_store().await;
+
+    let mut bundle = sample_policy_bundle();
+    bundle.supersedes_bundle_id = Some(bundle.bundle_id);
+
+    let err = store
+        .policy_bundles()
+        .upsert(&bundle)
+        .await
+        .expect_err("upsert should reject self-referencing bundle");
+
+    let err_msg = format!("{}", err);
+    assert!(
+        err_msg.contains("cannot supersede itself"),
+        "error should mention cannot supersede itself: {}",
+        err_msg
+    );
+}
+
+#[tokio::test]
+async fn policy_bundle_delete_restricted_by_db_constraint() {
+    // H1.1c: ON DELETE RESTRICT at DB level blocks deletion when successors exist.
+    // This tests the DB-level enforcement in addition to the app-level check.
+    let (_temp_dir, store) = create_test_store().await;
+
+    let parent = sample_policy_bundle();
+    let parent_id = parent.bundle_id;
+    store
+        .policy_bundles()
+        .upsert(&parent)
+        .await
+        .expect("insert parent bundle");
+
+    let child = sample_policy_bundle_with_supersedes(parent_id);
+    store
+        .policy_bundles()
+        .upsert(&child)
+        .await
+        .expect("insert child");
+
+    // Directly delete via SQL to bypass app-level check — DB-level FK should reject.
+    // (The app-level check in delete() will also block, but ON DELETE RESTRICT is the DB-level guard.)
+    let pool = store.pool();
+    let result = sqlx::query("DELETE FROM policy_bundles WHERE bundle_id = ?1")
+        .bind(parent_id.to_string())
+        .execute(pool)
+        .await;
+
+    assert!(
+        result.is_err(),
+        "DB-level ON DELETE RESTRICT should reject deletion of referenced bundle"
+    );
+    let err_msg = format!("{}", result.unwrap_err());
+    assert!(
+        err_msg.contains("FOREIGN KEY") || err_msg.contains("constraint"),
+        "error should be FK constraint error: {}",
+        err_msg
+    );
 }
