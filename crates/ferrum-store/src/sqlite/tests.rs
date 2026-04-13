@@ -1456,3 +1456,253 @@ async fn append_event_rejects_tampered_tip_content_hash() {
         err
     );
 }
+
+// ---------------------------------------------------------------------------
+// Ledger cursor pagination tests (H1.4c)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn ledger_list_cursor_first_page() {
+    let (_temp_dir, store) = create_test_store().await;
+
+    // Append 5 ledger entries
+    for i in 0..5u64 {
+        store
+            .ledger()
+            .append_event(&make_test_provenance_event(i))
+            .await
+            .expect("append_event should succeed");
+    }
+
+    // Fetch first page of 3
+    let (entries, next_cursor) = store
+        .ledger()
+        .list_cursor(3, None)
+        .await
+        .expect("list_cursor should succeed");
+
+    assert_eq!(entries.len(), 3, "first page should have 3 entries");
+    assert!(
+        next_cursor.is_some(),
+        "next_cursor should be present (more entries exist)"
+    );
+
+    // Entries should be ordered newest-first (entry_id DESC)
+    // We appended 5, so entries 5,4,3 are returned
+    assert_eq!(entries[0].sequence, 4, "first entry should be sequence 4");
+    assert_eq!(entries[1].sequence, 3, "second entry should be sequence 3");
+    assert_eq!(entries[2].sequence, 2, "third entry should be sequence 2");
+}
+
+#[tokio::test]
+async fn ledger_list_cursor_pagination_through_all_entries() {
+    let (_temp_dir, store) = create_test_store().await;
+
+    // Append 7 entries
+    for i in 0..7u64 {
+        store
+            .ledger()
+            .append_event(&make_test_provenance_event(i))
+            .await
+            .expect("append_event should succeed");
+    }
+
+    // Page through all entries with page size 3
+    let page_size = 3;
+    let mut all_entries: Vec<ferrum_ledger::LedgerEntry> = Vec::new();
+    let mut cursor: Option<u64> = None;
+
+    loop {
+        let (entries, next_cursor) = store
+            .ledger()
+            .list_cursor(page_size, cursor)
+            .await
+            .expect("list_cursor should succeed");
+
+        all_entries.extend(entries);
+        cursor = next_cursor;
+
+        if cursor.is_none() {
+            break;
+        }
+    }
+
+    assert_eq!(all_entries.len(), 7, "should have retrieved all 7 entries");
+
+    // Verify sequence order is descending (newest-first across pages)
+    let sequences: Vec<u64> = all_entries.iter().map(|e| e.sequence).collect();
+    assert_eq!(
+        sequences,
+        vec![6, 5, 4, 3, 2, 1, 0],
+        "sequences should be descending"
+    );
+}
+
+#[tokio::test]
+async fn ledger_list_cursor_respects_limit_exactly() {
+    let (_temp_dir, store) = create_test_store().await;
+
+    // Append 10 entries
+    for i in 0..10u64 {
+        store
+            .ledger()
+            .append_event(&make_test_provenance_event(i))
+            .await
+            .expect("append_event should succeed");
+    }
+
+    // Request page size of 4
+    let (entries, next_cursor) = store
+        .ledger()
+        .list_cursor(4, None)
+        .await
+        .expect("list_cursor should succeed");
+
+    assert_eq!(entries.len(), 4, "should return exactly 4 entries");
+    assert!(next_cursor.is_some(), "next_cursor should be present");
+
+    // Verify sequences are 9,8,7,6 (newest 4)
+    assert_eq!(entries[0].sequence, 9);
+    assert_eq!(entries[1].sequence, 8);
+    assert_eq!(entries[2].sequence, 7);
+    assert_eq!(entries[3].sequence, 6);
+}
+
+#[tokio::test]
+async fn ledger_list_cursor_empty_ledger() {
+    let (_temp_dir, store) = create_test_store().await;
+
+    let (entries, next_cursor) = store
+        .ledger()
+        .list_cursor(10, None)
+        .await
+        .expect("list_cursor should succeed");
+
+    assert!(entries.is_empty(), "empty ledger should return empty list");
+    assert!(
+        next_cursor.is_none(),
+        "empty ledger should have no next_cursor"
+    );
+}
+
+#[tokio::test]
+async fn ledger_list_cursor_after_cursor_returns_correct_page() {
+    let (_temp_dir, store) = create_test_store().await;
+
+    // Append 5 entries
+    for i in 0..5u64 {
+        store
+            .ledger()
+            .append_event(&make_test_provenance_event(i))
+            .await
+            .expect("append_event should succeed");
+    }
+
+    // First page: 3 entries, cursor at entry_id of 3rd entry (sequence=2)
+    let (first_page, cursor) = store
+        .ledger()
+        .list_cursor(3, None)
+        .await
+        .expect("first list_cursor should succeed");
+    assert_eq!(first_page.len(), 3);
+    let after_cursor = cursor.expect("cursor should be present for first page");
+
+    // Second page: should return entries with sequence < 2
+    let (second_page, next_cursor) = store
+        .ledger()
+        .list_cursor(3, Some(after_cursor))
+        .await
+        .expect("second list_cursor should succeed");
+
+    assert_eq!(
+        second_page.len(),
+        2,
+        "second page should have remaining 2 entries"
+    );
+    assert!(
+        next_cursor.is_none(),
+        "second page should be last (no more entries)"
+    );
+
+    // Second page should be sequences 1 and 0
+    assert_eq!(second_page[0].sequence, 1);
+    assert_eq!(second_page[1].sequence, 0);
+}
+
+#[tokio::test]
+async fn ledger_list_cursor_exactly_one_page() {
+    let (_temp_dir, store) = create_test_store().await;
+
+    // Append 3 entries
+    for i in 0..3u64 {
+        store
+            .ledger()
+            .append_event(&make_test_provenance_event(i))
+            .await
+            .expect("append_event should succeed");
+    }
+
+    // Request 5 entries (more than exist)
+    let (entries, next_cursor) = store
+        .ledger()
+        .list_cursor(5, None)
+        .await
+        .expect("list_cursor should succeed");
+
+    assert_eq!(
+        entries.len(),
+        3,
+        "should return all 3 entries (capped at actual count)"
+    );
+    assert!(
+        next_cursor.is_none(),
+        "no next_cursor since all entries returned"
+    );
+}
+
+#[tokio::test]
+async fn ledger_list_cursor_boundary_at_exactly_full_pages() {
+    let (_temp_dir, store) = create_test_store().await;
+
+    // Append 6 entries
+    for i in 0..6u64 {
+        store
+            .ledger()
+            .append_event(&make_test_provenance_event(i))
+            .await
+            .expect("append_event should succeed");
+    }
+
+    // 3 pages of exactly 2 entries each
+    let (page1, cursor1) = store
+        .ledger()
+        .list_cursor(2, None)
+        .await
+        .expect("page 1 should succeed");
+    assert_eq!(page1.len(), 2);
+    let cursor1 = cursor1.expect("cursor should exist");
+
+    let (page2, cursor2) = store
+        .ledger()
+        .list_cursor(2, Some(cursor1))
+        .await
+        .expect("page 2 should succeed");
+    assert_eq!(page2.len(), 2);
+    let cursor2 = cursor2.expect("cursor should exist");
+
+    let (page3, cursor3) = store
+        .ledger()
+        .list_cursor(2, Some(cursor2))
+        .await
+        .expect("page 3 should succeed");
+    assert_eq!(page3.len(), 2);
+    assert!(cursor3.is_none(), "page 3 should be last (no more entries)");
+
+    // Verify sequences across pages
+    assert_eq!(page1[0].sequence, 5);
+    assert_eq!(page1[1].sequence, 4);
+    assert_eq!(page2[0].sequence, 3);
+    assert_eq!(page2[1].sequence, 2);
+    assert_eq!(page3[0].sequence, 1);
+    assert_eq!(page3[1].sequence, 0);
+}

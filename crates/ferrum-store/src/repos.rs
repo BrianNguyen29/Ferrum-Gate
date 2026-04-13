@@ -171,6 +171,22 @@ pub trait LedgerRepo: Send + Sync {
     /// Lists all ledger entries ordered by entry_id ASC (chronological order).
     /// Used for chain verification after loading from persistence.
     async fn list_all(&self) -> Result<Vec<LedgerEntry>>;
+
+    /// Cursor-based pagination for ledger entries.
+    ///
+    /// Returns `(entries, next_cursor)` where `next_cursor` is `None` if this is the last page.
+    /// Ordering: entry_id DESC (newest-first), providing stable pagination for large ledgers.
+    ///
+    /// The cursor format is a raw entry_id integer as a string.
+    /// Pass `after_cursor = None` for the first page.
+    ///
+    /// This is the primary method for handling larger-than-memory ledger datasets,
+    /// replacing `list_recent` for paginated access.
+    async fn list_cursor(
+        &self,
+        limit: u32,
+        after_cursor: Option<u64>,
+    ) -> Result<(Vec<LedgerEntry>, Option<u64>)>;
 }
 
 /// Repository trait for policy bundle persistence.
