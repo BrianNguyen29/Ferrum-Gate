@@ -46,6 +46,15 @@ v2 RATIFIED. Single-node v2 scope. Last updated: 2026-04-12.
 - [x] startup SOP requires a functional readiness probe after healthz/readyz; shallow checks alone are not sufficient
 - [x] backup/restore drill procedure and evidence template documented in 18-single-node-operations-runbook.md Section 6.4; operator backup cadence and RPO guidance documented in Sections 5.3 and 5.4
 
+## H1 delivery (post-v2 ratification)
+- [x] H1.1a — policy bundle persistence API + `PolicyBundleRepo` storage + `ferrumctl` surface
+- [x] H1.2b — policy bundle authoring CLI (`ferrumctl author intent|bundle generate|validate`)
+- [x] H1.3a — persistent named-remote configuration (`GitRemoteStore`)
+- [x] H1.4b — `ferrumctl store backup`/`restore` for SQLite automation
+- [x] H1.4c — streaming/chunked query patterns for larger-than-memory datasets
+- [x] H1.5a — retry/backoff with idempotency key management for HTTP mutations
+- [ ] Remaining H1 slices (H1.1b–H1.1d, H1.2a, H1.3b–H1.3c, H1.4a, H1.4d–H1.4e, H1.5b–H1.5c) — ⬜ PLANNED; full detail in `50-post-v2-roadmap.md`
+
 ## Broader production-ready sign-off
 - [x] G-E1 adapter hardening complete — evidence: `docs/implementation-path/30-production-roadmap.md`
 - [x] G-E2 performance baseline captured — evidence: `docs/implementation-path/42-p2-performance-baseline-evidence.md`

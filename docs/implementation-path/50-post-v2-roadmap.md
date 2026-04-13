@@ -1,7 +1,7 @@
 # 50 — Post-v2 Roadmap
 
 **Last updated:** 2026-04-12
-**Status:** PLANNED — post-v2 backlog, not yet started
+**Status:** IN PROGRESS — H1 slices shipped, H2+ planned
 **Owner:** Engineering
 **Scope:** Post-ratification FerrumGate capability expansion. v1 is ratified for v1 scope;
 v2 is **✅ RATIFIED** for v2 single-node scope. This roadmap is grounded in the

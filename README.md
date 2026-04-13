@@ -27,10 +27,27 @@ Muc tieu la de **AI agents hoac engineers khac co the bam vao va hoan thien tiep
 7. `contracts/ferrumgate-agent-contract.v1.yaml`
 8. `prompts/agent_system.md`
 
-## Trang thai hien tai
+## Current status
 
-FerrumGate dang o **single-node v1 RC candidate**.
-Phan core cua workspace da compile, gateway orchestration da co, SQLite persistence da hoat dong, integration tests da pass.
+FerrumGate is at **v2 RATIFIED** (2026-04-12) for single-node production. v1 RC gates passed 2026-04-02; v2 ratification completed 2026-04-12 per `44-v2-production-execution-plan.md`.
+
+### H1 delivery (post-v2 ratification)
+
+Six H1 sub-slices shipped since v2 ratification:
+- **H1.1a** — policy bundle persistence API + `PolicyBundleRepo` storage + `ferrumctl` surface
+- **H1.2b** — policy bundle authoring CLI (`ferrumctl author intent|bundle generate|validate`)
+- **H1.3a** — persistent named-remote configuration (`GitRemoteStore`)
+- **H1.4b** — `ferrumctl store backup`/`restore` for SQLite automation
+- **H1.4c** — streaming/chunked query patterns for larger-than-memory datasets
+- **H1.5a** — retry/backoff with idempotency key management for HTTP mutations
+
+Remaining H1.1b–H1.1d, H1.2a, H1.3b–H1.3c, H1.4a, H1.4d–H1.4e, H1.5b–H1.5c are planned. Full detail in `docs/implementation-path/50-post-v2-roadmap.md`.
+
+### Support contract (v2)
+
+- **Supported** = SQLite-backed single-node governance core.
+- **Partial** = bounded local adapter implementations (fs, sqlite, maildraft, git, http) plus early H1 slices.
+- **Deferred/post-v1** = broader adapter hardening, multi-node/HA, U1 expressiveness backlog, U2/U3/U4 upgrade-track work.
 
 ### RC gates as of 2026-04-02
 

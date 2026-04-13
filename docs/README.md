@@ -64,6 +64,7 @@ For a quick orientation on current production state, start here:
 | Current state | `implementation-path/01-current-state.md` | Where the project stands now |
 | Remaining tasks | `implementation-path/11-remaining-tasks.md` | P0/P1/P2 done; P3 post-v1 backlog now indexed to roadmap doc |
 | Production roadmap | `implementation-path/30-production-roadmap.md` | Priority 1–6 tracks, all P2 slices ✅ DONE |
+| H1 shipped summary | `implementation-path/01-current-state.md` | H1 sub-slices shipped post-v2 ratification (H1.1a, H1.2b, H1.3a, H1.4b, H1.4c, H1.5a); remaining H1 slices ⬜ PLANNED |
 | Post-v2 roadmap (H1/H2/H3) | `implementation-path/50-post-v2-roadmap.md` | Structured backlog: near-term H1, next-capability H2, long-term H3 |
 | fs-first artifact | `artifacts/2026-04-09/closure-note.txt` | Narrow PR #165 evidence: fs before_hash/after_hash wiring closed |
 
