@@ -212,4 +212,57 @@ impl LedgerRepo for SqliteLedgerRepo {
             })
             .collect()
     }
+
+    async fn list_cursor(
+        &self,
+        limit: u32,
+        after_cursor: Option<u64>,
+    ) -> Result<(Vec<LedgerEntry>, Option<u64>)> {
+        let limit_i64 = i64::from(limit);
+
+        let rows = if let Some(after) = after_cursor {
+            // Fetch one extra to detect next page
+            // Use i64 for SQLite integer binding (entry_id is INTEGER PRIMARY KEY AUTOINCREMENT)
+            sqlx::query(
+                "SELECT entry_id, raw_json FROM ledger_entries
+                 WHERE entry_id < ?1
+                 ORDER BY entry_id DESC
+                 LIMIT ?2",
+            )
+            .bind(after as i64)
+            .bind(limit_i64 + 1)
+            .fetch_all(&self.pool)
+            .await?
+        } else {
+            // First page — no cursor
+            sqlx::query(
+                "SELECT entry_id, raw_json FROM ledger_entries
+                 ORDER BY entry_id DESC
+                 LIMIT ?1",
+            )
+            .bind(limit_i64 + 1)
+            .fetch_all(&self.pool)
+            .await?
+        };
+
+        let has_next_page = rows.len() > limit as usize;
+        let rows_to_return = if has_next_page {
+            &rows[..limit as usize]
+        } else {
+            &rows
+        };
+
+        let mut entries = Vec::with_capacity(rows_to_return.len());
+        let mut next_cursor: Option<u64> = None;
+
+        for row in rows_to_return {
+            let entry_id: i64 = row.try_get("entry_id")?;
+            let raw_json: String = row.try_get("raw_json")?;
+            let entry: LedgerEntry = serde_json::from_str(&raw_json)?;
+            next_cursor = Some(entry_id as u64);
+            entries.push(entry);
+        }
+
+        Ok((entries, next_cursor.filter(|_| has_next_page)))
+    }
 }
