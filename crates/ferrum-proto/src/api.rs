@@ -212,11 +212,4 @@ pub enum LedgerVerificationError {
 // H1.1a: Policy bundle lifecycle API types
 // =============================================================================
 
-/// Request to list policy bundles with cursor-based pagination.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct PolicyBundleListRequest {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cursor: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u32>,
-}
+// NOTE: PolicyBundleListRequest lives in policy_bundle.rs to keep H1.1a types together.

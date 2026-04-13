@@ -37,6 +37,23 @@ impl SqlitePolicyBundleRepo {
 #[async_trait::async_trait]
 impl PolicyBundleRepo for SqlitePolicyBundleRepo {
     async fn upsert(&self, bundle: &PolicyBundle) -> Result<()> {
+        // H1.1b: Preserve created_at when updating existing bundles.
+        // We fetch existing created_at first, then upsert with preserved value.
+        let created_at_to_use = {
+            let row = sqlx::query("SELECT created_at FROM policy_bundles WHERE bundle_id = ?1")
+                .bind(bundle.bundle_id.to_string())
+                .fetch_optional(&self.pool)
+                .await?;
+            match row {
+                Some(r) => {
+                    let ts: chrono::DateTime<chrono::Utc> =
+                        r.try_get("created_at").map_err(crate::StoreError::from)?;
+                    ts
+                }
+                None => bundle.created_at,
+            }
+        };
+
         sqlx::query(
             r#"
             INSERT INTO policy_bundles (bundle_id, name, description, version, created_at, updated_at)
@@ -52,7 +69,7 @@ impl PolicyBundleRepo for SqlitePolicyBundleRepo {
         .bind(&bundle.name)
         .bind(&bundle.description)
         .bind(&bundle.version)
-        .bind(bundle.created_at)
+        .bind(created_at_to_use)
         .bind(bundle.updated_at)
         .execute(&self.pool)
         .await?;
@@ -117,5 +134,54 @@ impl PolicyBundleRepo for SqlitePolicyBundleRepo {
         };
 
         Ok((items, next_cursor))
+    }
+
+    async fn update_metadata(
+        &self,
+        bundle_id: PolicyBundleId,
+        name: &str,
+        description: &str,
+        version: &str,
+    ) -> Result<()> {
+        let now = chrono::Utc::now();
+        let rows_affected = sqlx::query(
+            r#"
+            UPDATE policy_bundles
+            SET name = ?1, description = ?2, version = ?3, updated_at = ?4
+            WHERE bundle_id = ?5
+            "#,
+        )
+        .bind(name)
+        .bind(description)
+        .bind(version)
+        .bind(now.to_rfc3339())
+        .bind(bundle_id.to_string())
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+
+        if rows_affected == 0 {
+            return Err(crate::StoreError::not_found(
+                "policy_bundle",
+                bundle_id.to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    async fn delete(&self, bundle_id: PolicyBundleId) -> Result<()> {
+        let rows_affected = sqlx::query("DELETE FROM policy_bundles WHERE bundle_id = ?1")
+            .bind(bundle_id.to_string())
+            .execute(&self.pool)
+            .await?
+            .rows_affected();
+
+        if rows_affected == 0 {
+            return Err(crate::StoreError::not_found(
+                "policy_bundle",
+                bundle_id.to_string(),
+            ));
+        }
+        Ok(())
     }
 }
