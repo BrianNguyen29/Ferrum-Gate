@@ -80,6 +80,62 @@ pub struct OutcomeSelectors {
     pub mutation_family_in: Option<Vec<String>>,
 }
 
+/// H1.2a: Temporal constraints for outcome clause validity windows.
+/// When temporal constraints are present, the clause only applies within
+/// the specified time window (valid_from <= current_time < valid_until).
+/// Both fields are optional - when absent, the clause is always valid
+/// within the intent's overall expiration window.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct OutcomeTemporalConstraints {
+    /// When present, the clause is not valid before this timestamp.
+    /// If None, the clause has no lower bound (valid from intent creation).
+    pub valid_from: Option<Timestamp>,
+    /// When present, the clause is not valid after this timestamp.
+    /// If None, the clause has no upper bound (valid until intent expiration).
+    pub valid_until: Option<Timestamp>,
+}
+
+impl Default for OutcomeTemporalConstraints {
+    fn default() -> Self {
+        Self {
+            valid_from: None,
+            valid_until: None,
+        }
+    }
+}
+
+impl OutcomeTemporalConstraints {
+    /// Check if this temporal constraint is active at the given timestamp.
+    /// Returns true if the timestamp falls within the validity window.
+    pub fn is_active_at(&self, timestamp: &Timestamp) -> bool {
+        if let Some(valid_from) = &self.valid_from {
+            if timestamp < valid_from {
+                return false;
+            }
+        }
+        if let Some(valid_until) = &self.valid_until {
+            if timestamp >= valid_until {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Validate the temporal constraints for internal consistency.
+    /// Returns None if valid, Some(error_message) if invalid.
+    pub fn validate(&self) -> Option<String> {
+        if let (Some(valid_from), Some(valid_until)) = (&self.valid_from, &self.valid_until) {
+            if valid_from >= valid_until {
+                return Some(format!(
+                    "valid_from ({}) must be before valid_until ({})",
+                    valid_from, valid_until
+                ));
+            }
+        }
+        None
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct OutcomeClause {
     pub id: String,
@@ -90,6 +146,24 @@ pub struct OutcomeClause {
     /// When present alongside effect_type, both must match for the clause to be considered aligned.
     /// When absent, only effect_type matching is used (backward compatible).
     pub selectors: Option<OutcomeSelectors>,
+    /// H1.2a: Optional temporal constraints for time-windowed outcome validity.
+    /// When present, the clause only applies within the specified time window.
+    /// When absent, the clause is always valid (within intent expiration).
+    #[serde(default)]
+    pub temporal: Option<OutcomeTemporalConstraints>,
+}
+
+impl Default for OutcomeClause {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            description: String::new(),
+            effect_type: EffectType::ReadOnlyAnalysis,
+            required: false,
+            selectors: None,
+            temporal: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

@@ -164,7 +164,7 @@ than duplicated here. Brief reference:
 
 | Item | Description | Status | Verification |
 |------|-------------|--------|--------------|
-| U1.1 | Richer outcome clause expressiveness (nested selectors, temporal) | ⬜ PLANNED (H1) | `50-post-v2-roadmap.md` H1.2a |
+| U1.1 | Richer outcome clause expressiveness (nested selectors, temporal) | ✅ DONE | `50-post-v2-roadmap.md` H1.2a |
 | U1.2 | Policy bundle migration / authoring tooling | ⬜ PLANNED (H1) | `50-post-v2-roadmap.md` H1.1, H1.2b |
 | U2 | Reversible Execution Planner | ⬜ PLANNED (H2) | `50-post-v2-roadmap.md` H2.2; `91-phase-success-criteria-and-kpis.md` section 8.2 |
 | U3 | Cross-runtime Provenance Fabric | ⬜ PLANNED (H3) | `50-post-v2-roadmap.md` H3.1; `91-phase-success-criteria-and-kpis.md` section 8.3 |

@@ -1839,6 +1839,7 @@ mod tests {
                 effect_type,
                 required: true,
                 selectors: None,
+                temporal: None,
             }],
             forbidden_outcomes: Vec::new(),
             resource_scope: Vec::new(),
@@ -2025,6 +2026,7 @@ mod tests {
             effect_type: EffectType::FileMutation,
             required: false,
             selectors: None,
+            temporal: None,
         }];
         // Proposal is FileMutation - matches forbidden, PDP denies
         // Firewall should NOT fire contradiction (PDP's forbidden check handles it)

@@ -2418,6 +2418,7 @@ fn run_author_intent_generate(
             effect_type: effect.clone(),
             required: false,
             selectors: None,
+            temporal: None,
         }])
     } else {
         None
@@ -2430,6 +2431,7 @@ fn run_author_intent_generate(
             effect_type: ferrum_proto::intent::EffectType::FileMutation,
             required: true,
             selectors: None,
+            temporal: None,
         }])
     } else {
         None
@@ -2515,6 +2517,12 @@ fn run_author_intent_validate(file: &Path, as_yaml: bool) -> Result<()> {
             if clause.description.is_empty() {
                 errors.push(format!("allowed_outcomes[{}].description is required", i));
             }
+            // H1.2a: Validate temporal constraints if present
+            if let Some(ref temporal) = clause.temporal {
+                if let Some(err) = temporal.validate() {
+                    errors.push(format!("allowed_outcomes[{}].temporal: {}", i, err));
+                }
+            }
         }
     }
     if let Some(ref forbidden) = req.forbidden_outcomes {
@@ -2524,6 +2532,12 @@ fn run_author_intent_validate(file: &Path, as_yaml: bool) -> Result<()> {
             }
             if clause.description.is_empty() {
                 errors.push(format!("forbidden_outcomes[{}].description is required", i));
+            }
+            // H1.2a: Validate temporal constraints if present
+            if let Some(ref temporal) = clause.temporal {
+                if let Some(err) = temporal.validate() {
+                    errors.push(format!("forbidden_outcomes[{}].temporal: {}", i, err));
+                }
             }
         }
     }

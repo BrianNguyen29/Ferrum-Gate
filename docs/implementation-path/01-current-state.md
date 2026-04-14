@@ -85,7 +85,7 @@ The following H1 sub-slices completed post-v2-ratification (2026-04-12):
 | **H1.4c** | Streaming/chunked query patterns for larger-than-memory dataset handling (single-node) | ✅ DONE |
 | **H1.5a** | Retry/backoff with idempotency key management for mutation methods | ✅ DONE |
 
-Remaining H1 sub-slices (H1.2a, H1.3b–H1.3c, H1.4a, H1.4d–H1.4e, H1.5b–H1.5c) are ⬜ PLANNED.
+Remaining H1 sub-slices (H1.3b–H1.3c, H1.4a, H1.4d–H1.4e, H1.5b–H1.5c) are ⬜ PLANNED.
 
 Full per-slice detail: **`50-post-v2-roadmap.md`** (Horizons H1/H2/H3).
 

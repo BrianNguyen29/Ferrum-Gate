@@ -44,6 +44,7 @@ fn sample_intent() -> IntentEnvelope {
             effect_type: EffectType::ReadOnlyAnalysis,
             required: true,
             selectors: None,
+            temporal: None,
         }],
         forbidden_outcomes: Vec::new(),
         resource_scope: Vec::new(),
