@@ -36,8 +36,8 @@
 - **H1.3a Named Remote Configuration** (out-of-band, separate from rollback cycle):
   - `GitRemoteStore` provides persistent named-remote management: add/get/list/update/remove
   - Remotes persist in local git config and are available to all git operations
-  - H1.3a scope: single-node local usage, no auth storage
-  - Remaining H1.3: H1.3b (authenticated remotes), H1.3c (multi-remote mirroring)
+  - H1.3a scope: single-node local usage, no auth storage; H1.3b ✅ DONE (git-native credential delegation)
+  - Remaining H1.3: H1.3c (multi-remote mirroring)
 
 ## HTTP
 - `prepare` capture bound method/url/request_digest cho `HttpRequest`

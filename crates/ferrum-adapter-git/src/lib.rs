@@ -9,6 +9,7 @@ use ferrum_rollback::{
     AdapterError, AdapterRegistry, ExecuteReceipt, PrepareReceipt, RecoveryReceipt,
     RollbackAdapter, VerifyReceipt,
 };
+use std::env;
 use std::path::Path;
 use std::process::Command;
 
@@ -1071,15 +1072,39 @@ fn git_remote_ref(repo_path: &str, remote: &str, refspec: &str) -> Result<String
 }
 
 fn git_push(repo_path: &str, remote: &str, refspec: &str) -> Result<(), AdapterError> {
-    run_git(repo_path, &["push", remote, refspec]).map(|_| ())
+    let credential_helper = get_remote_credential_helper(repo_path, remote)
+        .ok()
+        .flatten();
+    run_git_with_env(
+        repo_path,
+        &["push", remote, refspec],
+        credential_helper.as_deref(),
+    )
+    .map(|_| ())
 }
 
 fn git_push_force(repo_path: &str, remote: &str, refspec: &str) -> Result<(), AdapterError> {
-    run_git(repo_path, &["push", "--force", remote, refspec]).map(|_| ())
+    let credential_helper = get_remote_credential_helper(repo_path, remote)
+        .ok()
+        .flatten();
+    run_git_with_env(
+        repo_path,
+        &["push", "--force", remote, refspec],
+        credential_helper.as_deref(),
+    )
+    .map(|_| ())
 }
 
 fn git_fetch(repo_path: &str, remote: &str, refspec: &str) -> Result<(), AdapterError> {
-    run_git(repo_path, &["fetch", remote, refspec]).map(|_| ())
+    let credential_helper = get_remote_credential_helper(repo_path, remote)
+        .ok()
+        .flatten();
+    run_git_with_env(
+        repo_path,
+        &["fetch", remote, refspec],
+        credential_helper.as_deref(),
+    )
+    .map(|_| ())
 }
 
 fn git_is_ancestor(
@@ -1096,7 +1121,15 @@ fn git_is_ancestor(
 fn git_pull_ff_only(repo_path: &str, remote: &str, refspec: &str) -> Result<(), AdapterError> {
     // Pull with fast-forward only semantics; fails if local has diverged
     // Use git pull --ff-only <remote> <refspec>
-    run_git(repo_path, &["pull", "--ff-only", remote, refspec]).map(|_| ())
+    let credential_helper = get_remote_credential_helper(repo_path, remote)
+        .ok()
+        .flatten();
+    run_git_with_env(
+        repo_path,
+        &["pull", "--ff-only", remote, refspec],
+        credential_helper.as_deref(),
+    )
+    .map(|_| ())
 }
 
 fn git_local_ref_exists(repo_path: &str, refspec: &str) -> Result<bool, AdapterError> {
@@ -1429,6 +1462,93 @@ fn run_git(repo_path: &str, args: &[&str]) -> Result<String, AdapterError> {
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Runs a git command with environment adjustments for non-interactive operation.
+/// - Always sets `GIT_TERMINAL_PROMPT=0` to prevent git from prompting for passwords.
+/// - Passes through `SSH_AUTH_SOCK` if present to enable SSH key access.
+/// - Applies credential helper via `-c credential.helper=<helper>` git flag if provided.
+fn run_git_with_env(
+    repo_path: &str,
+    args: &[&str],
+    credential_helper: Option<&str>,
+) -> Result<String, AdapterError> {
+    if !Path::new(repo_path).exists() {
+        return Err(AdapterError::Validation(format!(
+            "git repo path does not exist: {}",
+            repo_path
+        )));
+    }
+
+    let mut cmd = Command::new("git");
+    // Apply credential helper via -c flag if provided (not via GIT_ASKPASS env var)
+    if let Some(helper) = credential_helper {
+        cmd.arg("-c").arg(format!("credential.helper={}", helper));
+    }
+    cmd.args(args).current_dir(repo_path);
+
+    // Always disable terminal prompt to prevent git from blocking
+    cmd.env("GIT_TERMINAL_PROMPT", "0");
+
+    // Pass through SSH_AUTH_SOCK if present to enable SSH key access
+    if let Ok(ssh_auth_sock) = env::var("SSH_AUTH_SOCK") {
+        cmd.env("SSH_AUTH_SOCK", ssh_auth_sock);
+    }
+
+    let output = cmd
+        .output()
+        .map_err(|err| AdapterError::Internal(format!("failed to run git: {}", err)))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(AdapterError::Validation(format!(
+            "git {} failed: {}",
+            args.join(" "),
+            stderr
+        )));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Retrieves the configured credential helper for a remote from git config.
+/// Returns the helper name (e.g., "cache" or "/usr/local/bin/git-credential-foo")
+/// or None if no credential helper is configured.
+///
+/// Checks both forms:
+/// - credential.<remote>.helper
+/// - remote.<remote>.credentialHelper
+fn get_remote_credential_helper(
+    repo_path: &str,
+    remote: &str,
+) -> Result<Option<String>, AdapterError> {
+    // Try credential.<remote>.helper first
+    let cred_help_result = run_git(
+        repo_path,
+        &["config", &format!("credential.{}.helper", remote)],
+    );
+
+    if let Ok(helper) = cred_help_result {
+        let trimmed = helper.trim();
+        if !trimmed.is_empty() {
+            return Ok(Some(trimmed.to_string()));
+        }
+    }
+
+    // Try remote.<remote>.credentialHelper
+    let remote_help_result = run_git(
+        repo_path,
+        &["config", &format!("remote.{}.credentialHelper", remote)],
+    );
+
+    if let Ok(helper) = remote_help_result {
+        let trimmed = helper.trim();
+        if !trimmed.is_empty() {
+            return Ok(Some(trimmed.to_string()));
+        }
+    }
+
+    Ok(None)
 }
 
 // =============================================================================
@@ -4628,5 +4748,171 @@ mod tests {
         drop(main_temp);
         drop(remote_temp);
         drop(remote2_temp);
+    }
+
+    // =============================================================================
+    // H1.3b: Authenticated remote support tests
+    // =============================================================================
+
+    #[test]
+    fn test_get_remote_credential_helper_returns_none_when_not_configured() {
+        // When no credential helper is set, should return None
+        let temp = TempDir::new().unwrap();
+        let repo_path = temp.path().to_str().unwrap().to_string();
+        run_git(&repo_path, &["init"]).unwrap();
+
+        let helper = get_remote_credential_helper(&repo_path, "origin").unwrap();
+        assert!(
+            helper.is_none(),
+            "Expected None when no credential helper is configured"
+        );
+    }
+
+    #[test]
+    fn test_get_remote_credential_helper_reads_credential_dot_form() {
+        // Test reading credential.<remote>.helper
+        let (main_temp, main_path, remote_temp, remote_path) = init_temp_repo_with_remote();
+        let store = GitRemoteStore::new(&main_path);
+        let remote_url = format!("file://{}", remote_path);
+        store.add_remote("origin", &remote_url).unwrap();
+
+        // Set credential helper using credential.<remote>.helper form
+        run_git(&main_path, &["config", "credential.origin.helper", "cache"]).unwrap();
+
+        let helper = get_remote_credential_helper(&main_path, "origin").unwrap();
+        assert!(helper.is_some(), "Expected helper to be found");
+        assert_eq!(helper.unwrap(), "cache");
+
+        drop(main_temp);
+        drop(remote_temp);
+    }
+
+    #[test]
+    fn test_get_remote_credential_helper_reads_remote_dot_form() {
+        // Test reading remote.<remote>.credentialHelper
+        let (main_temp, main_path, remote_temp, remote_path) = init_temp_repo_with_remote();
+        let store = GitRemoteStore::new(&main_path);
+        let remote_url = format!("file://{}", remote_path);
+        store.add_remote("origin", &remote_url).unwrap();
+
+        // Set credential helper using remote.<remote>.credentialHelper form
+        run_git(
+            &main_path,
+            &["config", "remote.origin.credentialHelper", "store"],
+        )
+        .unwrap();
+
+        let helper = get_remote_credential_helper(&main_path, "origin").unwrap();
+        assert!(helper.is_some(), "Expected helper to be found");
+        assert_eq!(helper.unwrap(), "store");
+
+        drop(main_temp);
+        drop(remote_temp);
+    }
+
+    #[test]
+    fn test_get_remote_credential_helper_prefers_credential_dot_form() {
+        // When both forms are set, credential.<remote>.helper should take precedence
+        let (main_temp, main_path, remote_temp, remote_path) = init_temp_repo_with_remote();
+        let store = GitRemoteStore::new(&main_path);
+        let remote_url = format!("file://{}", remote_path);
+        store.add_remote("origin", &remote_url).unwrap();
+
+        // Set both forms
+        run_git(&main_path, &["config", "credential.origin.helper", "cache"]).unwrap();
+        run_git(
+            &main_path,
+            &["config", "remote.origin.credentialHelper", "store"],
+        )
+        .unwrap();
+
+        let helper = get_remote_credential_helper(&main_path, "origin").unwrap();
+        assert!(helper.is_some(), "Expected helper to be found");
+        // credential.<remote>.helper takes precedence
+        assert_eq!(helper.unwrap(), "cache");
+
+        drop(main_temp);
+        drop(remote_temp);
+    }
+
+    #[test]
+    fn test_env_aware_git_works_for_push() {
+        // Verify that git_push (which uses env-aware helper) still works
+        let (main_temp, main_path, remote_temp, remote_path) = init_temp_repo_with_remote();
+        let store = GitRemoteStore::new(&main_path);
+        let remote_url = format!("file://{}", remote_path);
+        store.add_remote("origin", &remote_url).unwrap();
+
+        // This should succeed using the env-aware helper
+        git_push(&main_path, "origin", "master").unwrap();
+
+        // Verify push happened
+        let remote_ref = git_remote_ref(&main_path, "origin", "master").unwrap();
+        let local_head = git_head(&main_path).unwrap();
+        assert_eq!(remote_ref, local_head);
+
+        drop(main_temp);
+        drop(remote_temp);
+    }
+
+    #[test]
+    fn test_env_aware_git_works_for_fetch() {
+        // Verify that git_fetch (which uses env-aware helper) still works
+        let (main_temp, main_path, remote_temp, remote_path) = init_temp_repo_with_remote();
+        let store = GitRemoteStore::new(&main_path);
+        let remote_url = format!("file://{}", remote_path);
+        store.add_remote("origin", &remote_url).unwrap();
+
+        // Make a commit in main and push to origin
+        commit_change(&main_path, "feature.txt", "feature content");
+        run_git(&main_path, &["push", "origin", "master"]).unwrap();
+
+        // Create a feature branch and push it
+        run_git(&main_path, &["checkout", "-b", "feature"]).unwrap();
+        run_git(&main_path, &["push", "origin", "feature"]).unwrap();
+
+        // Reset main to before the commit
+        run_git(&main_path, &["checkout", "master"]).unwrap();
+        let before_ref = run_git(&main_path, &["rev-parse", "HEAD~1"]).unwrap();
+        git_reset_hard(&main_path, &before_ref).unwrap();
+
+        // Fetch should succeed using env-aware helper - fetch feature branch
+        git_fetch(&main_path, "origin", "feature").unwrap();
+
+        // Verify fetch happened - origin/feature should now exist
+        let remote_feature_ref = git_remote_ref(&main_path, "origin", "feature").unwrap();
+        let expected_ref = run_git(&remote_path, &["rev-parse", "feature"]).unwrap();
+        assert_eq!(remote_feature_ref, expected_ref);
+
+        drop(main_temp);
+        drop(remote_temp);
+    }
+
+    #[test]
+    fn test_env_aware_git_works_for_pull_ff_only() {
+        // Verify that git_pull_ff_only uses the env-aware helper
+        let (main_temp, main_path, remote_temp, remote_path) = init_temp_repo_with_remote();
+        let store = GitRemoteStore::new(&main_path);
+        let remote_url = format!("file://{}", remote_path);
+        store.add_remote("origin", &remote_url).unwrap();
+
+        // Make a commit in main and push to origin
+        commit_change(&main_path, "remote.txt", "remote content");
+        run_git(&main_path, &["push", "origin", "master"]).unwrap();
+
+        // Reset main to before the commit
+        let before_ref = run_git(&main_path, &["rev-parse", "HEAD~1"]).unwrap();
+        git_reset_hard(&main_path, &before_ref).unwrap();
+
+        // Pull should succeed using env-aware helper (fast-forward only)
+        git_pull_ff_only(&main_path, "origin", "master").unwrap();
+
+        // Verify pull happened - main should now have the pushed commit
+        let local_head = git_head(&main_path).unwrap();
+        let remote_ref = run_git(&remote_path, &["rev-parse", "master"]).unwrap();
+        assert_eq!(local_head, remote_ref);
+
+        drop(main_temp);
+        drop(remote_temp);
     }
 }
