@@ -44,7 +44,7 @@ Nine H1 sub-slices shipped since v2 ratification:
 - **H1.4c** — streaming/chunked query patterns for larger-than-memory datasets
 - **H1.5a** — retry/backoff with idempotency key management for HTTP mutations
 
-Remaining H1.2a, H1.3b–H1.3c, H1.4a, H1.4d–H1.4e, H1.5b–H1.5c are planned. Full detail in `docs/implementation-path/50-post-v2-roadmap.md`.
+Remaining H1.3b–H1.3c, H1.4a, H1.4d–H1.4e, H1.5b–H1.5c are planned. Full detail in `docs/implementation-path/50-post-v2-roadmap.md`.
 
 ### Support contract (v2)
 

@@ -635,6 +635,7 @@ async fn compile_intent(
                     .unwrap_or(ferrum_proto::EffectType::ReadOnlyAnalysis),
                 required: true,
                 selectors: None,
+                temporal: None,
             }],
             outcomes.clone(),
         )
@@ -652,6 +653,7 @@ async fn compile_intent(
                     .unwrap_or(ferrum_proto::EffectType::ReadOnlyAnalysis),
                 required: true,
                 selectors: None,
+                temporal: None,
             }],
             Vec::new(),
         )
@@ -7228,6 +7230,7 @@ mod u1_s3a_tests {
                 effect_type: ferrum_proto::EffectType::FileMutation,
                 required: true,
                 selectors: None,
+                temporal: None,
             }],
             forbidden_outcomes: Vec::new(),
             resource_scope: vec![ferrum_proto::ResourceSelector::FilesystemPath {

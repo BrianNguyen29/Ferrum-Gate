@@ -219,6 +219,7 @@ mod tests {
                 effect_type: ferrum_proto::EffectType::ReadOnlyAnalysis,
                 required: true,
                 selectors: None,
+                temporal: None,
             }],
             forbidden_outcomes: Vec::new(),
             resource_scope: Vec::new(),

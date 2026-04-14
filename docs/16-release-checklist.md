@@ -56,7 +56,7 @@ v2 RATIFIED. Single-node v2 scope. Last updated: 2026-04-12.
 - [x] H1.4b — `ferrumctl store backup`/`restore` for SQLite automation
 - [x] H1.4c — streaming/chunked query patterns for larger-than-memory datasets
 - [x] H1.5a — retry/backoff with idempotency key management for HTTP mutations
-- [ ] Remaining H1.2a, H1.3b–H1.3c, H1.4a, H1.4d–H1.4e, H1.5b–H1.5c — ⬜ PLANNED; full detail in `50-post-v2-roadmap.md`
+- [ ] Remaining H1.3b–H1.3c, H1.4a, H1.4d–H1.4e, H1.5b–H1.5c — ⬜ PLANNED; full detail in `50-post-v2-roadmap.md`
 
 ## Broader production-ready sign-off
 - [x] G-E1 adapter hardening complete — evidence: `docs/implementation-path/30-production-roadmap.md`
