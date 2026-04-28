@@ -23,7 +23,7 @@ documented compensating controls.
 | Phase 2 (transaction batching + direct UPDATE) | **Deferred/regressed** — perf regression in benchmarking |
 | Phase 3 (PostgreSQL) | Path to full production scale |
 | RC status | RC-ready (single-node SQLite) |
-| Production claim | **Conditional** — operational constraints (SQLite single-node write limits, bounded offline/local `ferrumctl backup` workflow only, no incremental backup, no automated scheduling, no retention policy; PostgreSQL/multi-node deferred; operator sign-off required) require evaluation |
+| Production claim | **Conditional** — operational constraints (SQLite single-node write limits, bounded offline/local `ferrumctl backup` workflow with opt-in retention pruning (`--retention-days N`), no automated scheduling, no encryption; PostgreSQL/multi-node deferred; operator sign-off required) require evaluation |
 
 ---
 
@@ -156,7 +156,7 @@ with HTTP 403 if `intent.approval_mode == DraftOnly`.
   preserves pre-restore copy; verifies restored DB
 
 Limitations: SQLite-only (no PostgreSQL backup), no incremental backup, no built-in
-scheduling, no built-in retention policy, no encryption.
+scheduling, opt-in CLI retention pruning (`--retention-days N`), no encryption.
 
 **Pass criteria**: Operator uses `ferrumctl backup` for create/verify/restore workflow.
 RPO (Recovery Point Objective) is understood — any state created after the backup
@@ -383,12 +383,12 @@ operator acknowledgment and, where indicated, documented accepted-risk signoff.
 | Item | Required Action | Reference |
 |---|---|---|
 | Backup schedule outside FerrumGate | Operator implements backup scheduling external to FerrumGate (cron, CI job, etc.); `ferrumctl backup` does not support automated scheduling | Dimension 3, §3.5 |
-| Backup retention | Operator defines and enforces backup retention policy outside FerrumGate | Dimension 3, §3.5 |
+| Backup retention | Operator defines retention policy; opt-in CLI retention pruning (`--retention-days N`) available | Dimension 3, §3.5 |
 | Restore drill performed | Operator has run `ferrumctl backup restore` in a non-production environment and verified data integrity with `PRAGMA integrity_check` | Operations runbook §4 |
 | RPO accepted | Operator understands RPO = time since last backup; any writes after last backup are lost on restore | Dimension 3, §3.5 |
 | RTO accepted | Operator understands RTO includes backup restore time + re-start + verification; FerrumGate has no automated recovery | Dimension 3, §3.5 |
 
-**Signoff phrase required**: "Operator has performed a restore drill, confirmed RPO/RTO fit for the target workload, and backup retention is managed externally."
+**Signoff phrase required**: "Operator has performed a restore drill, confirmed RPO/RTO fit for the target workload, and backup retention policy (including scheduling and offsite needs) is operator-defined."
 
 ---
 

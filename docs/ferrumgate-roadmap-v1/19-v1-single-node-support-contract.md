@@ -159,7 +159,9 @@ FerrumGate provides bounded offline/local SQLite backup commands via
 `ferrumctl backup create`, `ferrumctl backup verify`, and
 `ferrumctl backup restore --confirm`. Restore requires the server to be
 stopped and remains a full-store replacement. There is no incremental backup,
-no automated scheduling, and no backup retention policy built into FerrumGate.
+no automated scheduling, and opt-in retention pruning (`--retention-days N`).
+Full retention policy management (scheduling, offsite, encryption) remains
+operator-owned.
 
 ### 3.4 Restore causes data loss after backup timestamp
 

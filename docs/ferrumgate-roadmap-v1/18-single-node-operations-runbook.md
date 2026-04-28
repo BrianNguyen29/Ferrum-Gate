@@ -133,6 +133,12 @@ ferrumctl backup create --db-path "$STORE_PATH" --output-dir "$BACKUP_DIR"
 # Verify the backup is valid
 ferrumctl backup verify --db-path "$BACKUP_DIR/ferrumgate_<timestamp>.db"
 # Expected: OK
+
+# Create backup with automatic retention pruning (keeps 7 days of backups)
+ferrumctl backup create --db-path "$STORE_PATH" --output-dir "$BACKUP_DIR" --retention-days 7
+# After creating the new backup, older backups matching the same source DB
+# name pattern (ferrumgate_*.db) with mtime > 7 days are deleted.
+# The newly created backup is never deleted.
 ```
 
 ### 5.3 Notes
@@ -146,24 +152,29 @@ ferrumctl backup verify --db-path "$BACKUP_DIR/ferrumgate_<timestamp>.db"
 - This is a crash-consistent backup: it captures the state at the moment
   of the copy. It does not flush in-flight transactions.
 - SQLite-only; there is no PostgreSQL backup in v1.
+- `--retention-days N` prunes old backups after successful backup creation.
+  Only files matching `<source_db_name>_*.db` with mtime > N days are deleted.
+  N must be at least 1. Omitting the flag performs no pruning (backward-compatible).
 
 ### 5.4 External Scheduling (Operator-Owned)
 
 FerrumGate v1 does not include a built-in backup scheduler. Backup
-scheduling and retention policy are operator-owned concerns. Below are
-examples of operator-implemented external scheduling.
+scheduling and encryption are operator-owned external concerns.
+`--retention-days` provides opt-in retention pruning after each backup,
+but automated scheduling must still be implemented externally (cron, systemd
+timers, etc.). Below are examples of operator-implemented scheduling.
 
 #### cron example
 
 ```bash
 # /etc/cron.d/ferrumgate-backup
-# Run backup at 02:00 daily, keep 7 daily snapshots
+# Run backup at 02:00 daily with 7-day retention pruning
 SHELL=/bin/bash
 PATH=/usr/local/bin:/usr/bin:/bin
 0 2 * * * root /usr/local/bin/ferrumctl backup create \
     --db-path "/var/lib/ferrumgate/ferrumgate.db" \
     --output-dir "/var/backups/ferrumgate" \
-    && find /var/backups/ferrumgate -name "ferrumgate_*.db" -mtime +7 -delete
+    --retention-days 7
 ```
 
 #### systemd timer example
@@ -178,7 +189,8 @@ Requires=ferrumd.service
 Type=oneshot
 ExecStart=/usr/local/bin/ferrumctl backup create \
     --db-path "/var/lib/ferrumgate/ferrumgate.db" \
-    --output-dir "/var/backups/ferrumgate"
+    --output-dir "/var/backups/ferrumgate" \
+    --retention-days 7
 PrivateTmp=true
 
 # /etc/systemd/system/ferrumgate-backup.timer
@@ -197,17 +209,11 @@ WantedBy=timers.target
 # Enable and start the timer
 systemctl enable ferrumgate-backup.timer
 systemctl start ferrumgate-backup.timer
-
-# For retention, add a separate cleanup service or use tmpfiles.d
-# Example: /etc/tmpfiles.d/ferrumgate-backup.conf
-# d /var/backups/ferrumgate 0755 root root 7d
 ```
 
 **Important**: These are operator-owned examples. Adjust paths, schedules,
-retention periods, and notifications to match your operational
-requirements. FerrumGate provides `ferrumctl backup` as the backup
-primitive only; scheduler, retention rotation, and offsite transfer are
-external responsibilities.
+and notifications to match your operational requirements. Scheduling,
+encryption, and offsite transfer remain external responsibilities.
 
 ---
 
@@ -424,10 +430,10 @@ a no-op in v1.
    a backup.
 
 5. **Bounded backup command.** `ferrumctl backup` provides create/verify/restore
-   with safety guardrails, but there is no incremental backup, no
-   automated scheduling, and no backup retention policy built into
-   FerrumGate. Operators must implement their own backup scheduling and
-   rotation. Backup/restore is SQLite-only; no PostgreSQL backup in v1.
+   with safety guardrails and opt-in retention pruning (`--retention-days N`).
+   There is no incremental backup, no automated scheduling, and no encryption.
+   Operators must implement their own backup scheduling and encryption if needed.
+   Backup/restore is SQLite-only; no PostgreSQL backup in v1.
 
 6. **Restore is full-file, not incremental.** Restoring from a backup
    overwrites the entire store. Any executions, intents, approvals, or

@@ -47,7 +47,7 @@ Release engineer / documentation owner.
 | SQLite single-node write throughput ceiling (~300 writes/s sustained) | `27-production-evaluation-plan.md` §1.2 |
 | No PostgreSQL/multi-node/HA in scope | ADR-50; `30-production-roadmap.md` §3 |
 | Phase 2 transaction batching reverted — Phase 1 write queue is production target | `30-production-roadmap.md` §2 |
-| `ferrumctl backup` bounded offline workflow only; no automated scheduling, no retention policy | `27-production-evaluation-plan.md` §3.5 |
+| `ferrumctl backup` bounded offline workflow with opt-in retention pruning (`--retention-days N`); no automated scheduling, no encryption | `27-production-evaluation-plan.md` §3.5 |
 | Compensate may be noop-backed depending on adapter implementation | `27-production-evaluation-plan.md` §3.6 |
 | Health endpoints are shallow; functional probe required for readiness | `27-production-evaluation-plan.md` §4.2 |
 
@@ -113,7 +113,7 @@ Operator / site reliability / deployment authority.
 
 ### Backup/restore/runbook checklist
 - [ ] `ferrumctl backup create` scheduled externally (cron, CI job, or manual)
-- [ ] Backup retention policy defined and enforced external to FerrumGate
+- [ ] Backup retention policy defined (opt-in CLI pruning `--retention-days N` available; full policy management including scheduling remains operator-owned)
 - [ ] `ferrumctl backup verify` run after each backup to confirm `PRAGMA integrity_check` passes
 - [ ] `ferrumctl backup restore` drill performed in non-production environment
 - [ ] RPO understood: any writes after last backup timestamp are lost on restore

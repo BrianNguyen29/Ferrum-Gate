@@ -219,6 +219,12 @@ enum BackupCommand {
         /// Defaults to the current directory.
         #[arg(long, value_name = "DIR")]
         output_dir: Option<PathBuf>,
+
+        /// Number of days to retain backups. After creating a new backup,
+        /// older backups matching the same source DB name pattern are deleted.
+        /// Must be at least 1. Without this flag, no pruning is performed.
+        #[arg(long, value_name = "N")]
+        retention_days: Option<u32>,
     },
     /// Verify the integrity of a SQLite database.
     Verify {
@@ -599,10 +605,15 @@ async fn main() -> Result<()> {
             BackupCommand::Create {
                 db_path,
                 output_dir,
+                retention_days,
             } => {
                 let output = output_dir.unwrap_or_else(|| PathBuf::from("."));
-                let backup_path = backup::backup_create(&db_path, &output)?;
+                let (backup_path, pruned) =
+                    backup::backup_create_with_retention(&db_path, &output, retention_days)?;
                 println!("{}", backup_path.display());
+                if pruned > 0 {
+                    eprintln!("Pruned {} old backup(s)", pruned);
+                }
             }
             BackupCommand::Verify { db_path } => {
                 backup::backup_verify(&db_path)?;

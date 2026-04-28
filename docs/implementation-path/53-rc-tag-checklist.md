@@ -63,7 +63,7 @@ The following items were completed before publishing `v0.1.0-rc.1`:
 | SQLite single-node write throughput ceiling (~300 writes/s sustained) | `27-production-evaluation-plan.md` §1.2 |
 | No PostgreSQL/multi-node/HA in scope | ADR-50; `30-production-roadmap.md` §3 |
 | Phase 2 transaction batching reverted — Phase 1 write queue is production target | `30-production-roadmap.md` §2 |
-| `ferrumctl backup` bounded offline workflow only; no automated scheduling, no retention policy | `27-production-evaluation-plan.md` §3.5 |
+| `ferrumctl backup` bounded offline workflow with opt-in retention pruning (`--retention-days N`); no automated scheduling, no encryption | `27-production-evaluation-plan.md` §3.5 |
 | Compensate may be noop-backed depending on adapter implementation | `27-production-evaluation-plan.md` §3.6 |
 | Health endpoints are shallow; functional probe required for readiness | `27-production-evaluation-plan.md` §4.2 |
 

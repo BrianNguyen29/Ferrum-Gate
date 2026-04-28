@@ -247,7 +247,7 @@ Kiểm toán được coi là hoàn thành khi:
 | Graceful shutdown | ✅ Đã triển khai | |
 | Runtime bridges / cross-runtime provenance | ✅ Đã triển khai | `RuntimeBridge` trait; `McpBridge`; GET /v1/bridges endpoints |
 | Stress testing | ✅ Đã triển khai | `ferrum-stress` binary |
-| Backup/restore | ✅ Đã triển khai (bounded) | `ferrumctl backup create/verify/restore`; SQLite-only; offline/local; no scheduling/retention/encryption |
+| Backup/restore | ✅ Đã triển khai (bounded) | `ferrumctl backup create/verify/restore`; SQLite-only; offline/local; opt-in retention pruning (`--retention-days N`); no scheduling/encryption |
 | PostgreSQL / multi-node / HA | ❌ Deferred | Not implemented; PostgreSQL recommended for production scale |
 | cancel_execution | ✅ Implemented (post-v1 boundary) | `ferrumctl` client path now has matching `POST /v1/executions/{execution_id}/cancel` server route, handler, state guards, and integration tests |
 

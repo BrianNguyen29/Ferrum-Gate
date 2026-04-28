@@ -130,7 +130,7 @@ The v1 support contract is the only authoritative boundary.
 - SQLite used for governance core persistence (executions, capabilities, approvals, provenance)
 - SQLite migrations are embedded in `ferrum-store`
 - No built-in backup command; manual file-level backup is the only path
-- No incremental backup, no automated scheduling, no retention policy
+- No incremental backup, no automated scheduling, opt-in CLI retention pruning (`--retention-days N`)
 
 Postgres support (via `ferrum-store` generalization or separate adapter) is
 post-v1 scope.
@@ -143,7 +143,7 @@ These are intrinsic v1 limitations, not defects to be fixed in the roadmap:
 
 1. **healthz and readyz are shallow** — they confirm the process is alive, not that store or governance loop is functional. A functional probe is required after startup.
 2. **Compensate may be noop-backed** — the compensate endpoint exists but may return HTTP 200 without performing external undo. Always verify resource state manually after compensate.
-3. **Backup/restore is bounded SQLite-only** — `ferrumctl backup create/verify/restore` exists for offline/local workflows. Restoring overwrites the entire store; any state created after the backup timestamp is permanently lost. There is no built-in scheduling, retention, encryption, or incremental backup.
+3. **Backup/restore is bounded SQLite-only** — `ferrumctl backup create/verify/restore` exists for offline/local workflows with opt-in retention pruning (`--retention-days N`). Restoring overwrites the entire store; any state created after the backup timestamp is permanently lost. There is no built-in scheduling, encryption, or incremental backup.
 4. **CLI is inspect-only** — no mutating CLI commands (no intent create, no capability revoke via CLI).
 5. **Accepted risks — status as of Q1/v1.1 gate (2026-04-09)** (from v1 support contract weak spots 1–4):
    - WS1 (prepare-step rollback_class bypass): addressed — rollback_class now sourced from proposal at prepare; adversarial regression test confirms `auto_commit=false` propagation — evidence: `docs/artifacts/2026-04-09/08-q1-p7-invariant-matrix-pass-evidence.md`

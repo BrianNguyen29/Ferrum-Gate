@@ -50,7 +50,7 @@ These items improve production posture and operational confidence but are not bl
 
 | Priority | Item | D5 Domain | Evidence | Phase |
 |----------|------|-----------|----------|-------|
-| **3** | Backup automation / retention / encryption | Domain 6 (Backup/restore limits) | Bounded SQLite-only backup exists; no scheduling, retention, or encryption in v1; S3 in `33-feature-completion-backlog.md` | Pilot (operator-owned) or Phase 3+ |
+| **3** | Backup automation / retention / encryption | Domain 6 (Backup/restore limits) | Bounded SQLite-only backup with opt-in retention pruning (`--retention-days N`); no scheduling or encryption in v1; S3 in `33-feature-completion-backlog.md` | Pilot (operator-owned) or Phase 3+ |
 | **4** | Observability / metrics | Domain 9 (Health check depth), Dimension 4 §4.4 (Operational monitoring baseline) | Bounded `/v1/metrics` endpoint implemented for health/metrics counters and store up/down gauge; broader latency/error/WAL/pool metrics remain future work | Pilot or Phase 3+ |
 | **5** | Adapter hardening | Domain 4 (Adapter compensation non-uniformity), Domain 5 (Adapter surface boundedness) | P3–P6 in `33-feature-completion-backlog.md`; compensation guarantees vary by adapter | Pilot or Phase 3+ |
 
@@ -79,7 +79,7 @@ D6 items are **not authorized** before the RC tag is cut. The RC tag is the prer
 Items ranked Should Have (priorities 3–5) may be considered during a Path 2 pilot if the operator determines they are required for the target workload. However:
 
 - They remain **operator-owned external concerns** in v1 architecture (per `33-feature-completion-backlog.md` S3)
-- Built-in scheduling/retention/encryption (priority 3) is explicitly documented as **not in v1 scope**
+- Built-in scheduling and encryption (priority 3) are explicitly documented as **not in v1 scope**; opt-in retention pruning (`--retention-days N`) is implemented
 - Implementation of Should-Have items does not expand the v1 support contract
 
 ### Gate 3 — Phase 3 Entry (Path 3)
@@ -126,8 +126,8 @@ D6 does not:
 - D6 items are **not implemented** — their existence in this document does not change the implementation status of any feature.
 - PostgreSQL (priority 1) is explicitly **not implemented** per ADR-50: NO-GO verdict for full implementation.
 - Multi-node/HA (priority 2) is **not implemented** and not in v1 scope.
-- Backup automation/retention/encryption (priority 3) is **not implemented** in v1; external scheduling is operator-owned per `18-single-node-operations-runbook.md`.
-- Observability/metrics (priority 4) is documented in `../ferrumgate-roadmap-v1/21-v1-single-node-observability-minimums.md` but not implemented in v1.
+- Backup automation/retention/encryption (priority 3): opt-in retention pruning (`--retention-days N`) is **implemented**; scheduling and encryption are **not implemented** in v1; operator-owned per `18-single-node-operations-runbook.md`.
+- Observability/metrics (priority 4): bounded `/v1/metrics` endpoint (health/metrics counters, store up/down gauge) is implemented; broader latency/error/WAL/pool metrics remain future work per `21-v1-single-node-observability-minimums.md`
 - Adapter hardening (priority 5) refers to work documented in `33-feature-completion-backlog.md` P3–P6.
 - Rate-limit/load test suite (priority 6) is documented in `33-feature-completion-backlog.md` M2 but deferred to Phase 3+.
 
@@ -150,7 +150,7 @@ D6 does not modify or supersede D5 conclusions. All 10 bottleneck domains mapped
 - D5 Domain 3: FK chain write amplification (6+ writes per pipeline) — **unchanged**
 - D5 Domain 4: Adapter compensation non-uniformity — **unchanged**
 - D5 Domain 5: Adapter surface boundedness — **unchanged**
-- D5 Domain 6: Backup/restore limits (no scheduling/retention/encryption) — **unchanged**
+- D5 Domain 6: Backup/restore limits (opt-in retention pruning available; no scheduling/encryption) — **unchanged**
 - D5 Domain 7: Lineage query at scale — **unchanged**
 - D5 Domain 8: Rate limiting under load (2 req/s sustained) — **unchanged**
 - D5 Domain 9: Health check depth (shallow probes) — **unchanged**

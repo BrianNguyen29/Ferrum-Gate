@@ -14,7 +14,7 @@ All P0/P1/P2 items verified complete. Core governance loop implemented and test-
 
 **Production posture**: Phase 1 only — SQLite write queue. Phase 2 (transaction batching + direct UPDATE) was partially implemented but **deferred/regressed** due to performance regression in benchmarking. Phase 3 (PostgreSQL migration) is the path to full production scale.
 
-**Conditional production constraint**: Full "production-ready" posture is not claimed because operational constraints remain (SQLite single-node write limits, bounded offline/local `ferrumctl backup` workflow only, no built-in incremental backup, no automated scheduling, no retention policy; broader observability deferred; PostgreSQL/multi-node deferred; operator sign-off required before production deployment). All 12 invariants are VERIFIED per invariant matrix. The release is **RC-ready** with known accepted risks; operators should evaluate against the production evaluation plan before production deployment.
+**Conditional production constraint**: Full "production-ready" posture is not claimed because operational constraints remain (SQLite single-node write limits, bounded offline/local `ferrumctl backup` workflow with opt-in retention pruning (`--retention-days N`), no built-in incremental backup, no automated scheduling, no encryption; broader observability deferred; PostgreSQL/multi-node deferred; operator sign-off required before production deployment). All 12 invariants are VERIFIED per invariant matrix. The release is **RC-ready** with known accepted risks; operators should evaluate against the production evaluation plan before production deployment.
 
 Remaining gaps are post-v1 backlog documented in `11-remaining-tasks.md` P3.
 
@@ -86,7 +86,7 @@ Remaining gaps are post-v1 backlog documented in `11-remaining-tasks.md` P3.
 | RC evidence doc | PASS | `docs/implementation-path/25-EV-v1-single-node-rc-evidence.md` exists (this doc) |
 | Phase F final docs pack | PASS | implementation-path docs finalized as cohesive pack |
 
-**Known gaps**: See support contract Accepted Risks and invariant matrix (`12 VERIFIED / 0 PARTIAL / 0 INFERRED`) for the current control baseline. Residual production constraints are operational rather than invariant-evidence gaps: SQLite single-node throughput limits, bounded SQLite-only backup/restore workflow without scheduling/retention, PostgreSQL/multi-node deferral, and required operator signoff. No outstanding P0/P1/P2 items.
+**Known gaps**: See support contract Accepted Risks and invariant matrix (`12 VERIFIED / 0 PARTIAL / 0 INFERRED`) for the current control baseline. Residual production constraints are operational rather than invariant-evidence gaps: SQLite single-node throughput limits, bounded SQLite-only backup/restore with opt-in retention pruning, PostgreSQL/multi-node deferral, and required operator signoff. No outstanding P0/P1/P2 items.
 
 ---
 

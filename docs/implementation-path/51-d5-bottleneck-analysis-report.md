@@ -141,15 +141,15 @@ The adapter surface is a bottleneck for production use cases requiring real side
 
 ### Description
 
-`ferrumctl backup` provides a bounded SQLite-only backup/restore workflow. There is no incremental backup, no built-in scheduling, no retention policy, and no encryption.
+`ferrumctl backup` provides a bounded SQLite-only backup/restore workflow with opt-in retention pruning (`--retention-days N`). There is no incremental backup, no built-in scheduling, and no encryption.
 
 ### Evidence
 
 | Source | Finding |
 |--------|---------|
-| `27-production-evaluation-plan.md` §3.5 | "Limitations: SQLite-only (no PostgreSQL backup), no incremental backup, no built-in scheduling, no built-in retention policy, no encryption." |
-| `18-single-node-operations-runbook.md` §5.4 | "FerrumGate v1 does not include a built-in backup scheduler. Backup scheduling and retention policy are operator-owned concerns." |
-| `33-feature-completion-backlog.md` §S3 | "Gap: No built-in scheduling, no retention policy, no encryption, no incremental backup, no cross-instance restore" |
+| `27-production-evaluation-plan.md` §3.5 | "Limitations: SQLite-only (no PostgreSQL backup), no incremental backup, no built-in scheduling, opt-in CLI retention pruning (`--retention-days N`), no encryption." |
+| `18-single-node-operations-runbook.md` §5.4 | "FerrumGate v1 does not include a built-in backup scheduler. Scheduling and encryption remain operator-owned; `--retention-days` provides opt-in pruning." |
+| `33-feature-completion-backlog.md` §S3 | "Gap: No built-in scheduling, no encryption, no incremental backup, no cross-instance restore. Opt-in retention pruning available." |
 
 ### Analysis
 
@@ -256,7 +256,7 @@ PostgreSQL deferral means the SQLite single-writer ceiling is the hard limit for
 | 3 | FK chain write amplification | Schema | Write queue reduces contention | 6+ sequential writes per pipeline; non-linear latency under load | `PERFORMANCE_OPTIMIZATION_PLAN.md` §Problem Statement |
 | 4 | Adapter compensation non-uniformity | Correctness | Bounded compensation implemented | No uniform guarantee; compensate may be noop | `27-production-evaluation-plan.md` §3.6; `33-feature-completion-backlog.md` §P6 |
 | 5 | Adapter surface boundedness | Coverage | Local operations verified | Broader surface (permissions, remote, TLS) unverified | `45-current-feature-audit.md` §Nhóm 5; `33-feature-completion-backlog.md` §P3–P5 |
-| 6 | Backup/restore limits | Operational | Bounded SQLite backup exists | No incremental/scheduling/retention/encryption | `27-production-evaluation-plan.md` §3.5; `18-single-node-operations-runbook.md` §5 |
+| 6 | Backup/restore limits | Operational | Bounded SQLite backup + opt-in retention pruning (`--retention-days N`) | No incremental backup; no built-in scheduling/encryption; full retention policy management operator-owned | `27-production-evaluation-plan.md` §3.5; `18-single-node-operations-runbook.md` §5 |
 | 7 | Lineage query at scale | Query | Implemented correctly | SQLite lacks parallel query; large histories may be slow | `27-production-evaluation-plan.md` §1.2 |
 | 8 | Rate limiting under load | HTTP/Gateway | tower-governor active | 2 req/s sustained may limit high-throughput legitimate traffic | `27-production-evaluation-plan.md` §2.2; `33-feature-completion-backlog.md` §M2 |
 | 9 | Health check depth | Operational | readyz/deep store probe available | Shallow checks do not validate governance loop | `27-production-evaluation-plan.md` §4.2; `18-single-node-operations-runbook.md` §4 |

@@ -77,12 +77,12 @@ Operator signature: _________________ Date: _________
 | Item | Required Action | Reference |
 |---|---|---|
 | Backup schedule outside FerrumGate | Operator implements backup scheduling external to FerrumGate (cron, CI job, etc.); `ferrumctl backup` does not support automated scheduling | `27-production-evaluation-plan.md` §3.5 |
-| Backup retention | Operator defines and enforces backup retention policy outside FerrumGate | `27-production-evaluation-plan.md` §3.5 |
+| Backup retention | Operator defines retention policy; opt-in CLI retention pruning (`--retention-days N`) available | `27-production-evaluation-plan.md` §3.5 |
 | Restore drill performed | Operator has run `ferrumctl backup restore` in a non-production environment and verified data integrity with `PRAGMA integrity_check` | Operations runbook §4 |
 | RPO accepted | Operator understands RPO = time since last backup; any writes after last backup are lost on restore | `27-production-evaluation-plan.md` §3.5 |
 | RTO accepted | Operator understands RTO includes backup restore time + re-start + verification; FerrumGate has no automated recovery | `27-production-evaluation-plan.md` §3.5 |
 
-**Signoff phrase required**: "Operator has performed a restore drill, confirmed RPO/RTO fit for the target workload, and backup retention is managed externally."
+**Signoff phrase required**: "Operator has performed a restore drill, confirmed RPO/RTO fit for the target workload, and backup retention policy (including scheduling and offsite needs) is operator-defined."
 
 Operator signature: _________________ Date: _________
 

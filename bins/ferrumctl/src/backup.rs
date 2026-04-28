@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, OpenFlags};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -46,10 +47,86 @@ fn copy_db_snapshot(db_path: &Path, dest_path: &Path) -> Result<u64> {
     Ok(size)
 }
 
+/// Prunes backup files older than `retention_days` from output_dir.
+/// Files matching `<db_name>_*.db` pattern with mtime older than retention_days
+/// are deleted. The newly created backup (current_backup_path) is never deleted.
+fn prune_old_backups(
+    output_dir: &Path,
+    db_name: &str,
+    retention_days: u32,
+    current_backup_path: &Path,
+) -> Result<usize> {
+    let cutoff = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| {
+            d.as_secs()
+                .saturating_sub((retention_days as u64) * 24 * 60 * 60)
+        })
+        .unwrap_or(0);
+
+    let mut pruned_count = 0;
+
+    for entry in fs::read_dir(output_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+
+        // Skip non-regular files
+        if !path.is_file() {
+            continue;
+        }
+
+        // Skip the newly created backup
+        if path == current_backup_path {
+            continue;
+        }
+
+        // Check if filename matches the pattern
+        let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let prefix = format!("{}_", db_name);
+        if !filename.starts_with(&prefix) || !filename.ends_with(".db") {
+            continue;
+        }
+
+        // Check mtime
+        if let Ok(metadata) = entry.metadata() {
+            if let Ok(mtime) = metadata.modified() {
+                let mtime_secs = mtime
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                if mtime_secs < cutoff {
+                    fs::remove_file(&path)?;
+                    pruned_count += 1;
+                    eprintln!("Pruned old backup: {}", path.display());
+                }
+            }
+        }
+    }
+
+    Ok(pruned_count)
+}
+
 /// Creates a backup of the SQLite database at db_path and writes it to output_dir.
 /// Uses the rusqlite backup API for a consistent snapshot.
 /// Sets restrictive file permissions (0600) on the backup file.
+#[allow(dead_code)]
 pub fn backup_create(db_path: &Path, output_dir: &Path) -> Result<PathBuf> {
+    backup_create_with_retention(db_path, output_dir, None).map(|(path, _)| path)
+}
+
+/// Creates a backup with optional retention pruning.
+/// Returns the backup path and number of pruned files if retention_days is Some.
+pub fn backup_create_with_retention(
+    db_path: &Path,
+    output_dir: &Path,
+    retention_days: Option<u32>,
+) -> Result<(PathBuf, usize)> {
+    // Validate retention_days
+    if let Some(n) = retention_days {
+        if n == 0 {
+            bail!("--retention-days must be at least 1 (got 0)");
+        }
+    }
     // Determine backup filename
     let timestamp = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
@@ -74,7 +151,14 @@ pub fn backup_create(db_path: &Path, output_dir: &Path) -> Result<PathBuf> {
 
     eprintln!("Backup created: {} ({} bytes)", backup_path.display(), size);
 
-    Ok(backup_path)
+    // Apply retention pruning if requested
+    let pruned_count = if let Some(days) = retention_days {
+        prune_old_backups(output_dir, db_name, days, &backup_path)?
+    } else {
+        0
+    };
+
+    Ok((backup_path, pruned_count))
 }
 
 /// Verifies the integrity of the SQLite database at db_path.
@@ -487,5 +571,290 @@ mod tests {
             data, "original",
             "original data should be unchanged after failed restore"
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // Backup retention tests
+    // -------------------------------------------------------------------------
+
+    /// Sets file mtime to a specific unix timestamp using touch -t
+    fn touch_with_mtime(path: &Path, timestamp_secs: u64) {
+        // touch -t format: YYYYMMDDhhmm
+        // Convert unix timestamp to YYYYMMDDHHMM
+        let days = timestamp_secs / 86400;
+        let rem = timestamp_secs % 86400;
+        let hour = rem / 3600;
+        let min = (rem % 3600) / 60;
+
+        // Calculate year/month/day from days since epoch (1970-01-01)
+        let mut year = 1970;
+        let mut remaining_days = days as i64;
+        loop {
+            let days_in_year = if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) {
+                366
+            } else {
+                365
+            };
+            if remaining_days < days_in_year {
+                break;
+            }
+            remaining_days -= days_in_year;
+            year += 1;
+        }
+
+        let month_days = if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) {
+            [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+        } else {
+            [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+        };
+
+        let mut month = 1;
+        for d in month_days.iter() {
+            if remaining_days < *d as i64 {
+                break;
+            }
+            remaining_days -= *d as i64;
+            month += 1;
+        }
+        let day = remaining_days + 1;
+
+        let formatted = format!("{:04}{:02}{:02}{:02}{:02}", year, month, day, hour, min);
+        std::process::Command::new("touch")
+            .args(["-t", &formatted, &path.to_string_lossy()])
+            .output()
+            .expect("touch should succeed");
+    }
+
+    #[test]
+    fn test_backup_create_with_retention_prunes_old_backups() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let backup_dir = temp_dir.path().join("backups");
+
+        // Create a test database
+        create_test_db(
+            &db_path,
+            "CREATE TABLE test (id INTEGER PRIMARY KEY); INSERT INTO test (id) VALUES (1);",
+        );
+
+        // Create output dir
+        std::fs::create_dir_all(&backup_dir).unwrap();
+
+        // Create an old backup file manually (touch with old mtime)
+        // Note: backup files are named {db_name}_{timestamp}.db, db_name="test.db"
+        let old_backup = backup_dir.join("test.db_1000000000.db");
+        std::fs::write(&old_backup, b"fake old backup").unwrap();
+
+        // Set the old backup's mtime to 100 days ago using touch -t
+        let old_mtime = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            - (100 * 24 * 60 * 60);
+        touch_with_mtime(&old_backup, old_mtime);
+
+        // Create a recent backup file that should NOT be deleted
+        let recent_backup = backup_dir.join("test.db_2000000000.db");
+        std::fs::write(&recent_backup, b"fake recent backup").unwrap();
+
+        // Create new backup with retention=30 days
+        let (backup_path, pruned) = backup_create_with_retention(&db_path, &backup_dir, Some(30))
+            .expect("backup should succeed");
+
+        // Verify the new backup was created
+        assert!(backup_path.exists());
+
+        // Verify old backup was pruned
+        assert!(!old_backup.exists(), "old backup should be pruned");
+
+        // Verify recent backup was preserved
+        assert!(recent_backup.exists(), "recent backup should be preserved");
+
+        // Verify new backup was preserved
+        assert!(backup_path.exists(), "new backup should be preserved");
+
+        // Verify pruned count
+        assert_eq!(pruned, 1, "should have pruned exactly 1 backup");
+    }
+
+    #[test]
+    fn test_backup_create_with_retention_does_not_delete_new_backup() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("mydb.db");
+        let backup_dir = temp_dir.path().join("backups");
+
+        // Create a test database
+        create_test_db(
+            &db_path,
+            "CREATE TABLE test (id INTEGER PRIMARY KEY); INSERT INTO test (id) VALUES (1);",
+        );
+
+        // Create output dir
+        std::fs::create_dir_all(&backup_dir).unwrap();
+
+        // Create new backup with retention=1 day
+        let (backup_path, pruned) = backup_create_with_retention(&db_path, &backup_dir, Some(1))
+            .expect("backup should succeed");
+
+        // Verify the new backup exists
+        assert!(backup_path.exists());
+
+        // Verify nothing was pruned (the new backup is never deleted even if mtime is weird)
+        assert_eq!(pruned, 0, "should not prune anything on first backup");
+
+        // Verify we can still verify the backup
+        backup_verify(&backup_path).expect("new backup should pass verification");
+    }
+
+    #[test]
+    fn test_backup_create_with_retention_preserves_nonmatching_files() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let backup_dir = temp_dir.path().join("backups");
+
+        // Create a test database
+        create_test_db(
+            &db_path,
+            "CREATE TABLE test (id INTEGER PRIMARY KEY); INSERT INTO test (id) VALUES (1);",
+        );
+
+        // Create output dir
+        std::fs::create_dir_all(&backup_dir).unwrap();
+
+        // Create an old backup with different prefix (should NOT be matched)
+        let other_backup = backup_dir.join("otherdb_1000000000.db");
+        std::fs::write(&other_backup, b"other db backup").unwrap();
+
+        // Create old backup with same prefix but different suffix
+        let old_matching = backup_dir.join("test.db_1000000000.db");
+        std::fs::write(&old_matching, b"old test backup").unwrap();
+        let old_mtime = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            - (100 * 24 * 60 * 60);
+        touch_with_mtime(&old_matching, old_mtime);
+
+        // Create new backup with retention=30 days
+        let (backup_path, pruned) = backup_create_with_retention(&db_path, &backup_dir, Some(30))
+            .expect("backup should succeed");
+
+        // Verify old matching backup was pruned
+        assert!(
+            !old_matching.exists(),
+            "old matching backup should be pruned"
+        );
+
+        // Verify other db backup was preserved (doesn't match pattern)
+        assert!(
+            other_backup.exists(),
+            "non-matching backup should be preserved"
+        );
+
+        // Verify new backup was preserved
+        assert!(backup_path.exists(), "new backup should be preserved");
+
+        assert_eq!(pruned, 1, "should have pruned exactly 1 backup");
+    }
+
+    #[test]
+    fn test_backup_create_with_retention_zero_is_invalid() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let backup_dir = temp_dir.path().join("backups");
+
+        // Create a test database
+        create_test_db(
+            &db_path,
+            "CREATE TABLE test (id INTEGER PRIMARY KEY); INSERT INTO test (id) VALUES (1);",
+        );
+
+        // retention=0 should be an error
+        let result = backup_create_with_retention(&db_path, &backup_dir, Some(0));
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("retention-days must be at least 1"),
+            "error should mention retention-days requirement: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_backup_create_with_retention_none_unchanged_behavior() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let backup_dir = temp_dir.path().join("backups");
+
+        // Create a test database
+        create_test_db(
+            &db_path,
+            "CREATE TABLE test (id INTEGER PRIMARY KEY); INSERT INTO test (id) VALUES (1);",
+        );
+
+        // Create output dir
+        std::fs::create_dir_all(&backup_dir).unwrap();
+
+        // Create an old backup manually
+        // Note: backup files are named {db_name}_{timestamp}.db, db_name="test.db"
+        let old_backup = backup_dir.join("test.db_1000000000.db");
+        std::fs::write(&old_backup, b"old backup").unwrap();
+
+        // retention=None should behave like original backup_create (no pruning)
+        let (backup_path, pruned) = backup_create_with_retention(&db_path, &backup_dir, None)
+            .expect("backup should succeed");
+
+        // Verify the new backup was created
+        assert!(backup_path.exists());
+
+        // Verify old backup was NOT pruned (retention=None means no pruning)
+        assert!(
+            old_backup.exists(),
+            "old backup should NOT be pruned when retention is None"
+        );
+
+        // Verify pruned count is 0
+        assert_eq!(
+            pruned, 0,
+            "should not prune anything when retention is None"
+        );
+    }
+
+    #[test]
+    fn test_backup_create_with_retention_skips_non_db_files() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let backup_dir = temp_dir.path().join("backups");
+
+        // Create a test database
+        create_test_db(
+            &db_path,
+            "CREATE TABLE test (id INTEGER PRIMARY KEY); INSERT INTO test (id) VALUES (1);",
+        );
+
+        // Create output dir
+        std::fs::create_dir_all(&backup_dir).unwrap();
+
+        // Create various non-matching files
+        let txt_file = backup_dir.join("readme.txt");
+        std::fs::write(&txt_file, b"this is not a backup").unwrap();
+
+        let other_file = backup_dir.join("test.txt");
+        std::fs::write(&other_file, b"not a db file").unwrap();
+
+        // Create new backup with retention=1 day
+        let (backup_path, pruned) = backup_create_with_retention(&db_path, &backup_dir, Some(1))
+            .expect("backup should succeed");
+
+        // Verify new backup exists
+        assert!(backup_path.exists());
+
+        // Verify non-db files are untouched
+        assert!(txt_file.exists(), "txt file should be untouched");
+        assert!(other_file.exists(), "other file should be untouched");
+
+        // Verify nothing was pruned
+        assert_eq!(pruned, 0, "should not prune any files");
     }
 }

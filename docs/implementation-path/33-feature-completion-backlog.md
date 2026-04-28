@@ -85,16 +85,16 @@ These items improve production posture but are not v1 RC blockers.
 | **Production ready** | **Partial** — deep probe verified for store-unhealthy path; broader failure modes (adapter failure, corruption) remain post-v1 scope |
 | **Next action** | Future: add latency/error/WAL/pool metrics if Phase 3 or pilot operations require them |
 
-### S3 — Backup/restore: bounded SQLite-only; external scheduling is v1 architecture
+### S3 — Backup/restore: bounded SQLite-only; opt-in retention pruning implemented
 
 | Aspect | Detail |
 |--------|--------|
-| **Current state** | `ferrumctl backup create/verify/restore` exists; offline/local workflow; SQLite-only |
-| **v1 architecture** | Backup scheduling and retention are **operator-owned external concerns** — no built-in scheduler, no retention engine, no encryption in v1. Operators use cron, systemd timers, or external backup tools to drive `ferrumctl backup`. |
-| **Gap** | No built-in scheduling, no retention policy, no encryption, no incremental backup, no cross-instance restore |
-| **Risk** | MED for production data durability |
-| **Production ready** | **No** — production deployments need operator-implemented scheduling + retention; no production claim is made for automated backup |
-| **Next action** | None for built-in implementation — operator implements external scheduling per runbook examples; built-in scheduler/retention/encryption remain deferred post-v1 |
+| **Current state** | `ferrumctl backup create/verify/restore` exists; offline/local workflow; SQLite-only; `--retention-days N` flag provides automatic pruning of backups older than N days after each backup creation |
+| **v1 architecture** | Backup scheduling and encryption are **operator-owned external concerns** — no built-in scheduler, no encryption in v1. Operators use cron, systemd timers, or external backup tools to drive `ferrumctl backup`. The `--retention-days` flag provides bounded retention pruning within the CLI itself. |
+| **Gap** | No built-in scheduler, no encryption, no incremental backup, no cross-instance restore |
+| **Risk** | LOW for production data durability — bounded retention pruning implemented and tested |
+| **Production ready** | **Partial** — bounded retention pruning is implemented; production deployments still need operator-implemented scheduling; no production claim is made for automated backup |
+| **Next action** | None for built-in implementation — operator implements external scheduling per runbook examples; built-in scheduler/encryption remain deferred post-v1 |
 
 ### S4 — Policy bundle / bridge support boundary
 
@@ -182,7 +182,7 @@ These require PostgreSQL, multi-node, or broader adapter surface — not in v1 s
 | M3 | Must | cancel_execution HTTP endpoint | **Implemented** with route/handler/tests | No |
 | S1 | Should | DLP stub | Docs-only stub; post-v1 | No |
 | S2 | Should | Deep health check coverage | Partial | No |
-| S3 | Should | Backup/restore (scheduling/retention) | Bounded SQLite-only | No |
+| S3 | Should | Backup/restore (opt-in retention pruning; no scheduling/encryption) | Bounded SQLite-only + `--retention-days N` | No |
 | S4 | Should | Policy bundle/bridge boundary | Post-v1/experimental | No |
 | P1 | Production-only | PostgreSQL backend | Not implemented | N/A |
 | P2 | Production-only | Multi-node/HA | Not implemented | N/A |
