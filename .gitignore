@@ -6,6 +6,7 @@ Cargo.lock
 /tmp
 /.idea
 /.vscode
+.agents/
 .DS_Store
 *.log
 *.db

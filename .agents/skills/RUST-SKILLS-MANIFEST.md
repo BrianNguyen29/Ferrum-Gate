@@ -1,1 +1,0 @@
-/home/uong_guyen/.config/opencode/skills/RUST-SKILLS-MANIFEST.md
