@@ -91,7 +91,7 @@ Full G1 evidence: [`53-rc-tag-checklist.md`](./docs/implementation-path/53-rc-ta
 ### Canonical references
 
 - v1 support contract: `docs/ferrumgate-roadmap-v1/19-v1-single-node-support-contract.md`
-- Invariant control evidence: `docs/implementation-path/26-v1-single-node-invariant-control-test-evidence-matrix.md`
+- Invariant control evidence: `docs/implementation-path/26-EV-v1-single-node-invariant-control-test-evidence-matrix.md`
 - Feature completeness: `docs/implementation-path/32-feature-completeness-audit.md`
 - Feature completion backlog: `docs/implementation-path/33-feature-completion-backlog.md`
 - Production evaluation: `docs/implementation-path/27-production-evaluation-plan.md`

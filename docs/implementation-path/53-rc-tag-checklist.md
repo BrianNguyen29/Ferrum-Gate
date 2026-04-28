@@ -84,7 +84,7 @@ The following items were completed before publishing `v0.1.0-rc.1`:
 | Document | Purpose |
 |----------|---------|
 | `31-release-paths-todo.md` §Path 1 | Full release path with rollback/abort criteria |
-| `25-v1-single-node-rc-evidence.md` | Canonical RC evidence record |
+| `25-EV-v1-single-node-rc-evidence.md` | Canonical RC evidence record |
 | `23-production-readiness-assessment.md` | RC-ready declaration |
 | `27-production-evaluation-plan.md` | Production evaluation framework + Operator Signoff Packet |
 

@@ -36,7 +36,7 @@ Attach the following evidence to each section before signing:
 
 Before the production pilot begins, the operator must sign the following statement:
 
-> **Operator acceptance**: "I, [Operator Name], acting in my capacity as [Role], have evaluated FerrumGate v1 single-node SQLite against the production evaluation plan (`27-production-evaluation-plan.md`). I have reviewed and accepted all accepted risks documented in `19-v1-single-node-support-contract.md` §4 and the Weak Spots documented in `26-v1-single-node-invariant-control-test-evidence-matrix.md`. I confirm the workload fits within Phase 1 SQLite constraints, all G2 gates have been satisfied, and I accept the conditional production posture as described in `23-production-readiness-assessment.md`. I authorize the limited production pilot deployment as described in `31-release-paths-todo.md` §Path 2."
+> **Operator acceptance**: "I, [Operator Name], acting in my capacity as [Role], have evaluated FerrumGate v1 single-node SQLite against the production evaluation plan (`27-production-evaluation-plan.md`). I have reviewed and accepted all accepted risks documented in `19-v1-single-node-support-contract.md` §4 and the Weak Spots documented in `26-EV-v1-single-node-invariant-control-test-evidence-matrix.md`. I confirm the workload fits within Phase 1 SQLite constraints, all G2 gates have been satisfied, and I accept the conditional production posture as described in `23-production-readiness-assessment.md`. I authorize the limited production pilot deployment as described in `31-release-paths-todo.md` §Path 2."
 >
 > Operator signature: _________________ Date: _________
 >
@@ -138,7 +138,7 @@ Before the first production pilot deployment, the following must be all confirme
 |----------|---------|
 | `27-production-evaluation-plan.md` | Canonical production evaluation framework |
 | `19-v1-single-node-support-contract.md` | Accepted risks §4, support constraints §3 |
-| `26-v1-single-node-invariant-control-test-evidence-matrix.md` | Weak Spots 1–4 resolved |
+| `26-EV-v1-single-node-invariant-control-test-evidence-matrix.md` | Weak Spots 1–4 resolved |
 | `23-production-readiness-assessment.md` | RC-ready declaration |
 | `31-release-paths-todo.md` §Path 2 | Full production pilot path with G2 gates |
 
@@ -324,7 +324,7 @@ Date pre-filled: _______________________________
 
 Review required documents:
   - `19-v1-single-node-support-contract.md` §4 (Accepted Risks)
-  - `26-v1-single-node-invariant-control-test-evidence-matrix.md` (Weak Spots 1–4)
+  - `26-EV-v1-single-node-invariant-control-test-evidence-matrix.md` (Weak Spots 1–4)
 
 Weak Spot 1 — Rollback class handling (RESOLVED):
   [ ] Operator confirms callers set `rollback_class` correctly at intent creation

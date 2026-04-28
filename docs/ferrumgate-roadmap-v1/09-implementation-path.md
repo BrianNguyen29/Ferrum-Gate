@@ -4,6 +4,8 @@
 >
 > **For current Phase status**: See `docs/implementation-path/01-current-state.md` §Phase status summary.
 >
+> **Planning reference**: For post-v1/quarterly planning, see [`../ferrumgate-roadmap-v2/ferrumgate-roadmap-pack/README.md`](../ferrumgate-roadmap-v2/ferrumgate-roadmap-pack/README.md). This pack is non-authoritative for v1 support unless the support contract is explicitly amended.
+>
 > **Canonical Phase completion**:
 > - Phase A (compile/shape stability): ✅ DONE
 > - Phase B (SQLite storage boundary): ✅ DONE

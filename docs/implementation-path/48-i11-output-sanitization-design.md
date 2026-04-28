@@ -204,4 +204,4 @@ cargo test --workspace --test '*integration*' sanitize
 - `crates/ferrum-gateway/src/server.rs` — GatewayRuntime + handlers
 - `crates/ferrum-gateway/src/error.rs` — Error type construction
 - `docs/implementation-path/45-current-feature-audit.md` — I11 VERIFIED status (2026-04-27)
-- `docs/implementation-path/26-v1-single-node-invariant-control-test-evidence-matrix.md` — Invariant matrix
+- `docs/implementation-path/26-EV-v1-single-node-invariant-control-test-evidence-matrix.md` — Invariant matrix

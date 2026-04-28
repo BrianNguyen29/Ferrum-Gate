@@ -1,7 +1,9 @@
 # 40 — Out-of-Tree SQLite Performance Candidate
 
-> **⚠️ Out-of-tree / unmerged**: This document captures performance findings that are not yet merged into the canonical documentation chain. Treat as draft candidate.
-> **Status**: Phase 1 completed and production-tested. Phase 2 reverted.
+> **⚠️ Deprecated / historical reference**: Phase 1 write-queue findings are now canonical in
+> [`../PRODUCTION_NOTES.md`](../PRODUCTION_NOTES.md). Phase 2 batching regressed and remains
+> deferred; Phase 3 PostgreSQL remains unimplemented and gated by ADR-50/G3. This document is
+> retained only as historical benchmark context and must not be used as an implementation authority.
 
 ---
 

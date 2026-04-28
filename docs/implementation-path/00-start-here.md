@@ -8,9 +8,11 @@ Không tái thiết kế lại dự án.
 Bạn phải đi tiếp implementation theo plan hiện có.
 
 ## Việc đầu tiên
-- đọc project canon
-- xác định phase hiện tại
-- chọn đúng crate cần làm
+- đọc `01-current-state.md`
+- đọc `../ferrumgate-roadmap-v1/19-v1-single-node-support-contract.md`
+- xác định route hiện tại trong `31-release-paths-todo.md`
+- nếu đi production pilot: dùng `54-operator-signoff-packet.md` và không tự mark G2 complete
+- nếu đi Phase 3/PostgreSQL: chỉ bắt đầu sau khi G3.2–G3.4 thỏa mãn
 - không phá invariants
 
 ## Việc tuyệt đối không làm

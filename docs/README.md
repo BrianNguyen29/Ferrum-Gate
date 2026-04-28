@@ -11,29 +11,27 @@ Mục tiêu của bộ docs này:
 
 Nếu bạn chỉ có thời gian đọc ít tài liệu, hãy đọc theo đúng thứ tự sau:
 
-1. `ferrumgate-roadmap-v1/00-project-canon.md`
-2. `ferrumgate-roadmap-v1/01-quickstart.md`
-3. `ferrumgate-roadmap-v1/02-project-overview.md`
-4. `ferrumgate-roadmap-v1/03-architecture.md`
-5. `ferrumgate-roadmap-v1/04-runtime-flow.md`
-6. `ferrumgate-roadmap-v1/05-domain-model.md`
-7. `ferrumgate-roadmap-v1/06-constraints-and-invariants.md`
-8. `ferrumgate-roadmap-v1/07-policy-and-security-model.md`
-9. `ferrumgate-roadmap-v1/08-repository-structure.md`
-10. `ferrumgate-roadmap-v1/09-implementation-path.md`
+1. `implementation-path/00-start-here.md`
+2. `implementation-path/01-current-state.md`
+3. `ferrumgate-roadmap-v1/19-v1-single-node-support-contract.md`
+4. `implementation-path/23-production-readiness-assessment.md`
+5. `implementation-path/31-release-paths-todo.md`
+6. `implementation-path/54-operator-signoff-packet.md`
+7. `implementation-path/55-phase-3-go-no-go-review.md`
 
-Sau đó mới đọc:
-- `ferrumgate-roadmap-v1/10-crate-by-crate-plan.md`
-- `ferrumgate-roadmap-v1/11-testing-strategy.md`
-- `ferrumgate-roadmap-v1/12-persistence-and-data-model.md`
-- `ferrumgate-roadmap-v1/13-adapter-contracts.md`
+Sau đó mới đọc các tài liệu nền tảng khi cần:
+- `ferrumgate-roadmap-v1/06-constraints-and-invariants.md`
 - `ferrumgate-roadmap-v1/14-api-and-contracts-map.md`
-- `ferrumgate-roadmap-v1/15-deployment-and-operations.md`
-- `ferrumgate-roadmap-v1/16-release-checklist.md`
-- `ferrumgate-roadmap-v1/17-troubleshooting.md`
 - `ferrumgate-roadmap-v1/18-single-node-operations-runbook.md`
 - `ferrumgate-roadmap-v1/20-v1-single-node-operator-checks.md`
 - `ferrumgate-roadmap-v1/21-v1-single-node-observability-minimums.md`
+- `implementation-path/25-EV-v1-single-node-rc-evidence.md`
+- `implementation-path/26-EV-v1-single-node-invariant-control-test-evidence-matrix.md`
+- `ferrumgate-roadmap-v2/ferrumgate-roadmap-pack/README.md` — planning reference cho post-v1/Phase 3; không override support contract
+
+Các tài liệu `ferrumgate-roadmap-v1/00-project-canon.md` và roadmap-v1
+đời đầu là historical/superseded cho trạng thái v1 hiện tại; chỉ dùng để
+hiểu bối cảnh, không dùng làm nguồn quyết định feature/status.
 
 ## Thư mục con
 - `90-docs-governance-phase1.md` — Phase 1 docs inventory, canonical map, overlap matrix (governance artifact)
@@ -44,11 +42,18 @@ Sau đó mới đọc:
 
 Khi có mâu thuẫn, ưu tiên theo thứ tự:
 
-1. `00-project-canon.md`
-2. `06-constraints-and-invariants.md`
-3. `09-implementation-path.md`
-4. `10-crate-by-crate-plan.md`
-5. phần còn lại của `docs/`
+1. `ferrumgate-roadmap-v1/19-v1-single-node-support-contract.md`
+2. `implementation-path/01-current-state.md`
+3. `implementation-path/31-release-paths-todo.md`
+4. `implementation-path/23-production-readiness-assessment.md`
+5. `ferrumgate-roadmap-v1/06-constraints-and-invariants.md`
+6. phần còn lại của `docs/`
+
+## Bước tiếp theo hiện tại
+
+- Path 1 đã xong: `v0.1.0-rc.1` là GitHub prerelease.
+- Path 2 đang chờ operator: hoàn tất/ký `implementation-path/54-operator-signoff-packet.md` trước production pilot.
+- Path 3 chưa bắt đầu: PostgreSQL/Phase 3 chỉ mở sau khi G2 pilot confirmation và G3.2–G3.4 thỏa mãn.
 
 ## Kết luận ngắn
 

@@ -178,7 +178,7 @@ via CLI). Mutating operations must be performed via the REST API.
 ## 4. Accepted Risks
 
 These risks are acknowledged based on current implementation and test evidence.
-They are documented in `26-v1-single-node-invariant-control-test-evidence-matrix.md`
+They are documented in `26-EV-v1-single-node-invariant-control-test-evidence-matrix.md`
 Weak Spots 1-4 and the runbook.
 
 ### 4.1 prepare-step rollback-class handling
@@ -244,8 +244,8 @@ Source docs:
 - `docs/ferrumgate-roadmap-v1/18-single-node-operations-runbook.md` — operator guide
 - `docs/ferrumgate-roadmap-v1/14-api-and-contracts-map.md` — API endpoint reference
 - `docs/implementation-path/23-production-readiness-assessment.md` — RC verdict
-- `docs/implementation-path/25-v1-single-node-rc-evidence.md` — evidence record
-- `docs/implementation-path/26-v1-single-node-invariant-control-test-evidence-matrix.md` — weak spots
+- `docs/implementation-path/25-EV-v1-single-node-rc-evidence.md` — evidence record
+- `docs/implementation-path/26-EV-v1-single-node-invariant-control-test-evidence-matrix.md` — weak spots
 - `docs/implementation-path/11-remaining-tasks.md` — post-v1 backlog
 
 ---

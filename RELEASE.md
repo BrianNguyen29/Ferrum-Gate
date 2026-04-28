@@ -78,7 +78,7 @@ evaluation plan before any production deployment.
 | PARTIAL | 0 |
 | INFERRED | 0 |
 
-Full matrix: `docs/implementation-path/26-v1-single-node-invariant-control-test-evidence-matrix.md`
+Full matrix: `docs/implementation-path/26-EV-v1-single-node-invariant-control-test-evidence-matrix.md`
 
 ### Readiness Dimensions
 
@@ -131,9 +131,9 @@ See `docs/implementation-path/31-release-paths-todo.md` §Path 1 for rollback/ab
 
 | Document | Purpose |
 |----------|---------|
-| `docs/implementation-path/25-v1-single-node-rc-evidence.md` | Canonical RC evidence record |
+| `docs/implementation-path/25-EV-v1-single-node-rc-evidence.md` | Canonical RC evidence record |
 | `docs/implementation-path/23-production-readiness-assessment.md` | RC-ready declaration with all dimensions verified |
-| `docs/implementation-path/26-v1-single-node-invariant-control-test-evidence-matrix.md` | 12 VERIFIED / 0 PARTIAL / 0 INFERRED |
+| `docs/implementation-path/26-EV-v1-single-node-invariant-control-test-evidence-matrix.md` | 12 VERIFIED / 0 PARTIAL / 0 INFERRED |
 | `docs/implementation-path/27-production-evaluation-plan.md` | Production evaluation framework + Operator Signoff Packet |
 | `docs/implementation-path/31-release-paths-todo.md` | Release paths: RC tag (Path 1), Production pilot (Path 2), Phase 3 PostgreSQL (Path 3) |
 | `docs/implementation-path/44-v1-review-readiness-template.md` | Conservative review readiness template |

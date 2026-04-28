@@ -24,7 +24,7 @@ This RC candidate resolves all P0/P1/P2 items identified during Phase F evidence
 |-----------|--------|
 | P6 Validation | PASS — fresh validation 2026-04-28 |
 | Invariant Matrix | 12 VERIFIED / 0 PARTIAL / 0 INFERRED |
-| RC Evidence | `docs/implementation-path/25-v1-single-node-rc-evidence.md` |
+| RC Evidence | `docs/implementation-path/25-EV-v1-single-node-rc-evidence.md` |
 | Production Readiness | `docs/implementation-path/23-production-readiness-assessment.md` |
 | Release Paths | `docs/implementation-path/31-release-paths-todo.md` |
 

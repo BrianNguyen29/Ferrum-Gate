@@ -5,7 +5,7 @@ Single-node v1 scope. Phase 1 SQLite write queue. Phase 2 deferred/regressed.
 This document is the canonical production evaluation framework for FerrumGate v1
 single-node deployment. It operationalizes the conditional production posture described
 in `23-production-readiness-assessment.md` and the accepted risks documented in
-`19-v1-single-node-support-contract.md` §4 and `26-v1-single-node-invariant-control-test-evidence-matrix.md`
+`19-v1-single-node-support-contract.md` §4 and `26-EV-v1-single-node-invariant-control-test-evidence-matrix.md`
 Weak Spots 1–4.
 
 **Use this plan** before any production deployment decision. Each section lists
@@ -261,7 +261,7 @@ Critical behaviors verified by integration tests:
 ### 5.4 Supported flows documented
 
 The full list of supported governance flows is documented in
-`docs/implementation-path/25-v1-single-node-rc-evidence.md` Evidence 9.
+`docs/implementation-path/25-EV-v1-single-node-rc-evidence.md` Evidence 9.
 
 **Pass criteria**: Operator confirms the target production workflow is listed
 in the supported flows. Unsupported flows must not be used in production.
@@ -319,7 +319,7 @@ For each dimension above, mark each item as:
 | **5. Release Confidence** | Workspace quality gate | [ ] PASSING | check/fmt/clippy/test all pass |
 | **5. Release Confidence** | Contract consistency | [ ] PASSING | `generate_rc_evidence.py` all 5 checks pass |
 | **5. Release Confidence** | Governance behavior verified | [ ] VERIFIED | 7 critical behaviors confirmed by integration tests |
-| **5. Release Confidence** | Supported flows documented | [ ] VERIFIED | Full list in `25-v1-single-node-rc-evidence.md` Evidence 9 |
+| **5. Release Confidence** | Supported flows documented | [ ] VERIFIED | Full list in `25-EV-v1-single-node-rc-evidence.md` Evidence 9 |
 | **5. Release Confidence** | Post-v1 backlog reviewed | [ ] RECOMMENDED | P3 items in `11-remaining-tasks.md`; none blocking |
 
 **Pre-fill engineer**: _____________________________ **Date**: ___________
@@ -436,7 +436,7 @@ Is the production pilot complete and are you ready to cut an RC tag / release no
 └── YES → Are you also ready to start Phase 3 (PostgreSQL/multi-node implementation)?
           │
           ├── NO → Cut RC tag / publish release notes for v1 single-node SQLite only
-          │        Refer to `25-v1-single-node-rc-evidence.md` for evidence base
+          │        Refer to `25-EV-v1-single-node-rc-evidence.md` for evidence base
           │        Refer to `23-production-readiness-assessment.md` for RC-ready declaration
           │
           └── YES → Begin Phase 3 PostgreSQL implementation
@@ -479,8 +479,8 @@ Do not begin Phase P1 until v1 RC tag is cut and the production pilot has confir
 - Production notes: `docs/PRODUCTION_NOTES.md`
 - RC readiness: `docs/implementation-path/23-production-readiness-assessment.md`
 - Support contract: `../ferrumgate-roadmap-v1/19-v1-single-node-support-contract.md`
-- Invariant matrix: `docs/implementation-path/26-v1-single-node-invariant-control-test-evidence-matrix.md`
-- RC evidence: `docs/implementation-path/25-v1-single-node-rc-evidence.md`
+- Invariant matrix: `docs/implementation-path/26-EV-v1-single-node-invariant-control-test-evidence-matrix.md`
+- RC evidence: `docs/implementation-path/25-EV-v1-single-node-rc-evidence.md`
 - Observability minimums: `../ferrumgate-roadmap-v1/21-v1-single-node-observability-minimums.md`
 - Operations runbook: `docs/ferrumgate-roadmap-v1/18-single-node-operations-runbook.md`
 - Release paths (RC tag / production pilot / Phase 3 PostgreSQL): `docs/implementation-path/31-release-paths-todo.md`

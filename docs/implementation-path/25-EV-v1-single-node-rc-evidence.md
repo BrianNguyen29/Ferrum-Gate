@@ -1,5 +1,7 @@
 # 25 — v1 Single-Node RC Evidence
 
+> **Evidence document**: This file records verification evidence; it is not a feature/status authority on its own. When it conflicts with current support-contract or release-path docs, defer to those current docs.
+
 Single-node v1 scope. This document is the canonical evidence record for the
 FerrumGate v1 release candidate. It is the output of the Phase F evidence gate
 from `91-phase-success-criteria-and-kpis.md` section 7.5.

@@ -12,7 +12,7 @@ Single-node v1 scope. Last updated: 2026-03-30.
 
 > **Production architecture**: Phase 1 SQLite write queue. Phase 2 (transaction batching + direct UPDATE) was partially implemented but **deferred/regressed** due to performance regression in benchmarking. See `docs/PRODUCTION_NOTES.md` Phase 2 entry.
 >
-> **Production readiness**: RC-ready (single-node SQLite). Production deployment should be evaluated against `docs/implementation-path/27-production-evaluation-plan.md`. Conditional constraints apply due to documented invariant/control gaps (see `26-v1-single-node-invariant-control-test-evidence-matrix.md` Weak Spots 1-4 and `19-v1-single-node-support-contract.md` Accepted Risks §4).
+> **Production readiness**: RC-ready (single-node SQLite). Production deployment should be evaluated against `docs/implementation-path/27-production-evaluation-plan.md`. Conditional constraints apply due to documented invariant/control gaps (see `26-EV-v1-single-node-invariant-control-test-evidence-matrix.md` Weak Spots 1-4 and `19-v1-single-node-support-contract.md` Accepted Risks §4).
 >
 > **Production branch**: Phase 1 only. Phase 2 deferred. Phase 3 (PostgreSQL) is the path to full production scale.
 

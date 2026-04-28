@@ -171,7 +171,7 @@ On any failure: return HTTP 403 with `Forbidden` reason code.
 | **P2** | Gateway I6 validation in `authorize_execution` (I5 → I6 → mark_used) | **Complete** — implemented in `crates/ferrum-gateway/src/server.rs`; `validate_approval_binding_digest` helper added; wired after I5 scope validation; 8 integration tests pass (see P3) |
 | **P3** | Integration tests: None/success/mismatch/pending/expired/not-found/chain-broken/single-use | **Complete** — 8 tests implemented in `crates/ferrum-integration-tests/src/integration_gateway_flow.rs`: None skip, valid binding success, pending denial, digest mismatch denial, expired binding denial, approval not found denial, chain-broken digest mismatch between approval and binding, single-use with valid approval binding |
 | **P4** | Optional `ferrumctl` support for digest inspection | Optional — not required for invariant verification; optional future enhancement |
-| **P5** | Update I6 status to VERIFIED in `26-v1-single-node-invariant-control-test-evidence-matrix.md` + update this ADR | **Complete** — I6 marked VERIFIED with 12/0/0; production claim remains deferred |
+| **P5** | Update I6 status to VERIFIED in `26-EV-v1-single-node-invariant-control-test-evidence-matrix.md` + update this ADR | **Complete** — I6 marked VERIFIED with 12/0/0; production claim remains deferred |
 
 **Note**: P5 gate passed — I6 is now VERIFIED. Production deployment still deferred per project policy.
 
@@ -207,7 +207,7 @@ On any failure: return HTTP 403 with `Forbidden` reason code.
 ## 11. References
 
 - [45-current-feature-audit.md](./45-current-feature-audit.md) — I6 status context
-- [26-v1-single-node-invariant-control-test-evidence-matrix.md](./26-v1-single-node-invariant-control-test-evidence-matrix.md) — Invariant matrix
+- [26-EV-v1-single-node-invariant-control-test-evidence-matrix.md](./26-EV-v1-single-node-invariant-control-test-evidence-matrix.md) — Invariant matrix
 - `crates/ferrum-proto/src/capability.rs` — `ApprovalBinding`, `ApprovalRequest` structs
 - `crates/ferrum-gateway/src/server.rs` — `authorize_execution` (enforcement point)
 - `crates/ferrum-cap/src/service.rs` — `CapabilityLease` with `approval_binding`

@@ -53,7 +53,7 @@ Single-node v1 scope unless noted.
 ### P1 — v1 RC evidence gaps
 - (none) — poisoned-context regression fixtures implemented (6 fixture tests)
 - (none) — Phase F docs pack finalized in `docs/implementation-path/`
-- (none) — supported flows list documented in `25-v1-single-node-rc-evidence.md`
+- (none) — supported flows list documented in `25-EV-v1-single-node-rc-evidence.md`
 - (none) — open gaps list documented in `11-remaining-tasks.md`
 
 ### P2 — v1 polish

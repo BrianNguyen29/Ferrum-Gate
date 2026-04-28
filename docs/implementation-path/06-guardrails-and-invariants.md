@@ -1,5 +1,10 @@
 # 06 — Guardrails and invariants
 
+> **Note**: This is a condensed guardrails summary. For the complete invariant set
+> with detailed definitions, see
+> [`../ferrumgate-roadmap-v1/06-constraints-and-invariants.md`](../ferrumgate-roadmap-v1/06-constraints-and-invariants.md).
+
+
 ## Không được phá
 - intent-scoped execution
 - single-use capability

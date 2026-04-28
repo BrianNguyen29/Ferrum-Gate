@@ -19,11 +19,11 @@ Scope is single-node v1 unless labeled post-v1.
 
 - [x] final docs pack for Phase F (complete, consistent, internally non-contradictory)
   - Src: `docs/91-phase-success-criteria-and-kpis.md` 7.5 evidence "final docs pack"
-  - Status: DONE — implementation-path docs finalized as cohesive pack. See `01-current-state.md`, `11-remaining-tasks.md`, `23-production-readiness-assessment.md`, `25-v1-single-node-rc-evidence.md`.
+  - Status: DONE — implementation-path docs finalized as cohesive pack. See `01-current-state.md`, `11-remaining-tasks.md`, `23-production-readiness-assessment.md`, `25-EV-v1-single-node-rc-evidence.md`.
 
 - [x] supported flows list (Phase F evidence)
   - Src: `docs/91-phase-success-criteria-and-kpis.md` 7.5 evidence "supported flows list"
-  - Status: DONE — documented in `25-v1-single-node-rc-evidence.md` Evidence 9. The gateway orchestrates: evaluate -> mint -> authorize -> prepare -> execute -> verify -> compensate (commit/rollback are internal semantics; compensate is the exposed v1 recovery endpoint). Denial paths: deny, quarantine, compensate, await-approval, scope-mismatch (now explicit), draft-only gated at evaluate (before prepare).
+  - Status: DONE — documented in `25-EV-v1-single-node-rc-evidence.md` Evidence 9. The gateway orchestrates: evaluate -> mint -> authorize -> prepare -> execute -> verify -> compensate (commit/rollback are internal semantics; compensate is the exposed v1 recovery endpoint). Denial paths: deny, quarantine, compensate, await-approval, scope-mismatch (now explicit), draft-only gated at evaluate (before prepare).
 
 - [x] open gaps list (Phase F evidence)
   - Src: `docs/91-phase-success-criteria-and-kpis.md` 7.5 evidence "open gaps list"
@@ -74,10 +74,10 @@ Current partial adapter progress already verified in local package-scoped checks
   - Src: `docs/implementation-path/04-crate-by-crate-tasks.md` "adapters: ... -> git/http"
   - Current state: bounded local slice implemented (`crates/ferrum-adapter-http/src/lib.rs` has bounded prepare/execute/verify for HttpMutation; execute sends real HTTP requests and captures request/response metadata + digests plus digest-only `rollback_groundwork_v1` and `http_recovery_readiness_v1` groundwork metadata; verify supports method-aware `HttpStatusExpected` plus `expected_statuses` arrays with phase-aware normalization; PUT/PATCH replay now supported in addition to POST; 103 tests passing). Bounded replay-based recovery is supported: exactly one `http.replay_v1` compensation step for POST/PUT/PATCH, exact target URL match, digest-bound payload match, non-empty header-safe idempotency key, and required strict `expected_statuses` (non-empty, each in `100..=599`). All other rollback/compensate shapes still fail closed.
   - Remaining surface (concrete sub-areas for post-v1):
-    - Broader request replay and idempotency-key handling beyond the narrow one-step `http.replay_v1` POST case
+    - Broader request replay and idempotency-key handling beyond the bounded one-step `http.replay_v1` POST/PUT/PATCH slice
     - Response snapshotting for rollback-able mutations beyond digest-only groundwork
-    - Connection pooling and keepalive management
-    - Retry / backoff with rollback semantics
+    - Production-grade pooling/keepalive policy beyond the implemented bounded client slice
+    - Full retry/backoff policy coverage across all mutation shapes beyond the verified bounded semantics
     - Timeout and cancellation handling
     - TLS trust and certificate pinning
 

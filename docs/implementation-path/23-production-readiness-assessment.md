@@ -34,7 +34,7 @@ Remaining gaps are post-v1 backlog documented in `11-remaining-tasks.md` P3.
 | Provenance emitted for supported flows | PASS | `test_lineage_endpoint_*` series |
 | Rollback/compensate distinct ops | PASS | `test_rollback_and_compensate_are_distinct_operations` |
 
-**Known gaps**: See support contract (19-v1-single-node-support-contract.md) Accepted Risks §4 and invariant matrix (26-v1-single-node-invariant-control-test-evidence-matrix.md). WS1–WS4 are resolved, all 12 invariants are VERIFIED, and output sanitization (Invariant 11) has bounded gateway wiring. Remaining gaps are operational limitations plus PostgreSQL/multi-node/real-adapter backlog.
+**Known gaps**: See support contract (19-v1-single-node-support-contract.md) Accepted Risks §4 and invariant matrix (26-EV-v1-single-node-invariant-control-test-evidence-matrix.md). WS1–WS4 are resolved, all 12 invariants are VERIFIED, and output sanitization (Invariant 11) has bounded gateway wiring. Remaining gaps are operational limitations plus PostgreSQL/multi-node/real-adapter backlog.
 
 ---
 
@@ -50,7 +50,7 @@ Remaining gaps are post-v1 backlog documented in `11-remaining-tasks.md` P3.
 | R3 requires approval | PASS | StaticPdpEngine returns RequireApproval for R3 |
 | Draft-only enforcement | PASS (evaluate-level) | draft-only gated at evaluate (before prepare) — WS2 resolved (revalidated at prepare) |
 
-**Known gaps**: See Accepted Risks §4 (19-v1-single-node-support-contract.md) and Weak Spots 1–4 (26-v1-single-node-invariant-control-test-evidence-matrix.md). WS1-WS3 gaps are resolved in code; WS4 provenance completeness is resolved by integration test.
+**Known gaps**: See Accepted Risks §4 (19-v1-single-node-support-contract.md) and Weak Spots 1–4 (26-EV-v1-single-node-invariant-control-test-evidence-matrix.md). WS1-WS3 gaps are resolved in code; WS4 provenance completeness is resolved by integration test.
 
 ---
 
@@ -83,7 +83,7 @@ Remaining gaps are post-v1 backlog documented in `11-remaining-tasks.md` P3.
 | Remaining tasks | PASS | `docs/implementation-path/11-remaining-tasks.md` |
 | Current state | PASS | `docs/implementation-path/01-current-state.md` |
 | Phase checklists | PASS | `docs/implementation-path/09-phase-checklists.md` |
-| RC evidence doc | PASS | `docs/implementation-path/25-v1-single-node-rc-evidence.md` exists (this doc) |
+| RC evidence doc | PASS | `docs/implementation-path/25-EV-v1-single-node-rc-evidence.md` exists (this doc) |
 | Phase F final docs pack | PASS | implementation-path docs finalized as cohesive pack |
 
 **Known gaps**: See support contract Accepted Risks and invariant matrix (`12 VERIFIED / 0 PARTIAL / 0 INFERRED`) for the current control baseline. Residual production constraints are operational rather than invariant-evidence gaps: SQLite single-node throughput limits, bounded SQLite-only backup/restore workflow without scheduling/retention, PostgreSQL/multi-node deferral, and required operator signoff. No outstanding P0/P1/P2 items.
@@ -117,7 +117,7 @@ Remaining gaps are post-v1 backlog documented in `11-remaining-tasks.md` P3.
 (none) — all P1 items resolved:
 1. Curated poisoned-context regression fixtures (6 tests).
 2. Phase F docs pack finalized as cohesive, non-contradictory set.
-3. Supported flows list documented in `25-v1-single-node-rc-evidence.md` Evidence 9.
+3. Supported flows list documented in `25-EV-v1-single-node-rc-evidence.md` Evidence 9.
 4. Open gaps list documented in `11-remaining-tasks.md`.
 
 ### P2 — v1 polish

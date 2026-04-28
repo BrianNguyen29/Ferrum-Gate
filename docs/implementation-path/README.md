@@ -19,11 +19,17 @@ Thư mục này là điểm vào duy nhất để agent khác tiếp tục tri�
 12a. `12a-sync-3a1-read-only-transport-probe.md`
 15. `15-ferrumctl-more-useful-execution-plan.md`
 23. `23-production-readiness-assessment.md`
-25. `25-v1-single-node-rc-evidence.md`
-26. [26-v1-single-node-invariant-control-test-evidence-matrix.md](26-v1-single-node-invariant-control-test-evidence-matrix.md)
+25. `25-EV-v1-single-node-rc-evidence.md`
+26. [26-EV-v1-single-node-invariant-control-test-evidence-matrix.md](26-EV-v1-single-node-invariant-control-test-evidence-matrix.md)
 
 ## Luật ưu tiên
 Khi mâu thuẫn, ưu tiên:
-1. `../00-project-canon.md`
-2. `../06-constraints-and-invariants.md`
-3. file trong thư mục này
+1. `../ferrumgate-roadmap-v1/19-v1-single-node-support-contract.md`
+2. `01-current-state.md`
+3. `31-release-paths-todo.md`
+4. `23-production-readiness-assessment.md`
+5. `../ferrumgate-roadmap-v1/06-constraints-and-invariants.md`
+6. file còn lại trong thư mục này
+
+`../ferrumgate-roadmap-v1/00-project-canon.md` là historical/superseded cho v1 hiện tại;
+không dùng làm nguồn quyết định feature/status khi mâu thuẫn với các file trên.

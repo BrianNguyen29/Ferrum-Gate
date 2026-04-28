@@ -26,7 +26,7 @@ Tài liệu này định nghĩa phương pháp nghiên cứu và các chiều so
 | Khía cạnh | Trạng thái FerrumGate | Lưu ý |
 |---|---|---|
 | Trạng thái | RC-ready/conditional | Single-node SQLite |
-| Invariant | 12 VERIFIED / 0 PARTIAL / 0 INFERRED | Xem `26-v1-single-node-invariant-control-test-evidence-matrix.md` |
+| Invariant | 12 VERIFIED / 0 PARTIAL / 0 INFERRED | Xem `26-EV-v1-single-node-invariant-control-test-evidence-matrix.md` |
 | Production claim | **Không** | Chỉ conditional RC, chưa production-ready |
 
 **Lưu ý quan trọng**: Tài liệu này không khẳng định intent-rebase có specific internals nào. Mọi so sánh phải được framed là research questions hoặc verification targets. Không claim completed findings.
@@ -138,6 +138,6 @@ So sánh được coi là hoàn thành khi:
 ## Tham khảo
 
 - `docs/implementation-path/06-guardrails-and-invariants.md` — FerrumGate invariants
-- `docs/implementation-path/26-v1-single-node-invariant-control-test-evidence-matrix.md` — Invariant status
+- `docs/implementation-path/26-EV-v1-single-node-invariant-control-test-evidence-matrix.md` — Invariant status
 - `docs/implementation-path/47-novelty-roadmap.md` — Novelty roadmap (dựa trên so sánh này)
 - `/home/uong_guyen/work/intent-rebase` — Intent-rebase repository (so sánh)

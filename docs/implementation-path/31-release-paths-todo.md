@@ -36,9 +36,9 @@ Release engineer / documentation owner.
 | G1.7 | `python3 scripts/check_contract_consistency.py` passes | "VALIDATION PASSED" | ☑ PASS |
 
 ### Evidence references (preserve existing P6 links)
-- `25-v1-single-node-rc-evidence.md` — canonical RC evidence record
+- `25-EV-v1-single-node-rc-evidence.md` — canonical RC evidence record
 - `23-production-readiness-assessment.md` — RC-ready declaration with all dimensions verified
-- `26-v1-single-node-invariant-control-test-evidence-matrix.md` — 12 VERIFIED / 0 PARTIAL / 0 INFERRED
+- `26-EV-v1-single-node-invariant-control-test-evidence-matrix.md` — 12 VERIFIED / 0 PARTIAL / 0 INFERRED
 - `27-production-evaluation-plan.md` Dimension 5 — Release Confidence checklist
 
 ### Accepted risks (must appear in release notes)
@@ -100,15 +100,15 @@ Operator / site reliability / deployment authority.
 - `27-production-evaluation-plan.md` §Engineer-Side Pre-Fill Table — advisory repo-side pre-fill (operator signoff still required)
 - `54-operator-signoff-packet.md` Appendix — G2 Evidence Packet Templates (Templates 1–5: workload model, evaluation framework pre-fill, restore drill report, compensate behavior matrix, accepted-risk verification checklist); repo-side tooling validation only
 - `19-v1-single-node-support-contract.md` — accepted risks §4, support constraints §3
-- `26-v1-single-node-invariant-control-test-evidence-matrix.md` — Weak Spots 1–4 resolved
+- `26-EV-v1-single-node-invariant-control-test-evidence-matrix.md` — Weak Spots 1–4 resolved
 - `23-production-readiness-assessment.md` — RC-ready declaration
-- `25-v1-single-node-rc-evidence.md` — evidence record
+- `25-EV-v1-single-node-rc-evidence.md` — evidence record
 
 ### Workload-fit review checklist
 - [ ] Confirm expected sustained write rate ≤300 writes/s
 - [ ] Confirm single-node topology (no HA/replica/multi-node required)
 - [ ] Confirm bounded execution history is acceptable for target use case
-- [ ] Confirm target workflow is in the supported flows list (`25-v1-single-node-rc-evidence.md` Evidence 9)
+- [ ] Confirm target workflow is in the supported flows list (`25-EV-v1-single-node-rc-evidence.md` Evidence 9)
 - [ ] If any of the above do not fit: defer to Path 3 (Phase 3 PostgreSQL)
 
 ### Backup/restore/runbook checklist
@@ -275,12 +275,12 @@ Per `50-p4-postgres-store-facade-adr.md` §3 Phase P1:
 | `11-remaining-tasks.md` §P3 backlog | This doc | Phase 3 PostgreSQL as post-v1 path |
 | `30-production-roadmap.md` §Phase 3 | This doc | Phase 3 go/no-go gates |
 | `50-p4-postgres-store-facade-adr.md` §3 Phase P1 | This doc | Phase 3 entry criteria |
-| `25-v1-single-node-rc-evidence.md` | This doc | Path 1 evidence preservation |
+| `25-EV-v1-single-node-rc-evidence.md` | This doc | Path 1 evidence preservation |
 | `32-feature-completeness-audit.md` | This doc | Route/API reconciliation for v1 boundary audit |
 | `CHANGELOG.md` | `RELEASE.md` | RC candidate changelog and release notes |
 | `RELEASE.md` | This doc | Pre-tag checklist for Path 1 RC release |
-| `RELEASE.md` | `25-v1-single-node-rc-evidence.md` | RC evidence cross-reference |
-| `RELEASE.md` | `26-v1-single-node-invariant-control-test-evidence-matrix.md` | Invariant matrix cross-reference |
+| `RELEASE.md` | `25-EV-v1-single-node-rc-evidence.md` | RC evidence cross-reference |
+| `RELEASE.md` | `26-EV-v1-single-node-invariant-control-test-evidence-matrix.md` | Invariant matrix cross-reference |
 | `RELEASE.md` | `27-production-evaluation-plan.md` | Production evaluation framework cross-reference |
 
 ---

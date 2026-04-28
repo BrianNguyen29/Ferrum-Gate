@@ -22,7 +22,7 @@
 - **Phase C**: DONE — firewall logic present (trust labels, taint scorer, sanitize, contradiction checks); curated poisoned-context regression fixtures implemented (6 fixture tests).
 - **Phase D**: PARTIAL — adapter skeletons exist (fs, sqlite, maildraft, git, http); real implementations are post-v1 backlog. NoopRollbackAdapter used for integration tests.
 - **Phase E**: DONE for SQLite-backed single-node flow — gateway orchestrates `evaluate -> mint -> authorize -> prepare -> execute -> verify -> compensate` (internal lifecycle: commit/rollback not exposed in v1 router); negative paths: deny, quarantine, RequireApproval (R3), draft-only gated at evaluate (before prepare), scope-mismatch (P0 resolved).
-- **Phase F**: DONE — integration tests strong; poisoned-context regression fixtures curated (6 tests); supported flows list and open gaps list documented in `25-v1-single-node-rc-evidence.md`.
+- **Phase F**: DONE — integration tests strong; poisoned-context regression fixtures curated (6 tests); supported flows list and open gaps list documented in `25-EV-v1-single-node-rc-evidence.md`.
 
 ### Latest evidence snapshot
 

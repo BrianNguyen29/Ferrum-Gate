@@ -30,13 +30,13 @@ contract/schema consistent, fmt/check/clippy/test all exit 0.
 | Criterion | Status | Evidence | Notes |
 |---|---|---|---|
 | Intent required before mutation | PASS | `server.rs:118` — all flows require intent_id | Direct from doc inspection |
-| Capability single-use enforced | PASS | `ferrum-cap/src/service.rs:101-122` — `mark_capability_used_durable` called in authorize path (`server.rs:751-757`) with store persistence | VERIFIED — Weak Spot 3 resolved. Evidence from `26-v1-single-node-invariant-control-test-evidence-matrix.md:25` |
+| Capability single-use enforced | PASS | `ferrum-cap/src/service.rs:101-122` — `mark_capability_used_durable` called in authorize path (`server.rs:751-757`) with store persistence | VERIFIED — Weak Spot 3 resolved. Evidence from `26-EV-v1-single-node-invariant-control-test-evidence-matrix.md:25` |
 | Scope-bounds enforcement | PASS | `ferrum-pdp/src/engine.rs:31-46` — explicit scope check | Verified in `16-release-checklist.md:18` |
-| Provenance chain maintained | PASS | `server.rs:119-129` — lineage/query/ingest routes registered | Evidence from `25-v1-single-node-rc-evidence.md:99-107` |
+| Provenance chain maintained | PASS | `server.rs:119-129` — lineage/query/ingest routes registered | Evidence from `25-EV-v1-single-node-rc-evidence.md:99-107` |
 | R3 requires approval | PASS | `ferrum-pdp/src/engine.rs:63-74` — StaticPdpEngine returns RequireApproval for R3 | Evidence from `23-production-readiness-assessment.md:46-55` |
 | Draft-only gated at evaluate | PASS | `ferrum-pdp/src/engine.rs:76-85` | Evidence from `19-v1-single-node-support-contract.md:157-162` |
 | Rollback/compensate distinct | PASS | `ferrum-rollback/src/service.rs:93` — rollback vs compensate services | Evidence from `16-release-checklist.md:21` |
-| Compensate end-to-end | PASS | `integration_gateway_flow.rs:compensate_execution_flow` | Evidence from `25-v1-single-node-rc-evidence.md:32` |
+| Compensate end-to-end | PASS | `integration_gateway_flow.rs:compensate_execution_flow` | Evidence from `25-EV-v1-single-node-rc-evidence.md:32` |
 
 **Section 2 verdict**: CONDITIONAL — governance core controls are in place. Weak Spots 1–4
 (WS1–WS4) are resolved, output sanitization (Invariant 11) is VERIFIED with bounded gateway
@@ -103,8 +103,8 @@ Shallow-health limitation is documented.
 | Operations runbook | PASS | `docs/ferrumgate-roadmap-v1/18-single-node-operations-runbook.md` | Evidence: `19-v1-single-node-support-contract.md:203` |
 | API endpoint reference | PASS | `docs/ferrumgate-roadmap-v1/14-api-and-contracts-map.md` | Upgrade-track routes documented; no drift |
 | Release checklist | PASS | `docs/16-release-checklist.md` | Evidence: `23-production-readiness-assessment.md:77` |
-| RC evidence | PASS | `docs/implementation-path/25-v1-single-node-rc-evidence.md` | Evidence: `23-production-readiness-assessment.md:81` |
-| Invariant matrix | PASS | `docs/implementation-path/26-v1-single-node-invariant-control-test-evidence-matrix.md` | 12 VERIFIED, 0 PARTIAL, 0 INFERRED |
+| RC evidence | PASS | `docs/implementation-path/25-EV-v1-single-node-rc-evidence.md` | Evidence: `23-production-readiness-assessment.md:81` |
+| Invariant matrix | PASS | `docs/implementation-path/26-EV-v1-single-node-invariant-control-test-evidence-matrix.md` | 12 VERIFIED, 0 PARTIAL, 0 INFERRED |
 | Production roadmap | PASS | `docs/implementation-path/30-production-roadmap.md` | Phase 1 production-ready; Phase 2 deferred; Phase 3 PostgreSQL |
 | Production evaluation | PASS | `docs/implementation-path/27-production-evaluation-plan.md` | Production evaluation framework |
 
@@ -135,7 +135,7 @@ with `19-v1-single-node-support-contract.md:81-86`.
 | Re-run workspace build checks | MED | ✅ VERIFIED — layout/contract/fmt/check/clippy/test passed this session. Evidence refreshed. |
 | Confirm API map fix applied | MED | ✅ Applied — upgrade-track routes documented in `14-api-and-contracts-map.md:50-65` |
 | Re-verify integration tests | MED | ✅ VERIFIED — `integration_gateway_flow` (65 cases) and `integration_lineage_chain` (8 cases) passed as part of workspace test run this session. |
-| Review accepted risks with operator | LOW | Weak Spots 1-4 documented in `19-v1-single-node-support-contract.md:131-179` and `26-v1-single-node-invariant-control-test-evidence-matrix.md:37-79` |
+| Review accepted risks with operator | LOW | Weak Spots 1-4 documented in `19-v1-single-node-support-contract.md:131-179` and `26-EV-v1-single-node-invariant-control-test-evidence-matrix.md:37-79` |
 
 ### 6.3 Signoff Declaration
 

@@ -234,6 +234,6 @@ Roadmap được coi là hoàn thành khi:
 
 - `docs/implementation-path/45-current-feature-audit.md` — Feature audit plan
 - `docs/implementation-path/46-ferrumgate-vs-intent-rebase.md` — Comparison framework
-- `docs/implementation-path/26-v1-single-node-invariant-control-test-evidence-matrix.md` — Invariant status
+- `docs/implementation-path/26-EV-v1-single-node-invariant-control-test-evidence-matrix.md` — Invariant status
 - `docs/implementation-path/27-production-evaluation-plan.md` — Production evaluation
 - `/home/uong_guyen/work/intent-rebase` — Intent-rebase (so sánh)

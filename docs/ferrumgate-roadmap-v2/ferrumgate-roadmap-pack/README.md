@@ -62,3 +62,10 @@ It includes v1 hardening work plus post-v1 roadmap work, but it does not modify 
 - Không triển khai feature ngoài release scope nếu chưa có thay đổi chính thức ở `02-release-plan.md`
 - **Critical**: when working in the v1 support scope, always check `19-v1-single-node-support-contract.md`
   before making any claim about what is or is not supported
+
+## Canonical v1 roadmap cross-reference
+
+For canonical v1 implementation status and release/pilot routing, see
+[`../../ferrumgate-roadmap-v1/09-implementation-path.md`](../../ferrumgate-roadmap-v1/09-implementation-path.md)
+and `../../implementation-path/01-current-state.md`. This roadmap-v2 pack remains a planning
+reference and does not override the v1 support contract.

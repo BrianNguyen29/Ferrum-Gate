@@ -437,25 +437,21 @@ a no-op in v1.
    maildraft, git, http) are skeleton implementations in v1. Real
    side-effect undo via adapters is a post-v1 item.
 
-8. **No rollback contract auto-enforcement at prepare.** The gateway's
-   prepare handler hardcodes rollback class at the prepare step. The
-   caller is responsible for ensuring the correct rollback_class is
-   persisted at intent creation. See `26-v1-single-node-invariant-control-test-evidence-matrix.md`
-   Weak Spot 1.
+8. **Rollback class handling is resolved, but still operator-relevant.**
+   Weak Spot 1 is resolved in the v1 evidence matrix: R3 `auto_commit=false`
+   is verified and rollback-class handling is covered by tests. Operators must
+   still ensure callers choose the correct `rollback_class` for their workload
+   before signing G2.7 accepted-risk review.
 
-9. **Single-use capability not enforced end-to-end at authorize.**
-   The capability service's `mark_used` is not called by the gateway's
-   authorize path. Caller must ensure single-use capability mapping is
-   respected client-side. See `26-v1-single-node-invariant-control-test-evidence-matrix.md`
-   Weak Spot 3.
+9. **Single-use capability enforcement is resolved in gateway flow.**
+   Weak Spot 3 is resolved in the v1 evidence matrix: durable capability-use
+   marking is wired and tested. Operators must still monitor clients for retry
+   behavior that attempts to reuse expired or already-used capabilities.
 
-10. **Provenance chain completeness not test-covered end-to-end.**
-    Lineage events are emitted at each gateway step, but there is no
-    integration test that queries the lineage endpoint for a full
-    execution chain and confirms every step appears. Manual tracing or
-    ad-hoc verification is required to confirm completeness. See
-    `26-v1-single-node-invariant-control-test-evidence-matrix.md`
-    Weak Spot 4.
+10. **Provenance chain completeness is test-covered.**
+    Weak Spot 4 is resolved in the v1 evidence matrix: integration tests query
+    lineage and verify the expected execution/provenance chain. Operators should
+    still include lineage checks in pilot daily/incident procedures.
 
 ---
 

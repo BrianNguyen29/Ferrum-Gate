@@ -23,7 +23,7 @@ Tài liệu này định nghĩa kế hoạch kiểm toán toàn diện các tín
 |---|---|---|
 | Kiến trúc sản xuất | Phase 1 SQLite write queue | Không phù hợp cho multi-node hoặc HA |
 | Trạng thái RC | RC-ready (single-node SQLite) | Cần đánh giá trước triển khai |
-| Invariant | 12 VERIFIED / 0 PARTIAL / 0 INFERRED | Xem `26-v1-single-node-invariant-control-test-evidence-matrix.md` |
+| Invariant | 12 VERIFIED / 0 PARTIAL / 0 INFERRED | Xem `26-EV-v1-single-node-invariant-control-test-evidence-matrix.md` |
 | Phase 2 | Deferred/regressed | Perf regression trong benchmarking |
 | Phase 3 (PostgreSQL) | Chưa triển khai | Cần thiết cho mở rộng quy mô |
 
@@ -54,7 +54,7 @@ Tài liệu này định nghĩa kế hoạch kiểm toán toàn diện các tín
 **Mục tiêu**: Xác minh trạng thái invariant hiện tại
 
 **Công việc**:
-1. Duyệt lại ma trận kiểm chứng invariant (`26-v1-single-node-invariant-control-test-evidence-matrix.md`)
+1. Duyệt lại ma trận kiểm chứng invariant (`26-EV-v1-single-node-invariant-control-test-evidence-matrix.md`)
 2. Ghi nhận trạng thái lịch sử của các items từng PARTIAL/INFERRED và trạng thái hiện tại sau khi đã khắc phục
 3. Đề xuất hành động khắc phục cho từng item
 4. Đánh giá risk level của từng invariant gap
@@ -342,7 +342,7 @@ Kiểm toán được coi là hoàn thành khi:
 #### Phase 2 D3 + D4 — Đã Thực thi ✅
 
 > **Trạng thái**: Phase 2 audit hoàn thành (2026-04-27)
-> **Nguồn**: Kiểm tra mã nguồn trực tiếp + `26-v1-single-node-invariant-control-test-evidence-matrix.md`
+> **Nguồn**: Kiểm tra mã nguồn trực tiếp + `26-EV-v1-single-node-invariant-control-test-evidence-matrix.md`
 > **Lưu ý**: Kiểm toán D3/D4 đã hoàn thành — việc triển khai các bản sửa lỗi vẫn là **pending**
 
 ---
@@ -455,7 +455,7 @@ Kiểm toán được coi là hoàn thành khi:
 
 ## Tham khảo
 
-- `docs/implementation-path/26-v1-single-node-invariant-control-test-evidence-matrix.md` — Ma trận invariant
+- `docs/implementation-path/26-EV-v1-single-node-invariant-control-test-evidence-matrix.md` — Ma trận invariant
 - `docs/implementation-path/27-production-evaluation-plan.md` — Evaluation framework
 - `docs/implementation-path/47-novelty-roadmap.md` — Novelty roadmap (đầu ra của kiểm toán này)
 - `docs/implementation-path/01-current-state.md` — Trạng thái hiện tại (test coverage, phase status)
