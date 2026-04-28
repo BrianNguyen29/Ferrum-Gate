@@ -14,7 +14,7 @@ Three-phase plan to resolve SQLite single-writer bottleneck and reach full produ
 | **Phase 2** | Transaction batching for pipelines + direct UPDATE | ✅ Done (reverted) | Reverted; Phase 1 remains production target |
 | **Phase 3** | PostgreSQL migration | Planned | Target: 1000+ writes/s, 200+ pipelines/s |
 
-> **Note**: Phase 2 was partially implemented (Transaction/Pipeline batching in WriteOp enum) but benchmark testing revealed performance regression rather than improvement. The implementation was reverted. Phase 1 write-queue architecture is production-ready for single-node workloads up to ~300 writes/s sustained.
+> **Note**: Phase 2 was partially implemented (Transaction/Pipeline batching in WriteOp enum) but benchmark testing revealed performance regression rather than improvement. The implementation was reverted. Phase 1 write-queue architecture is the RC-supported production-target path for bounded single-node workloads up to ~300 writes/s sustained; production pilot still requires operator signoff.
 
 ---
 

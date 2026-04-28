@@ -292,6 +292,42 @@ For each dimension above, mark each item as:
 
 ---
 
+## Engineer-Side Pre-Fill Table (Advisory / Repo-Side Only)
+
+> **Note**: This table is **repo-side tooling validation only**. It provides engineers with a pre-filled assessment of the production evaluation dimensions to facilitate operator handoff. This table does **not** replace operator signoff and does **not** claim production readiness. All G2 gates remain **operator signoff still required** before any production pilot begins.
+
+| Dimension | Item | Pre-fill Status | Repo-Side Notes |
+|---|---|---|---|
+| **1. Performance** | Stress test evidence (Phase 1 baseline) | Pre-filled from `docs/PRODUCTION_NOTES.md` | All S4/S5/S6/S7/S9 thresholds met |
+| **1. Performance** | Workload profile fit | [ ] FIT  [ ] DEFER TO PG | ≤300 writes/s = FIT; >300 = PostgreSQL |
+| **1. Performance** | No regression since Phase 1 | [ ] CONFIRMED | Write queue + PRAGMAs unchanged since 2026-03-30 |
+| **2. Security** | Bearer token mode | [ ] CONFIGURED | `auth_mode = "Bearer"`; constant-time comparison |
+| **2. Security** | Rate limiting | [ ] CONFIGURED | tower_governor: 2 req/s sustained, burst 50 |
+| **2. Security** | Capability TTL | [ ] ENFORCED | Hardcoded max 300s in `ferrum-cap` |
+| **2. Security** | Scope-bounds enforcement | [ ] VERIFIED | PDP engine control + `mark_capability_used_durable` |
+| **2. Security** | Output sanitization | [ ] CONDITIONAL | Trait-level implemented; gateway integration deferred |
+| **3. Reliability** | FK constraint integrity | [ ] VERIFIED | Synchronous FK chain; no orphaned children |
+| **3. Reliability** | Write queue stability | [ ] VERIFIED | WAL + PRAGMA tuning; 5000ms busy_timeout |
+| **3. Reliability** | Rollback class handling | [ ] VERIFIED | R3 `auto_commit=false` wired; caller sets rollback_class |
+| **3. Reliability** | Draft-only revalidation | [ ] VERIFIED | Prepare handler rejects DraftOnly with HTTP 403 |
+| **3. Reliability** | Backup/restore | [ ] VERIFIED | `ferrumctl backup` workflow bounded; no auto-scheduling |
+| **3. Reliability** | Compensate may be noop | [ ] ACCEPTED-RISK | Operator must verify per-adapter compensate behavior |
+| **4. Operations** | CLI surface (inspect-only) | [ ] VERIFIED | `ferrumctl` read/inspect only; mutating via REST API |
+| **4. Operations** | Health endpoint depth | [ ] VERIFIED | `healthz`/`readyz` shallow; `readyz/deep` bounded store probe |
+| **4. Operations** | Provenance completeness | [ ] VERIFIED | Full lineage chain (6 event kinds) verified |
+| **4. Operations** | Observability baseline | [ ] RECOMMENDED | Monitor queue depth/lag, write latency, error rates |
+| **5. Release Confidence** | Workspace quality gate | [ ] PASSING | check/fmt/clippy/test all pass |
+| **5. Release Confidence** | Contract consistency | [ ] PASSING | `generate_rc_evidence.py` all 5 checks pass |
+| **5. Release Confidence** | Governance behavior verified | [ ] VERIFIED | 7 critical behaviors confirmed by integration tests |
+| **5. Release Confidence** | Supported flows documented | [ ] VERIFIED | Full list in `25-v1-single-node-rc-evidence.md` Evidence 9 |
+| **5. Release Confidence** | Post-v1 backlog reviewed | [ ] RECOMMENDED | P3 items in `11-remaining-tasks.md`; none blocking |
+
+**Pre-fill engineer**: _____________________________ **Date**: ___________
+
+**This table is advisory only. Operator signoff still required for all G2 gates.**
+
+---
+
 ## Quick Checklist
 
 Before production deployment, confirm all of:

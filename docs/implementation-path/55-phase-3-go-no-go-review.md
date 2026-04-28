@@ -17,16 +17,18 @@ This document is the standalone go/no-go review form for entering Phase 3 Postgr
 
 ## Phase 3 Entry Gates (G3.1–G3.4)
 
-All four gates must be satisfied before beginning Phase P1.
+All four gates must be satisfied before beginning Phase P1 (ADR-50 terminology: P1 = first PostgreSQL implementation phase, not to be confused with the Phase 1/2/3 numbering used elsewhere in the documentation).
+
+> **Phase naming clarification**: ADR-50 uses "Phase P1–P4" for PostgreSQL implementation stages. This document's "Phase 3" maps to ADR-50 Phase P1 start through Phase P4 completion. See `50-p4-postgres-store-facade-adr.md` §1 for the full ADR-50 phase naming table.
 
 | # | Gate Criterion | Evidence | Owner | Satisfied |
 |---|---|---|---|---|
-| G3.1 | v1 RC tag cut and Path 1 complete | RC tag exists; release notes published | Release engineer | ☐ |
+| G3.1 | v1 RC tag cut and Path 1 complete | RC tag `v0.1.0-rc.1` exists at commit `5fce844d`; release notes published; GitHub prerelease | Release engineer | ☑ YES |
 | G3.2 | Production pilot (Path 2) has confirmed single-node SQLite posture is acceptable for target workload | Operator signoff per `27-production-evaluation-plan.md` | Operator | ☐ |
 | G3.3 | Engineering capacity confirmed for ~2000–3000 LOC + migrations + container tests | ADR-50 effort estimate | Engineering lead | ☐ |
 | G3.4 | ADR-50 Phase P1 reviewed and approved to proceed | `50-p4-postgres-store-facade-adr.md` §3 | Engineering lead | ☐ |
 
-**Do not begin Phase P1 until G3.1–G3.4 are satisfied.**
+**Do not begin Phase P1 (ADR-50) until G3.1–G3.4 are all satisfied.** G3.1 is now satisfied. G3.2–G3.4 remain blocked pending operator signoff and engineering capacity confirmation.
 
 ---
 

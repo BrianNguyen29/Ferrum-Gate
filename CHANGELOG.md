@@ -2,7 +2,7 @@
 
 All notable changes for FerrumGate v1 release candidates are documented in [RELEASE.md](./RELEASE.md).
 
-**Repository**: `https://github.com/BrianNguyen29/Ferrum-Gate` (upstream/original — private, accessible with authorized GitHub credentials) | **Default version**: `0.1.0` (development — no official release)
+**Repository**: `https://github.com/BrianNguyen29/Ferrum-Gate` (upstream/original — private, accessible with authorized GitHub credentials) | **Default version**: `0.1.0` | **Status**: RC candidate v0.1.0-rc.1 published as GitHub prerelease
 
 ## v0.1.0-rc.1 (RC Release Candidate)
 
@@ -36,4 +36,4 @@ This RC candidate resolves all P0/P1/P2 items identified during Phase F evidence
 
 ---
 
-*This changelog is documentation-only. No git tag, version bump, or commit was made for this RC candidate.*
+*RC candidate v0.1.0-rc.1 published as GitHub prerelease at target commit `5fce844d2850be45268db37544f17dd4dba988a9`.*

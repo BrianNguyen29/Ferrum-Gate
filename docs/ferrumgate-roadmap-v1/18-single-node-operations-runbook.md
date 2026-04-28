@@ -459,6 +459,89 @@ a no-op in v1.
 
 ---
 
+## 10. Production Pilot Procedures (Path 2)
+
+> **Context**: FerrumGate v1 is RC-ready/conditional for single-node SQLite only.
+> No production-ready claim is made. This section supplements the full
+> `31-release-paths-todo.md` §Path 2 pilot runbook with operator-facing
+> procedural detail for the active pilot period.
+
+### 10.1 Pilot Start Conditions
+
+Before the first production pilot deployment, confirm all of:
+
+| # | Condition | Verification |
+|---|---|---|
+| 1 | All G2 gates satisfied with documented operator signoff | `54-operator-signoff-packet.md` completed and signed |
+| 2 | Write workload modeled against SQLite capacity | Expected sustained writes ≤300 writes/s |
+| 3 | Bearer auth configured; TLS/reverse proxy confirmed | Config review |
+| 4 | Backup schedule implemented external to FerrumGate | Operator evidence of scheduled `ferrumctl backup create` |
+| 5 | Restore drill completed with `PRAGMA integrity_check` passing | Operator evidence |
+| 6 | RPO/RTO formally accepted for target workload | Operator signoff |
+| 7 | All production evaluation dimensions SATISFIED or CONDITIONAL | `27-production-evaluation-plan.md` Evaluation Decision Framework |
+| 8 | Accepted risks documented (Weak Spots 1–4) | `19-v1-single-node-support-contract.md` §4 reviewed |
+| 9 | Compensate noop risk formally accepted | Operator acknowledgment |
+
+### 10.2 Daily Pilot Checks
+
+| Check | Frequency | Threshold | Action if Exceeded |
+|---|---|---|---|
+| `GET /v1/readyz/deep` returns HTTP 200 | Daily | HTTP 503 = store unreachable | Investigate; restore from backup if corruption |
+| `ferrumctl backup verify` passes | After each backup | `PRAGMA integrity_check` failure | Do not use backup; take new backup after fixing |
+| Error rate on S4/S5/S6/S7 | Per monitoring interval | >0% error rate | Page on-call; evaluate against abort criteria |
+| Write queue depth | Per monitoring interval | Sustained backlog >100 items | Evaluate write throughput fit |
+| Disk space on store volume | Daily | <10% free | Alert; risk of DB lock |
+
+### 10.3 Monitoring Thresholds
+
+| Metric | Warning | Critical | Go/No-Go |
+|---|---|---|---|
+| Sustained write rate | >200 writes/s | >250 writes/s | >300 writes/s triggers Path 3 evaluation |
+| p50 write latency | >50ms | >100ms | >200ms triggers Path 3 evaluation |
+| Error rate (any scenario) | >0.1% | >0% | >0% = abort pilot |
+| Backup verify | N/A | `PRAGMA integrity_check` fail | Do not deploy; fix before proceeding |
+
+### 10.4 Abort Triggers
+
+| Trigger | Action |
+|---|---|
+| Write throughput exceeds Phase 1 capacity (>300 writes/s sustained) | Abort pilot; migrate to Path 3 PostgreSQL |
+| `PRAGMA integrity_check` fails on any backup or store | Abort pilot; restore from last known-good backup |
+| Error rate >0% on S4/S5/S6/S7 | Abort pilot; investigate regression |
+| RPO/RTO no longer meets target workload SLA | Abort pilot; evaluate Path 3 |
+| Any G2 signoff item declined by operator | Abort pilot; resolve or formally accept risk |
+| Compensate noop risk unacceptable for target adapters | Abort pilot; adapter implementation required before R1/R2/R3 use |
+| SQLite store corruption or data integrity failure | Abort pilot; restore from backup and investigate |
+
+### 10.5 Completion Criteria
+
+| # | Criterion | Evidence Required |
+|---|---|---|
+| 1 | Pilot workload processed for agreed evaluation period | Operator logs / monitoring data |
+| 2 | All governance behaviors verified for pilot workflow | Integration test evidence or manual verification log |
+| 3 | Backup/restore drill completed successfully | Operator evidence with `PRAGMA integrity_check` passing |
+| 4 | No abort triggers encountered during pilot period | Operator incident log |
+| 5 | Operator formally accepts pilot outcome | Signed completion statement per `54-operator-signoff-packet.md` |
+
+### 10.6 Decision Log Template
+
+| Date | Decision | Owner | Rationale |
+|---|---|---|---|
+| YYYY-MM-DD | Pilot started | Operator | Reason for pilot scope and target workload |
+| YYYY-MM-DD | Abort / Continue / Complete | Operator | Evidence-based assessment |
+| YYYY-MM-DD | Proceed to Path 3 or single-node production | Operator + Engineering lead | Based on pilot outcome |
+
+### 10.7 Cross-References
+
+| Document | Purpose |
+|---|---|
+| `31-release-paths-todo.md` §Path 2 | Full pilot path with G2 gates and checklists |
+| `54-operator-signoff-packet.md` | Operator signoff form with evidence fields and final acceptance statement |
+| `27-production-evaluation-plan.md` | Production evaluation framework |
+| `55-phase-3-go-no-go-review.md` | Phase 3 go/no-go gates (G3.1 satisfied by v0.1.0-rc.1; G3.2–G3.4 pending) |
+
+---
+
 ## References
 
 - Configuration reference: [15-deployment-and-operations.md](./15-deployment-and-operations.md)

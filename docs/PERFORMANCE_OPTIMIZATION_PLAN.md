@@ -272,7 +272,7 @@ let _ = state.runtime.store.provenance().fire_and_forget_append(&event).await;
 **Goal**: Increase S5 pipeline throughput from ~2-3 → ~6-8 pipelines/s by batching writes
 **Status**: **DEFERRED** — Partial implementation introduced performance regression. Phase 1 architecture restored as production target.
 
-> **Note**: A partial Phase 2 implementation (Transaction/Pipeline batching in WriteOp enum) was attempted but benchmark testing revealed performance regression rather than improvement. The implementation has been reverted. Phase 1 write-queue architecture remains production-ready.
+> **Note**: A partial Phase 2 implementation (Transaction/Pipeline batching in WriteOp enum) was attempted but benchmark testing revealed performance regression rather than improvement. The implementation has been reverted. Phase 1 write-queue architecture remains the RC-supported production-target path for bounded single-node workloads; full production deployment still requires operator signoff.
 
 ### P2.1 — Pipeline Transaction Support in WriteQueue
 

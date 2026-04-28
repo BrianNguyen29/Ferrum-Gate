@@ -31,8 +31,6 @@ evaluation plan before any production deployment.
 
 ## What This Release Is NOT
 
-- **NOT** a tagged release — no `git tag` has been created for `v0.1.0-rc.1`
-- **NOT** version-bumped — `Cargo.toml` version remains unchanged
 - **NOT** production-ready — production deployment requires operator signoff (Path 2 per `31-release-paths-todo.md`)
 - **NOT** multi-node/HA — PostgreSQL is not implemented; Phase 3 is the path to full production scale
 - **NOT** Phase 2 — transaction batching was deferred/regressed; Phase 1 write queue is the production target
@@ -109,22 +107,21 @@ any production pilot (per `27-production-evaluation-plan.md` Operator Signoff Pa
 
 ---
 
-## Pre-Tag Checklist (Not Performed)
+## Pre-Tag Checklist (Completed)
 
-> **Note**: G1 gates were observed PASS as of 2026-04-28 (see [`53-rc-tag-checklist.md`](docs/implementation-path/53-rc-tag-checklist.md) §Latest RC Prep Verification Observed). Re-verification is required immediately before tagging; workspace state may have changed.
+> **Note**: G1 gates were re-verified immediately before creating and publishing `v0.1.0-rc.1`. The release is published as a GitHub prerelease at target commit `5fce844d2850be45268db37544f17dd4dba988a9`.
 
-The following gates must be re-verified immediately before cutting a git tag for `v0.1.0-rc.1`.
-**These items are unchecked — no tag, commit, or version bump has been performed.**
+The following gates were completed before cutting the `v0.1.0-rc.1` git tag. `Cargo.toml` version remains unchanged at `0.1.0`.
 
 | # | Gate Criterion | Status |
 |---|----------------|--------|
-| G1.1 | `cargo check --workspace` passes | ☐ Re-verify |
-| G1.2 | `cargo fmt --all --check` passes | ☐ Re-verify |
-| G1.3 | `cargo clippy --workspace --all-targets -- -D warnings` passes | ☐ Re-verify |
-| G1.4 | `cargo test --workspace` passes (~761 tests) | ☐ Re-verify |
-| G1.5 | `scripts/generate_rc_evidence.py` passes all five checks | ☐ Re-verify |
-| G1.6 | `scripts/validate_repo_layout.sh` passes | ☐ Re-verify |
-| G1.7 | `python3 scripts/check_contract_consistency.py` passes | ☐ Re-verify |
+| G1.1 | `cargo check --workspace` passes | ☑ PASS |
+| G1.2 | `cargo fmt --all --check` passes | ☑ PASS |
+| G1.3 | `cargo clippy --workspace --all-targets -- -D warnings` passes | ☑ PASS |
+| G1.4 | `cargo test --workspace` passes (~761 tests) | ☑ PASS |
+| G1.5 | `scripts/generate_rc_evidence.py` passes all five checks | ☑ PASS |
+| G1.6 | `scripts/validate_repo_layout.sh` passes | ☑ PASS |
+| G1.7 | `python3 scripts/check_contract_consistency.py` passes | ☑ PASS |
 
 See `docs/implementation-path/31-release-paths-todo.md` §Path 1 for rollback/abort criteria.
 
@@ -154,10 +151,9 @@ Three mutually exclusive paths are documented in `docs/implementation-path/31-re
 2. **Path 2 — Conditional Production Pilot**: Limited production deployment with operator signoff
 3. **Path 3 — Phase 3 PostgreSQL**: Begin PostgreSQL implementation per ADR-50
 
-**No path claims full production-ready status.** Path 1 is RC candidate only.
+**No path claims full production-ready status.** Path 1 is RC candidate only (now published).
 Path 2 is conditional pilot requiring operator signoff. Path 3 requires Phase P1–P4 completion.
 
 ---
 
-*Document generated: 2026-04-28. Grounded in P6 evidence base and existing implementation-path docs.*
-*This is documentation-only. No git tag, version bump, commit, or deployment was performed.*
+*Document generated: 2026-04-28. Updated: v0.1.0-rc.1 published as GitHub prerelease at target commit `5fce844d2850be45268db37544f17dd4dba988a9`.*

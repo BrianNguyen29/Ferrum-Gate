@@ -3,7 +3,7 @@
 Last updated: 2026-04-28 — G1 observed PASS
 Single-node v1 scope unless noted.
 
-**Repository**: `https://github.com/BrianNguyen29/Ferrum-Gate` (upstream/original — private, accessible with authorized GitHub credentials) | **Default package version**: `0.1.0` | **Status**: development — RC candidate documented but no official release yet
+**Repository**: `https://github.com/BrianNguyen29/Ferrum-Gate` (upstream/original — private, accessible with authorized GitHub credentials) | **Default package version**: `0.1.0` | **Status**: RC candidate v0.1.0-rc.1 published (GitHub prerelease) — Path 1 complete; Path 2 pilot pending operator signoff
 
 **Release support contract**:
 - Supported = SQLite-backed single-node governance core.

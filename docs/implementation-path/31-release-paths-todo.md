@@ -13,6 +13,8 @@ posture requires operator signoff (Path 2) and Phase 3/operational gates
 
 ## Path 1 — RC Release (Tag + Release Notes)
 
+> **Status**: Complete. v0.1.0-rc.1 published as GitHub prerelease at target commit `5fce844d2850be45268db37544f17dd4dba988a9`.
+
 Cut a v1 RC tag for the single-node SQLite release candidate. No production
 deployment implied. No PostgreSQL/multi-node scope.
 
@@ -21,17 +23,17 @@ Release engineer / documentation owner.
 
 ### Gate (go/no-go before cutting tag)
 
-> **Footnote**: G1 observed PASS as of 2026-04-28 (see [`53-rc-tag-checklist.md`](./53-rc-tag-checklist.md) §Latest RC Prep Verification Observed). All G1 gates must be re-verified immediately before tagging.
+> **Footnote**: G1 observed PASS as of 2026-04-28 (see [`53-rc-tag-checklist.md`](./53-rc-tag-checklist.md) §Latest RC Prep Verification Observed). All G1 gates re-verified and PASS immediately before tagging.
 
 | # | Gate criterion | Evidence | Status |
 |---|---|---|---|
-| G1.1 | `cargo check --workspace` passes | Fresh P6 validation (2026-04-28) | Must re-verify |
-| G1.2 | `cargo fmt --all --check` passes | Fresh P6 validation | Must re-verify |
-| G1.3 | `cargo clippy --workspace --all-targets -- -D warnings` passes | Fresh P6 validation | Must re-verify |
-| G1.4 | `cargo test --workspace` passes (~761 tests) | Fresh feature-completeness validation | Must re-verify |
-| G1.5 | `scripts/generate_rc_evidence.py` passes all five checks | `docs/artifacts/2026-03-30/05-contract-consistency.txt` or fresh run | Must re-verify |
-| G1.6 | `scripts/validate_repo_layout.sh` passes | "Repository layout looks OK" | Must re-verify |
-| G1.7 | `python3 scripts/check_contract_consistency.py` passes | "VALIDATION PASSED" | Must re-verify |
+| G1.1 | `cargo check --workspace` passes | Fresh P6 validation (2026-04-28) | ☑ PASS |
+| G1.2 | `cargo fmt --all --check` passes | Fresh P6 validation | ☑ PASS |
+| G1.3 | `cargo clippy --workspace --all-targets -- -D warnings` passes | Fresh P6 validation | ☑ PASS |
+| G1.4 | `cargo test --workspace` passes (~761 tests) | Fresh feature-completeness validation | ☑ PASS |
+| G1.5 | `scripts/generate_rc_evidence.py` passes all five checks | `docs/artifacts/2026-03-30/05-contract-consistency.txt` or fresh run | ☑ PASS |
+| G1.6 | `scripts/validate_repo_layout.sh` passes | "Repository layout looks OK" | ☑ PASS |
+| G1.7 | `python3 scripts/check_contract_consistency.py` passes | "VALIDATION PASSED" | ☑ PASS |
 
 ### Evidence references (preserve existing P6 links)
 - `25-v1-single-node-rc-evidence.md` — canonical RC evidence record
@@ -49,15 +51,15 @@ Release engineer / documentation owner.
 | Compensate may be noop-backed depending on adapter implementation | `27-production-evaluation-plan.md` §3.6 |
 | Health endpoints are shallow; functional probe required for readiness | `27-production-evaluation-plan.md` §4.2 |
 
-### Todo checklist (Path 1)
-- [ ] Re-run all G1 gates immediately before tagging
-- [ ] Verify/update CHANGELOG: document all P0/P1/P2 resolutions (scope-mismatch deny, poisoned-context fixtures, Phase F docs pack, clippy clean, RC script)
-- [ ] Verify/update RELEASE notes: explicitly state single-node SQLite scope, Phase 3 deferred, conditional production posture
-- [ ] Include accepted-risks table from above in release notes
-- [ ] Include signoff language: "This is an RC tag for v1 single-node SQLite. Production deployment requires evaluation against `27-production-evaluation-plan.md` and explicit operator signoff."
-- [ ] Do NOT claim production-ready in release notes
-- [ ] Do NOT bump Cargo.toml version (unless explicitly requested later)
-- [ ] Do NOT create CHANGELOG.md or RELEASE.md files unless needed for external references
+### Todo checklist (Path 1 — Historical Completed)
+- [x] Re-run all G1 gates immediately before tagging
+- [x] Verify/update CHANGELOG: document all P0/P1/P2 resolutions (scope-mismatch deny, poisoned-context fixtures, Phase F docs pack, clippy clean, RC script)
+- [x] Verify/update RELEASE notes: explicitly state single-node SQLite scope, Phase 3 deferred, conditional production posture
+- [x] Include accepted-risks table from above in release notes
+- [x] Include signoff language: "This is an RC tag for v1 single-node SQLite. Production deployment requires evaluation against `27-production-evaluation-plan.md` and explicit operator signoff."
+- [x] Do NOT claim production-ready in release notes
+- [x] Do NOT bump Cargo.toml version; `Cargo.toml` remains `0.1.0`
+- [x] Publish CHANGELOG.md and RELEASE.md as release-facing documentation
 
 ### Rollback / abort criteria
 | Trigger | Action |
@@ -74,25 +76,29 @@ Deploy v1 single-node SQLite to a limited production target with explicit
 operator signoff. Preserves conditional single-node SQLite posture.
 PostgreSQL/multi-node deferred.
 
+> **G2 Gate Ownership Note**: All G2 gates (G2.1–G2.8) are **operator-owned** and **operator signoff still required** before any production pilot begins. Structured pre-fill templates for each gate are provided in the **G2 Evidence Packet Appendix** (`54-operator-signoff-packet.md` Appendix). These templates are **repo-side tooling validation only** and do not substitute for explicit operator acknowledgment. Do not mark G2 items complete on behalf of the operator.
+
 ### Owner
 Operator / site reliability / deployment authority.
 
 ### Gate (go/no-go before production pilot)
 | # | Gate criterion | Evidence | Owner |
 |---|---|---|---|
-| G2.1 | Write workload modeled against SQLite single-node capacity (≤300 writes/s sustained) | Operator signoff per `27-production-evaluation-plan.md` §Operator Signoff Packet §1 | Operator |
+| G2.1 | Write workload modeled against SQLite single-node capacity (≤300 writes/s sustained) | Operator signoff per `27-production-evaluation-plan.md` §Operator Signoff Packet §1 + Template 1 | Operator |
 | G2.2 | Bearer auth configured; TLS/reverse proxy confirmed | Operator signoff per `27-production-evaluation-plan.md` §Operator Signoff Packet §2 | Operator |
 | G2.3 | Backup schedule implemented external to FerrumGate | Operator evidence of scheduled `ferrumctl backup create` | Operator |
-| G2.4 | Restore drill completed; `PRAGMA integrity_check` passes on restored DB | Operator evidence per `27-production-evaluation-plan.md` §Operator Signoff Packet §3 | Operator |
-| G2.5 | RPO/RTO formally accepted for target workload | Operator signoff per `27-production-evaluation-plan.md` §Operator Signoff Packet §3 | Operator |
-| G2.6 | All production evaluation dimensions SATISFIED or CONDITIONAL | `27-production-evaluation-plan.md` Evaluation Decision Framework completed | Operator |
-| G2.7 | Accepted risks documented (Weak Spots 1–4) | `19-v1-single-node-support-contract.md` §4 reviewed | Operator |
-| G2.8 | Compensate noop risk formally accepted | Operator acknowledges compensate may be noop-backed for target adapters | Operator |
+| G2.4 | Restore drill completed; `PRAGMA integrity_check` passes on restored DB | Operator evidence per `27-production-evaluation-plan.md` §Operator Signoff Packet §3 + Template 3 | Operator |
+| G2.5 | RPO/RTO formally accepted for target workload | Operator signoff per `27-production-evaluation-plan.md` §Operator Signoff Packet §3 + Template 3 | Operator |
+| G2.6 | All production evaluation dimensions SATISFIED or CONDITIONAL | `27-production-evaluation-plan.md` Evaluation Decision Framework completed + Template 2 | Operator |
+| G2.7 | Accepted risks documented (Weak Spots 1–4) | `19-v1-single-node-support-contract.md` §4 reviewed + Template 5 | Operator |
+| G2.8 | Compensate noop risk formally accepted | Operator acknowledges compensate may be noop-backed for target adapters + Template 4 | Operator |
 
-**No production pilot begins until all G2 items are satisfied with documented operator signoff.** Do not mark G2 items complete on behalf of the operator.
+**No production pilot begins until all G2 items are satisfied with documented operator signoff.** Do not mark G2 items complete on behalf of the operator. All G2 gates remain **operator-owned/pending** — see `54-operator-signoff-packet.md` Appendix for structured pre-fill templates (repo-side tooling validation only).
 
 ### Evidence references
 - `27-production-evaluation-plan.md` — canonical production evaluation framework; Operator Signoff Packet in §309–385
+- `27-production-evaluation-plan.md` §Engineer-Side Pre-Fill Table — advisory repo-side pre-fill (operator signoff still required)
+- `54-operator-signoff-packet.md` Appendix — G2 Evidence Packet Templates (Templates 1–5: workload model, evaluation framework pre-fill, restore drill report, compensate behavior matrix, accepted-risk verification checklist); repo-side tooling validation only
 - `19-v1-single-node-support-contract.md` — accepted risks §4, support constraints §3
 - `26-v1-single-node-invariant-control-test-evidence-matrix.md` — Weak Spots 1–4 resolved
 - `23-production-readiness-assessment.md` — RC-ready declaration
@@ -126,6 +132,69 @@ Operator / site reliability / deployment authority.
 ### PostgreSQL / multi-node status in Path 2
 PostgreSQL and multi-node are **not in scope** for Path 2. Per `27-production-evaluation-plan.md` §Operator Signoff Packet §4: "Operator acknowledges PostgreSQL/multi-node is deferred and not part of the current production pilot scope." If PostgreSQL is needed, proceed to Path 3.
 
+### Pilot Runbook (Path 2 — Conditional Production Pilot)
+
+#### Pilot Start Conditions
+All of the following must be confirmed before the first production pilot deployment:
+
+| # | Condition | Verification |
+|---|---|---|
+| 1 | All G2 gates satisfied with documented operator signoff | `54-operator-signoff-packet.md` completed |
+| 2 | Write workload modeled against SQLite capacity (≤300 writes/s sustained) | Operator evidence |
+| 3 | Bearer auth configured; TLS/reverse proxy confirmed | Operator configuration review |
+| 4 | Backup schedule implemented external to FerrumGate | Operator evidence of scheduled `ferrumctl backup create` |
+| 5 | Restore drill completed with `PRAGMA integrity_check` passing | Operator evidence |
+| 6 | RPO/RTO formally accepted for target workload | Operator signoff |
+| 7 | All production evaluation dimensions SATISFIED or CONDITIONAL | `27-production-evaluation-plan.md` Evaluation Decision Framework |
+| 8 | Accepted risks documented (Weak Spots 1–4) | `19-v1-single-node-support-contract.md` §4 reviewed |
+| 9 | Compensate noop risk formally accepted | Operator acknowledgment |
+
+#### Daily Pilot Checks
+| Check | Frequency | Threshold | Action if Exceeded |
+|---|---|---|---|
+| `GET /v1/readyz/deep` returns HTTP 200 | Daily or per deployment cycle | HTTP 503 indicates store unreachable | Investigate store connectivity; restore from backup if corruption suspected |
+| Backup verify (`ferrumctl backup verify`) passes | After each backup | `PRAGMA integrity_check` failure | Do not use backup; take new backup after resolving write issues |
+| Error rate on S4/S5/S6/S7 scenarios | Per monitoring interval | >0% error rate | Page on-call; evaluate against abort criteria |
+| Write queue depth / lag | Per monitoring interval | Sustained backlog >100 items | Evaluate write throughput fit; consider Path 3 if sustained >300 writes/s |
+| Disk space for SQLite store | Daily | <10% free on store volume | Alert; risk of DB lock or crash |
+
+#### Monitoring Thresholds
+| Metric | Warning | Critical | Go/No-Go |
+|---|---|---|---|
+| Sustained write rate | >200 writes/s | >250 writes/s | >300 writes/s triggers Path 3 evaluation |
+| p50 write latency | >50ms | >100ms | >200ms triggers Path 3 evaluation |
+| Error rate (any scenario) | >0.1% | >0% | >0% on S4/S5/S6/S7 = abort pilot |
+| Backup verify | N/A | `PRAGMA integrity_check` fail | Do not deploy; fix before proceeding |
+
+#### Pilot Abort Triggers
+| Trigger | Action |
+|---|---|
+| Write throughput exceeds Phase 1 capacity (>300 writes/s sustained) | Abort pilot; migrate to Path 3 PostgreSQL |
+| `PRAGMA integrity_check` fails on any backup or store | Abort pilot; restore from last known-good backup |
+| Error rate >0% on S4/S5/S6/S7 stress scenarios | Abort pilot; investigate regression |
+| RPO/RTO no longer meets target workload SLA | Abort pilot; evaluate Path 3 |
+| Any G2 signoff item declined by operator | Abort pilot; resolve or formally accept risk |
+| Compensate noop risk is unacceptable for target adapters | Abort pilot; adapter implementation required before R1/R2/R3 use |
+| SQLite store corruption or data integrity failure | Abort pilot; restore from backup and investigate |
+
+#### Pilot Completion Criteria
+| # | Criterion | Evidence Required |
+|---|---|---|
+| 1 | Pilot workload successfully processed for the agreed evaluation period | Operator logs / monitoring data |
+| 2 | All governance behaviors (scope-mismatch deny, single-use capability, rollback/compensate) verified for pilot workflow | Integration test evidence or manual verification log |
+| 3 | Backup/restore drill completed successfully in pilot environment | Operator evidence with `PRAGMA integrity_check` passing |
+| 4 | No abort triggers encountered during pilot period | Operator incident log |
+| 5 | Operator formally accepts pilot outcome and recommends proceeding to Path 3 OR declares pilot sufficient for bounded single-node production | Signed completion statement per `54-operator-signoff-packet.md` |
+
+#### Decision Log
+| Date | Decision | Owner | Rationale |
+|---|---|---|---|
+| (fill in) | Pilot started | Operator | Reason for pilot scope and target workload |
+| (fill in) | Abort / Continue / Complete | Operator | Evidence-based assessment against abort/completion criteria |
+| (fill in) | Proceed to Path 3 or claim single-node production | Operator + Engineering lead | Based on pilot outcome and production requirements |
+
+**No production-ready claim is made during the pilot period.** FerrumGate v1 remains RC-ready/conditional. Full production posture requires Path 3 completion (Phase P1–P4) or explicit documented acceptance of single-node SQLite constraints for the target workload.
+
 ---
 
 ## Path 3 — Phase 3 PostgreSQL / Full Production Posture
@@ -138,14 +207,14 @@ validation. Go/no-go gates before production claim.
 Engineering lead / architect.
 
 ### Gate (go/no-go before beginning Phase P1)
-| # | Gate criterion | Evidence | Owner |
-|---|---|---|---|
-| G3.1 | v1 RC tag cut and Path 1 complete | RC tag exists; release notes published | Release engineer |
-| G3.2 | Production pilot (Path 2) has confirmed single-node SQLite posture is acceptable for target workload | Operator signoff per `27-production-evaluation-plan.md` | Operator |
-| G3.3 | Engineering capacity confirmed for ~2000–3000 LOC + migrations + container tests | ADR-50 effort estimate | Engineering lead |
-| G3.4 | ADR-50 Phase P1 reviewed and approved to proceed | `50-p4-postgres-store-facade-adr.md` §3 | Engineering lead |
+| # | Gate criterion | Evidence | Owner | Status |
+|---|---|---|---|---|
+| G3.1 | v1 RC tag cut and Path 1 complete | RC tag `v0.1.0-rc.1` at commit `5fce844d`; GitHub prerelease published | Release engineer | ☑ DONE |
+| G3.2 | Production pilot (Path 2) has confirmed single-node SQLite posture is acceptable for target workload | Operator signoff per `27-production-evaluation-plan.md` | Operator | ☐ Pending |
+| G3.3 | Engineering capacity confirmed for ~2000–3000 LOC + migrations + container tests | ADR-50 effort estimate | Engineering lead | ☐ Pending |
+| G3.4 | ADR-50 Phase P1 reviewed and approved to proceed | `50-p4-postgres-store-facade-adr.md` §3 | Engineering lead | ☐ Pending |
 
-**Do not begin Phase P1 until G3.1–G3.4 are satisfied.**
+> **Phase naming note**: ADR-50 uses "Phase P1–P4" for PostgreSQL implementation stages. This document's "Phase 3" maps to ADR-50 Phase P1 start through Phase P4 completion.
 
 ### Phase P1 checklist (PostgreSQL migrations + testcontainer strategy)
 Per `50-p4-postgres-store-facade-adr.md` §3 Phase P1:

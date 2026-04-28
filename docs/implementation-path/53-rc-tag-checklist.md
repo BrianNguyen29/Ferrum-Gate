@@ -1,9 +1,9 @@
 # 53 — RC Tag Checklist
 
-> **Status**: Documentation-only. No release action performed.
-> **Purpose**: Standalone fillable pre-tag checklist for FerrumGate v1 RC release.
+> **Status**: Path 1 complete. v0.1.0-rc.1 published as GitHub prerelease.
+> **Purpose**: Standalone fillable pre-tag checklist for FerrumGate v1 RC release (retained for reference).
 > **Scope**: Single-node SQLite only. No production claim.
-> **Repository**: `https://github.com/BrianNguyen29/Ferrum-Gate` (upstream/original — private, accessible with authorized GitHub credentials) | **Default package version**: `0.1.0` (development — RC tag is documentation-only, no official release)
+> **Repository**: `https://github.com/BrianNguyen29/Ferrum-Gate` (upstream/original — private, accessible with authorized GitHub credentials) | **Default package version**: `0.1.0` | **RC status**: v0.1.0-rc.1 published (GitHub prerelease)
 
 ---
 
@@ -25,34 +25,34 @@ Full G1 chain: `cargo check --workspace && cargo fmt --all -- --check && cargo c
 
 ---
 
-## Pre-Tag Gate Checklist
+## Pre-Tag Gate Checklist (Historical — Path 1 Complete)
 
-Re-verify all gates immediately before cutting a git tag. Tagging must not proceed if any gate fails.
+The following table records the verified pass state at time of tagging (2026-04-28). Tagging is now complete; this checklist is retained for reference.
 
 | # | Gate Criterion | Evidence Reference | Verified |
 |---|---|---|---|
-| G1.1 | `cargo check --workspace` passes | Fresh P6 validation (2026-04-28) | ☐ |
-| G1.2 | `cargo fmt --all -- --check` passes | Fresh P6 validation | ☐ |
-| G1.3 | `cargo clippy --workspace --all-targets -- -D warnings` passes | Fresh P6 validation | ☐ |
-| G1.4 | `cargo test --workspace` passes (~761 tests) | Fresh feature-completeness validation | ☐ |
-| G1.5 | `scripts/generate_rc_evidence.py` passes all five checks | `docs/artifacts/2026-03-30/05-contract-consistency.txt` or fresh run | ☐ |
-| G1.6 | `bash scripts/validate_repo_layout.sh` passes | "Repository layout looks OK" | ☐ |
-| G1.7 | `python3 scripts/check_contract_consistency.py` passes | "VALIDATION PASSED" | ☐ |
+| G1.1 | `cargo check --workspace` passes | Fresh P6 validation (2026-04-28) | ☑ PASS |
+| G1.2 | `cargo fmt --all -- --check` passes | Fresh P6 validation | ☑ PASS |
+| G1.3 | `cargo clippy --workspace --all-targets -- -D warnings` passes | Fresh P6 validation | ☑ PASS |
+| G1.4 | `cargo test --workspace` passes (~761 tests) | Fresh feature-completeness validation | ☑ PASS |
+| G1.5 | `scripts/generate_rc_evidence.py` passes all five checks | `docs/artifacts/2026-03-30/05-contract-consistency.txt` or fresh run | ☑ PASS |
+| G1.6 | `bash scripts/validate_repo_layout.sh` passes | "Repository layout looks OK" | ☑ PASS |
+| G1.7 | `python3 scripts/check_contract_consistency.py` passes | "VALIDATION PASSED" | ☑ PASS |
 
 ---
 
-## Pre-Tag Todo Checklist
+## Pre-Tag Todo Checklist (Historical — Completed)
 
-Complete all items before tagging:
+The following items were completed before publishing `v0.1.0-rc.1`:
 
-- [ ] Re-run all G1 gates immediately before tagging
-- [ ] Verify/update CHANGELOG: document all P0/P1/P2 resolutions (scope-mismatch deny, poisoned-context fixtures, Phase F docs pack, clippy clean, RC script)
-- [ ] Verify/update RELEASE notes: explicitly state single-node SQLite scope, Phase 3 deferred, conditional production posture
-- [ ] Include accepted-risks table in release notes
-- [ ] Include signoff language: "This is an RC tag for v1 single-node SQLite. Production deployment requires evaluation against `27-production-evaluation-plan.md` and explicit operator signoff."
-- [ ] Do NOT claim production-ready in release notes
-- [ ] Do NOT bump Cargo.toml version (unless explicitly requested later)
-- [ ] Do NOT create CHANGELOG.md or RELEASE.md files unless needed for external references
+- [x] Re-run all G1 gates immediately before tagging
+- [x] Verify/update CHANGELOG: document all P0/P1/P2 resolutions (scope-mismatch deny, poisoned-context fixtures, Phase F docs pack, clippy clean, RC script)
+- [x] Verify/update RELEASE notes: explicitly state single-node SQLite scope, Phase 3 deferred, conditional production posture
+- [x] Include accepted-risks table in release notes
+- [x] Include signoff language: "This is an RC tag for v1 single-node SQLite. Production deployment requires evaluation against `27-production-evaluation-plan.md` and explicit operator signoff."
+- [x] Do NOT claim production-ready in release notes
+- [x] Do NOT bump Cargo.toml version; `Cargo.toml` remains `0.1.0`
+- [x] Publish CHANGELOG.md and RELEASE.md as release-facing documentation
 
 ---
 
@@ -90,4 +90,4 @@ Complete all items before tagging:
 
 ---
 
-*Document generated: 2026-04-28. Documentation-only — no release action performed.*
+*Document generated: 2026-04-28. Updated to reflect Path 1 completion: v0.1.0-rc.1 published as GitHub prerelease at target commit `5fce844d2850be45268db37544f17dd4dba988a9`.*

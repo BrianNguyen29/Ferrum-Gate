@@ -3,6 +3,7 @@
 > **Status**: Documentation-only. No production deployment performed.
 > **Purpose**: Standalone fillable operator signoff form for FerrumGate v1 single-node SQLite production pilot.
 > **Scope**: Single-node SQLite only. No PostgreSQL/multi-node. No production-ready claim.
+> **RC status**: v0.1.0-rc.1 published as GitHub prerelease (Path 1 complete; Path 2 pilot pending operator signoff)
 
 ---
 
@@ -11,6 +12,35 @@
 This packet is the formal operator acceptance checklist before any production pilot deployment. It is **documentation-only** — completing these items does not claim production readiness; it confirms the operator has evaluated and accepted the known constraints.
 
 **Do not mark these items complete on behalf of the operator.** Each item requires explicit operator acknowledgment and, where indicated, documented accepted-risk signoff.
+
+---
+
+## Evidence Attachment Fields
+
+Attach the following evidence to each section before signing:
+
+| Section | Evidence Item | File / Reference |
+|---|---|---|
+| §1 SQLite limits | Write workload model showing ≤300 writes/s sustained | Operator workload analysis document |
+| §1 SQLite limits | Confirmation single-node topology confirmed acceptable | Operator statement |
+| §2 Auth/TLS | Bearer token configuration confirmed | Config file excerpt (redacted token) |
+| §2 Auth/TLS | TLS termination confirmed at reverse proxy | Network/firewall documentation |
+| §3 Backup/restore | Backup schedule evidence (cron, CI job, or manual log) | Scheduled job or manual run log |
+| §3 Backup/restore | Restore drill evidence with `PRAGMA integrity_check` passing | Restore drill report |
+| §4 PostgreSQL deferred | Operator acknowledgment of PostgreSQL deferral | This document signed |
+| §5 Pilot prerequisites | All 8 prerequisites verified | This document signed |
+
+---
+
+## Pilot Acceptance Statement (Final Signoff)
+
+Before the production pilot begins, the operator must sign the following statement:
+
+> **Operator acceptance**: "I, [Operator Name], acting in my capacity as [Role], have evaluated FerrumGate v1 single-node SQLite against the production evaluation plan (`27-production-evaluation-plan.md`). I have reviewed and accepted all accepted risks documented in `19-v1-single-node-support-contract.md` §4 and the Weak Spots documented in `26-v1-single-node-invariant-control-test-evidence-matrix.md`. I confirm the workload fits within Phase 1 SQLite constraints, all G2 gates have been satisfied, and I accept the conditional production posture as described in `23-production-readiness-assessment.md`. I authorize the limited production pilot deployment as described in `31-release-paths-todo.md` §Path 2."
+>
+> Operator signature: _________________ Date: _________
+>
+> Owner/Supervisor countersignature (if required): _________________ Date: _________
 
 ---
 
@@ -115,3 +145,270 @@ Before the first production pilot deployment, the following must be all confirme
 ---
 
 *Document generated: 2026-04-28. Documentation-only — no production deployment performed.*
+
+---
+
+## Appendix: G2 Evidence Packet Templates
+
+> **Purpose**: These templates provide structured pre-fill forms for the G2 gates in Path 2 (Conditional Production Pilot) of `31-release-paths-todo.md`. All templates are **repo-side tooling validation only** — the actual G2 gates require explicit **operator signoff still required** before any production pilot begins. Do not mark G2 items complete on behalf of the operator.
+
+### Template 1 — Workload Model
+
+```
+════════════════════════════════════════════════════════════════
+WORKLOAD MODEL  (Template 1 of 5 — G2.1 Pre-fill)
+════════════════════════════════════════════════════════════════
+Repo-side tooling validation only | Operator signoff still required
+
+Operator name: _______________________________
+Target deployment environment: _______________________________
+Date pre-filled: _______________________________
+
+Expected sustained write rate: _____ writes/s (max: 300 writes/s for Phase 1 SQLite)
+Expected peak write rate: _____ writes/s
+Expected daily write volume: _____ writes/day
+Expected execution history size at steady state: _____ records
+
+SQLite single-node capacity assessment:
+  [ ] Fits within ≤300 writes/s sustained  → Proceed to G2.1 signoff
+  [ ] Exceeds 300 writes/s sustained      → Requires Path 3 PostgreSQL evaluation
+  [ ] Single-node topology confirmed       → Proceed to G2.1 signoff
+  [ ] Multi-node/HA/replica required      → Requires Path 3 PostgreSQL evaluation
+
+Pre-fill completed by (engineer): _______________________________
+Pre-fill date: _______________________________
+Notes: _______________________________
+
+Operator acknowledgment: _______________________________ (signature) Date: ___________
+════════════════════════════════════════════════════════════════
+```
+
+### Template 2 — Evaluation Framework Pre-Fill
+
+```
+════════════════════════════════════════════════════════════════
+EVALUATION FRAMEWORK PRE-FILL  (Template 2 of 5 — G2.6 Pre-fill)
+════════════════════════════════════════════════════════════════
+Repo-side tooling validation only | Operator signoff still required
+
+Operator name: _______________________________
+Date pre-filled: _______________________________
+
+Dimension 1 — Performance:
+  [ ] SATISFIED   [ ] CONDITIONAL   [ ] NOT MET   [ ] N/A
+  Notes / compensating controls: _______________________________
+
+Dimension 2 — Security:
+  [ ] SATISFIED   [ ] CONDITIONAL   [ ] NOT MET   [ ] N/A
+  Notes / compensating controls: _______________________________
+
+Dimension 3 — Reliability:
+  [ ] SATISFIED   [ ] CONDITIONAL   [ ] NOT MET   [ ] N/A
+  Notes / compensating controls: _______________________________
+
+Dimension 4 — Operations:
+  [ ] SATISFIED   [ ] CONDITIONAL   [ ] NOT MET   [ ] N/A
+  Notes / compensating controls: _______________________________
+
+Dimension 5 — Release Confidence:
+  [ ] SATISFIED   [ ] CONDITIONAL   [ ] NOT MET   [ ] N/A
+  Notes / compensating controls: _______________________________
+
+Overall: All critical items SATISFIED or CONDITIONAL (with controls)?
+  [ ] YES — Proceed to G2.6 signoff
+  [ ] NO  — NOT MET item blocks pilot; resolve before proceeding
+
+Pre-fill completed by (engineer): _______________________________
+Pre-fill date: _______________________________
+
+Operator final signoff: _______________________________ (signature) Date: ___________
+════════════════════════════════════════════════════════════════
+```
+
+### Template 3 — Restore Drill Report
+
+```
+════════════════════════════════════════════════════════════════
+RESTORE DRILL REPORT  (Template 3 of 5 — G2.4 Pre-fill)
+════════════════════════════════════════════════════════════════
+Repo-side tooling validation only | Operator signoff still required
+
+Operator name: _______________________________
+Drill environment: _______________________________
+Date of drill: _______________________________
+Backup file used: _______________________________
+Backup timestamp: _______________________________
+
+Drill steps performed:
+  1. [ ] Non-production environment confirmed isolated from live store
+  2. [ ] `ferrumctl backup restore --confirm` executed
+  3. [ ] Exclusive lock detection triggered correctly (refused if server running)
+  4. [ ] Pre-restore copy preserved
+  5. [ ] `PRAGMA integrity_check` passed on restored DB
+  6. [ ] Execution lineage queryable after restore
+  7. [ ] Approval queue readable after restore
+
+Restore drill outcome:
+  [ ] SUCCESS — All steps passed; proceed to G2.4 signoff
+  [ ] PARTIAL — Issues encountered: _______________________________
+  [ ] FAILED  — Drill failed; do not use this backup; fix procedure before G2.4 signoff
+
+RPO confirmation:
+  [ ] Operator confirms RPO = time since last backup; writes after last backup are lost on restore
+  [ ] RPO acceptable for target workload SLA
+
+RTO confirmation:
+  [ ] Operator confirms RTO = restore time + restart + verification; no automated recovery in FerrumGate
+  [ ] RTO acceptable for target workload SLA
+
+Pre-fill completed by (engineer): _______________________________
+Pre-fill date: _______________________________
+
+Operator signoff: _______________________________ (signature) Date: ___________
+════════════════════════════════════════════════════════════════
+```
+
+### Template 4 — Compensate Behavior Matrix
+
+```
+════════════════════════════════════════════════════════════════
+COMPENSATE BEHAVIOR MATRIX  (Template 4 of 5 — G2.8 Pre-fill)
+════════════════════════════════════════════════════════════════
+Repo-side tooling validation only | Operator signoff still required
+
+Operator name: _______________________________
+Date pre-filled: _______________________________
+Target adapters in scope: _______________________________
+
+Adapter / Rollback Class | Compensate performs real undo? | Verified by |
+------------------------|----------------------------------|-------------|
+(adapter name) R0        | [ ] YES  [ ] NO  [ ] UNKNOWN   | ___________ |
+(adapter name) R1        | [ ] YES  [ ] NO  [ ] UNKNOWN   | ___________ |
+(adapter name) R2        | [ ] YES  [ ] NO  [ ] UNKNOWN   | ___________ |
+(adapter name) R3        | [ ] YES  [ ] NO  [ ] UNKNOWN   | ___________ |
+
+Compensate behavior summary:
+  [ ] All target adapters verified as performing real undo — proceed to G2.8 signoff
+  [ ] Some adapters are noop-backed — compensate noop risk formally accepted (see below)
+  [ ] Guaranteed external undo required but not yet verified — adapter implementation required before G2.8 signoff
+
+Compensate noop risk acceptance (only if some adapters are noop-backed):
+  Operator acknowledges that `POST /v1/executions/{execution_id}/compensate` may return 200
+  without performing external undo for the following adapters:
+  List adapters: _______________________________
+
+  Manual verification procedure for noop-backed compensate:
+  Step 1: _______________________________
+  Step 2: _______________________________
+  Step 3: _______________________________
+
+  [ ] Operator accepts compensate noop risk with manual verification procedure above
+
+Pre-fill completed by (engineer): _______________________________
+Pre-fill date: _______________________________
+
+Operator signoff: _______________________________ (signature) Date: ___________
+════════════════════════════════════════════════════════════════
+```
+
+### Template 5 — Accepted-Risk Verification Checklist
+
+```
+════════════════════════════════════════════════════════════════
+ACCEPTED-RISK VERIFICATION CHECKLIST  (Template 5 of 5 — G2.7 Pre-fill)
+════════════════════════════════════════════════════════════════
+Repo-side tooling validation only | Operator signoff still required
+
+Operator name: _______________________________
+Date pre-filled: _______________________________
+
+Review required documents:
+  - `19-v1-single-node-support-contract.md` §4 (Accepted Risks)
+  - `26-v1-single-node-invariant-control-test-evidence-matrix.md` (Weak Spots 1–4)
+
+Weak Spot 1 — Rollback class handling (RESOLVED):
+  [ ] Operator confirms callers set `rollback_class` correctly at intent creation
+  [ ] R3 `auto_commit=false` control is correctly applied by gateway prepare
+  Notes: _______________________________
+
+Weak Spot 2 — Draft-only revalidation (RESOLVED):
+  [ ] Operator confirms prepare handler revalidates draft-only status
+  [ ] HTTP 403 returned for `intent.approval_mode == DraftOnly`
+  Notes: _______________________________
+
+Weak Spot 3 — Scope-bounds enforcement (RESOLVED):
+  [ ] Scope-bounds mismatch control implemented in PDP engine
+  [ ] Single-use capability enforcement wired via `mark_capability_used_durable`
+  Notes: _______________________________
+
+Weak Spot 4 — Provenance completeness (RESOLVED):
+  [ ] Full lineage chain verified: authorize → prepare → execute → verify
+  [ ] All 6 event kinds appear in lineage query response linked to execution_id
+  Notes: _______________________________
+
+Additional accepted risks from `19-v1-single-node-support-contract.md` §4:
+  Risk 1: _______________________________ [ ] Accepted  [ ] Not applicable
+  Risk 2: _______________________________ [ ] Accepted  [ ] Not applicable
+  Risk 3: _______________________________ [ ] Accepted  [ ] Not applicable
+  Risk 4: _______________________________ [ ] Accepted  [ ] Not applicable
+
+Pre-fill completed by (engineer): _______________________________
+Pre-fill date: _______________________________
+
+Operator final signoff (all weak spots reviewed and accepted risks acknowledged):
+  Signature: _______________________________ Date: ___________
+════════════════════════════════════════════════════════════════
+```
+
+
+---
+
+## Appendix: Repo-Side G2 Validation Evidence (Tooling Only)
+
+> **Status**: repo-side tooling validation only. Operator signoff still required.
+> These checks validate local tooling and selected controls in the release-preparation
+> workspace. They do **not** complete any G2 gate and do **not** authorize a
+> production pilot.
+
+| Gate(s) informed | Local check | Result | Evidence |
+|---|---|---|---|
+| G2.3/G2.4 | `cargo test --package ferrumctl -- backup` | PASS | 8 backup tests passed; restore guardrails, corruption detection, pre-restore copy, and locked DB refusal covered |
+| G2.2 | `cargo test --package ferrumd -- test_resolve_config_rejects_bearer_mode_without_token` | PASS | bearer mode without token rejected |
+| G2.2/G3 guardrail | `cargo test --package ferrumd -- test_resolve_config_rejects_postgres_dsn` | PASS | PostgreSQL DSN remains rejected for v1 single-node scope |
+| G2.7 | `cargo test --package ferrum-integration-tests -- test_scope_mismatch_deny_on_empty_scope_with_mutation` | PASS | scope-mismatch deny verified |
+| G2.7 | `cargo test --package ferrum-integration-tests -- test_r3_contracts_have_auto_commit_false` | PASS | R3 no-auto-commit invariant verified |
+| G2.8 | `cargo test --package ferrum-integration-tests -- compensate_execution_flow` | PASS | compensate flow exercised; operator still must accept noop-backed adapter risk |
+| G2.7 | `cargo test --test integration_lineage_chain -- test_lineage_chain_full_provenance_events` | PASS | full provenance lineage chain verified |
+| G2.4 | Local `/tmp` restore drill with `ferrumctl backup create/verify/restore --confirm` and direct `PRAGMA integrity_check` | PASS | backup created, verified, restored; post-restore `integrity_check=ok`; restored rows matched pre-backup state |
+
+### Local Restore Drill Record
+
+```text
+Repo-side tooling validation only | Operator signoff still required
+Source DB: /tmp/ferrumgate-g2-restore-drill-8627/source.db
+Backup DB: /tmp/ferrumgate-g2-restore-drill-8627/backups/source.db_1777378684.db
+Create: Backup created (8192 bytes)
+Verify backup: Database integrity check passed / OK
+Restore: Pre-restore snapshot saved; Database restored successfully / Restore complete
+Verify restored DB: Database integrity check passed / OK
+Direct PRAGMA: integrity_check=ok
+Restored rows: [(1, 'before-backup')]
+```
+
+### Operator Follow-Up Required
+
+The operator must still provide environment-specific evidence before any G2 gate
+can be marked complete:
+
+- G2.1 target workload model for the actual production pilot.
+- G2.2 production bearer auth, TLS/reverse proxy, and firewall evidence.
+- G2.3 production backup schedule evidence.
+- G2.4 restore drill in the production-adjacent environment.
+- G2.5 RPO/RTO acceptance for the target workload.
+- G2.6 operator-completed production evaluation framework.
+- G2.7 accepted-risk review/signature.
+- G2.8 compensate noop risk acceptance for target adapters.
+
+---
+
+*Appendix generated: 2026-04-28. All templates are repo-side tooling validation only. Operator signoff still required before production pilot begins.*

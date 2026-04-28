@@ -54,7 +54,7 @@ Phase 1 materially outperformed the original target. The queue removed lock-thra
 
 **Reason**: The write queue already eliminates lock thrashing via serialization. Batching heterogeneous operations into a single transaction added complexity overhead without meaningful lock contention reduction, because the single-writer model means only one write proceeds at a time regardless.
 
-**Current status**: Phase 2 deferred. Phase 1 write-queue architecture is production-ready for single-node workloads up to ~300 writes/s sustained.
+**Current status**: Phase 2 deferred. Phase 1 write-queue architecture is the RC-supported production-target path for bounded single-node workloads up to ~300 writes/s sustained; production pilot still requires operator signoff.
 
 ---
 
