@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use chrono::{Duration, Utc};
 use ferrum_proto::{
     CapabilityId, CapabilityLease, CapabilityMintRequest, CapabilityMintResponse, CapabilityStatus,
+    PolicyBundleId,
 };
 use std::{collections::HashMap, sync::Arc};
 use thiserror::Error;
@@ -19,8 +20,6 @@ pub enum CapabilityError {
     Expired,
     #[error("requested ttl exceeds max allowed")]
     TtlTooLong,
-    #[error("capability persistence failure")]
-    Internal,
 }
 
 #[async_trait]
@@ -53,10 +52,6 @@ impl CapabilityService for InMemoryCapabilityService {
             return Err(CapabilityError::TtlTooLong);
         }
 
-        // U1-S9a: Use provided policy_bundle_id if given, otherwise generate a random one.
-        // The provided ID is derived deterministically from the intent's outcome contracts.
-        let policy_bundle_id = request.policy_bundle_id.unwrap_or_default();
-
         let now = Utc::now();
         let lease = CapabilityLease {
             capability_id: CapabilityId::new(),
@@ -68,7 +63,7 @@ impl CapabilityService for InMemoryCapabilityService {
             taint_budget: request.taint_budget,
             approval_binding: request.approval_binding,
             issued_by: "ferrum-cap".to_string(),
-            policy_bundle_id,
+            policy_bundle_id: PolicyBundleId::new(),
             tool_manifest_id: None,
             manifest_hash: None,
             status: CapabilityStatus::Active,
@@ -137,5 +132,81 @@ impl CapabilityService for InMemoryCapabilityService {
         lease.status = CapabilityStatus::Revoked;
         lease.revoked_at = Some(Utc::now());
         Ok(lease.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_mint_request(ttl_secs: u64) -> CapabilityMintRequest {
+        CapabilityMintRequest {
+            intent_id: ferrum_proto::IntentId::new(),
+            proposal_id: ferrum_proto::ProposalId::new(),
+            tool_binding: ferrum_proto::ToolBinding {
+                server_name: "test-server".to_string(),
+                tool_name: "test-tool".to_string(),
+                tool_version: None,
+            },
+            resource_bindings: Vec::new(),
+            argument_constraints: Vec::new(),
+            taint_budget: ferrum_proto::TaintBudget {
+                max_taint_score: 0,
+                allow_external_tool_output: false,
+                allow_external_metadata: false,
+                allow_untrusted_text: false,
+            },
+            approval_binding: None,
+            requested_ttl_secs: ttl_secs,
+            metadata: ferrum_proto::JsonMap::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_ttl_301_rejected() {
+        let service = InMemoryCapabilityService::default();
+        let request = make_mint_request(301);
+        let result = service.mint(request).await;
+        assert!(
+            matches!(result, Err(CapabilityError::TtlTooLong)),
+            "TTL=301 should be rejected with TtlTooLong, got: {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ttl_300_accepted() {
+        let service = InMemoryCapabilityService::default();
+        let request = make_mint_request(300);
+        let result = service.mint(request).await;
+        assert!(
+            result.is_ok(),
+            "TTL=300 should be accepted, got: {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ttl_0_accepted() {
+        let service = InMemoryCapabilityService::default();
+        let request = make_mint_request(0);
+        let result = service.mint(request).await;
+        assert!(
+            result.is_ok(),
+            "TTL=0 should be accepted (edge case), got: {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ttl_302_rejected_boundary() {
+        let service = InMemoryCapabilityService::default();
+        let request = make_mint_request(302);
+        let result = service.mint(request).await;
+        assert!(
+            matches!(result, Err(CapabilityError::TtlTooLong)),
+            "TTL=302 should be rejected with TtlTooLong, got: {:?}",
+            result
+        );
     }
 }

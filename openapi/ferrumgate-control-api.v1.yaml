@@ -2,18 +2,30 @@ openapi: 3.1.0
 info:
   title: FerrumGate Control API
   version: 0.1.0
-  description: REST control plane API for FerrumGate v1. When `ferrumd` runs with `auth.mode = bearer`, all non-health routes require bearer authentication.
+  description: |
+    REST control plane API for FerrumGate v1.
+    
+    ## Authentication
+    
+    When auth mode is set to "bearer", all endpoints except `/v1/healthz` and `/v1/readyz` 
+    require a Bearer token in the Authorization header:
+    
+    ```
+    Authorization: Bearer <token>
+    ```
+    
+    ## TLS
+    
+    This API does not terminate TLS. Deploy behind a TLS-terminating proxy 
+    (e.g., nginx, cloud load balancer) for production use.
 
 servers:
   - url: http://localhost:8080
 
-security:
-  - ControlPlaneBearer: []
-
 paths:
   /v1/healthz:
     get:
-      summary: Basic health check
+      summary: Basic health check (unauthenticated)
       operationId: healthz
       security: []
       responses:
@@ -26,7 +38,7 @@ paths:
 
   /v1/readyz:
     get:
-      summary: Deep readiness check
+      summary: Deep readiness check (unauthenticated)
       operationId: readyz
       security: []
       responses:
@@ -56,59 +68,8 @@ paths:
                 $ref: '#/components/schemas/IntentCompileResponse'
         '400':
           $ref: '#/components/responses/ApiError'
-
-  /v1/intents/{intent_id}:
-    get:
-      summary: Get intent
-      operationId: getIntent
-      parameters:
-        - $ref: '#/components/parameters/IntentId'
-      responses:
-        '200':
-          description: Intent found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/IntentEnvelope'
-        '404':
-          $ref: '#/components/responses/ApiError'
-
-  /v1/intents/{intent_id}/revoke:
-    post:
-      summary: Revoke an intent
-      operationId: revokeIntent
-      parameters:
-        - $ref: '#/components/parameters/IntentId'
-      responses:
-        '200':
-          description: Revoked
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-
-  /v1/proposals:
-    post:
-      summary: Create an action proposal
-      operationId: createProposal
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ActionProposal'
-      responses:
-        '201':
-          description: Proposal created
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ActionProposal'
-        '400':
-          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
 
   /v1/proposals/{proposal_id}/evaluate:
     post:
@@ -125,6 +86,8 @@ paths:
                 $ref: '#/components/schemas/EvaluateProposalResponse'
         '404':
           $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
 
   /v1/capabilities/mint:
     post:
@@ -147,22 +110,8 @@ paths:
           $ref: '#/components/responses/ApiError'
         '403':
           $ref: '#/components/responses/ApiError'
-
-  /v1/capabilities/{capability_id}:
-    get:
-      summary: Get capability
-      operationId: getCapability
-      parameters:
-        - $ref: '#/components/parameters/CapabilityId'
-      responses:
-        '200':
-          description: Capability found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CapabilityLease'
-        '404':
-          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
 
   /v1/capabilities/{capability_id}/revoke:
     post:
@@ -180,6 +129,8 @@ paths:
                 properties:
                   ok:
                     type: boolean
+      security:
+        - BearerAuth: []
 
   /v1/executions/authorize:
     post:
@@ -202,6 +153,8 @@ paths:
           $ref: '#/components/responses/ApiError'
         '422':
           $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
 
   /v1/executions/{execution_id}/prepare:
     post:
@@ -218,191 +171,8 @@ paths:
                 $ref: '#/components/schemas/PrepareExecutionResponse'
         '404':
           $ref: '#/components/responses/ApiError'
-
-  /v1/executions/{execution_id}/execute:
-    post:
-      summary: Execute the prepared operation
-      operationId: executeOperation
-      parameters:
-        - $ref: '#/components/parameters/ExecutionId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ExecuteRequest'
-      responses:
-        '200':
-          description: Execution result
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ExecuteResponse'
-        '404':
-          $ref: '#/components/responses/ApiError'
-
-  /v1/executions/{execution_id}/verify:
-    post:
-      summary: Verify execution result against intent and policy
-      operationId: verifyExecution
-      parameters:
-        - $ref: '#/components/parameters/ExecutionId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/VerifyRequest'
-      responses:
-        '200':
-          description: Verification result
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/VerifyResponse'
-        '404':
-          $ref: '#/components/responses/ApiError'
-
-  /v1/executions/{execution_id}/commit:
-    post:
-      summary: Commit verified execution
-      operationId: commitExecution
-      parameters:
-        - $ref: '#/components/parameters/ExecutionId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CommitRequest'
-      responses:
-        '200':
-          description: Committed
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CommitResponse'
-
-  /v1/executions/{execution_id}/compensate:
-    post:
-      summary: Request compensation
-      operationId: compensateExecution
-      parameters:
-        - $ref: '#/components/parameters/ExecutionId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CompensateRequest'
-      responses:
-        '200':
-          description: Compensation acknowledged
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CompensateResponse'
-
-  /v1/executions/{execution_id}/rollback:
-    post:
-      summary: Request rollback or compensation (no-op for HTTP adapter)
-      operationId: rollbackExecution
-      parameters:
-        - $ref: '#/components/parameters/ExecutionId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RollbackRequest'
-      responses:
-        '200':
-          description: Rollback acknowledged (may be no-op)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RollbackResponse'
-
-  /v1/executions/{execution_id}/cancel:
-    post:
-      summary: Cancel an execution in a pre-execute state
-      description: |
-        Cancels an execution that is in a pre-execute state (Proposed, Authorized, Prepared).
-        Returns 409 Conflict if the execution is not in one of these states.
-      operationId: cancelExecution
-      parameters:
-        - $ref: '#/components/parameters/ExecutionId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CancelExecutionRequest'
-      responses:
-        '200':
-          description: Cancel acknowledged
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CancelExecutionResponse'
-        '404':
-          $ref: '#/components/responses/ApiError'
-        '409':
-          $ref: '#/components/responses/ApiError'
-
-  /v1/executions/{execution_id}/pause:
-    post:
-      summary: Pause an execution in a running state
-      description: |
-        Pauses an execution that is in a running state (Running, AwaitingVerification).
-        Returns 409 Conflict if the execution is not in one of these states.
-      operationId: pauseExecution
-      parameters:
-        - $ref: '#/components/parameters/ExecutionId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PauseExecutionRequest'
-      responses:
-        '200':
-          description: Pause acknowledged
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PauseExecutionResponse'
-        '404':
-          $ref: '#/components/responses/ApiError'
-        '409':
-          $ref: '#/components/responses/ApiError'
-
-  /v1/executions/{execution_id}/resume:
-    post:
-      summary: Resume a paused execution
-      description: |
-        Resumes an execution that is in a Paused state. Returns the execution to Running state.
-        Returns 409 Conflict if the execution is not in Paused state.
-      operationId: resumeExecution
-      parameters:
-        - $ref: '#/components/parameters/ExecutionId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ResumeExecutionRequest'
-      responses:
-        '200':
-          description: Resume acknowledged
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ResumeExecutionResponse'
-        '404':
-          $ref: '#/components/responses/ApiError'
-        '409':
-          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
 
   /v1/executions/{execution_id}:
     get:
@@ -417,68 +187,55 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ExecutionRecord'
+        '404':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
 
   /v1/approvals:
     get:
-      summary: List pending approval requests
+      summary: List pending approvals
       operationId: listApprovals
-      description: |
-        Returns all approval requests in the Pending state, ordered by
-        created_at descending (most recent first). Use this endpoint to
-        discover approvals that require operator action before they can be
-        resolved via POST /v1/approvals/{approval_id}/resolve.
-
-        Supports cursor-based pagination via `limit` and `cursor`.
-        Defaults: limit=50. Maximum limit: 100 (conservatively clamped).
-
-        Cursor pagination is stable for operator workflows while the pending
-        set changes. Ordering: created_at DESC, approval_id DESC (stable tiebreaker).
-
-        Optionally filter by `proposal_id` to return only pending approvals
-        for a specific proposal. Optionally filter by `execution_id` to return
-        only pending approvals linked to a specific execution. When both
-        `proposal_id` and `execution_id` are provided, both filters apply (AND semantics).
       parameters:
+        - name: proposal_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: Filter to only pending approvals for this proposal (exact match)
         - name: limit
           in: query
-          description: Maximum number of approvals to return (1-100). Defaults to 50. Values above 100 are clamped to 100.
           required: false
           schema:
             type: integer
             minimum: 1
             maximum: 100
             default: 50
-        - name: cursor
+          description: Maximum number of approvals to return
+        - name: offset
           in: query
-          description: Cursor for keyset pagination. Use an empty value to request the first cursor-based page, then pass the returned next_cursor to advance.
           required: false
           schema:
-            type: string
-        - name: proposal_id
-          in: query
-          description: Optional proposal_id filter. When provided, returns only pending approvals for this proposal.
-          required: false
-          schema:
-            type: string
-            format: uuid
-        - name: execution_id
-          in: query
-          description: Optional execution_id filter. When provided, returns only pending approvals linked to this execution.
-          required: false
-          schema:
-            type: string
-            format: uuid
+            type: integer
+            minimum: 0
+            default: 0
+          description: Number of approvals to skip
       responses:
         '200':
-          description: Paginated list of pending approval requests
+          description: List of pending approvals
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ListApprovalsResponse'
-        '400':
-          $ref: '#/components/responses/ApiError'
-        '500':
-          $ref: '#/components/responses/ApiError'
+                type: object
+                properties:
+                  approvals:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ApprovalRequest'
+      security:
+        - BearerAuth: []
+
   /v1/approvals/{approval_id}:
     get:
       summary: Get approval
@@ -492,26 +249,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApprovalRequest'
-
-  /v1/approvals/{approval_id}/resolve:
-    post:
-      summary: Resolve approval
-      operationId: resolveApproval
-      parameters:
-        - $ref: '#/components/parameters/ApprovalId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ApprovalResolveRequest'
-      responses:
-        '200':
-          description: Updated approval
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApprovalRequest'
+        '404':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
 
   /v1/provenance/query:
     post:
@@ -530,104 +271,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ProvenanceQueryResponse'
-
-  /v1/provenance/events/external:
-    post:
-      summary: Ingest an externally-observed runtime event into provenance lineage
-      description: |
-        Ingests an externally-observed event into the FerrumGate provenance lineage.
-
-        This endpoint provides a vendor-neutral boundary for anchoring external runtime
-        observations into an existing execution lineage. The server validates:
-        - execution_id must refer to an existing execution record
-        - parent_event_id must refer to an existing provenance event
-        - parent event must belong to the same execution_id
-
-        The server derives internal lineage context (actor, object, timestamps) from
-        existing state rather than trusting caller-supplied linkage intent.
-
-        Fail-closed: any validation failure results in an error response without
-        creating any provenance record.
-      operationId: ingestExternalEvent
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ExternalEventIngestRequest'
-      responses:
-        '200':
-          description: External event ingested successfully
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ExternalEventIngestResponse'
-        '400':
-          $ref: '#/components/responses/ApiError'
-        '404':
-          $ref: '#/components/responses/ApiError'
-
-  /v1/provenance/lineage:
-    post:
-      summary: Multi-hop provenance lineage traversal
-      description: |
-        Traverses provenance ancestry and/or descendant edges from a seed event_id using BFS.
-
-        Validation rules:
-        - At least one of ancestry or descendants must be true (400 ValidationError otherwise)
-        - max_hops is hard-capped at 32 by the server
-        - All traversed events with execution_id=Some(x) must match the request execution_id (execution fence)
-
-        The seed event is always included in the response. Results are deterministically ordered
-        by (occurred_at ASC, event_id ASC-string).
-      operationId: lineageQuery
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/LineageQueryRequest'
-      responses:
-        '200':
-          description: Lineage traversal result
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/LineageQueryResponse'
-        '400':
-          $ref: '#/components/responses/ApiError'
-        '404':
-          $ref: '#/components/responses/ApiError'
-
-  /v1/provenance/events/{event_id}:
-    get:
-      summary: Get a single provenance event
-      operationId: getProvenanceEvent
-      parameters:
-        - $ref: '#/components/parameters/EventId'
-        - name: ancestry
-          in: query
-          required: false
-          schema:
-            type: boolean
-          description: When true, include ancestor events reached by walking parent edges backwards.
-        - name: descendants
-          in: query
-          required: false
-          schema:
-            type: boolean
-          description: When true, include descendant events reached by walking child edges forwards.
-      responses:
-        '200':
-          description: Provenance event result
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ProvenanceEventResponse'
-        '400':
-          $ref: '#/components/responses/ApiError'
-        '404':
-          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
 
   /v1/provenance/lineage/{execution_id}:
     get:
@@ -650,84 +295,145 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/ProvenanceEvent'
+      security:
+        - BearerAuth: []
 
-  /v1/provenance/export:
+  /v1/provenance/lineage:
     post:
-      summary: Export provenance events as a deterministic audit payload
+      summary: Multi-hop lineage query from seed event
       description: |
-        Exports provenance events using the same filter semantics as the query endpoint
-        but returns a self-contained audit payload with export metadata for auditability.
-
-        Results are sorted by occurred_at ascending, then event_id ascending.
-        Supports cursor-based pagination via `cursor` and `limit`.
-      operationId: exportProvenance
+        Traverses provenance ancestry and/or descendant edges from a seed event_id
+        up to a configurable maximum depth (hops). Use this for debugging lineage chains
+        and understanding event dependencies.
+      operationId: queryLineage
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ProvenanceExportRequest'
+              $ref: '#/components/schemas/LineageQueryRequest'
       responses:
         '200':
-          description: Exported provenance audit payload
+          description: Multi-hop lineage result
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ProvenanceExportResponse'
+                $ref: '#/components/schemas/LineageQueryResponse'
+        '404':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
 
-  /v1/ledger/verify:
-    get:
-      summary: Verify ledger hash-chain integrity
-      description: |
-        Performs on-demand verification of the ledger hash-chain integrity.
-
-        This endpoint reads all ledger entries from persistent storage and validates:
-        - Sequence numbers match entry positions
-        - prev_hash linkage is intact (chain continuity)
-        - Entry hashes match recomputed content hashes (tamper detection)
-
-        This is a read-only diagnostic endpoint for operators to audit ledger integrity.
-        It does not modify any state.
-      operationId: verifyLedger
-      responses:
-        '200':
-          description: Ledger verification result
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/LedgerVerificationResponse'
-  /v1/provenance/stats:
+  /v1/provenance/ingest:
     post:
-      summary: Compute server-side provenance statistics
+      summary: Ingest external provenance event
       description: |
-        Computes aggregated provenance statistics over the same filter semantics as the query endpoint.
-        Returns counts and breakdowns rather than individual events.
-
-        Statistics include totals by event kind, terminal event counts, issue indicators,
-        and unique entity counts. Optionally includes events flagged by consistency checks.
-      operationId: provenanceStats
+        Ingests a provenance event from an external source runtime into FerrumGate's
+        lineage ledger. The source_runtime_id must reference a registered bridge.
+        Fails closed if the source is not a known registered bridge.
+      operationId: ingestProvenance
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ProvenanceStatsRequest'
+              $ref: '#/components/schemas/ProvenanceIngestRequest'
       responses:
         '200':
-          description: Provenance statistics
+          description: Event ingested and linked to ledger
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ProvenanceStatsResponse'
+                $ref: '#/components/schemas/ProvenanceIngestResponse'
         '400':
           $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/bridges:
+    get:
+      summary: List registered runtime bridges
+      operationId: listBridges
+      responses:
+        '200':
+          description: List of bridges and their connection status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BridgeListResponse'
+      security:
+        - BearerAuth: []
+
+  /v1/bridges/{bridge_id}/tools:
+    get:
+      summary: List tools available through a bridge
+      operationId: listBridgeTools
+      parameters:
+        - $ref: '#/components/parameters/BridgeId'
+      responses:
+        '200':
+          description: List of tools exposed by the bridge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BridgeToolsResponse'
+        '404':
+          $ref: '#/components/responses/ApiError'
+        '503':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/executions/{execution_id}/compensate:
+    post:
+      summary: Compensate (rollback) an execution via its rollback contract
+      operationId: compensateExecution
+      parameters:
+        - $ref: '#/components/parameters/ExecutionId'
+      responses:
+        '200':
+          description: Compensation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompensateExecutionResponse'
+        '404':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/executions/{execution_id}/evaluate-outcome:
+    post:
+      summary: Evaluate an execution outcome against intent policy
+      operationId: evaluateOutcome
+      parameters:
+        - $ref: '#/components/parameters/ExecutionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OutcomeReport'
+      responses:
+        '200':
+          description: Outcome evaluation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvaluateOutcomeResponse'
+        '400':
+          $ref: '#/components/responses/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
 
 components:
   securitySchemes:
-    ControlPlaneBearer:
+    BearerAuth:
       type: http
       scheme: bearer
-      bearerFormat: opaque token
+      bearerFormat: opaque
 
   parameters:
     IntentId:
@@ -772,6 +478,13 @@ components:
       schema:
         type: string
         format: uuid
+    BridgeId:
+      name: bridge_id
+      in: path
+      required: true
+      schema:
+        type: string
+        description: Runtime bridge identifier
 
   responses:
     ApiError:
@@ -800,6 +513,7 @@ components:
             - AdapterFailure
             - Conflict
             - Internal
+            - Unauthorized
         message:
           type: string
         correlation_id:
@@ -1219,186 +933,6 @@ components:
           items:
             type: string
 
-    ExecuteRequest:
-      type: object
-      required: [execution_id, payload]
-      properties:
-        execution_id:
-          type: string
-          format: uuid
-        payload:
-          type: object
-
-    VerifyRequest:
-      type: object
-      required: [execution_id]
-      properties:
-        execution_id:
-          type: string
-          format: uuid
-
-    ExecuteResponse:
-      type: object
-      required: [execution_id, executed]
-      properties:
-        execution_id:
-          type: string
-          format: uuid
-        executed:
-          type: boolean
-        result_digest:
-          type: string
-          nullable: true
-        external_id:
-          type: string
-          nullable: true
-
-    VerifyResponse:
-      type: object
-      required: [execution_id, verified]
-      properties:
-        execution_id:
-          type: string
-          format: uuid
-        verified:
-          type: boolean
-        verified_at:
-          type: string
-          format: date-time
-          nullable: true
-
-    CommitRequest:
-      type: object
-      required: [execution_id]
-      properties:
-        execution_id:
-          type: string
-          format: uuid
-
-    CommitResponse:
-      type: object
-      required: [execution_id, committed]
-      properties:
-        execution_id:
-          type: string
-          format: uuid
-        committed:
-          type: boolean
-        committed_at:
-          type: string
-          format: date-time
-          nullable: true
-
-    CompensateRequest:
-      type: object
-      required: [execution_id]
-      properties:
-        execution_id:
-          type: string
-          format: uuid
-
-    CompensateResponse:
-      type: object
-      required: [execution_id, compensated]
-      properties:
-        execution_id:
-          type: string
-          format: uuid
-        compensated:
-          type: boolean
-        compensated_at:
-          type: string
-          format: date-time
-          nullable: true
-
-    RollbackRequest:
-      type: object
-      required: [execution_id]
-      properties:
-        execution_id:
-          type: string
-          format: uuid
-
-    RollbackResponse:
-      type: object
-      required: [execution_id, rolled_back]
-      properties:
-        execution_id:
-          type: string
-          format: uuid
-        rolled_back:
-          type: boolean
-        rolled_back_at:
-          type: string
-          format: date-time
-          nullable: true
-
-    CancelExecutionRequest:
-      type: object
-      required: [execution_id]
-      properties:
-        execution_id:
-          type: string
-          format: uuid
-
-    CancelExecutionResponse:
-      type: object
-      required: [execution_id, cancelled]
-      properties:
-        execution_id:
-          type: string
-          format: uuid
-        cancelled:
-          type: boolean
-        cancelled_at:
-          type: string
-          format: date-time
-          nullable: true
-
-    PauseExecutionRequest:
-      type: object
-      required: [execution_id]
-      properties:
-        execution_id:
-          type: string
-          format: uuid
-
-    PauseExecutionResponse:
-      type: object
-      required: [execution_id, paused]
-      properties:
-        execution_id:
-          type: string
-          format: uuid
-        paused:
-          type: boolean
-        paused_at:
-          type: string
-          format: date-time
-          nullable: true
-
-    ResumeExecutionRequest:
-      type: object
-      required: [execution_id]
-      properties:
-        execution_id:
-          type: string
-          format: uuid
-
-    ResumeExecutionResponse:
-      type: object
-      required: [execution_id, resumed]
-      properties:
-        execution_id:
-          type: string
-          format: uuid
-        resumed:
-          type: boolean
-        resumed_at:
-          type: string
-          format: date-time
-          nullable: true
-
     RollbackContract:
       type: object
       required:
@@ -1495,19 +1029,6 @@ components:
           type: string
           format: date-time
 
-    ListApprovalsResponse:
-      type: object
-      required: [items]
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/ApprovalRequest'
-        next_cursor:
-          type: string
-          nullable: true
-          description: Cursor for the next page. Null when there is no next page.
-
     ApprovalResolveRequest:
       type: object
       required: [actor, approve]
@@ -1527,31 +1048,16 @@ components:
           type: string
           format: uuid
           nullable: true
-        proposal_id:
-          type: string
-          format: uuid
-          nullable: true
         execution_id:
           type: string
           format: uuid
           nullable: true
-          description: Filter by a single execution ID.
-        execution_ids:
-          type: array
-          items:
-            type: string
-            format: uuid
-          nullable: true
-          description: Additive filter: match events from any of the given execution IDs. When both execution_id and execution_ids are set, events matching either are returned.
         capability_id:
           type: string
           format: uuid
           nullable: true
         event_kind:
           type: string
-          nullable: true
-        terminal_only:
-          type: boolean
           nullable: true
         since:
           type: string
@@ -1561,14 +1067,23 @@ components:
           type: string
           format: date-time
           nullable: true
-        limit:
-          type: integer
-          nullable: true
-          description: Maximum number of events to return (1-10000). Defaults to 100.
-        cursor:
-          type: string
-          nullable: true
-          description: Cursor for keyset pagination. Use the returned next_cursor to advance. The cursor encodes the (occurred_at, event_id) of the last item in the previous page.
+        edge_types:
+          type: array
+          items:
+            type: string
+            enum:
+              - DerivedFrom
+              - AuthorizedBy
+              - ApprovedBy
+              - TaintedBy
+              - UsesManifest
+              - EvaluatedByPolicy
+              - Caused
+              - Compensates
+              - Verifies
+              - References
+          default: []
+          description: Filter events by edge types. Only events that have at least one parent edge matching one of the specified types will be returned. Empty or omitted means no edge-type filtering.
 
     ProvenanceQueryResponse:
       type: object
@@ -1576,27 +1091,6 @@ components:
       properties:
         events:
           type: array
-          items:
-            $ref: '#/components/schemas/ProvenanceEvent'
-        next_cursor:
-          type: string
-          nullable: true
-          description: Cursor for the next page. None if this is the last page.
-
-    ProvenanceEventResponse:
-      type: object
-      required: [event]
-      properties:
-        event:
-          $ref: '#/components/schemas/ProvenanceEvent'
-        ancestry:
-          type: array
-          nullable: true
-          items:
-            $ref: '#/components/schemas/ProvenanceEvent'
-        descendants:
-          type: array
-          nullable: true
           items:
             $ref: '#/components/schemas/ProvenanceEvent'
 
@@ -1651,83 +1145,65 @@ components:
         parent_edges:
           type: array
           items:
-            type: object
+            $ref: '#/components/schemas/ProvenanceEdge'
         hash_chain:
           type: object
         metadata:
           type: object
-
-    ExternalEventIngestRequest:
-      type: object
-      additionalProperties: false
-      required: [execution_id, parent_event_id, source_system, source_event_id]
-      properties:
-        execution_id:
+        source_runtime_id:
           type: string
-          format: uuid
-          description: The execution_id that this external event is being anchored to.
-        parent_event_id:
-          type: string
-          format: uuid
-          description: The parent event within the same execution that this external event observes.
-        source_system:
-          type: string
-          description: Identifier for the external system or runtime that observed this event.
-        source_event_id:
-          type: string
-          description: The event identifier assigned by the external source system.
-        observed_at:
-          type: string
-          format: date-time
           nullable: true
-          description: Optional wall-clock time when the external system observed the event.
+          description: Identifier of the source runtime that produced this event. None for internally-generated events.
+
+    ProvenanceEdge:
+      type: object
+      required: [edge_type, from_event_id]
+      properties:
+        edge_type:
+          type: string
+          enum:
+            - DerivedFrom
+            - AuthorizedBy
+            - ApprovedBy
+            - TaintedBy
+            - UsesManifest
+            - EvaluatedByPolicy
+            - Caused
+            - Compensates
+            - Verifies
+            - References
+        from_event_id:
+          type: string
+          format: uuid
+          description: The parent event (source of the edge)
+        to_event_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: The child event (target of the edge), used for descendant traversal
         summary:
           type: string
           nullable: true
-          description: Optional human-readable summary describing what was observed.
-        payload_digest:
-          type: string
-          nullable: true
-          description: Optional digest of the external event payload for integrity verification.
-        metadata:
-          type: object
-          nullable: true
-          description: Optional lightweight metadata bag. Small/simple values only. Stored under `external_metadata` so caller keys cannot override server-owned correlation fields.
-
-    ExternalEventIngestResponse:
-      type: object
-      required: [event]
-      properties:
-        event:
-          $ref: '#/components/schemas/ProvenanceEvent'
 
     LineageQueryRequest:
       type: object
-      additionalProperties: false
-      required: [execution_id, event_id]
+      required: [event_id]
       properties:
-        execution_id:
-          type: string
-          format: uuid
-          description: The execution_id to fence traversed events against.
         event_id:
           type: string
           format: uuid
-          description: The seed event_id to start traversal from.
-        ancestry:
-          type: boolean
-          default: true
-          description: When true, walk ancestry backwards via parent edges.
-        descendants:
-          type: boolean
-          default: false
-          description: When true, walk descendants forwards via child edges.
+          description: The seed event_id to start traversal from
+        direction:
+          type: string
+          enum: [ancestors, descendants, both]
+          default: ancestors
+          description: Direction to traverse - ancestors (parents only), descendants (children only), or both
         max_hops:
           type: integer
           minimum: 1
-          maximum: 32
-          nullable: true
-          description: Maximum hops for BFS traversal. Hard-capped at 32 by the server. Defaults to 8.
+          maximum: 10
+          default: 3
+          description: Maximum number of hops to traverse (1-10)
 
     LineageQueryResponse:
       type: object
@@ -1737,279 +1213,195 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ProvenanceEvent'
-          description: All events discovered during traversal, including the seed event.
         edges:
           type: array
           items:
-            $ref: '#/components/schemas/LineageEdge'
-          description: Edges discovered during traversal.
+            $ref: '#/components/schemas/ProvenanceEdge'
 
-    LineageEdge:
+    ProvenanceIngestRequest:
       type: object
-      required: [edge_type, from_event_id, to_event_id]
+      required: [source_runtime_id, kind, description, trust_labels, sensitivity_labels, metadata]
       properties:
-        edge_type:
+        source_runtime_id:
           type: string
-          description: The type of the provenance edge.
-        from_event_id:
-          type: string
-          format: uuid
-          description: The source event of the edge.
-        to_event_id:
-          type: string
-          format: uuid
-          description: The target event of the edge.
-        summary:
-          type: string
-          nullable: true
-          description: Optional human-readable summary of the edge.
-
-    ProvenanceExportRequest:
-      type: object
-      properties:
-        intent_id:
-          type: string
-          format: uuid
-          nullable: true
-          description: Filter by intent_id.
-        proposal_id:
-          type: string
-          format: uuid
-          nullable: true
-          description: Filter by proposal_id.
-        execution_id:
-          type: string
-          format: uuid
-          nullable: true
-          description: Filter by execution_id.
-        capability_id:
-          type: string
-          format: uuid
-          nullable: true
-          description: Filter by capability_id.
-        event_kind:
-          type: string
-          nullable: true
-          description: Filter by event kind.
-        terminal_only:
-          type: boolean
-          nullable: true
-          description: Filter to terminal events only.
-        since:
-          type: string
-          format: date-time
-          nullable: true
-          description: Filter events that occurred at or after this timestamp.
-        until:
-          type: string
-          format: date-time
-          nullable: true
-          description: Filter events that occurred at or before this timestamp.
-        limit:
-          type: integer
-          nullable: true
-          description: Maximum number of events to export (1-10000). Defaults to 1000.
-        cursor:
-          type: string
-          nullable: true
-          description: Cursor for keyset pagination. Use the returned next_cursor to advance.
-
-    ProvenanceExportResponse:
-      type: object
-      required: [events, total_matched, exported_count, export_info]
-      properties:
-        events:
-          type: array
-          items:
-            $ref: '#/components/schemas/ProvenanceEvent'
-          description: Exported provenance events, sorted by occurred_at ascending, then event_id ascending.
-        total_matched:
-          type: integer
-          format: uint64
-          description: Number of events matched by the filter.
-        exported_count:
-          type: integer
-          format: uint64
-          description: Number of events included in this export page.
-        next_cursor:
-          type: string
-          nullable: true
-          description: Cursor for fetching the next page of exports. None if this is the last page.
-        export_info:
-          $ref: '#/components/schemas/ProvenanceExportInfo'
-
-    ProvenanceExportInfo:
-      type: object
-      required: [exported_at, filters]
-      properties:
-        exported_at:
-          type: string
-          format: date-time
-          description: RFC3339 timestamp when this export was generated.
-        filters:
-          $ref: '#/components/schemas/ProvenanceExportFilters'
-
-    ProvenanceExportFilters:
-      type: object
-      properties:
-        intent_id:
-          type: boolean
-          nullable: true
-        proposal_id:
-          type: boolean
-          nullable: true
-        execution_id:
-          type: boolean
-          nullable: true
-        capability_id:
-          type: boolean
-          nullable: true
-        event_kind:
-          type: boolean
-          nullable: true
-        terminal_only:
-          type: boolean
-          nullable: true
-        since:
-          type: boolean
-          nullable: true
-        until:
-          type: boolean
-          nullable: true
-
-    LedgerVerificationResponse:
-      type: object
-      required: [valid, entry_count, verified_at]
-      properties:
-        valid:
-          type: boolean
-          description: True if the ledger chain is valid, false if tampered or broken.
-        entry_count:
-          type: integer
-          format: uint64
-          description: Number of ledger entries verified.
-        verified_at:
-          type: string
-          format: date-time
-          description: Timestamp when verification was performed.
-        error:
-          description: Error details when verification fails (None when valid).
-          nullable: true
-          allOf:
-            - $ref: '#/components/schemas/LedgerVerificationError'
-
-    LedgerVerificationError:
-      type: object
-      required: [type, detail]
-      properties:
-        type:
+          description: Identifier of the source runtime that produced this event
+        kind:
           type: string
           enum:
-            - BrokenChain
-            - TamperDetected
-            - SequenceMismatch
-            - EmptyLedger
-        detail:
-          type: object
-          description: Error detail object whose schema varies by type.
-
-    ProvenanceStatsRequest:
-      type: object
-      properties:
-        intent_id:
+            - UserGoalReceived
+            - IntentCompiled
+            - IntentRevoked
+            - ActionProposalSubmitted
+            - PolicyEvaluated
+            - CapabilityMinted
+            - CapabilityRevoked
+            - ApprovalRequested
+            - ApprovalGranted
+            - ApprovalDenied
+            - ToolCallPrepared
+            - ToolCallIntercepted
+            - ToolCallExecuted
+            - ToolOutputReceived
+            - ToolOutputSanitized
+            - DlpBlocked
+            - SideEffectPrepared
+            - SideEffectVerified
+            - SideEffectCommitted
+            - SideEffectCompensated
+            - SideEffectRolledBack
+            - Quarantined
+            - ErrorRaised
+            - ExternalEventReceived
+        description:
           type: string
-          format: uuid
-          nullable: true
-          description: Filter by intent_id.
-        proposal_id:
-          type: string
-          format: uuid
-          nullable: true
-          description: Filter by proposal_id.
         execution_id:
           type: string
           format: uuid
           nullable: true
-          description: Filter by execution_id.
-        capability_id:
+        intent_id:
           type: string
           format: uuid
           nullable: true
-          description: Filter by capability_id.
-        event_kind:
-          type: string
-          nullable: true
-          description: Filter by event kind.
-        since:
-          type: string
-          format: date-time
-          nullable: true
-          description: Filter events that occurred at or after this timestamp.
-        until:
-          type: string
-          format: date-time
-          nullable: true
-          description: Filter events that occurred at or before this timestamp.
-        max_events:
-          type: integer
-          nullable: true
-          description: Maximum events to process for stats computation (1-100000). Defaults to 10000.
-
-    ProvenanceStatsResponse:
-      type: object
-      required: [total_events, kinds, terminal_count, issue_count, events_without_execution_id, unique_intents, unique_proposals, unique_executions, flagged_events]
-      properties:
-        total_events:
-          type: integer
-          format: uint64
-          description: Total number of events matching the filter.
-        kinds:
-          type: object
-          additionalProperties:
-            type: integer
-            format: uint64
-          description: Count of events by kind.
-        terminal_count:
-          type: integer
-          format: uint64
-          description: Count of terminal events.
-        issue_count:
-          type: integer
-          format: uint64
-          description: Count of events that indicate a problem condition.
-        events_without_execution_id:
-          type: integer
-          format: uint64
-          description: Count of events missing an execution_id.
-        unique_intents:
-          type: integer
-          format: uint64
-          description: Number of unique intents with matching events.
-        unique_proposals:
-          type: integer
-          format: uint64
-          description: Number of unique proposals with matching events.
-        unique_executions:
-          type: integer
-          format: uint64
-          description: Number of unique executions with matching events.
-        flagged_events:
+        trust_labels:
           type: array
           items:
-            $ref: '#/components/schemas/FlaggedEvent'
-          description: Events flagged by consistency checks.
+            type: string
+            enum:
+              - Trusted
+              - UserProvided
+              - InternalPolicy
+              - InternalSystem
+              - ExternalWeb
+              - ExternalEmail
+              - ExternalRepoText
+              - ExternalToolMetadata
+              - ExternalToolOutput
+              - OCRExtracted
+              - Untrusted
+        sensitivity_labels:
+          type: array
+          items:
+            type: string
+            enum:
+              - Public
+              - Internal
+              - Confidential
+              - Secret
+              - Credential
+              - Pii
+        metadata:
+          type: object
 
-    FlaggedEvent:
+    ProvenanceIngestResponse:
       type: object
-      required: [event_id, kind, reason]
+      required: [event_id, linked]
       properties:
         event_id:
           type: string
           format: uuid
-          description: The event ID of the flagged event.
-        kind:
+        linked:
+          type: boolean
+
+    BridgeInfo:
+      type: object
+      required: [runtime_id, connected]
+      properties:
+        runtime_id:
           type: string
-          description: The kind of the flagged event.
+        connected:
+          type: boolean
+
+    BridgeListResponse:
+      type: object
+      required: [bridges]
+      properties:
+        bridges:
+          type: array
+          items:
+            $ref: '#/components/schemas/BridgeInfo'
+
+    BridgeToolInfo:
+      type: object
+      required: [name, description]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        input_schema:
+          type: object
+          nullable: true
+
+    BridgeToolsResponse:
+      type: object
+      required: [runtime_id, tools]
+      properties:
+        runtime_id:
+          type: string
+        tools:
+          type: array
+          items:
+            $ref: '#/components/schemas/BridgeToolInfo'
+
+    CompensateExecutionResponse:
+      type: object
+      required: [execution_id, compensated, warnings]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+        compensated:
+          type: boolean
+        rollback_contract:
+          $ref: '#/components/schemas/RollbackContract'
+          nullable: true
+        warnings:
+          type: array
+          items:
+            type: string
+
+    EvaluateOutcomeResponse:
+      type: object
+      required: [aligned, reason, matched_rule_ids, warnings]
+      properties:
+        aligned:
+          type: boolean
         reason:
           type: string
-          description: Human-readable reason why the event was flagged.
+        matched_rule_ids:
+          type: array
+          items:
+            type: string
+        warnings:
+          type: array
+          items:
+            type: string
+
+    OutcomeReport:
+      type: object
+      required: [execution_id, actual_effect, description, adapter_success]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+        actual_effect:
+          type: string
+          enum:
+            - ReadOnlyAnalysis
+            - DraftCreation
+            - FileMutation
+            - GitMutation
+            - DatabaseMutation
+            - ExternalApiCall
+            - ExternalCommunication
+            - Scheduling
+            - AdministrativeChange
+        description:
+          type: string
+        result_digest:
+          type: string
+          nullable: true
+        adapter_success:
+          type: boolean
+        adapter_metadata:
+          type: object

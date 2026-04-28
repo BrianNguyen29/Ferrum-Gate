@@ -14,7 +14,7 @@
 - contradiction checks
 
 ## Phase D
-- fs/sqlite/maildraft/git adapters usable + http full parity (GET/POST/PUT/PATCH/DELETE + body/header/query binding + auth) usable
+- fs/sqlite/maildraft/git/http adapters (fs/git have partial verified local slices; http has a bounded first prepare/verify slice; broader completion remains post-v1)
 
 ## Phase E
 - gateway full happy path

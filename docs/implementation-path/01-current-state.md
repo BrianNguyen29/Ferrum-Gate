@@ -1,40 +1,41 @@
 # 01 — Current state
 
-Last updated: 2026-04-12
-Single-node v2 RATIFIED (2026-04-12). Scope: v2 single-node production per `44-v2-production-execution-plan.md`.
+Last updated: 2026-04-28 — G1 observed PASS
+Single-node v1 scope unless noted.
 
-**Note on fs-first hash slice (2026-04-09)**: The fs-first `before_hash`/`after_hash` wiring for the fs adapter and gateway rollback path was completed as a **T2/partial beta-slice hardening step**. This is a narrow internal wiring improvement; it does not change the T1/T2/T3 support contract boundaries declared in `43-production-readiness-signoff.md`. See `docs/artifacts/2026-04-09/closure-note.txt` for evidence.
+**Repository**: `https://github.com/BrianNguyen29/Ferrum-Gate` (upstream/original — private, accessible with authorized GitHub credentials) | **Default package version**: `0.1.0` | **Status**: development — RC candidate documented but no official release yet
 
 **Release support contract**:
 - Supported = SQLite-backed single-node governance core.
-- Partial = bounded local adapter implementations plus early upgrade-track slices that are not yet production-verified.
-- Deferred/post-v1 = broader adapter hardening, multi-node/HA/read-replica, remaining U1 expressiveness/operator tooling work, and deeper U2-U4 upgrade-track work.
+- Partial = adapter crates and extended runtime integrations (uneven implementation slices exist, not production-verified).
+- Deferred/post-v1 = broader adapter completion, multi-node/HA/read-replica, PostgreSQL (not yet implemented).
 
 ## What exists
 
 ### Core crates
 - `ferrum-proto` — domain shapes, proto definitions
-- `ferrum-pdp` — Policy Decision Point (StaticPdpEngine; trust labels, taint scoring, contradiction checks, advisory outcome-aware assessment with explicit forbidden-outcome deny)
+- `ferrum-pdp` — Policy Decision Point (StaticPdpEngine; trust labels, taint scoring, contradiction checks)
 - `ferrum-cap` — capability mint, mark_used, single-use enforcement
 - `ferrum-rollback` — rollback/compensate operations, R3/R2/R0/R1 contract classes, auto_commit semantics
-- `ferrum-store` — SQLite persistence (intents, proposals, capabilities, executions, rollback contracts, provenance events, approvals)
-- `ferrum-gateway` — full orchestration: evaluate -> mint -> authorize -> prepare -> execute -> verify -> compensate (internal: commit/rollback as orchestration semantics); negative paths: deny, quarantine, RequireApproval, draft-only gated at evaluate (before prepare); U1-S2 verify-time outcome assessment annotation (annotate-only, does not change verify decision semantics); U1-S5a soft gate preview DONE at prepare-time (emit warn signals does not block state-machine or change auto-commit); U1-S5b hard gate DONE at prepare-time (block only when would_block=true, state-machine halts to Denied, auditability via ErrorRaised event and u1_s5b_hard_gate metadata, auto-commit unchanged per R3 contract semantics); U1-S6 selector-aware effective match DONE (selector-bearing clauses require effect_type AND selectors to match for effective match, enabling HIGH-confidence selector mismatch to trigger would_block=true at prepare-time); U1-S7a list-based selector matching DONE (additive `adapter_family_in`, `target_family_in`, `request_class_in`, `mutation_family_in` fields enable OR semantics: match scalar OR any list member); U1-S8a operator compile-time ergonomics DONE (compile endpoint accepts optional `allowed_outcomes`/`forbidden_outcomes` using existing OutcomeClause/OutcomeSelectors schema with fail-closed validation); U1-S9a deterministic policy bundle fingerprinting DONE (PolicyBundleId::derive() uses UUID v5 to create deterministic identity from canonical outcome contract; IntentEnvelope.policy_bundle_fingerprint stores the derived fingerprint; capability mint propagates fingerprint into CapabilityLease.policy_bundle_id; provenance events carry derived bundle identity)
-- `ferrum-firewall` — trust labeler, taint scorer, sanitize, contradiction checks, and U1-aware read-only contradiction gating
-- `ferrum-graph` — provenance graph
-- `ferrum-ledger` — ledger (skeleton)
-- `ferrum-sync` — sync probe (skeleton, infrastructure only)
+- `ferrum-store` — SQLite persistence (intents, proposals, capabilities, executions, rollback contracts, provenance events, approvals); exposes `StoreFacade` trait (9 repo accessors + health_check) for store-agnostic access
+- `ferrum-gateway` — full orchestration: evaluate -> mint -> authorize -> prepare -> execute -> verify -> compensate (internal: commit/rollback as orchestration semantics); negative paths: deny, quarantine, RequireApproval, draft-only gated at evaluate (before prepare); store-agnostic via `Arc<dyn StoreFacade>`
+- `ferrum-firewall` — TaintScoringFirewall with taint scoring, trust labeling, contradiction detection, sanitize, quarantine (21 tests)
+- `ferrum-graph` — HashMap adjacency indexing, BFS ancestor/descendant traversal with cycle protection (10 tests)
+- `ferrum-ledger` — SHA-256 hash chain ledger with chain integrity verification (13 tests)
+- `ferrum-sync` — sync probe, ExternalEventSource trait, RuntimeBridge trait, McpBridge bridge infrastructure (65 tests)
 - `ferrum-testkit` — test helpers
 
 ### Adapters
-- `ferrum-adapter-fs` — filesystem adapter (local file write/delete with hash-based verify semantics; durability/hardening still limited)
-- `ferrum-adapter-sqlite` — SQLite adapter (single-row and atomic multi-row rollback/compensate path for bounded local table/row mutations)
-- `ferrum-adapter-maildraft` — maildraft adapter (SQLite-backed draft persistence; verify semantics implemented; send semantics explicitly out of scope)
-- `ferrum-adapter-git` — git adapter (local HEAD capture/reset and branch-create rollback path; remote workflows explicitly out of scope)
-- `ferrum-adapter-http` — HTTP adapter (bounded HTTP execute/verify with body-aware digest, header-shape binding, canonical query strings, auth support, and conservative rollback no-op; mutation recovery is R3 boundary; verify semantics clarified via issue #97 — mutations use execute-time metadata only, fail-closed on non-2xx without explicit check; gateway integration coverage added)
+- `ferrum-adapter-fs` — filesystem adapter (partial: prepare/verify/validation/execute/rollback for FileWrite/FileDelete/FileMove/FileCopy/DirCreate/DirDelete/FileAppend/FileChmod; FileWrite/FileDelete: snapshot-recovery for existing files via deterministic snapshot paths, new-file FileWrite with cleanup-on-rollback; FileMove (rename with snapshot-based rollback, dest/source dual-check verify, hash verification); FileCopy (copy with dest snapshotting, hash-matching verify, idempotent cleanup/restore rollback); DirCreate (validate parent exists + dir absent, mkdir, verify dir exists, rollback removes created dir); DirDelete (reject non-empty dirs, rm empty dir, verify dir gone, rollback recreates dir); **FileAppend** (prepare captures original hash + length, execute appends data, verify confirms file growth, rollback truncates to original length with hash verification); **FileChmod** (prepare captures current permissions, execute changes mode bits, verify confirms new permissions, rollback restores original mode with verification); explicit checks fail-closed on target-state invariants, target-path mismatch, malformed config, unsupported checks with phase-aware validation, plus phase-consistent normalization for fs/internal prepare/verify/execute/rollback failures; 135 tests passing)
+- `ferrum-adapter-sqlite` — SQLite adapter (transaction-based rollback implementation; not production-verified)
+- `ferrum-adapter-maildraft` — maildraft adapter (16 tests: create/update/delete lifecycle + rollback idempotency)
+- `ferrum-adapter-git` — git adapter (local rollback/recovery implementation: prepare captures HEAD ref, rollback resets hard with dirty-worktree guard, verify checks ref matches, execute captures after_ref from payload, GitBranchCreate support with branch creation/deletion, base_ref validation/resolution, prepare-time rejection of existing branches and detached-HEAD-without-explicit-base, branch-name validation during prepare using git-native `git check-ref-format --branch` (fail-closed), verify fail-closed when the created branch is currently checked out, and detached-HEAD / safe-delete fail-closed guards; P2.3 slice adds implicit HEAD base_ref_sha persistence and enriched verify audit metadata; **GitTagCreate/GitTagDelete added**: GitTagCreate (prepare validates tag name + rejects existing tag, execute creates lightweight tag at HEAD, verify confirms tag exists, rollback deletes tag idempotently); GitTagDelete (prepare validates tag exists + captures tag_sha, execute deletes tag, verify confirms tag gone, rollback recreates tag at captured SHA with hash verification); **GitBranchDelete added**: safe branch deletion with recreate rollback (prepare captures branch SHA + current HEAD, execute deletes branch, verify confirms deletion, rollback recreates branch at captured SHA); 86 tests passing)
+- `ferrum-adapter-http` — HTTP adapter (partial: bounded HttpMutation prepare/execute/verify plus bounded replay-based recovery for POST/PUT/PATCH. Prepare validates target/method/url shape and optional prepare checks; execute sends real HTTP requests, captures request/response metadata + digests, emits digest-only `rollback_groundwork_v1` and `http_recovery_readiness_v1`, and sends `Idempotency-Key` when a valid `http.replay_v1` contract is present; verify supports method-aware `HttpStatusExpected` plus `expected_statuses` arrays with phase-aware normalization; rollback/compensate succeed only for the strict one-step `http.replay_v1` POST/PUT/PATCH case with exact URL/digest binding, header-safe idempotency key, and required strict `expected_statuses` (non-empty, `100..=599`), and fail closed otherwise; **connection pooling and retry/backoff with rollback semantics**; 103 tests passing)
 
 ### Binaries
 - `ferrumd` — server binary
-- `ferrumctl` — operator CLI (health; inspect-capability/execution/approvals/approval/lineage/provenance; watch-execution/watch-approvals; resolve-approval; revoke-capability; cancel/pause/resume/prepare/execute/compensate/rollback execution)
+- `ferrumctl` — CLI (health, inspect-execution, inspect-approvals, inspect-approval, inspect-lineage, inspect-provenance)
+  - **Policy bundle authoring (H1.1d)**: `server create-policy-bundle`, `server get-policy-bundle` (with `--export`), `server list-policy-bundles`, `server update-policy-bundle`, `server delete-policy-bundle`, `server set-policy-bundle-active`; local `author bundle bump` for version bumping
 
 ### Integrations
 - `ferrum-integration-tests` — integration tests covering: capability single-use, R3 no-auto-commit, rollback/compensate distinct ops, taint-based quarantine, compensate end-to-end flow, pending-approvals pagination/filter, lineage endpoint shape/validation
@@ -46,8 +47,8 @@ Single-node v2 RATIFIED (2026-04-12). Scope: v2 single-node production per `44-v
 
 ## What is missing
 
-### P0 — v1 RC blockers (as of 2026-04-02)
-- (none) — all P0 blockers resolved as of 2026-04-02 gate run; issue #97 HTTP adapter semantics and gateway integration coverage merged 2026-04-03
+### P0 — v1 RC blockers
+- (none) — scope-mismatch deny implemented in `crates/ferrum-pdp/src/engine.rs` lines 31-46
 
 ### P1 — v1 RC evidence gaps
 - (none) — poisoned-context regression fixtures implemented (6 fixture tests)
@@ -56,48 +57,62 @@ Single-node v2 RATIFIED (2026-04-12). Scope: v2 single-node production per `44-v
 - (none) — open gaps list documented in `11-remaining-tasks.md`
 
 ### P2 — v1 polish
-- scope-mismatch deny: DONE in `crates/ferrum-pdp/src/engine.rs` lines 31-46
-- `scripts/generate_rc_evidence.py` exists and PASS — verdict is ALL GATES PASSED (2026-04-02)
+Current verified slices are green: `ferrum-adapter-fs` (135 tests, FileWrite/FileDelete/FileMove/FileCopy/DirCreate/DirDelete/FileAppend/FileChmod), `ferrum-adapter-git` (86 tests, GitCommit/GitBranchCreate/GitTagCreate/GitTagDelete/GitBranchDelete), `ferrum-adapter-http` (103 tests, POST/PUT/PATCH replay), clippy passes on those packages, and `scripts/generate_rc_evidence.py` exists and passes
 
 ## Phase status summary
 
-- **Phase A** (compile/shape stability): ✅ DONE
-- **Phase B** (SQLite storage boundary): ✅ DONE
-- **Phase C** (firewall MVP): ✅ DONE — logic exists, curated regression fixtures implemented (6 tests)
-- **Phase D** (adapters): ✅ DONE — bounded local implementations exist for fs/sqlite/maildraft/git/http; broader production hardening is post-v1
-- **Phase E** (gateway orchestration): ✅ DONE for SQLite-backed single-node flow
-- **Phase F** (hardening/evidence): ✅ DONE — integration tests strong, poisoned-context fixtures curated, supported flows and gaps documented, evidence script present; P3.G1-G4 live evidence all executed and attested (2026-04-03); all gates cleared as of 2026-04-02
-- **Phase 6** (v2 ratification): ✅ DONE — v2 RATIFIED 2026-04-12 (`46-v2-readiness-signoff.md`)
+- **Phase A** (compile/shape stability): DONE
+- **Phase B** (SQLite storage boundary): DONE
+- **Phase C** (firewall MVP): DONE — logic exists, curated regression fixtures implemented (6 tests)
+- **Phase D** (adapters): PARTIAL — fs has verified local slices (135 tests: FileWrite/FileDelete/FileMove/FileCopy/DirCreate/DirDelete/FileAppend/FileChmod), git has verified local slices (86 tests), http has a bounded prepare/verify slice with PUT/PATCH replay (103 tests), sqlite has a transaction-based rollback implementation (16 tests), maildraft has full lifecycle implementation (13 tests: create/update/delete), and broader adapter completion is post-v1
+- **Phase E** (gateway orchestration): DONE for SQLite-backed single-node flow
+- **Phase F** (hardening/evidence): DONE — integration tests strong, poisoned-context fixtures curated, supported flows and gaps documented, evidence script present
 
-## H1 Shipped Summary (as of 2026-04-13)
+## Test coverage matrix (2026-04-28)
 
-The following H1 sub-slices completed post-v2-ratification (2026-04-12):
+Full workspace check/clippy/test pass locally with 0 failures. Prefer command-level verification over stale aggregate test counts.
 
-| Sub-slice | What | Status |
-|-----------|------|--------|
-| **H1.1a** | Policy bundle persistence API + `PolicyBundleRepo` storage + `ferrumctl` surface (`register-policy-bundle`, `inspect-policy-bundle`, `list-policy-bundles`) | ✅ DONE |
-| **H1.1b** | Policy bundle metadata update/delete (`PUT /v1/policy-bundles/{id}`, `DELETE /v1/policy-bundles/{id}`) + created_at preservation on re-registration | ✅ DONE |
-| **H1.1c** | Policy bundle lineage via optional supersedes relationship — `supersedes_bundle_id`, `GET /v1/policy-bundles/{id}/successors`, `list-policy-bundle-successors` CLI, delete-referenced-blocked | ✅ DONE |
-| **H1.1d** | Policy bundle authoring CLI for registration payloads — `ferrumctl author request generate\|validate\|bump` + `ferrumctl server register-policy-bundle --request-file` | ✅ DONE |
-| **H1.2b** | Policy bundle authoring CLI for rules-format YAML — `ferrumctl author intent generate\|validate`, `ferrumctl author bundle generate\|validate` | ✅ DONE |
-| **H1.3a** | Persistent named-remote configuration — `GitRemoteStore` with add/get/list/update/remove; remotes persist in git config | ✅ DONE |
-| **H1.3b** | Authenticated remote support — git-native credential delegation (HTTPS username/password, SSH private key); no in-process secret storage | ✅ DONE |
-| **H1.4b** | `ferrumctl store backup` / `restore` for local SQLite backup/restore automation | ✅ DONE |
-| **H1.4c** | Streaming/chunked query patterns for larger-than-memory dataset handling (single-node) | ✅ DONE |
-| **H1.5a** | Retry/backoff with idempotency key management for mutation methods | ✅ DONE |
+**Governance fixes completed**:
+- Active policy bundle rules evaluated in gateway before PDP fallback.
+- `ferrum-firewall` taint scoring wired into gateway PDP and policy bundle matching.
+- Lineage emits PolicyEvaluated, CapabilityMinted, ToolCallPrepared, ToolCallExecuted, SideEffectVerified, SideEffectCommitted in happy path.
+- `SqliteStore::verify_ledger_chain()` delegates to real chain checks over `ledger_entries`.
+- Gateway capability authorize/revoke falls back to persisted capability state after in-memory loss; revoke persistence/provenance is synchronous.
+- **Note**: U1 (Outcome-aware Governance) complete — `evaluate_outcome` endpoint implemented, 2 integration tests added (`test_outcome_evaluation_aligned_flow`, `test_outcome_evaluation_forbidden_flow`).
+- **Note**: U2 (Reversible Execution Planner) complete — PlannableAdapter trait, PlannableNoopAdapter, PlannableFsAdapter implemented, 4 new tests added.
+- **Note**: U3 (Cross-runtime Provenance Fabric) complete — ExternalEventSource trait, FakeExternalEventSource, POST /v1/provenance/ingest endpoint, source_runtime_id on ProvenanceEvent. 13 new tests.
+- **Note**: U4 (Runtime Integrations) complete — RuntimeBridge trait, McpBridge, GET /v1/bridges + GET /v1/bridges/{id}/tools endpoints. 13 new tests.
 
-Remaining H1 sub-slices (H1.3c, H1.4a, H1.4d–H1.4e, H1.5b–H1.5c) are ⬜ PLANNED.
+| Crate | Tests | Status |
+|---|---|---|
+| ferrum-adapter-fs | 135 | FileWrite/FileDelete/FileMove/FileCopy/DirCreate/DirDelete/FileAppend/FileChmod + cross-filesystem + PlannableFsAdapter |
+| ferrum-adapter-git | 86 | GitCommit/GitBranchCreate/GitTagCreate/GitTagDelete/GitBranchDelete + GitPush/GitPull |
+| ferrum-adapter-http | 103 | HttpMutation + http.replay_v1 (POST/PUT/PATCH) + pooling/retry |
+| ferrum-adapter-sqlite | 16 | SqlRowCountRange checks + transaction rollback + G-E1 verify fail-closed |
+| ferrum-adapter-maildraft | 16 | create/update/delete lifecycle + rollback idempotency |
+| ferrum-cap | 4 | Capability TTL boundaries |
+| ferrum-firewall | 21 | TaintScoringFirewall, taint scoring, contradiction detection, sanitizer |
+| ferrum-graph | 10 | HashMap adjacency indexing, BFS ancestor/descendant traversal |
+| ferrum-ledger | 13 | SHA-256 hash chain with chain integrity verification |
+| ferrum-gateway | 44 | Server endpoints + evaluate-outcome + provenance ingest + bridge endpoints + readiness + deep readiness failure-mode (S2 improved) |
+| ferrum-pdp | 19 | Outcome-aware governance |
+| ferrum-proto | 18 | Intent validation + canonical action digest + schemas |
+| ferrum-store | 60 | SQLite persistence + StoreFacade + readiness health check |
+| ferrum-sync | 65 | ExternalEventSource + RuntimeBridge + McpBridge + preflight/decision/diff-classifier |
+| ferrumctl | 35 | list-intents/cancel-execution/pause-execution + policy bundle CRUD + author bundle bump + backup/restore |
+| ferrumd | 6 | Daemon config + unsupported DSN guardrails |
+| Integration tests | 82 | contracts(2) + fs-roundtrip(7) + gateway-flow(65) + lineage-chain(8) |
+| ferrum-rollback | 11 | ExecutionPlan + PlannableAdapter + auto-planning in RollbackService |
 
-Full per-slice detail: **`50-post-v2-roadmap.md`** (Horizons H1/H2/H3).
+## Next step
 
-## Post-v2 execution queue
+All P0/P1/P2 items closed. U1-U4 upgrade tracks complete. Full workspace check/clippy/test verified locally (G1 observed PASS 2026-04-28). v1 RC is unblocked for single-node SQLite-backed deployment. Next decision routing:
 
-v2 is RATIFIED. The immediate post-v2 execution queue is:
+1. **Path 1 (RC tag)**: Requires git repo + re-run G1 gates before tagging. See [`31-release-paths-todo.md`](./31-release-paths-todo.md) §Path 1.
+2. **Path 2 (Operator signoff/pilot)**: Limited production deployment with explicit operator signoff. See [`54-operator-signoff-packet.md`](./54-operator-signoff-packet.md).
+3. **Path 3 (PostgreSQL/Phase3)**: Begins only after Path 1 RC tag + Path 2 pilot confirmation + G3 gates satisfied. See [`55-phase-3-go-no-go-review.md`](./55-phase-3-go-no-go-review.md).
 
-1. **H1.1** — Policy bundle lifecycle tooling (operator-facing, unblocks advanced authoring)
-2. **H1.2** — U1 remaining expressiveness backlog + authoring CLI
-3. **H1.3** — git adapter deeper remote integration hardening (authenticated remote, multi-remote support)
-4. **H1.4** — fs/sqlite broader production-verified integration (WAL-mode tuning, backup/restore automation, larger-than-memory handling)
-5. **H1.5** — http adapter broader external integration (mTLS, OAuth2, retry/idempotency)
-
-Full detail: **`50-post-v2-roadmap.md`** (Horizons H1/H2/H3).
+Remaining work is documented in:
+- [33-feature-completion-backlog.md](./33-feature-completion-backlog.md) — Must/Should/Production-only backlog for incomplete/partial features
+- [45-current-feature-audit.md](./45-current-feature-audit.md) — Phase 3 D5 bottleneck analysis complete; D6 priority list complete. Full report: [51-d5-bottleneck-analysis-report.md](./51-d5-bottleneck-analysis-report.md); Priority list: [52-d6-priority-expansion-list.md](./52-d6-priority-expansion-list.md)
+- [32-feature-completeness-audit.md](./32-feature-completeness-audit.md) — Route/API reconciliation

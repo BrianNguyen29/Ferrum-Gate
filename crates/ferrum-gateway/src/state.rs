@@ -1,8 +1,9 @@
 use ferrum_cap::CapabilityService;
-use ferrum_firewall::SemanticFirewall;
+use ferrum_firewall::TaintScoringFirewall;
 use ferrum_pdp::PdpEngine;
 use ferrum_rollback::RollbackService;
-use ferrum_store::SqliteStore;
+use ferrum_store::StoreFacade;
+use ferrum_sync::RuntimeBridge;
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -10,8 +11,9 @@ pub struct GatewayRuntime {
     pub pdp: Arc<dyn PdpEngine>,
     pub cap: Arc<dyn CapabilityService>,
     pub rollback: Arc<RollbackService>,
-    pub store: Arc<SqliteStore>,
-    pub firewall: Arc<dyn SemanticFirewall>,
+    pub store: Arc<dyn StoreFacade>,
+    pub bridges: Vec<Arc<dyn RuntimeBridge>>,
+    pub firewall: Arc<TaintScoringFirewall>,
 }
 
 impl GatewayRuntime {
@@ -19,42 +21,147 @@ impl GatewayRuntime {
         pdp: Arc<dyn PdpEngine>,
         cap: Arc<dyn CapabilityService>,
         rollback: Arc<RollbackService>,
-        store: Arc<SqliteStore>,
-        firewall: Arc<dyn SemanticFirewall>,
+        store: Arc<dyn StoreFacade>,
+        bridges: Vec<Arc<dyn RuntimeBridge>>,
     ) -> Self {
         Self {
             pdp,
             cap,
             rollback,
             store,
-            firewall,
+            bridges,
+            firewall: Arc::new(TaintScoringFirewall::new()),
         }
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Debug)]
+/// Authentication mode for the gateway.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AuthMode {
+    /// No authentication required.
+    #[default]
     Disabled,
+    /// Bearer token authentication required.
     Bearer,
 }
 
-impl std::str::FromStr for AuthMode {
-    type Err = &'static str;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "disabled" => Ok(AuthMode::Disabled),
-            "bearer" => Ok(AuthMode::Bearer),
-            _ => Err("invalid auth_mode, must be 'disabled' or 'bearer'"),
+impl std::fmt::Display for AuthMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AuthMode::Disabled => write!(f, "disabled"),
+            AuthMode::Bearer => write!(f, "bearer"),
         }
     }
 }
 
-#[derive(Clone)]
-pub struct ServerConfig {
-    pub auth_mode: AuthMode,
-    pub bearer_token: Option<String>,
+impl std::str::FromStr for AuthMode {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "disabled" => Ok(AuthMode::Disabled),
+            "bearer" => Ok(AuthMode::Bearer),
+            _ => Err(format!("invalid auth mode: {}", s)),
+        }
+    }
 }
 
+/// Server configuration for the gateway.
+#[derive(Clone)]
+pub struct ServerConfig {
+    /// Socket address to bind to.
+    pub bind_addr: std::net::SocketAddr,
+    /// Store data source name (e.g., sqlite::memory:, sqlite://foo.db).
+    pub store_dsn: String,
+    /// Authentication mode.
+    pub auth_mode: AuthMode,
+    /// Bearer token for authentication (required when auth_mode is Bearer).
+    pub bearer_token: Option<String>,
+    /// Allow binding to non-loopback addresses when auth is disabled.
+    pub allow_insecure_nonlocal_bind: bool,
+    /// Log filter (e.g., debug, info, warn).
+    pub log_filter: String,
+    /// SQLite synchronous pragma value (off, normal, full, extra).
+    pub store_synchronous: Option<String>,
+    /// SQLite wal_autocheckpoint pragma value (frames between checkpoints).
+    pub store_wal_autocheckpoint: Option<u32>,
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            bind_addr: "127.0.0.1:8080".parse().unwrap(),
+            store_dsn: "sqlite::memory:".to_string(),
+            auth_mode: AuthMode::Disabled,
+            bearer_token: None,
+            allow_insecure_nonlocal_bind: false,
+            log_filter: "info".to_string(),
+            store_synchronous: None,
+            store_wal_autocheckpoint: None,
+        }
+    }
+}
+
+impl ServerConfig {
+    /// Validates the configuration and returns an error if invalid.
+    pub fn validate(&self) -> Result<(), String> {
+        // Check that bearer mode has a non-empty token
+        if self.auth_mode == AuthMode::Bearer {
+            let token = self.bearer_token.as_deref().unwrap_or("");
+            if token.is_empty() {
+                return Err("bearer token cannot be empty when auth mode is bearer".to_string());
+            }
+        }
+
+        // Check that non-loopback bind is allowed when auth is disabled
+        if !self.allow_insecure_nonlocal_bind
+            && self.auth_mode == AuthMode::Disabled
+            && !self.bind_addr.ip().is_loopback()
+        {
+            return Err(
+                "binding to non-loopback address requires --allow-insecure-nonlocal-bind \
+                 when auth is disabled"
+                    .to_string(),
+            );
+        }
+
+        // Validate store DSN is SQLite (PostgreSQL and MySQL not implemented)
+        validate_store_dsn(&self.store_dsn)?;
+
+        Ok(())
+    }
+}
+
+/// Validates the store DSN.
+///
+/// PostgreSQL and MySQL are explicitly not implemented.
+/// See ADR-50 for the phased implementation plan.
+fn validate_store_dsn(dsn: &str) -> Result<(), String> {
+    let dsn_lower = dsn.to_lowercase();
+
+    // Check for postgres:// or postgresql://
+    if dsn_lower.starts_with("postgres://") || dsn_lower.starts_with("postgresql://") {
+        return Err(
+            "PostgreSQL is not implemented. See ADR-50 for the phased implementation plan. \
+             Use sqlite:// or sqlite::memory: for local development."
+                .to_string(),
+        );
+    }
+
+    // Check for mysql://
+    if dsn_lower.starts_with("mysql://") {
+        return Err(
+            "MySQL is not implemented. See ADR-50 for the phased implementation plan. \
+             Use sqlite:// or sqlite::memory: for local development."
+                .to_string(),
+        );
+    }
+
+    // Accept sqlite://, sqlite::memory:, or other SQLite variants
+    Ok(())
+}
+
+/// Legacy gateway config for backward compatibility.
 #[derive(Clone)]
 pub struct GatewayConfig {
     pub bind_addr: std::net::SocketAddr,

@@ -1,26 +1,31 @@
-log_filter = "info"
+# FerrumGate production configuration
+# Use with: ferrumd --config configs/ferrumgate.prod.toml
+# Or set environment variable: FERRUMD_CONFIG=configs/ferrumgate.prod.toml
 
 [server]
-host = "0.0.0.0"
-port = 8080
-allow_insecure_nonlocal = false
+# Bind address for the HTTP server
+# Use 0.0.0.0 to bind to all interfaces (requires auth_mode = "bearer")
+bind_addr = "0.0.0.0:8080"
 
-[auth]
-mode = "bearer"
+# Store data source name (DSN)
+# NOTE: PostgreSQL and MySQL are NOT implemented. See ADR-50.
+# IMPORTANT: Use a persistent database in production
+# Examples:
+#   sqlite:///var/lib/ferrumgate/ferrumgate.db
+store_dsn = "sqlite:///var/lib/ferrumgate/ferrumgate.db"
 
-[policy]
-bundle_path = "contracts/policy-bundle.example.yaml"
-strict_manifest_pinning = true
+# Authentication mode: "disabled" or "bearer"
+# WARNING: Never use "disabled" in production with a non-loopback bind address
+auth_mode = "bearer"
 
-[ledger]
-backend = "sqlite"
+# Bearer token for authentication (required when auth_mode is "bearer")
+# IMPORTANT: Use a strong, randomly generated token in production
+# Generate with: openssl rand -hex 32
+bearer_token = "CHANGE_ME_TO_A_SECURE_TOKEN"
 
-[store]
-backend = "sqlite"
-dsn = "sqlite://ferrumgate.prod.db"
+# Allow binding to non-loopback addresses when auth is disabled.
+# DANGEROUS: Never enable in production.
+allow_insecure_nonlocal_bind = false
 
-[features]
-enable_firewall = true
-enable_provenance = true
-enable_rollback = true
-enable_draft_only_default = true
+# Log filter (info, debug, warn, error)
+log_filter = "info"

@@ -1,26 +1,29 @@
-log_filter = "info"
+# FerrumGate development configuration
+# This file is auto-loaded by ferrumd if no --config is specified and it exists.
 
 [server]
-host = "127.0.0.1"
-port = 8080
-allow_insecure_nonlocal = false
+# Bind address for the HTTP server
+bind_addr = "127.0.0.1:8080"
 
-[auth]
-mode = "disabled"
+# Store data source name (DSN)
+# NOTE: PostgreSQL and MySQL are NOT implemented. See ADR-50.
+# Examples:
+#   sqlite::memory: - in-memory database (default)
+#   sqlite://ferrumgate.dev.db - file-based SQLite
+#   sqlite:///absolute/path/to/db - absolute path
+store_dsn = "sqlite::memory:"
 
-[policy]
-bundle_path = "contracts/policy-bundle.example.yaml"
-strict_manifest_pinning = false
+# Authentication mode: "disabled" or "bearer"
+auth_mode = "disabled"
 
-[ledger]
-backend = "memory"
+# Bearer token for authentication (required when auth_mode is "bearer")
+# WARNING: Do not commit real tokens to version control
+bearer_token = ""
 
-[store]
-backend = "sqlite"
-dsn = "sqlite://ferrumgate.dev.db"
+# Allow binding to non-loopback addresses when auth is disabled.
+# DANGEROUS: Only enable for development/local testing.
+# In production, always use auth_mode = "bearer" with a valid token.
+allow_insecure_nonlocal_bind = false
 
-[features]
-enable_firewall = true
-enable_provenance = true
-enable_rollback = true
-enable_draft_only_default = true
+# Log filter (info, debug, warn, error)
+log_filter = "info"

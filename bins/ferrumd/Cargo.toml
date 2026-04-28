@@ -6,6 +6,10 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_derive.workspace = true
+toml.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
@@ -14,13 +18,6 @@ ferrum-pdp = { path = "../../crates/ferrum-pdp" }
 ferrum-cap = { path = "../../crates/ferrum-cap" }
 ferrum-rollback = { path = "../../crates/ferrum-rollback" }
 ferrum-store = { path = "../../crates/ferrum-store" }
-ferrum-firewall = { path = "../../crates/ferrum-firewall" }
+ferrum-sync = { path = "../../crates/ferrum-sync" }
 ferrum-adapter-fs = { path = "../../crates/ferrum-adapter-fs" }
 ferrum-adapter-git = { path = "../../crates/ferrum-adapter-git" }
-ferrum-adapter-http = { path = "../../crates/ferrum-adapter-http" }
-ferrum-adapter-sqlite = { path = "../../crates/ferrum-adapter-sqlite" }
-ferrum-adapter-maildraft = { path = "../../crates/ferrum-adapter-maildraft" }
-clap = { workspace = true, features = ["derive"] }
-serde.workspace = true
-serde_json.workspace = true
-toml = "0.8"

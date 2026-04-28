@@ -44,7 +44,8 @@
         "SideEffectCompensated",
         "SideEffectRolledBack",
         "Quarantined",
-        "ErrorRaised"
+        "ErrorRaised",
+        "ExternalEventReceived"
       ]
     },
     "occurred_at": {
@@ -184,6 +185,13 @@
             "type": "string",
             "format": "uuid"
           },
+          "to_event_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
           "summary": {
             "type": [
               "string",
@@ -195,12 +203,6 @@
     },
     "hash_chain": {
       "type": "object",
-      "required": [
-        "content_hash",
-        "manifest_hash",
-        "policy_bundle_hash",
-        "previous_ledger_hash"
-      ],
       "properties": {
         "content_hash": {
           "type": [
@@ -230,6 +232,13 @@
     },
     "metadata": {
       "type": "object"
+    },
+    "source_runtime_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Identifier of the source runtime that produced this event. None for internally-generated events."
     }
   }
 }

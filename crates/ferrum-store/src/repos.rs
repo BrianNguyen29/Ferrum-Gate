@@ -1,14 +1,26 @@
 use async_trait::async_trait;
-use ferrum_ledger::LedgerEntry;
 use ferrum_proto::{
     ActionProposal, ApprovalId, ApprovalRequest, ApprovalState, CapabilityId, CapabilityLease,
     CapabilityStatus, EventId, ExecutionId, ExecutionRecord, ExecutionState, IntentEnvelope,
-    IntentId, IntentStatus, PolicyBundle, PolicyBundleId, ProposalId, ProvenanceEdge,
-    ProvenanceEvent, ProvenanceQueryRequest, ProvenanceStatsRequest, ProvenanceStatsResponse,
-    RollbackContract, RollbackContractId, RollbackState,
+    IntentId, IntentStatus, PolicyBundle, ProposalId, ProvenanceEdge, ProvenanceEvent,
+    ProvenanceQueryRequest, RollbackContract, RollbackContractId, RollbackState, Timestamp,
 };
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 use crate::Result;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LedgerEntry {
+    pub entry_id: i64,
+    pub event_id: EventId,
+    pub intent_id: Option<IntentId>,
+    pub execution_id: Option<ExecutionId>,
+    pub occurred_at: Timestamp,
+    pub content_hash: Option<String>,
+    pub previous_ledger_hash: Option<String>,
+    pub raw_json: serde_json::Value,
+}
 
 #[async_trait]
 pub trait IntentRepo: Send + Sync {
@@ -23,7 +35,6 @@ pub trait IntentRepo: Send + Sync {
 pub trait ProposalRepo: Send + Sync {
     async fn insert(&self, proposal: &ActionProposal) -> Result<()>;
     async fn get(&self, proposal_id: ProposalId) -> Result<Option<ActionProposal>>;
-    async fn update(&self, proposal: &ActionProposal) -> Result<()>;
     async fn list_by_intent(&self, intent_id: IntentId) -> Result<Vec<ActionProposal>>;
 }
 
@@ -38,19 +49,6 @@ pub trait CapabilityRepo: Send + Sync {
         status: CapabilityStatus,
     ) -> Result<()>;
     async fn list_by_intent(&self, intent_id: IntentId) -> Result<Vec<CapabilityLease>>;
-
-    /// Atomically mark a capability as Used if it is currently Active.
-    /// Returns true if the capability was successfully marked as Used,
-    /// false if it was already Used, Expired, Revoked, or Quarantined.
-    /// This is fail-closed: once used, a capability cannot be used again.
-    async fn mark_used_if_active(&self, capability_id: CapabilityId) -> Result<bool>;
-
-    /// Revoke a capability, setting its status to Revoked and persisting revoked_at.
-    async fn revoke(&self, capability_id: CapabilityId) -> Result<()>;
-
-    /// List capabilities that are active and not yet expired.
-    /// Used for reconciliation and auditing.
-    async fn list_active(&self) -> Result<Vec<CapabilityLease>>;
 }
 
 #[async_trait]
@@ -83,46 +81,33 @@ pub trait ApprovalRepo: Send + Sync {
     async fn get(&self, approval_id: ApprovalId) -> Result<Option<ApprovalRequest>>;
     async fn update(&self, approval: &ApprovalRequest) -> Result<()>;
     async fn resolve(&self, approval_id: ApprovalId, state: ApprovalState) -> Result<()>;
-
+    async fn list_pending(&self) -> Result<Vec<ApprovalRequest>>;
+    async fn list_pending_paginated(&self, limit: u32, offset: u32)
+    -> Result<Vec<ApprovalRequest>>;
+    async fn list_pending_by_proposal_paginated(
+        &self,
+        proposal_id: ProposalId,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<ApprovalRequest>>;
     /// Cursor-based pagination for pending approvals.
-    /// Returns (items, next_cursor) where next_cursor is None if this is the last page.
-    /// Ordering: created_at DESC, approval_id DESC (stable descending).
+    /// Uses keyset pagination with (created_at DESC, approval_id DESC).
+    /// Returns items older than or equal to the cursor position.
     async fn list_pending_cursor(
         &self,
+        created_after: Timestamp,
+        approval_id_after: ApprovalId,
         limit: u32,
-        after_cursor: Option<&str>,
-    ) -> Result<(Vec<ApprovalRequest>, Option<String>)>;
-
-    /// Cursor-based pagination for pending approvals filtered by proposal_id.
-    /// Returns (items, next_cursor) where next_cursor is None if this is the last page.
-    /// Ordering: created_at DESC, approval_id DESC (stable descending).
+    ) -> Result<Vec<ApprovalRequest>>;
+    /// Cursor-based pagination for pending approvals filtered by proposal.
+    /// Uses keyset pagination with (created_at DESC, approval_id DESC).
     async fn list_pending_by_proposal_cursor(
         &self,
         proposal_id: ProposalId,
+        created_after: Timestamp,
+        approval_id_after: ApprovalId,
         limit: u32,
-        after_cursor: Option<&str>,
-    ) -> Result<(Vec<ApprovalRequest>, Option<String>)>;
-
-    /// Cursor-based pagination for pending approvals filtered by execution_id.
-    /// Returns (items, next_cursor) where next_cursor is None if this is the last page.
-    /// Ordering: created_at DESC, approval_id DESC (stable descending).
-    async fn list_pending_by_execution_id_cursor(
-        &self,
-        execution_id: ExecutionId,
-        limit: u32,
-        after_cursor: Option<&str>,
-    ) -> Result<(Vec<ApprovalRequest>, Option<String>)>;
-
-    /// Cursor-based pagination for pending approvals filtered by both proposal_id and execution_id.
-    /// Returns (items, next_cursor) where next_cursor is None if this is the last page.
-    /// Ordering: created_at DESC, approval_id DESC (stable descending).
-    async fn list_pending_by_proposal_and_execution_id_cursor(
-        &self,
-        proposal_id: ProposalId,
-        execution_id: ExecutionId,
-        limit: u32,
-        after_cursor: Option<&str>,
-    ) -> Result<(Vec<ApprovalRequest>, Option<String>)>;
+    ) -> Result<Vec<ApprovalRequest>>;
 }
 
 #[async_trait]
@@ -131,119 +116,75 @@ pub trait ProvenanceRepo: Send + Sync {
     async fn get_event(&self, event_id: EventId) -> Result<Option<ProvenanceEvent>>;
     async fn append_edges(&self, to_event_id: EventId, edges: &[ProvenanceEdge]) -> Result<()>;
     async fn query(&self, request: &ProvenanceQueryRequest) -> Result<Vec<ProvenanceEvent>>;
-    /// Query events with cursor-based pagination and DB-level filtering.
-    /// Returns (events, next_cursor) where next_cursor is None if this is the last page.
-    /// Ordering: occurred_at ASC, event_id ASC (stable ascending).
-    async fn query_paginated(
-        &self,
-        request: &ProvenanceQueryRequest,
-    ) -> Result<(Vec<ProvenanceEvent>, Option<String>)>;
-    /// Query edges where the given event is the target (incoming edges / ancestry)
-    async fn get_edges_to(&self, event_id: EventId) -> Result<Vec<ProvenanceEdge>>;
-    /// Query edges where the given event is the source (outgoing edges / descendants)
-    async fn get_edges_from(&self, event_id: EventId) -> Result<Vec<ProvenanceEdge>>;
-    /// Reconstruct the lineage chain for a single event by walking edges backwards.
-    /// Returns events ordered by occurred_at (oldest first), including the starting event.
-    async fn get_lineage_by_event(&self, event_id: EventId) -> Result<Vec<ProvenanceEvent>>;
-    /// Reconstruct the lineage chain for an execution by walking edges backwards.
-    /// Returns events ordered by occurred_at (oldest first).
-    async fn get_lineage_by_execution(
-        &self,
-        execution_id: ExecutionId,
-    ) -> Result<Vec<ProvenanceEvent>>;
-    /// Compute aggregated statistics over provenance events matching the given filters.
-    /// This is more efficient than fetching all events and aggregating client-side
-    /// because it performs aggregation at the database level.
-    async fn query_stats(
-        &self,
-        request: &ProvenanceStatsRequest,
-    ) -> Result<ProvenanceStatsResponse>;
+    async fn get_edges_to(&self, to_event_id: EventId) -> Result<Vec<ProvenanceEdge>>;
+    /// Get all edges that originate from any of the given event IDs (child edges / descendants).
+    async fn get_edges_from(&self, from_event_ids: &[EventId]) -> Result<Vec<ProvenanceEdge>>;
 }
 
 #[async_trait]
 pub trait LedgerRepo: Send + Sync {
     async fn append(&self, entry: &LedgerEntry) -> Result<()>;
-    async fn append_event(&self, event: &ProvenanceEvent) -> Result<LedgerEntry>;
     async fn get_by_event(&self, event_id: EventId) -> Result<Option<LedgerEntry>>;
     async fn list_recent(&self, limit: u32) -> Result<Vec<LedgerEntry>>;
-    /// Returns the most recent ledger entry, if any.
+    /// Get the latest ledger entry by entry_id, if any.
     async fn get_latest(&self) -> Result<Option<LedgerEntry>>;
-    /// Lists all ledger entries ordered by entry_id ASC (chronological order).
-    /// Used for chain verification after loading from persistence.
-    async fn list_all(&self) -> Result<Vec<LedgerEntry>>;
-
-    /// Cursor-based pagination for ledger entries.
-    ///
-    /// Returns `(entries, next_cursor)` where `next_cursor` is `None` if this is the last page.
-    /// Ordering: entry_id DESC (newest-first), providing stable pagination for large ledgers.
-    ///
-    /// The cursor format is a raw entry_id integer as a string.
-    /// Pass `after_cursor = None` for the first page.
-    ///
-    /// This is the primary method for handling larger-than-memory ledger datasets,
-    /// replacing `list_recent` for paginated access.
-    async fn list_cursor(
-        &self,
-        limit: u32,
-        after_cursor: Option<u64>,
-    ) -> Result<(Vec<LedgerEntry>, Option<u64>)>;
+    /// Verify the ledger chain integrity.
+    async fn verify_chain(&self) -> Result<()>;
 }
 
-/// Repository trait for policy bundle persistence.
+/// Repository for policy bundles.
 ///
-/// H1.1a: Provides bounded CRUD operations for policy bundle lifecycle management:
-/// - Register a new bundle (idempotent by derived bundle_id)
-/// - Fetch a bundle by its deterministic id
-/// - List all bundles with cursor-based pagination
-/// - Update bundle metadata (name, description, version) preserving created_at
-/// - Delete a bundle by its deterministic bundle_id
-///
-/// H1.1c: Adds supersedes_bundle_id for lineage tracking:
-/// - list_successors: fetch bundles that directly supersede a given bundle
-/// - has_successors: check if any bundle supersedes a given bundle (for delete gating)
-///
-/// No engine swap, no policy evaluation changes, single-node/local-only storage.
+/// Provides CRUD operations for policy bundles with content-hash based
+/// idempotency support for create operations.
 #[async_trait]
 pub trait PolicyBundleRepo: Send + Sync {
-    /// Register (upsert) a policy bundle. If a bundle with the same bundle_id
-    /// already exists, update its metadata (name, description, version).
-    /// The created_at timestamp is preserved from the existing record.
-    /// H1.1c: supersedes_bundle_id is stored as part of the bundle.
-    async fn upsert(&self, bundle: &PolicyBundle) -> Result<()>;
+    /// Insert a new policy bundle.
+    /// Returns an error if a bundle with the same bundle_id already exists.
+    async fn insert(&self, bundle: &PolicyBundle) -> Result<()>;
 
-    /// Fetch a bundle by its deterministic bundle_id.
-    async fn get(&self, bundle_id: PolicyBundleId) -> Result<Option<PolicyBundle>>;
+    /// Get a policy bundle by its bundle_id.
+    async fn get(&self, bundle_id: &str) -> Result<Option<PolicyBundle>>;
 
-    /// List all bundles ordered by created_at DESC with cursor-based pagination.
-    /// Returns (items, next_cursor) where next_cursor is None if this is the last page.
-    async fn list_cursor(
-        &self,
-        limit: u32,
-        after_cursor: Option<&str>,
-    ) -> Result<(Vec<PolicyBundle>, Option<String>)>;
+    /// Get a policy bundle by its content hash.
+    /// Used for idempotency checks on create operations.
+    async fn get_by_content_hash(&self, content_hash: &str) -> Result<Option<PolicyBundle>>;
 
-    /// Update metadata for an existing bundle (name, description, version).
-    /// The bundle_id and created_at are preserved; updated_at is set to now.
-    /// Returns Ok(()) if the bundle was updated, Err if the bundle was not found.
-    async fn update_metadata(
-        &self,
-        bundle_id: PolicyBundleId,
-        name: &str,
-        description: &str,
-        version: &str,
-    ) -> Result<()>;
+    /// Update an existing policy bundle.
+    /// Returns an error if the bundle does not exist.
+    async fn update(&self, bundle: &PolicyBundle) -> Result<()>;
 
-    /// Delete a bundle by its deterministic bundle_id.
-    /// H1.1c: Returns Err if the bundle is referenced by another bundle's supersedes_bundle_id.
-    /// Returns Ok(()) if the bundle was deleted, Err if the bundle was not found
-    /// or blocked by referential integrity.
-    async fn delete(&self, bundle_id: PolicyBundleId) -> Result<()>;
+    /// Delete a policy bundle by its bundle_id.
+    /// Returns an error if the bundle does not exist.
+    async fn delete(&self, bundle_id: &str) -> Result<()>;
 
-    /// H1.1c: List bundles that directly supersede the given bundle.
-    /// Returns bundles whose supersedes_bundle_id equals the provided bundle_id.
-    async fn list_successors(&self, bundle_id: PolicyBundleId) -> Result<Vec<PolicyBundle>>;
+    /// List all policy bundles.
+    async fn list(&self) -> Result<Vec<PolicyBundle>>;
 
-    /// H1.1c: Check whether any bundle directly supersedes the given bundle.
-    /// Used for delete referential integrity gating.
-    async fn has_successors(&self, bundle_id: PolicyBundleId) -> Result<bool>;
+    /// List all active policy bundles.
+    async fn list_active(&self) -> Result<Vec<PolicyBundle>>;
+
+    /// Set the active flag for a policy bundle.
+    async fn set_active(&self, bundle_id: &str, active: bool) -> Result<()>;
+}
+
+/// Facade trait that bundles all repository accessors.
+///
+/// Decouples GatewayRuntime from any concrete store implementation.
+/// Each accessor returns an Arc<dyn XxxRepo>.
+#[async_trait]
+pub trait StoreFacade: Send + Sync {
+    fn capabilities(&self) -> Arc<dyn CapabilityRepo>;
+    fn executions(&self) -> Arc<dyn ExecutionRepo>;
+    fn rollback_contracts(&self) -> Arc<dyn RollbackRepo>;
+    fn approvals(&self) -> Arc<dyn ApprovalRepo>;
+    fn provenance(&self) -> Arc<dyn ProvenanceRepo>;
+    fn ledger(&self) -> Arc<dyn LedgerRepo>;
+    fn intents(&self) -> Arc<dyn IntentRepo>;
+    fn proposals(&self) -> Arc<dyn ProposalRepo>;
+    fn policy_bundles(&self) -> Arc<dyn PolicyBundleRepo>;
+
+    /// Performs a cheap health check on the store.
+    /// Returns Ok(()) if the store is reachable and functional.
+    /// Returns Err if the store is unavailable or not functional.
+    async fn health_check(&self) -> crate::Result<()>;
 }

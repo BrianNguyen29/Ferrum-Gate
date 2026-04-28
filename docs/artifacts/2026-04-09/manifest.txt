@@ -1,43 +1,70 @@
-# Ferrum Gate fs-first Beta Slice Evidence Bundle
-# Generated: 2026-04-09 (rewritten at 2026-04-12 to match actual bundle contents)
-# Purpose: Timestamped evidence for fs-first before_hash/after_hash wiring completion
+# FerrumGate Evidence Bundle
+# Generated: 2026-04-09
+# Purpose: Q1 evidence bundle — G1, G2, Q1-P3/PDP audit slice (Gate A partial), Q1-P4 (P4a mark_used + P4b rollback_class; Gate B/C partial), Q1-P5 (conservative minimum chain), Q1-P6 (adversarial first slices), Q1-P7 (invariant matrix pass / Q1 exit gate)
 
 ## Artifact Index
 
-| File | Description | Status |
-|------|-------------|--------|
-| closure-note.txt | fs-first beta slice closure statement | PRESENT |
-| manifest.txt | This file - bundle contents index | PRESENT |
+| File | Description | Gate Criterion |
+|------|-------------|----------------|
+| 01-q1-p1-g1-evidence.md | G1 proto shape lock confirmation note | G1 |
+| 02-q1-p2-g2-store-integrity-evidence.md | G2 store transition validation — terminal states, InvalidState enforcement | G2 |
+| 03-q1-p3-pdp-audit-evidence.md | Q1-P3 PDP branch coverage audit — scope/taint/R3/draft-only deterministic; draft-only gateway fix (server.rs:275); Gate A NOT fully closed (partial only) | Gate A (partial) |
+| 04-q1-p4b-prepare-rollback-class-evidence.md | Q1-P4b prepare_execution rollback_class propagation — proposal-sourced rollback_class replaces hardcoded R0; 21 integration tests pass | Gate B |
+| 05-q1-p4-combined-closure-note.md | Q1-P4 combined closure: P4a (mark_used at authorize, server.rs:464) + P4b (rollback_class propagation, server.rs:540); supersedes P4b detail note for package-close purposes | Gate B/C |
+| 06-q1-p5-minimum-chain-evidence.md | Q1-P5 minimum chain: conservative slice pass (authorize+prepare+terminal over existing surface); no literal execute endpoint claimed | Gate C (conservative) |
+| 07-q1-p6-adversarial-first-slices-evidence.md | Q1-P6 adversarial first slices: WS1/WS2/WS3/WS4 each have a passing adversarial regression test; scope is first-pass suite only, not full exit gate | Gate C (adversarial first slices) |
+| 08-q1-p7-invariant-matrix-pass-evidence.md | Q1-P7 invariant matrix pass: cargo test --workspace passed, cargo test -p ferrum-gateway passed, route parity 19/19 confirmed, Q1-P6 chain passed; Q1 exit gate / v1.1 scope only | Q1 Exit Gate / v1.1 |
+| 09-handoff-note.md | Handoff note for next session: Q1 exit gate passed, route reconciliation complete, WS1-WS4 addressed, Q2 entry gate satisfied | — |
+| 10-q2-fs-foundation-evidence.md | Q2 fs-first foundation slice: fs FileWrite store+adapter lifecycle confirmed; stronger gateway-facing slice: HTTP prepare → persisted contract → HTTP compensate restore (FileWrite only); execute/verify HTTP surfaces now exist with state guards; Gate E/G4 store layer confirmed | Gate E/G4 (foundation slice) |
+| 11-gateway-execute-verify-surface-design-note.md | Gateway-facing execute/verify HTTP surface: current router reality with implemented endpoints (server.rs:155–162), explicit non-goals for Q2, fs-first FileWrite only | — |
+| 12-gateway-execute-verify-invalid-state-409-evidence.md | Execute/verify HTTP endpoint invalid-state 409 guard coverage — 4 integration tests (execute on Running/Committed, verify on Prepared/Verified); fs-first FileWrite only | — |
+| 13-happy-path-execute-verify-evidence.md | Happy-path execute/verify end-to-end evidence — `test_execute_and_verify_endpoint_flow_for_file_write` (integration_gateway_flow.rs:4056–4427); full HTTP lifecycle confirmed for fs-first FileWrite | — |
+| 14-v2-readiness-note.md | Q2/v2 readiness assessment — confirmed items, open items (git/sqlite adapters), concrete 4-step next-step plan to v2 exit gate | — |
+| 15-gateway-execute-verify-compensate-error-model.md | Execute/verify/compensate error model documentation — current state guards, error responses, known rough edges; compensate has explicit state guard (WS-Compensate) | — |
+| 16-fs-first-beta-readiness-note.md | fs-first FileWrite beta readiness — confirmed working capabilities, out-of-scope items, beta exit criteria for production | BETA |
+| 17-fs-first-operator-release-checklist-note.md | fs-first FileWrite operator-facing release checklist — demo-ready / not production-ready because... | BETA |
+| manifest.txt | This file — bundle index | — |
 
 ## Evidence Summary
 
-- fs-first before_hash/after_hash wiring: COMPLETE (beta slice only)
-- Workspace compiles: PASS
-- Integration tests pass: PASS (2 new tests added covering new-file and overwrite flows)
-- Gateway wiring: PASS (server.rs:1751-1758 prepare, server.rs:1933-1945 execute)
-- Helper function: PASS (server.rs:2182-2201 update_file_target_hashes)
+| Criterion | Status | Evidence File |
+|-----------|--------|--------------|
+| G1: Proto field names locked for intent/proposal/capability/rollback/provenance/approval | PASS | 01-q1-p1-g1-evidence.md |
+| G1: All downstream crates compile with new proto shapes | PASS | 01-q1-p1-g1-evidence.md |
+| G1: No mid-quarter rename planned | PASS | 01-q1-p1-g1-evidence.md |
+| G2: Store layer explicit state transitions for executions/capabilities/approvals; terminal states absorbing | PASS | 02-q1-p2-g2-store-integrity-evidence.md |
+| G2: Repo-layer InvalidState errors for all invalid transitions (46 tests pass) | PASS | 02-q1-p2-g2-store-integrity-evidence.md |
+| Gate B (Q1-P4b) | prepare-step rollback_class propagation: real `rollback_class` sourced from proposal; R3 `auto_commit=false` confirmed; 21 integration tests pass | PASS | 04-q1-p4b-prepare-rollback-class-evidence.md |
+| Gate B/C (Q1-P4 combined) | P4a: mark_used called at authorize (server.rs:464), single-use enforced at authorize; P4b: rollback_class propagated at prepare (server.rs:540); Gate C criterion satisfied on Q1-P4 package dimension | PASS | 05-q1-p4-combined-closure-note.md |
+| Gate C (Q1-P5 conservative) | Minimum chain (authorize + prepare + terminal-present) over existing gateway execution surface; no literal execute endpoint claimed; conservative slice pass | PASS | 06-q1-p5-minimum-chain-evidence.md |
+| Gate C (Q1-P6 adversarial first slices) | WS1/WS2/WS3/WS4 adversarial first slices: each weak spot has a passing regression test; first-pass suite scope — Q1-P7 (exit gate) not claimed | PASS | 07-q1-p6-adversarial-first-slices-evidence.md |
+| Q1 Exit Gate / v1.1 (Q1-P7) | cargo test --workspace passed, cargo test -p ferrum-gateway passed, route parity 19/19 confirmed, Q1-P6 chain passed; conservative gate pass for Q1/v1.1 scope only; no v1 scope expansion | PASS | 08-q1-p7-invariant-matrix-pass-evidence.md |
+
+## Verification Commands
+
+- `cargo check --workspace` → PASS (Finished `dev` profile)
+- `cargo test --package ferrum-proto` → PASS (4 tests passed)
 
 ## Notes
 
-- This is a **beta slice** for **fs-first** only
-- Only FilePath target hash wiring is implemented (git/sqlite/HTTP not in scope)
-- Conservative wording: does not claim full Q2/v2 completion
-- Remaining gaps explicitly listed in closure-note.txt
+- G1 (Q1-P1/Proto Shape Lock) is closed as of 2026-04-09.
+- This bundle records that proto field names for intent, proposal, capability,
+  rollback, provenance, and approval are locked for the quarter.
+- Downstream crate compilation verified via `cargo check --workspace`.
+- ferrum-proto unit tests pass (4/4).
+- Q1-P2 and subsequent packages may proceed using stable proto shapes.
+- G2 (Q1-P2/Store Integrity) is closed as of 2026-04-09.
+- Store transition validation is implemented: terminal states are absorbing,
+  InvalidState errors returned for invalid transitions via validated repo paths.
+- 46 tests pass (24 unit + 22 integration).
+- Known gap: raw update() paths bypass transition guard — defense-in-depth debt.
+- Provenance append-only is code-level/repo-surface scope only.
+- Q1-P3 (PDP Hard-Rules Audit): 7 PDP branches are deterministic (scope, taint,
+  R3, draft-only, forbidden outcome, advisory mismatch, default allow). No "maybe"
+  branches. Draft-only approval_mode propagation bug fixed in server.rs:275.
+- Gate A is NOT fully closed. Q1-P3/PDP slice is satisfied; Q1-P4a mark_used
+  at authorize (server.rs:464) is evidenced in combined closure note. Full Gate A
+  requires remaining integration coverage (steps 1.6–1.8).
+- This bundle does NOT claim full Gate A closure.
 
-## Changes Are Production Code
-
-This bundle includes actual Rust code changes to:
-- `crates/ferrum-adapter-fs/src/lib.rs` - prepare metadata now surfaces before_hash
-- `crates/ferrum-gateway/src/server.rs` - persisted FilePath target wiring for before_hash/after_hash
-- `tests/integration_gateway_flow.rs` - integration tests for hash semantics
-
-## Evidence Files (Concrete Paths in Repo)
-
-| File | What It Shows |
-|------|---------------|
-| `crates/ferrum-adapter-fs/src/lib.rs:174-185` | prepare returns before_hash in adapter metadata |
-| `crates/ferrum-gateway/src/server.rs:1751-1758` | prepare surfaces before_hash onto FilePath target |
-| `crates/ferrum-gateway/src/server.rs:1933-1945` | execute surfaces after_hash onto FilePath target |
-| `crates/ferrum-gateway/src/server.rs:2182-2201` | update_file_target_hashes helper function |
-| `crates/ferrum-proto/src/rollback.rs:61-65` | RollbackTarget::FilePath with before_hash/after_hash fields |
-| `tests/integration_gateway_flow.rs` | Integration tests for new-file and overwrite hash flows |
+Overall: G1/G2 FULL PASS; Gate A Q1-P3 slice PASS (partial); Gate B/C Q1-P4 PASS (P4a mark_used + P4b rollback_class); Gate C Q1-P5 PASS (conservative minimum chain); Gate C Q1-P6 PASS (adversarial first slices — WS1/WS2/WS3/WS4 first-pass suite); Q1-P7 PASS (invariant matrix pass / Q1 exit gate — v1.1 scope only)

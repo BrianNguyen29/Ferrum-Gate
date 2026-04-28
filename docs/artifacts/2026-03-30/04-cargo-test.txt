@@ -137,6 +137,7 @@ test sqlite::leader_tip_cache::tests::write_then_read_roundtrip ... ok
 test sqlite::leader_tip_cache::tests::rejects_hash_conflict ... ok
 test sync_service::tests::insync_both_empty ... ok
 test sqlite::leader_tip_cache::tests::rejects_stale_write_lower_sequence ... ok
+test sqlite::leader_tip_cache::tests::write_replaces_existing ... ok
 test sync_service::tests::leader_ahead ... ok
 test sync_service::tests::pf4_deny_leader_not_authorized ... ok
 test sync_service::tests::pf8_missing_cached_tip ... ok
@@ -217,7 +218,7 @@ test tests::test_actor_type_cli_to_proto_user ... ok
 test tests::test_escape_dot_label_basic ... ok
 test tests::test_render_dot_deterministic_ordering ... ok
 test tests::test_render_dot_empty_lineage ... ok
-test tests::test_escape_dot_label_valid_escape_in_label ... ok
+test tests::test_render_dot_valid_escape_in_label ... ok
 test tests::test_validate_flags_approve_is_valid ... ok
 test tests::test_validate_flags_both_approve_and_deny_fails ... ok
 test tests::test_validate_flags_deny_with_reason_is_valid ... ok
@@ -234,6 +235,11 @@ test tests::test_resolve_config_cli_over_env_over_file ... ok
 test tests::test_resolve_config_rejects_bearer_mode_without_token ... ok
 
 test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
 
 running 0 tests

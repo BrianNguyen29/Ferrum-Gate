@@ -11,9 +11,3 @@ chrono.workspace = true
 tokio.workspace = true
 thiserror.workspace = true
 ferrum-proto = { path = "../ferrum-proto" }
-ferrum-store = { path = "../ferrum-store" }
-
-[dev-dependencies]
-serde_json = "1"
-tempfile = "3"
-tokio = { workspace = true, features = ["test-util"] }

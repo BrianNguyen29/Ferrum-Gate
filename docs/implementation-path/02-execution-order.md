@@ -15,7 +15,7 @@ F. hardening and evidence
 4. cap
 5. firewall
 6. rollback
-7. adapters fs/sqlite/maildraft/git/http
+7. adapters fs/sqlite/maildraft/git/http (fs/git have partial verified local slices; http has a bounded first prepare/verify slice; broader completion post-v1)
 8. graph
 9. ledger
 10. gateway

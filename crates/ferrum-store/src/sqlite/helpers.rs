@@ -49,11 +49,15 @@ pub async fn fetch_entity_by_id<T: DeserializeOwned>(
     }
 }
 
-pub async fn fetch_entities<T>(pool: &SqlitePool, sql: &str, bind_value: String) -> Result<Vec<T>>
+pub async fn fetch_entities<T, F>(pool: &SqlitePool, sql: &str, binder: F) -> Result<Vec<T>>
 where
     T: DeserializeOwned,
+    F: for<'a> FnOnce(
+        sqlx::query::Query<'a, sqlx::Sqlite, sqlx::sqlite::SqliteArguments<'a>>,
+    )
+        -> sqlx::query::Query<'a, sqlx::Sqlite, sqlx::sqlite::SqliteArguments<'a>>,
 {
-    let rows = sqlx::query(sql).bind(bind_value).fetch_all(pool).await?;
+    let rows = binder(sqlx::query(sql)).fetch_all(pool).await?;
     rows.into_iter()
         .map(|row| from_json(&row.try_get::<String, _>("raw_json")?))
         .collect()

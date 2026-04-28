@@ -10,6 +10,18 @@ pub struct EvaluateProposalResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct EvaluateOutcomeResponse {
+    /// Whether the outcome matches the intent's expectations.
+    pub aligned: bool,
+    /// Human-readable explanation of alignment decision.
+    pub reason: String,
+    /// Matched rule IDs from outcome evaluation.
+    pub matched_rule_ids: Vec<String>,
+    /// Warnings (e.g., advisory mismatch).
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AuthorizeExecutionRequest {
     pub proposal_id: crate::ProposalId,
     pub capability_id: crate::CapabilityId,
@@ -31,8 +43,73 @@ pub struct PrepareExecutionResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CompensateExecutionResponse {
+    pub execution_id: crate::ExecutionId,
+    pub compensated: bool,
+    pub rollback_contract: Option<crate::RollbackContract>,
+    pub warnings: Vec<String>,
+}
+
+/// Request body for the execute endpoint.
+/// Payload format is adapter-specific; for FileWrite fs adapter, supply
+/// `{"content": "..."}` or a raw string.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ExecuteExecutionRequest {
+    /// Optional JSON payload passed to the adapter's execute method.
+    /// For FileWrite, this should contain the new file content.
+    #[serde(default)]
+    pub payload: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ExecuteExecutionResponse {
+    pub execution_id: crate::ExecutionId,
+    pub executed: bool,
+    pub result_digest: Option<String>,
+    pub rollback_contract: Option<crate::RollbackContract>,
+    pub warnings: Vec<String>,
+}
+
+/// Response envelope for the verify endpoint.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct VerifyExecutionResponse {
+    pub execution_id: crate::ExecutionId,
+    pub verified: bool,
+    pub rollback_contract: Option<crate::RollbackContract>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct HealthResponse {
     pub status: String,
+}
+
+/// Status of a single component in the deep health check.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ComponentStatus {
+    /// Name of the component (e.g., "store").
+    pub component: String,
+    /// Human-readable status description.
+    pub status: String,
+    /// True if the component is healthy.
+    pub healthy: bool,
+    /// Optional error message when unhealthy.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Deep health check response for /v1/readyz/deep.
+///
+/// Returns structured status for each component. Returns HTTP 200 when all
+/// components are healthy, HTTP 503 when any component is unhealthy.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct DeepHealthResponse {
+    /// Overall status: "ok" or "degraded".
+    pub status: String,
+    /// True if all components are healthy.
+    pub healthy: bool,
+    /// Detailed status of each component.
+    pub components: Vec<ComponentStatus>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -52,164 +129,69 @@ pub enum ApiErrorCode {
     ApprovalRequired,
     CapabilityExpired,
     CapabilityRevoked,
-    CapabilityUsed,
-    ScopeMismatch,
     IntegrityMismatch,
     RollbackUnsupported,
     AdapterFailure,
     Conflict,
     Internal,
+    Unauthorized,
 }
 
 /// Response envelope for paginated approval lists.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ApprovalListEnvelope {
-    pub items: Vec<crate::approval::ApprovalRequest>,
+    pub items: Vec<crate::ApprovalRequest>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
 }
 
-// Execute request/response types
+/// Response for GET /v1/executions/{id} — includes execution record and
+/// optionally the linked rollback contract for fs-first rollback inspection.
+///
+/// The rollback_contract field is populated when the execution has a
+/// rollback_contract_id set and the contract is retrievable from the store.
+/// This enables operators to inspect contract state, target path, before_hash,
+/// after_hash, compensation_plan, and verify_checks for the fs-first FileWrite slice.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct ExecuteRequest {
-    pub execution_id: crate::ExecutionId,
-    pub payload: serde_json::Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct ExecuteResponse {
-    pub execution_id: crate::ExecutionId,
-    pub executed: bool,
-    pub result_digest: Option<String>,
-    pub external_id: Option<String>,
-}
-
-// Verify request/response types
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct VerifyRequest {
-    pub execution_id: crate::ExecutionId,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct VerifyResponse {
-    pub execution_id: crate::ExecutionId,
-    pub verified: bool,
-    pub verified_at: Option<crate::Timestamp>,
-}
-
-// Commit request/response types
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct CommitRequest {
-    pub execution_id: crate::ExecutionId,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct CommitResponse {
-    pub execution_id: crate::ExecutionId,
-    pub committed: bool,
-    pub committed_at: Option<crate::Timestamp>,
-}
-
-// Compensate request/response types
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct CompensateRequest {
-    pub execution_id: crate::ExecutionId,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct CompensateResponse {
-    pub execution_id: crate::ExecutionId,
-    pub compensated: bool,
-    pub compensated_at: Option<crate::Timestamp>,
-}
-
-// Rollback request/response types
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct RollbackRequest {
-    pub execution_id: crate::ExecutionId,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct RollbackResponse {
-    pub execution_id: crate::ExecutionId,
-    pub rolled_back: bool,
-    pub rolled_back_at: Option<crate::Timestamp>,
-}
-
-// Cancel request/response types
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct CancelExecutionRequest {
-    pub execution_id: crate::ExecutionId,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct CancelExecutionResponse {
-    pub execution_id: crate::ExecutionId,
-    pub cancelled: bool,
-    pub cancelled_at: Option<crate::Timestamp>,
-}
-
-// Pause request/response types
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct PauseExecutionRequest {
-    pub execution_id: crate::ExecutionId,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct PauseExecutionResponse {
-    pub execution_id: crate::ExecutionId,
-    pub paused: bool,
-    pub paused_at: Option<crate::Timestamp>,
-}
-
-// Resume request/response types
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct ResumeExecutionRequest {
-    pub execution_id: crate::ExecutionId,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct ResumeExecutionResponse {
-    pub execution_id: crate::ExecutionId,
-    pub resumed: bool,
-    pub resumed_at: Option<crate::Timestamp>,
-}
-
-// Ledger verification types
-/// Response for on-demand ledger hash-chain verification.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct LedgerVerificationResponse {
-    /// True if the ledger chain is valid, false if tampered or broken.
-    pub valid: bool,
-    /// Number of ledger entries verified.
-    pub entry_count: u64,
-    /// Timestamp when verification was performed.
-    pub verified_at: crate::Timestamp,
-    /// Error details when verification fails (None when valid).
+pub struct ExecutionDetailResponse {
+    pub execution: crate::ExecutionRecord,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<LedgerVerificationError>,
+    pub rollback_contract: Option<crate::RollbackContract>,
 }
 
-/// Error details when ledger verification fails.
+// Policy Bundle API types
+
+/// Request to create a new policy bundle.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "type", content = "detail")]
-pub enum LedgerVerificationError {
-    /// Chain linkage is broken: prev_hash does not match expected.
-    BrokenChain { expected: String, actual: String },
-    /// Entry hash mismatch: tampered content detected.
-    TamperDetected {
-        sequence: u64,
-        recorded: String,
-        recomputed: String,
-    },
-    /// Sequence number mismatch.
-    SequenceMismatch { event_seq: u64, ledger_len: usize },
-    /// Ledger is empty but verification required at least one entry.
-    EmptyLedger,
+pub struct CreatePolicyBundleRequest {
+    /// The YAML content of the policy bundle.
+    pub yaml_content: String,
 }
 
-// =============================================================================
-// H1.1a: Policy bundle lifecycle API types
-// =============================================================================
+/// Response after creating a policy bundle.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct PolicyBundleResponse {
+    pub bundle: crate::PolicyBundle,
+    /// SHA-256 hash of the bundle content.
+    pub content_hash: String,
+}
 
-// NOTE: PolicyBundleListRequest lives in policy_bundle.rs to keep H1.1a types together.
+/// Response for listing policy bundles.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct PolicyBundleListResponse {
+    pub bundles: Vec<crate::PolicyBundle>,
+    pub total: usize,
+}
+
+/// Request to update an existing policy bundle.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct UpdatePolicyBundleRequest {
+    /// The YAML content of the policy bundle.
+    pub yaml_content: String,
+}
+
+/// Request to set the active flag of a policy bundle.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SetPolicyBundleActiveRequest {
+    pub active: bool,
+}

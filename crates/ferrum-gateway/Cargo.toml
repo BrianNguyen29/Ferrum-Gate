@@ -8,23 +8,23 @@ license.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 axum.workspace = true
+base64.workspace = true
 chrono.workspace = true
+constant_time_eq.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-sha2.workspace = true
 tokio.workspace = true
 tower.workspace = true
 tower-http.workspace = true
+tower_governor.workspace = true
 tracing.workspace = true
-prometheus = "0.13"
-regex = "1"
 
 ferrum-proto = { path = "../ferrum-proto" }
 ferrum-pdp = { path = "../ferrum-pdp" }
 ferrum-cap = { path = "../ferrum-cap" }
 ferrum-rollback = { path = "../ferrum-rollback" }
 ferrum-store = { path = "../ferrum-store" }
-ferrum-firewall = { path = "../ferrum-firewall" }
-ferrum-ledger = { path = "../ferrum-ledger" }
 ferrum-graph = { path = "../ferrum-graph" }
+ferrum-sync = { path = "../ferrum-sync" }
+ferrum-firewall = { path = "../ferrum-firewall" }
 uuid.workspace = true

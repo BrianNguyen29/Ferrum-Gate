@@ -11,3 +11,6 @@ chrono.workspace = true
 thiserror.workspace = true
 serde_json.workspace = true
 ferrum-proto = { path = "../ferrum-proto" }
+
+[dev-dependencies]
+tokio.workspace = true

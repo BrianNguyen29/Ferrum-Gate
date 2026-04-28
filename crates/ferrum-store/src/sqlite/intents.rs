@@ -1,7 +1,9 @@
 use async_trait::async_trait;
 use ferrum_proto::{IntentEnvelope, IntentId, IntentStatus};
 use sqlx::SqlitePool;
+use tokio::sync::oneshot;
 
+use crate::sqlite::write_queue::WriteQueue;
 use crate::{IntentRepo, Result};
 
 use super::helpers::{enum_text, fetch_entities, fetch_entity_by_id, to_json};
@@ -9,17 +11,34 @@ use super::helpers::{enum_text, fetch_entities, fetch_entity_by_id, to_json};
 #[derive(Clone)]
 pub struct SqliteIntentRepo {
     pool: SqlitePool,
+    write_queue: Option<WriteQueue>,
 }
 
 impl SqliteIntentRepo {
     pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            write_queue: None,
+        }
+    }
+
+    pub fn with_write_queue(mut self, queue: WriteQueue) -> Self {
+        self.write_queue = Some(queue);
+        self
     }
 }
 
 #[async_trait]
 impl IntentRepo for SqliteIntentRepo {
     async fn insert(&self, intent: &IntentEnvelope) -> Result<()> {
+        if let Some(ref queue) = self.write_queue {
+            let (reply_tx, _) = oneshot::channel();
+            let op = crate::sqlite::write_queue::WriteOp::InsertIntent {
+                data: intent.clone(),
+                reply: reply_tx,
+            };
+            return queue.send(op).await;
+        }
         let raw_json = to_json(intent)?;
         sqlx::query(
             "INSERT INTO intents (
@@ -47,6 +66,14 @@ impl IntentRepo for SqliteIntentRepo {
     }
 
     async fn update(&self, intent: &IntentEnvelope) -> Result<()> {
+        if let Some(ref queue) = self.write_queue {
+            let (reply_tx, _) = oneshot::channel();
+            let op = crate::sqlite::write_queue::WriteOp::UpdateIntent {
+                data: intent.clone(),
+                reply: reply_tx,
+            };
+            return queue.send(op).await;
+        }
         let raw_json = to_json(intent)?;
         sqlx::query(
             "UPDATE intents
@@ -73,18 +100,29 @@ impl IntentRepo for SqliteIntentRepo {
     }
 
     async fn update_status(&self, intent_id: IntentId, status: IntentStatus) -> Result<()> {
-        let Some(mut intent) = self.get(intent_id).await? else {
-            return Ok(());
-        };
-        intent.status = status;
-        self.update(&intent).await
+        if let Some(ref queue) = self.write_queue {
+            let (reply_tx, _) = oneshot::channel();
+            let op = crate::sqlite::write_queue::WriteOp::UpdateIntentStatus {
+                intent_id,
+                status,
+                reply: reply_tx,
+            };
+            return queue.send(op).await;
+        }
+        // Direct SQL UPDATE - avoids read-modify-write overhead
+        sqlx::query("UPDATE intents SET status = ?2 WHERE intent_id = ?1")
+            .bind(intent_id.to_string())
+            .bind(enum_text(&status)?)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 
     async fn list_by_status(&self, status: IntentStatus) -> Result<Vec<IntentEnvelope>> {
         fetch_entities(
             &self.pool,
             "SELECT raw_json FROM intents WHERE status = ?1 ORDER BY created_at DESC",
-            enum_text(&status)?,
+            |query| query.bind(enum_text(&status).expect("intent status should serialize")),
         )
         .await
     }

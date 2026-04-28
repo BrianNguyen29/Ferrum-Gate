@@ -1,1678 +1,1606 @@
-// Maildraft adapter for EmailDraft rollback/compensate evidence.
-// This adapter provides draft artifact management:
-// - execute: creates a draft artifact with draft_id in SQLite
-// - rollback/compensate: deletes the draft artifact from SQLite
-// - verify: checks that draft exists in SQLite (durable persistence)
-// Fail-closed: rejects send payloads (send semantics out of scope)
+//! MailDraft adapter for email draft management with rollback support.
+//!
+//! This adapter implements the `RollbackAdapter` trait for email draft operations,
+//! supporting create, update, and delete operations on drafts stored in memory.
+//!
+//! # Operations
+//!
+//! - **Create**: prepare validates draft_id is new, execute stores, verify confirms exists, rollback deletes
+//! - **Update**: prepare captures original draft, execute overwrites, verify confirms new content, rollback restores original
+//! - **Delete**: prepare captures draft content, execute removes, verify confirms gone, rollback recreates
+//!
+//! The operation type is determined by `request.metadata["operation"]` ("create", "update", "delete").
 
 use async_trait::async_trait;
-use rusqlite::{Connection, params};
-use serde::{Deserialize, Serialize};
-use std::path::Path;
-use std::sync::{Arc, Mutex};
-
-#[cfg(test)]
-use ferrum_proto::RollbackTarget;
-use ferrum_proto::{CheckSpec, CheckType, JsonMap, RollbackContract, RollbackPrepareRequest};
+use chrono::{DateTime, Utc};
+use ferrum_proto::{ActionType, JsonMap, RollbackContract, RollbackPrepareRequest, RollbackTarget};
 use ferrum_rollback::{
     AdapterError, ExecuteReceipt, PrepareReceipt, RecoveryReceipt, RollbackAdapter, VerifyReceipt,
 };
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use thiserror::Error;
 
 pub const ADAPTER_KIND: &str = "ferrum-adapter-maildraft";
-pub const ADAPTER_KEY: &str = "maildraft";
 
-/// Draft artifact stored in SQLite
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DraftArtifact {
-    pub draft_id: String,
-    pub execution_id: String,
-    pub recipients: Vec<String>,
+/// Phase context for error normalization.
+const PHASE_PREPARE: &str = "prepare";
+const PHASE_VERIFY: &str = "verify";
+const PHASE_EXECUTE: &str = "execute";
+const PHASE_ROLLBACK: &str = "rollback";
+#[allow(dead_code)]
+const PHASE_COMPENSATE: &str = "compensate";
+
+/// Supported operation types for MailDraft adapter.
+const OP_CREATE: &str = "create";
+const OP_UPDATE: &str = "update";
+const OP_DELETE: &str = "delete";
+
+#[derive(Debug, Error)]
+pub enum MailDraftAdapterError {
+    #[error("invalid target: expected EmailDraft, got {0}")]
+    InvalidTarget(String),
+    #[error("draft not found: {0}")]
+    DraftNotFound(String),
+    #[error("draft already exists: {0}")]
+    DraftAlreadyExists(String),
+    #[error("unsupported action type: {0}")]
+    UnsupportedAction(String),
+    #[error("unsupported operation: {0}")]
+    UnsupportedOperation(String),
+    #[error("validation error: {0}")]
+    Validation(String),
+    #[error("internal error: {0}")]
+    Internal(String),
+}
+
+impl From<MailDraftAdapterError> for AdapterError {
+    fn from(err: MailDraftAdapterError) -> Self {
+        match err {
+            MailDraftAdapterError::InvalidTarget(msg) => AdapterError::Validation(msg),
+            MailDraftAdapterError::DraftNotFound(msg) => AdapterError::Validation(msg),
+            MailDraftAdapterError::DraftAlreadyExists(msg) => AdapterError::Validation(msg),
+            MailDraftAdapterError::UnsupportedAction(msg) => AdapterError::Unsupported(msg),
+            MailDraftAdapterError::UnsupportedOperation(msg) => AdapterError::Unsupported(msg),
+            MailDraftAdapterError::Validation(msg) => AdapterError::Validation(msg),
+            MailDraftAdapterError::Internal(msg) => AdapterError::Internal(msg),
+        }
+    }
+}
+
+/// Email draft data structure.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct EmailDraft {
+    pub id: String,
+    pub from: String,
+    pub to: Vec<String>,
     pub subject: String,
     pub body: String,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: DateTime<Utc>,
 }
 
-impl DraftArtifact {
-    pub fn new(
-        draft_id: String,
-        execution_id: String,
-        recipients: Vec<String>,
-        subject: String,
-        body: String,
-    ) -> Self {
+/// Thread-safe in-memory store for email drafts.
+#[derive(Default)]
+pub struct DraftStore {
+    drafts: HashMap<String, EmailDraft>,
+}
+
+impl DraftStore {
+    fn new() -> Self {
         Self {
-            draft_id,
-            execution_id,
-            recipients,
-            subject,
-            body,
-            created_at: chrono::Utc::now(),
-        }
-    }
-}
-
-/// SQLite-backed store for draft artifacts
-pub struct SqliteMaildraftStore {
-    conn: Arc<Mutex<Connection>>,
-}
-
-/// Backwards-compatible alias for SqliteMaildraftStore.
-/// The MaildraftStore name is used in integration tests and existing code.
-pub type MaildraftStore = SqliteMaildraftStore;
-
-impl SqliteMaildraftStore {
-    /// Create a new in-memory SQLite store (for testing)
-    pub fn new_in_memory() -> anyhow::Result<Self> {
-        let conn = Connection::open_in_memory()?;
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS maildraft_drafts (
-                draft_id TEXT PRIMARY KEY,
-                execution_id TEXT NOT NULL,
-                recipients TEXT NOT NULL,
-                subject TEXT NOT NULL,
-                body TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_maildraft_execution_id ON maildraft_drafts(execution_id);",
-        )?;
-        Ok(Self {
-            conn: Arc::new(Mutex::new(conn)),
-        })
-    }
-
-    /// Create a new SQLite store backed by a file
-    pub fn new_from_file<P: AsRef<Path>>(path: P) -> anyhow::Result<Self> {
-        let conn = Connection::open(path)?;
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS maildraft_drafts (
-                draft_id TEXT PRIMARY KEY,
-                execution_id TEXT NOT NULL,
-                recipients TEXT NOT NULL,
-                subject TEXT NOT NULL,
-                body TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_maildraft_execution_id ON maildraft_drafts(execution_id);",
-        )?;
-        Ok(Self {
-            conn: Arc::new(Mutex::new(conn)),
-        })
-    }
-
-    /// Create a new in-memory SQLite store (panics on error).
-    /// This is the backwards-compatible API used by existing tests.
-    pub fn new() -> Self {
-        Self::new_in_memory().expect("failed to create maildraft store")
-    }
-
-    /// Save a draft artifact
-    pub fn save_draft(&self, draft: &DraftArtifact) -> anyhow::Result<()> {
-        let conn = self.conn.lock().unwrap();
-        let recipients_json = serde_json::to_string(&draft.recipients)?;
-        conn.execute(
-            "INSERT OR REPLACE INTO maildraft_drafts 
-             (draft_id, execution_id, recipients, subject, body, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![
-                draft.draft_id,
-                draft.execution_id,
-                recipients_json,
-                draft.subject,
-                draft.body,
-                draft.created_at.to_rfc3339(),
-            ],
-        )?;
-        Ok(())
-    }
-
-    /// Get draft by draft_id
-    pub fn get_draft(&self, draft_id: &str) -> anyhow::Result<Option<DraftArtifact>> {
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT draft_id, execution_id, recipients, subject, body, created_at 
-             FROM maildraft_drafts WHERE draft_id = ?1",
-        )?;
-        let mut rows = stmt.query(params![draft_id])?;
-        if let Some(row) = rows.next()? {
-            let recipients_json: String = row.get(2)?;
-            let created_at_str: String = row.get(5)?;
-            Ok(Some(DraftArtifact {
-                draft_id: row.get(0)?,
-                execution_id: row.get(1)?,
-                recipients: serde_json::from_str(&recipients_json).unwrap_or_default(),
-                subject: row.get(3)?,
-                body: row.get(4)?,
-                created_at: chrono::DateTime::parse_from_rfc3339(&created_at_str)
-                    .map(|dt| dt.with_timezone(&chrono::Utc))
-                    .unwrap_or_else(|_| chrono::Utc::now()),
-            }))
-        } else {
-            Ok(None)
+            drafts: HashMap::new(),
         }
     }
 
-    /// Get draft_id for an execution
-    pub fn get_draft_id_by_execution(&self, execution_id: &str) -> anyhow::Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
-        let mut stmt =
-            conn.prepare("SELECT draft_id FROM maildraft_drafts WHERE execution_id = ?1")?;
-        let mut rows = stmt.query(params![execution_id])?;
-        if let Some(row) = rows.next()? {
-            Ok(Some(row.get(0)?))
-        } else {
-            Ok(None)
-        }
+    fn get(&self, id: &str) -> Option<EmailDraft> {
+        self.drafts.get(id).cloned()
     }
 
-    /// Check if draft exists by draft_id (backwards-compatible API returns bool)
-    pub fn draft_exists(&self, draft_id: &str) -> bool {
-        // For backwards compatibility, we panic on error (database errors won't happen for in-memory SQLite)
-        self.draft_exists_check(draft_id)
-            .expect("database error checking draft existence")
+    fn insert(&mut self, draft: EmailDraft) {
+        self.drafts.insert(draft.id.clone(), draft);
     }
 
-    /// Internal check that returns Result (used by verify method)
-    pub(crate) fn draft_exists_check(&self, draft_id: &str) -> anyhow::Result<bool> {
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare("SELECT 1 FROM maildraft_drafts WHERE draft_id = ?1")?;
-        let mut rows = stmt.query(params![draft_id])?;
-        Ok(rows.next()?.is_some())
+    fn remove(&mut self, id: &str) -> Option<EmailDraft> {
+        self.drafts.remove(id)
     }
 
-    /// Delete draft by draft_id
-    pub fn delete_draft(&self, draft_id: &str) -> anyhow::Result<bool> {
-        let conn = self.conn.lock().unwrap();
-        let affected = conn.execute(
-            "DELETE FROM maildraft_drafts WHERE draft_id = ?1",
-            params![draft_id],
-        )?;
-        Ok(affected > 0)
-    }
-
-    /// Delete draft by execution_id
-    pub fn delete_draft_by_execution(&self, execution_id: &str) -> anyhow::Result<Option<String>> {
-        if let Some(draft_id) = self.get_draft_id_by_execution(execution_id)? {
-            self.delete_draft(&draft_id)?;
-            Ok(Some(draft_id))
-        } else {
-            Ok(None)
-        }
-    }
-
-    /// Clear all drafts for an execution (used for rollback)
-    pub fn clear(&self, execution_id: &str) -> anyhow::Result<()> {
-        let _ = self.delete_draft_by_execution(execution_id);
-        Ok(())
+    fn contains(&self, id: &str) -> bool {
+        self.drafts.contains_key(id)
     }
 }
 
-impl Clone for SqliteMaildraftStore {
-    fn clone(&self) -> Self {
-        Self {
-            conn: Arc::clone(&self.conn),
-        }
-    }
-}
-
-impl Default for SqliteMaildraftStore {
-    fn default() -> Self {
-        Self::new_in_memory().expect("failed to create default maildraft store")
-    }
-}
-
-/// Maildraft rollback adapter with durable SQLite persistence
-pub struct MaildraftAdapter {
+/// MailDraft adapter implementing the RollbackAdapter trait.
+///
+/// Uses in-memory storage to provide prepare→verify lifecycle testing
+/// with snapshot-based recovery for bounded Create, Update, and Delete operations.
+pub struct MailDraftAdapter {
     key: &'static str,
-    store: SqliteMaildraftStore,
+    store: Arc<Mutex<DraftStore>>,
 }
 
-impl MaildraftAdapter {
+impl MailDraftAdapter {
     pub fn new(key: &'static str) -> Self {
         Self {
             key,
-            store: SqliteMaildraftStore::new_in_memory().expect("failed to create maildraft store"),
+            store: Arc::new(Mutex::new(DraftStore::new())),
         }
     }
 
-    pub fn with_store(key: &'static str, store: SqliteMaildraftStore) -> Self {
+    /// Creates a new MailDraftAdapter with a shared store (useful for testing).
+    pub fn with_store(key: &'static str, store: Arc<Mutex<DraftStore>>) -> Self {
         Self { key, store }
     }
 
-    /// Get the draft store (for test inspection)
-    pub fn store(&self) -> &SqliteMaildraftStore {
-        &self.store
+    /// Extracts the draft_id from a RollbackTarget::EmailDraft variant.
+    fn extract_draft_id(target: &RollbackTarget) -> Result<String, AdapterError> {
+        match target {
+            RollbackTarget::EmailDraft { draft_id, .. } => draft_id.clone().ok_or_else(|| {
+                AdapterError::Validation("draft_id is required in EmailDraft target".into())
+            }),
+            _ => Err(AdapterError::Validation(format!(
+                "invalid target: expected EmailDraft, got {:?}",
+                target
+            ))),
+        }
+    }
+
+    /// Gets the operation type from metadata.
+    fn get_operation(metadata: &JsonMap) -> Result<&str, AdapterError> {
+        metadata
+            .get("operation")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                AdapterError::Validation(
+                    "operation is required in metadata (create, update, delete)".into(),
+                )
+            })
+    }
+
+    /// Validates required draft fields.
+    fn validate_draft_fields(
+        draft_id: &str,
+        from: &str,
+        to: &[String],
+        subject: &str,
+        body: &str,
+    ) -> Result<(), AdapterError> {
+        if draft_id.is_empty() {
+            return Err(AdapterError::Validation("draft_id cannot be empty".into()));
+        }
+        if from.is_empty() {
+            return Err(AdapterError::Validation("from cannot be empty".into()));
+        }
+        if to.is_empty() {
+            return Err(AdapterError::Validation("to cannot be empty".into()));
+        }
+        for (i, recipient) in to.iter().enumerate() {
+            if recipient.is_empty() {
+                return Err(AdapterError::Validation(format!(
+                    "to[{}] cannot be empty",
+                    i
+                )));
+            }
+        }
+        if subject.is_empty() {
+            return Err(AdapterError::Validation("subject cannot be empty".into()));
+        }
+        if body.is_empty() {
+            return Err(AdapterError::Validation("body cannot be empty".into()));
+        }
+        Ok(())
+    }
+
+    /// Normalizes an internal error with phase context.
+    fn phase_wrap_internal(phase: &'static str, msg: String) -> AdapterError {
+        AdapterError::Internal(format!("[{}] {}", phase, msg))
+    }
+
+    /// Normalizes a validation error with phase context.
+    fn phase_wrap_validation(phase: &'static str, msg: String) -> AdapterError {
+        AdapterError::Validation(format!("[{}] {}", phase, msg))
     }
 }
 
 #[async_trait]
-impl RollbackAdapter for MaildraftAdapter {
+impl RollbackAdapter for MailDraftAdapter {
     fn key(&self) -> &'static str {
         self.key
     }
 
     async fn prepare(
         &self,
-        _request: &RollbackPrepareRequest,
+        request: &RollbackPrepareRequest,
     ) -> Result<PrepareReceipt, AdapterError> {
-        // No special preparation needed for draft creation
+        // Validate that target is EmailDraft
+        let draft_id = Self::extract_draft_id(&request.target)?;
+
+        // Validate that action_type is MailDraft
+        if !matches!(request.action_type, ActionType::MailDraft) {
+            return Err(AdapterError::Unsupported(format!(
+                "unsupported action type: {:?}",
+                request.action_type
+            )));
+        }
+
+        // Get operation type from metadata
+        let operation = Self::get_operation(&request.metadata)?;
+
+        // Validate operation is supported
+        if !matches!(operation, OP_CREATE | OP_UPDATE | OP_DELETE) {
+            return Err(AdapterError::Unsupported(format!(
+                "unsupported operation: {} (expected create, update, or delete)",
+                operation
+            )));
+        }
+
+        let mut metadata = JsonMap::new();
+        metadata.insert(
+            "adapter_kind".to_string(),
+            serde_json::Value::String(ADAPTER_KIND.to_string()),
+        );
+        metadata.insert(
+            "prepared_at".to_string(),
+            serde_json::Value::String(Utc::now().to_rfc3339()),
+        );
+        metadata.insert(
+            "operation".to_string(),
+            serde_json::Value::String(operation.to_string()),
+        );
+        metadata.insert(
+            "draft_id".to_string(),
+            serde_json::Value::String(draft_id.clone()),
+        );
+
+        let store = self.store.lock().map_err(|e| {
+            Self::phase_wrap_internal(
+                PHASE_PREPARE,
+                format!("failed to acquire store lock: {}", e),
+            )
+        })?;
+
+        match operation {
+            OP_CREATE => {
+                // Fail-closed: draft must NOT exist for create
+                if store.contains(&draft_id) {
+                    return Err(Self::phase_wrap_validation(
+                        PHASE_PREPARE,
+                        format!("draft already exists: {}", draft_id),
+                    ));
+                }
+
+                // Validate required fields from metadata
+                let from = request
+                    .metadata
+                    .get("from")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
+                let to_values = request
+                    .metadata
+                    .get("to")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                let subject = request
+                    .metadata
+                    .get("subject")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
+                let body = request
+                    .metadata
+                    .get("body")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
+
+                // Validate fields are present for create
+                Self::validate_draft_fields(&draft_id, from, &to_values, subject, body)?;
+
+                // Store validated fields in metadata for execute phase
+                metadata.insert(
+                    "from".to_string(),
+                    serde_json::Value::String(from.to_string()),
+                );
+                metadata.insert(
+                    "to".to_string(),
+                    serde_json::Value::Array(
+                        to_values
+                            .iter()
+                            .map(|s| serde_json::Value::String(s.clone()))
+                            .collect(),
+                    ),
+                );
+                metadata.insert(
+                    "subject".to_string(),
+                    serde_json::Value::String(subject.to_string()),
+                );
+                metadata.insert(
+                    "body".to_string(),
+                    serde_json::Value::String(body.to_string()),
+                );
+            }
+            OP_UPDATE => {
+                // Fail-closed: draft MUST exist for update
+                let original_draft = store.get(&draft_id).ok_or_else(|| {
+                    Self::phase_wrap_validation(
+                        PHASE_PREPARE,
+                        format!("draft not found for update: {}", draft_id),
+                    )
+                })?;
+
+                // Store original draft state for potential rollback
+                metadata.insert(
+                    "original_from".to_string(),
+                    serde_json::Value::String(original_draft.from.clone()),
+                );
+                metadata.insert(
+                    "original_to".to_string(),
+                    serde_json::Value::Array(
+                        original_draft
+                            .to
+                            .iter()
+                            .map(|s| serde_json::Value::String(s.clone()))
+                            .collect(),
+                    ),
+                );
+                metadata.insert(
+                    "original_subject".to_string(),
+                    serde_json::Value::String(original_draft.subject.clone()),
+                );
+                metadata.insert(
+                    "original_body".to_string(),
+                    serde_json::Value::String(original_draft.body.clone()),
+                );
+
+                // Validate new fields from metadata if provided
+                let from = request
+                    .metadata
+                    .get("from")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&original_draft.from);
+                let to_values = request
+                    .metadata
+                    .get("to")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_else(|| original_draft.to.clone());
+                let subject = request
+                    .metadata
+                    .get("subject")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&original_draft.subject);
+                let body = request
+                    .metadata
+                    .get("body")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&original_draft.body);
+
+                // Validate fields
+                Self::validate_draft_fields(&draft_id, from, &to_values, subject, body)?;
+
+                // Store new values in metadata for execute phase
+                metadata.insert(
+                    "from".to_string(),
+                    serde_json::Value::String(from.to_string()),
+                );
+                metadata.insert(
+                    "to".to_string(),
+                    serde_json::Value::Array(
+                        to_values
+                            .iter()
+                            .map(|s| serde_json::Value::String(s.clone()))
+                            .collect(),
+                    ),
+                );
+                metadata.insert(
+                    "subject".to_string(),
+                    serde_json::Value::String(subject.to_string()),
+                );
+                metadata.insert(
+                    "body".to_string(),
+                    serde_json::Value::String(body.to_string()),
+                );
+            }
+            OP_DELETE => {
+                // Fail-closed: draft MUST exist for delete
+                let original_draft = store.get(&draft_id).ok_or_else(|| {
+                    Self::phase_wrap_validation(
+                        PHASE_PREPARE,
+                        format!("draft not found for delete: {}", draft_id),
+                    )
+                })?;
+
+                // Store original draft state for potential rollback (recreation)
+                metadata.insert(
+                    "original_from".to_string(),
+                    serde_json::Value::String(original_draft.from.clone()),
+                );
+                metadata.insert(
+                    "original_to".to_string(),
+                    serde_json::Value::Array(
+                        original_draft
+                            .to
+                            .iter()
+                            .map(|s| serde_json::Value::String(s.clone()))
+                            .collect(),
+                    ),
+                );
+                metadata.insert(
+                    "original_subject".to_string(),
+                    serde_json::Value::String(original_draft.subject.clone()),
+                );
+                metadata.insert(
+                    "original_body".to_string(),
+                    serde_json::Value::String(original_draft.body.clone()),
+                );
+                metadata.insert(
+                    "original_created_at".to_string(),
+                    serde_json::Value::String(original_draft.created_at.to_rfc3339()),
+                );
+            }
+            _ => {
+                return Err(AdapterError::Unsupported(format!(
+                    "unsupported operation: {}",
+                    operation
+                )));
+            }
+        }
+
         Ok(PrepareReceipt {
             accepted: true,
-            adapter_metadata: JsonMap::new(),
+            adapter_metadata: metadata,
         })
     }
 
     async fn execute(
         &self,
         contract: &RollbackContract,
-        payload: &serde_json::Value,
+        _payload: &serde_json::Value,
     ) -> Result<ExecuteReceipt, AdapterError> {
-        // Fail-closed: reject send payloads (send semantics out of scope)
-        if let Some(send) = payload.get("send").and_then(|v| v.as_bool()) {
-            if send {
-                return Err(AdapterError::Validation(
-                    "maildraft adapter: send semantics out of scope, rejecting send payload"
-                        .to_string(),
-                ));
-            }
+        // Validate that action_type is MailDraft
+        if !matches!(contract.action_type, ActionType::MailDraft) {
+            return Err(AdapterError::Unsupported(format!(
+                "unsupported action type: {:?}",
+                contract.action_type
+            )));
         }
 
-        // Extract draft creation fields
-        let recipients: Vec<String> = payload
-            .get("to")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect()
-            })
-            .unwrap_or_default();
+        let draft_id = Self::extract_draft_id(&contract.target)?;
+        let operation = Self::get_operation(&contract.metadata)?;
 
-        let subject = payload
-            .get("subject")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
+        let mut store = self.store.lock().map_err(|e| {
+            Self::phase_wrap_internal(
+                PHASE_EXECUTE,
+                format!("failed to acquire store lock: {}", e),
+            )
+        })?;
 
-        let body = payload
-            .get("body")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-
-        // Generate draft_id
-        let draft_id = format!("draft-{}", uuid::Uuid::new_v4());
-        let execution_id = contract.execution_id.to_string();
-
-        let artifact = DraftArtifact::new(
-            draft_id.clone(),
-            execution_id,
-            recipients.clone(),
-            subject.clone(),
-            body.clone(),
-        );
-
-        // Store the draft artifact durably in SQLite
-        self.store
-            .save_draft(&artifact)
-            .map_err(|e| AdapterError::Internal(format!("failed to save draft: {}", e)))?;
-
-        let mut metadata = JsonMap::new();
-        metadata.insert("draft_id".to_string(), serde_json::json!(draft_id));
-
-        Ok(ExecuteReceipt {
-            external_id: Some(draft_id.clone()),
-            result_digest: Some(format!("draft:{}", recipients.len())),
-            adapter_metadata: metadata,
-        })
-    }
-
-    async fn verify(&self, contract: &RollbackContract) -> Result<VerifyReceipt, AdapterError> {
-        // Verify checks that the draft was actually persisted and can be retrieved.
-        // Explicit EmailDraftExists checks are honored: if provided, the check's draft_id
-        // is used; otherwise fall back to metadata lookup.
-        let execution_id = contract.execution_id.to_string();
-
-        // Extract explicit draft_id from verify_checks if EmailDraftExists is present.
-        // Fail-closed: if EmailDraftExists check is present but draft_id is missing or
-        // non-string, return Validation error (explicit check was requested but malformed).
-        let explicit_check_result =
-            MaildraftAdapter::extract_expected_draft_id(&contract.verify_checks);
-
-        // Track if explicit check was requested (before we consume explicit_draft_id)
-        let has_explicit_check =
-            explicit_check_result.is_ok() && explicit_check_result.as_ref().unwrap().is_some();
-
-        // Get draft_id: explicit check takes precedence, then metadata, then lookup.
-        // For explicit check: propagate errors (including Validation for malformed check).
-        // For fallback lookup: DB/storage errors result in verified=false (fail-closed)
-        // rather than propagating, ensuring execution transitions to Failed at gateway level.
-        let draft_id = match explicit_check_result {
-            Ok(Some(draft_id)) => Some(draft_id),
-            Ok(None) => {
-                // No explicit EmailDraftExists check in verify_checks; use metadata or lookup
-                if let Some(draft_id) = contract
+        match operation {
+            OP_CREATE => {
+                // Get fields from metadata (validated in prepare)
+                let from = contract
                     .metadata
-                    .get("draft_id")
+                    .get("from")
                     .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-                {
-                    Some(draft_id)
-                } else {
-                    // Fallback: look up by execution_id.
-                    // DB/storage errors result in verified=false (fail-closed) rather than
-                    // propagating, ensuring execution transitions to Failed at gateway level.
-                    match self.store.get_draft_id_by_execution(&execution_id) {
-                        Ok(draft_id) => draft_id,
-                        Err(_) => {
-                            // Database error - fail closed by returning verified=false
-                            return Ok(VerifyReceipt {
-                                verified: false,
-                                adapter_metadata: JsonMap::new(),
-                            });
-                        }
-                    }
-                }
-            }
-            Err(e) => return Err(e), // Validation error for malformed explicit check
-        };
+                    .ok_or_else(|| AdapterError::Validation("from not found in metadata".into()))?;
+                let to_values = contract
+                    .metadata
+                    .get("to")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect::<Vec<_>>()
+                    })
+                    .ok_or_else(|| AdapterError::Validation("to not found in metadata".into()))?;
+                let subject = contract
+                    .metadata
+                    .get("subject")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        AdapterError::Validation("subject not found in metadata".into())
+                    })?;
+                let body = contract
+                    .metadata
+                    .get("body")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| AdapterError::Validation("body not found in metadata".into()))?;
 
-        let draft_id = match draft_id {
-            Some(id) => id,
-            None => {
-                // No draft found for this execution - verification fails
-                return Ok(VerifyReceipt {
-                    verified: false,
-                    adapter_metadata: JsonMap::new(),
-                });
-            }
-        };
+                let draft = EmailDraft {
+                    id: draft_id.clone(),
+                    from: from.to_string(),
+                    to: to_values,
+                    subject: subject.to_string(),
+                    body: body.to_string(),
+                    created_at: Utc::now(),
+                };
 
-        // Check that draft exists in SQLite store
-        match self.store.draft_exists_check(&draft_id) {
-            Ok(true) => {
+                store.insert(draft);
+
                 let mut metadata = JsonMap::new();
-                metadata.insert("draft_id".to_string(), serde_json::json!(draft_id));
                 metadata.insert(
-                    "verified_at".to_string(),
-                    serde_json::json!(chrono::Utc::now().to_rfc3339()),
+                    "operation".to_string(),
+                    serde_json::Value::String(OP_CREATE.to_string()),
                 );
-                // Record if this was an explicit check
-                if has_explicit_check {
-                    metadata.insert(
-                        "explicit_check".to_string(),
-                        serde_json::json!("EmailDraftExists"),
-                    );
-                }
-                Ok(VerifyReceipt {
-                    verified: true,
+                metadata.insert("draft_id".to_string(), serde_json::Value::String(draft_id));
+
+                Ok(ExecuteReceipt {
+                    external_id: None,
+                    result_digest: None,
                     adapter_metadata: metadata,
                 })
             }
-            Ok(false) => {
-                // Draft was expected but doesn't exist - verification fails
-                Ok(VerifyReceipt {
-                    verified: false,
-                    adapter_metadata: JsonMap::new(),
+            OP_UPDATE => {
+                // Get fields from metadata (validated in prepare)
+                let from = contract
+                    .metadata
+                    .get("from")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| AdapterError::Validation("from not found in metadata".into()))?;
+                let to_values = contract
+                    .metadata
+                    .get("to")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect::<Vec<_>>()
+                    })
+                    .ok_or_else(|| AdapterError::Validation("to not found in metadata".into()))?;
+                let subject = contract
+                    .metadata
+                    .get("subject")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        AdapterError::Validation("subject not found in metadata".into())
+                    })?;
+                let body = contract
+                    .metadata
+                    .get("body")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| AdapterError::Validation("body not found in metadata".into()))?;
+
+                // Get original created_at if it exists (for update, preserve original timestamp)
+                let original_created_at = if let Some(created_at_str) = contract
+                    .metadata
+                    .get("original_created_at")
+                    .and_then(|v| v.as_str())
+                {
+                    DateTime::parse_from_rfc3339(created_at_str)
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .ok()
+                } else {
+                    None
+                };
+
+                let created_at = original_created_at.unwrap_or_else(Utc::now);
+
+                let draft = EmailDraft {
+                    id: draft_id.clone(),
+                    from: from.to_string(),
+                    to: to_values,
+                    subject: subject.to_string(),
+                    body: body.to_string(),
+                    created_at,
+                };
+
+                store.insert(draft);
+
+                let mut metadata = JsonMap::new();
+                metadata.insert(
+                    "operation".to_string(),
+                    serde_json::Value::String(OP_UPDATE.to_string()),
+                );
+                metadata.insert("draft_id".to_string(), serde_json::Value::String(draft_id));
+
+                Ok(ExecuteReceipt {
+                    external_id: None,
+                    result_digest: None,
+                    adapter_metadata: metadata,
                 })
             }
-            Err(_e) => {
-                // Database error - verification fails closed by returning verified=false.
-                // This ensures execution transitions to Failed state at the gateway level,
-                // enabling proper commit rejection semantics.
-                Ok(VerifyReceipt {
-                    verified: false,
-                    adapter_metadata: JsonMap::new(),
+            OP_DELETE => {
+                store.remove(&draft_id);
+
+                let mut metadata = JsonMap::new();
+                metadata.insert(
+                    "operation".to_string(),
+                    serde_json::Value::String(OP_DELETE.to_string()),
+                );
+                metadata.insert("draft_id".to_string(), serde_json::Value::String(draft_id));
+
+                Ok(ExecuteReceipt {
+                    external_id: None,
+                    result_digest: None,
+                    adapter_metadata: metadata,
                 })
+            }
+            _ => Err(AdapterError::Unsupported(format!(
+                "unsupported operation: {}",
+                operation
+            ))),
+        }
+    }
+
+    async fn verify(&self, contract: &RollbackContract) -> Result<VerifyReceipt, AdapterError> {
+        // Validate that action_type is MailDraft
+        if !matches!(contract.action_type, ActionType::MailDraft) {
+            return Err(AdapterError::Unsupported(format!(
+                "unsupported action type: {:?}",
+                contract.action_type
+            )));
+        }
+
+        let draft_id = Self::extract_draft_id(&contract.target)?;
+        let operation = Self::get_operation(&contract.metadata)?;
+
+        let store = self.store.lock().map_err(|e| {
+            Self::phase_wrap_internal(PHASE_VERIFY, format!("failed to acquire store lock: {}", e))
+        })?;
+
+        match operation {
+            OP_CREATE | OP_UPDATE => {
+                // Fail-closed: draft must exist after create/update
+                let draft = store.get(&draft_id).ok_or_else(|| {
+                    Self::phase_wrap_validation(
+                        PHASE_VERIFY,
+                        format!("draft not found after {}: {}", operation, draft_id),
+                    )
+                })?;
+
+                // Verify expected content if provided in metadata
+                if let Some(expected_from) = contract.metadata.get("from").and_then(|v| v.as_str())
+                {
+                    if draft.from != expected_from {
+                        return Err(Self::phase_wrap_validation(
+                            PHASE_VERIFY,
+                            format!(
+                                "from mismatch: expected '{}', got '{}'",
+                                expected_from, draft.from
+                            ),
+                        ));
+                    }
+                }
+
+                if let Some(expected_to_arr) =
+                    contract.metadata.get("to").and_then(|v| v.as_array())
+                {
+                    let expected_to: Vec<&str> =
+                        expected_to_arr.iter().filter_map(|v| v.as_str()).collect();
+                    if draft.to.iter().map(|s| s.as_str()).collect::<Vec<_>>() != expected_to {
+                        return Err(Self::phase_wrap_validation(
+                            PHASE_VERIFY,
+                            format!(
+                                "to mismatch: expected {:?}, got {:?}",
+                                expected_to, draft.to
+                            ),
+                        ));
+                    }
+                }
+
+                if let Some(expected_subject) =
+                    contract.metadata.get("subject").and_then(|v| v.as_str())
+                {
+                    if draft.subject != expected_subject {
+                        return Err(Self::phase_wrap_validation(
+                            PHASE_VERIFY,
+                            format!(
+                                "subject mismatch: expected '{}', got '{}'",
+                                expected_subject, draft.subject
+                            ),
+                        ));
+                    }
+                }
+
+                if let Some(expected_body) = contract.metadata.get("body").and_then(|v| v.as_str())
+                {
+                    if draft.body != expected_body {
+                        return Err(Self::phase_wrap_validation(
+                            PHASE_VERIFY,
+                            format!(
+                                "body mismatch: expected '{}', got '{}'",
+                                expected_body, draft.body
+                            ),
+                        ));
+                    }
+                }
+            }
+            OP_DELETE => {
+                // Fail-closed: draft must NOT exist after delete
+                if store.contains(&draft_id) {
+                    return Err(Self::phase_wrap_validation(
+                        PHASE_VERIFY,
+                        format!("draft still exists after delete: {}", draft_id),
+                    ));
+                }
+            }
+            _ => {
+                return Err(AdapterError::Unsupported(format!(
+                    "unsupported operation: {}",
+                    operation
+                )));
             }
         }
+
+        Ok(VerifyReceipt {
+            verified: true,
+            adapter_metadata: JsonMap::new(),
+        })
     }
 
     async fn compensate(
         &self,
         contract: &RollbackContract,
     ) -> Result<RecoveryReceipt, AdapterError> {
-        let execution_id = contract.execution_id.to_string();
+        // Compensate is the same as rollback for MailDraft
+        self.rollback(contract).await
+    }
 
-        // Delete the draft artifact from SQLite
-        match self.store.delete_draft_by_execution(&execution_id) {
-            Ok(Some(draft_id)) => {
+    async fn rollback(&self, contract: &RollbackContract) -> Result<RecoveryReceipt, AdapterError> {
+        // Validate that action_type is MailDraft
+        if !matches!(contract.action_type, ActionType::MailDraft) {
+            return Err(AdapterError::Unsupported(format!(
+                "unsupported action type: {:?}",
+                contract.action_type
+            )));
+        }
+
+        let draft_id = Self::extract_draft_id(&contract.target)?;
+        let operation = Self::get_operation(&contract.metadata)?;
+
+        let mut store = self.store.lock().map_err(|e| {
+            Self::phase_wrap_internal(
+                PHASE_ROLLBACK,
+                format!("failed to acquire store lock: {}", e),
+            )
+        })?;
+
+        match operation {
+            OP_CREATE => {
+                // Rollback create: delete the created draft (idempotent)
+                store.remove(&draft_id);
+
+                // Verify it's gone
+                if store.contains(&draft_id) {
+                    return Err(Self::phase_wrap_validation(
+                        PHASE_ROLLBACK,
+                        format!("rollback failed: draft still exists: {}", draft_id),
+                    ));
+                }
+
                 let mut metadata = JsonMap::new();
-                metadata.insert("deleted_draft_id".to_string(), serde_json::json!(draft_id));
+                metadata.insert(
+                    "rollback_action".to_string(),
+                    serde_json::Value::String("deleted_created_draft".to_string()),
+                );
+                metadata.insert("draft_id".to_string(), serde_json::Value::String(draft_id));
+
                 Ok(RecoveryReceipt {
                     recovered: true,
                     adapter_metadata: metadata,
                 })
             }
-            Ok(None) => {
-                // No draft to compensate (shouldn't happen in normal flow)
+            OP_UPDATE => {
+                // Rollback update: restore original draft state
+                let original_from = contract
+                    .metadata
+                    .get("original_from")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        AdapterError::Validation("original_from not found in metadata".into())
+                    })?;
+                let original_to = contract
+                    .metadata
+                    .get("original_to")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect::<Vec<_>>()
+                    })
+                    .ok_or_else(|| {
+                        AdapterError::Validation("original_to not found in metadata".into())
+                    })?;
+                let original_subject = contract
+                    .metadata
+                    .get("original_subject")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        AdapterError::Validation("original_subject not found in metadata".into())
+                    })?;
+                let original_body = contract
+                    .metadata
+                    .get("original_body")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        AdapterError::Validation("original_body not found in metadata".into())
+                    })?;
+                let original_created_at = contract
+                    .metadata
+                    .get("original_created_at")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+                    .map(|dt| dt.with_timezone(&Utc));
+
+                let restored_draft = EmailDraft {
+                    id: draft_id.clone(),
+                    from: original_from.to_string(),
+                    to: original_to,
+                    subject: original_subject.to_string(),
+                    body: original_body.to_string(),
+                    created_at: original_created_at.unwrap_or_else(Utc::now),
+                };
+
+                store.insert(restored_draft);
+
+                // Verify it's restored
+                let restored = store.get(&draft_id).ok_or_else(|| {
+                    Self::phase_wrap_validation(
+                        PHASE_ROLLBACK,
+                        format!(
+                            "rollback failed: draft not found after restore: {}",
+                            draft_id
+                        ),
+                    )
+                })?;
+
+                // Verify content matches
+                if restored.from != original_from
+                    || restored.subject != original_subject
+                    || restored.body != original_body
+                {
+                    return Err(Self::phase_wrap_validation(
+                        PHASE_ROLLBACK,
+                        format!(
+                            "rollback failed: restored draft content mismatch for {}",
+                            draft_id
+                        ),
+                    ));
+                }
+
+                let mut metadata = JsonMap::new();
+                metadata.insert(
+                    "rollback_action".to_string(),
+                    serde_json::Value::String("restored_original".to_string()),
+                );
+                metadata.insert("draft_id".to_string(), serde_json::Value::String(draft_id));
+
                 Ok(RecoveryReceipt {
                     recovered: true,
-                    adapter_metadata: JsonMap::new(),
+                    adapter_metadata: metadata,
                 })
             }
-            Err(e) => Err(AdapterError::Internal(format!(
-                "compensate failed to delete draft: {}",
-                e
+            OP_DELETE => {
+                // Rollback delete: recreate the deleted draft
+                let from = contract
+                    .metadata
+                    .get("original_from")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        AdapterError::Validation("original_from not found in metadata".into())
+                    })?;
+                let to = contract
+                    .metadata
+                    .get("original_to")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect::<Vec<_>>()
+                    })
+                    .ok_or_else(|| {
+                        AdapterError::Validation("original_to not found in metadata".into())
+                    })?;
+                let subject = contract
+                    .metadata
+                    .get("original_subject")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        AdapterError::Validation("original_subject not found in metadata".into())
+                    })?;
+                let body = contract
+                    .metadata
+                    .get("original_body")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        AdapterError::Validation("original_body not found in metadata".into())
+                    })?;
+                let created_at = contract
+                    .metadata
+                    .get("original_created_at")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .unwrap_or_else(Utc::now);
+
+                let restored_draft = EmailDraft {
+                    id: draft_id.clone(),
+                    from: from.to_string(),
+                    to,
+                    subject: subject.to_string(),
+                    body: body.to_string(),
+                    created_at,
+                };
+
+                store.insert(restored_draft);
+
+                // Verify it's restored
+                if !store.contains(&draft_id) {
+                    return Err(Self::phase_wrap_validation(
+                        PHASE_ROLLBACK,
+                        format!("rollback failed: draft not recreated: {}", draft_id),
+                    ));
+                }
+
+                let mut metadata = JsonMap::new();
+                metadata.insert(
+                    "rollback_action".to_string(),
+                    serde_json::Value::String("recreated_deleted_draft".to_string()),
+                );
+                metadata.insert("draft_id".to_string(), serde_json::Value::String(draft_id));
+
+                Ok(RecoveryReceipt {
+                    recovered: true,
+                    adapter_metadata: metadata,
+                })
+            }
+            _ => Err(AdapterError::Unsupported(format!(
+                "unsupported operation: {}",
+                operation
             ))),
         }
     }
-
-    async fn rollback(&self, contract: &RollbackContract) -> Result<RecoveryReceipt, AdapterError> {
-        // Rollback and compensate are the same for draft creation - delete the draft
-        self.compensate(contract).await
-    }
-}
-
-impl MaildraftAdapter {
-    /// Extract expected draft_id from verify_checks if EmailDraftExists is present.
-    ///
-    /// Returns:
-    /// - `Ok(Some(draft_id))` if EmailDraftExists check is present and draft_id is a valid string
-    /// - `Ok(None)` if no EmailDraftExists check is present
-    /// - `Err(AdapterError::Validation)` if EmailDraftExists check is present but draft_id
-    ///   is missing or non-string (fail-closed: explicit check was requested but malformed)
-    fn extract_expected_draft_id(checks: &[CheckSpec]) -> Result<Option<String>, AdapterError> {
-        for check in checks {
-            if matches!(check.check_type, CheckType::EmailDraftExists) {
-                // EmailDraftExists check is present; require draft_id to be a string
-                match check.config.get("draft_id") {
-                    Some(draft_id_json) => {
-                        if let Some(draft_id) = draft_id_json.as_str() {
-                            return Ok(Some(draft_id.to_string()));
-                        }
-                        // draft_id is present but not a string - fail closed
-                        return Err(AdapterError::Validation(
-                            "EmailDraftExists check requires draft_id to be a string".to_string(),
-                        ));
-                    }
-                    None => {
-                        // draft_id is missing - fail closed
-                        return Err(AdapterError::Validation(
-                            "EmailDraftExists check requires draft_id but it is missing"
-                                .to_string(),
-                        ));
-                    }
-                }
-            }
-        }
-        Ok(None) // No EmailDraftExists check present
-    }
-}
-
-/// Register the maildraft adapter in the registry
-pub fn register_maildraft_adapter(registry: &mut ferrum_rollback::AdapterRegistry) {
-    registry.register(std::sync::Arc::new(MaildraftAdapter::new(ADAPTER_KEY)));
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ferrum_proto::{ExecutionId, IntentId, ProposalId, RollbackContractId, RollbackState};
 
-    #[tokio::test]
-    async fn test_maildraft_adapter_execute_creates_draft() {
-        let store = SqliteMaildraftStore::new_in_memory().unwrap();
-        let adapter = MaildraftAdapter::with_store(ADAPTER_KEY, store);
-        let execution_id = ferrum_proto::ExecutionId::new();
+    fn create_test_request(draft_id: &str, operation: &str) -> RollbackPrepareRequest {
+        let mut metadata = JsonMap::new();
+        metadata.insert(
+            "operation".to_string(),
+            serde_json::Value::String(operation.to_string()),
+        );
 
-        // Prepare
-        let prepare_req = RollbackPrepareRequest {
-            intent_id: ferrum_proto::IntentId::new(),
-            proposal_id: ferrum_proto::ProposalId::new(),
-            execution_id,
-            action_type: ferrum_proto::ActionType::EmailDraftCreate,
-            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
-            adapter_key: ADAPTER_KEY.to_string(),
+        if operation == OP_CREATE || operation == OP_UPDATE {
+            metadata.insert(
+                "from".to_string(),
+                serde_json::Value::String("sender@example.com".to_string()),
+            );
+            metadata.insert(
+                "to".to_string(),
+                serde_json::Value::Array(vec![serde_json::Value::String(
+                    "recipient@example.com".to_string(),
+                )]),
+            );
+            metadata.insert(
+                "subject".to_string(),
+                serde_json::Value::String("Test Subject".to_string()),
+            );
+            metadata.insert(
+                "body".to_string(),
+                serde_json::Value::String("Test Body".to_string()),
+            );
+        }
+
+        RollbackPrepareRequest {
+            intent_id: IntentId::new(),
+            proposal_id: ProposalId::new(),
+            execution_id: ExecutionId::new(),
+            action_type: ActionType::MailDraft,
+            rollback_class: ferrum_proto::RollbackClass::R1SnapshotRecoverable,
+            adapter_key: "maildraft".to_string(),
             target: RollbackTarget::EmailDraft {
-                draft_id: None,
-                recipients: vec!["alice@example.com".to_string()],
+                draft_id: Some(draft_id.to_string()),
+                recipients: vec!["recipient@example.com".to_string()],
             },
             prepare_checks: vec![],
             verify_checks: vec![],
             compensation_plan: vec![],
             auto_commit: false,
-            metadata: JsonMap::new(),
-        };
+            metadata,
+        }
+    }
 
-        let prep_receipt = adapter.prepare(&prepare_req).await.unwrap();
+    fn create_test_contract(
+        draft_id: &str,
+        _operation: &str,
+        metadata: JsonMap,
+    ) -> RollbackContract {
+        RollbackContract {
+            contract_id: RollbackContractId::new(),
+            intent_id: IntentId::new(),
+            proposal_id: ProposalId::new(),
+            execution_id: ExecutionId::new(),
+            action_type: ActionType::MailDraft,
+            rollback_class: ferrum_proto::RollbackClass::R1SnapshotRecoverable,
+            adapter_key: "maildraft".to_string(),
+            target: RollbackTarget::EmailDraft {
+                draft_id: Some(draft_id.to_string()),
+                recipients: vec!["recipient@example.com".to_string()],
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: RollbackState::Prepared,
+            created_at: Utc::now(),
+            expires_at: None,
+            metadata,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_maildraft_prepare_create_validates_required_fields() {
+        let adapter = MailDraftAdapter::new("maildraft");
+
+        // Missing subject
+        let mut request = create_test_request("draft1", OP_CREATE);
+        request.metadata.remove("subject");
+        let result = adapter.prepare(&request).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("subject"));
+
+        // Missing body
+        let mut request = create_test_request("draft1", OP_CREATE);
+        request.metadata.remove("body");
+        let result = adapter.prepare(&request).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("body"));
+
+        // Missing from
+        let mut request = create_test_request("draft1", OP_CREATE);
+        request.metadata.remove("from");
+        let result = adapter.prepare(&request).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("from"));
+
+        // Empty to array
+        let mut request = create_test_request("draft1", OP_CREATE);
+        request
+            .metadata
+            .insert("to".to_string(), serde_json::Value::Array(vec![]));
+        let result = adapter.prepare(&request).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("to"));
+    }
+
+    #[tokio::test]
+    async fn test_maildraft_prepare_create_rejects_existing_draft() {
+        let adapter = MailDraftAdapter::new("maildraft");
+        let store = Arc::clone(&adapter.store);
+
+        // Pre-create a draft
+        {
+            let mut store_lock = store.lock().unwrap();
+            store_lock.insert(EmailDraft {
+                id: "existing-draft".to_string(),
+                from: "sender@example.com".to_string(),
+                to: vec!["recipient@example.com".to_string()],
+                subject: "Existing".to_string(),
+                body: "Body".to_string(),
+                created_at: Utc::now(),
+            });
+        }
+
+        // Try to create with same id
+        let request = create_test_request("existing-draft", OP_CREATE);
+        let result = adapter.prepare(&request).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("already exists"));
+    }
+
+    #[tokio::test]
+    async fn test_maildraft_execute_create_stores_draft() {
+        let adapter = MailDraftAdapter::new("maildraft");
+        let store = Arc::clone(&adapter.store);
+
+        let request = create_test_request("new-draft", OP_CREATE);
+        let prep_receipt = adapter.prepare(&request).await.unwrap();
         assert!(prep_receipt.accepted);
 
-        // Execute (draft creation, not send)
-        let payload = serde_json::json!({
-            "to": ["alice@example.com", "bob@example.com"],
-            "subject": "Test email",
-            "body": "Hello!"
-        });
-
-        let contract = RollbackContract {
-            contract_id: ferrum_proto::RollbackContractId::new(),
-            intent_id: prepare_req.intent_id,
-            proposal_id: prepare_req.proposal_id,
-            execution_id: prepare_req.execution_id,
-            action_type: ferrum_proto::ActionType::EmailDraftCreate,
-            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
-            adapter_key: ADAPTER_KEY.to_string(),
-            target: prepare_req.target.clone(),
-            prepare_checks: vec![],
-            verify_checks: vec![],
-            compensation_plan: vec![],
-            auto_commit: false,
-            state: ferrum_proto::RollbackState::Prepared,
-            created_at: chrono::Utc::now(),
-            expires_at: None,
-            metadata: prep_receipt.adapter_metadata,
-        };
-
-        let exec_receipt = adapter.execute(&contract, &payload).await.unwrap();
-        assert!(exec_receipt.external_id.is_some());
-        let draft_id = exec_receipt.external_id.unwrap();
-
-        // Verify draft exists in store
-        assert!(adapter.store().draft_exists(&draft_id));
-
-        // Verify draft can be retrieved
-        let draft = adapter.store().get_draft(&draft_id).unwrap().unwrap();
-        assert_eq!(draft.draft_id, draft_id);
-        assert_eq!(draft.recipients.len(), 2);
-    }
-
-    #[tokio::test]
-    async fn test_maildraft_adapter_rejects_send_payload() {
-        let store = SqliteMaildraftStore::new_in_memory().unwrap();
-        let adapter = MaildraftAdapter::with_store(ADAPTER_KEY, store);
-        let execution_id = ferrum_proto::ExecutionId::new();
-
-        let prepare_req = RollbackPrepareRequest {
-            intent_id: ferrum_proto::IntentId::new(),
-            proposal_id: ferrum_proto::ProposalId::new(),
-            execution_id,
-            action_type: ferrum_proto::ActionType::EmailDraftCreate,
-            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
-            adapter_key: ADAPTER_KEY.to_string(),
-            target: RollbackTarget::EmailDraft {
-                draft_id: None,
-                recipients: vec!["alice@example.com".to_string()],
-            },
-            prepare_checks: vec![],
-            verify_checks: vec![],
-            compensation_plan: vec![],
-            auto_commit: false,
-            metadata: JsonMap::new(),
-        };
-
-        let _prep_receipt = adapter.prepare(&prepare_req).await.unwrap();
-
-        // Execute with send=true (should fail)
-        let payload = serde_json::json!({
-            "to": ["alice@example.com"],
-            "subject": "Test",
-            "body": "Hello!",
-            "send": true
-        });
-
-        let contract = RollbackContract {
-            contract_id: ferrum_proto::RollbackContractId::new(),
-            intent_id: prepare_req.intent_id,
-            proposal_id: prepare_req.proposal_id,
-            execution_id: prepare_req.execution_id,
-            action_type: ferrum_proto::ActionType::EmailDraftCreate,
-            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
-            adapter_key: ADAPTER_KEY.to_string(),
-            target: prepare_req.target.clone(),
-            prepare_checks: vec![],
-            verify_checks: vec![],
-            compensation_plan: vec![],
-            auto_commit: false,
-            state: ferrum_proto::RollbackState::Prepared,
-            created_at: chrono::Utc::now(),
-            expires_at: None,
-            metadata: JsonMap::new(),
-        };
-
-        let result = adapter.execute(&contract, &payload).await;
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("send semantics out of scope"));
-    }
-
-    #[tokio::test]
-    async fn test_maildraft_adapter_rollback_deletes_draft() {
-        let store = SqliteMaildraftStore::new_in_memory().unwrap();
-        let adapter = MaildraftAdapter::with_store(ADAPTER_KEY, store);
-        let execution_id = ferrum_proto::ExecutionId::new();
-
-        let prepare_req = RollbackPrepareRequest {
-            intent_id: ferrum_proto::IntentId::new(),
-            proposal_id: ferrum_proto::ProposalId::new(),
-            execution_id,
-            action_type: ferrum_proto::ActionType::EmailDraftCreate,
-            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
-            adapter_key: ADAPTER_KEY.to_string(),
-            target: RollbackTarget::EmailDraft {
-                draft_id: None,
-                recipients: vec!["alice@example.com".to_string()],
-            },
-            prepare_checks: vec![],
-            verify_checks: vec![],
-            compensation_plan: vec![],
-            auto_commit: false,
-            metadata: JsonMap::new(),
-        };
-
-        let prep_receipt = adapter.prepare(&prepare_req).await.unwrap();
-
-        let payload = serde_json::json!({
-            "to": ["alice@example.com"],
-            "subject": "Test",
-            "body": "Hello!"
-        });
-
-        let contract = RollbackContract {
-            contract_id: ferrum_proto::RollbackContractId::new(),
-            intent_id: prepare_req.intent_id,
-            proposal_id: prepare_req.proposal_id,
-            execution_id: prepare_req.execution_id,
-            action_type: ferrum_proto::ActionType::EmailDraftCreate,
-            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
-            adapter_key: ADAPTER_KEY.to_string(),
-            target: prepare_req.target.clone(),
-            prepare_checks: vec![],
-            verify_checks: vec![],
-            compensation_plan: vec![],
-            auto_commit: false,
-            state: ferrum_proto::RollbackState::Prepared,
-            created_at: chrono::Utc::now(),
-            expires_at: None,
-            metadata: prep_receipt.adapter_metadata,
-        };
-
-        let exec_receipt = adapter.execute(&contract, &payload).await.unwrap();
-        let draft_id = exec_receipt.external_id.unwrap();
-        assert!(adapter.store().draft_exists(&draft_id));
-
-        // Rollback should delete the draft
-        adapter.rollback(&contract).await.unwrap();
-        assert!(!adapter.store().draft_exists(&draft_id));
-    }
-
-    #[tokio::test]
-    async fn test_maildraft_adapter_compensate_deletes_draft() {
-        let store = SqliteMaildraftStore::new_in_memory().unwrap();
-        let adapter = MaildraftAdapter::with_store(ADAPTER_KEY, store);
-        let execution_id = ferrum_proto::ExecutionId::new();
-
-        let prepare_req = RollbackPrepareRequest {
-            intent_id: ferrum_proto::IntentId::new(),
-            proposal_id: ferrum_proto::ProposalId::new(),
-            execution_id,
-            action_type: ferrum_proto::ActionType::EmailDraftCreate,
-            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
-            adapter_key: ADAPTER_KEY.to_string(),
-            target: RollbackTarget::EmailDraft {
-                draft_id: None,
-                recipients: vec!["alice@example.com".to_string()],
-            },
-            prepare_checks: vec![],
-            verify_checks: vec![],
-            compensation_plan: vec![],
-            auto_commit: false,
-            metadata: JsonMap::new(),
-        };
-
-        let prep_receipt = adapter.prepare(&prepare_req).await.unwrap();
-
-        let payload = serde_json::json!({
-            "to": ["alice@example.com"],
-            "subject": "Test",
-            "body": "Hello!"
-        });
-
-        let contract = RollbackContract {
-            contract_id: ferrum_proto::RollbackContractId::new(),
-            intent_id: prepare_req.intent_id,
-            proposal_id: prepare_req.proposal_id,
-            execution_id: prepare_req.execution_id,
-            action_type: ferrum_proto::ActionType::EmailDraftCreate,
-            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
-            adapter_key: ADAPTER_KEY.to_string(),
-            target: prepare_req.target.clone(),
-            prepare_checks: vec![],
-            verify_checks: vec![],
-            compensation_plan: vec![],
-            auto_commit: false,
-            state: ferrum_proto::RollbackState::Prepared,
-            created_at: chrono::Utc::now(),
-            expires_at: None,
-            metadata: prep_receipt.adapter_metadata,
-        };
-
-        let exec_receipt = adapter.execute(&contract, &payload).await.unwrap();
-        let draft_id = exec_receipt.external_id.unwrap();
-        assert!(adapter.store().draft_exists(&draft_id));
-
-        // Compensate should delete the draft
-        adapter.compensate(&contract).await.unwrap();
-        assert!(!adapter.store().draft_exists(&draft_id));
-    }
-
-    #[tokio::test]
-    async fn test_maildraft_adapter_verify_returns_true_for_existing_draft() {
-        let store = SqliteMaildraftStore::new_in_memory().unwrap();
-        let adapter = MaildraftAdapter::with_store(ADAPTER_KEY, store);
-        let execution_id = ferrum_proto::ExecutionId::new();
-
-        let prepare_req = RollbackPrepareRequest {
-            intent_id: ferrum_proto::IntentId::new(),
-            proposal_id: ferrum_proto::ProposalId::new(),
-            execution_id,
-            action_type: ferrum_proto::ActionType::EmailDraftCreate,
-            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
-            adapter_key: ADAPTER_KEY.to_string(),
-            target: RollbackTarget::EmailDraft {
-                draft_id: None,
-                recipients: vec!["alice@example.com".to_string()],
-            },
-            prepare_checks: vec![],
-            verify_checks: vec![],
-            compensation_plan: vec![],
-            auto_commit: false,
-            metadata: JsonMap::new(),
-        };
-
-        let prep_receipt = adapter.prepare(&prepare_req).await.unwrap();
-
-        let payload = serde_json::json!({
-            "to": ["alice@example.com"],
-            "subject": "Test",
-            "body": "Hello!"
-        });
-
-        let contract = RollbackContract {
-            contract_id: ferrum_proto::RollbackContractId::new(),
-            intent_id: prepare_req.intent_id,
-            proposal_id: prepare_req.proposal_id,
-            execution_id: prepare_req.execution_id,
-            action_type: ferrum_proto::ActionType::EmailDraftCreate,
-            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
-            adapter_key: ADAPTER_KEY.to_string(),
-            target: prepare_req.target.clone(),
-            prepare_checks: vec![],
-            verify_checks: vec![],
-            compensation_plan: vec![],
-            auto_commit: false,
-            state: ferrum_proto::RollbackState::Prepared,
-            created_at: chrono::Utc::now(),
-            expires_at: None,
-            metadata: prep_receipt.adapter_metadata,
-        };
-
-        adapter.execute(&contract, &payload).await.unwrap();
-
-        // Verify should return true for existing draft
-        let verify_receipt = adapter.verify(&contract).await.unwrap();
-        assert!(verify_receipt.verified);
-    }
-
-    #[tokio::test]
-    async fn test_maildraft_adapter_verify_returns_false_for_missing_draft() {
-        let store = SqliteMaildraftStore::new_in_memory().unwrap();
-        let adapter = MaildraftAdapter::with_store(ADAPTER_KEY, store);
-        let execution_id = ferrum_proto::ExecutionId::new();
-
-        let prepare_req = RollbackPrepareRequest {
-            intent_id: ferrum_proto::IntentId::new(),
-            proposal_id: ferrum_proto::ProposalId::new(),
-            execution_id,
-            action_type: ferrum_proto::ActionType::EmailDraftCreate,
-            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
-            adapter_key: ADAPTER_KEY.to_string(),
-            target: RollbackTarget::EmailDraft {
-                draft_id: None,
-                recipients: vec!["alice@example.com".to_string()],
-            },
-            prepare_checks: vec![],
-            verify_checks: vec![],
-            compensation_plan: vec![],
-            auto_commit: false,
-            metadata: JsonMap::new(),
-        };
-
-        let prep_receipt = adapter.prepare(&prepare_req).await.unwrap();
-
-        let payload = serde_json::json!({
-            "to": ["alice@example.com"],
-            "subject": "Test",
-            "body": "Hello!"
-        });
-
-        let contract = RollbackContract {
-            contract_id: ferrum_proto::RollbackContractId::new(),
-            intent_id: prepare_req.intent_id,
-            proposal_id: prepare_req.proposal_id,
-            execution_id: prepare_req.execution_id,
-            action_type: ferrum_proto::ActionType::EmailDraftCreate,
-            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
-            adapter_key: ADAPTER_KEY.to_string(),
-            target: prepare_req.target.clone(),
-            prepare_checks: vec![],
-            verify_checks: vec![],
-            compensation_plan: vec![],
-            auto_commit: false,
-            state: ferrum_proto::RollbackState::Prepared,
-            created_at: chrono::Utc::now(),
-            expires_at: None,
-            metadata: prep_receipt.adapter_metadata,
-        };
-
-        adapter.execute(&contract, &payload).await.unwrap();
-
-        // Delete the draft manually to simulate missing draft
-        let draft_id = adapter
-            .store()
-            .get_draft_id_by_execution(&execution_id.to_string())
-            .unwrap()
+        let contract = create_test_contract("new-draft", OP_CREATE, prep_receipt.adapter_metadata);
+        let _exec_receipt = adapter
+            .execute(&contract, &serde_json::json!({}))
+            .await
             .unwrap();
-        adapter.store().delete_draft(&draft_id).unwrap();
 
-        // Verify should return false for missing draft
+        // Verify draft is in store
+        let store_lock = store.lock().unwrap();
+        let draft = store_lock.get("new-draft").expect("draft should exist");
+        assert_eq!(draft.id, "new-draft");
+        assert_eq!(draft.from, "sender@example.com");
+        assert_eq!(draft.subject, "Test Subject");
+    }
+
+    #[tokio::test]
+    async fn test_maildraft_verify_create_confirms_exists() {
+        let adapter = MailDraftAdapter::new("maildraft");
+
+        let request = create_test_request("verify-draft", OP_CREATE);
+        let prep_receipt = adapter.prepare(&request).await.unwrap();
+
+        let contract =
+            create_test_contract("verify-draft", OP_CREATE, prep_receipt.adapter_metadata);
+
+        // Execute first
+        adapter
+            .execute(&contract, &serde_json::json!({}))
+            .await
+            .unwrap();
+
+        // Then verify
         let verify_receipt = adapter.verify(&contract).await.unwrap();
-        assert!(!verify_receipt.verified);
-    }
-
-    #[tokio::test]
-    async fn test_maildraft_adapter_persistence_across_adapter_restart() {
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().unwrap();
-        let db_path = temp_dir.path().join("test_drafts.sqlite");
-
-        // Create store and adapter with file-backed SQLite
-        let store1 = SqliteMaildraftStore::new_from_file(&db_path).unwrap();
-        let adapter1 = MaildraftAdapter::with_store(ADAPTER_KEY, store1);
-        let execution_id = ferrum_proto::ExecutionId::new();
-
-        // Prepare and execute
-        let prepare_req = RollbackPrepareRequest {
-            intent_id: ferrum_proto::IntentId::new(),
-            proposal_id: ferrum_proto::ProposalId::new(),
-            execution_id,
-            action_type: ferrum_proto::ActionType::EmailDraftCreate,
-            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
-            adapter_key: ADAPTER_KEY.to_string(),
-            target: RollbackTarget::EmailDraft {
-                draft_id: None,
-                recipients: vec!["alice@example.com".to_string()],
-            },
-            prepare_checks: vec![],
-            verify_checks: vec![],
-            compensation_plan: vec![],
-            auto_commit: false,
-            metadata: JsonMap::new(),
-        };
-
-        let prep_receipt = adapter1.prepare(&prepare_req).await.unwrap();
-
-        let payload = serde_json::json!({
-            "to": ["alice@example.com", "bob@example.com"],
-            "subject": "Persistence test",
-            "body": "This should persist!"
-        });
-
-        let contract = RollbackContract {
-            contract_id: ferrum_proto::RollbackContractId::new(),
-            intent_id: prepare_req.intent_id,
-            proposal_id: prepare_req.proposal_id,
-            execution_id: prepare_req.execution_id,
-            action_type: ferrum_proto::ActionType::EmailDraftCreate,
-            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
-            adapter_key: ADAPTER_KEY.to_string(),
-            target: prepare_req.target.clone(),
-            prepare_checks: vec![],
-            verify_checks: vec![],
-            compensation_plan: vec![],
-            auto_commit: false,
-            state: ferrum_proto::RollbackState::Prepared,
-            created_at: chrono::Utc::now(),
-            expires_at: None,
-            metadata: prep_receipt.adapter_metadata,
-        };
-
-        let exec_receipt = adapter1.execute(&contract, &payload).await.unwrap();
-        let draft_id = exec_receipt.external_id.unwrap();
-
-        // Verify draft exists in first adapter
-        assert!(adapter1.store().draft_exists(&draft_id));
-
-        // Drop first adapter
-        drop(adapter1);
-
-        // Create new adapter with same file-backed store
-        let store2 = SqliteMaildraftStore::new_from_file(&db_path).unwrap();
-        let adapter2 = MaildraftAdapter::with_store(ADAPTER_KEY, store2);
-
-        // Draft should still exist in persisted store
-        assert!(adapter2.store().draft_exists(&draft_id));
-
-        // Should be able to retrieve the draft
-        let draft = adapter2.store().get_draft(&draft_id).unwrap().unwrap();
-        assert_eq!(draft.subject, "Persistence test");
-        assert_eq!(draft.recipients.len(), 2);
-    }
-
-    #[tokio::test]
-    async fn test_maildraft_adapter_verify_returns_false_for_nonexistent_execution() {
-        let store = SqliteMaildraftStore::new_in_memory().unwrap();
-        let adapter = MaildraftAdapter::with_store(ADAPTER_KEY, store);
-        let execution_id = ferrum_proto::ExecutionId::new();
-
-        // Contract with an execution that was never executed
-        let contract = RollbackContract {
-            contract_id: ferrum_proto::RollbackContractId::new(),
-            intent_id: ferrum_proto::IntentId::new(),
-            proposal_id: ferrum_proto::ProposalId::new(),
-            execution_id,
-            action_type: ferrum_proto::ActionType::EmailDraftCreate,
-            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
-            adapter_key: ADAPTER_KEY.to_string(),
-            target: RollbackTarget::EmailDraft {
-                draft_id: None,
-                recipients: vec!["alice@example.com".to_string()],
-            },
-            prepare_checks: vec![],
-            verify_checks: vec![],
-            compensation_plan: vec![],
-            auto_commit: false,
-            state: ferrum_proto::RollbackState::Prepared,
-            created_at: chrono::Utc::now(),
-            expires_at: None,
-            metadata: JsonMap::new(),
-        };
-
-        // Verify should return false for non-existent execution
-        let verify_receipt = adapter.verify(&contract).await.unwrap();
-        assert!(!verify_receipt.verified);
-    }
-
-    #[tokio::test]
-    async fn test_maildraft_adapter_verify_with_explicit_email_draft_exists_check_passes() {
-        let store = SqliteMaildraftStore::new_in_memory().unwrap();
-        let adapter = MaildraftAdapter::with_store(ADAPTER_KEY, store);
-        let execution_id = ferrum_proto::ExecutionId::new();
-
-        let prepare_req = RollbackPrepareRequest {
-            intent_id: ferrum_proto::IntentId::new(),
-            proposal_id: ferrum_proto::ProposalId::new(),
-            execution_id,
-            action_type: ferrum_proto::ActionType::EmailDraftCreate,
-            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
-            adapter_key: ADAPTER_KEY.to_string(),
-            target: RollbackTarget::EmailDraft {
-                draft_id: None,
-                recipients: vec!["alice@example.com".to_string()],
-            },
-            prepare_checks: vec![],
-            verify_checks: vec![],
-            compensation_plan: vec![],
-            auto_commit: false,
-            metadata: JsonMap::new(),
-        };
-
-        let prep_receipt = adapter.prepare(&prepare_req).await.unwrap();
-
-        let payload = serde_json::json!({
-            "to": ["alice@example.com"],
-            "subject": "Test",
-            "body": "Hello!"
-        });
-
-        let contract = RollbackContract {
-            contract_id: ferrum_proto::RollbackContractId::new(),
-            intent_id: prepare_req.intent_id,
-            proposal_id: prepare_req.proposal_id,
-            execution_id: prepare_req.execution_id,
-            action_type: ferrum_proto::ActionType::EmailDraftCreate,
-            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
-            adapter_key: ADAPTER_KEY.to_string(),
-            target: prepare_req.target.clone(),
-            prepare_checks: vec![],
-            verify_checks: vec![],
-            compensation_plan: vec![],
-            auto_commit: false,
-            state: ferrum_proto::RollbackState::Prepared,
-            created_at: chrono::Utc::now(),
-            expires_at: None,
-            metadata: prep_receipt.adapter_metadata.clone(),
-        };
-
-        let exec_receipt = adapter.execute(&contract, &payload).await.unwrap();
-        let draft_id = exec_receipt.external_id.unwrap();
-
-        // Now verify with an explicit EmailDraftExists check
-        let explicit_check = CheckSpec {
-            check_type: CheckType::EmailDraftExists,
-            config: {
-                let mut m = JsonMap::new();
-                m.insert("draft_id".to_string(), serde_json::json!(draft_id));
-                m
-            },
-        };
-
-        let contract_with_explicit_check = RollbackContract {
-            contract_id: ferrum_proto::RollbackContractId::new(),
-            intent_id: prepare_req.intent_id,
-            proposal_id: prepare_req.proposal_id,
-            execution_id: prepare_req.execution_id,
-            action_type: ferrum_proto::ActionType::EmailDraftCreate,
-            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
-            adapter_key: ADAPTER_KEY.to_string(),
-            target: prepare_req.target.clone(),
-            prepare_checks: vec![],
-            verify_checks: vec![explicit_check],
-            compensation_plan: vec![],
-            auto_commit: false,
-            state: ferrum_proto::RollbackState::Prepared,
-            created_at: chrono::Utc::now(),
-            expires_at: None,
-            metadata: prep_receipt.adapter_metadata,
-        };
-
-        let verify_receipt = adapter.verify(&contract_with_explicit_check).await.unwrap();
         assert!(verify_receipt.verified);
-        // Verify that explicit_check metadata was recorded
+    }
+
+    #[tokio::test]
+    async fn test_maildraft_rollback_create_deletes_draft() {
+        let adapter = MailDraftAdapter::new("maildraft");
+        let store = Arc::clone(&adapter.store);
+
+        let request = create_test_request("rollback-create-draft", OP_CREATE);
+        let prep_receipt = adapter.prepare(&request).await.unwrap();
+
+        let contract = create_test_contract(
+            "rollback-create-draft",
+            OP_CREATE,
+            prep_receipt.adapter_metadata,
+        );
+        adapter
+            .execute(&contract, &serde_json::json!({}))
+            .await
+            .unwrap();
+
+        // Verify draft exists
+        {
+            let store_lock = store.lock().unwrap();
+            assert!(store_lock.contains("rollback-create-draft"));
+        }
+
+        // Rollback
+        let rollback_receipt = adapter.rollback(&contract).await.unwrap();
+        assert!(rollback_receipt.recovered);
+
+        // Verify draft is gone
+        let store_lock = store.lock().unwrap();
+        assert!(!store_lock.contains("rollback-create-draft"));
+    }
+
+    #[tokio::test]
+    async fn test_maildraft_prepare_update_captures_original() {
+        let adapter = MailDraftAdapter::new("maildraft");
+        let store = Arc::clone(&adapter.store);
+
+        // Pre-create a draft
+        {
+            let mut store_lock = store.lock().unwrap();
+            store_lock.insert(EmailDraft {
+                id: "update-draft".to_string(),
+                from: "original@example.com".to_string(),
+                to: vec!["recipient@example.com".to_string()],
+                subject: "Original Subject".to_string(),
+                body: "Original Body".to_string(),
+                created_at: Utc::now(),
+            });
+        }
+
+        let request = create_test_request("update-draft", OP_UPDATE);
+        let prep_receipt = adapter.prepare(&request).await.unwrap();
+        assert!(prep_receipt.accepted);
+
+        // Verify original state is captured in metadata
+        let metadata = &prep_receipt.adapter_metadata;
         assert_eq!(
-            verify_receipt
-                .adapter_metadata
-                .get("explicit_check")
-                .and_then(|v| v.as_str()),
-            Some("EmailDraftExists")
+            metadata.get("original_from").and_then(|v| v.as_str()),
+            Some("original@example.com")
+        );
+        assert_eq!(
+            metadata.get("original_subject").and_then(|v| v.as_str()),
+            Some("Original Subject")
         );
     }
 
     #[tokio::test]
-    async fn test_maildraft_adapter_verify_with_explicit_email_draft_exists_check_fails() {
-        let store = SqliteMaildraftStore::new_in_memory().unwrap();
-        let adapter = MaildraftAdapter::with_store(ADAPTER_KEY, store);
-        let execution_id = ferrum_proto::ExecutionId::new();
+    async fn test_maildraft_rollback_update_restores_original() {
+        let adapter = MailDraftAdapter::new("maildraft");
+        let store = Arc::clone(&adapter.store);
 
-        let prepare_req = RollbackPrepareRequest {
-            intent_id: ferrum_proto::IntentId::new(),
-            proposal_id: ferrum_proto::ProposalId::new(),
-            execution_id,
-            action_type: ferrum_proto::ActionType::EmailDraftCreate,
-            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
-            adapter_key: ADAPTER_KEY.to_string(),
-            target: RollbackTarget::EmailDraft {
-                draft_id: None,
-                recipients: vec!["alice@example.com".to_string()],
-            },
-            prepare_checks: vec![],
-            verify_checks: vec![],
-            compensation_plan: vec![],
-            auto_commit: false,
-            metadata: JsonMap::new(),
-        };
+        // Pre-create a draft
+        {
+            let mut store_lock = store.lock().unwrap();
+            store_lock.insert(EmailDraft {
+                id: "restore-draft".to_string(),
+                from: "original@example.com".to_string(),
+                to: vec!["recipient@example.com".to_string()],
+                subject: "Original Subject".to_string(),
+                body: "Original Body".to_string(),
+                created_at: Utc::now(),
+            });
+        }
 
-        let prep_receipt = adapter.prepare(&prepare_req).await.unwrap();
+        let request = create_test_request("restore-draft", OP_UPDATE);
+        let prep_receipt = adapter.prepare(&request).await.unwrap();
 
-        let payload = serde_json::json!({
-            "to": ["alice@example.com"],
-            "subject": "Test",
-            "body": "Hello!"
-        });
+        let contract =
+            create_test_contract("restore-draft", OP_UPDATE, prep_receipt.adapter_metadata);
+        adapter
+            .execute(&contract, &serde_json::json!({}))
+            .await
+            .unwrap();
 
-        let contract = RollbackContract {
-            contract_id: ferrum_proto::RollbackContractId::new(),
-            intent_id: prepare_req.intent_id,
-            proposal_id: prepare_req.proposal_id,
-            execution_id: prepare_req.execution_id,
-            action_type: ferrum_proto::ActionType::EmailDraftCreate,
-            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
-            adapter_key: ADAPTER_KEY.to_string(),
-            target: prepare_req.target.clone(),
-            prepare_checks: vec![],
-            verify_checks: vec![],
-            compensation_plan: vec![],
-            auto_commit: false,
-            state: ferrum_proto::RollbackState::Prepared,
-            created_at: chrono::Utc::now(),
-            expires_at: None,
-            metadata: prep_receipt.adapter_metadata.clone(),
-        };
+        // Verify updated content
+        {
+            let store_lock = store.lock().unwrap();
+            let draft = store_lock.get("restore-draft").expect("draft should exist");
+            assert_eq!(draft.from, "sender@example.com"); // New from
+            assert_eq!(draft.subject, "Test Subject"); // New subject
+        }
 
-        adapter.execute(&contract, &payload).await.unwrap();
+        // Rollback
+        let rollback_receipt = adapter.rollback(&contract).await.unwrap();
+        assert!(rollback_receipt.recovered);
 
-        // Verify with an explicit EmailDraftExists check for a DIFFERENT draft_id
-        let nonexistent_draft_id = "nonexistent-draft-12345";
-        let explicit_check = CheckSpec {
-            check_type: CheckType::EmailDraftExists,
-            config: {
-                let mut m = JsonMap::new();
-                m.insert(
-                    "draft_id".to_string(),
-                    serde_json::json!(nonexistent_draft_id),
-                );
-                m
-            },
-        };
-
-        let contract_with_explicit_check = RollbackContract {
-            contract_id: ferrum_proto::RollbackContractId::new(),
-            intent_id: prepare_req.intent_id,
-            proposal_id: prepare_req.proposal_id,
-            execution_id: prepare_req.execution_id,
-            action_type: ferrum_proto::ActionType::EmailDraftCreate,
-            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
-            adapter_key: ADAPTER_KEY.to_string(),
-            target: prepare_req.target.clone(),
-            prepare_checks: vec![],
-            verify_checks: vec![explicit_check],
-            compensation_plan: vec![],
-            auto_commit: false,
-            state: ferrum_proto::RollbackState::Prepared,
-            created_at: chrono::Utc::now(),
-            expires_at: None,
-            metadata: prep_receipt.adapter_metadata,
-        };
-
-        // Verify should return false because the explicit draft_id doesn't exist
-        let verify_receipt = adapter.verify(&contract_with_explicit_check).await.unwrap();
-        assert!(!verify_receipt.verified);
+        // Verify original is restored
+        {
+            let store_lock = store.lock().unwrap();
+            let draft = store_lock.get("restore-draft").expect("draft should exist");
+            assert_eq!(draft.from, "original@example.com");
+            assert_eq!(draft.subject, "Original Subject");
+            assert_eq!(draft.body, "Original Body");
+        }
     }
 
     #[tokio::test]
-    async fn test_maildraft_adapter_verify_fail_closed_on_storage_db_error() {
-        // Test that verify fails closed (returns error) when database/storage error occurs.
-        // This is P2.7 Slice 2: focused fail-closed verification coverage for storage/db errors.
-        use std::fs;
-        use tempfile::TempDir;
+    async fn test_maildraft_compensate_aliases_rollback() {
+        let adapter = MailDraftAdapter::new("maildraft");
+        let store = Arc::clone(&adapter.store);
 
-        let temp_dir = TempDir::new().unwrap();
-        let db_path = temp_dir.path().join("test_drafts.sqlite");
+        // Pre-create a draft
+        {
+            let mut store_lock = store.lock().unwrap();
+            store_lock.insert(EmailDraft {
+                id: "compensate-draft".to_string(),
+                from: "original@example.com".to_string(),
+                to: vec!["recipient@example.com".to_string()],
+                subject: "Original Subject".to_string(),
+                body: "Original Body".to_string(),
+                created_at: Utc::now(),
+            });
+        }
 
-        // Create store and adapter with file-backed SQLite
-        let store = SqliteMaildraftStore::new_from_file(&db_path).unwrap();
-        let adapter = MaildraftAdapter::with_store(ADAPTER_KEY, store);
-        let execution_id = ferrum_proto::ExecutionId::new();
+        let request = create_test_request("compensate-draft", OP_UPDATE);
+        let prep_receipt = adapter.prepare(&request).await.unwrap();
 
-        // Prepare
-        let prepare_req = RollbackPrepareRequest {
-            intent_id: ferrum_proto::IntentId::new(),
-            proposal_id: ferrum_proto::ProposalId::new(),
-            execution_id,
-            action_type: ferrum_proto::ActionType::EmailDraftCreate,
-            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
-            adapter_key: ADAPTER_KEY.to_string(),
-            target: RollbackTarget::EmailDraft {
-                draft_id: None,
-                recipients: vec!["alice@example.com".to_string()],
-            },
-            prepare_checks: vec![],
-            verify_checks: vec![],
-            compensation_plan: vec![],
-            auto_commit: false,
-            metadata: JsonMap::new(),
-        };
+        let contract =
+            create_test_contract("compensate-draft", OP_UPDATE, prep_receipt.adapter_metadata);
+        adapter
+            .execute(&contract, &serde_json::json!({}))
+            .await
+            .unwrap();
 
-        let prep_receipt = adapter.prepare(&prepare_req).await.unwrap();
+        // Compensate should do the same as rollback
+        let compensate_receipt = adapter.compensate(&contract).await.unwrap();
+        assert!(compensate_receipt.recovered);
 
-        let payload = serde_json::json!({
-            "to": ["alice@example.com"],
-            "subject": "Test",
-            "body": "Hello!"
-        });
+        // Verify original is restored
+        let store_lock = store.lock().unwrap();
+        let draft = store_lock
+            .get("compensate-draft")
+            .expect("draft should exist");
+        assert_eq!(draft.from, "original@example.com");
+        assert_eq!(draft.subject, "Original Subject");
+    }
 
-        let contract = RollbackContract {
-            contract_id: ferrum_proto::RollbackContractId::new(),
-            intent_id: prepare_req.intent_id,
-            proposal_id: prepare_req.proposal_id,
-            execution_id: prepare_req.execution_id,
-            action_type: ferrum_proto::ActionType::EmailDraftCreate,
-            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
-            adapter_key: ADAPTER_KEY.to_string(),
-            target: prepare_req.target.clone(),
-            prepare_checks: vec![],
-            verify_checks: vec![],
-            compensation_plan: vec![],
-            auto_commit: false,
-            state: ferrum_proto::RollbackState::Prepared,
-            created_at: chrono::Utc::now(),
-            expires_at: None,
-            metadata: prep_receipt.adapter_metadata,
-        };
+    #[tokio::test]
+    async fn test_maildraft_prepare_delete_captures_original() {
+        let adapter = MailDraftAdapter::new("maildraft");
+        let store = Arc::clone(&adapter.store);
 
-        // Execute to create draft
-        let exec_receipt = adapter.execute(&contract, &payload).await.unwrap();
-        let draft_id = exec_receipt.external_id.unwrap();
+        // Pre-create a draft
+        {
+            let mut store_lock = store.lock().unwrap();
+            store_lock.insert(EmailDraft {
+                id: "delete-draft".to_string(),
+                from: "sender@example.com".to_string(),
+                to: vec!["recipient@example.com".to_string()],
+                subject: "To Be Deleted".to_string(),
+                body: "This will be gone".to_string(),
+                created_at: Utc::now(),
+            });
+        }
 
-        // Verify draft exists before we corrupt the database
-        assert!(adapter.store().draft_exists(&draft_id));
+        let request = create_test_request("delete-draft", OP_DELETE);
+        let prep_receipt = adapter.prepare(&request).await.unwrap();
+        assert!(prep_receipt.accepted);
 
-        // Get the draft_id from metadata for later verification
-        let draft_id_for_verify = draft_id.clone();
-
-        // Corrupt the database file by writing garbage to it
-        // This will cause SQLite to return an error when trying to query
-        fs::write(&db_path, b"this is not a valid sqlite database file!!!").unwrap();
-
-        // Try to verify - should fail closed (return error) because database is corrupted
-        // We use the same execution_id so it will try to look up the draft
-        let contract_for_verify = RollbackContract {
-            contract_id: ferrum_proto::RollbackContractId::new(),
-            intent_id: prepare_req.intent_id,
-            proposal_id: prepare_req.proposal_id,
-            execution_id: prepare_req.execution_id,
-            action_type: ferrum_proto::ActionType::EmailDraftCreate,
-            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
-            adapter_key: ADAPTER_KEY.to_string(),
-            target: prepare_req.target.clone(),
-            prepare_checks: vec![],
-            verify_checks: vec![],
-            compensation_plan: vec![],
-            auto_commit: false,
-            state: ferrum_proto::RollbackState::Prepared,
-            created_at: chrono::Utc::now(),
-            expires_at: None,
-            metadata: {
-                let mut m = JsonMap::new();
-                m.insert(
-                    "draft_id".to_string(),
-                    serde_json::json!(draft_id_for_verify),
-                );
-                m
-            },
-        };
-
-        // Verify should fail closed (return verified=false) when database file is corrupted.
-        // This enables gateway-level execution state transition to Failed and commit rejection.
-        let verify_result = adapter.verify(&contract_for_verify).await;
-        assert!(
-            verify_result.is_ok(),
-            "verify should return Ok on database error (fail-closed), not propagate error"
-        );
-        let receipt = verify_result.unwrap();
-        assert!(
-            !receipt.verified,
-            "verify should return verified=false on database corruption"
+        // Verify original state is captured in metadata
+        let metadata = &prep_receipt.adapter_metadata;
+        assert_eq!(
+            metadata.get("original_subject").and_then(|v| v.as_str()),
+            Some("To Be Deleted")
         );
     }
 
     #[tokio::test]
-    async fn test_maildraft_adapter_verify_fallback_lookup_db_error_fails_closed() {
-        // Test that verify fails closed (returns verified=false) when:
-        // - No metadata draft_id is present
-        // - No explicit EmailDraftExists check is present
-        // - Corrupted DB causes get_draft_id_by_execution to return error, which we convert
-        //   to verified=false (fail-closed) rather than propagating as Internal error.
-        // This is P2.7 Slice 3: fallback lookup error path fail-closed regression.
-        use std::fs;
-        use tempfile::TempDir;
+    async fn test_maildraft_execute_delete_removes_draft() {
+        let adapter = MailDraftAdapter::new("maildraft");
+        let store = Arc::clone(&adapter.store);
 
-        let temp_dir = TempDir::new().unwrap();
-        let db_path = temp_dir.path().join("test_drafts.sqlite");
+        // Pre-create a draft
+        {
+            let mut store_lock = store.lock().unwrap();
+            store_lock.insert(EmailDraft {
+                id: "execute-delete-draft".to_string(),
+                from: "sender@example.com".to_string(),
+                to: vec!["recipient@example.com".to_string()],
+                subject: "Subject".to_string(),
+                body: "Body".to_string(),
+                created_at: Utc::now(),
+            });
+        }
 
-        // Create store and adapter with file-backed SQLite
-        let store = SqliteMaildraftStore::new_from_file(&db_path).unwrap();
-        let adapter = MaildraftAdapter::with_store(ADAPTER_KEY, store);
-        let execution_id = ferrum_proto::ExecutionId::new();
+        let request = create_test_request("execute-delete-draft", OP_DELETE);
+        let prep_receipt = adapter.prepare(&request).await.unwrap();
 
-        // Prepare
-        let prepare_req = RollbackPrepareRequest {
-            intent_id: ferrum_proto::IntentId::new(),
-            proposal_id: ferrum_proto::ProposalId::new(),
-            execution_id,
-            action_type: ferrum_proto::ActionType::EmailDraftCreate,
-            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
-            adapter_key: ADAPTER_KEY.to_string(),
-            target: RollbackTarget::EmailDraft {
-                draft_id: None,
-                recipients: vec!["alice@example.com".to_string()],
-            },
-            prepare_checks: vec![],
-            verify_checks: vec![],
-            compensation_plan: vec![],
-            auto_commit: false,
-            metadata: JsonMap::new(),
-        };
-
-        let _prep_receipt = adapter.prepare(&prepare_req).await.unwrap();
-
-        let payload = serde_json::json!({
-            "to": ["alice@example.com"],
-            "subject": "Test",
-            "body": "Hello!"
-        });
-
-        let contract = RollbackContract {
-            contract_id: ferrum_proto::RollbackContractId::new(),
-            intent_id: prepare_req.intent_id,
-            proposal_id: prepare_req.proposal_id,
-            execution_id: prepare_req.execution_id,
-            action_type: ferrum_proto::ActionType::EmailDraftCreate,
-            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
-            adapter_key: ADAPTER_KEY.to_string(),
-            target: prepare_req.target.clone(),
-            prepare_checks: vec![],
-            verify_checks: vec![],
-            compensation_plan: vec![],
-            auto_commit: false,
-            state: ferrum_proto::RollbackState::Prepared,
-            created_at: chrono::Utc::now(),
-            expires_at: None,
-            metadata: JsonMap::new(), // No draft_id in metadata - triggers fallback lookup
-        };
-
-        // Execute to create draft
-        adapter.execute(&contract, &payload).await.unwrap();
-
-        // Corrupt the database file so get_draft_id_by_execution returns an error
-        fs::write(&db_path, b"this is not a valid sqlite database file!!!").unwrap();
-
-        // Verify with no metadata draft_id and no explicit check - should hit fallback lookup
-        // and fail closed with verified=false (not propagate error).
-        // This enables gateway-level execution state transition to Failed and commit rejection.
-        let verify_result = adapter.verify(&contract).await;
-        assert!(
-            verify_result.is_ok(),
-            "verify should return Ok on DB error (fail-closed), not propagate error"
+        let contract = create_test_contract(
+            "execute-delete-draft",
+            OP_DELETE,
+            prep_receipt.adapter_metadata,
         );
-        let receipt = verify_result.unwrap();
-        assert!(
-            !receipt.verified,
-            "verify should return verified=false when fallback lookup hits corrupted database"
-        );
+        adapter
+            .execute(&contract, &serde_json::json!({}))
+            .await
+            .unwrap();
+
+        // Verify draft is gone
+        let store_lock = store.lock().unwrap();
+        assert!(!store_lock.contains("execute-delete-draft"));
     }
 
     #[tokio::test]
-    async fn test_maildraft_adapter_verify_explicit_check_missing_draft_id_fails_validation() {
-        // Test that verify fails closed with Validation error when EmailDraftExists
-        // check is present but draft_id is missing.
-        // This is P2.7 Slice 3: fail-closed on malformed explicit check (missing draft_id).
-        let store = SqliteMaildraftStore::new_in_memory().unwrap();
-        let adapter = MaildraftAdapter::with_store(ADAPTER_KEY, store);
-        let execution_id = ferrum_proto::ExecutionId::new();
+    async fn test_maildraft_rollback_delete_recreates_draft() {
+        let adapter = MailDraftAdapter::new("maildraft");
+        let store = Arc::clone(&adapter.store);
 
-        // Contract with EmailDraftExists check but NO draft_id in config
-        let explicit_check_without_draft_id = CheckSpec {
-            check_type: CheckType::EmailDraftExists,
-            config: JsonMap::new(), // Missing draft_id entirely
-        };
+        // Pre-create a draft
+        {
+            let mut store_lock = store.lock().unwrap();
+            store_lock.insert(EmailDraft {
+                id: "rollback-delete-draft".to_string(),
+                from: "sender@example.com".to_string(),
+                to: vec!["recipient@example.com".to_string()],
+                subject: "Subject".to_string(),
+                body: "Body".to_string(),
+                created_at: Utc::now(),
+            });
+        }
 
-        let contract = RollbackContract {
-            contract_id: ferrum_proto::RollbackContractId::new(),
-            intent_id: ferrum_proto::IntentId::new(),
-            proposal_id: ferrum_proto::ProposalId::new(),
-            execution_id,
-            action_type: ferrum_proto::ActionType::EmailDraftCreate,
-            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
-            adapter_key: ADAPTER_KEY.to_string(),
-            target: RollbackTarget::EmailDraft {
-                draft_id: None,
-                recipients: vec!["alice@example.com".to_string()],
-            },
-            prepare_checks: vec![],
-            verify_checks: vec![explicit_check_without_draft_id],
-            compensation_plan: vec![],
-            auto_commit: false,
-            state: ferrum_proto::RollbackState::Prepared,
-            created_at: chrono::Utc::now(),
-            expires_at: None,
-            metadata: JsonMap::new(),
-        };
+        let request = create_test_request("rollback-delete-draft", OP_DELETE);
+        let prep_receipt = adapter.prepare(&request).await.unwrap();
 
-        // Verify should fail with Validation error (explicit check requested but malformed)
-        let verify_result = adapter.verify(&contract).await;
-        assert!(
-            verify_result.is_err(),
-            "verify should return error when EmailDraftExists check has missing draft_id"
+        let contract = create_test_contract(
+            "rollback-delete-draft",
+            OP_DELETE,
+            prep_receipt.adapter_metadata,
         );
-        let err = verify_result.unwrap_err();
-        assert!(
-            matches!(err, AdapterError::Validation(_)),
-            "error should be AdapterError::Validation, got: {}",
-            err
-        );
-        assert!(
-            err.to_string()
-                .contains("EmailDraftExists check requires draft_id"),
-            "error should mention 'EmailDraftExists check requires draft_id', got: {}",
-            err
-        );
+        adapter
+            .execute(&contract, &serde_json::json!({}))
+            .await
+            .unwrap();
+
+        // Rollback should recreate the draft
+        let rollback_receipt = adapter.rollback(&contract).await.unwrap();
+        assert!(rollback_receipt.recovered);
+
+        // Verify draft is restored
+        let store_lock = store.lock().unwrap();
+        let draft = store_lock
+            .get("rollback-delete-draft")
+            .expect("draft should exist");
+        assert_eq!(draft.from, "sender@example.com");
+        assert_eq!(draft.subject, "Subject");
     }
 
     #[tokio::test]
-    async fn test_maildraft_adapter_verify_explicit_check_non_string_draft_id_fails_validation() {
-        // Test that verify fails closed with Validation error when EmailDraftExists
-        // check is present but draft_id is non-string (e.g., a number).
-        // This is P2.7 Slice 3: fail-closed on malformed explicit check (non-string draft_id).
-        let store = SqliteMaildraftStore::new_in_memory().unwrap();
-        let adapter = MaildraftAdapter::with_store(ADAPTER_KEY, store);
-        let execution_id = ferrum_proto::ExecutionId::new();
+    async fn test_maildraft_prepare_delete_fails_on_nonexistent() {
+        let adapter = MailDraftAdapter::new("maildraft");
 
-        // Contract with EmailDraftExists check but draft_id is a NUMBER, not a string
-        let explicit_check_with_non_string_draft_id = CheckSpec {
-            check_type: CheckType::EmailDraftExists,
-            config: {
-                let mut m = JsonMap::new();
-                // draft_id is a number, not a string - this is malformed
-                m.insert("draft_id".to_string(), serde_json::json!(12345));
-                m
-            },
-        };
-
-        let contract = RollbackContract {
-            contract_id: ferrum_proto::RollbackContractId::new(),
-            intent_id: ferrum_proto::IntentId::new(),
-            proposal_id: ferrum_proto::ProposalId::new(),
-            execution_id,
-            action_type: ferrum_proto::ActionType::EmailDraftCreate,
-            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
-            adapter_key: ADAPTER_KEY.to_string(),
-            target: RollbackTarget::EmailDraft {
-                draft_id: None,
-                recipients: vec!["alice@example.com".to_string()],
-            },
-            prepare_checks: vec![],
-            verify_checks: vec![explicit_check_with_non_string_draft_id],
-            compensation_plan: vec![],
-            auto_commit: false,
-            state: ferrum_proto::RollbackState::Prepared,
-            created_at: chrono::Utc::now(),
-            expires_at: None,
-            metadata: JsonMap::new(),
-        };
-
-        // Verify should fail with Validation error (explicit check requested but malformed)
-        let verify_result = adapter.verify(&contract).await;
-        assert!(
-            verify_result.is_err(),
-            "verify should return error when EmailDraftExists check has non-string draft_id"
-        );
-        let err = verify_result.unwrap_err();
-        assert!(
-            matches!(err, AdapterError::Validation(_)),
-            "error should be AdapterError::Validation, got: {}",
-            err
-        );
-        assert!(
-            err.to_string()
-                .contains("EmailDraftExists check requires draft_id to be a string"),
-            "error should mention 'draft_id to be a string', got: {}",
-            err
-        );
+        let request = create_test_request("nonexistent-draft", OP_DELETE);
+        let result = adapter.prepare(&request).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
     }
 
     #[tokio::test]
-    async fn test_maildraft_adapter_compensate_fail_closed_on_storage_db_error() {
-        // Test that compensate fails closed with AdapterError::Internal when
-        // database/storage is corrupted during delete.
-        // This is P2.7 Slice 4: compensate/rollback fail-closed coverage on storage/db error.
-        use std::fs;
-        use tempfile::TempDir;
+    async fn test_maildraft_prepare_update_fails_on_nonexistent() {
+        let adapter = MailDraftAdapter::new("maildraft");
 
-        let temp_dir = TempDir::new().unwrap();
-        let db_path = temp_dir.path().join("test_drafts.sqlite");
-
-        // Create store and adapter with file-backed SQLite
-        let store = SqliteMaildraftStore::new_from_file(&db_path).unwrap();
-        let adapter = MaildraftAdapter::with_store(ADAPTER_KEY, store);
-        let execution_id = ferrum_proto::ExecutionId::new();
-
-        // Prepare
-        let prepare_req = RollbackPrepareRequest {
-            intent_id: ferrum_proto::IntentId::new(),
-            proposal_id: ferrum_proto::ProposalId::new(),
-            execution_id,
-            action_type: ferrum_proto::ActionType::EmailDraftCreate,
-            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
-            adapter_key: ADAPTER_KEY.to_string(),
-            target: RollbackTarget::EmailDraft {
-                draft_id: None,
-                recipients: vec!["alice@example.com".to_string()],
-            },
-            prepare_checks: vec![],
-            verify_checks: vec![],
-            compensation_plan: vec![],
-            auto_commit: false,
-            metadata: JsonMap::new(),
-        };
-
-        let prep_receipt = adapter.prepare(&prepare_req).await.unwrap();
-
-        let payload = serde_json::json!({
-            "to": ["alice@example.com"],
-            "subject": "Test",
-            "body": "Hello!"
-        });
-
-        let contract = RollbackContract {
-            contract_id: ferrum_proto::RollbackContractId::new(),
-            intent_id: prepare_req.intent_id,
-            proposal_id: prepare_req.proposal_id,
-            execution_id: prepare_req.execution_id,
-            action_type: ferrum_proto::ActionType::EmailDraftCreate,
-            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
-            adapter_key: ADAPTER_KEY.to_string(),
-            target: prepare_req.target.clone(),
-            prepare_checks: vec![],
-            verify_checks: vec![],
-            compensation_plan: vec![],
-            auto_commit: false,
-            state: ferrum_proto::RollbackState::Prepared,
-            created_at: chrono::Utc::now(),
-            expires_at: None,
-            metadata: prep_receipt.adapter_metadata,
-        };
-
-        // Execute to create draft
-        adapter.execute(&contract, &payload).await.unwrap();
-
-        // Corrupt the database file so delete operations will fail
-        fs::write(&db_path, b"this is not a valid sqlite database file!!!").unwrap();
-
-        // Compensate should fail closed (return Internal error) when database is corrupted
-        let compensate_result = adapter.compensate(&contract).await;
-        assert!(
-            compensate_result.is_err(),
-            "compensate should return error on database error, not succeed"
-        );
-        let err = compensate_result.unwrap_err();
-        assert!(
-            matches!(err, AdapterError::Internal(_)),
-            "error should be AdapterError::Internal, got: {}",
-            err
-        );
-        assert!(
-            err.to_string()
-                .contains("compensate failed to delete draft"),
-            "error should mention 'compensate failed to delete draft', got: {}",
-            err
-        );
+        let request = create_test_request("nonexistent-draft", OP_UPDATE);
+        let result = adapter.prepare(&request).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
     }
 
     #[tokio::test]
-    async fn test_maildraft_adapter_rollback_fail_closed_on_storage_db_error() {
-        // Test that rollback fails closed with AdapterError::Internal when
-        // database/storage is corrupted during delete.
-        // This is P2.7 Slice 4: compensate/rollback fail-closed coverage on storage/db error.
-        use std::fs;
-        use tempfile::TempDir;
+    async fn test_maildraft_rollback_create_idempotent() {
+        // Verify that rollback on an already-deleted draft (via prior rollback) is idempotent.
+        let adapter = MailDraftAdapter::new("maildraft");
+        let store = Arc::clone(&adapter.store);
 
-        let temp_dir = TempDir::new().unwrap();
-        let db_path = temp_dir.path().join("test_drafts.sqlite");
+        let request = create_test_request("idempotent-create-draft", OP_CREATE);
+        let prep_receipt = adapter.prepare(&request).await.unwrap();
 
-        // Create store and adapter with file-backed SQLite
-        let store = SqliteMaildraftStore::new_from_file(&db_path).unwrap();
-        let adapter = MaildraftAdapter::with_store(ADAPTER_KEY, store);
-        let execution_id = ferrum_proto::ExecutionId::new();
+        let contract = create_test_contract(
+            "idempotent-create-draft",
+            OP_CREATE,
+            prep_receipt.adapter_metadata,
+        );
+        adapter
+            .execute(&contract, &serde_json::json!({}))
+            .await
+            .unwrap();
 
-        // Prepare
-        let prepare_req = RollbackPrepareRequest {
-            intent_id: ferrum_proto::IntentId::new(),
-            proposal_id: ferrum_proto::ProposalId::new(),
-            execution_id,
-            action_type: ferrum_proto::ActionType::EmailDraftCreate,
-            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
-            adapter_key: ADAPTER_KEY.to_string(),
-            target: RollbackTarget::EmailDraft {
-                draft_id: None,
-                recipients: vec!["alice@example.com".to_string()],
-            },
-            prepare_checks: vec![],
-            verify_checks: vec![],
-            compensation_plan: vec![],
-            auto_commit: false,
-            metadata: JsonMap::new(),
+        // First rollback: deletes the draft
+        let rollback_receipt1 = adapter.rollback(&contract).await.unwrap();
+        assert!(rollback_receipt1.recovered);
+
+        // Verify draft is gone after first rollback
+        {
+            let store_lock = store.lock().unwrap();
+            assert!(!store_lock.contains("idempotent-create-draft"));
+        }
+
+        // Second rollback: should succeed (idempotent) — draft already deleted
+        let rollback_receipt2 = adapter.rollback(&contract).await.unwrap();
+        assert!(rollback_receipt2.recovered);
+
+        // Draft should still be gone
+        {
+            let store_lock = store.lock().unwrap();
+            assert!(!store_lock.contains("idempotent-create-draft"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_maildraft_rollback_update_idempotent() {
+        // Verify that calling rollback update twice is idempotent (restoring same state twice).
+        let adapter = MailDraftAdapter::new("maildraft");
+        let store = Arc::clone(&adapter.store);
+
+        // Pre-create a draft
+        {
+            let mut store_lock = store.lock().unwrap();
+            store_lock.insert(EmailDraft {
+                id: "idempotent-update-draft".to_string(),
+                from: "original@example.com".to_string(),
+                to: vec!["recipient@example.com".to_string()],
+                subject: "Original Subject".to_string(),
+                body: "Original Body".to_string(),
+                created_at: Utc::now(),
+            });
+        }
+
+        let request = create_test_request("idempotent-update-draft", OP_UPDATE);
+        let prep_receipt = adapter.prepare(&request).await.unwrap();
+
+        let contract = create_test_contract(
+            "idempotent-update-draft",
+            OP_UPDATE,
+            prep_receipt.adapter_metadata,
+        );
+        adapter
+            .execute(&contract, &serde_json::json!({}))
+            .await
+            .unwrap();
+
+        // First rollback: restores original
+        let rollback_receipt1 = adapter.rollback(&contract).await.unwrap();
+        assert!(rollback_receipt1.recovered);
+
+        // Verify original is restored
+        let draft1 = {
+            let store_lock = store.lock().unwrap();
+            store_lock
+                .get("idempotent-update-draft")
+                .expect("draft should exist")
+                .clone()
         };
+        assert_eq!(draft1.from, "original@example.com");
+        assert_eq!(draft1.subject, "Original Subject");
 
-        let prep_receipt = adapter.prepare(&prepare_req).await.unwrap();
+        // Second rollback: should succeed (idempotent) — restoring same state again
+        let rollback_receipt2 = adapter.rollback(&contract).await.unwrap();
+        assert!(rollback_receipt2.recovered);
 
-        let payload = serde_json::json!({
-            "to": ["alice@example.com"],
-            "subject": "Test",
-            "body": "Hello!"
-        });
-
-        let contract = RollbackContract {
-            contract_id: ferrum_proto::RollbackContractId::new(),
-            intent_id: prepare_req.intent_id,
-            proposal_id: prepare_req.proposal_id,
-            execution_id: prepare_req.execution_id,
-            action_type: ferrum_proto::ActionType::EmailDraftCreate,
-            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
-            adapter_key: ADAPTER_KEY.to_string(),
-            target: prepare_req.target.clone(),
-            prepare_checks: vec![],
-            verify_checks: vec![],
-            compensation_plan: vec![],
-            auto_commit: false,
-            state: ferrum_proto::RollbackState::Prepared,
-            created_at: chrono::Utc::now(),
-            expires_at: None,
-            metadata: prep_receipt.adapter_metadata,
+        // Draft should still have original content
+        let draft2 = {
+            let store_lock = store.lock().unwrap();
+            store_lock
+                .get("idempotent-update-draft")
+                .expect("draft should exist")
+                .clone()
         };
+        assert_eq!(draft2.from, "original@example.com");
+        assert_eq!(draft2.subject, "Original Subject");
+        assert_eq!(draft2.body, "Original Body");
+    }
 
-        // Execute to create draft
-        adapter.execute(&contract, &payload).await.unwrap();
+    #[tokio::test]
+    async fn test_maildraft_rollback_delete_idempotent() {
+        // Verify that rollback delete on an already-recreated draft is idempotent.
+        let adapter = MailDraftAdapter::new("maildraft");
+        let store = Arc::clone(&adapter.store);
 
-        // Corrupt the database file so delete operations will fail
-        fs::write(&db_path, b"this is not a valid sqlite database file!!!").unwrap();
+        // Pre-create a draft
+        {
+            let mut store_lock = store.lock().unwrap();
+            store_lock.insert(EmailDraft {
+                id: "idempotent-delete-draft".to_string(),
+                from: "sender@example.com".to_string(),
+                to: vec!["recipient@example.com".to_string()],
+                subject: "Subject".to_string(),
+                body: "Body".to_string(),
+                created_at: Utc::now(),
+            });
+        }
 
-        // Rollback should fail closed (return Internal error) when database is corrupted
-        let rollback_result = adapter.rollback(&contract).await;
-        assert!(
-            rollback_result.is_err(),
-            "rollback should return error on database error, not succeed"
+        let request = create_test_request("idempotent-delete-draft", OP_DELETE);
+        let prep_receipt = adapter.prepare(&request).await.unwrap();
+
+        let contract = create_test_contract(
+            "idempotent-delete-draft",
+            OP_DELETE,
+            prep_receipt.adapter_metadata,
         );
-        let err = rollback_result.unwrap_err();
-        assert!(
-            matches!(err, AdapterError::Internal(_)),
-            "error should be AdapterError::Internal, got: {}",
-            err
-        );
-        assert!(
-            err.to_string()
-                .contains("compensate failed to delete draft"),
-            "error should mention 'compensate failed to delete draft' (rollback delegates to compensate), got: {}",
-            err
-        );
+        adapter
+            .execute(&contract, &serde_json::json!({}))
+            .await
+            .unwrap();
+
+        // Verify draft is gone after execute
+        {
+            let store_lock = store.lock().unwrap();
+            assert!(!store_lock.contains("idempotent-delete-draft"));
+        }
+
+        // First rollback: recreates the draft
+        let rollback_receipt1 = adapter.rollback(&contract).await.unwrap();
+        assert!(rollback_receipt1.recovered);
+
+        // Verify draft is restored
+        let draft1 = {
+            let store_lock = store.lock().unwrap();
+            store_lock
+                .get("idempotent-delete-draft")
+                .expect("draft should exist")
+                .clone()
+        };
+        assert_eq!(draft1.from, "sender@example.com");
+        assert_eq!(draft1.subject, "Subject");
+
+        // Second rollback: should succeed (idempotent) — removing and recreating same draft
+        let rollback_receipt2 = adapter.rollback(&contract).await.unwrap();
+        assert!(rollback_receipt2.recovered);
+
+        // Draft should still exist with same content
+        let draft2 = {
+            let store_lock = store.lock().unwrap();
+            store_lock
+                .get("idempotent-delete-draft")
+                .expect("draft should exist")
+                .clone()
+        };
+        assert_eq!(draft2.from, "sender@example.com");
+        assert_eq!(draft2.subject, "Subject");
+        assert_eq!(draft2.body, "Body");
     }
 }

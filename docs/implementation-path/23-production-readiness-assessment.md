@@ -4,21 +4,19 @@ Single-node v1 scope. Assessment against FerrumGate v1 success criteria.
 
 **Release support contract**:
 - Supported = single-node governance core with SQLite-backed persistence.
-- Partial = adapter crate surfaces (fs/sqlite/git/http) plus maildraft (SQLite-backed persistence and verify semantics implemented; send/provider integration deferred/post-v1), and a bounded `ferrumctl` operator surface.
-- Deferred/post-v1 = broader adapter hardening, multi-node/HA/read-replica, remaining U1 expressiveness/operator tooling work, and U2-U4 upgrade tracks.
+- Partial = adapter crate surfaces (fs/sqlite/maildraft/git/http) and limited `ferrumctl` inspect surface.
+- Deferred/post-v1 = real adapter implementations, multi-node/HA/read-replica, PostgreSQL.
 
-## Overall readiness: RC-READY — full evidence in `25-v1-single-node-rc-evidence.md`
+## Overall readiness: RC-READY — CONDITIONAL PRODUCTION
 
-See [25-v1-single-node-rc-evidence.md](./25-v1-single-node-rc-evidence.md) for the
-canonical evidence record (Phase F gate 7.5 output), including all gate results,
-test verdicts, and supported-flows attestation.
+**FerrumGate v1 is RC-ready** for single-node SQLite-backed deployment.
+All P0/P1/P2 items verified complete. Core governance loop implemented and test-covered.
 
-FerrumGate v1 single-node passed all gates as of 2026-04-02:
-1. `cargo clippy --workspace -- -D warnings` PASS
-2. `cargo test --workspace` PASS
+**Production posture**: Phase 1 only — SQLite write queue. Phase 2 (transaction batching + direct UPDATE) was partially implemented but **deferred/regressed** due to performance regression in benchmarking. Phase 3 (PostgreSQL migration) is the path to full production scale.
 
-Core governance loop is implemented. Scope-mismatch deny is implemented.
-All P0 gates cleared as of 2026-04-02. RC sign-off can proceed.
+**Conditional production constraint**: Full "production-ready" posture is not claimed because operational constraints remain (SQLite single-node write limits, bounded offline/local `ferrumctl backup` workflow only, no built-in incremental backup, no automated scheduling, no retention policy; broader observability deferred; PostgreSQL/multi-node deferred; operator sign-off required before production deployment). All 12 invariants are VERIFIED per invariant matrix. The release is **RC-ready** with known accepted risks; operators should evaluate against the production evaluation plan before production deployment.
+
+Remaining gaps are post-v1 backlog documented in `11-remaining-tasks.md` P3.
 
 ---
 
@@ -26,17 +24,17 @@ All P0 gates cleared as of 2026-04-02. RC sign-off can proceed.
 
 | Criterion | Status | Evidence |
 |---|---|---|
-| Workspace compiles | PASS | `cargo check --workspace` (2026-04-02) |
-| `cargo fmt --all --check` | PASS | `cargo fmt --all -- --check` (2026-04-02) |
-| `cargo clippy --workspace -- -D warnings` | PASS | All gates PASS as of 2026-04-02 |
-| Core tests pass | PASS | `cargo test --workspace` (2026-04-02) |
+| Workspace compiles | PASS | Fresh P6 validation (2026-04-28): `cargo check --workspace` exit 0 |
+| `cargo fmt --all --check` | PASS | Fresh P6 validation: `cargo fmt --all -- --check` exit 0 |
+| `cargo clippy --workspace --all-targets -- -D warnings` | PASS | Fresh P6 validation (2026-04-28) exit 0 |
+| Core tests pass | PASS | Fresh feature-completeness validation: `cargo test --workspace` ~761 observed tests pass |
 | Integration tests pass | PASS | `ferrum-integration-tests` suite |
 | No R3 auto-commit violations | PASS | `test_r3_contracts_have_auto_commit_false` |
-| Single-use capability enforced | PASS | `test_single_use_capability_cannot_be_reused` |
+| Single-use capability enforced (durable mark-used in authorize path) | PASS | `test_single_use_capability_cannot_be_reused` — see Weak Spot 3 (resolved) |
 | Provenance emitted for supported flows | PASS | `test_lineage_endpoint_*` series |
 | Rollback/compensate distinct ops | PASS | `test_rollback_and_compensate_are_distinct_operations` |
 
-**Known gaps**: none. All P0 gates cleared as of 2026-04-02. Residual accepted risks and partial controls are documented in the support contract Accepted Risks section and invariant matrix.
+**Known gaps**: See support contract (19-v1-single-node-support-contract.md) Accepted Risks §4 and invariant matrix (26-v1-single-node-invariant-control-test-evidence-matrix.md). WS1–WS4 are resolved, all 12 invariants are VERIFIED, and output sanitization (Invariant 11) has bounded gateway wiring. Remaining gaps are operational limitations plus PostgreSQL/multi-node/real-adapter backlog.
 
 ---
 
@@ -48,11 +46,11 @@ All P0 gates cleared as of 2026-04-02. RC sign-off can proceed.
 | Capability single-use | PASS | `cap.mark_used` -> AlreadyUsed on reuse |
 | Capability scoped narrowly | PASS | scope-bounds mismatch explicitly enforced (P0 resolved) |
 | Provenance chain maintained | PASS | lineage endpoint returns events for execution |
-| Rollback contract per mutation | PASS | R0/R1/R2/R3 contract classes with auto_commit semantics |
+| Rollback contract per mutation | PASS (service-level) | R0/R1/R2/R3 contract classes with auto_commit semantics — WS1 resolved (rollback_class loaded at prepare) |
 | R3 requires approval | PASS | StaticPdpEngine returns RequireApproval for R3 |
-| Draft-only enforcement | PASS | draft-only gated at evaluate (before prepare) |
+| Draft-only enforcement | PASS (evaluate-level) | draft-only gated at evaluate (before prepare) — WS2 resolved (revalidated at prepare) |
 
-**Known gaps**: none. All P0 gates cleared. Residual accepted risks and partial controls are documented in the support contract Accepted Risks section and invariant matrix.
+**Known gaps**: See Accepted Risks §4 (19-v1-single-node-support-contract.md) and Weak Spots 1–4 (26-v1-single-node-invariant-control-test-evidence-matrix.md). WS1-WS3 gaps are resolved in code; WS4 provenance completeness is resolved by integration test.
 
 ---
 
@@ -61,13 +59,13 @@ All P0 gates cleared as of 2026-04-02. RC sign-off can proceed.
 | Criterion | Status | Evidence |
 |---|---|---|
 | SQLite persistence | PASS | `ferrum-store` with embedded migrations |
-| CLI usable for inspection and targeted operator control | PASS | `ferrumctl` now covers the remaining operator-facing REST surface, including compile/evaluate/mint/authorize/verify/commit flows |
-| Config docs | PASS | `docs/15-deployment-and-operations.md` |
+| CLI usable for inspection | PARTIAL | health, inspect-execution, inspect-approvals, inspect-approval, inspect-lineage, inspect-provenance |
+| Config docs | PASS | `docs/ferrumgate-roadmap-v1/15-deployment-and-operations.md` |
 | Approval workflow | PASS | GET /v1/approvals with pagination/filter |
 | Provenance query | PASS | GET/POST /v1/provenance/lineage, POST /v1/provenance/query |
 
 **Known gaps**:
-- Policy bundle lifecycle tooling remains a post-G-E3 backlog item; it is not required for the current operator-surface CLI closure.
+- `ferrumctl` limited to read/inspect operations; no mutating commands (post-v1 backlog).
 
 ---
 
@@ -75,20 +73,20 @@ All P0 gates cleared as of 2026-04-02. RC sign-off can proceed.
 
 | Criterion | Status | Evidence |
 |---|---|---|
-| Project canon | PASS | `docs/00-project-canon.md` |
-| Business overview | PASS | `docs/02-project-overview.md` |
-| Runtime flow | PASS | `docs/04-runtime-flow.md` |
-| Constraints/invariants | PASS | `docs/06-constraints-and-invariants.md` |
+| Project canon | PASS | `docs/ferrumgate-roadmap-v1/00-project-canon.md` |
+| Business overview | PASS | `docs/ferrumgate-roadmap-v1/02-project-overview.md` |
+| Runtime flow | PASS | `docs/ferrumgate-roadmap-v1/04-runtime-flow.md` |
+| Constraints/invariants | PASS | `docs/ferrumgate-roadmap-v1/06-constraints-and-invariants.md` |
 | Agent handoff | PASS | `docs/implementation-path/07-agent-handoff-prompt.md` |
-| Phase success criteria | PASS | `docs/91-phase-success-criteria-and-kpis.md` |
-| Release checklist | PASS | `docs/16-release-checklist.md` |
+| Phase success criteria | PASS | `docs/ferrumgate-roadmap-v1/91-phase-success-criteria-and-kpis.md` |
+| Release checklist | PASS | `docs/ferrumgate-roadmap-v1/16-release-checklist.md` |
 | Remaining tasks | PASS | `docs/implementation-path/11-remaining-tasks.md` |
 | Current state | PASS | `docs/implementation-path/01-current-state.md` |
 | Phase checklists | PASS | `docs/implementation-path/09-phase-checklists.md` |
 | RC evidence doc | PASS | `docs/implementation-path/25-v1-single-node-rc-evidence.md` exists (this doc) |
 | Phase F final docs pack | PASS | implementation-path docs finalized as cohesive pack |
 
-**Known gaps**: none. Residual accepted risks and partial controls are documented in the support contract and invariant matrix.
+**Known gaps**: See support contract Accepted Risks and invariant matrix (`12 VERIFIED / 0 PARTIAL / 0 INFERRED`) for the current control baseline. Residual production constraints are operational rather than invariant-evidence gaps: SQLite single-node throughput limits, bounded SQLite-only backup/restore workflow without scheduling/retention, PostgreSQL/multi-node deferral, and required operator signoff. No outstanding P0/P1/P2 items.
 
 ---
 
@@ -112,51 +110,39 @@ All P0 gates cleared as of 2026-04-02. RC sign-off can proceed.
 
 ## Open gaps summary
 
-### RC blockers — none (all P0 gates cleared 2026-04-02)
-- scope-mismatch deny implemented (`crates/ferrum-pdp/src/engine.rs:31-46`)
-- issue #97 merged 2026-04-03: HTTP adapter verify semantics clarified; broader adapter hardening remains post-v1
+### P0 — v1 RC blocker
+(none) — scope-mismatch deny implemented in `crates/ferrum-pdp/src/engine.rs` lines 31-46.
 
-### RC evidence — complete (all P1 items resolved 2026-04-02)
-- Curated poisoned-context regression fixtures (6 tests)
-- Phase F docs pack finalized
-- Supported flows: `25-v1-single-node-rc-evidence.md` Evidence 9
-- Open gaps: `11-remaining-tasks.md`
+### P1 — v1 RC evidence
+(none) — all P1 items resolved:
+1. Curated poisoned-context regression fixtures (6 tests).
+2. Phase F docs pack finalized as cohesive, non-contradictory set.
+3. Supported flows list documented in `25-v1-single-node-rc-evidence.md` Evidence 9.
+4. Open gaps list documented in `11-remaining-tasks.md`.
 
-### Broader production-ready — completed via roadmap gates
-FerrumGate v1 single-node is **RC-ready** (2026-04-02) and **broader production-ready**
-as of 2026-04-08. The production evaluation gates G-E1 through G-E5 are now complete
-per `30-production-roadmap.md` Priority 5:
-- **G-E1**: P2 adapter hardening — ✅ DONE
-- **G-E2**: P2 performance baseline + benchmark suite — ✅ DONE
-- **G-E3**: `ferrumctl` advanced operator flows — ✅ DONE
-- **G-E4**: P5 Sync-1 preflight checks + decision table — ✅ DONE
-- **G-E5**: Production evaluation sign-off — ✅ DONE
-
-> **Out-of-tree SQLite candidate (NOT merged):** A write-queue optimization was
-> evaluated in a local workspace (Phase 1 ✅, Phase 2 deferred after regression).
-> See `40-out-of-tree-sqlite-performance-candidate.md`. This is **not repo truth**
-> and is tracked as a potential future input to P2.2 Slice 3.
+### P2 — v1 polish
+(all resolved):
+1. `scripts/generate_rc_evidence.py` exists and PASS with all five checks — evidence: fresh P6 run (2026-04-28) → "Overall: ALL PASS".
+2. clippy passes: `cargo clippy --workspace --all-targets -- -D warnings` PASS — evidence: fresh P6 validation.
+3. `cargo test --workspace` PASS — evidence: fresh feature-completeness validation (~761 observed tests).
 
 ---
 
 ## Verdict
 
-**FerrumGate v1 is RC-ready** as of 2026-04-02 and **broader production-ready** as of 2026-04-08.
+**FerrumGate v1 is RC-ready** for single-node SQLite-backed deployment, with conditional production posture.
 
-All RC gates pass:
-1. `cargo clippy --workspace -- -D warnings` PASS
-2. `cargo test --workspace` PASS
+All P0/P1/P2 items verified complete:
+- Scope-mismatch deny implemented
+- Poisoned-context fixtures curated (6 tests)
+- Phase F docs pack finalized
+- clippy passes with no warnings
+- ~761 observed workspace tests pass (fresh feature-completeness validation 2026-04-28)
+- RC evidence script present and passing
 
-Core governance loop is implemented. Scope-mismatch deny is done. P1 evidence items are complete.
-All P0 blockers resolved as of 2026-04-02.
-P3.G1-G4 live evidence executed and attested (2026-04-03): see `30-production-roadmap.md` Priority 3 (lines 57–77).
+The governance loop, persistence layer, and integration test coverage are strong.
+Remaining gaps are post-v1 backlog items (multi-node/HA, real adapters, PostgreSQL). U1–U4 are implemented upgrade tracks but are outside the original v1 single-node SQLite support contract.
 
-**Broader production-ready** has now been achieved via G-E1 through G-E5.
-Remaining gaps (multi-node/HA, broader external adapter verification, policy bundle lifecycle tooling, and U2-U4 upgrade tracks) remain post-v1 backlog.
+**Production evaluation required before production deployment.** See `docs/implementation-path/27-production-evaluation-plan.md` for the full evaluation framework covering performance, security, reliability, operations, and release confidence.
 
-Full evidence record: [25-v1-single-node-rc-evidence.md](./25-v1-single-node-rc-evidence.md),
-[42-p2-performance-baseline-evidence.md](./42-p2-performance-baseline-evidence.md), and
-[43-production-readiness-signoff.md](./43-production-readiness-signoff.md).
-
-Issue #97 (2026-04-03) improved HTTP adapter verify semantics and gateway integration
-coverage but does not expand the supported scope beyond single-node RC-ready.
+**Release paths**: Three mutually exclusive post-P6 decision paths (RC tag, conditional production pilot, Phase 3 PostgreSQL) are documented in `docs/implementation-path/31-release-paths-todo.md` with detailed checklists, gates, evidence references, risks, and rollback/abort criteria.

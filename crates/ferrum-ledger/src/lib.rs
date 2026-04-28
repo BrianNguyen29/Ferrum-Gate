@@ -1,613 +1,239 @@
-//! Append-only audit ledger with hash-chain integrity.
-//!
-//! ## Design
-//!
-//! Each [`LedgerEntry`] wraps a [`ProvenanceEvent`] and adds chain metadata:
-//! - `sequence`: zero-based index into the ledger
-//! - `prev_hash`: hash of the previous entry (null for genesis)
-//! - `entry_hash`: deterministic hash of this entry's content + prev_hash
-//!
-//! The ledger is append-only: [`InMemoryLedger::append`] validates the chain
-//! before inserting, and exposed a minimal read-only API for chain verification.
-//!
-//! ## Genesis Entry
-//!
-//! The first entry is the **genesis entry**. Its `prev_hash` is `None` and its
-//! hash is computed from the entry content + the ASCII string `"GENESIS"`.
-
-use ferrum_proto::{ProvenanceEvent, Sha256Hex};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use thiserror::Error;
 
-/// A ledger entry with chain linkage metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LedgerEntry {
-    /// Zero-based sequence number (0 = genesis).
-    pub sequence: u64,
-    /// Hash of the previous entry (None for genesis).
-    pub prev_hash: Option<Sha256Hex>,
-    /// Deterministic hash of this entry (content + prev_hash).
-    pub entry_hash: Sha256Hex,
-    /// The underlying provenance event.
-    pub event: ProvenanceEvent,
+    pub index: u64,
+    pub hash: String,
+    pub prev_hash: String,
+    pub event_data: Vec<u8>,
+    pub event_data_hash: String,
+    pub timestamp: DateTime<Utc>,
 }
 
-/// Error returned when chain validation fails.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum LedgerError {
-    #[error("chain broken: expected prev_hash={expected}, got {actual}")]
-    BrokenChain { expected: String, actual: String },
-
-    #[error(
-        "tamper detected: entry {sequence} hash mismatch (recomputed {recomputed} != recorded {recorded})"
-    )]
-    TamperDetected {
-        sequence: u64,
-        recorded: Sha256Hex,
-        recomputed: Sha256Hex,
-    },
-
-    #[error("empty ledger cannot verify non-genesis entry")]
-    EmptyLedger,
-
-    #[error("event sequence {event_seq} does not match ledger length {ledger_len}")]
-    SequenceMismatch { event_seq: u64, ledger_len: usize },
-
-    #[error("event already appended (duplicate event_id)")]
-    DuplicateEvent,
-}
-
-/// The genesis hash is the SHA-256 of the ASCII string "GENESIS".
-pub const GENESIS_HASH: &str = "GENESIS";
-
-/// In-memory append-only ledger with hash-chain integrity.
-#[derive(Default)]
-pub struct InMemoryLedger {
+#[derive(Debug, Default)]
+pub struct HashChainLedger {
     entries: Vec<LedgerEntry>,
 }
 
-impl InMemoryLedger {
-    /// Creates a new empty ledger.
-    pub fn new() -> Self {
-        Self {
-            entries: Vec::new(),
-        }
+#[derive(Debug, Error)]
+pub enum LedgerError {
+    #[error("chain integrity broken at index {index}: expected {expected}, found {found}")]
+    ChainIntegrityBroken {
+        index: u64,
+        expected: String,
+        found: String,
+    },
+    #[error("ledger is empty")]
+    Empty,
+}
+
+const GENESIS_PREV_HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+
+fn compute_entry_hash(prev_hash: &str, event_data: &[u8], index: u64) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(prev_hash.as_bytes());
+    hasher.update(event_data);
+    hasher.update(index.to_le_bytes());
+    hex::encode(hasher.finalize())
+}
+
+fn compute_data_hash(event_data: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(event_data);
+    hex::encode(hasher.finalize())
+}
+
+impl HashChainLedger {
+    pub fn append(&mut self, event_data: &[u8]) -> Result<String, LedgerError> {
+        let index = self.entries.len() as u64;
+        let prev_hash = if index == 0 {
+            GENESIS_PREV_HASH.to_string()
+        } else {
+            self.entries.last().map(|e| e.hash.clone()).unwrap()
+        };
+        let event_data_hash = compute_data_hash(event_data);
+        let hash = compute_entry_hash(&prev_hash, event_data, index);
+        let entry = LedgerEntry {
+            index,
+            hash: hash.clone(),
+            prev_hash,
+            event_data: event_data.to_vec(),
+            event_data_hash,
+            timestamp: Utc::now(),
+        };
+        self.entries.push(entry);
+        Ok(hash)
     }
 
-    /// Returns the number of entries in the ledger.
+    pub fn verify_chain(&self) -> Result<bool, LedgerError> {
+        if self.entries.is_empty() {
+            return Ok(true);
+        }
+        for i in 0..self.entries.len() {
+            let entry = &self.entries[i];
+            let prev_hash = if i == 0 {
+                GENESIS_PREV_HASH.to_string()
+            } else {
+                self.entries[i - 1].hash.clone()
+            };
+            // Recompute event_data_hash to verify it matches
+            let expected_data_hash = compute_data_hash(&entry.event_data);
+            if entry.event_data_hash != expected_data_hash {
+                return Err(LedgerError::ChainIntegrityBroken {
+                    index: entry.index,
+                    expected: expected_data_hash,
+                    found: entry.event_data_hash.clone(),
+                });
+            }
+            // Recompute entry hash using stored event_data bytes
+            let recomputed = compute_entry_hash(&prev_hash, &entry.event_data, entry.index);
+            if entry.hash != recomputed {
+                return Err(LedgerError::ChainIntegrityBroken {
+                    index: entry.index,
+                    expected: recomputed,
+                    found: entry.hash.clone(),
+                });
+            }
+        }
+        Ok(true)
+    }
+
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
-    /// Returns true if the ledger is empty.
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
-    /// Returns a reference to the last entry, if any.
-    pub fn last_entry(&self) -> Option<&LedgerEntry> {
-        self.entries.last()
+    pub fn get_entry(&self, index: usize) -> Option<&LedgerEntry> {
+        self.entries.get(index)
     }
 
-    /// Returns a reference to the genesis entry, if any.
-    pub fn genesis(&self) -> Option<&LedgerEntry> {
-        self.entries.first()
-    }
-
-    /// Returns an iterator over all entries.
-    pub fn entries(&self) -> &[LedgerEntry] {
-        &self.entries
-    }
-
-    /// Appends a [`ProvenanceEvent`] as a new [`LedgerEntry`].
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LedgerError::DuplicateEvent`] if the event's `event_id` is already
-    /// present in the ledger. Returns [`LedgerError::SequenceMismatch`] if the
-    /// event's internal sequence number doesn't match the expected next position.
-    /// On a tampered previous entry, returns [`LedgerError::BrokenChain`] or
-    /// [`LedgerError::TamperDetected`].
-    pub fn append(&mut self, event: ProvenanceEvent) -> Result<&LedgerEntry, LedgerError> {
-        let sequence = self.entries.len() as u64;
-        let prev_hash = self.entries.last().map(|e| e.entry_hash.clone());
-
-        // Duplicate detection
-        if self
-            .entries
-            .iter()
-            .any(|e| e.event.event_id == event.event_id)
-        {
-            return Err(LedgerError::DuplicateEvent);
-        }
-
-        // Build a temporary entry to compute the hash (prev_hash is used as-is)
-        let temp_entry = LedgerEntry {
-            sequence,
-            prev_hash: prev_hash.clone(),
-            entry_hash: String::new(), // placeholder, not used for hashing
-            event,
-        };
-        let entry_hash = compute_entry_hash(&temp_entry, prev_hash.as_deref());
-
-        let entry = LedgerEntry {
-            sequence,
-            prev_hash,
-            entry_hash: entry_hash.clone(),
-            event: temp_entry.event,
-        };
-
-        // --- Light validation before committing ---
-        // Verify the entry we just built hashes to what we expect
-        let recomputed = compute_entry_hash_raw(&entry);
-        if recomputed != entry_hash {
-            // This should never happen — indicates a bug in compute_entry_hash
-            return Err(LedgerError::TamperDetected {
-                sequence,
-                recorded: entry.entry_hash.to_string(),
-                recomputed,
-            });
-        }
-
-        self.entries.push(entry);
-        Ok(self.entries.last().unwrap())
-    }
-
-    /// Verifies the entire chain, returning the first error encountered.
-    ///
-    /// Use this to audit integrity after loading from persistence.
-    pub fn verify_chain(&self) -> Result<(), LedgerError> {
-        for (i, entry) in self.entries.iter().enumerate() {
-            let sequence = i as u64;
-
-            // Check sequence matches
-            if entry.sequence != sequence {
-                return Err(LedgerError::SequenceMismatch {
-                    event_seq: entry.sequence,
-                    ledger_len: i,
-                });
-            }
-
-            // Check prev_hash linkage
-            let expected_prev = if i == 0 {
-                None
-            } else {
-                Some(self.entries[i - 1].entry_hash.clone())
-            };
-            if entry.prev_hash != expected_prev {
-                return Err(LedgerError::BrokenChain {
-                    expected: expected_prev.unwrap_or_else(|| GENESIS_HASH.to_string()),
-                    actual: entry
-                        .prev_hash
-                        .clone()
-                        .unwrap_or_else(|| "None".to_string()),
-                });
-            }
-
-            // Check entry hash
-            let recomputed = compute_entry_hash_raw(entry);
-            if recomputed != entry.entry_hash.as_str() {
-                return Err(LedgerError::TamperDetected {
-                    sequence,
-                    recorded: entry.entry_hash.to_string(),
-                    recomputed,
-                });
-            }
-        }
-        Ok(())
-    }
-
-    /// Loads pre-built entries into a new [`InMemoryLedger`] without re-hashing or
-    /// re-validating chain linkage. Used when rebuilding a ledger from a trusted
-    /// store (e.g. SQLite) that already persisted verified entries.
-    ///
-    /// # Safety
-    ///
-    /// Caller must ensure the entries form a valid chain (i.e. [`verify_chain`]
-    /// would pass). Passing invalid data will cause subsequent [`verify_chain`]
-    /// calls to fail.
-    pub fn load_entries(entries: Vec<LedgerEntry>) -> Self {
-        Self { entries }
-    }
-}
-
-/// Verifies a single entry against an expected previous hash.
-///
-/// This is the core append-time verification primitive: before inserting a new
-/// entry into the ledger, call this to confirm its `prev_hash` matches the
-/// tip of the chain.
-///
-/// # Arguments
-/// * `entry` - The ledger entry to verify
-/// * `expected_prev_hash` - The hash of the previous entry (None for genesis)
-///
-/// # Errors
-///
-/// Returns [`LedgerError::BrokenChain`] if the entry's `prev_hash` does not
-/// match `expected_prev_hash`. Genesis entries (sequence 0) require both
-/// `expected_prev_hash` and `entry.prev_hash` to be `None`.
-pub fn verify_entry(
-    entry: &LedgerEntry,
-    expected_prev_hash: Option<&str>,
-) -> Result<(), LedgerError> {
-    // Genesis entry (sequence 0) must have no prev_hash
-    if entry.sequence == 0 {
-        if entry.prev_hash.is_some() {
-            return Err(LedgerError::BrokenChain {
-                expected: "None (genesis)".to_string(),
-                actual: entry.prev_hash.clone().unwrap_or_default(),
-            });
-        }
-        if let Some(val) = expected_prev_hash {
-            return Err(LedgerError::BrokenChain {
-                expected: val.to_string(),
-                actual: "None (genesis)".to_string(),
-            });
-        }
-        return Ok(());
-    }
-
-    // Non-genesis: prev_hash must match expected
-    let actual = entry.prev_hash.as_deref();
-    if actual != expected_prev_hash {
-        return Err(LedgerError::BrokenChain {
-            expected: expected_prev_hash.unwrap_or("None").to_string(),
-            actual: entry
-                .prev_hash
-                .clone()
-                .unwrap_or_else(|| "None".to_string()),
-        });
-    }
-
-    Ok(())
-}
-
-/// Compute the deterministic hash for a ledger entry.
-///
-/// The hash is SHA-256 over the concatenation of:
-/// 1. The deterministic serde_json serialization of the entry's event
-/// 2. The prev_hash string (or "GENESIS" if None)
-fn compute_entry_hash(entry: &LedgerEntry, prev_hash: Option<&str>) -> String {
-    let content = serde_json::to_string(&entry.event).expect("event must serialize");
-    let prev = prev_hash.unwrap_or(GENESIS_HASH);
-    let mut hasher = Sha256::new();
-    hasher.update(content.as_bytes());
-    hasher.update(prev.as_bytes());
-    hex::encode(hasher.finalize())
-}
-
-/// Variant that works on a fully-constructed entry (uses entry.prev_hash).
-pub fn compute_entry_hash_raw(entry: &LedgerEntry) -> String {
-    compute_entry_hash(entry, entry.prev_hash.as_deref())
-}
-
-impl LedgerEntry {
-    /// Construct a ledger entry from a provenance event and chain metadata.
-    ///
-    /// This is the low-level constructor used when building an entry from a
-    /// known previous tip (rather than appending to an in-memory ledger).
-    ///
-    /// # Arguments
-    /// * `event` - The provenance event to wrap
-    /// * `sequence` - This entry's zero-based sequence number
-    /// * `prev_hash` - Hash of the previous entry (None for genesis)
-    pub fn from_event(event: ProvenanceEvent, sequence: u64, prev_hash: Option<Sha256Hex>) -> Self {
-        let entry_hash = {
-            // Build a temporary entry to compute the hash (clone event since we need it after)
-            let temp = LedgerEntry {
-                sequence,
-                prev_hash: prev_hash.clone(),
-                entry_hash: String::new(),
-                event: event.clone(),
-            };
-            compute_entry_hash(&temp, prev_hash.as_deref())
-        };
-
-        LedgerEntry {
-            sequence,
-            prev_hash,
-            entry_hash,
-            event,
-        }
+    pub fn latest_hash(&self) -> Option<String> {
+        self.entries.last().map(|e| e.hash.clone())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ferrum_proto::{
-        ActorRef, ActorType, EventId, HashChainRef, ObjectRef, ObjectType, SensitivityLabel,
-        Timestamp, TrustLabel,
-    };
 
-    fn make_test_event(sequence: u64) -> ProvenanceEvent {
-        ProvenanceEvent {
-            event_id: EventId::new(),
-            kind: ferrum_proto::ProvenanceEventKind::UserGoalReceived,
-            occurred_at: Timestamp::default(),
-            actor: ActorRef {
-                actor_type: ActorType::User,
-                actor_id: format!("user-{}", sequence),
-                display_name: None,
-            },
-            object: ObjectRef {
-                object_type: ObjectType::Intent,
-                object_id: format!("intent-{}", sequence),
-                summary: None,
-            },
-            intent_id: None,
-            proposal_id: None,
-            execution_id: None,
-            capability_id: None,
-            rollback_contract_id: None,
-            policy_bundle_id: None,
-            trust_labels: vec![TrustLabel::Trusted],
-            sensitivity_labels: vec![SensitivityLabel::Public],
-            parent_edges: vec![],
-            hash_chain: HashChainRef {
-                content_hash: None,
-                manifest_hash: None,
-                policy_bundle_hash: None,
-                previous_ledger_hash: None,
-            },
-            metadata: ferrum_proto::JsonMap::new(),
-        }
+    #[test]
+    fn test_genesis_entry_has_zero_prev_hash() {
+        let mut ledger = HashChainLedger::default();
+        ledger.append(b"genesis event").unwrap();
+        assert_eq!(ledger.entries[0].prev_hash, GENESIS_PREV_HASH);
     }
 
     #[test]
-    fn test_genesis_entry_has_null_prev_hash() {
-        let mut ledger = InMemoryLedger::new();
-        let event = make_test_event(0);
-        let entry = ledger.append(event).expect("append should succeed");
-
-        assert_eq!(entry.sequence, 0);
-        assert!(entry.prev_hash.is_none());
-        // Genesis hash is computed with "GENESIS" as prev_hash
-        let expected = {
-            let content = serde_json::to_string(&entry.event).unwrap();
-            let mut hasher = Sha256::new();
-            hasher.update(content.as_bytes());
-            hasher.update(b"GENESIS");
-            hex::encode(hasher.finalize())
-        };
-        assert_eq!(entry.entry_hash.as_str(), expected);
+    fn test_append_returns_hash() {
+        let mut ledger = HashChainLedger::default();
+        let hash = ledger.append(b"first event").unwrap();
+        assert_eq!(hash.len(), 64);
+        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
     }
 
     #[test]
-    fn test_chain_linkage() {
-        let mut ledger = InMemoryLedger::new();
-
-        ledger.append(make_test_event(1)).expect("append genesis");
-        let first_hash = ledger.entries[0].entry_hash.clone();
-
-        ledger.append(make_test_event(2)).expect("append second");
-        let second_hash = ledger.entries[1].entry_hash.clone();
-
-        ledger.append(make_test_event(3)).expect("append third");
-
-        // Verify linkage
-        assert_eq!(ledger.entries[1].prev_hash.as_ref(), Some(&first_hash));
-        assert_eq!(ledger.entries[1].sequence, 1);
-
-        assert_eq!(ledger.entries[2].prev_hash.as_ref(), Some(&second_hash));
-        assert_eq!(ledger.entries[2].sequence, 2);
+    fn test_chain_grows() {
+        let mut ledger = HashChainLedger::default();
+        assert_eq!(ledger.len(), 0);
+        ledger.append(b"event 1").unwrap();
+        assert_eq!(ledger.len(), 1);
+        ledger.append(b"event 2").unwrap();
+        assert_eq!(ledger.len(), 2);
     }
 
     #[test]
-    fn test_verify_chain_passes_on_valid_ledger() {
-        let mut ledger = InMemoryLedger::new();
-        ledger.append(make_test_event(0)).expect("append genesis");
-        ledger.append(make_test_event(1)).expect("append second");
-        ledger.append(make_test_event(2)).expect("append third");
-
-        ledger.verify_chain().expect("chain should be valid");
+    fn test_verify_chain_on_valid_chain() {
+        let mut ledger = HashChainLedger::default();
+        ledger.append(b"event 1").unwrap();
+        ledger.append(b"event 2").unwrap();
+        assert!(ledger.verify_chain().is_ok());
     }
 
     #[test]
-    fn test_verify_chain_detects_broken_prev_hash() {
-        let mut ledger = InMemoryLedger::new();
-        ledger.append(make_test_event(0)).expect("append genesis");
-        ledger.append(make_test_event(1)).expect("append second");
-
-        // Corrupt the prev_hash of the second entry
-        ledger.entries[1].prev_hash = Some("badbadbad".to_string());
-
-        let err = ledger
-            .verify_chain()
-            .expect_err("should detect broken chain");
-        assert!(matches!(err, LedgerError::BrokenChain { .. }));
+    fn test_verify_chain_detects_tampering() {
+        let mut ledger = HashChainLedger::default();
+        ledger.append(b"event 1").unwrap();
+        ledger.append(b"event 2").unwrap();
+        // Tamper with the second entry's hash
+        ledger.entries[1].hash = "a".repeat(64);
+        assert!(ledger.verify_chain().is_err());
     }
 
     #[test]
-    fn test_verify_chain_detects_tampered_entry_hash() {
-        let mut ledger = InMemoryLedger::new();
-        ledger.append(make_test_event(0)).expect("append genesis");
-        ledger.append(make_test_event(1)).expect("append second");
-
-        // Corrupt the entry_hash of the second entry
-        ledger.entries[1].entry_hash = "tampered_entry_hash".to_string();
-
-        let err = ledger.verify_chain().expect_err("should detect tamper");
-        assert!(matches!(err, LedgerError::TamperDetected { .. }));
+    fn test_latest_hash_matches_last_entry() {
+        let mut ledger = HashChainLedger::default();
+        let h1 = ledger.append(b"event 1").unwrap();
+        assert_eq!(ledger.latest_hash(), Some(h1.clone()));
+        let h2 = ledger.append(b"event 2").unwrap();
+        assert_eq!(ledger.latest_hash(), Some(h2));
     }
 
     #[test]
-    fn test_verify_chain_detects_tampered_event_content() {
-        let mut ledger = InMemoryLedger::new();
-        ledger.append(make_test_event(0)).expect("append genesis");
-        ledger.append(make_test_event(1)).expect("append second");
-
-        // Mutate event content after append (simulates tampering)
-        ledger.entries[1].event.actor.actor_id = "hacker".to_string();
-
-        let err = ledger
-            .verify_chain()
-            .expect_err("should detect content tamper");
-        assert!(matches!(err, LedgerError::TamperDetected { .. }));
+    fn test_each_entry_references_previous() {
+        let mut ledger = HashChainLedger::default();
+        ledger.append(b"event 1").unwrap();
+        ledger.append(b"event 2").unwrap();
+        assert_eq!(ledger.entries[1].prev_hash, ledger.entries[0].hash);
     }
 
     #[test]
-    fn test_duplicate_event_rejected() {
-        let mut ledger = InMemoryLedger::new();
-        let event = make_test_event(0);
-        let event_id = event.event_id;
-        ledger.append(event).expect("append should succeed");
-
-        let dup = ProvenanceEvent {
-            event_id, // same id
-            kind: ferrum_proto::ProvenanceEventKind::IntentCompiled,
-            occurred_at: Timestamp::default(),
-            actor: ActorRef {
-                actor_type: ActorType::User,
-                actor_id: "user-x".to_string(),
-                display_name: None,
-            },
-            object: ObjectRef {
-                object_type: ObjectType::Intent,
-                object_id: "intent-x".to_string(),
-                summary: None,
-            },
-            intent_id: None,
-            proposal_id: None,
-            execution_id: None,
-            capability_id: None,
-            rollback_contract_id: None,
-            policy_bundle_id: None,
-            trust_labels: vec![],
-            sensitivity_labels: vec![],
-            parent_edges: vec![],
-            hash_chain: HashChainRef {
-                content_hash: None,
-                manifest_hash: None,
-                policy_bundle_hash: None,
-                previous_ledger_hash: None,
-            },
-            metadata: ferrum_proto::JsonMap::new(),
-        };
-
-        let err = ledger
-            .append(dup)
-            .expect_err("duplicate should be rejected");
-        assert!(matches!(err, LedgerError::DuplicateEvent));
+    fn test_empty_ledger_latest_hash_is_none() {
+        let ledger = HashChainLedger::default();
+        assert_eq!(ledger.latest_hash(), None);
     }
 
     #[test]
-    fn test_empty_ledger_verify_succeeds() {
-        let ledger = InMemoryLedger::new();
-        ledger.verify_chain().expect("empty ledger is valid");
+    fn test_empty_ledger_verify_returns_ok() {
+        let ledger = HashChainLedger::default();
+        assert!(ledger.verify_chain().unwrap());
     }
 
     #[test]
-    fn test_last_entry_returns_correctly() {
-        let mut ledger = InMemoryLedger::new();
-        assert!(ledger.last_entry().is_none());
-
-        ledger.append(make_test_event(0)).expect("append");
-        assert_eq!(ledger.last_entry().unwrap().sequence, 0);
-
-        ledger.append(make_test_event(1)).expect("append");
-        assert_eq!(ledger.last_entry().unwrap().sequence, 1);
+    fn test_entry_index_increments() {
+        let mut ledger = HashChainLedger::default();
+        ledger.append(b"e0").unwrap();
+        assert_eq!(ledger.entries[0].index, 0);
+        ledger.append(b"e1").unwrap();
+        assert_eq!(ledger.entries[1].index, 1);
+        ledger.append(b"e2").unwrap();
+        assert_eq!(ledger.entries[2].index, 2);
     }
 
     #[test]
-    fn test_genesis_returns_correctly() {
-        let mut ledger = InMemoryLedger::new();
-        assert!(ledger.genesis().is_none());
-
-        ledger.append(make_test_event(0)).expect("append");
-        assert_eq!(ledger.genesis().unwrap().sequence, 0);
-
-        ledger.append(make_test_event(1)).expect("append");
-        assert_eq!(ledger.genesis().unwrap().sequence, 0);
-    }
-
-    // --- verify_entry tests ---
-
-    #[test]
-    fn test_verify_entry_genesis_succeeds() {
-        let event = make_test_event(0);
-        let entry = LedgerEntry::from_event(event, 0, None);
-
-        // Genesis: expected_prev_hash = None, entry.prev_hash = None
-        verify_entry(&entry, None).expect("genesis entry should verify");
+    fn test_event_data_hash_matches_sha256() {
+        let mut ledger = HashChainLedger::default();
+        ledger.append(b"hello world").unwrap();
+        let entry = &ledger.entries[0];
+        // Manually compute sha256 of "hello world"
+        let mut hasher = Sha256::new();
+        hasher.update(b"hello world");
+        let expected = hex::encode(hasher.finalize());
+        assert_eq!(entry.event_data_hash, expected);
     }
 
     #[test]
-    fn test_verify_entry_genesis_rejects_non_null_prev_hash() {
-        let event = make_test_event(0);
-        // Manually create a genesis entry with a bogus prev_hash
-        let entry = LedgerEntry {
-            sequence: 0,
-            prev_hash: Some("bad".to_string()),
-            entry_hash: "ignored".to_string(),
-            event,
-        };
-
-        let err = verify_entry(&entry, None).expect_err("genesis with prev_hash should fail");
-        assert!(matches!(err, LedgerError::BrokenChain { .. }));
+    fn test_verify_chain_detects_tampered_prev_hash() {
+        let mut ledger = HashChainLedger::default();
+        ledger.append(b"event 1").unwrap();
+        ledger.append(b"event 2").unwrap();
+        // Tamper with first entry's hash - second entry's prev_hash won't match
+        ledger.entries[0].hash = "b".repeat(64);
+        assert!(ledger.verify_chain().is_err());
     }
 
     #[test]
-    fn test_verify_entry_valid_chain_succeeds() {
-        // Build a 2-entry ledger
-        let event0 = make_test_event(0);
-        let entry0 = LedgerEntry::from_event(event0, 0, None);
-        let hash0 = entry0.entry_hash.clone();
-
-        let event1 = make_test_event(1);
-        let entry1 = LedgerEntry::from_event(event1, 1, Some(hash0.clone()));
-
-        // Verify genesis
-        verify_entry(&entry0, None).expect("genesis should verify");
-        // Verify second entry linking to genesis
-        verify_entry(&entry1, Some(&hash0)).expect("valid chain should verify");
-    }
-
-    #[test]
-    fn test_verify_entry_broken_prev_hash_fails() {
-        // Build a genesis entry
-        let event0 = make_test_event(0);
-        let entry0 = LedgerEntry::from_event(event0, 0, None);
-        let hash0 = entry0.entry_hash.clone();
-
-        // Build a second entry that claims to link to hash0
-        let event1 = make_test_event(1);
-        let entry1 = LedgerEntry::from_event(event1, 1, Some(hash0.clone()));
-
-        // Corrupt the prev_hash (doesn't match the actual hash0)
-        let bad_entry = LedgerEntry {
-            sequence: 1,
-            prev_hash: Some("not-the-expected-hash".to_string()),
-            entry_hash: entry1.entry_hash.clone(),
-            event: entry1.event,
-        };
-
-        let err = verify_entry(&bad_entry, Some(&hash0)).expect_err("broken chain should fail");
-        assert!(matches!(err, LedgerError::BrokenChain { expected, .. } if expected == hash0));
-    }
-
-    #[test]
-    fn test_verify_entry_wrong_expected_hash_fails() {
-        let event0 = make_test_event(0);
-        let entry0 = LedgerEntry::from_event(event0, 0, None);
-
-        let event1 = make_test_event(1);
-        let entry1 = LedgerEntry::from_event(event1, 1, Some(entry0.entry_hash.clone()));
-
-        // Verify with a different expected hash
-        let err = verify_entry(&entry1, Some("wrong-expected-hash"))
-            .expect_err("wrong expected hash should fail");
-        assert!(matches!(err, LedgerError::BrokenChain { .. }));
-    }
-
-    #[test]
-    fn test_verify_entry_genesis_with_expected_hash_fails() {
-        let event = make_test_event(0);
-        let entry = LedgerEntry::from_event(event, 0, None);
-
-        // Genesis but we incorrectly pass an expected hash
-        let err = verify_entry(&entry, Some("any-hash"))
-            .expect_err("genesis with expected hash should fail");
-        assert!(matches!(err, LedgerError::BrokenChain { .. }));
+    fn test_verify_chain_detects_tampered_event_data_hash() {
+        let mut ledger = HashChainLedger::default();
+        ledger.append(b"event 1").unwrap();
+        ledger.append(b"event 2").unwrap();
+        // Tamper with first entry's event_data_hash - its hash will change
+        ledger.entries[0].event_data_hash = "c".repeat(64);
+        assert!(ledger.verify_chain().is_err());
     }
 }

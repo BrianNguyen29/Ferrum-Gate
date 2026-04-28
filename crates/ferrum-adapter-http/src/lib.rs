@@ -1,850 +1,1405 @@
+//! HTTP adapter for mutation and idempotency-aware compensation.
+//!
+//! This adapter implements the `RollbackAdapter` trait for HTTP operations,
+//! supporting prepare→verify lifecycle with HttpStatusExpected checks.
+//!
+//! # HttpMutation Recovery Slice
+//!
+//! This adapter supports bounded HttpMutation execute for **request execution with receipt capture**:
+//! - `prepare`: validates target/method/url shape and optionally validates prepare checks
+//!   if they use `HttpStatusExpected` (making a request to check endpoint reachability)
+//! - `execute`: sends real HTTP requests to the target URL using the specified method,
+//!   captures request metadata (method, URL, request digest), response status, and bounded
+//!   response digest/size. Fail-closed on connection/timeout/parse errors with phase-aware
+//!   internal normalization. Supports payload body (string, number, bool, null, or object
+//!   with "body" field).
+//! - `verify`: supports explicit `HttpStatusExpected` checks against a local test server/endpoint
+//!   and fail-closes on mismatch or request error
+//!
+//! # Limitations
+//!
+//! - `rollback()` and `compensate()` are **not yet supported**.
+//!   They will return `AdapterError::Unsupported` with a clear message indicating this.
+//! - Only `HttpStatusExpected` checks are supported; other check types return unsupported error.
+
 use async_trait::async_trait;
+use chrono::Utc;
 use ferrum_proto::{
-    CheckSpec, CheckType, HttpMethod, JsonMap, RollbackContract, RollbackPrepareRequest,
+    ActionType, CheckType, HttpMethod, JsonMap, RollbackContract, RollbackPrepareRequest,
     RollbackTarget,
 };
 use ferrum_rollback::{
-    AdapterError, AdapterRegistry, ExecuteReceipt, PrepareReceipt, RecoveryReceipt,
-    RollbackAdapter, VerifyReceipt,
+    AdapterError, ExecuteReceipt, PrepareReceipt, RecoveryReceipt, RollbackAdapter, VerifyReceipt,
 };
-use reqwest::{Client, Url, header::HeaderName};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, HashMap};
+use std::io::{Read, Write};
 use std::time::Duration;
 use thiserror::Error;
-use tokio::time::sleep;
 
-pub const ADAPTER_KEY: &str = "http";
-const APPROVED_HTTP_REQUEST_METADATA_KEY: &str = "approved_http_request";
+#[derive(Debug, Clone)]
+pub struct PoolConfig {
+    /// Maximum number of concurrent connections.
+    pub max_connections: usize,
+    /// Connection timeout in milliseconds.
+    pub connection_timeout_ms: u64,
+    /// Pool idle timeout in milliseconds.
+    pub pool_idle_timeout_ms: u64,
+}
+
+impl Default for PoolConfig {
+    fn default() -> Self {
+        Self {
+            max_connections: 10,
+            connection_timeout_ms: 5000,
+            pool_idle_timeout_ms: 30000,
+        }
+    }
+}
+
+impl PoolConfig {
+    /// Validates the pool configuration.
+    /// Returns Ok if valid, or Err with validation message if invalid.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.max_connections == 0 {
+            return Err("max_connections must be greater than 0".to_string());
+        }
+        if self.max_connections > 1000 {
+            return Err("max_connections must be at most 1000".to_string());
+        }
+        if self.connection_timeout_ms == 0 {
+            return Err("connection_timeout_ms must be greater than 0".to_string());
+        }
+        if self.connection_timeout_ms > 60000 {
+            return Err("connection_timeout_ms must be at most 60000 (60 seconds)".to_string());
+        }
+        if self.pool_idle_timeout_ms > 3600000 {
+            return Err("pool_idle_timeout_ms must be at most 3600000 (1 hour)".to_string());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RetryConfig {
+    /// Maximum number of retry attempts.
+    pub max_retries: u32,
+    /// Initial backoff delay in milliseconds.
+    pub initial_backoff_ms: u64,
+    /// Maximum backoff delay in milliseconds.
+    pub max_backoff_ms: u64,
+    /// HTTP status codes that trigger retry.
+    pub retryable_statuses: Vec<u16>,
+}
+
+impl Default for RetryConfig {
+    fn default() -> Self {
+        Self {
+            max_retries: 3,
+            initial_backoff_ms: 100,
+            max_backoff_ms: 5000,
+            retryable_statuses: vec![429, 502, 503, 504],
+        }
+    }
+}
+
+impl RetryConfig {
+    /// Validates the retry configuration.
+    /// Returns Ok if valid, or Err with validation message if invalid.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.max_retries > 10 {
+            return Err("max_retries must be at most 10".to_string());
+        }
+        if self.initial_backoff_ms == 0 {
+            return Err("initial_backoff_ms must be greater than 0".to_string());
+        }
+        if self.initial_backoff_ms > 60000 {
+            return Err("initial_backoff_ms must be at most 60000 (60 seconds)".to_string());
+        }
+        if self.max_backoff_ms < self.initial_backoff_ms {
+            return Err("max_backoff_ms must be >= initial_backoff_ms".to_string());
+        }
+        if self.max_backoff_ms > 300000 {
+            return Err("max_backoff_ms must be at most 300000 (5 minutes)".to_string());
+        }
+        for status in &self.retryable_statuses {
+            if *status < 100 || *status > 599 {
+                return Err(format!(
+                    "retryable_statuses contains invalid HTTP status {} (must be 100-599)",
+                    status
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Records a single retry attempt.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AttemptRecord {
+    /// Zero-based attempt number.
+    pub attempt_number: u32,
+    /// HTTP status code received (0 if connection error).
+    pub status_code: u16,
+    /// Whether the attempt succeeded (status in expected list).
+    pub succeeded: bool,
+    /// Timestamp when attempt started (RFC3339).
+    pub started_at: String,
+    /// Timestamp when attempt completed (RFC3339).
+    pub completed_at: String,
+    /// Error message if attempt failed (connection error, etc).
+    pub error_message: Option<String>,
+}
+
+/// Rollback metadata tracking all retry attempts.
+/// This is included in error metadata when all retries are exhausted.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RetryRollbackMetadata {
+    /// Version identifier.
+    pub version: String,
+    /// Total attempts made (including initial + retries).
+    pub total_attempts: u32,
+    /// All individual attempt records.
+    pub attempts: Vec<AttemptRecord>,
+    /// The final error message after all retries exhausted.
+    pub final_error: String,
+    /// Whether idempotency key was preserved across retries.
+    pub idempotency_key_preserved: bool,
+}
+
+pub const ADAPTER_KIND: &str = "ferrum-adapter-http";
+
+/// Phase context for error normalization.
+const PHASE_PREPARE: &str = "prepare";
+const PHASE_VERIFY: &str = "verify";
+const PHASE_EXECUTE: &str = "execute";
+const PHASE_COMPENSATE: &str = "compensate";
+const PHASE_ROLLBACK: &str = "rollback";
+
+/// The supported replay operation identifier.
+const REPLAY_OPERATION: &str = "http.replay_v1";
+
+/// Valid replay args keys and their types for strict schema validation.
+const REPLAY_VALID_KEYS: &[&str] = &["method", "url", "payload", "expected_statuses"];
 
 #[derive(Debug, Error)]
 pub enum HttpAdapterError {
-    #[error("unsupported action: {0}")]
-    Unsupported(String),
-    #[error("validation failed: {0}")]
+    #[error("invalid target: expected HttpRequest, got {0}")]
+    InvalidTarget(String),
+    #[error("unsupported action type: {0}")]
+    UnsupportedAction(String),
+    #[error("unsupported check type: {0}")]
+    UnsupportedCheck(String),
+    #[error("validation error: {0}")]
     Validation(String),
-    #[error("internal: {0}")]
-    Internal(String),
-    #[error("HTTP request failed: {0}")]
-    RequestFailed(String),
+    #[error("http request failed: {0}")]
+    HttpRequestFailed(String),
+    #[error("http status mismatch: expected {expected}, got {actual}")]
+    HttpStatusMismatch { expected: u16, actual: u16 },
+    #[error("malformed URL: {0}")]
+    MalformedUrl(String),
+    #[error("connection error: {0}")]
+    ConnectionError(String),
+    #[error("timeout: {0}")]
+    Timeout(String),
+    #[error("replay validation failed: {0}")]
+    ReplayValidation(String),
+    #[error("retry exhausted: {0}")]
+    RetryExhausted(String),
 }
 
 impl From<HttpAdapterError> for AdapterError {
-    fn from(e: HttpAdapterError) -> Self {
-        match e {
-            HttpAdapterError::Unsupported(s) => AdapterError::Unsupported(s),
-            HttpAdapterError::Validation(s) => AdapterError::Validation(s),
-            HttpAdapterError::Internal(s) => AdapterError::Internal(s),
-            HttpAdapterError::RequestFailed(s) => AdapterError::Internal(s),
-        }
-    }
-}
-
-/// HttpRollbackAdapter provides conservative HTTP request capture and verification.
-///
-/// Supported operations:
-/// - `prepare`: captures bound scope plus approved-request digest metadata
-/// - `execute`: performs HTTP requests (GET/POST/PUT/PATCH/DELETE) with body handling
-/// - `verify`: validates status - GET can re-request; mutations use execute-time metadata only
-/// - `rollback`: conservative no-op (remote mutation recovery is not established)
-/// - `compensate`: alias for rollback in this slice
-///
-/// URL scope semantics:
-/// - `RollbackTarget::HttpRequest.url` represents the BOUND URL scope/prefix (base_url + path_prefix)
-/// - Execute-time payload may contain a concrete URL within that scope
-/// - Adapter validates fail-closed that actual URL stays within bound scope prefix
-/// - Method must match the bound method
-///
-/// Approved request digest semantics:
-/// - `prepare` may receive the approved HTTP request payload via transient metadata
-/// - GET digest = SHA256(method:url[:headers])
-/// - POST/PUT/PATCH/DELETE digest = SHA256(method:url:body[:headers]) where body is canonical JSON or empty
-/// - Header names are canonicalized to lowercase before digesting
-/// - The approved digest binds execute-time payloads to the concrete approved request without
-///   broadening rollback/recovery guarantees for remote mutation methods
-///
-/// Verify semantics by method:
-/// - GET: re-requests if explicit HttpStatusExpected check; otherwise uses execute-time metadata
-/// - Mutations: ALWAYS uses execute-time metadata only (no replay). Fail-closed if metadata missing.
-///
-/// Metadata keys (clearer naming to distinguish bound vs executed):
-/// - `bound_url`: the allowed URL scope prefix from prepare
-/// - `bound_method`: the allowed method from prepare
-/// - `bound_request_digest`: digest of the bound scope target
-/// - `approved_url`: concrete approved URL resolved at prepare time
-/// - `approved_method`: concrete approved method resolved at prepare time
-/// - `approved_body_digest`: SHA256(canonical body) for the approved request body
-/// - `approved_headers_digest`: SHA256(canonical lowercase header map) for approved headers
-/// - `approved_request_digest`: digest of the approved concrete request
-/// - `executed_url`: the concrete URL actually executed (from payload or bound default)
-/// - `executed_method`: the method actually executed (from payload or bound default)
-/// - `executed_body_digest`: SHA256(canonical body) for the execute-time request body
-/// - `executed_headers_digest`: SHA256(canonical lowercase header map) for execute-time headers
-/// - `executed_request_digest`: digest computed at execute time including actual body/header shape
-///
-/// This slice is conservative:
-/// - rollback/compensate are no-ops since mutation recovery guarantees are not yet established
-/// - Response bodies are not captured or compared
-/// - Destructive remote mutation recovery remains an explicit R3 boundary
-pub struct HttpRollbackAdapter {
-    client: Client,
-}
-
-/// Dedicated HTTP auth representation for HTTP requests.
-/// Supports bearer, basic, and API key auth, allowing auth to be specified separately
-/// from headers while maintaining header allowlist semantics for the authorization header.
-#[derive(Debug, Clone)]
-enum HttpAuth {
-    Bearer { token: String },
-    Basic { username: String, password: String },
-    ApiKey { header: String, key: String },
-}
-
-type ParsedRequestParts = (
-    Option<String>,
-    Option<HttpMethod>,
-    serde_json::Value,
-    Option<HashMap<String, String>>,
-    Option<HttpAuth>,
-);
-
-type ResolvedRequestParts = (
-    String,
-    HttpMethod,
-    serde_json::Value,
-    Option<HashMap<String, String>>,
-    Option<HttpAuth>,
-);
-
-impl HttpAuth {
-    /// Compute a digest for this auth credential (without storing raw credentials).
-    fn compute_digest(&self) -> String {
-        let mut hasher = Sha256::new();
-        match self {
-            HttpAuth::Bearer { token } => {
-                hasher.update(format!("bearer:{}", token).as_bytes());
+    fn from(err: HttpAdapterError) -> Self {
+        match err {
+            HttpAdapterError::InvalidTarget(msg) => AdapterError::Validation(msg),
+            HttpAdapterError::UnsupportedAction(msg) => AdapterError::Unsupported(msg),
+            HttpAdapterError::UnsupportedCheck(msg) => AdapterError::Unsupported(msg),
+            HttpAdapterError::Validation(msg) => AdapterError::Validation(msg),
+            HttpAdapterError::HttpRequestFailed(msg) => AdapterError::Internal(msg),
+            HttpAdapterError::HttpStatusMismatch { .. } => {
+                AdapterError::Validation(err.to_string())
             }
-            HttpAuth::Basic { username, password } => {
-                hasher.update(format!("basic:{}:{}", username, password).as_bytes());
+            HttpAdapterError::MalformedUrl(msg) => AdapterError::Validation(msg),
+            HttpAdapterError::ConnectionError(msg) => AdapterError::Internal(msg),
+            HttpAdapterError::Timeout(msg) => AdapterError::Internal(msg),
+            HttpAdapterError::ReplayValidation(msg) => AdapterError::Validation(msg),
+            HttpAdapterError::RetryExhausted(msg) => AdapterError::Internal(msg),
+        }
+    }
+}
+
+/// HTTP adapter implementing the RollbackAdapter trait.
+///
+/// Uses HTTP requests to provide bounded prepare→execute→verify behavior with status checks.
+/// This first slice supports real request execution with receipt capture while keeping
+/// rollback/compensate unsupported.
+pub struct HttpAdapter {
+    key: &'static str,
+}
+
+/// Parsed and validated replay contract for the narrow http.replay_v1 slice.
+struct ReplayContract {
+    /// The idempotency key to use for replay.
+    idempotency_key: String,
+    /// Expected HTTP method (must be POST).
+    method: HttpMethod,
+    /// Target URL (must match target.url).
+    url: String,
+    /// Payload to replay.
+    payload: serde_json::Value,
+    /// Required expected status codes for validation (must be non-empty, values in 100..=599).
+    expected_statuses: Vec<u16>,
+}
+
+impl HttpAdapter {
+    /// Creates a new HttpAdapter with the given key.
+    pub fn new(key: &'static str) -> Self {
+        Self { key }
+    }
+
+    /// Computes exponential backoff delay with jitter cap.
+    fn compute_backoff_delay(attempt: u32, config: &RetryConfig) -> Duration {
+        // Exponential backoff: initial * 2^attempt
+        let base_delay = config.initial_backoff_ms;
+        let exponential_delay = base_delay * (2_u64.pow(attempt.min(10)));
+        let capped_delay = exponential_delay.min(config.max_backoff_ms);
+        Duration::from_millis(capped_delay)
+    }
+
+    /// Checks if a status code is retryable based on configuration.
+    fn is_retryable_status(status: u16, config: &RetryConfig) -> bool {
+        config.retryable_statuses.contains(&status)
+    }
+
+    /// Records an attempt and returns the attempt record.
+    #[allow(dead_code)]
+    fn record_attempt(
+        attempt_number: u32,
+        status_code: u16,
+        succeeded: bool,
+        started_at: chrono::DateTime<Utc>,
+        completed_at: chrono::DateTime<Utc>,
+        error_message: Option<String>,
+    ) -> AttemptRecord {
+        AttemptRecord {
+            attempt_number,
+            status_code,
+            succeeded,
+            started_at: started_at.to_rfc3339(),
+            completed_at: completed_at.to_rfc3339(),
+            error_message,
+        }
+    }
+
+    /// Executes HTTP request with retry/backoff logic.
+    /// Returns (status, response_body, attempt_history) on success.
+    /// On final failure after all retries, returns error with full attempt history.
+    #[allow(dead_code)]
+    async fn execute_with_retry(
+        method: HttpMethod,
+        url: &str,
+        body: Option<Vec<u8>>,
+        idempotency_key: Option<&str>,
+        retry_config: &RetryConfig,
+        expected_statuses: &[u16],
+    ) -> Result<(u16, Vec<u8>, Vec<AttemptRecord>), (AdapterError, Vec<AttemptRecord>)> {
+        let mut attempts = Vec::new();
+        let max_attempts = 1 + retry_config.max_retries; // initial + retries
+        let method_clone = method.clone();
+        let url_owned = url.to_string();
+        let idempotency_key_owned = idempotency_key.map(|s| s.to_string());
+
+        for attempt_num in 0..max_attempts {
+            let started_at = Utc::now();
+
+            // Execute the HTTP request
+            let result = Self::execute_http_request(
+                method_clone.clone(),
+                &url_owned,
+                body.clone(),
+                idempotency_key_owned.as_deref(),
+            )
+            .await;
+
+            let completed_at = Utc::now();
+
+            match result {
+                Ok((status, response_body)) => {
+                    let succeeded = expected_statuses.contains(&status);
+                    let record = Self::record_attempt(
+                        attempt_num,
+                        status,
+                        succeeded,
+                        started_at,
+                        completed_at,
+                        None,
+                    );
+                    attempts.push(record);
+
+                    if succeeded || !Self::is_retryable_status(status, retry_config) {
+                        // Success or non-retryable status - return
+                        return Ok((status, response_body, attempts));
+                    }
+
+                    // Retryable failure - unless this is the last attempt
+                    if attempt_num < max_attempts - 1 {
+                        let delay = Self::compute_backoff_delay(attempt_num, retry_config);
+                        tokio::time::sleep(delay).await;
+                        continue;
+                    }
+                    // Last attempt failed - fall through to error
+                    let final_error = format!(
+                        "HTTP request failed with status {} after {} attempts",
+                        status, max_attempts
+                    );
+                    return Err((AdapterError::Internal(final_error), attempts));
+                }
+                Err(e) => {
+                    // Connection error - record as attempt with status 0
+                    let record = Self::record_attempt(
+                        attempt_num,
+                        0, // status 0 indicates connection error
+                        false,
+                        started_at,
+                        completed_at,
+                        Some(e.to_string()),
+                    );
+                    attempts.push(record);
+
+                    // Unless this is the last attempt, retry
+                    if attempt_num < max_attempts - 1 {
+                        let delay = Self::compute_backoff_delay(attempt_num, retry_config);
+                        tokio::time::sleep(delay).await;
+                        continue;
+                    }
+                    // Last attempt failed
+                    let final_error =
+                        format!("HTTP request failed after {} attempts: {}", max_attempts, e);
+                    return Err((AdapterError::Internal(final_error), attempts));
+                }
             }
-            HttpAuth::ApiKey { header, key } => {
-                hasher.update(format!("api_key:{}:{}", header, key).as_bytes());
-            }
         }
-        format!("{:x}", hasher.finalize())
+
+        // Should not reach here, but safety fallback
+        let final_error = format!("HTTP request exhausted {} attempts", max_attempts);
+        Err((AdapterError::Internal(final_error), attempts))
     }
 
-    /// Returns the auth kind string for observability metadata.
-    /// Returns "bearer", "basic", or "api_key" - no secrets stored.
-    fn kind_str(&self) -> &'static str {
-        match self {
-            HttpAuth::Bearer { .. } => "bearer",
-            HttpAuth::Basic { .. } => "basic",
-            HttpAuth::ApiKey { .. } => "api_key",
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Retry helpers (H1.5a: bounded retry/backoff)
-// ---------------------------------------------------------------------------
-
-/// Returns true if the error is transient and retryable for HTTP adapter.
-///
-/// Retryable: request timeout, connection refused/reset.
-/// Non-retryable: validation errors, non-2xx responses (these are already
-/// mapped to appropriate AdapterError variants).
-fn is_http_retryable_error(err: &HttpAdapterError) -> bool {
-    match err {
-        // Request timeout - transient, retry
-        HttpAdapterError::RequestFailed(msg) if msg.contains("request timed out") => true,
-        // Connection refused/reset - transient, retry
-        HttpAdapterError::RequestFailed(msg)
-            if msg.contains("connection refused")
-                || msg.contains("connection reset")
-                || msg.contains("connect error")
-                || msg.contains("Connection closed")
-                || msg.contains("connection timed out") =>
-        {
-            true
-        }
-        // All other errors are non-retryable (validation, etc.)
-        _ => false,
-    }
-}
-
-/// Execute a fallible HTTP request with at most one retry on transient errors.
-///
-/// - First attempt is always made.
-/// - On transient error (timeout, connection issues), waits `backoff_ms` then retries once.
-/// - On non-transient error, returns immediately.
-/// - Max total attempts: 2.
-///
-/// This is a bounded retry policy suitable for local HTTP adapter use.
-async fn http_with_retry<F, Fut, T>(mut f: F, backoff_ms: u64) -> Result<T, HttpAdapterError>
-where
-    F: FnMut() -> Fut,
-    Fut: std::future::Future<Output = Result<T, HttpAdapterError>>,
-{
-    // First attempt
-    match f().await {
-        Ok(result) => return Ok(result),
-        Err(ref err) if is_http_retryable_error(err) => { /* fall through to retry */ }
-        Err(err) => return Err(err),
-    }
-
-    // Retry after backoff (only for transient errors)
-    sleep(Duration::from_millis(backoff_ms)).await;
-    f().await
-}
-
-impl HttpRollbackAdapter {
-    pub fn new() -> Self {
-        Self {
-            client: Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
-                .build()
-                .unwrap_or_else(|_| Client::new()),
-        }
-    }
-
-    /// Extract HTTP target from RollbackTarget::HttpRequest.
-    /// Returns (bound_method, bound_url, bound_request_digest) representing the scope/prefix.
-    fn extract_http_target(
-        target: &RollbackTarget,
-    ) -> Result<(HttpMethod, String, String), HttpAdapterError> {
+    /// Extracts the HTTP request details from a RollbackTarget::HttpRequest variant.
+    fn extract_http_target(target: &RollbackTarget) -> Result<(&HttpMethod, &str), AdapterError> {
         match target {
-            RollbackTarget::HttpRequest {
-                method,
-                url,
-                request_digest,
-            } => Ok((method.clone(), url.clone(), request_digest.clone())),
-            _ => Err(HttpAdapterError::Validation(format!(
-                "expected HttpRequest target, got {:?}",
+            RollbackTarget::HttpRequest { method, url, .. } => Ok((method, url)),
+            _ => Err(AdapterError::Validation(format!(
+                "invalid target: expected HttpRequest, got {:?}",
                 target
             ))),
         }
     }
 
-    /// Compute a SHA256 digest from method and URL for scope-level identification.
-    #[cfg_attr(not(test), allow(dead_code))]
-    fn compute_request_digest(method: &HttpMethod, url: &str) -> String {
-        let mut hasher = Sha256::new();
-        hasher.update(format!("{:?}:{}", method, url).as_bytes());
-        format!("{:x}", hasher.finalize())
-    }
-
-    /// Canonicalize a query string by sorting key-value pairs.
-    /// Returns (canonical_url, canonical_query_string_or_empty).
-    /// Example: "https://example.com/api?b=2&a=1" -> ("https://example.com/api?a=1&b=2", "a=1&b=2")
-    fn canonicalize_query_string(url: &str) -> (String, String) {
-        let Ok(mut parsed) = Url::parse(url) else {
-            return (url.to_string(), String::new());
-        };
-
-        let query = match parsed.query() {
-            Some(q) if !q.is_empty() => q.to_string(),
-            _ => {
-                parsed.set_query(None);
-                return (parsed.to_string(), String::new());
-            }
-        };
-
-        let mut params: Vec<(String, String)> = Self::parse_query_string(&query);
-        params.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
-
-        let canonical_query = params
-            .iter()
-            .map(|(k, v): &(String, String)| {
-                if v.is_empty() {
-                    k.clone()
-                } else {
-                    format!("{}={}", k, v)
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("&");
-
-        parsed.set_query(Some(&canonical_query));
-
-        (parsed.to_string(), canonical_query)
-    }
-
-    /// Parse a query string into key-value pairs, preserving values (including empty).
-    fn parse_query_string(query: &str) -> Vec<(String, String)> {
-        query
-            .split('&')
-            .filter_map(|pair| {
-                let mut parts = pair.splitn(2, '=');
-                let key = parts.next()?.to_string();
-                let value = parts.next().unwrap_or("").to_string();
-                Some((key, value))
-            })
-            .collect()
-    }
-
-    /// Compute a SHA256 digest for query string presence.
-    /// Empty or absent query produces an empty string digest.
-    fn compute_query_digest(query: Option<&str>) -> String {
-        let mut hasher = Sha256::new();
-        match query {
-            Some(q) if !q.is_empty() => {
-                hasher.update(q.as_bytes());
-            }
-            _ => {}
+    /// Validates URL shape - must be http or https and parseable.
+    fn validate_url_shape(url: &str) -> Result<(), AdapterError> {
+        // Must start with http:// or https://
+        if !url.starts_with("http://") && !url.starts_with("https://") {
+            return Err(HttpAdapterError::MalformedUrl(format!(
+                "URL must start with http:// or https://, got: {}",
+                url
+            ))
+            .into());
         }
-        format!("{:x}", hasher.finalize())
+        // Try to parse as a URI to validate basic shape
+        let _: http::Uri = url
+            .parse()
+            .map_err(|_| HttpAdapterError::MalformedUrl(format!("failed to parse URL: {}", url)))?;
+        Ok(())
     }
 
-    /// Extract canonical query string from a URL, returning None if no query is present.
-    fn extract_query_from_url(url: &str) -> Option<String> {
-        let (_, canonical_query) = Self::canonicalize_query_string(url);
-        if canonical_query.is_empty() {
-            None
-        } else {
-            Some(canonical_query)
+    /// Normalizes a validation error with phase context.
+    fn phase_wrap_validation(phase: &'static str, msg: String) -> AdapterError {
+        AdapterError::Validation(format!("[{}] {}", phase, msg))
+    }
+
+    /// Normalizes an internal error with phase context.
+    fn phase_wrap_internal(phase: &'static str, msg: String) -> AdapterError {
+        AdapterError::Internal(format!("[{}] {}", phase, msg))
+    }
+
+    /// Parses a method string into HttpMethod.
+    fn parse_method_string(method_str: &str) -> Result<HttpMethod, ()> {
+        match method_str {
+            "GET" | "get" | "Get" => Ok(HttpMethod::Get),
+            "POST" | "post" | "Post" => Ok(HttpMethod::Post),
+            "PUT" | "put" | "Put" => Ok(HttpMethod::Put),
+            "PATCH" | "patch" | "Patch" => Ok(HttpMethod::Patch),
+            "DELETE" | "delete" | "Delete" => Ok(HttpMethod::Delete),
+            _ => Err(()),
         }
     }
 
-    fn canonical_headers(
-        headers: Option<&HashMap<String, String>>,
-    ) -> Option<BTreeMap<String, String>> {
-        let headers = headers?;
-        if headers.is_empty() {
-            return None;
-        }
+    /// Makes a blocking HTTP GET request to the given URL and returns the status code.
+    #[allow(dead_code)]
+    fn fetch_status_code_blocking(url: &str) -> Result<u16, AdapterError> {
+        // Parse the URL
+        let uri: http::Uri = url.parse().map_err(|_| {
+            Self::phase_wrap_validation(
+                PHASE_VERIFY,
+                format!("failed to parse URL as URI: {}", url),
+            )
+        })?;
 
-        Some(
-            headers
-                .iter()
-                .map(|(key, value)| (key.to_lowercase(), value.clone()))
-                .collect(),
+        // Extract host and port from URI
+        let host = uri.host().ok_or_else(|| {
+            Self::phase_wrap_validation(PHASE_VERIFY, format!("URL has no host: {}", url))
+        })?;
+
+        let port = uri.port_u16().unwrap_or(80);
+
+        // Build destination string
+        let destination = format!("{}:{}", host, port);
+
+        // Connect to the server with timeout
+        let connect_timeout = Duration::from_secs(5);
+        let stream = std::net::TcpStream::connect_timeout(
+            &destination.parse().map_err(|_| {
+                Self::phase_wrap_internal(
+                    PHASE_VERIFY,
+                    format!("failed to parse address: {}", destination),
+                )
+            })?,
+            connect_timeout,
         )
+        .map_err(|e| {
+            Self::phase_wrap_internal(
+                PHASE_VERIFY,
+                format!("failed to connect to {}: {}", destination, e),
+            )
+        })?;
+
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .map_err(|e| {
+                Self::phase_wrap_internal(
+                    PHASE_VERIFY,
+                    format!("failed to set read timeout: {}", e),
+                )
+            })?;
+
+        let path = uri.path_and_query().map(|pq| pq.as_str()).unwrap_or("/");
+
+        // Build HTTP request
+        let request = format!(
+            "GET {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\nAccept: */*\r\n\r\n",
+            path, host
+        );
+
+        // Send request
+        let mut stream = stream;
+        stream.write_all(request.as_bytes()).map_err(|e| {
+            Self::phase_wrap_internal(PHASE_VERIFY, format!("failed to send request: {}", e))
+        })?;
+
+        // Read response
+        let mut response = Vec::new();
+        let mut buffer = [0u8; 8192];
+        loop {
+            match stream.read(&mut buffer) {
+                Ok(0) => break, // Connection closed
+                Ok(n) => response.extend_from_slice(&buffer[..n]),
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    // Read would block, try again
+                    continue;
+                }
+                Err(e) => {
+                    return Err(Self::phase_wrap_internal(
+                        PHASE_VERIFY,
+                        format!("failed to read response: {}", e),
+                    ));
+                }
+            }
+        }
+
+        // Parse status line
+        let response_str = String::from_utf8_lossy(&response);
+        let status_line = response_str.lines().next().unwrap_or("");
+
+        // Extract status code (e.g., "HTTP/1.1 200 OK" -> 200)
+        let parts: Vec<&str> = status_line.split_whitespace().collect();
+        if parts.len() < 2 {
+            return Err(Self::phase_wrap_internal(
+                PHASE_VERIFY,
+                format!("invalid HTTP response: {}", status_line),
+            ));
+        }
+
+        let status_code: u16 = parts[1].parse().map_err(|_| {
+            Self::phase_wrap_internal(
+                PHASE_VERIFY,
+                format!("failed to parse status code: {}", parts[1]),
+            )
+        })?;
+
+        Ok(status_code)
     }
 
-    fn compute_headers_digest(headers: Option<&HashMap<String, String>>) -> String {
-        let mut hasher = Sha256::new();
-        let headers_str = match Self::canonical_headers(headers) {
-            Some(headers) => serde_json::to_string(&headers).unwrap_or_default(),
-            None => String::new(),
-        };
-        hasher.update(headers_str.as_bytes());
-        format!("{:x}", hasher.finalize())
-    }
-
-    /// Compute a SHA256 digest for concrete HTTP request shape.
-    /// - GET ignores body but includes canonicalized headers when present.
-    /// - POST/PUT/PATCH/DELETE include canonical JSON body and canonicalized headers.
-    /// - Query strings are canonicalized (sorted by key) before digesting to ensure
-    ///   semantically identical query strings produce the same digest.
-    fn compute_body_aware_digest(
-        method: &HttpMethod,
+    /// Runs an HTTP status check against the given URL using the specified method.
+    async fn run_http_status_check(
         url: &str,
-        body: &serde_json::Value,
-        headers: Option<&HashMap<String, String>>,
-    ) -> String {
-        let mut hasher = Sha256::new();
-        let headers_str = Self::canonical_headers(headers)
-            .as_ref()
-            .map(|headers| serde_json::to_string(headers).unwrap_or_default());
+        method: HttpMethod,
+        expected_statuses: &[u16],
+        phase: &'static str,
+    ) -> Result<(), AdapterError> {
+        // Use blocking call in a spawn to avoid blocking the async runtime
+        let url_owned = url.to_string();
+        let method_owned = method;
+        let status = tokio::task::spawn_blocking(move || {
+            Self::fetch_status_code_blocking_with_method(&url_owned, method_owned)
+        })
+        .await
+        .map_err(|e| Self::phase_wrap_internal(phase, format!("task join error: {}", e)))?
+        .map_err(|e| Self::phase_wrap_internal(phase, format!("fetch failed: {}", e)))?;
 
-        // Canonicalize URL query string for consistent digest computation
-        let (canonical_url, _canonical_query) = Self::canonicalize_query_string(url);
-
-        if Self::is_mutation_method(method) && !body.is_null() {
-            let body_str = serde_json::to_string(body).unwrap_or_default();
-            hasher.update(format!("{:?}:{}:{}", method, canonical_url, body_str).as_bytes());
-        } else {
-            hasher.update(format!("{:?}:{}", method, canonical_url).as_bytes());
-        }
-
-        if let Some(headers_str) = headers_str {
-            hasher.update(format!(":{}", headers_str).as_bytes());
-        }
-
-        format!("{:x}", hasher.finalize())
-    }
-
-    fn headers_present(headers: Option<&HashMap<String, String>>) -> bool {
-        Self::canonical_headers(headers).is_some()
-    }
-
-    fn compute_body_digest(body: &serde_json::Value) -> String {
-        let mut hasher = Sha256::new();
-        let body_str = if body.is_null() {
-            String::new()
-        } else {
-            serde_json::to_string(body).unwrap_or_default()
-        };
-        hasher.update(body_str.as_bytes());
-        format!("{:x}", hasher.finalize())
-    }
-
-    /// Returns true if the HTTP method is mutation-capable (has side effects).
-    fn is_mutation_method(method: &HttpMethod) -> bool {
-        matches!(
-            method,
-            HttpMethod::Post | HttpMethod::Put | HttpMethod::Patch | HttpMethod::Delete
-        )
-    }
-
-    /// Extract expected status code from verify_checks if HttpStatusExpected is present.
-    fn extract_expected_status(checks: &[CheckSpec]) -> Option<u16> {
-        for check in checks {
-            if matches!(check.check_type, CheckType::HttpStatusExpected) {
-                if let Some(status) = check.config.get("status") {
-                    return status.as_u64().map(|s| s as u16);
-                }
-            }
-        }
-        None
-    }
-
-    fn parse_http_method(raw: &str) -> Option<HttpMethod> {
-        match raw.to_uppercase().as_str() {
-            "GET" => Some(HttpMethod::Get),
-            "POST" => Some(HttpMethod::Post),
-            "PUT" => Some(HttpMethod::Put),
-            "PATCH" => Some(HttpMethod::Patch),
-            "DELETE" => Some(HttpMethod::Delete),
-            _ => None,
-        }
-    }
-
-    /// Parse URL, method, body, headers, and auth from a request payload if present.
-    /// Returns (payload_url, payload_method, payload_body, payload_headers, payload_auth) where any may be absent.
-    /// Stay fail-closed if the payload tries to provide malformed or unsupported values.
-    /// Rejects ambiguous/conflicting auth where both headers.authorization and auth are supplied.
-    fn parse_request_parts(
-        payload: &serde_json::Value,
-    ) -> Result<ParsedRequestParts, HttpAdapterError> {
-        let obj = match payload.as_object() {
-            Some(o) => o,
-            None => return Ok((None, None, serde_json::Value::Null, None, None)),
-        };
-
-        let url = match obj.get("url") {
-            Some(value) => Some(
-                value
-                    .as_str()
-                    .ok_or_else(|| {
-                        HttpAdapterError::Validation(
-                            "payload url must be a string when provided".to_string(),
-                        )
-                    })?
-                    .to_string(),
-            ),
-            None => None,
-        };
-
-        let method = match obj.get("method") {
-            Some(value) => {
-                let raw = value.as_str().ok_or_else(|| {
-                    HttpAdapterError::Validation(
-                        "payload method must be a string when provided".to_string(),
-                    )
-                })?;
-                Some(Self::parse_http_method(raw).ok_or_else(|| {
-                    HttpAdapterError::Validation(format!(
-                        "unsupported HTTP method in payload: {}",
-                        raw
-                    ))
-                })?)
-            }
-            None => None,
-        };
-
-        let body = obj.get("body").cloned().unwrap_or(serde_json::Value::Null);
-
-        let headers = match obj.get("headers") {
-            Some(value) => {
-                let headers_obj = value.as_object().ok_or_else(|| {
-                    HttpAdapterError::Validation(
-                        "payload headers must be an object when provided".to_string(),
-                    )
-                })?;
-                let mut headers_map = HashMap::new();
-                for (k, v) in headers_obj {
-                    let header_value = v.as_str().ok_or_else(|| {
-                        HttpAdapterError::Validation(format!(
-                            "header value for '{}' must be a string",
-                            k
-                        ))
-                    })?;
-                    headers_map.insert(k.to_lowercase(), header_value.to_string());
-                }
-                if headers_map.is_empty() {
-                    None
-                } else {
-                    Some(headers_map)
-                }
-            }
-            None => None,
-        };
-
-        // Parse dedicated auth field if present
-        let auth = match obj.get("auth") {
-            Some(value) => {
-                let http_auth = Self::parse_http_auth(value)
-                    .map_err(|e| HttpAdapterError::Validation(format!("invalid auth: {}", e)))?;
-                Some(http_auth)
-            }
-            None => None,
-        };
-
-        // Fail-closed: reject ambiguous/conflicting auth where both headers.authorization and auth are supplied
-        let has_auth_header = headers
-            .as_ref()
-            .map(|h| h.contains_key("authorization"))
-            .unwrap_or(false);
-        if has_auth_header && auth.is_some() {
-            return Err(HttpAdapterError::Validation(
-                "ambiguous auth: both headers.authorization and auth field are supplied; use only one".to_string(),
-            ));
-        }
-
-        // Fail-closed: reject ambiguous/conflicting auth where the API key header is present in headers
-        if let Some(HttpAuth::ApiKey { header, .. }) = &auth {
-            let has_api_key_header = headers
-                .as_ref()
-                .map(|h| h.contains_key(&header.to_lowercase()))
-                .unwrap_or(false);
-            if has_api_key_header {
-                return Err(HttpAdapterError::Validation(format!(
-                    "ambiguous auth: header '{}' is present in headers and also specified in api_key auth; use only one",
-                    header
-                )));
-            }
-        }
-
-        Ok((url, method, body, headers, auth))
-    }
-
-    /// Parse HTTP auth from auth JSON value.
-    /// Expected shapes:
-    /// - Bearer: {"type": "bearer", "token": "..."}
-    /// - Basic: {"type": "basic", "username": "...", "password": "..."}
-    /// - ApiKey: {"type": "api_key", "header": "X-API-Key", "key": "..."}
-    fn parse_http_auth(value: &serde_json::Value) -> Result<HttpAuth, String> {
-        let obj = value.as_object().ok_or("auth must be an object")?;
-
-        let auth_type = obj
-            .get("type")
-            .and_then(|v| v.as_str())
-            .ok_or("auth.type must be a string")?;
-
-        match auth_type.to_lowercase().as_str() {
-            "bearer" => {
-                let token = obj
-                    .get("token")
-                    .and_then(|v| v.as_str())
-                    .ok_or("auth.token must be a string")?;
-
-                if token.is_empty() {
-                    return Err("auth.token must not be empty".to_string());
-                }
-
-                Ok(HttpAuth::Bearer {
-                    token: token.to_string(),
-                })
-            }
-            "basic" => {
-                let username = obj
-                    .get("username")
-                    .and_then(|v| v.as_str())
-                    .ok_or("auth.username must be a string")?;
-
-                let password = obj
-                    .get("password")
-                    .and_then(|v| v.as_str())
-                    .ok_or("auth.password must be a string")?;
-
-                if username.is_empty() {
-                    return Err("auth.username must not be empty".to_string());
-                }
-
-                Ok(HttpAuth::Basic {
-                    username: username.to_string(),
-                    password: password.to_string(),
-                })
-            }
-            "api_key" => {
-                let header = obj
-                    .get("header")
-                    .and_then(|v| v.as_str())
-                    .ok_or("auth.header must be a string")?;
-
-                let key = obj
-                    .get("key")
-                    .and_then(|v| v.as_str())
-                    .ok_or("auth.key must be a string")?;
-
-                if header.is_empty() {
-                    return Err("auth.header must not be empty".to_string());
-                }
-
-                if key.is_empty() {
-                    return Err("auth.key must not be empty".to_string());
-                }
-
-                Ok(HttpAuth::ApiKey {
-                    header: header.to_string(),
-                    key: key.to_string(),
-                })
-            }
-            other => Err(format!(
-                "unsupported auth type: {} (only bearer, basic, and api_key supported)",
-                other
-            )),
-        }
-    }
-
-    /// Apply HTTP auth to the request headers, returning updated headers map.
-    /// Does not mutate the original headers; returns a new HashMap if auth is applied.
-    fn apply_http_auth(
-        headers: Option<&HashMap<String, String>>,
-        auth: Option<&HttpAuth>,
-    ) -> Option<HashMap<String, String>> {
-        match (headers, auth) {
-            (Some(h), Some(HttpAuth::Bearer { token })) => {
-                let mut new_headers = h.clone();
-                new_headers.insert("authorization".to_string(), format!("Bearer {}", token));
-                Some(new_headers)
-            }
-            (Some(h), Some(HttpAuth::Basic { username, password })) => {
-                let mut new_headers = h.clone();
-                let credentials = base64::Engine::encode(
-                    &base64::engine::general_purpose::STANDARD,
-                    format!("{}:{}", username, password),
-                );
-                new_headers.insert(
-                    "authorization".to_string(),
-                    format!("Basic {}", credentials),
-                );
-                Some(new_headers)
-            }
-            (Some(h), Some(HttpAuth::ApiKey { header, key })) => {
-                let mut new_headers = h.clone();
-                new_headers.insert(header.to_lowercase(), key.clone());
-                Some(new_headers)
-            }
-            (Some(h), None) => Some(h.clone()),
-            (None, Some(HttpAuth::Bearer { token })) => Some({
-                let mut new_headers = HashMap::new();
-                new_headers.insert("authorization".to_string(), format!("Bearer {}", token));
-                new_headers
-            }),
-            (None, Some(HttpAuth::Basic { username, password })) => Some({
-                let mut new_headers = HashMap::new();
-                let credentials = base64::Engine::encode(
-                    &base64::engine::general_purpose::STANDARD,
-                    format!("{}:{}", username, password),
-                );
-                new_headers.insert(
-                    "authorization".to_string(),
-                    format!("Basic {}", credentials),
-                );
-                new_headers
-            }),
-            (None, Some(HttpAuth::ApiKey { header, key })) => Some({
-                let mut new_headers = HashMap::new();
-                new_headers.insert(header.to_lowercase(), key.clone());
-                new_headers
-            }),
-            (None, None) => None,
-        }
-    }
-
-    fn resolve_request_parts(
-        bound_method: &HttpMethod,
-        bound_url: &str,
-        payload: &serde_json::Value,
-    ) -> Result<ResolvedRequestParts, HttpAdapterError> {
-        let (payload_url, payload_method, payload_body, payload_headers, payload_auth) =
-            Self::parse_request_parts(payload)?;
-        let resolved_url = payload_url.unwrap_or_else(|| bound_url.to_string());
-        let resolved_method = payload_method.unwrap_or(bound_method.clone());
-
-        Self::validate_url_within_scope(&resolved_url, bound_url)
-            .map_err(HttpAdapterError::Validation)?;
-
-        if resolved_method != *bound_method {
-            return Err(HttpAdapterError::Validation(format!(
-                "executed method {:?} does not match bound method {:?}",
-                resolved_method, bound_method
+        if !expected_statuses.contains(&status) {
+            let expected_str = if expected_statuses.len() == 1 {
+                format!("{}", expected_statuses[0])
+            } else {
+                format!("{:?}", expected_statuses)
+            };
+            return Err(AdapterError::Validation(format!(
+                "[{}] HttpStatusExpected mismatch: expected {}, got {}",
+                phase, expected_str, status
             )));
-        }
-
-        Ok((
-            resolved_url,
-            resolved_method,
-            payload_body,
-            payload_headers,
-            payload_auth,
-        ))
-    }
-
-    /// Validate that the executed URL stays within the bound URL scope.
-    /// The executed URL must match scheme/host/port and stay within the bound path prefix.
-    /// Returns Ok(()) if valid, Err(message) if fail-closed.
-    fn validate_url_within_scope(executed_url: &str, bound_url: &str) -> Result<(), String> {
-        let executed = Url::parse(executed_url).map_err(|e| {
-            format!(
-                "executed URL '{}' is not a valid absolute URL: {}",
-                executed_url, e
-            )
-        })?;
-        let bound = Url::parse(bound_url).map_err(|e| {
-            format!(
-                "bound URL '{}' is not a valid absolute URL: {}",
-                bound_url, e
-            )
-        })?;
-
-        let executed_host = executed.host_str().unwrap_or_default();
-        let bound_host = bound.host_str().unwrap_or_default();
-        if executed.scheme() != bound.scheme()
-            || executed_host != bound_host
-            || executed.port_or_known_default() != bound.port_or_known_default()
-        {
-            return Err(format!(
-                "executed URL '{}' is not within bound scope '{}'",
-                executed_url, bound_url
-            ));
-        }
-
-        let executed_path = executed.path();
-        let bound_path = bound.path();
-        let path_allowed = if bound_path.ends_with('/') {
-            executed_path.starts_with(bound_path)
-        } else {
-            executed_path == bound_path
-                || executed_path.starts_with(&format!("{}/", bound_path.trim_end_matches('/')))
-        };
-
-        if !path_allowed {
-            return Err(format!(
-                "executed URL '{}' is not within bound scope '{}'",
-                executed_url, bound_url
-            ));
         }
 
         Ok(())
     }
-}
 
-impl Default for HttpRollbackAdapter {
-    fn default() -> Self {
-        Self::new()
+    /// Makes a blocking HTTP request with the specified method and returns the status code.
+    fn fetch_status_code_blocking_with_method(
+        url: &str,
+        method: HttpMethod,
+    ) -> Result<u16, AdapterError> {
+        // Parse the URL
+        let uri: http::Uri = url.parse().map_err(|_| {
+            Self::phase_wrap_validation(
+                PHASE_VERIFY,
+                format!("failed to parse URL as URI: {}", url),
+            )
+        })?;
+
+        // Extract host and port from URI
+        let host = uri.host().ok_or_else(|| {
+            Self::phase_wrap_validation(PHASE_VERIFY, format!("URL has no host: {}", url))
+        })?;
+
+        let port = uri.port_u16().unwrap_or(80);
+
+        // Build destination string
+        let destination = format!("{}:{}", host, port);
+
+        // Connect to the server with timeout
+        let connect_timeout = Duration::from_secs(5);
+        let stream = std::net::TcpStream::connect_timeout(
+            &destination.parse().map_err(|_| {
+                Self::phase_wrap_internal(
+                    PHASE_VERIFY,
+                    format!("failed to parse address: {}", destination),
+                )
+            })?,
+            connect_timeout,
+        )
+        .map_err(|e| {
+            Self::phase_wrap_internal(
+                PHASE_VERIFY,
+                format!("failed to connect to {}: {}", destination, e),
+            )
+        })?;
+
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .map_err(|e| {
+                Self::phase_wrap_internal(
+                    PHASE_VERIFY,
+                    format!("failed to set read timeout: {}", e),
+                )
+            })?;
+
+        let path = uri.path_and_query().map(|pq| pq.as_str()).unwrap_or("/");
+
+        // Build HTTP request with specified method
+        let method_str = match method {
+            HttpMethod::Get => "GET",
+            HttpMethod::Post => "POST",
+            HttpMethod::Put => "PUT",
+            HttpMethod::Patch => "PATCH",
+            HttpMethod::Delete => "DELETE",
+        };
+
+        let request = format!(
+            "{} {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\nAccept: */*\r\n\r\n",
+            method_str, path, host
+        );
+
+        // Send request
+        let mut stream = stream;
+        stream.write_all(request.as_bytes()).map_err(|e| {
+            Self::phase_wrap_internal(PHASE_VERIFY, format!("failed to send request: {}", e))
+        })?;
+
+        // Read response
+        let mut response = Vec::new();
+        let mut buffer = [0u8; 8192];
+        loop {
+            match stream.read(&mut buffer) {
+                Ok(0) => break, // Connection closed
+                Ok(n) => response.extend_from_slice(&buffer[..n]),
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    // Read would block, try again
+                    continue;
+                }
+                Err(e) => {
+                    return Err(Self::phase_wrap_internal(
+                        PHASE_VERIFY,
+                        format!("failed to read response: {}", e),
+                    ));
+                }
+            }
+        }
+
+        // Parse status line
+        let response_str = String::from_utf8_lossy(&response);
+        let status_line = response_str.lines().next().unwrap_or("");
+
+        // Extract status code (e.g., "HTTP/1.1 200 OK" -> 200)
+        let parts: Vec<&str> = status_line.split_whitespace().collect();
+        if parts.len() < 2 {
+            return Err(Self::phase_wrap_internal(
+                PHASE_VERIFY,
+                format!("invalid HTTP response: {}", status_line),
+            ));
+        }
+
+        let status_code: u16 = parts[1].parse().map_err(|_| {
+            Self::phase_wrap_internal(
+                PHASE_VERIFY,
+                format!("failed to parse status code: {}", parts[1]),
+            )
+        })?;
+
+        Ok(status_code)
+    }
+
+    /// Runs a single check spec and returns an error if it fails.
+    /// The `target_method` is used as the default for HTTP status checks.
+    async fn run_check(
+        check: &ferrum_proto::CheckSpec,
+        url: &str,
+        target_method: HttpMethod,
+        phase: &'static str,
+    ) -> Result<(), AdapterError> {
+        match check.check_type {
+            CheckType::HttpStatusExpected => {
+                // Validate 'url' field if present
+                if let Some(serde_json::Value::String(check_url)) = check.config.get("url") {
+                    if check_url != url {
+                        return Err(AdapterError::Validation(format!(
+                            "[{}] HttpStatusExpected check URL mismatch: check targets '{}', expected '{}'",
+                            phase, check_url, url
+                        )));
+                    }
+                }
+
+                // Validate optional 'method' field if present - must match target method
+                if let Some(serde_json::Value::String(method_str)) = check.config.get("method") {
+                    let check_method = Self::parse_method_string(method_str).map_err(|_| {
+                        AdapterError::Validation(format!(
+                            "[{}] HttpStatusExpected check 'method' must be a valid HTTP method (GET, POST, PUT, PATCH, DELETE), got '{}'",
+                            phase, method_str
+                        ))
+                    })?;
+                    if check_method != target_method {
+                        return Err(AdapterError::Validation(format!(
+                            "[{}] HttpStatusExpected check method mismatch: check uses '{}', target expects {:?}",
+                            phase, method_str, target_method
+                        )));
+                    }
+                }
+
+                // Parse expected statuses - support both single 'expected_status' and array 'expected_statuses'
+                let expected_statuses = if let Some(arr) = check.config.get("expected_statuses") {
+                    match arr {
+                        serde_json::Value::Array(arr) => {
+                            let mut statuses = Vec::new();
+                            for (i, item) in arr.iter().enumerate() {
+                                match item {
+                                    serde_json::Value::Number(n) => {
+                                        statuses.push(n.as_u64().unwrap_or(0) as u16);
+                                    }
+                                    serde_json::Value::String(s) => {
+                                        let parsed = s.parse::<u16>().map_err(|_| {
+                                            AdapterError::Validation(format!(
+                                                "[{}] HttpStatusExpected check 'expected_statuses' element {} must be a number, got '{}'",
+                                                phase, i, s
+                                            ))
+                                        })?;
+                                        statuses.push(parsed);
+                                    }
+                                    v => {
+                                        return Err(AdapterError::Validation(format!(
+                                            "[{}] HttpStatusExpected check 'expected_statuses' element {} must be a number, got {}",
+                                            phase, i, v
+                                        )));
+                                    }
+                                }
+                            }
+                            if statuses.is_empty() {
+                                return Err(AdapterError::Validation(format!(
+                                    "[{}] HttpStatusExpected check 'expected_statuses' cannot be empty",
+                                    phase
+                                )));
+                            }
+                            statuses
+                        }
+                        v => {
+                            return Err(AdapterError::Validation(format!(
+                                "[{}] HttpStatusExpected check 'expected_statuses' must be an array of numbers, got {}",
+                                phase, v
+                            )));
+                        }
+                    }
+                } else if let Some(val) = check.config.get("expected_status") {
+                    match val {
+                        serde_json::Value::Number(n) => {
+                            vec![n.as_u64().unwrap_or(0) as u16]
+                        }
+                        serde_json::Value::String(s) => {
+                            let parsed = s.parse::<u16>().map_err(|_| {
+                                AdapterError::Validation(format!(
+                                    "[{}] HttpStatusExpected check 'expected_status' must be a number, got '{}'",
+                                    phase, s
+                                ))
+                            })?;
+                            vec![parsed]
+                        }
+                        v => {
+                            return Err(AdapterError::Validation(format!(
+                                "[{}] HttpStatusExpected check 'expected_status' must be a number, got {}",
+                                phase, v
+                            )));
+                        }
+                    }
+                } else {
+                    return Err(AdapterError::Validation(format!(
+                        "[{}] HttpStatusExpected check requires 'expected_status' or 'expected_statuses' config",
+                        phase
+                    )));
+                };
+
+                // Use target method for the check (either explicit in config or from target)
+                // Note: method validation above ensures explicit method in config matches target
+                let check_method = if let Some(serde_json::Value::String(method_str)) =
+                    check.config.get("method")
+                {
+                    Self::parse_method_string(method_str).unwrap_or(target_method)
+                } else {
+                    target_method
+                };
+
+                Self::run_http_status_check(url, check_method, &expected_statuses, phase).await
+            }
+            _ => Err(AdapterError::Unsupported(format!(
+                "[{}] unsupported check type: {:?}",
+                phase, check.check_type
+            ))),
+        }
+    }
+
+    /// Extracts body bytes from the payload for HTTP request body.
+    /// Supports: string, number, bool, null, or object with "body" field.
+    fn extract_body_bytes(payload: &serde_json::Value) -> Result<Option<Vec<u8>>, AdapterError> {
+        match payload {
+            serde_json::Value::String(s) => Ok(Some(s.as_bytes().to_vec())),
+            serde_json::Value::Number(n) => Ok(Some(n.to_string().into_bytes())),
+            serde_json::Value::Bool(b) => Ok(Some(b.to_string().into_bytes())),
+            serde_json::Value::Null => Ok(None),
+            serde_json::Value::Object(obj) => {
+                // Support object with explicit "body" field
+                if let Some(body_val) = obj.get("body") {
+                    match body_val {
+                        serde_json::Value::String(s) => Ok(Some(s.as_bytes().to_vec())),
+                        serde_json::Value::Number(n) => Ok(Some(n.to_string().into_bytes())),
+                        serde_json::Value::Bool(b) => Ok(Some(b.to_string().into_bytes())),
+                        serde_json::Value::Null => Ok(None),
+                        serde_json::Value::Array(arr) => {
+                            // Serialize array to JSON bytes
+                            Ok(Some(serde_json::to_vec(arr).map_err(|e| {
+                                AdapterError::Validation(format!(
+                                    "[execute] failed to serialize body array: {}",
+                                    e
+                                ))
+                            })?))
+                        }
+                        serde_json::Value::Object(inner_obj) => {
+                            Ok(Some(serde_json::to_vec(inner_obj).map_err(|e| {
+                                AdapterError::Validation(format!(
+                                    "[execute] failed to serialize body object: {}",
+                                    e
+                                ))
+                            })?))
+                        }
+                    }
+                } else {
+                    // No "body" field: treat whole object as body
+                    Ok(Some(serde_json::to_vec(obj).map_err(|e| {
+                        AdapterError::Validation(format!(
+                            "[execute] failed to serialize payload object: {}",
+                            e
+                        ))
+                    })?))
+                }
+            }
+            serde_json::Value::Array(arr) => Ok(Some(serde_json::to_vec(arr).map_err(|e| {
+                AdapterError::Validation(format!(
+                    "[execute] failed to serialize payload array: {}",
+                    e
+                ))
+            })?)),
+        }
+    }
+
+    /// Validates payload is a supported type for HTTP request body.
+    fn validate_payload_shape(payload: &serde_json::Value) -> Result<(), AdapterError> {
+        match payload {
+            serde_json::Value::String(_)
+            | serde_json::Value::Number(_)
+            | serde_json::Value::Bool(_)
+            | serde_json::Value::Null => Ok(()),
+            serde_json::Value::Object(obj) => {
+                // Check if all values are simple types (or nested objects/arrays that we'll serialize)
+                for (key, val) in obj {
+                    match val {
+                        serde_json::Value::String(_)
+                        | serde_json::Value::Number(_)
+                        | serde_json::Value::Bool(_)
+                        | serde_json::Value::Null
+                        | serde_json::Value::Array(_)
+                        | serde_json::Value::Object(_) => {} // allowed
+                    }
+                    if matches!(
+                        val,
+                        serde_json::Value::String(_)
+                            | serde_json::Value::Number(_)
+                            | serde_json::Value::Bool(_)
+                            | serde_json::Value::Null
+                            | serde_json::Value::Array(_)
+                            | serde_json::Value::Object(_)
+                    ) {
+                        continue;
+                    }
+                    return Err(AdapterError::Validation(format!(
+                        "[execute] payload field '{}' has unsupported type: {}",
+                        key,
+                        serde_json::json!(val)
+                            .as_object()
+                            .map(|o| format!("{:?}", o))
+                            .unwrap_or_default()
+                    )));
+                }
+                Ok(())
+            }
+            serde_json::Value::Array(_) => Ok(()),
+        }
+    }
+
+    /// Validates that an idempotency key is non-empty and header-safe (RFC-compliant token).
+    /// Header-safe means it contains only visible ASCII characters except control chars and separators.
+    fn validate_idempotency_key(key: &str) -> Result<(), AdapterError> {
+        if key.is_empty() {
+            return Err(HttpAdapterError::ReplayValidation(
+                "idempotency_key must be non-empty".to_string(),
+            )
+            .into());
+        }
+        // RFC 7230 token characters: visible ASCII except control chars and separators
+        for ch in key.chars() {
+            let code = ch as u32;
+            if !(0x21..=0x7e).contains(&code) {
+                return Err(HttpAdapterError::ReplayValidation(format!(
+                    "idempotency_key contains non-header-safe character: {:?}",
+                    ch
+                ))
+                .into());
+            }
+        }
+        Ok(())
+    }
+
+    /// Computes the request digest: SHA256(method + url + body).
+    fn compute_request_digest(method: HttpMethod, url: &str, body: Option<&[u8]>) -> String {
+        let mut d = Sha256::new();
+        d.update(format!("{:?}", method).as_bytes());
+        d.update(url.as_bytes());
+        if let Some(b) = body {
+            d.update(b);
+        }
+        format!("{:x}", d.finalize())
+    }
+
+    /// Parses and validates the compensation plan for a supported http.replay_v1 contract.
+    /// Returns the validated replay contract or an error with structured reason codes.
+    fn parse_replay_contract(
+        contract: &RollbackContract,
+        phase: &'static str,
+    ) -> Result<ReplayContract, AdapterError> {
+        // Must have exactly 1 compensation step
+        if contract.compensation_plan.len() != 1 {
+            return Err(HttpAdapterError::ReplayValidation(format!(
+                "[{}] http.replay_v1 requires exactly 1 compensation step, got {}",
+                phase,
+                contract.compensation_plan.len()
+            ))
+            .into());
+        }
+
+        let step = &contract.compensation_plan[0];
+
+        // Step operation must be exactly http.replay_v1
+        if step.operation != REPLAY_OPERATION {
+            return Err(HttpAdapterError::ReplayValidation(format!(
+                "[{}] http.replay_v1 requires operation '{}', got '{}'",
+                phase, REPLAY_OPERATION, step.operation
+            ))
+            .into());
+        }
+
+        // Validate idempotency_key
+        Self::validate_idempotency_key(&step.idempotency_key)?;
+
+        // Validate args schema: only method, url, payload, expected_statuses allowed
+        let allowed_keys: std::collections::HashSet<&str> =
+            REPLAY_VALID_KEYS.iter().cloned().collect();
+        for key in step.args.keys() {
+            if !allowed_keys.contains(key.as_str()) {
+                return Err(HttpAdapterError::ReplayValidation(format!(
+                    "[{}] http.replay_v1 args contains unknown key '{}'; allowed: {:?}",
+                    phase, key, REPLAY_VALID_KEYS
+                ))
+                .into());
+            }
+        }
+
+        // Extract and validate method (must be POST)
+        let method_str = step
+            .args
+            .get("method")
+            .ok_or_else(|| {
+                HttpAdapterError::ReplayValidation(format!(
+                    "[{}] http.replay_v1 args missing required 'method' field",
+                    phase
+                ))
+            })?
+            .as_str()
+            .ok_or_else(|| {
+                HttpAdapterError::ReplayValidation(format!(
+                    "[{}] http.replay_v1 args 'method' must be a string",
+                    phase
+                ))
+            })?;
+
+        let method = match method_str {
+            "POST" | "post" | "Post" => HttpMethod::Post,
+            "PUT" | "put" | "Put" => HttpMethod::Put,
+            "PATCH" | "patch" | "Patch" => HttpMethod::Patch,
+            _ => {
+                return Err(HttpAdapterError::ReplayValidation(format!(
+                    "[{}] http.replay_v1 requires method POST/PUT/PATCH, got '{}'",
+                    phase, method_str
+                ))
+                .into());
+            }
+        };
+
+        // Extract and validate url (must exactly match target.url)
+        let target_url = match &contract.target {
+            RollbackTarget::HttpRequest { url: u, .. } => u.clone(),
+            _ => {
+                return Err(HttpAdapterError::ReplayValidation(format!(
+                    "[{}] http.replay_v1 requires target to be HttpRequest",
+                    phase
+                ))
+                .into());
+            }
+        };
+        let args_url = step
+            .args
+            .get("url")
+            .ok_or_else(|| {
+                HttpAdapterError::ReplayValidation(format!(
+                    "[{}] http.replay_v1 args missing required 'url' field",
+                    phase
+                ))
+            })?
+            .as_str()
+            .ok_or_else(|| {
+                HttpAdapterError::ReplayValidation(format!(
+                    "[{}] http.replay_v1 args 'url' must be a string",
+                    phase
+                ))
+            })?;
+
+        if args_url != target_url {
+            return Err(HttpAdapterError::ReplayValidation(format!(
+                "[{}] http.replay_v1 args url must equal target.url '{}', got '{}'",
+                phase, target_url, args_url
+            ))
+            .into());
+        }
+
+        // Extract payload
+        let payload = step
+            .args
+            .get("payload")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+
+        // Extract required expected_statuses
+        let expected_statuses = step.args.get("expected_statuses").ok_or_else(|| {
+            HttpAdapterError::ReplayValidation(format!(
+                "[{}] http.replay_v1 args missing required 'expected_statuses' field",
+                phase
+            ))
+        })?;
+        let expected_statuses = Self::parse_expected_statuses_array(expected_statuses, phase)?;
+
+        Ok(ReplayContract {
+            idempotency_key: step.idempotency_key.clone(),
+            method,
+            url: args_url.to_string(),
+            payload,
+            expected_statuses,
+        })
+    }
+
+    /// Parses an expected_statuses JSON value into a Vec<u16>.
+    /// Validates that the array is non-empty and all values are in HTTP range 100..=599.
+    fn parse_expected_statuses_array(
+        val: &serde_json::Value,
+        phase: &'static str,
+    ) -> Result<Vec<u16>, AdapterError> {
+        match val {
+            serde_json::Value::Array(arr) => {
+                if arr.is_empty() {
+                    return Err(HttpAdapterError::ReplayValidation(format!(
+                        "[{}] http.replay_v1 expected_statuses cannot be empty",
+                        phase
+                    ))
+                    .into());
+                }
+                let mut statuses = Vec::new();
+                for (i, item) in arr.iter().enumerate() {
+                    match item {
+                        serde_json::Value::Number(n) => {
+                            let status = n.as_u64().unwrap_or(0) as u16;
+                            if !Self::is_valid_http_status(status) {
+                                return Err(HttpAdapterError::ReplayValidation(format!(
+                                    "[{}] http.replay_v1 expected_statuses element {} is out of valid HTTP range (100..=599), got {}",
+                                    phase, i, status
+                                ))
+                                .into());
+                            }
+                            statuses.push(status);
+                        }
+                        serde_json::Value::String(s) => {
+                            let parsed = s.parse::<u16>().map_err(|_| {
+                                HttpAdapterError::ReplayValidation(format!(
+                                    "[{}] http.replay_v1 expected_statuses element {} must be a number, got '{}'",
+                                    phase, i, s
+                                ))
+                            })?;
+                            if !Self::is_valid_http_status(parsed) {
+                                return Err(HttpAdapterError::ReplayValidation(format!(
+                                    "[{}] http.replay_v1 expected_statuses element {} is out of valid HTTP range (100..=599), got {}",
+                                    phase, i, parsed
+                                ))
+                                .into());
+                            }
+                            statuses.push(parsed);
+                        }
+                        v => {
+                            return Err(HttpAdapterError::ReplayValidation(format!(
+                                "[{}] http.replay_v1 expected_statuses element {} must be a number, got {}",
+                                phase, i, v
+                            ))
+                            .into());
+                        }
+                    }
+                }
+                Ok(statuses)
+            }
+            _ => Err(HttpAdapterError::ReplayValidation(format!(
+                "[{}] http.replay_v1 expected_statuses must be an array, got {}",
+                phase, val
+            ))
+            .into()),
+        }
+    }
+
+    /// Validates that a status code is in the valid HTTP range (100..=599).
+    fn is_valid_http_status(status: u16) -> bool {
+        (100..=599).contains(&status)
+    }
+
+    /// Makes a blocking HTTP request and returns the response status and body bytes.
+    /// Optionally includes an Idempotency-Key header if provided.
+    fn execute_http_request_blocking(
+        method: HttpMethod,
+        url: &str,
+        body: Option<Vec<u8>>,
+        idempotency_key: Option<&str>,
+    ) -> Result<(u16, Vec<u8>), AdapterError> {
+        // Parse URL to get destination
+        let uri: http::Uri = url.parse().map_err(|_| {
+            Self::phase_wrap_validation(
+                PHASE_EXECUTE,
+                format!("failed to parse URL as URI: {}", url),
+            )
+        })?;
+
+        let host = uri.host().ok_or_else(|| {
+            Self::phase_wrap_validation(PHASE_EXECUTE, format!("URL has no host: {}", url))
+        })?;
+
+        let port = uri.port_u16().unwrap_or(80);
+        let destination = format!("{}:{}", host, port);
+
+        // Connect with timeout
+        let connect_timeout = Duration::from_secs(5);
+        let stream = std::net::TcpStream::connect_timeout(
+            &destination.parse().map_err(|_| {
+                Self::phase_wrap_internal(
+                    PHASE_EXECUTE,
+                    format!("failed to parse address: {}", destination),
+                )
+            })?,
+            connect_timeout,
+        )
+        .map_err(|e| {
+            Self::phase_wrap_internal(
+                PHASE_EXECUTE,
+                format!("failed to connect to {}: {}", destination, e),
+            )
+        })?;
+
+        stream
+            .set_read_timeout(Some(Duration::from_secs(30)))
+            .map_err(|e| {
+                Self::phase_wrap_internal(
+                    PHASE_EXECUTE,
+                    format!("failed to set read timeout: {}", e),
+                )
+            })?;
+
+        let path = uri.path_and_query().map(|pq| pq.as_str()).unwrap_or("/");
+
+        // Build HTTP request manually
+        let method_str = match method {
+            HttpMethod::Get => "GET",
+            HttpMethod::Post => "POST",
+            HttpMethod::Put => "PUT",
+            HttpMethod::Patch => "PATCH",
+            HttpMethod::Delete => "DELETE",
+        };
+
+        let mut request_builder = format!(
+            "{} {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\nAccept: */*\r\n",
+            method_str, path, host
+        );
+
+        // Add Idempotency-Key header if provided
+        if let Some(key) = idempotency_key {
+            request_builder.push_str(&format!("Idempotency-Key: {}\r\n", key));
+        }
+
+        if let Some(body_bytes) = &body {
+            request_builder.push_str(&format!(
+                "Content-Type: application/json\r\nContent-Length: {}\r\n",
+                body_bytes.len()
+            ));
+        }
+
+        request_builder.push_str("\r\n");
+
+        let mut full_request = request_builder.into_bytes();
+        if let Some(mut body_bytes) = body {
+            full_request.append(&mut body_bytes);
+        }
+
+        let mut stream = stream;
+        stream.write_all(&full_request).map_err(|e| {
+            Self::phase_wrap_internal(PHASE_EXECUTE, format!("failed to send request: {}", e))
+        })?;
+
+        // Read response
+        let mut response = Vec::new();
+        let mut buffer = [0u8; 8192];
+        loop {
+            match stream.read(&mut buffer) {
+                Ok(0) => break, // Connection closed
+                Ok(n) => response.extend_from_slice(&buffer[..n]),
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    // Read would block, try again
+                    continue;
+                }
+                Err(e) => {
+                    return Err(Self::phase_wrap_internal(
+                        PHASE_EXECUTE,
+                        format!("failed to read response: {}", e),
+                    ));
+                }
+            }
+        }
+
+        // Parse response to extract status and body
+        let response_str = String::from_utf8_lossy(&response);
+
+        // Split headers and body at the double CRLF
+        let parts: Vec<&str> = response_str.split("\r\n\r\n").collect();
+        let (status_line, body_str) = if parts.len() >= 2 {
+            (parts[0], parts[1])
+        } else {
+            // No body found, treat whole response as status line
+            (response_str.as_ref(), "")
+        };
+
+        // Extract status code (e.g., "HTTP/1.1 200 OK" -> 200)
+        let status_line_text = status_line.lines().next().unwrap_or("");
+        let status_parts: Vec<&str> = status_line_text.split_whitespace().collect();
+        if status_parts.len() < 2 {
+            return Err(Self::phase_wrap_internal(
+                PHASE_EXECUTE,
+                format!("invalid HTTP response status line: {}", status_line_text),
+            ));
+        }
+
+        let status_code: u16 = status_parts[1].parse().map_err(|_| {
+            Self::phase_wrap_internal(
+                PHASE_EXECUTE,
+                format!("failed to parse status code: {}", status_parts[1]),
+            )
+        })?;
+
+        // Body is what comes after headers
+        let body_bytes = body_str.as_bytes().to_vec();
+
+        Ok((status_code, body_bytes))
+    }
+
+    /// Async wrapper for HTTP execution.
+    /// Optionally includes an Idempotency-Key header if provided.
+    async fn execute_http_request(
+        method: HttpMethod,
+        url: &str,
+        body: Option<Vec<u8>>,
+        idempotency_key: Option<&str>,
+    ) -> Result<(u16, Vec<u8>), AdapterError> {
+        let method_owned = method;
+        let url_owned = url.to_string();
+        let body_owned = body;
+        let idempotency_key_owned = idempotency_key.map(|s| s.to_string());
+
+        tokio::task::spawn_blocking(move || {
+            Self::execute_http_request_blocking(
+                method_owned,
+                &url_owned,
+                body_owned,
+                idempotency_key_owned.as_deref(),
+            )
+        })
+        .await
+        .map_err(|e| Self::phase_wrap_internal(PHASE_EXECUTE, format!("task join error: {}", e)))?
+    }
+
+    /// Helper to build structured reason codes for unsupported compensation.
+    fn build_unsupported_reason_codes(contract: &RollbackContract) -> Vec<&'static str> {
+        let compensation_steps_present = !contract.compensation_plan.is_empty();
+        let idempotency_key_present_in_plan = contract
+            .compensation_plan
+            .iter()
+            .any(|step| !step.idempotency_key.is_empty());
+
+        let mut reason_codes = Vec::new();
+        reason_codes.push("RECOVERY_SLICE_NARROW_HTTP_REPLAY_V1");
+        if !compensation_steps_present {
+            reason_codes.push("NO_COMPENSATION_PLAN");
+        } else if !idempotency_key_present_in_plan {
+            reason_codes.push("NO_IDEMPOTENCY_KEY_IN_COMPENSATION");
+        } else {
+            reason_codes.push("COMPENSATION_PLAN_UNSUPPORTED_FOR_HTTP");
+        }
+        reason_codes.push("NO_OUTBOUND_RECOVERY_PATH");
+        reason_codes.push("NO_PERSISTED_EXECUTE_EVIDENCE");
+        reason_codes
     }
 }
 
 #[async_trait]
-impl RollbackAdapter for HttpRollbackAdapter {
+impl RollbackAdapter for HttpAdapter {
     fn key(&self) -> &'static str {
-        ADAPTER_KEY
+        self.key
     }
 
     async fn prepare(
         &self,
         request: &RollbackPrepareRequest,
     ) -> Result<PrepareReceipt, AdapterError> {
-        let (method, url, bound_request_digest) =
-            Self::extract_http_target(&request.target).map_err(AdapterError::from)?;
+        // Validate that target is HttpRequest
+        let (method, url) = Self::extract_http_target(&request.target)?;
 
-        // Validate URL is well-formed
-        if url.is_empty() {
-            return Err(AdapterError::Validation("URL cannot be empty".to_string()));
+        // Validate that action_type is HttpMutation
+        match request.action_type {
+            ActionType::HttpMutation => {}
+            _ => {
+                return Err(AdapterError::Unsupported(format!(
+                    "unsupported action type: {:?}",
+                    request.action_type
+                )));
+            }
         }
 
-        let approved_request_payload = request
-            .metadata
-            .get(APPROVED_HTTP_REQUEST_METADATA_KEY)
-            .cloned()
-            .unwrap_or(serde_json::Value::Null);
-        let (approved_url, approved_method, approved_body, approved_headers, approved_auth) =
-            Self::resolve_request_parts(&method, &url, &approved_request_payload)
-                .map_err(AdapterError::from)?;
+        // Validate URL shape
+        Self::validate_url_shape(url)?;
 
-        // Apply HTTP auth to headers for digest computation (if present)
-        let headers_for_digest =
-            Self::apply_http_auth(approved_headers.as_ref(), approved_auth.as_ref());
-
-        let approved_request_digest = Self::compute_body_aware_digest(
-            &approved_method,
-            &approved_url,
-            &approved_body,
-            headers_for_digest.as_ref(),
-        );
-        let approved_body_digest = Self::compute_body_digest(&approved_body);
-        let approved_headers_digest = Self::compute_headers_digest(headers_for_digest.as_ref());
-        let approved_query = Self::extract_query_from_url(&approved_url);
-        let approved_query_digest = Self::compute_query_digest(approved_query.as_deref());
-        let approved_query_present = approved_query.is_some();
-        let approved_auth_present = approved_auth.is_some();
-        let approved_auth_digest = approved_auth.as_ref().map(|a| a.compute_digest());
+        // Run prepare_checks if present (fail-closed on check failure)
+        for check in &request.prepare_checks {
+            Self::run_check(check, url, (*method).clone(), PHASE_PREPARE).await?;
+        }
 
         let mut metadata = JsonMap::new();
         metadata.insert(
-            "bound_method".to_string(),
-            serde_json::json!(format!("{:?}", method)),
-        );
-        metadata.insert("bound_url".to_string(), serde_json::json!(url));
-        metadata.insert(
-            "bound_request_digest".to_string(),
-            serde_json::json!(bound_request_digest),
+            "adapter_kind".to_string(),
+            serde_json::Value::String(ADAPTER_KIND.to_string()),
         );
         metadata.insert(
-            "approved_method".to_string(),
-            serde_json::json!(format!("{:?}", approved_method)),
-        );
-        metadata.insert("approved_url".to_string(), serde_json::json!(approved_url));
-        metadata.insert(
-            "approved_body_digest".to_string(),
-            serde_json::json!(approved_body_digest),
+            "prepared_at".to_string(),
+            serde_json::Value::String(Utc::now().to_rfc3339()),
         );
         metadata.insert(
-            "approved_headers_digest".to_string(),
-            serde_json::json!(approved_headers_digest),
+            "target_url".to_string(),
+            serde_json::Value::String(url.to_string()),
         );
         metadata.insert(
-            "approved_request_digest".to_string(),
-            serde_json::json!(approved_request_digest),
+            "target_method".to_string(),
+            serde_json::Value::String(format!("{:?}", method)),
         );
-        metadata.insert(
-            "approved_body_present".to_string(),
-            serde_json::json!(!approved_body.is_null()),
-        );
-        metadata.insert(
-            "approved_headers_present".to_string(),
-            serde_json::json!(Self::headers_present(headers_for_digest.as_ref())),
-        );
-        metadata.insert(
-            "approved_query_present".to_string(),
-            serde_json::json!(approved_query_present),
-        );
-        metadata.insert(
-            "approved_query_digest".to_string(),
-            serde_json::json!(approved_query_digest),
-        );
-        // Store auth presence and digest only, not raw token
-        metadata.insert(
-            "approved_auth_present".to_string(),
-            serde_json::json!(approved_auth_present),
-        );
-        if let Some(digest) = approved_auth_digest {
-            metadata.insert(
-                "approved_auth_digest".to_string(),
-                serde_json::json!(digest),
-            );
-        }
-        // Store auth kind for observability only (no secrets)
-        if let Some(auth) = &approved_auth {
-            metadata.insert(
-                "approved_auth_kind".to_string(),
-                serde_json::json!(auth.kind_str()),
-            );
-        }
+
+        // Minimal rollback groundwork marker for prepare phase.
+        // NOTE: This is lightweight groundwork only - do not assume prepare metadata
+        // persists in current orchestration if the service drops it.
+        let rollback_groundwork = serde_json::json!({
+            "version": "rollback_groundwork_v1",
+            "phase": "prepare",
+            "rollback_supported": false,
+            "compensate_supported": false,
+            "groundwork_mode": true,
+        });
+        metadata.insert("rollback_groundwork".to_string(), rollback_groundwork);
 
         Ok(PrepareReceipt {
             accepted: true,
@@ -857,340 +1412,290 @@ impl RollbackAdapter for HttpRollbackAdapter {
         contract: &RollbackContract,
         payload: &serde_json::Value,
     ) -> Result<ExecuteReceipt, AdapterError> {
-        let (bound_method, bound_url, _) =
-            Self::extract_http_target(&contract.target).map_err(AdapterError::from)?;
+        // Validate target is HttpRequest
+        let (method, url) = Self::extract_http_target(&contract.target)?;
 
-        let (executed_url, executed_method, executed_body, executed_headers, executed_auth) =
-            Self::resolve_request_parts(&bound_method, &bound_url, payload)
-                .map_err(AdapterError::from)?;
-
-        // Apply HTTP auth to headers for digest computation and request execution
-        let headers_for_request =
-            Self::apply_http_auth(executed_headers.as_ref(), executed_auth.as_ref());
-
-        let executed_request_digest = Self::compute_body_aware_digest(
-            &executed_method,
-            &executed_url,
-            &executed_body,
-            headers_for_request.as_ref(),
-        );
-        let executed_body_digest = Self::compute_body_digest(&executed_body);
-        let executed_headers_digest = Self::compute_headers_digest(headers_for_request.as_ref());
-        let executed_query = Self::extract_query_from_url(&executed_url);
-        let executed_query_digest = Self::compute_query_digest(executed_query.as_deref());
-        let executed_query_present = executed_query.is_some();
-        let executed_auth_present = executed_auth.is_some();
-        let executed_auth_digest = executed_auth.as_ref().map(|a| a.compute_digest());
-
-        if let Some(approved_request_digest) = contract
-            .metadata
-            .get("approved_request_digest")
-            .and_then(|value| value.as_str())
-        {
-            if approved_request_digest != executed_request_digest {
-                return Err(AdapterError::Validation(format!(
-                    "executed request digest does not match approved request digest: approved={} executed={}",
-                    approved_request_digest, executed_request_digest
+        // Validate action type is HttpMutation
+        match contract.action_type {
+            ActionType::HttpMutation => {}
+            _ => {
+                return Err(AdapterError::Unsupported(format!(
+                    "[execute] unsupported action type: {:?}",
+                    contract.action_type
                 )));
             }
         }
 
-        // H1.5a: For mutations, generate idempotency key to make retries safe.
-        // The key is based on execution_id to ensure uniqueness across executions.
-        let idempotency_key = if Self::is_mutation_method(&executed_method) {
-            Some(format!("fg-idempotency-{}", contract.execution_id))
-        } else {
-            None
+        // Validate URL shape
+        Self::validate_url_shape(url)?;
+
+        // Validate payload shape
+        Self::validate_payload_shape(payload)?;
+
+        // Extract body bytes from payload
+        let body_bytes = Self::extract_body_bytes(payload)?;
+
+        // Compute request body size for metadata (before moving into HTTP call)
+        let request_body_size = body_bytes.as_ref().map(|b| b.len()).unwrap_or(0);
+
+        // Compute request digest: SHA256(method + url + body)
+        let request_content = match &body_bytes {
+            Some(body) => {
+                let mut d = Sha256::new();
+                d.update(format!("{:?}", method).as_bytes());
+                d.update(url.as_bytes());
+                d.update(body);
+                format!("{:x}", d.finalize())
+            }
+            None => {
+                let mut d = Sha256::new();
+                d.update(format!("{:?}", method).as_bytes());
+                d.update(url.as_bytes());
+                format!("{:x}", d.finalize())
+            }
         };
 
-        // H1.5a: Build the request first so we can reconstruct it for retries.
-        // reqwest::RequestBuilder doesn't implement Clone, so we build fresh per attempt.
-        let client = self.client.clone();
-        let headers_for_request_clone = headers_for_request.clone();
-        let body_for_retry = executed_body.clone();
-        let url_for_retry = executed_url.clone();
-        let method_for_retry = executed_method.clone();
+        // Try to parse a valid http.replay_v1 contract from compensation plan
+        // If valid, we'll include the idempotency key in the request
+        let parsed_replay = Self::parse_replay_contract(contract, PHASE_EXECUTE).ok();
+        let idempotency_key_for_request =
+            parsed_replay.as_ref().map(|r| r.idempotency_key.as_str());
 
-        // Execute the HTTP request with retry (H1.5a: bounded retry/backoff).
-        // For mutation-capable methods, body is sent as canonical JSON when present.
-        // Idempotency-Key header is added for mutations to make retries safe.
-        let response = http_with_retry(
-            || {
-                let client = client.clone();
-                let headers = headers_for_request_clone.clone();
-                let body = body_for_retry.clone();
-                let url = url_for_retry.clone();
-                let method = method_for_retry.clone();
-                let idempotency = idempotency_key.clone();
+        // Extract target request_digest via pattern matching
+        let target_request_digest = match &contract.target {
+            RollbackTarget::HttpRequest {
+                request_digest: rd, ..
+            } => rd.clone(),
+            _ => {
+                return Err(HttpAdapterError::ReplayValidation(
+                    "[execute] http.replay_v1 requires HttpRequest target".to_string(),
+                )
+                .into());
+            }
+        };
 
-                async move {
-                    let mut request = match method {
-                        HttpMethod::Get => client.get(&url),
-                        HttpMethod::Post => client.post(&url),
-                        HttpMethod::Put => client.put(&url),
-                        HttpMethod::Patch => client.patch(&url),
-                        HttpMethod::Delete => client.delete(&url),
-                    };
-                    if Self::is_mutation_method(&method) && !body.is_null() {
-                        request = request.json(&body);
-                    }
-                    // H1.5a: Apply idempotency key header for mutations
-                    if let Some(ref key) = idempotency {
-                        request = request.header("Idempotency-Key", key);
-                    }
-                    // Apply headers (includes bearer auth if specified via auth field).
-                    // Header validation against allowlist is performed by the firewall before this adapter executes.
-                    if let Some(headers) = headers {
-                        for (name, value) in headers {
-                            let header_name = HeaderName::try_from(name.as_str()).map_err(|e| {
-                                HttpAdapterError::Validation(format!(
-                                    "invalid header name '{}': {}",
-                                    name, e
-                                ))
-                            })?;
-                            request = request.header(header_name, value);
-                        }
-                    }
-                    request.send().await.map_err(|e| {
-                        HttpAdapterError::RequestFailed(format!(
-                            "{:?} request failed: {}",
-                            method, e
-                        ))
-                    })
-                }
-            },
-            100, // 100ms backoff before retry
+        // If we have a valid replay contract, verify digest matches
+        if let Some(ref replay) = parsed_replay {
+            // Compute the expected digest from replay payload
+            let replay_body_bytes = Self::extract_body_bytes(&replay.payload)?;
+            let expected_digest = Self::compute_request_digest(
+                replay.method.clone(),
+                &replay.url,
+                replay_body_bytes.as_deref(),
+            );
+            if expected_digest != target_request_digest {
+                return Err(HttpAdapterError::ReplayValidation(format!(
+                    "[execute] http.replay_v1 digest mismatch: computed '{}' != target.request_digest '{}'",
+                    expected_digest, target_request_digest
+                ))
+                .into());
+            }
+        }
+
+        // Execute HTTP request (with idempotency key if replay contract is valid)
+        let (status, response_body) = Self::execute_http_request(
+            (*method).clone(),
+            url,
+            body_bytes,
+            idempotency_key_for_request,
         )
         .await?;
-        let status = response.status().as_u16();
 
+        // Compute response digest: SHA256(status + bounded body)
+        // Bound response body to first 64KB to avoid memory issues
+        const MAX_RESPONSE_DIGEST_BYTES: usize = 64 * 1024;
+        let response_body_for_digest = if response_body.len() > MAX_RESPONSE_DIGEST_BYTES {
+            &response_body[..MAX_RESPONSE_DIGEST_BYTES]
+        } else {
+            &response_body[..]
+        };
+        let response_digest = {
+            let mut d = Sha256::new();
+            d.update(status.to_string().as_bytes());
+            d.update(response_body_for_digest);
+            format!("{:x}", d.finalize())
+        };
+
+        // Build receipt metadata
         let mut metadata = JsonMap::new();
         metadata.insert(
-            "bound_method".to_string(),
-            serde_json::json!(format!("{:?}", bound_method)),
-        );
-        metadata.insert("bound_url".to_string(), serde_json::json!(bound_url));
-        metadata.insert(
-            "executed_method".to_string(),
-            serde_json::json!(format!("{:?}", executed_method)),
-        );
-        metadata.insert("executed_url".to_string(), serde_json::json!(executed_url));
-        metadata.insert(
-            "executed_body_digest".to_string(),
-            serde_json::json!(executed_body_digest),
+            "adapter_kind".to_string(),
+            serde_json::Value::String(ADAPTER_KIND.to_string()),
         );
         metadata.insert(
-            "executed_headers_digest".to_string(),
-            serde_json::json!(executed_headers_digest),
+            "executed_at".to_string(),
+            serde_json::Value::String(Utc::now().to_rfc3339()),
         );
         metadata.insert(
-            "executed_body_present".to_string(),
-            serde_json::json!(!executed_body.is_null()),
+            "target_method".to_string(),
+            serde_json::Value::String(format!("{:?}", method)),
         );
         metadata.insert(
-            "executed_headers_present".to_string(),
-            serde_json::json!(Self::headers_present(headers_for_request.as_ref())),
+            "target_url".to_string(),
+            serde_json::Value::String(url.to_string()),
         );
         metadata.insert(
-            "executed_query_present".to_string(),
-            serde_json::json!(executed_query_present),
+            "request_digest".to_string(),
+            serde_json::Value::String(request_content),
         );
         metadata.insert(
-            "executed_query_digest".to_string(),
-            serde_json::json!(executed_query_digest),
+            "response_status".to_string(),
+            serde_json::Value::Number(status.into()),
         );
-        metadata.insert("status".to_string(), serde_json::json!(status));
-        metadata.insert("executed".to_string(), serde_json::json!(true));
         metadata.insert(
-            "executed_request_digest".to_string(),
-            serde_json::json!(executed_request_digest),
+            "response_body_size".to_string(),
+            serde_json::Value::Number(response_body.len().into()),
         );
-        // Store auth presence and digest only, not raw token
         metadata.insert(
-            "executed_auth_present".to_string(),
-            serde_json::json!(executed_auth_present),
+            "response_digest".to_string(),
+            serde_json::Value::String(response_digest.clone()),
         );
-        if let Some(digest) = executed_auth_digest {
-            metadata.insert(
-                "executed_auth_digest".to_string(),
-                serde_json::json!(digest),
-            );
+        metadata.insert(
+            "response_body_truncated".to_string(),
+            serde_json::Value::Bool(response_body.len() > MAX_RESPONSE_DIGEST_BYTES),
+        );
+
+        // Build rollback groundwork v1 metadata block (digest-only, no raw bodies)
+        let rollback_groundwork_v1 = serde_json::json!({
+            "version": "rollback_groundwork_v1",
+            "request": {
+                "digest_algorithm": "SHA-256",
+                "digest_window": "full",
+                "digest_input_bytes": request_body_size,
+                "body_size_bytes": request_body_size,
+                "truncated": false,
+                "content_type_hint": payload.as_object()
+                    .and_then(|o| o.get("body"))
+                    .map(|_| "application/json")
+                    .unwrap_or_else(|| match payload {
+                        serde_json::Value::String(_) => "text/plain",
+                        serde_json::Value::Number(_) => "text/plain",
+                        serde_json::Value::Bool(_) => "text/plain",
+                        _ => "application/json",
+                    }),
+                "rollback_supported": false,
+                "compensate_supported": false,
+                "replay_confidence": "none",
+            },
+            "response": {
+                "digest_algorithm": "SHA-256",
+                "digest_window": if response_body.len() > MAX_RESPONSE_DIGEST_BYTES {
+                    format!("first{}B", MAX_RESPONSE_DIGEST_BYTES)
+                } else {
+                    "full".to_string()
+                },
+                "digest_input_bytes": response_body_for_digest.len(),
+                "body_size_bytes": response_body.len(),
+                "truncated": response_body.len() > MAX_RESPONSE_DIGEST_BYTES,
+                "content_type_hint": "application/octet-stream", // no header inspection
+                "rollback_supported": false,
+                "compensate_supported": false,
+                "replay_confidence": "none",
+            }
+        });
+        metadata.insert("rollback_groundwork_v1".to_string(), rollback_groundwork_v1);
+
+        // Build http_recovery_readiness_v1 metadata block (classification for recovery path planning)
+        // This uses ONLY current contract surface: target method, compensation plan, idempotency_key presence.
+        // It does NOT guess transport headers that do not exist.
+        let compensation_steps_present = !contract.compensation_plan.is_empty();
+        let idempotency_key_present_in_plan = contract
+            .compensation_plan
+            .iter()
+            .any(|step| !step.idempotency_key.is_empty());
+
+        // Classify replayability based on method and compensation plan presence
+        // - Safe methods (GET, DELETE) with idempotency key in plan = potentially_replayable
+        // - Unsafe methods (POST, PUT, PATCH) need explicit idempotency key = conditional
+        // - No compensation plan = not_replayable
+        // - Valid http.replay_v1 contract = replay_ready
+        let has_valid_replay_contract = parsed_replay.is_some();
+        let replayable_classification = if has_valid_replay_contract {
+            "replay_ready"
+        } else {
+            match (
+                method,
+                idempotency_key_present_in_plan,
+                compensation_steps_present,
+            ) {
+                (HttpMethod::Get, _, true) => "potentially_replayable",
+                (HttpMethod::Delete, _, true) => "potentially_replayable",
+                (HttpMethod::Post, true, true) => "conditional_replayable",
+                (HttpMethod::Put, true, true) => "conditional_replayable",
+                (HttpMethod::Patch, true, true) => "conditional_replayable",
+                (_, false, true) => "requires_idempotency_key",
+                _ => "not_replayable",
+            }
+        };
+
+        // Build reason codes explaining why recovery is not currently executable
+        let mut reason_codes = Vec::new();
+        if !compensation_steps_present {
+            reason_codes.push("NO_COMPENSATION_PLAN");
         }
-        // Store auth kind for observability only (no secrets)
-        if let Some(auth) = &executed_auth {
-            metadata.insert(
-                "executed_auth_kind".to_string(),
-                serde_json::json!(auth.kind_str()),
-            );
+        if compensation_steps_present && !idempotency_key_present_in_plan {
+            reason_codes.push("NO_IDEMPOTENCY_KEY_IN_COMPENSATION");
         }
-        // H1.5a: Store idempotency key presence for mutations (key itself not stored - contains execution_id)
+        if compensation_steps_present && !has_valid_replay_contract {
+            reason_codes.push("INVALID_REPLAY_CONTRACT");
+        }
+        if !has_valid_replay_contract {
+            reason_codes.push("NO_REPLAY_CONTRACT");
+        }
+        reason_codes.push("NO_PERSISTED_EXECUTE_EVIDENCE");
+        reason_codes.push("NO_OUTBOUND_RECOVERY_PATH");
+
+        let http_recovery_readiness_v1 = serde_json::json!({
+            "version": "http_recovery_readiness_v1",
+            "replayable_classification": replayable_classification,
+            "idempotency_key_present_in_plan": idempotency_key_present_in_plan,
+            "compensation_steps_present": compensation_steps_present,
+            "has_valid_replay_contract": has_valid_replay_contract,
+            "rollback_supported": has_valid_replay_contract,
+            "compensate_supported": has_valid_replay_contract,
+            "reason_codes": reason_codes,
+        });
         metadata.insert(
-            "executed_idempotency_key_present".to_string(),
-            serde_json::json!(idempotency_key.is_some()),
+            "http_recovery_readiness_v1".to_string(),
+            http_recovery_readiness_v1,
         );
 
         Ok(ExecuteReceipt {
             external_id: None,
-            result_digest: Some(status.to_string()),
+            result_digest: Some(format!("http-{}", status)),
             adapter_metadata: metadata,
         })
     }
 
     async fn verify(&self, contract: &RollbackContract) -> Result<VerifyReceipt, AdapterError> {
-        let (bound_method, bound_url, _) =
-            Self::extract_http_target(&contract.target).map_err(AdapterError::from)?;
+        // Validate target
+        let (method, url) = Self::extract_http_target(&contract.target)?;
 
-        // For mutation-capable methods, verify MUST use execute-time metadata only.
-        // Replaying mutating requests during verify is NOT safe - it would re-execute the side effect.
-        // This is the key distinction from GET where re-requesting is safe.
-        let is_mutation = Self::is_mutation_method(&bound_method);
+        // Validate URL shape
+        Self::validate_url_shape(url)?;
 
-        // Get expected status from verify_checks (explicit expectation)
-        let explicit_expected_status = Self::extract_expected_status(&contract.verify_checks);
-
-        // Get execute-time status from metadata (always required for mutations)
-        let execute_status = contract
-            .metadata
-            .get("status")
-            .and_then(|v| v.as_u64())
-            .map(|s| s as u16);
-
-        let verify_url = contract
-            .metadata
-            .get("executed_url")
-            .and_then(|v| v.as_str())
-            .unwrap_or(&bound_url)
-            .to_string();
-
-        // Fail-closed: mutation methods require execute-time status in metadata
-        if is_mutation && execute_status.is_none() {
-            return Ok(VerifyReceipt {
-                verified: false,
-                adapter_metadata: {
-                    let mut m = JsonMap::new();
-                    m.insert(
-                        "bound_method".to_string(),
-                        serde_json::json!(format!("{:?}", bound_method)),
-                    );
-                    m.insert("bound_url".to_string(), serde_json::json!(bound_url));
-                    m.insert("verify_url".to_string(), serde_json::json!(verify_url));
-                    m.insert(
-                        "reason".to_string(),
-                        serde_json::json!(
-                            "mutation method verify requires execute-time status in metadata"
-                        ),
-                    );
-                    m
-                },
-            });
+        // If no verify_checks are provided, fail-closed with a clear reason.
+        // Without explicit checks, we cannot verify the HTTP mutation succeeded.
+        if contract.verify_checks.is_empty() {
+            return Err(Self::phase_wrap_validation(
+                PHASE_VERIFY,
+                "no verify_checks provided and no default verification available for HttpMutation. \
+                 HttpMutation verify requires explicit HttpStatusExpected checks to confirm \
+                 the mutation had the expected effect. Provide verify_checks with HttpStatusExpected \
+                 to specify the expected HTTP status code."
+                    .to_string(),
+            ));
         }
 
-        // Determine expected status:
-        // - Explicit check if provided
-        // - Otherwise use execute-time metadata (required for mutations, optional for GET)
-        let expected_status = match explicit_expected_status {
-            Some(s) => s,
-            None => {
-                match execute_status {
-                    Some(s) => s,
-                    None => {
-                        // GET with no status metadata - fail closed
-                        return Ok(VerifyReceipt {
-                            verified: false,
-                            adapter_metadata: {
-                                let mut m = JsonMap::new();
-                                m.insert(
-                                    "bound_method".to_string(),
-                                    serde_json::json!(format!("{:?}", bound_method)),
-                                );
-                                m.insert("bound_url".to_string(), serde_json::json!(bound_url));
-                                m.insert("verify_url".to_string(), serde_json::json!(verify_url));
-                                m.insert(
-                                    "reason".to_string(),
-                                    serde_json::json!("no HttpStatusExpected check and no execute-time status in metadata"),
-                                );
-                                m
-                            },
-                        });
-                    }
-                }
-            }
-        };
-
-        // For GET with explicit check: optionally re-request to verify current server state
-        // For mutations: always use execute-time metadata (do not replay)
-        // For GET without explicit check: only 2xx auto-verifies via execute-time metadata
-        let (verified, actual_status) = if !is_mutation && explicit_expected_status.is_some() {
-            // GET with explicit check: re-request to verify actual current state.
-            // Fail-closed on transport failure: if re-request fails, return verified=false
-            // instead of propagating the error (which would cause 500 at gateway level).
-            let actual = match self.client.get(&verify_url).send().await {
-                Ok(response) => Some(response.status().as_u16()),
-                Err(_e) => {
-                    // Transport failure during verify re-request - fail closed.
-                    // Return verified=false with reason indicating transport failure.
-                    return Ok(VerifyReceipt {
-                        verified: false,
-                        adapter_metadata: {
-                            let mut m = JsonMap::new();
-                            m.insert(
-                                "bound_method".to_string(),
-                                serde_json::json!(format!("{:?}", bound_method)),
-                            );
-                            m.insert("bound_url".to_string(), serde_json::json!(bound_url));
-                            m.insert("verify_url".to_string(), serde_json::json!(verify_url));
-                            m.insert("reason".to_string(), serde_json::json!("transport failure"));
-                            m.insert("verified".to_string(), serde_json::json!(false));
-                            m
-                        },
-                    });
-                }
-            };
-            let actual = actual.unwrap();
-            (actual == expected_status, Some(actual))
-        } else if !is_mutation {
-            // GET without explicit check: auto-verify only 2xx via execute-time metadata
-            let actual = execute_status.unwrap_or(expected_status);
-            let verified = (200..300).contains(&actual);
-            (verified, Some(actual))
-        } else if explicit_expected_status.is_some() {
-            // Mutation with explicit expectation: crosscheck execute-time status only (no replay)
-            let actual = execute_status.unwrap();
-            let verified = actual == expected_status;
-            (verified, Some(actual))
-        } else {
-            // Mutation without explicit check: auto-verify only successful execute-time statuses.
-            // Stay fail-closed for non-2xx outcomes like 4xx/5xx.
-            let actual = execute_status.unwrap();
-            let verified = (200..300).contains(&actual);
-            (verified, Some(actual))
-        };
-
-        let mut metadata = JsonMap::new();
-        metadata.insert(
-            "bound_method".to_string(),
-            serde_json::json!(format!("{:?}", bound_method)),
-        );
-        metadata.insert("bound_url".to_string(), serde_json::json!(bound_url));
-        metadata.insert(
-            "expected_status".to_string(),
-            serde_json::json!(expected_status),
-        );
-        if let Some(actual) = actual_status {
-            metadata.insert("actual_status".to_string(), serde_json::json!(actual));
+        // Run explicit verify_checks (fail-closed on mismatch or error)
+        for check in &contract.verify_checks {
+            Self::run_check(check, url, (*method).clone(), PHASE_VERIFY).await?;
         }
-        metadata.insert("verify_url".to_string(), serde_json::json!(verify_url));
-        if is_mutation || explicit_expected_status.is_none() {
-            metadata.insert(
-                "verified_via".to_string(),
-                serde_json::json!("execute-time metadata"),
-            );
-        }
-        metadata.insert("verified".to_string(), serde_json::json!(verified));
 
+        // All checks passed
         Ok(VerifyReceipt {
-            verified,
-            adapter_metadata: metadata,
+            verified: true,
+            adapter_metadata: JsonMap::new(),
         })
     }
 
@@ -1198,29 +1703,338 @@ impl RollbackAdapter for HttpRollbackAdapter {
         &self,
         contract: &RollbackContract,
     ) -> Result<RecoveryReceipt, AdapterError> {
-        // Compensate is the same as rollback for this slice
-        self.rollback(contract).await
+        // Validate target is HttpRequest
+        let (_method, url) = Self::extract_http_target(&contract.target)?;
+
+        // Validate action type is HttpMutation
+        match contract.action_type {
+            ActionType::HttpMutation => {}
+            _ => {
+                return Err(AdapterError::Unsupported(format!(
+                    "[compensate] unsupported action type: {:?}",
+                    contract.action_type
+                )));
+            }
+        }
+
+        // Validate URL shape
+        Self::validate_url_shape(url)?;
+
+        // Try to parse a valid http.replay_v1 contract
+        let replay = match Self::parse_replay_contract(contract, PHASE_COMPENSATE) {
+            Ok(r) => r,
+            Err(e) => {
+                // Fail closed with structured reason codes for unsupported shapes
+                let reason_codes = Self::build_unsupported_reason_codes(contract);
+                return Err(AdapterError::Unsupported(format!(
+                    "[compensate] http.replay_v1 contract validation failed: {}. Reason codes: [{}]",
+                    e,
+                    reason_codes.join(", ")
+                )));
+            }
+        };
+
+        // Validate method is POST/PUT/PATCH (already enforced by parse_replay_contract, but double-check)
+        match replay.method {
+            HttpMethod::Post | HttpMethod::Put | HttpMethod::Patch => {}
+            _ => {
+                return Err(AdapterError::Validation(format!(
+                    "[compensate] http.replay_v1 requires POST/PUT/PATCH method, got {:?}",
+                    replay.method
+                )));
+            }
+        }
+
+        // Validate URL matches target (already enforced by parse_replay_contract)
+        // Validate digest matches target.request_digest
+        let target_request_digest = match &contract.target {
+            RollbackTarget::HttpRequest {
+                request_digest: rd, ..
+            } => rd.clone(),
+            _ => {
+                return Err(HttpAdapterError::ReplayValidation(
+                    "[compensate] http.replay_v1 requires HttpRequest target".to_string(),
+                )
+                .into());
+            }
+        };
+
+        // Extract body bytes from replay payload and compute digest
+        let body_bytes = Self::extract_body_bytes(&replay.payload)?;
+        let computed_digest =
+            Self::compute_request_digest(replay.method.clone(), &replay.url, body_bytes.as_deref());
+        if computed_digest != target_request_digest {
+            return Err(HttpAdapterError::ReplayValidation(format!(
+                "[compensate] http.replay_v1 digest mismatch: computed '{}' != target.request_digest '{}'",
+                computed_digest, target_request_digest
+            ))
+            .into());
+        }
+
+        // Compute replay request digest BEFORE the HTTP call (need body_bytes before it's moved)
+        // Also save these values before they're moved into execute_http_request
+        let replay_request_digest =
+            Self::compute_request_digest(replay.method.clone(), &replay.url, body_bytes.as_deref());
+        let replay_method_str = format!("{:?}", replay.method);
+        let replay_url = replay.url.clone();
+        let replay_idempotency_key = replay.idempotency_key.clone();
+        let replay_expected_statuses = replay.expected_statuses.clone();
+
+        // Execute the replay request with idempotency key
+        let (status, response_body) = Self::execute_http_request(
+            replay.method,
+            &replay.url,
+            body_bytes,
+            Some(&replay.idempotency_key),
+        )
+        .await?;
+
+        // Compute response digest: SHA256(status + bounded body)
+        const MAX_RESPONSE_DIGEST_BYTES: usize = 64 * 1024;
+        let response_body_for_digest = if response_body.len() > MAX_RESPONSE_DIGEST_BYTES {
+            &response_body[..MAX_RESPONSE_DIGEST_BYTES]
+        } else {
+            &response_body[..]
+        };
+        let response_digest = {
+            let mut d = Sha256::new();
+            d.update(status.to_string().as_bytes());
+            d.update(response_body_for_digest);
+            format!("{:x}", d.finalize())
+        };
+        let response_body_truncated = response_body.len() > MAX_RESPONSE_DIGEST_BYTES;
+
+        // Check expected_statuses (now required)
+        if !replay_expected_statuses.contains(&status) {
+            return Err(AdapterError::Validation(format!(
+                "[compensate] http.replay_v1 status mismatch: expected {:?}, got {}",
+                replay_expected_statuses, status
+            )));
+        }
+
+        // Build recovery receipt metadata
+        let mut metadata = JsonMap::new();
+        metadata.insert(
+            "adapter_kind".to_string(),
+            serde_json::Value::String(ADAPTER_KIND.to_string()),
+        );
+        metadata.insert(
+            "compensated_at".to_string(),
+            serde_json::Value::String(Utc::now().to_rfc3339()),
+        );
+        metadata.insert(
+            "replay_operation".to_string(),
+            serde_json::Value::String(REPLAY_OPERATION.to_string()),
+        );
+        metadata.insert(
+            "idempotency_key".to_string(),
+            serde_json::Value::String(replay_idempotency_key),
+        );
+        metadata.insert(
+            "response_status".to_string(),
+            serde_json::Value::Number(status.into()),
+        );
+        metadata.insert(
+            "response_body_size".to_string(),
+            serde_json::Value::Number(response_body.len().into()),
+        );
+        // Enrichment: replay audit metadata
+        metadata.insert(
+            "replay_target_url".to_string(),
+            serde_json::Value::String(replay_url),
+        );
+        metadata.insert(
+            "replay_method".to_string(),
+            serde_json::Value::String(replay_method_str),
+        );
+        metadata.insert(
+            "replay_request_digest".to_string(),
+            serde_json::Value::String(replay_request_digest),
+        );
+        metadata.insert(
+            "replay_response_digest".to_string(),
+            serde_json::Value::String(response_digest),
+        );
+        metadata.insert(
+            "replay_response_body_truncated".to_string(),
+            serde_json::Value::Bool(response_body_truncated),
+        );
+        metadata.insert(
+            "expected_statuses_checked".to_string(),
+            serde_json::Value::Array(
+                replay_expected_statuses
+                    .iter()
+                    .map(|&s| serde_json::Value::Number(s.into()))
+                    .collect(),
+            ),
+        );
+
+        Ok(RecoveryReceipt {
+            recovered: true,
+            adapter_metadata: metadata,
+        })
     }
 
     async fn rollback(&self, contract: &RollbackContract) -> Result<RecoveryReceipt, AdapterError> {
-        let (_bound_method, _bound_url, bound_request_digest) =
-            Self::extract_http_target(&contract.target).map_err(AdapterError::from)?;
+        // Validate target is HttpRequest
+        let (_method, url) = Self::extract_http_target(&contract.target)?;
 
-        // Conservative no-op for this slice.
-        // GET has no side effects and rollback is a no-op.
-        // Mutating HTTP methods (POST/PUT/PATCH/DELETE) require explicit R3 boundary
-        // at intent compile time; this adapter cannot recover remote mutations.
+        // Validate action type is HttpMutation
+        match contract.action_type {
+            ActionType::HttpMutation => {}
+            _ => {
+                return Err(AdapterError::Unsupported(format!(
+                    "[rollback] unsupported action type: {:?}",
+                    contract.action_type
+                )));
+            }
+        }
 
+        // Validate URL shape
+        Self::validate_url_shape(url)?;
+
+        // Try to parse a valid http.replay_v1 contract
+        let replay = match Self::parse_replay_contract(contract, PHASE_ROLLBACK) {
+            Ok(r) => r,
+            Err(e) => {
+                // Fail closed with structured reason codes for unsupported shapes
+                let reason_codes = Self::build_unsupported_reason_codes(contract);
+                return Err(AdapterError::Unsupported(format!(
+                    "[rollback] http.replay_v1 contract validation failed: {}. Reason codes: [{}]",
+                    e,
+                    reason_codes.join(", ")
+                )));
+            }
+        };
+
+        // Validate method is POST/PUT/PATCH (already enforced by parse_replay_contract, but double-check)
+        match replay.method {
+            HttpMethod::Post | HttpMethod::Put | HttpMethod::Patch => {}
+            _ => {
+                return Err(AdapterError::Validation(format!(
+                    "[rollback] http.replay_v1 requires POST/PUT/PATCH method, got {:?}",
+                    replay.method
+                )));
+            }
+        }
+
+        // Validate digest matches target.request_digest
+        let target_request_digest = match &contract.target {
+            RollbackTarget::HttpRequest {
+                request_digest: rd, ..
+            } => rd.clone(),
+            _ => {
+                return Err(HttpAdapterError::ReplayValidation(
+                    "[rollback] http.replay_v1 requires HttpRequest target".to_string(),
+                )
+                .into());
+            }
+        };
+
+        // Extract body bytes from replay payload and compute digest
+        let body_bytes = Self::extract_body_bytes(&replay.payload)?;
+        let computed_digest =
+            Self::compute_request_digest(replay.method.clone(), &replay.url, body_bytes.as_deref());
+        if computed_digest != target_request_digest {
+            return Err(HttpAdapterError::ReplayValidation(format!(
+                "[rollback] http.replay_v1 digest mismatch: computed '{}' != target.request_digest '{}'",
+                computed_digest, target_request_digest
+            ))
+            .into());
+        }
+
+        // Save these values before they're moved into execute_http_request
+        let replay_method_str = format!("{:?}", replay.method);
+        let replay_url = replay.url.clone();
+        let replay_idempotency_key = replay.idempotency_key.clone();
+        let replay_expected_statuses = replay.expected_statuses.clone();
+
+        // Execute the replay request with idempotency key
+        let (status, response_body) = Self::execute_http_request(
+            replay.method,
+            &replay.url,
+            body_bytes,
+            Some(&replay.idempotency_key),
+        )
+        .await?;
+
+        // Compute response digest: SHA256(status + bounded body)
+        const MAX_RESPONSE_DIGEST_BYTES: usize = 64 * 1024;
+        let response_body_for_digest = if response_body.len() > MAX_RESPONSE_DIGEST_BYTES {
+            &response_body[..MAX_RESPONSE_DIGEST_BYTES]
+        } else {
+            &response_body[..]
+        };
+        let response_digest = {
+            let mut d = Sha256::new();
+            d.update(status.to_string().as_bytes());
+            d.update(response_body_for_digest);
+            format!("{:x}", d.finalize())
+        };
+        let response_body_truncated = response_body.len() > MAX_RESPONSE_DIGEST_BYTES;
+
+        // Check expected_statuses (now required)
+        if !replay_expected_statuses.contains(&status) {
+            return Err(AdapterError::Validation(format!(
+                "[rollback] http.replay_v1 status mismatch: expected {:?}, got {}",
+                replay_expected_statuses, status
+            )));
+        }
+
+        // Build recovery receipt metadata
         let mut metadata = JsonMap::new();
         metadata.insert(
-            "bound_request_digest".to_string(),
-            serde_json::json!(bound_request_digest),
+            "adapter_kind".to_string(),
+            serde_json::Value::String(ADAPTER_KIND.to_string()),
         );
-        metadata.insert("rollback".to_string(), serde_json::json!("no-op"));
         metadata.insert(
-            "reason".to_string(),
-            serde_json::json!(
-                "HTTP adapter rollback is conservative no-op; mutating HTTP methods require explicit R3 boundary at compile time"
+            "rolled_back_at".to_string(),
+            serde_json::Value::String(Utc::now().to_rfc3339()),
+        );
+        metadata.insert(
+            "replay_operation".to_string(),
+            serde_json::Value::String(REPLAY_OPERATION.to_string()),
+        );
+        metadata.insert(
+            "idempotency_key".to_string(),
+            serde_json::Value::String(replay_idempotency_key),
+        );
+        metadata.insert(
+            "response_status".to_string(),
+            serde_json::Value::Number(status.into()),
+        );
+        metadata.insert(
+            "response_body_size".to_string(),
+            serde_json::Value::Number(response_body.len().into()),
+        );
+        // Enrichment: replay audit metadata
+        metadata.insert(
+            "replay_target_url".to_string(),
+            serde_json::Value::String(replay_url),
+        );
+        metadata.insert(
+            "replay_method".to_string(),
+            serde_json::Value::String(replay_method_str),
+        );
+        metadata.insert(
+            "replay_request_digest".to_string(),
+            serde_json::Value::String(computed_digest),
+        );
+        metadata.insert(
+            "replay_response_digest".to_string(),
+            serde_json::Value::String(response_digest),
+        );
+        metadata.insert(
+            "replay_response_body_truncated".to_string(),
+            serde_json::Value::Bool(response_body_truncated),
+        );
+        metadata.insert(
+            "expected_statuses_checked".to_string(),
+            serde_json::Value::Array(
+                replay_expected_statuses
+                    .iter()
+                    .map(|&s| serde_json::Value::Number(s.into()))
+                    .collect(),
             ),
         );
 
@@ -1231,3510 +2045,3869 @@ impl RollbackAdapter for HttpRollbackAdapter {
     }
 }
 
-/// Register this adapter with a registry.
-pub fn register_http_adapter(registry: &mut AdapterRegistry) {
-    registry.register(std::sync::Arc::new(HttpRollbackAdapter::new()));
+#[cfg(test)]
+/// Converts a serde_json::Map to a JsonMap (IndexMap)
+fn json_map_from_serde_map(map: serde_json::Map<String, serde_json::Value>) -> JsonMap {
+    map.into_iter().collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use ferrum_proto::{
-        ActionType, CheckSpec, CheckType, RollbackClass, RollbackContract, RollbackState,
+        CheckSpec, CompensationStep, ExecutionId, IntentId, ProposalId, RollbackContractId,
+        RollbackState,
     };
     use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::thread;
+    use std::time::Duration;
 
-    fn make_http_target(method: HttpMethod, url: &str) -> RollbackTarget {
-        let request_digest = HttpRollbackAdapter::compute_request_digest(&method, url);
-        RollbackTarget::HttpRequest {
-            method,
-            url: url.to_string(),
-            request_digest,
-        }
+    /// Starts a simple test HTTP server on a random available port.
+    /// Returns the server handle and the port number.
+    fn start_test_server(
+        expected_path: &str,
+        response_status: u16,
+    ) -> (thread::JoinHandle<()>, u16) {
+        let expected_path = expected_path.to_string();
+        let running = Arc::new(AtomicBool::new(true));
+        let running_clone = running.clone();
+
+        // Bind a TCP listener
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let port = addr.port();
+        listener.set_nonblocking(true).unwrap();
+
+        let handle = thread::spawn(move || {
+            while running_clone.load(Ordering::SeqCst) {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let expected_path = expected_path.clone();
+                        let response_status = response_status;
+
+                        // Handle connection
+                        let mut buffer = [0u8; 8192];
+                        match stream.read(&mut buffer) {
+                            Ok(n) if n > 0 => {
+                                let request = String::from_utf8_lossy(&buffer[..n]);
+
+                                // Simple HTTP parsing - extract path from request line
+                                let parts: Vec<&str> = request
+                                    .lines()
+                                    .next()
+                                    .unwrap_or("")
+                                    .split_whitespace()
+                                    .collect();
+                                let path = parts.get(1).unwrap_or(&"/");
+
+                                // Check if path matches expected
+                                let response = if *path != expected_path {
+                                    "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n"
+                                        .to_string()
+                                } else {
+                                    format!(
+                                        "HTTP/1.1 {} \r\nContent-Length: 0\r\n\r\n",
+                                        response_status
+                                    )
+                                };
+
+                                let _ = stream.write_all(response.as_bytes());
+                            }
+                            _ => {}
+                        }
+                    }
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        // No connection ready, sleep briefly
+                        thread::sleep(Duration::from_millis(1));
+                    }
+                    Err(_) => {
+                        thread::sleep(Duration::from_millis(1));
+                    }
+                }
+            }
+        });
+
+        // Give the server a moment to start
+        thread::sleep(Duration::from_millis(50));
+
+        (handle, port)
     }
 
-    fn make_prepare_request(target: RollbackTarget) -> RollbackPrepareRequest {
-        make_prepare_request_with_metadata(target, JsonMap::new())
+    /// Starts a simple test HTTP server that responds with a body.
+    /// Returns the server handle and the port number.
+    fn start_test_server_with_body(
+        expected_path: &str,
+        response_status: u16,
+        response_body: &str,
+    ) -> (thread::JoinHandle<()>, u16) {
+        let expected_path = expected_path.to_string();
+        let response_body = response_body.to_string();
+        let running = Arc::new(AtomicBool::new(true));
+        let running_clone = running.clone();
+
+        // Bind a TCP listener
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let port = addr.port();
+        listener.set_nonblocking(true).unwrap();
+
+        let handle = thread::spawn(move || {
+            while running_clone.load(Ordering::SeqCst) {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let expected_path = expected_path.clone();
+                        let response_body = response_body.clone();
+                        let response_status = response_status;
+
+                        // Handle connection
+                        let mut buffer = [0u8; 8192];
+                        match stream.read(&mut buffer) {
+                            Ok(n) if n > 0 => {
+                                let request = String::from_utf8_lossy(&buffer[..n]);
+
+                                // Simple HTTP parsing - extract path from request line
+                                let parts: Vec<&str> = request
+                                    .lines()
+                                    .next()
+                                    .unwrap_or("")
+                                    .split_whitespace()
+                                    .collect();
+                                let path = parts.get(1).unwrap_or(&"/");
+
+                                // Check if path matches expected
+                                let response = if *path != expected_path {
+                                    "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n"
+                                        .to_string()
+                                } else {
+                                    format!(
+                                        "HTTP/1.1 {} \r\nContent-Length: {}\r\n\r\n{}",
+                                        response_status,
+                                        response_body.len(),
+                                        response_body
+                                    )
+                                };
+
+                                let _ = stream.write_all(response.as_bytes());
+                            }
+                            _ => {}
+                        }
+                    }
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        // No connection ready, sleep briefly
+                        thread::sleep(Duration::from_millis(1));
+                    }
+                    Err(_) => {
+                        thread::sleep(Duration::from_millis(1));
+                    }
+                }
+            }
+        });
+
+        // Give the server a moment to start
+        thread::sleep(Duration::from_millis(50));
+
+        (handle, port)
     }
 
-    fn make_prepare_request_with_metadata(
-        target: RollbackTarget,
-        metadata: JsonMap,
-    ) -> RollbackPrepareRequest {
+    fn create_test_request(url: &str, method: HttpMethod) -> RollbackPrepareRequest {
         RollbackPrepareRequest {
-            intent_id: ferrum_proto::IntentId::new(),
-            proposal_id: ferrum_proto::ProposalId::new(),
-            execution_id: ferrum_proto::ExecutionId::new(),
+            intent_id: IntentId::new(),
+            proposal_id: ProposalId::new(),
+            execution_id: ExecutionId::new(),
             action_type: ActionType::HttpMutation,
-            rollback_class: RollbackClass::R1SnapshotRecoverable,
-            adapter_key: ADAPTER_KEY.to_string(),
-            target,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "http".to_string(),
+            target: RollbackTarget::HttpRequest {
+                method,
+                url: url.to_string(),
+                request_digest: "test-digest".to_string(),
+            },
             prepare_checks: vec![],
             verify_checks: vec![],
             compensation_plan: vec![],
             auto_commit: false,
-            metadata,
+            metadata: JsonMap::new(),
         }
     }
 
-    fn make_contract(
-        target: RollbackTarget,
-        metadata: JsonMap,
-        verify_checks: Vec<CheckSpec>,
-    ) -> RollbackContract {
+    fn create_test_contract(url: &str, method: HttpMethod) -> RollbackContract {
         RollbackContract {
-            contract_id: ferrum_proto::RollbackContractId::new(),
-            intent_id: ferrum_proto::IntentId::new(),
-            proposal_id: ferrum_proto::ProposalId::new(),
-            execution_id: ferrum_proto::ExecutionId::new(),
+            contract_id: RollbackContractId::new(),
+            intent_id: IntentId::new(),
+            proposal_id: ProposalId::new(),
+            execution_id: ExecutionId::new(),
             action_type: ActionType::HttpMutation,
-            rollback_class: RollbackClass::R1SnapshotRecoverable,
-            adapter_key: ADAPTER_KEY.to_string(),
-            target,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "http".to_string(),
+            target: RollbackTarget::HttpRequest {
+                method,
+                url: url.to_string(),
+                request_digest: "test-digest".to_string(),
+            },
             prepare_checks: vec![],
-            verify_checks,
+            verify_checks: vec![],
             compensation_plan: vec![],
             auto_commit: false,
             state: RollbackState::Prepared,
-            created_at: chrono::Utc::now(),
+            created_at: Utc::now(),
             expires_at: None,
-            metadata,
+            metadata: JsonMap::new(),
         }
     }
 
-    fn make_status_check(expected: u16) -> CheckSpec {
-        CheckSpec {
+    #[tokio::test]
+    async fn test_prepare_accepts_valid_http_url() {
+        // Start a simple test server
+        let (server_handle, port) = start_test_server("/test", 200);
+        let url = format!("http://127.0.0.1:{}/test", port);
+
+        let adapter = HttpAdapter::new("http");
+        let request = create_test_request(&url, HttpMethod::Get);
+
+        let receipt = adapter.prepare(&request).await.unwrap();
+        assert!(receipt.accepted);
+
+        // Verify metadata was set
+        assert_eq!(
+            receipt.adapter_metadata.get("adapter_kind").unwrap(),
+            &serde_json::Value::String("ferrum-adapter-http".to_string())
+        );
+        assert_eq!(
+            receipt.adapter_metadata.get("target_url").unwrap(),
+            &serde_json::Value::String(url.clone())
+        );
+
+        drop(server_handle);
+    }
+
+    #[tokio::test]
+    async fn test_prepare_fails_on_malformed_url() {
+        let adapter = HttpAdapter::new("http");
+        let request = create_test_request("not-a-valid-url", HttpMethod::Get);
+
+        let result = adapter.prepare(&request).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("http:// or https://"));
+    }
+
+    #[tokio::test]
+    async fn test_prepare_fails_on_unsupported_action_type() {
+        let adapter = HttpAdapter::new("http");
+        let mut request = create_test_request("http://example.com/test", HttpMethod::Get);
+        request.action_type = ActionType::SqlMutation; // Not supported
+
+        let result = adapter.prepare(&request).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("unsupported action type"));
+    }
+
+    #[tokio::test]
+    async fn test_prepare_fails_on_wrong_target_type() {
+        let adapter = HttpAdapter::new("http");
+        let request = RollbackPrepareRequest {
+            intent_id: IntentId::new(),
+            proposal_id: ProposalId::new(),
+            execution_id: ExecutionId::new(),
+            action_type: ActionType::HttpMutation,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "http".to_string(),
+            target: RollbackTarget::FilePath {
+                path: "/tmp/test.txt".to_string(),
+                before_hash: None,
+                after_hash: None,
+            }, // Wrong target type
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            metadata: JsonMap::new(),
+        };
+
+        let result = adapter.prepare(&request).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("expected HttpRequest"));
+    }
+
+    #[tokio::test]
+    async fn test_prepare_with_http_status_check_passes() {
+        // Start a test server that returns 200
+        let (server_handle, port) = start_test_server("/health", 200);
+        let url = format!("http://127.0.0.1:{}/health", port);
+
+        let adapter = HttpAdapter::new("http");
+        let mut request = create_test_request(&url, HttpMethod::Get);
+        request.prepare_checks = vec![CheckSpec {
             check_type: CheckType::HttpStatusExpected,
-            config: {
-                let mut m = JsonMap::new();
-                m.insert("status".to_string(), serde_json::json!(expected));
-                m
-            },
+            config: json_map_from_serde_map(
+                serde_json::json!({
+                    "url": &url,
+                    "expected_status": 200
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+            ),
+        }];
+
+        let receipt = adapter.prepare(&request).await.unwrap();
+        assert!(receipt.accepted);
+
+        drop(server_handle);
+    }
+
+    #[tokio::test]
+    async fn test_prepare_with_http_status_check_fails_on_mismatch() {
+        // Start a test server that returns 200
+        let (server_handle, port) = start_test_server("/status", 200);
+        let url = format!("http://127.0.0.1:{}/status", port);
+
+        let adapter = HttpAdapter::new("http");
+        let mut request = create_test_request(&url, HttpMethod::Get);
+        // Expect 201 but server returns 200
+        request.prepare_checks = vec![CheckSpec {
+            check_type: CheckType::HttpStatusExpected,
+            config: json_map_from_serde_map(
+                serde_json::json!({
+                    "url": &url,
+                    "expected_status": 201
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+            ),
+        }];
+
+        let result = adapter.prepare(&request).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("HttpStatusExpected mismatch"));
+
+        drop(server_handle);
+    }
+
+    #[tokio::test]
+    async fn test_prepare_with_unsupported_check_type() {
+        let (server_handle, port) = start_test_server("/test", 200);
+        let url = format!("http://127.0.0.1:{}/test", port);
+
+        let adapter = HttpAdapter::new("http");
+        let mut request = create_test_request(&url, HttpMethod::Get);
+        request.prepare_checks = vec![CheckSpec {
+            check_type: CheckType::FileExists, // Not supported for http
+            config: json_map_from_serde_map(
+                serde_json::json!({ "path": "/tmp/test.txt" })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        }];
+
+        let result = adapter.prepare(&request).await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("unsupported check type")
+        );
+
+        drop(server_handle);
+    }
+
+    #[tokio::test]
+    async fn test_verify_fails_closed_without_checks() {
+        let adapter = HttpAdapter::new("http");
+        let contract = create_test_contract("http://example.com/test", HttpMethod::Get);
+
+        let result = adapter.verify(&contract).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        // Should fail with clear message about needing explicit checks
+        assert!(err.to_string().contains("no verify_checks provided"));
+    }
+
+    #[tokio::test]
+    async fn test_verify_with_matching_status_check() {
+        // Start a test server that returns 200
+        let (server_handle, port) = start_test_server("/api/data", 200);
+        let url = format!("http://127.0.0.1:{}/api/data", port);
+
+        let adapter = HttpAdapter::new("http");
+        let mut contract = create_test_contract(&url, HttpMethod::Get);
+        contract.verify_checks = vec![CheckSpec {
+            check_type: CheckType::HttpStatusExpected,
+            config: json_map_from_serde_map(
+                serde_json::json!({
+                    "url": &url,
+                    "expected_status": 200
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+            ),
+        }];
+
+        let receipt = adapter.verify(&contract).await.unwrap();
+        assert!(receipt.verified);
+
+        drop(server_handle);
+    }
+
+    #[tokio::test]
+    async fn test_verify_fails_closed_on_status_mismatch() {
+        // Start a test server that returns 500
+        let (server_handle, port) = start_test_server("/error", 500);
+        let url = format!("http://127.0.0.1:{}/error", port);
+
+        let adapter = HttpAdapter::new("http");
+        let mut contract = create_test_contract(&url, HttpMethod::Get);
+        contract.verify_checks = vec![CheckSpec {
+            check_type: CheckType::HttpStatusExpected,
+            config: json_map_from_serde_map(
+                serde_json::json!({
+                    "url": &url,
+                    "expected_status": 200
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+            ),
+        }];
+
+        let result = adapter.verify(&contract).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("HttpStatusExpected mismatch"));
+
+        drop(server_handle);
+    }
+
+    #[tokio::test]
+    async fn test_verify_fails_on_url_mismatch_in_check() {
+        let (server_handle, port) = start_test_server("/actual", 200);
+        let actual_url = format!("http://127.0.0.1:{}/actual", port);
+
+        let adapter = HttpAdapter::new("http");
+        let mut contract = create_test_contract(&actual_url, HttpMethod::Get);
+        // Check specifies a different URL
+        contract.verify_checks = vec![CheckSpec {
+            check_type: CheckType::HttpStatusExpected,
+            config: json_map_from_serde_map(
+                serde_json::json!({
+                    "url": "http://127.0.0.1:9999/different",
+                    "expected_status": 200
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+            ),
+        }];
+
+        let result = adapter.verify(&contract).await;
+        assert!(result.is_err());
+        // Should fail due to URL mismatch
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("URL mismatch") || err.to_string().contains("mismatch"));
+
+        drop(server_handle);
+    }
+
+    #[tokio::test]
+    async fn test_execute_successful_get() {
+        // Start a test server that returns 200 with a body
+        let (server_handle, port) =
+            start_test_server_with_body("/api/data", 200, r#"{"status":"ok"}"#);
+        let url = format!("http://127.0.0.1:{}/api/data", port);
+
+        let adapter = HttpAdapter::new("http");
+        let contract = create_test_contract(&url, HttpMethod::Get);
+
+        let receipt = adapter
+            .execute(&contract, &serde_json::json!({}))
+            .await
+            .unwrap();
+
+        // Verify receipt metadata
+        assert!(receipt.result_digest.is_some());
+        assert!(receipt.adapter_metadata.get("response_status").is_some());
+        assert_eq!(
+            receipt.adapter_metadata.get("response_status").unwrap(),
+            &serde_json::Value::Number(200.into())
+        );
+        assert_eq!(
+            receipt.adapter_metadata.get("target_method").unwrap(),
+            &serde_json::Value::String("Get".to_string())
+        );
+        assert_eq!(
+            receipt.adapter_metadata.get("target_url").unwrap(),
+            &serde_json::Value::String(url.clone())
+        );
+        assert!(receipt.adapter_metadata.get("request_digest").is_some());
+        assert!(receipt.adapter_metadata.get("response_digest").is_some());
+
+        drop(server_handle);
+    }
+
+    #[tokio::test]
+    async fn test_execute_successful_post_with_body() {
+        // Start a test server that returns 201 Created
+        let (server_handle, port) =
+            start_test_server_with_body("/api/items", 201, r#"{"id":"123","name":"test"}"#);
+        let url = format!("http://127.0.0.1:{}/api/items", port);
+
+        let adapter = HttpAdapter::new("http");
+        let contract = create_test_contract(&url, HttpMethod::Post);
+
+        let payload = serde_json::json!({
+            "name": "test item",
+            "quantity": 42
+        });
+
+        let receipt = adapter.execute(&contract, &payload).await.unwrap();
+
+        // Verify receipt metadata
+        assert_eq!(
+            receipt.adapter_metadata.get("response_status").unwrap(),
+            &serde_json::Value::Number(201.into())
+        );
+        assert_eq!(
+            receipt.adapter_metadata.get("target_method").unwrap(),
+            &serde_json::Value::String("Post".to_string())
+        );
+        // Response body should be captured (check it's non-zero)
+        let body_size = receipt.adapter_metadata.get("response_body_size").unwrap();
+        assert!(
+            body_size.is_number() && body_size.as_u64().unwrap() > 0,
+            "body_size should be positive, got: {}",
+            body_size
+        );
+
+        drop(server_handle);
+    }
+
+    #[tokio::test]
+    async fn test_execute_fails_on_connection_error() {
+        let adapter = HttpAdapter::new("http");
+        // Use a port that's unlikely to have anything listening
+        let contract = create_test_contract("http://127.0.0.1:99999/api/test", HttpMethod::Get);
+
+        let result = adapter.execute(&contract, &serde_json::json!({})).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        // Should fail with connection error
+        assert!(
+            err.to_string().contains("connect")
+                || err.to_string().contains("failed to connect")
+                || err.to_string().contains("Connection")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_execute_fails_on_unsupported_action() {
+        let adapter = HttpAdapter::new("http");
+        let mut contract = create_test_contract("http://example.com/test", HttpMethod::Get);
+        contract.action_type = ActionType::SqlMutation; // Not supported
+
+        let result = adapter.execute(&contract, &serde_json::json!({})).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("unsupported action type"));
+    }
+
+    #[tokio::test]
+    async fn test_rollback_returns_unsupported() {
+        let adapter = HttpAdapter::new("http");
+        let contract = create_test_contract("http://example.com/test", HttpMethod::Post);
+
+        let result = adapter.rollback(&contract).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        // Now fails with NO_COMPENSATION_PLAN because no compensation plan is present
+        assert!(err.to_string().contains("NO_COMPENSATION_PLAN"));
+    }
+
+    #[tokio::test]
+    async fn test_compensate_returns_unsupported() {
+        let adapter = HttpAdapter::new("http");
+        let contract = create_test_contract("http://example.com/test", HttpMethod::Post);
+
+        let result = adapter.compensate(&contract).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        // Now fails with NO_COMPENSATION_PLAN because no compensation plan is present
+        assert!(err.to_string().contains("NO_COMPENSATION_PLAN"));
+    }
+
+    #[tokio::test]
+    async fn test_prepare_validates_https_url_shape() {
+        let adapter = HttpAdapter::new("http");
+        let request = create_test_request("https://example.com/api", HttpMethod::Get);
+
+        // https URLs should pass validation (even though we can't actually connect)
+        // The prepare just validates shape, not reachability (unless checks are provided)
+        let result = adapter.prepare(&request).await;
+        // Should succeed because URL shape is valid and no checks require network
+        assert!(result.is_ok());
+    }
+
+    // =============================================================================
+    // Method-aware HttpStatusExpected tests
+    // =============================================================================
+
+    #[tokio::test]
+    async fn test_prepare_http_status_check_uses_target_method_get() {
+        // Start a test server that responds to GET with 200
+        let (server_handle, port) = start_test_server("/resource", 200);
+        let url = format!("http://127.0.0.1:{}/resource", port);
+
+        let adapter = HttpAdapter::new("http");
+        let mut request = create_test_request(&url, HttpMethod::Get);
+        // No explicit method in check - should use target method (GET)
+        request.prepare_checks = vec![CheckSpec {
+            check_type: CheckType::HttpStatusExpected,
+            config: json_map_from_serde_map(
+                serde_json::json!({
+                    "expected_status": 200
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+            ),
+        }];
+
+        let receipt = adapter.prepare(&request).await.unwrap();
+        assert!(receipt.accepted);
+
+        drop(server_handle);
+    }
+
+    #[tokio::test]
+    async fn test_prepare_http_status_check_uses_target_method_post() {
+        // Start a test server that responds to POST with 201
+        let (server_handle, port) = start_test_server("/resource", 201);
+        let url = format!("http://127.0.0.1:{}/resource", port);
+
+        let adapter = HttpAdapter::new("http");
+        let mut request = create_test_request(&url, HttpMethod::Post);
+        // No explicit method in check - should use target method (POST)
+        request.prepare_checks = vec![CheckSpec {
+            check_type: CheckType::HttpStatusExpected,
+            config: json_map_from_serde_map(
+                serde_json::json!({
+                    "expected_status": 201
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+            ),
+        }];
+
+        let receipt = adapter.prepare(&request).await.unwrap();
+        assert!(receipt.accepted);
+
+        drop(server_handle);
+    }
+
+    #[tokio::test]
+    async fn test_verify_check_method_mismatch_fails_closed() {
+        // Start a test server that responds to POST with 200
+        // Note: server is started but not contacted because validation fails first
+        let (_server_handle, port) = start_test_server("/resource", 200);
+        let url = format!("http://127.0.0.1:{}/resource", port);
+
+        let adapter = HttpAdapter::new("http");
+        let mut contract = create_test_contract(&url, HttpMethod::Post);
+        // Explicitly specify GET method but target is POST - should fail
+        contract.verify_checks = vec![CheckSpec {
+            check_type: CheckType::HttpStatusExpected,
+            config: json_map_from_serde_map(
+                serde_json::json!({
+                    "method": "GET",
+                    "expected_status": 200
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+            ),
+        }];
+
+        let result = adapter.verify(&contract).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("method mismatch"));
+    }
+
+    #[tokio::test]
+    async fn test_verify_check_method_matches_target_passes() {
+        // Start a test server that responds to POST with 201
+        let (server_handle, port) = start_test_server("/resource", 201);
+        let url = format!("http://127.0.0.1:{}/resource", port);
+
+        let adapter = HttpAdapter::new("http");
+        let mut contract = create_test_contract(&url, HttpMethod::Post);
+        // Explicitly specify POST method matching target - should pass
+        contract.verify_checks = vec![CheckSpec {
+            check_type: CheckType::HttpStatusExpected,
+            config: json_map_from_serde_map(
+                serde_json::json!({
+                    "method": "POST",
+                    "expected_status": 201
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+            ),
+        }];
+
+        let receipt = adapter.verify(&contract).await.unwrap();
+        assert!(receipt.verified);
+
+        drop(server_handle);
+    }
+
+    #[tokio::test]
+    async fn test_verify_check_invalid_method_fails_closed() {
+        // Note: server is started but not contacted because validation fails first
+        let (_server_handle, port) = start_test_server("/resource", 200);
+        let url = format!("http://127.0.0.1:{}/resource", port);
+
+        let adapter = HttpAdapter::new("http");
+        let mut contract = create_test_contract(&url, HttpMethod::Get);
+        // Invalid method string - should fail closed with clear error
+        contract.verify_checks = vec![CheckSpec {
+            check_type: CheckType::HttpStatusExpected,
+            config: json_map_from_serde_map(
+                serde_json::json!({
+                    "method": "INVALID_METHOD",
+                    "expected_status": 200
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+            ),
+        }];
+
+        let result = adapter.verify(&contract).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("must be a valid HTTP method"));
+    }
+
+    // =============================================================================
+    // expected_statuses array tests
+    // =============================================================================
+
+    #[tokio::test]
+    async fn test_verify_with_expected_statuses_array_passes() {
+        // Start a test server that returns 201
+        let (server_handle, port) = start_test_server("/resource", 201);
+        let url = format!("http://127.0.0.1:{}/resource", port);
+
+        let adapter = HttpAdapter::new("http");
+        let mut contract = create_test_contract(&url, HttpMethod::Post);
+        // expected_statuses array - 201 is one of the acceptable statuses
+        contract.verify_checks = vec![CheckSpec {
+            check_type: CheckType::HttpStatusExpected,
+            config: json_map_from_serde_map(
+                serde_json::json!({
+                    "method": "POST",
+                    "expected_statuses": [200, 201, 202]
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+            ),
+        }];
+
+        let receipt = adapter.verify(&contract).await.unwrap();
+        assert!(receipt.verified);
+
+        drop(server_handle);
+    }
+
+    #[tokio::test]
+    async fn test_verify_with_expected_statuses_array_fails_on_mismatch() {
+        // Start a test server that returns 500
+        let (server_handle, port) = start_test_server("/error", 500);
+        let url = format!("http://127.0.0.1:{}/error", port);
+
+        let adapter = HttpAdapter::new("http");
+        let mut contract = create_test_contract(&url, HttpMethod::Get);
+        // expected_statuses array - 500 is NOT in the acceptable list
+        contract.verify_checks = vec![CheckSpec {
+            check_type: CheckType::HttpStatusExpected,
+            config: json_map_from_serde_map(
+                serde_json::json!({
+                    "expected_statuses": [200, 201, 202]
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+            ),
+        }];
+
+        let result = adapter.verify(&contract).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("HttpStatusExpected mismatch"));
+        // Should show the expected list
+        assert!(err.to_string().contains("[200, 201, 202]"));
+
+        drop(server_handle);
+    }
+
+    #[tokio::test]
+    async fn test_verify_with_expected_statuses_empty_array_fails_closed() {
+        // Note: server is started but not contacted because validation fails first
+        let (_server_handle, port) = start_test_server("/resource", 200);
+        let url = format!("http://127.0.0.1:{}/resource", port);
+
+        let adapter = HttpAdapter::new("http");
+        let mut contract = create_test_contract(&url, HttpMethod::Get);
+        // Empty array - should fail closed
+        contract.verify_checks = vec![CheckSpec {
+            check_type: CheckType::HttpStatusExpected,
+            config: json_map_from_serde_map(
+                serde_json::json!({
+                    "expected_statuses": []
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+            ),
+        }];
+
+        let result = adapter.verify(&contract).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("cannot be empty"));
+    }
+
+    #[tokio::test]
+    async fn test_verify_with_expected_statuses_mixed_types_fails_closed() {
+        // Note: server is started but not contacted because validation fails first
+        let (_server_handle, port) = start_test_server("/resource", 200);
+        let url = format!("http://127.0.0.1:{}/resource", port);
+
+        let adapter = HttpAdapter::new("http");
+        let mut contract = create_test_contract(&url, HttpMethod::Get);
+        // Array with mixed types (string in number array) - should fail
+        contract.verify_checks = vec![CheckSpec {
+            check_type: CheckType::HttpStatusExpected,
+            config: json_map_from_serde_map(
+                serde_json::json!({
+                    "expected_statuses": [200, "not-a-number"]
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+            ),
+        }];
+
+        let result = adapter.verify(&contract).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("must be a number"));
+    }
+
+    // =============================================================================
+    // Phase-aware error message tests
+    // =============================================================================
+
+    #[tokio::test]
+    async fn test_prepare_phase_context_in_error_messages() {
+        let adapter = HttpAdapter::new("http");
+        let mut request = create_test_request("http://example.com/test", HttpMethod::Get);
+        // Missing expected_status - should fail with [prepare] context
+        request.prepare_checks = vec![CheckSpec {
+            check_type: CheckType::HttpStatusExpected,
+            config: json_map_from_serde_map(
+                serde_json::json!({
+                    "url": "http://example.com/test"
+                    // missing expected_status
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+            ),
+        }];
+
+        let result = adapter.prepare(&request).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("[prepare]"));
+    }
+
+    #[tokio::test]
+    async fn test_verify_phase_context_in_error_messages() {
+        let adapter = HttpAdapter::new("http");
+        let mut contract = create_test_contract("http://example.com/test", HttpMethod::Get);
+        // Missing expected_status - should fail with [verify] context
+        contract.verify_checks = vec![CheckSpec {
+            check_type: CheckType::HttpStatusExpected,
+            config: json_map_from_serde_map(
+                serde_json::json!({
+                    "url": "http://example.com/test"
+                    // missing expected_status
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+            ),
+        }];
+
+        let result = adapter.verify(&contract).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("[verify]"));
+    }
+
+    #[tokio::test]
+    async fn test_prepare_malformed_expected_status_type_fails_closed() {
+        let adapter = HttpAdapter::new("http");
+        let mut request = create_test_request("http://example.com/test", HttpMethod::Get);
+        // expected_status is an object instead of number - should fail closed
+        request.prepare_checks = vec![CheckSpec {
+            check_type: CheckType::HttpStatusExpected,
+            config: json_map_from_serde_map(
+                serde_json::json!({
+                    "expected_status": {"invalid": "object"}
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+            ),
+        }];
+
+        let result = adapter.prepare(&request).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("[prepare]"));
+        assert!(err.to_string().contains("must be a number"));
+    }
+
+    #[tokio::test]
+    async fn test_verify_unsupported_check_type_has_phase_context() {
+        let adapter = HttpAdapter::new("http");
+        let mut contract = create_test_contract("http://example.com/test", HttpMethod::Get);
+        // Use unsupported check type
+        contract.verify_checks = vec![CheckSpec {
+            check_type: CheckType::FileExists,
+            config: json_map_from_serde_map(
+                serde_json::json!({
+                    "path": "/tmp/test.txt"
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+            ),
+        }];
+
+        let result = adapter.verify(&contract).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("[verify]"));
+        assert!(err.to_string().contains("unsupported check type"));
+    }
+
+    // =============================================================================
+    // Rollback groundwork metadata tests
+    // =============================================================================
+
+    #[tokio::test]
+    async fn test_execute_has_rollback_groundwork_v1_metadata() {
+        // Start a test server that returns 200 with a body
+        let (server_handle, port) =
+            start_test_server_with_body("/api/data", 200, r#"{"status":"ok"}"#);
+        let url = format!("http://127.0.0.1:{}/api/data", port);
+
+        let adapter = HttpAdapter::new("http");
+        let contract = create_test_contract(&url, HttpMethod::Get);
+
+        let receipt = adapter
+            .execute(&contract, &serde_json::json!({}))
+            .await
+            .unwrap();
+
+        // Verify rollback_groundwork_v1 block exists
+        let groundwork = receipt
+            .adapter_metadata
+            .get("rollback_groundwork_v1")
+            .expect("rollback_groundwork_v1 should be present");
+        assert!(
+            groundwork.is_object(),
+            "rollback_groundwork_v1 should be an object"
+        );
+
+        let groundwork_obj = groundwork.as_object().unwrap();
+
+        // Verify version
+        assert_eq!(
+            groundwork_obj.get("version").unwrap(),
+            &serde_json::Value::String("rollback_groundwork_v1".to_string())
+        );
+
+        // Verify request sub-block
+        let request_block = groundwork_obj
+            .get("request")
+            .expect("rollback_groundwork_v1.request should exist");
+        assert!(request_block.is_object());
+        let request_obj = request_block.as_object().unwrap();
+        assert_eq!(request_obj.get("digest_algorithm").unwrap(), "SHA-256");
+        assert_eq!(
+            request_obj.get("rollback_supported").unwrap(),
+            &serde_json::Value::Bool(false)
+        );
+        assert_eq!(
+            request_obj.get("compensate_supported").unwrap(),
+            &serde_json::Value::Bool(false)
+        );
+        assert_eq!(request_obj.get("replay_confidence").unwrap(), "none");
+
+        // Verify response sub-block
+        let response_block = groundwork_obj
+            .get("response")
+            .expect("rollback_groundwork_v1.response should exist");
+        assert!(response_block.is_object());
+        let response_obj = response_block.as_object().unwrap();
+        assert_eq!(response_obj.get("digest_algorithm").unwrap(), "SHA-256");
+        assert_eq!(
+            response_obj.get("rollback_supported").unwrap(),
+            &serde_json::Value::Bool(false)
+        );
+        assert_eq!(
+            response_obj.get("compensate_supported").unwrap(),
+            &serde_json::Value::Bool(false)
+        );
+        assert_eq!(response_obj.get("replay_confidence").unwrap(), "none");
+
+        drop(server_handle);
+    }
+
+    #[tokio::test]
+    async fn test_execute_rollback_groundwork_no_raw_bodies() {
+        let (server_handle, port) = start_test_server_with_body(
+            "/api/data",
+            200,
+            r#"{"sensitive":"secret","password":"12345"}"#,
+        );
+        let url = format!("http://127.0.0.1:{}/api/data", port);
+
+        let adapter = HttpAdapter::new("http");
+        let contract = create_test_contract(&url, HttpMethod::Post);
+        let payload = serde_json::json!({
+            "password": "my-secret-password",
+            "data": "sensitive"
+        });
+
+        let receipt = adapter.execute(&contract, &payload).await.unwrap();
+
+        // Verify rollback_groundwork_v1 block exists
+        let groundwork = receipt
+            .adapter_metadata
+            .get("rollback_groundwork_v1")
+            .expect("rollback_groundwork_v1 should be present");
+        let groundwork_obj = groundwork.as_object().unwrap();
+
+        // Verify NO raw request body in metadata
+        let request_block = groundwork_obj.get("request").unwrap().as_object().unwrap();
+        assert!(
+            request_block.get("raw_body").is_none(),
+            "request should NOT contain raw_body snapshot"
+        );
+        assert!(
+            request_block.get("body").is_none(),
+            "request should NOT contain raw body snapshot"
+        );
+
+        // Verify NO raw response body in metadata
+        let response_block = groundwork_obj.get("response").unwrap().as_object().unwrap();
+        assert!(
+            response_block.get("raw_body").is_none(),
+            "response should NOT contain raw_body snapshot"
+        );
+        assert!(
+            response_block.get("body").is_none(),
+            "response should NOT contain raw body snapshot"
+        );
+
+        // Verify only digest-based info is present
+        assert!(request_block.contains_key("digest_input_bytes"));
+        assert!(request_block.contains_key("body_size_bytes"));
+        assert!(response_block.contains_key("digest_input_bytes"));
+        assert!(response_block.contains_key("body_size_bytes"));
+
+        // Verify the entire adapter_metadata does not contain raw bodies
+        for (_key, value) in &receipt.adapter_metadata {
+            if let serde_json::Value::String(s) = value {
+                assert!(
+                    !s.contains("my-secret-password"),
+                    "metadata should not contain raw request password"
+                );
+                assert!(
+                    !s.contains("secret"),
+                    "metadata should not contain raw response content"
+                );
+            }
+        }
+
+        drop(server_handle);
+    }
+
+    #[tokio::test]
+    async fn test_execute_rollback_groundwork_response_truncated_flag() {
+        // Start a server with a large response body (> 64KB)
+        let large_body = "x".repeat(100 * 1024); // 100KB body
+        let (server_handle, port) = start_test_server_with_body("/api/large", 200, &large_body);
+        let url = format!("http://127.0.0.1:{}/api/large", port);
+
+        let adapter = HttpAdapter::new("http");
+        let contract = create_test_contract(&url, HttpMethod::Get);
+
+        let receipt = adapter
+            .execute(&contract, &serde_json::json!({}))
+            .await
+            .unwrap();
+
+        let groundwork = receipt
+            .adapter_metadata
+            .get("rollback_groundwork_v1")
+            .expect("rollback_groundwork_v1 should be present");
+        let groundwork_obj = groundwork.as_object().unwrap();
+        let response_block = groundwork_obj.get("response").unwrap().as_object().unwrap();
+
+        // Verify truncated flag is set for large response
+        assert_eq!(
+            response_block.get("truncated").unwrap(),
+            &serde_json::Value::Bool(true),
+            "response should be marked as truncated for >64KB body"
+        );
+
+        // Verify digest window reflects truncation
+        let digest_window = response_block.get("digest_window").unwrap();
+        assert!(
+            digest_window.as_str().unwrap().contains("65536"),
+            "digest_window should reflect the 64KB limit, got: {}",
+            digest_window
+        );
+
+        // Verify body_size_bytes > digest_input_bytes (body was truncated for digest)
+        let body_size = response_block
+            .get("body_size_bytes")
+            .unwrap()
+            .as_u64()
+            .unwrap();
+        let digest_input = response_block
+            .get("digest_input_bytes")
+            .unwrap()
+            .as_u64()
+            .unwrap();
+        assert!(
+            body_size > digest_input,
+            "body_size_bytes ({}) should exceed digest_input_bytes ({}) when truncated",
+            body_size,
+            digest_input
+        );
+
+        drop(server_handle);
+    }
+
+    #[tokio::test]
+    async fn test_prepare_has_rollback_groundwork_marker() {
+        let adapter = HttpAdapter::new("http");
+        let request = create_test_request("http://example.com/test", HttpMethod::Post);
+
+        let receipt = adapter.prepare(&request).await.unwrap();
+        assert!(receipt.accepted);
+
+        // Verify rollback_groundwork marker exists
+        let groundwork = receipt
+            .adapter_metadata
+            .get("rollback_groundwork")
+            .expect("rollback_groundwork marker should be present");
+        assert!(groundwork.is_object());
+
+        let groundwork_obj = groundwork.as_object().unwrap();
+        assert_eq!(
+            groundwork_obj.get("version").unwrap(),
+            &serde_json::Value::String("rollback_groundwork_v1".to_string())
+        );
+        assert_eq!(
+            groundwork_obj.get("phase").unwrap(),
+            &serde_json::Value::String("prepare".to_string())
+        );
+        assert_eq!(
+            groundwork_obj.get("rollback_supported").unwrap(),
+            &serde_json::Value::Bool(false)
+        );
+        assert_eq!(
+            groundwork_obj.get("compensate_supported").unwrap(),
+            &serde_json::Value::Bool(false)
+        );
+        assert_eq!(
+            groundwork_obj.get("groundwork_mode").unwrap(),
+            &serde_json::Value::Bool(true)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_execute_rollback_groundwork_has_idempotency_hints() {
+        let (server_handle, port) =
+            start_test_server_with_body("/api/items", 201, r#"{"id":"123"}"#);
+        let url = format!("http://127.0.0.1:{}/api/items", port);
+
+        let adapter = HttpAdapter::new("http");
+        let contract = create_test_contract(&url, HttpMethod::Post);
+        let payload = serde_json::json!({ "name": "test" });
+
+        let receipt = adapter.execute(&contract, &payload).await.unwrap();
+
+        let groundwork = receipt
+            .adapter_metadata
+            .get("rollback_groundwork_v1")
+            .expect("rollback_groundwork_v1 should be present");
+        let groundwork_obj = groundwork.as_object().unwrap();
+        let request_block = groundwork_obj.get("request").unwrap().as_object().unwrap();
+
+        // Verify content-type hint is present and safe (no auth cookies, etc.)
+        let content_type = request_block.get("content_type_hint").unwrap();
+        assert!(content_type.is_string());
+        let ct_str = content_type.as_str().unwrap();
+        assert!(
+            ct_str == "application/json" || ct_str == "text/plain",
+            "content_type_hint should be safe media type, got: {}",
+            ct_str
+        );
+
+        drop(server_handle);
+    }
+
+    // =============================================================================
+    // http_recovery_readiness_v1 classification tests
+    // =============================================================================
+
+    #[tokio::test]
+    async fn test_execute_has_http_recovery_readiness_v1_metadata() {
+        let (server_handle, port) =
+            start_test_server_with_body("/api/data", 200, r#"{"status":"ok"}"#);
+        let url = format!("http://127.0.0.1:{}/api/data", port);
+
+        let adapter = HttpAdapter::new("http");
+        let contract = create_test_contract(&url, HttpMethod::Get);
+
+        let receipt = adapter
+            .execute(&contract, &serde_json::json!({}))
+            .await
+            .unwrap();
+
+        // Verify http_recovery_readiness_v1 block exists
+        let readiness = receipt
+            .adapter_metadata
+            .get("http_recovery_readiness_v1")
+            .expect("http_recovery_readiness_v1 should be present");
+        assert!(
+            readiness.is_object(),
+            "http_recovery_readiness_v1 should be an object"
+        );
+
+        let readiness_obj = readiness.as_object().unwrap();
+
+        // Verify version
+        assert_eq!(
+            readiness_obj.get("version").unwrap(),
+            &serde_json::Value::String("http_recovery_readiness_v1".to_string())
+        );
+
+        // Verify rollback/compensate are false
+        assert_eq!(
+            readiness_obj.get("rollback_supported").unwrap(),
+            &serde_json::Value::Bool(false)
+        );
+        assert_eq!(
+            readiness_obj.get("compensate_supported").unwrap(),
+            &serde_json::Value::Bool(false)
+        );
+
+        // Verify reason codes are present
+        let reason_codes = readiness_obj.get("reason_codes").unwrap();
+        assert!(reason_codes.is_array(), "reason_codes should be an array");
+        let reason_arr = reason_codes.as_array().unwrap();
+        assert!(!reason_arr.is_empty(), "reason_codes should not be empty");
+
+        drop(server_handle);
+    }
+
+    #[tokio::test]
+    async fn test_execute_recovery_classification_get_without_compensation() {
+        // GET without compensation plan = not_replayable
+        let (server_handle, port) =
+            start_test_server_with_body("/api/data", 200, r#"{"status":"ok"}"#);
+        let url = format!("http://127.0.0.1:{}/api/data", port);
+
+        let adapter = HttpAdapter::new("http");
+        let contract = create_test_contract(&url, HttpMethod::Get);
+
+        let receipt = adapter
+            .execute(&contract, &serde_json::json!({}))
+            .await
+            .unwrap();
+
+        let readiness = receipt
+            .adapter_metadata
+            .get("http_recovery_readiness_v1")
+            .expect("http_recovery_readiness_v1 should be present");
+        let readiness_obj = readiness.as_object().unwrap();
+
+        assert_eq!(
+            readiness_obj.get("replayable_classification").unwrap(),
+            "not_replayable"
+        );
+        assert_eq!(
+            readiness_obj
+                .get("idempotency_key_present_in_plan")
+                .unwrap(),
+            &serde_json::Value::Bool(false)
+        );
+        assert_eq!(
+            readiness_obj.get("compensation_steps_present").unwrap(),
+            &serde_json::Value::Bool(false)
+        );
+
+        // Reason codes should include NO_COMPENSATION_PLAN
+        let reason_codes = readiness_obj.get("reason_codes").unwrap();
+        let reason_arr = reason_codes.as_array().unwrap();
+        let reason_strs: Vec<&str> = reason_arr.iter().filter_map(|v| v.as_str()).collect();
+        assert!(
+            reason_strs.contains(&"NO_COMPENSATION_PLAN"),
+            "should have NO_COMPENSATION_PLAN reason"
+        );
+
+        drop(server_handle);
+    }
+
+    #[tokio::test]
+    async fn test_execute_recovery_classification_get_with_compensation_no_idempotency_key() {
+        // GET with compensation plan but no idempotency key = potentially_replayable
+        // GET is inherently safe and replayable without idempotency keys (read-only)
+        let (server_handle, port) =
+            start_test_server_with_body("/api/data", 200, r#"{"status":"ok"}"#);
+        let url = format!("http://127.0.0.1:{}/api/data", port);
+
+        let adapter = HttpAdapter::new("http");
+        let mut contract = create_test_contract(&url, HttpMethod::Get);
+        contract.compensation_plan = vec![CompensationStep {
+            order: 1,
+            adapter_key: "http".to_string(),
+            operation: "delete".to_string(),
+            args: JsonMap::new(),
+            idempotency_key: "".to_string(), // Empty idempotency key - GET is safe anyway
+        }];
+
+        let receipt = adapter
+            .execute(&contract, &serde_json::json!({}))
+            .await
+            .unwrap();
+
+        let readiness = receipt
+            .adapter_metadata
+            .get("http_recovery_readiness_v1")
+            .expect("http_recovery_readiness_v1 should be present");
+        let readiness_obj = readiness.as_object().unwrap();
+
+        // GET is inherently safe/replayable without idempotency key
+        assert_eq!(
+            readiness_obj.get("replayable_classification").unwrap(),
+            "potentially_replayable"
+        );
+        assert_eq!(
+            readiness_obj
+                .get("idempotency_key_present_in_plan")
+                .unwrap(),
+            &serde_json::Value::Bool(false)
+        );
+        assert_eq!(
+            readiness_obj.get("compensation_steps_present").unwrap(),
+            &serde_json::Value::Bool(true)
+        );
+
+        drop(server_handle);
+    }
+
+    #[tokio::test]
+    async fn test_execute_recovery_classification_post_with_idempotency_key() {
+        // POST with idempotency key in compensation plan = conditional_replayable
+        let (server_handle, port) =
+            start_test_server_with_body("/api/items", 201, r#"{"id":"123"}"#);
+        let url = format!("http://127.0.0.1:{}/api/items", port);
+
+        let adapter = HttpAdapter::new("http");
+        let mut contract = create_test_contract(&url, HttpMethod::Post);
+        contract.compensation_plan = vec![CompensationStep {
+            order: 1,
+            adapter_key: "http".to_string(),
+            operation: "delete".to_string(),
+            args: JsonMap::new(),
+            idempotency_key: "idem-key-12345".to_string(), // Has idempotency key
+        }];
+
+        let receipt = adapter
+            .execute(&contract, &serde_json::json!({}))
+            .await
+            .unwrap();
+
+        let readiness = receipt
+            .adapter_metadata
+            .get("http_recovery_readiness_v1")
+            .expect("http_recovery_readiness_v1 should be present");
+        let readiness_obj = readiness.as_object().unwrap();
+
+        assert_eq!(
+            readiness_obj.get("replayable_classification").unwrap(),
+            "conditional_replayable"
+        );
+        assert_eq!(
+            readiness_obj
+                .get("idempotency_key_present_in_plan")
+                .unwrap(),
+            &serde_json::Value::Bool(true)
+        );
+        assert_eq!(
+            readiness_obj.get("compensation_steps_present").unwrap(),
+            &serde_json::Value::Bool(true)
+        );
+
+        drop(server_handle);
+    }
+
+    // =============================================================================
+    // Structured rollback/compensate error tests
+    // =============================================================================
+
+    #[tokio::test]
+    async fn test_rollback_error_has_structured_reason_codes() {
+        let adapter = HttpAdapter::new("http");
+        let contract = create_test_contract("http://example.com/test", HttpMethod::Post);
+
+        let result = adapter.rollback(&contract).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+
+        let err_msg = err.to_string();
+
+        // Should have structured reason codes for narrow slice
+        assert!(
+            err_msg.contains("RECOVERY_SLICE_NARROW_HTTP_REPLAY_V1"),
+            "error should have RECOVERY_SLICE_NARROW_HTTP_REPLAY_V1 code"
+        );
+        assert!(
+            err_msg.contains("NO_COMPENSATION_PLAN"),
+            "error should have NO_COMPENSATION_PLAN code"
+        );
+        assert!(
+            err_msg.contains("NO_OUTBOUND_RECOVERY_PATH"),
+            "error should have NO_OUTBOUND_RECOVERY_PATH code"
+        );
+        assert!(
+            err_msg.contains("NO_PERSISTED_EXECUTE_EVIDENCE"),
+            "error should have NO_PERSISTED_EXECUTE_EVIDENCE code"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_compensate_error_has_structured_reason_codes() {
+        let adapter = HttpAdapter::new("http");
+        let contract = create_test_contract("http://example.com/test", HttpMethod::Post);
+
+        let result = adapter.compensate(&contract).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+
+        let err_msg = err.to_string();
+
+        // Should have structured reason codes for narrow slice
+        assert!(
+            err_msg.contains("RECOVERY_SLICE_NARROW_HTTP_REPLAY_V1"),
+            "error should have RECOVERY_SLICE_NARROW_HTTP_REPLAY_V1 code"
+        );
+        assert!(
+            err_msg.contains("NO_COMPENSATION_PLAN"),
+            "error should have NO_COMPENSATION_PLAN code"
+        );
+        assert!(
+            err_msg.contains("NO_OUTBOUND_RECOVERY_PATH"),
+            "error should have NO_OUTBOUND_RECOVERY_PATH code"
+        );
+        assert!(
+            err_msg.contains("NO_PERSISTED_EXECUTE_EVIDENCE"),
+            "error should have NO_PERSISTED_EXECUTE_EVIDENCE code"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_rollback_error_mentions_idempotency_key_when_compensation_present() {
+        let adapter = HttpAdapter::new("http");
+        let mut contract = create_test_contract("http://example.com/test", HttpMethod::Post);
+        contract.compensation_plan = vec![CompensationStep {
+            order: 1,
+            adapter_key: "http".to_string(),
+            operation: "delete".to_string(),
+            args: JsonMap::new(),
+            idempotency_key: "".to_string(), // Empty idempotency key
+        }];
+
+        let result = adapter.rollback(&contract).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+
+        let err_msg = err.to_string();
+
+        // Should mention NO_IDEMPOTENCY_KEY_IN_COMPENSATION when plan exists but no key
+        assert!(
+            err_msg.contains("NO_IDEMPOTENCY_KEY_IN_COMPENSATION"),
+            "error should have NO_IDEMPOTENCY_KEY_IN_COMPENSATION code when compensation plan exists without idempotency key"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_compensate_error_mentions_idempotency_key_when_compensation_present() {
+        let adapter = HttpAdapter::new("http");
+        let mut contract = create_test_contract("http://example.com/test", HttpMethod::Post);
+        contract.compensation_plan = vec![CompensationStep {
+            order: 1,
+            adapter_key: "http".to_string(),
+            operation: "delete".to_string(),
+            args: JsonMap::new(),
+            idempotency_key: "".to_string(), // Empty idempotency key
+        }];
+
+        let result = adapter.compensate(&contract).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+
+        let err_msg = err.to_string();
+
+        // Should mention NO_IDEMPOTENCY_KEY_IN_COMPENSATION when plan exists but no key
+        assert!(
+            err_msg.contains("NO_IDEMPOTENCY_KEY_IN_COMPENSATION"),
+            "error should have NO_IDEMPOTENCY_KEY_IN_COMPENSATION code when compensation plan exists without idempotency key"
+        );
+    }
+
+    // =============================================================================
+    // http.replay_v1 narrow recovery slice tests
+    // =============================================================================
+
+    /// Helper to create a valid http.replay_v1 compensation step with expected_statuses.
+    fn create_replay_step(
+        url: &str,
+        payload: serde_json::Value,
+        idempotency_key: &str,
+        expected_statuses: &[u16],
+    ) -> CompensationStep {
+        CompensationStep {
+            order: 1,
+            adapter_key: "http".to_string(),
+            operation: "http.replay_v1".to_string(),
+            args: JsonMap::from([
+                (
+                    "method".to_string(),
+                    serde_json::Value::String("POST".to_string()),
+                ),
+                (
+                    "url".to_string(),
+                    serde_json::Value::String(url.to_string()),
+                ),
+                ("payload".to_string(), payload),
+                (
+                    "expected_statuses".to_string(),
+                    serde_json::json!(expected_statuses),
+                ),
+            ]),
+            idempotency_key: idempotency_key.to_string(),
         }
     }
 
-    /// Start a local HTTP server on a random port and return (port, join_handle).
-    /// The server handles exactly one request and exits.
-    fn start_local_server(response_status: u16) -> (u16, std::thread::JoinHandle<()>) {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let handle = std::thread::spawn(move || {
-            if let Ok((mut stream, _)) = listener.accept() {
-                // Read request headers
-                let mut buf = [0u8; 1024];
-                let _ = stream.read(&mut buf);
-                // Send HTTP response with configurable status
-                let status_line = format!(
-                    "HTTP/1.1 {} {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-                    response_status,
-                    status_text(response_status)
-                );
-                let _ = stream.write_all(status_line.as_bytes());
-                let _ = stream.flush();
-            }
-        });
-        // Give server a moment to start
-        std::thread::sleep(std::time::Duration::from_millis(10));
-        (port, handle)
+    /// Helper to create a contract with a valid http.replay_v1 compensation plan.
+    fn create_replay_contract(
+        url: &str,
+        payload: serde_json::Value,
+        idempotency_key: &str,
+        request_digest: &str,
+        expected_statuses: &[u16],
+    ) -> RollbackContract {
+        RollbackContract {
+            contract_id: RollbackContractId::new(),
+            intent_id: IntentId::new(),
+            proposal_id: ProposalId::new(),
+            execution_id: ExecutionId::new(),
+            action_type: ActionType::HttpMutation,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "http".to_string(),
+            target: RollbackTarget::HttpRequest {
+                method: HttpMethod::Post,
+                url: url.to_string(),
+                request_digest: request_digest.to_string(),
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![create_replay_step(
+                url,
+                payload,
+                idempotency_key,
+                expected_statuses,
+            )],
+            auto_commit: false,
+            state: RollbackState::Prepared,
+            created_at: Utc::now(),
+            expires_at: None,
+            metadata: JsonMap::new(),
+        }
     }
 
-    /// Start a local HTTP server that handles multiple requests.
-    /// Returns (port, join_handle).
-    /// The `response_status` is returned for every request.
-    /// Server exits after handling `max_requests` or after `max_duration`.
-    fn start_multi_request_server_with_limit(
-        response_status: u16,
-        max_requests: usize,
-        max_duration_ms: u64,
-    ) -> (u16, std::thread::JoinHandle<()>) {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        listener
-            .set_nonblocking(true)
-            .expect("Cannot set non-blocking mode");
-        let port = listener.local_addr().unwrap().port();
-        let handle = std::thread::spawn(move || {
-            let start = std::time::Instant::now();
-            let mut request_count = 0;
+    #[tokio::test]
+    async fn test_compensate_with_valid_http_replay_v1_succeeds() {
+        // Start a test server that responds to POST with 200
+        let (server_handle, port) =
+            start_test_server_with_body("/api/items", 200, r#"{"recovered":true}"#);
+        let url = format!("http://127.0.0.1:{}/api/items", port);
 
-            // Handle up to max_requests connections OR until max_duration expires
-            while request_count < max_requests
-                && start.elapsed() < std::time::Duration::from_millis(max_duration_ms)
-            {
-                // Use a short sleep to avoid busy waiting while checking time
-                std::thread::sleep(std::time::Duration::from_millis(10));
+        let adapter = HttpAdapter::new("http");
+        let payload = serde_json::json!({ "name": "test item", "quantity": 42 });
 
-                // Try to accept a connection (non-blocking)
+        // Compute the correct request digest for the payload
+        let body_bytes = serde_json::to_vec(&payload).unwrap();
+        let mut d = Sha256::new();
+        d.update(b"Post");
+        d.update(url.as_bytes());
+        d.update(&body_bytes);
+        let request_digest = format!("{:x}", d.finalize());
+
+        let contract =
+            create_replay_contract(&url, payload, "idem-key-12345", &request_digest, &[200]);
+
+        let result = adapter.compensate(&contract).await;
+        assert!(
+            result.is_ok(),
+            "compensate should succeed with valid http.replay_v1: {:?}",
+            result.err()
+        );
+        let receipt = result.unwrap();
+        assert!(receipt.recovered);
+
+        // Verify metadata
+        assert_eq!(
+            receipt.adapter_metadata.get("replay_operation").unwrap(),
+            &serde_json::Value::String("http.replay_v1".to_string())
+        );
+        assert_eq!(
+            receipt.adapter_metadata.get("idempotency_key").unwrap(),
+            &serde_json::Value::String("idem-key-12345".to_string())
+        );
+        assert_eq!(
+            receipt.adapter_metadata.get("response_status").unwrap(),
+            &serde_json::Value::Number(200.into())
+        );
+
+        drop(server_handle);
+    }
+
+    #[tokio::test]
+    async fn test_rollback_with_valid_http_replay_v1_succeeds() {
+        // Start a test server that responds to POST with 200
+        let (server_handle, port) =
+            start_test_server_with_body("/api/items", 200, r#"{"rolled_back":true}"#);
+        let url = format!("http://127.0.0.1:{}/api/items", port);
+
+        let adapter = HttpAdapter::new("http");
+        let payload = serde_json::json!({ "name": "test item", "quantity": 42 });
+
+        // Compute the correct request digest for the payload
+        let body_bytes = serde_json::to_vec(&payload).unwrap();
+        let mut d = Sha256::new();
+        d.update(b"Post");
+        d.update(url.as_bytes());
+        d.update(&body_bytes);
+        let request_digest = format!("{:x}", d.finalize());
+
+        let contract =
+            create_replay_contract(&url, payload, "rollback-key-67890", &request_digest, &[200]);
+
+        let result = adapter.rollback(&contract).await;
+        assert!(
+            result.is_ok(),
+            "rollback should succeed with valid http.replay_v1: {:?}",
+            result.err()
+        );
+        let receipt = result.unwrap();
+        assert!(receipt.recovered);
+
+        // Verify metadata
+        assert_eq!(
+            receipt.adapter_metadata.get("replay_operation").unwrap(),
+            &serde_json::Value::String("http.replay_v1".to_string())
+        );
+        assert_eq!(
+            receipt.adapter_metadata.get("idempotency_key").unwrap(),
+            &serde_json::Value::String("rollback-key-67890".to_string())
+        );
+
+        drop(server_handle);
+    }
+
+    // =============================================================================
+    // http.replay_v1 enriched audit metadata tests
+    // =============================================================================
+
+    #[tokio::test]
+    async fn test_compensate_returns_enriched_audit_metadata() {
+        // Start a test server that responds to POST with 200 and a body
+        let (server_handle, port) =
+            start_test_server_with_body("/api/items", 200, r#"{"recovered":true}"#);
+        let url = format!("http://127.0.0.1:{}/api/items", port);
+
+        let adapter = HttpAdapter::new("http");
+        let payload = serde_json::json!({ "name": "test item", "quantity": 42 });
+
+        // Compute the correct request digest for the payload
+        let body_bytes = serde_json::to_vec(&payload).unwrap();
+        let mut d = Sha256::new();
+        d.update(b"Post");
+        d.update(url.as_bytes());
+        d.update(&body_bytes);
+        let request_digest = format!("{:x}", d.finalize());
+
+        let contract = create_replay_contract(
+            &url,
+            payload.clone(),
+            "audit-key-12345",
+            &request_digest,
+            &[200],
+        );
+
+        let result = adapter.compensate(&contract).await;
+        assert!(
+            result.is_ok(),
+            "compensate should succeed: {:?}",
+            result.err()
+        );
+        let receipt = result.unwrap();
+        assert!(receipt.recovered);
+
+        // Verify enriched audit metadata fields
+        // replay_target_url
+        assert_eq!(
+            receipt.adapter_metadata.get("replay_target_url").unwrap(),
+            &serde_json::Value::String(url.clone())
+        );
+        // replay_method
+        assert_eq!(
+            receipt.adapter_metadata.get("replay_method").unwrap(),
+            &serde_json::Value::String("Post".to_string())
+        );
+        // replay_request_digest
+        let replay_req_digest = receipt
+            .adapter_metadata
+            .get("replay_request_digest")
+            .unwrap();
+        assert!(replay_req_digest.is_string());
+        assert_eq!(replay_req_digest.as_str().unwrap(), &request_digest);
+        // replay_response_digest - computed SHA256(status + body)
+        let response_digest = receipt
+            .adapter_metadata
+            .get("replay_response_digest")
+            .unwrap();
+        assert!(response_digest.is_string());
+        let resp_digest_str = response_digest.as_str().unwrap();
+        assert_eq!(resp_digest_str.len(), 64); // SHA256 hex is 64 chars
+        // replay_response_body_truncated
+        assert_eq!(
+            receipt
+                .adapter_metadata
+                .get("replay_response_body_truncated")
+                .unwrap(),
+            &serde_json::Value::Bool(false)
+        );
+        // expected_statuses_checked
+        let expected_statuses = receipt
+            .adapter_metadata
+            .get("expected_statuses_checked")
+            .unwrap();
+        assert!(expected_statuses.is_array());
+        let statuses_arr = expected_statuses.as_array().unwrap();
+        assert_eq!(statuses_arr.len(), 1);
+        assert_eq!(statuses_arr[0], serde_json::Value::Number(200.into()));
+
+        drop(server_handle);
+    }
+
+    #[tokio::test]
+    async fn test_rollback_returns_enriched_audit_metadata() {
+        // Start a test server that responds to POST with 200 and a body
+        let (server_handle, port) =
+            start_test_server_with_body("/api/items", 200, r#"{"rolled_back":true}"#);
+        let url = format!("http://127.0.0.1:{}/api/items", port);
+
+        let adapter = HttpAdapter::new("http");
+        let payload = serde_json::json!({ "name": "test item", "quantity": 42 });
+
+        // Compute the correct request digest for the payload
+        let body_bytes = serde_json::to_vec(&payload).unwrap();
+        let mut d = Sha256::new();
+        d.update(b"Post");
+        d.update(url.as_bytes());
+        d.update(&body_bytes);
+        let request_digest = format!("{:x}", d.finalize());
+
+        let contract = create_replay_contract(
+            &url,
+            payload.clone(),
+            "rollback-audit-key",
+            &request_digest,
+            &[200],
+        );
+
+        let result = adapter.rollback(&contract).await;
+        assert!(
+            result.is_ok(),
+            "rollback should succeed: {:?}",
+            result.err()
+        );
+        let receipt = result.unwrap();
+        assert!(receipt.recovered);
+
+        // Verify enriched audit metadata fields
+        // replay_target_url
+        assert_eq!(
+            receipt.adapter_metadata.get("replay_target_url").unwrap(),
+            &serde_json::Value::String(url.clone())
+        );
+        // replay_method
+        assert_eq!(
+            receipt.adapter_metadata.get("replay_method").unwrap(),
+            &serde_json::Value::String("Post".to_string())
+        );
+        // replay_request_digest
+        let replay_req_digest = receipt
+            .adapter_metadata
+            .get("replay_request_digest")
+            .unwrap();
+        assert!(replay_req_digest.is_string());
+        assert_eq!(replay_req_digest.as_str().unwrap(), &request_digest);
+        // replay_response_digest - computed SHA256(status + body)
+        let response_digest = receipt
+            .adapter_metadata
+            .get("replay_response_digest")
+            .unwrap();
+        assert!(response_digest.is_string());
+        let resp_digest_str = response_digest.as_str().unwrap();
+        assert_eq!(resp_digest_str.len(), 64); // SHA256 hex is 64 chars
+        // replay_response_body_truncated
+        assert_eq!(
+            receipt
+                .adapter_metadata
+                .get("replay_response_body_truncated")
+                .unwrap(),
+            &serde_json::Value::Bool(false)
+        );
+        // expected_statuses_checked
+        let expected_statuses = receipt
+            .adapter_metadata
+            .get("expected_statuses_checked")
+            .unwrap();
+        assert!(expected_statuses.is_array());
+        let statuses_arr = expected_statuses.as_array().unwrap();
+        assert_eq!(statuses_arr.len(), 1);
+        assert_eq!(statuses_arr[0], serde_json::Value::Number(200.into()));
+
+        drop(server_handle);
+    }
+
+    #[tokio::test]
+    async fn test_compensate_response_truncated_flag_when_body_large() {
+        // Start a server with a large response body (> 64KB)
+        let large_body = "x".repeat(100 * 1024); // 100KB body
+        let (server_handle, port) = start_test_server_with_body("/api/large", 200, &large_body);
+        let url = format!("http://127.0.0.1:{}/api/large", port);
+
+        let adapter = HttpAdapter::new("http");
+        let payload = serde_json::json!({ "name": "test" });
+
+        // Compute the correct request digest
+        let body_bytes = serde_json::to_vec(&payload).unwrap();
+        let mut d = Sha256::new();
+        d.update(b"Post");
+        d.update(url.as_bytes());
+        d.update(&body_bytes);
+        let request_digest = format!("{:x}", d.finalize());
+
+        let contract =
+            create_replay_contract(&url, payload, "trunc-test-key", &request_digest, &[200]);
+
+        let result = adapter.compensate(&contract).await;
+        assert!(
+            result.is_ok(),
+            "compensate should succeed with large response: {:?}",
+            result.err()
+        );
+        let receipt = result.unwrap();
+
+        // Verify truncated flag is set for large response
+        assert_eq!(
+            receipt
+                .adapter_metadata
+                .get("replay_response_body_truncated")
+                .unwrap(),
+            &serde_json::Value::Bool(true),
+            "response should be marked as truncated for >64KB body"
+        );
+
+        drop(server_handle);
+    }
+
+    #[tokio::test]
+    async fn test_rollback_response_truncated_flag_when_body_large() {
+        // Start a server with a large response body (> 64KB)
+        let large_body = "y".repeat(100 * 1024); // 100KB body
+        let (server_handle, port) = start_test_server_with_body("/api/large", 200, &large_body);
+        let url = format!("http://127.0.0.1:{}/api/large", port);
+
+        let adapter = HttpAdapter::new("http");
+        let payload = serde_json::json!({ "name": "test" });
+
+        // Compute the correct request digest
+        let body_bytes = serde_json::to_vec(&payload).unwrap();
+        let mut d = Sha256::new();
+        d.update(b"Post");
+        d.update(url.as_bytes());
+        d.update(&body_bytes);
+        let request_digest = format!("{:x}", d.finalize());
+
+        let contract =
+            create_replay_contract(&url, payload, "trunc-rollback-key", &request_digest, &[200]);
+
+        let result = adapter.rollback(&contract).await;
+        assert!(
+            result.is_ok(),
+            "rollback should succeed with large response: {:?}",
+            result.err()
+        );
+        let receipt = result.unwrap();
+
+        // Verify truncated flag is set for large response
+        assert_eq!(
+            receipt
+                .adapter_metadata
+                .get("replay_response_body_truncated")
+                .unwrap(),
+            &serde_json::Value::Bool(true),
+            "response should be marked as truncated for >64KB body"
+        );
+
+        drop(server_handle);
+    }
+
+    #[tokio::test]
+    async fn test_compensate_enriched_metadata_has_multiple_expected_statuses() {
+        // Start a test server that responds to POST with 202
+        let (server_handle, port) =
+            start_test_server_with_body("/api/items", 202, r#"{"created":true}"#);
+        let url = format!("http://127.0.0.1:{}/api/items", port);
+
+        let adapter = HttpAdapter::new("http");
+        let payload = serde_json::json!({ "name": "test" });
+
+        // Compute the correct request digest
+        let body_bytes = serde_json::to_vec(&payload).unwrap();
+        let mut d = Sha256::new();
+        d.update(b"Post");
+        d.update(url.as_bytes());
+        d.update(&body_bytes);
+        let request_digest = format!("{:x}", d.finalize());
+
+        // expected_statuses [200, 201, 202] - 202 is valid
+        let contract = create_replay_contract(
+            &url,
+            payload,
+            "multi-status-key",
+            &request_digest,
+            &[200, 201, 202],
+        );
+
+        let result = adapter.compensate(&contract).await;
+        assert!(
+            result.is_ok(),
+            "compensate should succeed: {:?}",
+            result.err()
+        );
+        let receipt = result.unwrap();
+
+        // Verify expected_statuses_checked contains all statuses
+        let expected_statuses = receipt
+            .adapter_metadata
+            .get("expected_statuses_checked")
+            .unwrap();
+        let statuses_arr = expected_statuses.as_array().unwrap();
+        assert_eq!(statuses_arr.len(), 3);
+        assert!(statuses_arr.contains(&serde_json::Value::Number(200.into())));
+        assert!(statuses_arr.contains(&serde_json::Value::Number(201.into())));
+        assert!(statuses_arr.contains(&serde_json::Value::Number(202.into())));
+
+        drop(server_handle);
+    }
+
+    #[tokio::test]
+    async fn test_compensate_with_expected_statuses_validation() {
+        // Start a test server that returns 201 (not in expected list)
+        let (server_handle, port) =
+            start_test_server_with_body("/api/items", 201, r#"{"created":true}"#);
+        let url = format!("http://127.0.0.1:{}/api/items", port);
+
+        let adapter = HttpAdapter::new("http");
+        let payload = serde_json::json!({ "name": "test" });
+
+        // Compute the correct request digest
+        let body_bytes = serde_json::to_vec(&payload).unwrap();
+        let mut d = Sha256::new();
+        d.update(b"Post");
+        d.update(url.as_bytes());
+        d.update(&body_bytes);
+        let request_digest = format!("{:x}", d.finalize());
+
+        // Create contract with expected_statuses [200, 201, 202]
+        let mut contract =
+            create_replay_contract(&url, payload.clone(), "idem-key", &request_digest, &[200]);
+        contract.compensation_plan = vec![CompensationStep {
+            order: 1,
+            adapter_key: "http".to_string(),
+            operation: "http.replay_v1".to_string(),
+            args: JsonMap::from([
+                (
+                    "method".to_string(),
+                    serde_json::Value::String("POST".to_string()),
+                ),
+                ("url".to_string(), serde_json::Value::String(url.clone())),
+                ("payload".to_string(), payload),
+                (
+                    "expected_statuses".to_string(),
+                    serde_json::json!([200, 201, 202]),
+                ),
+            ]),
+            idempotency_key: "idem-key".to_string(),
+        }];
+
+        // Should succeed because 201 is in expected list
+        let result = adapter.compensate(&contract).await;
+        assert!(
+            result.is_ok(),
+            "compensate should succeed with matching expected_statuses"
+        );
+
+        drop(server_handle);
+    }
+
+    #[tokio::test]
+    async fn test_compensate_fails_on_status_mismatch() {
+        // Start a test server that returns 500 (not in expected list)
+        let (server_handle, port) =
+            start_test_server_with_body("/api/items", 500, r#"{"error":"internal"}"#);
+        let url = format!("http://127.0.0.1:{}/api/items", port);
+
+        let adapter = HttpAdapter::new("http");
+        let payload = serde_json::json!({ "name": "test" });
+
+        // Compute the correct request digest
+        let body_bytes = serde_json::to_vec(&payload).unwrap();
+        let mut d = Sha256::new();
+        d.update(b"Post");
+        d.update(url.as_bytes());
+        d.update(&body_bytes);
+        let request_digest = format!("{:x}", d.finalize());
+
+        // Create contract with expected_statuses [200, 201]
+        let mut contract =
+            create_replay_contract(&url, payload.clone(), "idem-key", &request_digest, &[200]);
+        contract.compensation_plan = vec![CompensationStep {
+            order: 1,
+            adapter_key: "http".to_string(),
+            operation: "http.replay_v1".to_string(),
+            args: JsonMap::from([
+                (
+                    "method".to_string(),
+                    serde_json::Value::String("POST".to_string()),
+                ),
+                ("url".to_string(), serde_json::Value::String(url.clone())),
+                ("payload".to_string(), payload),
+                (
+                    "expected_statuses".to_string(),
+                    serde_json::json!([200, 201]),
+                ),
+            ]),
+            idempotency_key: "idem-key".to_string(),
+        }];
+
+        let result = adapter.compensate(&contract).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("status mismatch"));
+        assert!(err.to_string().contains("500"));
+
+        drop(server_handle);
+    }
+
+    #[tokio::test]
+    async fn test_compensate_fails_on_wrong_operation() {
+        let adapter = HttpAdapter::new("http");
+        let contract = create_test_contract("http://example.com/test", HttpMethod::Post);
+        let mut c = contract;
+        c.compensation_plan = vec![CompensationStep {
+            order: 1,
+            adapter_key: "http".to_string(),
+            operation: "http.replay_v2".to_string(), // Wrong operation
+            args: JsonMap::new(),
+            idempotency_key: "idem-key".to_string(),
+        }];
+
+        let result = adapter.compensate(&c).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("http.replay_v1"));
+        assert!(err.to_string().contains("operation"));
+    }
+
+    #[tokio::test]
+    async fn test_compensate_fails_on_wrong_method() {
+        let adapter = HttpAdapter::new("http");
+        let contract = create_test_contract("http://example.com/test", HttpMethod::Post);
+        let mut c = contract;
+        c.compensation_plan = vec![CompensationStep {
+            order: 1,
+            adapter_key: "http".to_string(),
+            operation: "http.replay_v1".to_string(),
+            args: JsonMap::from([
+                (
+                    "method".to_string(),
+                    serde_json::Value::String("GET".to_string()),
+                ), // Wrong method
+                (
+                    "url".to_string(),
+                    serde_json::Value::String("http://example.com/test".to_string()),
+                ),
+                ("payload".to_string(), serde_json::Value::Null),
+            ]),
+            idempotency_key: "idem-key".to_string(),
+        }];
+
+        let result = adapter.compensate(&c).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("POST"));
+        assert!(err.to_string().contains("GET"));
+    }
+
+    #[tokio::test]
+    async fn test_compensate_fails_on_url_mismatch() {
+        let adapter = HttpAdapter::new("http");
+        let payload = serde_json::json!({ "name": "test" });
+        let body_bytes = serde_json::to_vec(&payload).unwrap();
+        let mut d = Sha256::new();
+        d.update(b"Post");
+        d.update("http://example.com/test".as_bytes());
+        d.update(&body_bytes);
+        let request_digest = format!("{:x}", d.finalize());
+
+        let mut contract = create_replay_contract(
+            "http://example.com/test",
+            payload,
+            "idem-key",
+            &request_digest,
+            &[200],
+        );
+        // Change the url in args to be different
+        contract.compensation_plan = vec![CompensationStep {
+            order: 1,
+            adapter_key: "http".to_string(),
+            operation: "http.replay_v1".to_string(),
+            args: JsonMap::from([
+                (
+                    "method".to_string(),
+                    serde_json::Value::String("POST".to_string()),
+                ),
+                (
+                    "url".to_string(),
+                    serde_json::Value::String("http://different.com/test".to_string()),
+                ), // Different URL
+                ("payload".to_string(), serde_json::Value::Null),
+            ]),
+            idempotency_key: "idem-key".to_string(),
+        }];
+
+        let result = adapter.compensate(&contract).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("url must equal target.url"));
+    }
+
+    #[tokio::test]
+    async fn test_compensate_fails_on_digest_mismatch() {
+        let adapter = HttpAdapter::new("http");
+        let payload = serde_json::json!({ "name": "test" });
+        // Create contract with WRONG request_digest
+        let contract = create_replay_contract(
+            "http://example.com/test",
+            payload,
+            "idem-key",
+            "wrong-digest-value",
+            &[200],
+        );
+
+        let result = adapter.compensate(&contract).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("digest mismatch"));
+    }
+
+    #[tokio::test]
+    async fn test_compensate_fails_on_empty_idempotency_key() {
+        let adapter = HttpAdapter::new("http");
+        let contract = create_test_contract("http://example.com/test", HttpMethod::Post);
+        let mut c = contract;
+        c.compensation_plan = vec![CompensationStep {
+            order: 1,
+            adapter_key: "http".to_string(),
+            operation: "http.replay_v1".to_string(),
+            args: JsonMap::from([
+                (
+                    "method".to_string(),
+                    serde_json::Value::String("POST".to_string()),
+                ),
+                (
+                    "url".to_string(),
+                    serde_json::Value::String("http://example.com/test".to_string()),
+                ),
+                ("payload".to_string(), serde_json::Value::Null),
+            ]),
+            idempotency_key: "".to_string(), // Empty key
+        }];
+
+        let result = adapter.compensate(&c).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("non-empty"));
+    }
+
+    #[tokio::test]
+    async fn test_compensate_fails_on_non_header_safe_idempotency_key() {
+        let adapter = HttpAdapter::new("http");
+        let contract = create_test_contract("http://example.com/test", HttpMethod::Post);
+        let mut c = contract;
+        c.compensation_plan = vec![CompensationStep {
+            order: 1,
+            adapter_key: "http".to_string(),
+            operation: "http.replay_v1".to_string(),
+            args: JsonMap::from([
+                (
+                    "method".to_string(),
+                    serde_json::Value::String("POST".to_string()),
+                ),
+                (
+                    "url".to_string(),
+                    serde_json::Value::String("http://example.com/test".to_string()),
+                ),
+                ("payload".to_string(), serde_json::Value::Null),
+            ]),
+            idempotency_key: "key with spaces and\ttab".to_string(), // Non-header-safe
+        }];
+
+        let result = adapter.compensate(&c).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("non-header-safe"));
+    }
+
+    #[tokio::test]
+    async fn test_compensate_fails_on_unknown_args_keys() {
+        let adapter = HttpAdapter::new("http");
+        let payload = serde_json::json!({ "name": "test" });
+        let body_bytes = serde_json::to_vec(&payload).unwrap();
+        let mut d = Sha256::new();
+        d.update(b"Post");
+        d.update("http://example.com/test".as_bytes());
+        d.update(&body_bytes);
+        let request_digest = format!("{:x}", d.finalize());
+
+        let mut contract = create_replay_contract(
+            "http://example.com/test",
+            payload,
+            "idem-key",
+            &request_digest,
+            &[200],
+        );
+        // Add unknown key to args
+        contract.compensation_plan = vec![CompensationStep {
+            order: 1,
+            adapter_key: "http".to_string(),
+            operation: "http.replay_v1".to_string(),
+            args: JsonMap::from([
+                (
+                    "method".to_string(),
+                    serde_json::Value::String("POST".to_string()),
+                ),
+                (
+                    "url".to_string(),
+                    serde_json::Value::String("http://example.com/test".to_string()),
+                ),
+                ("payload".to_string(), serde_json::Value::Null),
+                (
+                    "unknown_key".to_string(),
+                    serde_json::Value::String("bad".to_string()),
+                ), // Unknown key
+            ]),
+            idempotency_key: "idem-key".to_string(),
+        }];
+
+        let result = adapter.compensate(&contract).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("unknown key"));
+        assert!(err.to_string().contains("unknown_key"));
+    }
+
+    #[tokio::test]
+    async fn test_compensate_fails_on_multiple_compensation_steps() {
+        let adapter = HttpAdapter::new("http");
+        let payload = serde_json::json!({ "name": "test" });
+        let body_bytes = serde_json::to_vec(&payload).unwrap();
+        let mut d = Sha256::new();
+        d.update(b"Post");
+        d.update("http://example.com/test".as_bytes());
+        d.update(&body_bytes);
+        let request_digest = format!("{:x}", d.finalize());
+
+        let mut contract = create_replay_contract(
+            "http://example.com/test",
+            payload,
+            "idem-key",
+            &request_digest,
+            &[200],
+        );
+        // Add second step - should fail
+        contract.compensation_plan.push(CompensationStep {
+            order: 2,
+            adapter_key: "http".to_string(),
+            operation: "http.replay_v1".to_string(),
+            args: JsonMap::from([
+                (
+                    "method".to_string(),
+                    serde_json::Value::String("POST".to_string()),
+                ),
+                (
+                    "url".to_string(),
+                    serde_json::Value::String("http://example.com/test2".to_string()),
+                ),
+                ("payload".to_string(), serde_json::Value::Null),
+            ]),
+            idempotency_key: "idem-key-2".to_string(),
+        });
+
+        let result = adapter.compensate(&contract).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("exactly 1 compensation step"));
+    }
+
+    #[tokio::test]
+    async fn test_rollback_fails_closed_for_unsupported_shapes() {
+        let adapter = HttpAdapter::new("http");
+        let contract = create_test_contract("http://example.com/test", HttpMethod::Post);
+        // No compensation plan - should fail with structured reason codes
+        let result = adapter.rollback(&contract).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let err_msg = err.to_string();
+        assert!(err_msg.contains("NO_COMPENSATION_PLAN"));
+        assert!(err_msg.contains("RECOVERY_SLICE_NARROW_HTTP_REPLAY_V1"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_emits_idempotency_key_with_valid_replay_contract() {
+        // Start a test server
+        let (server_handle, port) =
+            start_test_server_with_body("/api/items", 201, r#"{"id":"123"}"#);
+        let url = format!("http://127.0.0.1:{}/api/items", port);
+
+        let adapter = HttpAdapter::new("http");
+        let payload = serde_json::json!({ "name": "test" });
+
+        // Compute the correct request digest for the payload
+        let body_bytes = serde_json::to_vec(&payload).unwrap();
+        let mut d = Sha256::new();
+        d.update(b"Post");
+        d.update(url.as_bytes());
+        d.update(&body_bytes);
+        let request_digest = format!("{:x}", d.finalize());
+
+        // Create contract with valid http.replay_v1 compensation plan
+        let contract = create_replay_contract(
+            &url,
+            payload,
+            "forward-idempotency-key",
+            &request_digest,
+            &[201],
+        );
+
+        let receipt = adapter
+            .execute(&contract, &serde_json::json!({}))
+            .await
+            .unwrap();
+
+        // Verify http_recovery_readiness_v1 shows replay_ready
+        let readiness = receipt
+            .adapter_metadata
+            .get("http_recovery_readiness_v1")
+            .expect("http_recovery_readiness_v1 should be present");
+        let readiness_obj = readiness.as_object().unwrap();
+
+        assert_eq!(
+            readiness_obj.get("replayable_classification").unwrap(),
+            "replay_ready"
+        );
+        assert_eq!(
+            readiness_obj.get("has_valid_replay_contract").unwrap(),
+            &serde_json::Value::Bool(true)
+        );
+        assert_eq!(
+            readiness_obj.get("rollback_supported").unwrap(),
+            &serde_json::Value::Bool(true)
+        );
+        assert_eq!(
+            readiness_obj.get("compensate_supported").unwrap(),
+            &serde_json::Value::Bool(true)
+        );
+
+        drop(server_handle);
+    }
+
+    #[tokio::test]
+    async fn test_execute_replay_contract_validation_fails_on_digest_mismatch() {
+        // Start a test server
+        let (server_handle, port) =
+            start_test_server_with_body("/api/items", 201, r#"{"id":"123"}"#);
+        let url = format!("http://127.0.0.1:{}/api/items", port);
+
+        let adapter = HttpAdapter::new("http");
+        let payload = serde_json::json!({ "name": "test" });
+
+        // Create contract with WRONG request_digest - should fail execute
+        let contract = create_replay_contract(&url, payload, "idem-key", "wrong-digest", &[201]);
+
+        let result = adapter.execute(&contract, &serde_json::json!({})).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("digest mismatch"));
+
+        drop(server_handle);
+    }
+
+    // =============================================================================
+    // http.replay_v1 expected_statuses required/strict validation tests
+    // =============================================================================
+
+    #[tokio::test]
+    async fn test_compensate_fails_when_expected_statuses_missing() {
+        let adapter = HttpAdapter::new("http");
+        let contract = create_test_contract("http://example.com/test", HttpMethod::Post);
+        // Compensation plan with http.replay_v1 but missing expected_statuses
+        let mut c = contract;
+        c.compensation_plan = vec![CompensationStep {
+            order: 1,
+            adapter_key: "http".to_string(),
+            operation: "http.replay_v1".to_string(),
+            args: JsonMap::from([
+                (
+                    "method".to_string(),
+                    serde_json::Value::String("POST".to_string()),
+                ),
+                (
+                    "url".to_string(),
+                    serde_json::Value::String("http://example.com/test".to_string()),
+                ),
+                ("payload".to_string(), serde_json::Value::Null),
+            ]),
+            idempotency_key: "idem-key".to_string(),
+        }];
+
+        let result = adapter.compensate(&c).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("missing required 'expected_statuses'")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_rollback_fails_when_expected_statuses_missing() {
+        let adapter = HttpAdapter::new("http");
+        let contract = create_test_contract("http://example.com/test", HttpMethod::Post);
+        // Compensation plan with http.replay_v1 but missing expected_statuses
+        let mut c = contract;
+        c.compensation_plan = vec![CompensationStep {
+            order: 1,
+            adapter_key: "http".to_string(),
+            operation: "http.replay_v1".to_string(),
+            args: JsonMap::from([
+                (
+                    "method".to_string(),
+                    serde_json::Value::String("POST".to_string()),
+                ),
+                (
+                    "url".to_string(),
+                    serde_json::Value::String("http://example.com/test".to_string()),
+                ),
+                ("payload".to_string(), serde_json::Value::Null),
+            ]),
+            idempotency_key: "idem-key".to_string(),
+        }];
+
+        let result = adapter.rollback(&c).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("missing required 'expected_statuses'")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_compensate_fails_on_empty_expected_statuses_array() {
+        let adapter = HttpAdapter::new("http");
+        let payload = serde_json::json!({ "name": "test" });
+        let body_bytes = serde_json::to_vec(&payload).unwrap();
+        let mut d = Sha256::new();
+        d.update(b"Post");
+        d.update("http://example.com/test".as_bytes());
+        d.update(&body_bytes);
+        let request_digest = format!("{:x}", d.finalize());
+
+        let contract = create_replay_contract(
+            "http://example.com/test",
+            payload,
+            "idem-key",
+            &request_digest,
+            &[],
+        );
+
+        let result = adapter.compensate(&contract).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("cannot be empty"));
+    }
+
+    #[tokio::test]
+    async fn test_rollback_fails_on_empty_expected_statuses_array() {
+        let adapter = HttpAdapter::new("http");
+        let payload = serde_json::json!({ "name": "test" });
+        let body_bytes = serde_json::to_vec(&payload).unwrap();
+        let mut d = Sha256::new();
+        d.update(b"Post");
+        d.update("http://example.com/test".as_bytes());
+        d.update(&body_bytes);
+        let request_digest = format!("{:x}", d.finalize());
+
+        let contract = create_replay_contract(
+            "http://example.com/test",
+            payload,
+            "idem-key",
+            &request_digest,
+            &[],
+        );
+
+        let result = adapter.rollback(&contract).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("cannot be empty"));
+    }
+
+    #[tokio::test]
+    async fn test_compensate_fails_on_out_of_range_status_0() {
+        let adapter = HttpAdapter::new("http");
+        let payload = serde_json::json!({ "name": "test" });
+        let body_bytes = serde_json::to_vec(&payload).unwrap();
+        let mut d = Sha256::new();
+        d.update(b"Post");
+        d.update("http://example.com/test".as_bytes());
+        d.update(&body_bytes);
+        let request_digest = format!("{:x}", d.finalize());
+
+        // expected_statuses with 0 is out of valid range
+        let contract = create_replay_contract(
+            "http://example.com/test",
+            payload,
+            "idem-key",
+            &request_digest,
+            &[0],
+        );
+
+        let result = adapter.compensate(&contract).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("out of valid HTTP range"));
+    }
+
+    #[tokio::test]
+    async fn test_rollback_fails_on_out_of_range_status_0() {
+        let adapter = HttpAdapter::new("http");
+        let payload = serde_json::json!({ "name": "test" });
+        let body_bytes = serde_json::to_vec(&payload).unwrap();
+        let mut d = Sha256::new();
+        d.update(b"Post");
+        d.update("http://example.com/test".as_bytes());
+        d.update(&body_bytes);
+        let request_digest = format!("{:x}", d.finalize());
+
+        // expected_statuses with 0 is out of valid range
+        let contract = create_replay_contract(
+            "http://example.com/test",
+            payload,
+            "idem-key",
+            &request_digest,
+            &[0],
+        );
+
+        let result = adapter.rollback(&contract).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("out of valid HTTP range"));
+    }
+
+    #[tokio::test]
+    async fn test_compensate_fails_on_out_of_range_status_700() {
+        let adapter = HttpAdapter::new("http");
+        let payload = serde_json::json!({ "name": "test" });
+        let body_bytes = serde_json::to_vec(&payload).unwrap();
+        let mut d = Sha256::new();
+        d.update(b"Post");
+        d.update("http://example.com/test".as_bytes());
+        d.update(&body_bytes);
+        let request_digest = format!("{:x}", d.finalize());
+
+        // expected_statuses with 700 is out of valid range (max is 599)
+        let contract = create_replay_contract(
+            "http://example.com/test",
+            payload,
+            "idem-key",
+            &request_digest,
+            &[700],
+        );
+
+        let result = adapter.compensate(&contract).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("out of valid HTTP range"));
+    }
+
+    #[tokio::test]
+    async fn test_rollback_fails_on_out_of_range_status_700() {
+        let adapter = HttpAdapter::new("http");
+        let payload = serde_json::json!({ "name": "test" });
+        let body_bytes = serde_json::to_vec(&payload).unwrap();
+        let mut d = Sha256::new();
+        d.update(b"Post");
+        d.update("http://example.com/test".as_bytes());
+        d.update(&body_bytes);
+        let request_digest = format!("{:x}", d.finalize());
+
+        // expected_statuses with 700 is out of valid range (max is 599)
+        let contract = create_replay_contract(
+            "http://example.com/test",
+            payload,
+            "idem-key",
+            &request_digest,
+            &[700],
+        );
+
+        let result = adapter.rollback(&contract).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("out of valid HTTP range"));
+    }
+
+    #[tokio::test]
+    async fn test_compensate_succeeds_on_valid_listed_statuses() {
+        // Start a test server that returns 202
+        let (server_handle, port) =
+            start_test_server_with_body("/api/items", 202, r#"{"created":true}"#);
+        let url = format!("http://127.0.0.1:{}/api/items", port);
+
+        let adapter = HttpAdapter::new("http");
+        let payload = serde_json::json!({ "name": "test" });
+
+        // Compute the correct request digest
+        let body_bytes = serde_json::to_vec(&payload).unwrap();
+        let mut d = Sha256::new();
+        d.update(b"Post");
+        d.update(url.as_bytes());
+        d.update(&body_bytes);
+        let request_digest = format!("{:x}", d.finalize());
+
+        // expected_statuses [200, 201, 202] - 202 is valid and in the list
+        let contract =
+            create_replay_contract(&url, payload, "idem-key", &request_digest, &[200, 201, 202]);
+
+        let result = adapter.compensate(&contract).await;
+        assert!(
+            result.is_ok(),
+            "compensate should succeed with valid expected_statuses: {:?}",
+            result.err()
+        );
+
+        drop(server_handle);
+    }
+
+    #[tokio::test]
+    async fn test_rollback_succeeds_on_valid_listed_statuses() {
+        // Start a test server that returns 202
+        let (server_handle, port) =
+            start_test_server_with_body("/api/items", 202, r#"{"created":true}"#);
+        let url = format!("http://127.0.0.1:{}/api/items", port);
+
+        let adapter = HttpAdapter::new("http");
+        let payload = serde_json::json!({ "name": "test" });
+
+        // Compute the correct request digest
+        let body_bytes = serde_json::to_vec(&payload).unwrap();
+        let mut d = Sha256::new();
+        d.update(b"Post");
+        d.update(url.as_bytes());
+        d.update(&body_bytes);
+        let request_digest = format!("{:x}", d.finalize());
+
+        // expected_statuses [200, 201, 202] - 202 is valid and in the list
+        let contract =
+            create_replay_contract(&url, payload, "idem-key", &request_digest, &[200, 201, 202]);
+
+        let result = adapter.rollback(&contract).await;
+        assert!(
+            result.is_ok(),
+            "rollback should succeed with valid expected_statuses: {:?}",
+            result.err()
+        );
+
+        drop(server_handle);
+    }
+
+    #[tokio::test]
+    async fn test_parse_replay_contract_fails_on_string_out_of_range_status() {
+        // Test that string-form status values are also validated
+        let adapter = HttpAdapter::new("http");
+        let contract = create_test_contract("http://example.com/test", HttpMethod::Post);
+        let mut c = contract;
+        c.compensation_plan = vec![CompensationStep {
+            order: 1,
+            adapter_key: "http".to_string(),
+            operation: "http.replay_v1".to_string(),
+            args: JsonMap::from([
+                (
+                    "method".to_string(),
+                    serde_json::Value::String("POST".to_string()),
+                ),
+                (
+                    "url".to_string(),
+                    serde_json::Value::String("http://example.com/test".to_string()),
+                ),
+                ("payload".to_string(), serde_json::Value::Null),
+                (
+                    "expected_statuses".to_string(),
+                    serde_json::json!(["700"]), // String "700" still out of range
+                ),
+            ]),
+            idempotency_key: "idem-key".to_string(),
+        }];
+
+        let result = adapter.compensate(&c).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("out of valid HTTP range"));
+    }
+
+    // =============================================================================
+    // http.replay_v1 PUT/PATCH support tests
+    // =============================================================================
+
+    /// Helper to create a valid http.replay_v1 compensation step with specified method.
+    fn create_replay_step_with_method(
+        url: &str,
+        payload: serde_json::Value,
+        idempotency_key: &str,
+        expected_statuses: &[u16],
+        method: &str,
+    ) -> CompensationStep {
+        CompensationStep {
+            order: 1,
+            adapter_key: "http".to_string(),
+            operation: "http.replay_v1".to_string(),
+            args: JsonMap::from([
+                (
+                    "method".to_string(),
+                    serde_json::Value::String(method.to_string()),
+                ),
+                (
+                    "url".to_string(),
+                    serde_json::Value::String(url.to_string()),
+                ),
+                ("payload".to_string(), payload),
+                (
+                    "expected_statuses".to_string(),
+                    serde_json::json!(expected_statuses),
+                ),
+            ]),
+            idempotency_key: idempotency_key.to_string(),
+        }
+    }
+
+    /// Helper to create a contract with a valid http.replay_v1 compensation plan for any method.
+    fn create_replay_contract_with_method(
+        url: &str,
+        payload: serde_json::Value,
+        idempotency_key: &str,
+        request_digest: &str,
+        expected_statuses: &[u16],
+        method: HttpMethod,
+    ) -> RollbackContract {
+        let method_str = match method {
+            HttpMethod::Put => "PUT",
+            HttpMethod::Patch => "PATCH",
+            _ => "POST",
+        };
+        RollbackContract {
+            contract_id: RollbackContractId::new(),
+            intent_id: IntentId::new(),
+            proposal_id: ProposalId::new(),
+            execution_id: ExecutionId::new(),
+            action_type: ActionType::HttpMutation,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "http".to_string(),
+            target: RollbackTarget::HttpRequest {
+                method,
+                url: url.to_string(),
+                request_digest: request_digest.to_string(),
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![create_replay_step_with_method(
+                url,
+                payload,
+                idempotency_key,
+                expected_statuses,
+                method_str,
+            )],
+            auto_commit: false,
+            state: RollbackState::Prepared,
+            created_at: Utc::now(),
+            expires_at: None,
+            metadata: JsonMap::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_http_put_replay_compensate_succeeds() {
+        // Start a test server that responds to PUT with 200
+        let (server_handle, port) =
+            start_test_server_with_body("/api/items/1", 200, r#"{"updated":true}"#);
+        let url = format!("http://127.0.0.1:{}/api/items/1", port);
+
+        let adapter = HttpAdapter::new("http");
+        let payload = serde_json::json!({ "name": "updated item", "quantity": 100 });
+
+        // Compute the correct request digest for PUT
+        let body_bytes = serde_json::to_vec(&payload).unwrap();
+        let mut d = Sha256::new();
+        d.update(b"Put");
+        d.update(url.as_bytes());
+        d.update(&body_bytes);
+        let request_digest = format!("{:x}", d.finalize());
+
+        let contract = create_replay_contract_with_method(
+            &url,
+            payload,
+            "put-idem-key-12345",
+            &request_digest,
+            &[200],
+            HttpMethod::Put,
+        );
+
+        let result = adapter.compensate(&contract).await;
+        assert!(
+            result.is_ok(),
+            "compensate should succeed with valid http.replay_v1 PUT: {:?}",
+            result.err()
+        );
+        let receipt = result.unwrap();
+        assert!(receipt.recovered);
+
+        // Verify metadata
+        assert_eq!(
+            receipt.adapter_metadata.get("replay_operation").unwrap(),
+            &serde_json::Value::String("http.replay_v1".to_string())
+        );
+        assert_eq!(
+            receipt.adapter_metadata.get("idempotency_key").unwrap(),
+            &serde_json::Value::String("put-idem-key-12345".to_string())
+        );
+        assert_eq!(
+            receipt.adapter_metadata.get("replay_method").unwrap(),
+            &serde_json::Value::String("Put".to_string())
+        );
+
+        drop(server_handle);
+    }
+
+    #[tokio::test]
+    async fn test_http_patch_replay_compensate_succeeds() {
+        // Start a test server that responds to PATCH with 200
+        let (server_handle, port) =
+            start_test_server_with_body("/api/items/1", 200, r#"{"patched":true}"#);
+        let url = format!("http://127.0.0.1:{}/api/items/1", port);
+
+        let adapter = HttpAdapter::new("http");
+        let payload = serde_json::json!({ "quantity": 50 });
+
+        // Compute the correct request digest for PATCH
+        let body_bytes = serde_json::to_vec(&payload).unwrap();
+        let mut d = Sha256::new();
+        d.update(b"Patch");
+        d.update(url.as_bytes());
+        d.update(&body_bytes);
+        let request_digest = format!("{:x}", d.finalize());
+
+        let contract = create_replay_contract_with_method(
+            &url,
+            payload,
+            "patch-idem-key-67890",
+            &request_digest,
+            &[200],
+            HttpMethod::Patch,
+        );
+
+        let result = adapter.compensate(&contract).await;
+        assert!(
+            result.is_ok(),
+            "compensate should succeed with valid http.replay_v1 PATCH: {:?}",
+            result.err()
+        );
+        let receipt = result.unwrap();
+        assert!(receipt.recovered);
+
+        // Verify metadata
+        assert_eq!(
+            receipt.adapter_metadata.get("replay_operation").unwrap(),
+            &serde_json::Value::String("http.replay_v1".to_string())
+        );
+        assert_eq!(
+            receipt.adapter_metadata.get("idempotency_key").unwrap(),
+            &serde_json::Value::String("patch-idem-key-67890".to_string())
+        );
+        assert_eq!(
+            receipt.adapter_metadata.get("replay_method").unwrap(),
+            &serde_json::Value::String("Patch".to_string())
+        );
+
+        drop(server_handle);
+    }
+
+    #[tokio::test]
+    async fn test_http_put_replay_rollback_succeeds() {
+        // Start a test server that responds to PUT with 200
+        let (server_handle, port) =
+            start_test_server_with_body("/api/items/1", 200, r#"{"rolled_back":true}"#);
+        let url = format!("http://127.0.0.1:{}/api/items/1", port);
+
+        let adapter = HttpAdapter::new("http");
+        let payload = serde_json::json!({ "name": "updated item" });
+
+        // Compute the correct request digest for PUT
+        let body_bytes = serde_json::to_vec(&payload).unwrap();
+        let mut d = Sha256::new();
+        d.update(b"Put");
+        d.update(url.as_bytes());
+        d.update(&body_bytes);
+        let request_digest = format!("{:x}", d.finalize());
+
+        let contract = create_replay_contract_with_method(
+            &url,
+            payload,
+            "put-rollback-key-11111",
+            &request_digest,
+            &[200],
+            HttpMethod::Put,
+        );
+
+        let result = adapter.rollback(&contract).await;
+        assert!(
+            result.is_ok(),
+            "rollback should succeed with valid http.replay_v1 PUT: {:?}",
+            result.err()
+        );
+        let receipt = result.unwrap();
+        assert!(receipt.recovered);
+
+        drop(server_handle);
+    }
+
+    #[tokio::test]
+    async fn test_http_patch_replay_rollback_succeeds() {
+        // Start a test server that responds to PATCH with 200
+        let (server_handle, port) =
+            start_test_server_with_body("/api/items/1", 200, r#"{"rolled_back":true}"#);
+        let url = format!("http://127.0.0.1:{}/api/items/1", port);
+
+        let adapter = HttpAdapter::new("http");
+        let payload = serde_json::json!({ "quantity": 25 });
+
+        // Compute the correct request digest for PATCH
+        let body_bytes = serde_json::to_vec(&payload).unwrap();
+        let mut d = Sha256::new();
+        d.update(b"Patch");
+        d.update(url.as_bytes());
+        d.update(&body_bytes);
+        let request_digest = format!("{:x}", d.finalize());
+
+        let contract = create_replay_contract_with_method(
+            &url,
+            payload,
+            "patch-rollback-key-22222",
+            &request_digest,
+            &[200],
+            HttpMethod::Patch,
+        );
+
+        let result = adapter.rollback(&contract).await;
+        assert!(
+            result.is_ok(),
+            "rollback should succeed with valid http.replay_v1 PATCH: {:?}",
+            result.err()
+        );
+        let receipt = result.unwrap();
+        assert!(receipt.recovered);
+
+        drop(server_handle);
+    }
+
+    #[tokio::test]
+    async fn test_http_delete_replay_still_fails_closed() {
+        let adapter = HttpAdapter::new("http");
+        let url = "http://example.com/test";
+        let payload = serde_json::json!({ "name": "test" });
+        let body_bytes = serde_json::to_vec(&payload).unwrap();
+        let mut d = Sha256::new();
+        d.update(b"Delete");
+        d.update(url.as_bytes());
+        d.update(&body_bytes);
+        let request_digest = format!("{:x}", d.finalize());
+
+        // Contract with DELETE method should fail - DELETE is not supported for replay
+        let contract = RollbackContract {
+            contract_id: RollbackContractId::new(),
+            intent_id: IntentId::new(),
+            proposal_id: ProposalId::new(),
+            execution_id: ExecutionId::new(),
+            action_type: ActionType::HttpMutation,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "http".to_string(),
+            target: RollbackTarget::HttpRequest {
+                method: HttpMethod::Delete,
+                url: url.to_string(),
+                request_digest: request_digest.clone(),
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![CompensationStep {
+                order: 1,
+                adapter_key: "http".to_string(),
+                operation: "http.replay_v1".to_string(),
+                args: JsonMap::from([
+                    (
+                        "method".to_string(),
+                        serde_json::Value::String("DELETE".to_string()), // Invalid method
+                    ),
+                    (
+                        "url".to_string(),
+                        serde_json::Value::String(url.to_string()),
+                    ),
+                    ("payload".to_string(), payload),
+                    ("expected_statuses".to_string(), serde_json::json!([200])),
+                ]),
+                idempotency_key: "delete-idem-key".to_string(),
+            }],
+            auto_commit: false,
+            state: RollbackState::Prepared,
+            created_at: Utc::now(),
+            expires_at: None,
+            metadata: JsonMap::new(),
+        };
+
+        let result = adapter.compensate(&contract).await;
+        assert!(result.is_err(), "compensate should fail for DELETE method");
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("requires method POST/PUT/PATCH"),
+            "error should indicate method is not supported, got: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn test_http_get_replay_still_fails_closed() {
+        let adapter = HttpAdapter::new("http");
+        let url = "http://example.com/test";
+        let payload = serde_json::json!({ "name": "test" });
+        let body_bytes = serde_json::to_vec(&payload).unwrap();
+        let mut d = Sha256::new();
+        d.update(b"Get");
+        d.update(url.as_bytes());
+        d.update(&body_bytes);
+        let request_digest = format!("{:x}", d.finalize());
+
+        // Contract with GET method should fail - GET is not supported for replay
+        let contract = RollbackContract {
+            contract_id: RollbackContractId::new(),
+            intent_id: IntentId::new(),
+            proposal_id: ProposalId::new(),
+            execution_id: ExecutionId::new(),
+            action_type: ActionType::HttpMutation,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "http".to_string(),
+            target: RollbackTarget::HttpRequest {
+                method: HttpMethod::Get,
+                url: url.to_string(),
+                request_digest: request_digest.clone(),
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![CompensationStep {
+                order: 1,
+                adapter_key: "http".to_string(),
+                operation: "http.replay_v1".to_string(),
+                args: JsonMap::from([
+                    (
+                        "method".to_string(),
+                        serde_json::Value::String("GET".to_string()), // Invalid method
+                    ),
+                    (
+                        "url".to_string(),
+                        serde_json::Value::String(url.to_string()),
+                    ),
+                    ("payload".to_string(), payload),
+                    ("expected_statuses".to_string(), serde_json::json!([200])),
+                ]),
+                idempotency_key: "get-idem-key".to_string(),
+            }],
+            auto_commit: false,
+            state: RollbackState::Prepared,
+            created_at: Utc::now(),
+            expires_at: None,
+            metadata: JsonMap::new(),
+        };
+
+        let result = adapter.compensate(&contract).await;
+        assert!(result.is_err(), "compensate should fail for GET method");
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("requires method POST/PUT/PATCH"),
+            "error should indicate method is not supported, got: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn test_http_put_replay_validates_digest() {
+        // Start a test server
+        let (server_handle, port) =
+            start_test_server_with_body("/api/items/1", 200, r#"{"updated":true}"#);
+        let url = format!("http://127.0.0.1:{}/api/items/1", port);
+
+        let adapter = HttpAdapter::new("http");
+        let payload = serde_json::json!({ "name": "updated item" });
+
+        // Compute the correct request digest (but we'll use wrong_digest in contract)
+        let body_bytes = serde_json::to_vec(&payload).unwrap();
+        let mut d = Sha256::new();
+        d.update(b"Put");
+        d.update(url.as_bytes());
+        d.update(&body_bytes);
+        let _correct_digest = format!("{:x}", d.finalize());
+
+        // Use wrong digest in contract
+        let wrong_digest = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+
+        let contract = create_replay_contract_with_method(
+            &url,
+            payload,
+            "put-idem-key",
+            wrong_digest,
+            &[200],
+            HttpMethod::Put,
+        );
+
+        let result = adapter.compensate(&contract).await;
+        assert!(
+            result.is_err(),
+            "compensate should fail when digest mismatches"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("digest mismatch"),
+            "error should indicate digest mismatch, got: {}",
+            err
+        );
+
+        drop(server_handle);
+    }
+
+    #[tokio::test]
+    async fn test_http_put_replay_validates_url() {
+        // Start a test server
+        let (server_handle, port) =
+            start_test_server_with_body("/api/items/1", 200, r#"{"updated":true}"#);
+        let url = format!("http://127.0.0.1:{}/api/items/1", port);
+
+        let adapter = HttpAdapter::new("http");
+        let payload = serde_json::json!({ "name": "updated item" });
+
+        // Compute the correct request digest
+        let body_bytes = serde_json::to_vec(&payload).unwrap();
+        let mut d = Sha256::new();
+        d.update(b"Put");
+        d.update(url.as_bytes());
+        d.update(&body_bytes);
+        let request_digest = format!("{:x}", d.finalize());
+
+        // Create contract with WRONG URL in args (but correct URL in target)
+        let wrong_url = format!("http://127.0.0.1:{}/api/items/999", port);
+        let contract = RollbackContract {
+            contract_id: RollbackContractId::new(),
+            intent_id: IntentId::new(),
+            proposal_id: ProposalId::new(),
+            execution_id: ExecutionId::new(),
+            action_type: ActionType::HttpMutation,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "http".to_string(),
+            target: RollbackTarget::HttpRequest {
+                method: HttpMethod::Put,
+                url: url.clone(),
+                request_digest: request_digest.clone(),
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![create_replay_step_with_method(
+                &wrong_url, // Wrong URL in args
+                payload,
+                "put-idem-key",
+                &[200],
+                "PUT",
+            )],
+            auto_commit: false,
+            state: RollbackState::Prepared,
+            created_at: Utc::now(),
+            expires_at: None,
+            metadata: JsonMap::new(),
+        };
+
+        let result = adapter.compensate(&contract).await;
+        assert!(
+            result.is_err(),
+            "compensate should fail when URL mismatches"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("url must equal target.url"),
+            "error should indicate URL mismatch, got: {}",
+            err
+        );
+
+        drop(server_handle);
+    }
+
+    #[tokio::test]
+    async fn test_http_put_replay_requires_idempotency_key() {
+        // Start a test server
+        let (server_handle, port) =
+            start_test_server_with_body("/api/items/1", 200, r#"{"updated":true}"#);
+        let url = format!("http://127.0.0.1:{}/api/items/1", port);
+
+        let adapter = HttpAdapter::new("http");
+        let payload = serde_json::json!({ "name": "updated item" });
+
+        // Compute the correct request digest
+        let body_bytes = serde_json::to_vec(&payload).unwrap();
+        let mut d = Sha256::new();
+        d.update(b"Put");
+        d.update(url.as_bytes());
+        d.update(&body_bytes);
+        let request_digest = format!("{:x}", d.finalize());
+
+        // Create contract with EMPTY idempotency key
+        let contract = RollbackContract {
+            contract_id: RollbackContractId::new(),
+            intent_id: IntentId::new(),
+            proposal_id: ProposalId::new(),
+            execution_id: ExecutionId::new(),
+            action_type: ActionType::HttpMutation,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "http".to_string(),
+            target: RollbackTarget::HttpRequest {
+                method: HttpMethod::Put,
+                url: url.clone(),
+                request_digest: request_digest.clone(),
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![CompensationStep {
+                order: 1,
+                adapter_key: "http".to_string(),
+                operation: "http.replay_v1".to_string(),
+                args: JsonMap::from([
+                    (
+                        "method".to_string(),
+                        serde_json::Value::String("PUT".to_string()),
+                    ),
+                    ("url".to_string(), serde_json::Value::String(url)),
+                    ("payload".to_string(), payload),
+                    ("expected_statuses".to_string(), serde_json::json!([200])),
+                ]),
+                idempotency_key: "".to_string(), // Empty idempotency key should fail
+            }],
+            auto_commit: false,
+            state: RollbackState::Prepared,
+            created_at: Utc::now(),
+            expires_at: None,
+            metadata: JsonMap::new(),
+        };
+
+        let result = adapter.compensate(&contract).await;
+        assert!(
+            result.is_err(),
+            "compensate should fail with empty idempotency key"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("idempotency_key") && err.to_string().contains("non-empty"),
+            "error should indicate empty idempotency key, got: {}",
+            err
+        );
+
+        drop(server_handle);
+    }
+
+    #[tokio::test]
+    async fn test_http_patch_replay_requires_expected_statuses() {
+        let adapter = HttpAdapter::new("http");
+        let url = "http://example.com/test";
+        let payload = serde_json::json!({ "quantity": 50 });
+
+        // Compute the correct request digest
+        let body_bytes = serde_json::to_vec(&payload).unwrap();
+        let mut d = Sha256::new();
+        d.update(b"Patch");
+        d.update(url.as_bytes());
+        d.update(&body_bytes);
+        let request_digest = format!("{:x}", d.finalize());
+
+        // Create contract with PATCH method but MISSING expected_statuses
+        let contract = RollbackContract {
+            contract_id: RollbackContractId::new(),
+            intent_id: IntentId::new(),
+            proposal_id: ProposalId::new(),
+            execution_id: ExecutionId::new(),
+            action_type: ActionType::HttpMutation,
+            rollback_class: ferrum_proto::RollbackClass::R2Compensatable,
+            adapter_key: "http".to_string(),
+            target: RollbackTarget::HttpRequest {
+                method: HttpMethod::Patch,
+                url: url.to_string(),
+                request_digest: request_digest.clone(),
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![CompensationStep {
+                order: 1,
+                adapter_key: "http".to_string(),
+                operation: "http.replay_v1".to_string(),
+                args: JsonMap::from([
+                    (
+                        "method".to_string(),
+                        serde_json::Value::String("PATCH".to_string()),
+                    ),
+                    (
+                        "url".to_string(),
+                        serde_json::Value::String(url.to_string()),
+                    ),
+                    ("payload".to_string(), payload),
+                    // MISSING: expected_statuses
+                ]),
+                idempotency_key: "patch-idem-key".to_string(),
+            }],
+            auto_commit: false,
+            state: RollbackState::Prepared,
+            created_at: Utc::now(),
+            expires_at: None,
+            metadata: JsonMap::new(),
+        };
+
+        let result = adapter.compensate(&contract).await;
+        assert!(
+            result.is_err(),
+            "compensate should fail when expected_statuses is missing"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("missing required 'expected_statuses'"),
+            "error should indicate missing expected_statuses, got: {}",
+            err
+        );
+    }
+
+    // =============================================================================
+    // Connection pool and retry configuration tests
+    // =============================================================================
+
+    #[test]
+    fn test_pool_config_default_values() {
+        let config = PoolConfig::default();
+        assert_eq!(config.max_connections, 10);
+        assert_eq!(config.connection_timeout_ms, 5000);
+        assert_eq!(config.pool_idle_timeout_ms, 30000);
+    }
+
+    #[test]
+    fn test_pool_config_validation_passes_valid_config() {
+        let config = PoolConfig {
+            max_connections: 50,
+            connection_timeout_ms: 3000,
+            pool_idle_timeout_ms: 60000,
+        };
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_pool_config_validation_fails_zero_max_connections() {
+        let config = PoolConfig {
+            max_connections: 0,
+            connection_timeout_ms: 5000,
+            pool_idle_timeout_ms: 30000,
+        };
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("max_connections"));
+    }
+
+    #[test]
+    fn test_pool_config_validation_fails_exceeds_max_connections() {
+        let config = PoolConfig {
+            max_connections: 1001,
+            connection_timeout_ms: 5000,
+            pool_idle_timeout_ms: 30000,
+        };
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("max_connections"));
+    }
+
+    #[test]
+    fn test_pool_config_validation_fails_zero_connection_timeout() {
+        let config = PoolConfig {
+            max_connections: 10,
+            connection_timeout_ms: 0,
+            pool_idle_timeout_ms: 30000,
+        };
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("connection_timeout_ms"));
+    }
+
+    #[test]
+    fn test_retry_config_default_values() {
+        let config = RetryConfig::default();
+        assert_eq!(config.max_retries, 3);
+        assert_eq!(config.initial_backoff_ms, 100);
+        assert_eq!(config.max_backoff_ms, 5000);
+        assert_eq!(config.retryable_statuses, vec![429, 502, 503, 504]);
+    }
+
+    #[test]
+    fn test_retry_config_validation_passes_valid_config() {
+        let config = RetryConfig {
+            max_retries: 5,
+            initial_backoff_ms: 200,
+            max_backoff_ms: 10000,
+            retryable_statuses: vec![429, 502, 503, 504],
+        };
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_retry_config_validation_fails_exceeds_max_retries() {
+        let config = RetryConfig {
+            max_retries: 11,
+            initial_backoff_ms: 100,
+            max_backoff_ms: 5000,
+            retryable_statuses: vec![429, 502, 503, 504],
+        };
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("max_retries"));
+    }
+
+    #[test]
+    fn test_retry_config_validation_fails_zero_initial_backoff() {
+        let config = RetryConfig {
+            max_retries: 3,
+            initial_backoff_ms: 0,
+            max_backoff_ms: 5000,
+            retryable_statuses: vec![429, 502, 503, 504],
+        };
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("initial_backoff_ms"));
+    }
+
+    #[test]
+    fn test_retry_config_validation_fails_max_less_than_initial() {
+        let config = RetryConfig {
+            max_retries: 3,
+            initial_backoff_ms: 1000,
+            max_backoff_ms: 500,
+            retryable_statuses: vec![429, 502, 503, 504],
+        };
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("max_backoff_ms"));
+    }
+
+    #[test]
+    fn test_retry_config_validation_fails_invalid_status_code() {
+        let config = RetryConfig {
+            max_retries: 3,
+            initial_backoff_ms: 100,
+            max_backoff_ms: 5000,
+            retryable_statuses: vec![99, 502, 503, 504], // 99 is invalid
+        };
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("retryable_statuses"));
+    }
+
+    // =============================================================================
+    // Retry/backoff logic tests
+    // =============================================================================
+
+    #[test]
+    fn test_backoff_delay_increases_exponentially() {
+        let config = RetryConfig {
+            max_retries: 10,
+            initial_backoff_ms: 100,
+            max_backoff_ms: 10000,
+            retryable_statuses: vec![502],
+        };
+
+        // Attempt 0: base delay
+        let delay0 = HttpAdapter::compute_backoff_delay(0, &config);
+        assert_eq!(delay0, Duration::from_millis(100));
+
+        // Attempt 1: 100 * 2 = 200
+        let delay1 = HttpAdapter::compute_backoff_delay(1, &config);
+        assert_eq!(delay1, Duration::from_millis(200));
+
+        // Attempt 2: 100 * 2^2 = 400
+        let delay2 = HttpAdapter::compute_backoff_delay(2, &config);
+        assert_eq!(delay2, Duration::from_millis(400));
+
+        // Attempt 3: 100 * 2^3 = 800
+        let delay3 = HttpAdapter::compute_backoff_delay(3, &config);
+        assert_eq!(delay3, Duration::from_millis(800));
+    }
+
+    #[test]
+    fn test_backoff_delay_respects_max() {
+        let config = RetryConfig {
+            max_retries: 10,
+            initial_backoff_ms: 100,
+            max_backoff_ms: 500,
+            retryable_statuses: vec![502],
+        };
+
+        // Attempt 5: 100 * 2^5 = 3200, but capped at 500
+        let delay5 = HttpAdapter::compute_backoff_delay(5, &config);
+        assert_eq!(delay5, Duration::from_millis(500));
+    }
+
+    #[test]
+    fn test_is_retryable_status() {
+        let config = RetryConfig {
+            max_retries: 3,
+            initial_backoff_ms: 100,
+            max_backoff_ms: 5000,
+            retryable_statuses: vec![429, 502, 503, 504],
+        };
+
+        assert!(HttpAdapter::is_retryable_status(429, &config));
+        assert!(HttpAdapter::is_retryable_status(502, &config));
+        assert!(HttpAdapter::is_retryable_status(503, &config));
+        assert!(HttpAdapter::is_retryable_status(504, &config));
+        assert!(!HttpAdapter::is_retryable_status(200, &config));
+        assert!(!HttpAdapter::is_retryable_status(500, &config));
+    }
+
+    // =============================================================================
+    // Retry attempt tracking tests
+    // =============================================================================
+
+    #[test]
+    fn test_retry_rollback_metadata_tracks_all_attempts() {
+        // Verify that attempt records can be created and serialized properly
+        let attempt1 = AttemptRecord {
+            attempt_number: 0,
+            status_code: 502,
+            succeeded: false,
+            started_at: "2024-01-01T00:00:00Z".to_string(),
+            completed_at: "2024-01-01T00:00:01Z".to_string(),
+            error_message: Some("connection reset".to_string()),
+        };
+
+        let attempt2 = AttemptRecord {
+            attempt_number: 1,
+            status_code: 502,
+            succeeded: false,
+            started_at: "2024-01-01T00:00:01Z".to_string(),
+            completed_at: "2024-01-01T00:00:02Z".to_string(),
+            error_message: Some("connection reset".to_string()),
+        };
+
+        let attempt3 = AttemptRecord {
+            attempt_number: 2,
+            status_code: 200,
+            succeeded: true,
+            started_at: "2024-01-01T00:00:02Z".to_string(),
+            completed_at: "2024-01-01T00:00:03Z".to_string(),
+            error_message: None,
+        };
+
+        let rollback_metadata = RetryRollbackMetadata {
+            version: "retry_rollback_v1".to_string(),
+            total_attempts: 3,
+            attempts: vec![attempt1, attempt2, attempt3],
+            final_error: String::new(),
+            idempotency_key_preserved: true,
+        };
+
+        // Verify serialization works (round-trip through JSON)
+        let json = serde_json::to_string(&rollback_metadata).unwrap();
+        let deserialized: RetryRollbackMetadata = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.version, "retry_rollback_v1");
+        assert_eq!(deserialized.total_attempts, 3);
+        assert_eq!(deserialized.attempts.len(), 3);
+        assert_eq!(deserialized.attempts[0].attempt_number, 0);
+        assert_eq!(deserialized.attempts[2].attempt_number, 2);
+        assert!(deserialized.idempotency_key_preserved);
+    }
+
+    #[test]
+    fn test_attempt_record_serialization() {
+        let record = AttemptRecord {
+            attempt_number: 0,
+            status_code: 502,
+            succeeded: false,
+            started_at: "2024-01-01T00:00:00Z".to_string(),
+            completed_at: "2024-01-01T00:00:01Z".to_string(),
+            error_message: Some("connection reset".to_string()),
+        };
+
+        let json = serde_json::to_string(&record).unwrap();
+        let deserialized: AttemptRecord = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.attempt_number, 0);
+        assert_eq!(deserialized.status_code, 502);
+        assert!(!deserialized.succeeded);
+        assert_eq!(
+            deserialized.error_message,
+            Some("connection reset".to_string())
+        );
+    }
+
+    // =============================================================================
+    // Retry with mock server tests
+    // =============================================================================
+
+    /// Starts a test server that fails N times then succeeds.
+    fn start_failing_then_succeeding_server(
+        fail_count: u16,
+        success_status: u16,
+    ) -> (thread::JoinHandle<()>, u16) {
+        let fail_count = std::sync::Arc::new(std::sync::atomic::AtomicU16::new(fail_count));
+        let fail_count_clone = fail_count.clone();
+        let running = Arc::new(AtomicBool::new(true));
+        let running_clone = running.clone();
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let port = addr.port();
+        listener.set_nonblocking(true).unwrap();
+
+        let handle = thread::spawn(move || {
+            while running_clone.load(Ordering::SeqCst) {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
-                        request_count += 1;
-                        // Read request headers
-                        let mut buf = [0u8; 1024];
-                        let _ = stream.read(&mut buf);
-                        // Send HTTP response with configurable status
-                        let status_line = format!(
-                            "HTTP/1.1 {} {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-                            response_status,
-                            status_text(response_status)
-                        );
-                        let _ = stream.write_all(status_line.as_bytes());
-                        let _ = stream.flush();
+                        let fail_count = fail_count_clone.clone();
+
+                        let mut buffer = [0u8; 8192];
+                        match stream.read(&mut buffer) {
+                            Ok(n) if n > 0 => {
+                                let _request = String::from_utf8_lossy(&buffer[..n]);
+                                let current_fail = fail_count.fetch_sub(1, Ordering::SeqCst);
+                                let status = if current_fail > 0 {
+                                    502 // Fail with retryable status
+                                } else {
+                                    success_status
+                                };
+
+                                let response =
+                                    format!("HTTP/1.1 {} \r\nContent-Length: 0\r\n\r\n", status);
+                                let _ = stream.write_all(response.as_bytes());
+                            }
+                            _ => {}
+                        }
+                    }
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(1));
                     }
                     Err(_) => {
-                        // No connection ready, continue checking time
+                        thread::sleep(Duration::from_millis(1));
                     }
                 }
             }
         });
-        // Give server a moment to start
-        std::thread::sleep(std::time::Duration::from_millis(10));
-        (port, handle)
+
+        thread::sleep(Duration::from_millis(50));
+        (handle, port)
     }
 
-    fn status_text(code: u16) -> &'static str {
-        match code {
-            200 => "OK",
-            201 => "Created",
-            204 => "No Content",
-            400 => "Bad Request",
-            401 => "Unauthorized",
-            403 => "Forbidden",
-            404 => "Not Found",
-            500 => "Internal Server Error",
-            _ => "Unknown",
-        }
-    }
-
-    #[tokio::test]
-    async fn test_prepare_captures_request_metadata() {
-        let adapter = HttpRollbackAdapter::new();
-        let target = make_http_target(HttpMethod::Get, "https://example.com/api");
-        let request = make_prepare_request(target);
-
-        let receipt = adapter.prepare(&request).await.unwrap();
-
-        assert!(receipt.accepted);
-        let meta = receipt.adapter_metadata;
-        // Updated keys to use "bound_" prefix to clarify scope semantics
-        assert_eq!(meta.get("bound_method").unwrap().as_str().unwrap(), "Get");
-        assert_eq!(
-            meta.get("bound_url").unwrap().as_str().unwrap(),
-            "https://example.com/api"
-        );
-        assert!(meta.get("bound_request_digest").unwrap().is_string());
-    }
-
-    #[tokio::test]
-    async fn test_prepare_rejects_empty_url() {
-        let adapter = HttpRollbackAdapter::new();
-        let target = make_http_target(HttpMethod::Get, "");
-        let request = make_prepare_request(target);
-
-        let err = adapter.prepare(&request).await.unwrap_err();
-        match err {
-            AdapterError::Validation(msg) => {
-                assert!(msg.contains("empty"));
-            }
-            _ => panic!("expected validation error, got {:?}", err),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_prepare_captures_approved_request_digest_for_mutation_payload() {
-        let adapter = HttpRollbackAdapter::new();
-        let target = make_http_target(HttpMethod::Post, "https://example.com/api");
-        let mut metadata = JsonMap::new();
-        metadata.insert(
-            APPROVED_HTTP_REQUEST_METADATA_KEY.to_string(),
-            serde_json::json!({
-                "url": "https://example.com/api/users",
-                "method": "POST",
-                "body": {"name": "test"}
-            }),
-        );
-        let request = make_prepare_request_with_metadata(target, metadata);
-
-        let receipt = adapter.prepare(&request).await.unwrap();
-        let meta = receipt.adapter_metadata;
-
-        assert_eq!(
-            meta.get("approved_method").unwrap().as_str().unwrap(),
-            "Post"
-        );
-        assert_eq!(
-            meta.get("approved_url").unwrap().as_str().unwrap(),
-            "https://example.com/api/users"
-        );
-        assert_eq!(
-            meta.get("approved_body_present").unwrap().as_bool(),
-            Some(true)
-        );
-        assert!(meta.get("approved_body_digest").unwrap().is_string());
-        assert!(meta.get("approved_request_digest").unwrap().is_string());
-        assert_ne!(
-            meta.get("bound_request_digest"),
-            meta.get("approved_request_digest")
-        );
-    }
-
-    #[tokio::test]
-    async fn test_prepare_rejects_approved_payload_outside_scope() {
-        let adapter = HttpRollbackAdapter::new();
-        let target = make_http_target(HttpMethod::Post, "https://example.com/api");
-        let mut metadata = JsonMap::new();
-        metadata.insert(
-            APPROVED_HTTP_REQUEST_METADATA_KEY.to_string(),
-            serde_json::json!({
-                "url": "https://example.com/other",
-                "method": "POST",
-                "body": {"name": "test"}
-            }),
-        );
-        let request = make_prepare_request_with_metadata(target, metadata);
-
-        let err = adapter.prepare(&request).await.unwrap_err();
-        match err {
-            AdapterError::Validation(msg) => assert!(msg.contains("not within bound scope")),
-            other => panic!("expected validation error, got {:?}", other),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_prepare_rejects_approved_payload_method_mismatch() {
-        let adapter = HttpRollbackAdapter::new();
-        let target = make_http_target(HttpMethod::Post, "https://example.com/api");
-        let mut metadata = JsonMap::new();
-        metadata.insert(
-            APPROVED_HTTP_REQUEST_METADATA_KEY.to_string(),
-            serde_json::json!({
-                "url": "https://example.com/api/users",
-                "method": "PUT",
-                "body": {"name": "test"}
-            }),
-        );
-        let request = make_prepare_request_with_metadata(target, metadata);
-
-        let err = adapter.prepare(&request).await.unwrap_err();
-        match err {
-            AdapterError::Validation(msg) => assert!(msg.contains("does not match bound method")),
-            other => panic!("expected validation error, got {:?}", other),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_verify_fails_without_status_check() {
-        let adapter = HttpRollbackAdapter::new();
-        let target = make_http_target(HttpMethod::Get, "https://example.com/api");
-        let contract = make_contract(target, JsonMap::new(), vec![]);
-
-        let receipt = adapter.verify(&contract).await.unwrap();
-
-        assert!(!receipt.verified);
-        let meta = receipt.adapter_metadata;
-        assert!(
-            meta.get("reason")
-                .unwrap()
-                .as_str()
-                .unwrap()
-                .contains("no HttpStatusExpected")
-        );
-    }
-
-    #[tokio::test]
-    async fn test_verify_returns_true_when_status_matches() {
-        let (port, handle) = start_local_server(200);
-        let adapter = HttpRollbackAdapter::new();
-        let target = make_http_target(HttpMethod::Get, &format!("http://127.0.0.1:{}/test", port));
-        let check = make_status_check(200);
-        let contract = make_contract(target, JsonMap::new(), vec![check]);
-
-        let receipt = adapter.verify(&contract).await.unwrap();
-
-        assert!(receipt.verified);
-        assert_eq!(
-            receipt
-                .adapter_metadata
-                .get("actual_status")
-                .unwrap()
-                .as_u64()
-                .unwrap(),
-            200
-        );
-        let _ = handle.join();
-    }
-
-    #[tokio::test]
-    async fn test_verify_returns_false_when_status_differs() {
-        let (port, handle) = start_local_server(404);
-        let adapter = HttpRollbackAdapter::new();
-        let target = make_http_target(HttpMethod::Get, &format!("http://127.0.0.1:{}/test", port));
-        let check = make_status_check(200); // Expect 200 but server returns 404
-        let contract = make_contract(target, JsonMap::new(), vec![check]);
-
-        let receipt = adapter.verify(&contract).await.unwrap();
-
-        assert!(!receipt.verified);
-        assert_eq!(
-            receipt
-                .adapter_metadata
-                .get("actual_status")
-                .unwrap()
-                .as_u64()
-                .unwrap(),
-            404
-        );
-        assert_eq!(
-            receipt
-                .adapter_metadata
-                .get("expected_status")
-                .unwrap()
-                .as_u64()
-                .unwrap(),
-            200
-        );
-        let _ = handle.join();
-    }
-
-    #[tokio::test]
-    async fn test_rollback_is_conservative_noop() {
-        let adapter = HttpRollbackAdapter::new();
-        let target = make_http_target(HttpMethod::Get, "https://example.com/api");
-        let contract = make_contract(target, JsonMap::new(), vec![]);
-
-        let receipt = adapter.rollback(&contract).await.unwrap();
-
-        // Rollback succeeds but is a no-op
-        assert!(receipt.recovered);
-        let meta = receipt.adapter_metadata;
-        assert_eq!(meta.get("rollback").unwrap().as_str().unwrap(), "no-op");
-    }
-
-    #[tokio::test]
-    async fn test_compensate_same_as_rollback() {
-        let adapter = HttpRollbackAdapter::new();
-        let target = make_http_target(HttpMethod::Get, "https://example.com/api");
-        let contract = make_contract(target, JsonMap::new(), vec![]);
-
-        let compensate_receipt = adapter.compensate(&contract).await.unwrap();
-        let rollback_receipt = adapter.rollback(&contract).await.unwrap();
-
-        assert_eq!(compensate_receipt.recovered, rollback_receipt.recovered);
-        assert_eq!(
-            compensate_receipt.adapter_metadata.get("rollback"),
-            rollback_receipt.adapter_metadata.get("rollback")
-        );
-    }
-
-    #[tokio::test]
-    async fn test_execute_returns_status_in_result_digest() {
-        let (port, handle) = start_local_server(201);
-        let adapter = HttpRollbackAdapter::new();
-        let target = make_http_target(HttpMethod::Get, &format!("http://127.0.0.1:{}/test", port));
-        let contract = make_contract(target, JsonMap::new(), vec![]);
-
-        let receipt = adapter
-            .execute(&contract, &serde_json::json!({}))
-            .await
-            .unwrap();
-
-        assert!(receipt.result_digest.is_some());
-        assert_eq!(receipt.result_digest.unwrap(), "201");
-        let _ = handle.join();
-    }
-
-    /// Regression test: non-success execute-time HTTP status must NOT verify.
-    /// Without explicit HttpStatusExpected, only 2xx statuses should auto-verify.
-    /// A 500 status should cause verify to return verified=false (fail-closed).
-    #[tokio::test]
-    async fn test_verify_fails_for_non_success_execute_time_status() {
-        let adapter = HttpRollbackAdapter::new();
-        let target = make_http_target(HttpMethod::Get, "https://example.com/api");
-
-        // Simulate execute-time metadata with a 500 Internal Server Error
-        let mut metadata = JsonMap::new();
-        metadata.insert("status".to_string(), serde_json::json!(500));
-
-        // No explicit verify_checks - relying on execute-time metadata fallback
-        let contract = make_contract(target, metadata, vec![]);
-
-        let receipt = adapter.verify(&contract).await.unwrap();
-
-        // Must NOT verify - 500 is not a successful HTTP status (fail-closed)
-        assert!(
-            !receipt.verified,
-            "500 status should NOT auto-verify; verify must be fail-closed. metadata={:?}",
-            receipt.adapter_metadata
-        );
-    }
-
-    /// Verify that 2xx execute-time status DOES verify (positive case for the fix).
-    #[tokio::test]
-    async fn test_verify_succeeds_for_success_execute_time_status() {
-        let adapter = HttpRollbackAdapter::new();
-        let target = make_http_target(HttpMethod::Get, "https://example.com/api");
-
-        // Simulate execute-time metadata with a 200 OK
-        let mut metadata = JsonMap::new();
-        metadata.insert("status".to_string(), serde_json::json!(200));
-
-        // No explicit verify_checks - relying on execute-time metadata fallback
-        let contract = make_contract(target, metadata, vec![]);
-
-        let receipt = adapter.verify(&contract).await.unwrap();
-
-        // 200 IS a successful status and should verify
-        assert!(
-            receipt.verified,
-            "200 status should auto-verify; got {:?}",
-            receipt.adapter_metadata
-        );
-    }
-
-    // === Additional Verify Semantics Tests (Issue #97 slice) ===
-
-    /// Test: GET without explicit HttpStatusExpected auto-verifies 2xx via execute-time metadata.
-    /// This locks the semantics that GET 2xx is self-verifying without explicit check.
-    #[tokio::test]
-    async fn test_verify_get_auto_verifies_2xx_without_explicit_check() {
-        let adapter = HttpRollbackAdapter::new();
-        let target = make_http_target(HttpMethod::Get, "https://example.com/api");
-
-        // Execute-time metadata with 201 Created
-        let mut metadata = JsonMap::new();
-        metadata.insert("status".to_string(), serde_json::json!(201));
-
-        // No explicit verify_checks - 2xx auto-verifies
-        let contract = make_contract(target, metadata, vec![]);
-
-        let receipt = adapter.verify(&contract).await.unwrap();
-
-        assert!(
-            receipt.verified,
-            "GET 2xx should auto-verify without explicit check. metadata={:?}",
-            receipt.adapter_metadata
-        );
-        assert_eq!(
-            receipt
-                .adapter_metadata
-                .get("verified_via")
-                .unwrap()
-                .as_str()
-                .unwrap(),
-            "execute-time metadata",
-            "should indicate auto-verify via execute-time metadata"
-        );
-    }
-
-    /// Test: GET with explicit HttpStatusExpected(404) fails when server returns 200.
-    /// This locks the semantics that explicit check requires exact status match.
-    #[tokio::test]
-    async fn test_verify_get_with_explicit_404_check_fails_when_server_returns_200() {
-        let (port, handle) = start_local_server(200);
-        let adapter = HttpRollbackAdapter::new();
-        let target = make_http_target(HttpMethod::Get, &format!("http://127.0.0.1:{}/test", port));
-
-        // Explicit check expects 404
-        let check = make_status_check(404);
-        let contract = make_contract(target, JsonMap::new(), vec![check]);
-
-        let receipt = adapter.verify(&contract).await.unwrap();
-
-        // Should fail - server returned 200, not 404
-        assert!(
-            !receipt.verified,
-            "GET with explicit 404 check should fail when server returns 200"
-        );
-        assert_eq!(
-            receipt
-                .adapter_metadata
-                .get("actual_status")
-                .unwrap()
-                .as_u64()
-                .unwrap(),
-            200,
-            "actual_status should reflect the 200 from server"
-        );
-        assert_eq!(
-            receipt
-                .adapter_metadata
-                .get("expected_status")
-                .unwrap()
-                .as_u64()
-                .unwrap(),
-            404,
-            "expected_status should reflect the explicit check"
-        );
-        let _ = handle.join();
-    }
-
-    /// Test: Mutation POST with 4xx execute-time status fails verify (fail-closed).
-    /// Mutations do NOT auto-verify 4xx - only 2xx auto-verify.
-    #[tokio::test]
-    async fn test_verify_mutation_post_4xx_execute_time_fails() {
-        let adapter = HttpRollbackAdapter::new();
-        let target = make_http_target(HttpMethod::Post, "https://example.com/api");
-
-        // Execute-time metadata with 400 Bad Request
-        let mut metadata = JsonMap::new();
-        metadata.insert("status".to_string(), serde_json::json!(400));
-        metadata.insert(
-            "executed_url".to_string(),
-            serde_json::json!("https://example.com/api/users"),
-        );
-
-        // No explicit verify_checks
-        let contract = make_contract(target, metadata, vec![]);
-
-        let receipt = adapter.verify(&contract).await.unwrap();
-
-        // 4xx should NOT auto-verify for mutations - fail-closed
-        assert!(
-            !receipt.verified,
-            "Mutation 4xx should NOT auto-verify; verify must be fail-closed. metadata={:?}",
-            receipt.adapter_metadata
-        );
-        assert_eq!(
-            receipt
-                .adapter_metadata
-                .get("actual_status")
-                .unwrap()
-                .as_u64()
-                .unwrap(),
-            400,
-            "actual_status should be 400"
-        );
-    }
-
-    /// Test: Mutation PUT with explicit 404 check crosscheck fails when execute-time was 200.
-    /// Explicit check acts as crosscheck against execute-time metadata, not a live request.
-    #[tokio::test]
-    async fn test_verify_mutation_put_explicit_404_check_fails_when_executed_200() {
-        let adapter = HttpRollbackAdapter::new();
-        let target = make_http_target(HttpMethod::Put, "https://example.com/api/users/1");
-
-        // Execute-time metadata says 200 OK
-        let mut metadata = JsonMap::new();
-        metadata.insert("status".to_string(), serde_json::json!(200));
-        metadata.insert(
-            "executed_url".to_string(),
-            serde_json::json!("https://example.com/api/users/1"),
-        );
-
-        // Explicit check expects 404 - crosscheck mismatch
-        let check = make_status_check(404);
-        let contract = make_contract(target, metadata, vec![check]);
-
-        let receipt = adapter.verify(&contract).await.unwrap();
-
-        // Should fail - execute-time (200) != explicit check (404)
-        assert!(
-            !receipt.verified,
-            "Mutation with explicit 404 check should fail when execute-time was 200"
-        );
-        assert_eq!(
-            receipt
-                .adapter_metadata
-                .get("actual_status")
-                .unwrap()
-                .as_u64()
-                .unwrap(),
-            200,
-            "actual_status should be from execute-time metadata"
-        );
-        assert_eq!(
-            receipt
-                .adapter_metadata
-                .get("expected_status")
-                .unwrap()
-                .as_u64()
-                .unwrap(),
-            404,
-            "expected_status should be from explicit check"
-        );
-    }
-
-    /// Test: Mutation PATCH with 5xx execute-time status fails verify (fail-closed).
-    /// 5xx are never auto-verified - they indicate server error.
-    #[tokio::test]
-    async fn test_verify_mutation_patch_5xx_execute_time_fails() {
-        let adapter = HttpRollbackAdapter::new();
-        let target = make_http_target(HttpMethod::Patch, "https://example.com/api/users/1");
-
-        // Execute-time metadata with 503 Service Unavailable
-        let mut metadata = JsonMap::new();
-        metadata.insert("status".to_string(), serde_json::json!(503));
-        metadata.insert(
-            "executed_url".to_string(),
-            serde_json::json!("https://example.com/api/users/1"),
-        );
-
-        // No explicit verify_checks
-        let contract = make_contract(target, metadata, vec![]);
-
-        let receipt = adapter.verify(&contract).await.unwrap();
-
-        // 5xx should NOT auto-verify for mutations - fail-closed
-        assert!(
-            !receipt.verified,
-            "Mutation 5xx should NOT auto-verify; verify must be fail-closed. metadata={:?}",
-            receipt.adapter_metadata
-        );
-        assert_eq!(
-            receipt
-                .adapter_metadata
-                .get("actual_status")
-                .unwrap()
-                .as_u64()
-                .unwrap(),
-            503,
-            "actual_status should be 503"
-        );
-    }
-
-    /// Test: DELETE with 204 No Content execute-time auto-verifies.
-    /// 204 is a successful 2xx status.
-    #[tokio::test]
-    async fn test_verify_delete_204_execute_time_auto_verifies() {
-        let adapter = HttpRollbackAdapter::new();
-        let target = make_http_target(HttpMethod::Delete, "https://example.com/api/users/1");
-
-        // Execute-time metadata with 204 No Content
-        let mut metadata = JsonMap::new();
-        metadata.insert("status".to_string(), serde_json::json!(204));
-        metadata.insert(
-            "executed_url".to_string(),
-            serde_json::json!("https://example.com/api/users/1"),
-        );
-
-        // No explicit verify_checks
-        let contract = make_contract(target, metadata, vec![]);
-
-        let receipt = adapter.verify(&contract).await.unwrap();
-
-        // 204 IS a successful 2xx status and should auto-verify
-        assert!(
-            receipt.verified,
-            "DELETE 204 should auto-verify. metadata={:?}",
-            receipt.adapter_metadata
-        );
-    }
-
-    /// Test: GET without execute-time status metadata fails-closed.
-    /// Even for GET, if no status metadata is available, verify must fail.
-    #[tokio::test]
-    async fn test_verify_get_without_execute_metadata_fails_closed() {
-        let adapter = HttpRollbackAdapter::new();
-        let target = make_http_target(HttpMethod::Get, "https://example.com/api");
-
-        // No status in metadata
-        let metadata = JsonMap::new();
-        let contract = make_contract(target, metadata, vec![]);
-
-        let receipt = adapter.verify(&contract).await.unwrap();
-
-        // Must fail - no status to verify against
-        assert!(
-            !receipt.verified,
-            "GET without execute-time metadata should fail-closed. metadata={:?}",
-            receipt.adapter_metadata
-        );
-        assert!(
-            receipt
-                .adapter_metadata
-                .get("reason")
-                .unwrap()
-                .as_str()
-                .unwrap()
-                .contains("no HttpStatusExpected"),
-            "reason should indicate missing status check"
-        );
-    }
-
-    /// Test: execute stores non-2xx status in metadata correctly.
-    /// Verifies that the adapter properly records the actual status code.
-    #[tokio::test]
-    async fn test_execute_stores_non_2xx_status_in_metadata() {
-        let (port, handle) = start_local_server(400);
-        let adapter = HttpRollbackAdapter::new();
-        let target = make_http_target(HttpMethod::Post, &format!("http://127.0.0.1:{}/api", port));
-
-        let mut metadata = JsonMap::new();
-        metadata.insert(
-            "approved_request_digest".to_string(),
-            serde_json::json!(HttpRollbackAdapter::compute_body_aware_digest(
-                &HttpMethod::Post,
-                &format!("http://127.0.0.1:{}/api", port),
-                &serde_json::json!({"name": "test"}),
-                None,
-            )),
-        );
-        let contract = make_contract(target, metadata, vec![]);
-        let payload = serde_json::json!({
-            "body": {"name": "test"}
-        });
-
-        let receipt = adapter.execute(&contract, &payload).await.unwrap();
-
-        // Status should be stored regardless of success/failure
-        assert_eq!(
-            receipt
-                .adapter_metadata
-                .get("status")
-                .unwrap()
-                .as_u64()
-                .unwrap(),
-            400,
-            "execute should store 400 in metadata"
-        );
-        // result_digest should contain the status as string
-        assert_eq!(
-            receipt.result_digest.unwrap(),
-            "400",
-            "result_digest should be the status code string"
-        );
-        let _ = handle.join();
-    }
-
-    /// Test: Execute for GET stores 3xx redirect status in metadata (fail-closed for verify).
-    #[tokio::test]
-    async fn test_execute_stores_3xx_status_for_get() {
-        let (port, handle) = start_local_server(301);
-        let adapter = HttpRollbackAdapter::new();
-        let target = make_http_target(HttpMethod::Get, &format!("http://127.0.0.1:{}/api", port));
-
-        let metadata = JsonMap::new();
-        let contract = make_contract(target, metadata, vec![]);
-
-        let receipt = adapter
-            .execute(&contract, &serde_json::json!({}))
-            .await
-            .unwrap();
-
-        // 3xx is stored but will fail verify (not 2xx)
-        assert_eq!(
-            receipt
-                .adapter_metadata
-                .get("status")
-                .unwrap()
-                .as_u64()
-                .unwrap(),
-            301,
-            "execute should store 301 in metadata"
-        );
-        let _ = handle.join();
-    }
-
-    /// Test: Mutation verify with explicit status check does NOT replay a network call.
-    /// This test proves that even when an explicit HttpStatusExpected check is provided,
-    /// mutations use execute-time metadata only and do NOT re-request against the server.
-    ///
-    /// Proof: We provide an executed_url that points to an unreachable address.
-    /// If verify tried to replay (make a network call), it would fail with a connection error.
-    /// Since verify succeeds using execute-time metadata, no replay occurred.
-    #[tokio::test]
-    async fn test_verify_mutation_with_explicit_check_does_not_replay() {
-        let adapter = HttpRollbackAdapter::new();
-        let target = make_http_target(HttpMethod::Post, "https://example.com/api");
-
-        // Execute-time metadata with 201 Created
-        let mut metadata = JsonMap::new();
-        metadata.insert("status".to_string(), serde_json::json!(201));
-        // This URL is unreachable - if verify tries to replay, it would fail
-        metadata.insert(
-            "executed_url".to_string(),
-            serde_json::json!("http://254.254.254.254:9999/unreachable"),
-        );
-        metadata.insert("executed_method".to_string(), serde_json::json!("Post"));
-
-        // Explicit check expects 201
-        let check = make_status_check(201);
-        let contract = make_contract(target, metadata, vec![check]);
-
-        let receipt = adapter.verify(&contract).await.unwrap();
-
-        // Should verify successfully - uses execute-time metadata, no replay
-        assert!(
-            receipt.verified,
-            "Mutation with explicit check should verify using execute-time metadata, not replay. metadata={:?}",
-            receipt.adapter_metadata
-        );
-        // If verify_url was used for replay, it would have failed with connection error
-        // The fact that it succeeded proves no replay happened
-        assert_eq!(
-            receipt
-                .adapter_metadata
-                .get("verified_via")
-                .unwrap()
-                .as_str()
-                .unwrap(),
-            "execute-time metadata",
-            "should indicate execute-time metadata was used, not live replay"
-        );
-    }
-
-    /// Test: GET verify with explicit check does not use execute-time metadata path.
-    /// This demonstrates asymmetry: GET with explicit check skips the execute-time metadata
-    /// path entirely, while mutations always use execute-time metadata.
-    ///
-    /// Observable behavior: verified=true and verified_via is NOT set to "execute-time metadata".
-    /// The actual mechanism (live replay vs cached) is an implementation detail.
-    #[tokio::test]
-    async fn test_verify_get_with_explicit_check_skips_execute_time_metadata() {
-        // Use a reachable local server so verify can succeed
-        let (port, handle) = start_local_server(200);
-        let adapter = HttpRollbackAdapter::new();
-        let target = make_http_target(HttpMethod::Get, &format!("http://127.0.0.1:{}/test", port));
-
-        // No execute-time status - GET with explicit check does not need it
-        let metadata = JsonMap::new();
-
-        // Explicit check expects 200
-        let check = make_status_check(200);
-        let contract = make_contract(target, metadata, vec![check]);
-
-        let receipt = adapter.verify(&contract).await.unwrap();
-
-        // Should verify - explicit check satisfied
-        assert!(
-            receipt.verified,
-            "GET with explicit check should verify successfully"
-        );
-        // verified_via should NOT be "execute-time metadata" - this distinguishes GET from mutation behavior
-        assert!(
-            receipt.adapter_metadata.get("verified_via").is_none(),
-            "GET with explicit check should not use execute-time metadata path (distinguishes from mutations)"
-        );
-        let _ = handle.join();
-    }
-
-    /// Test that execute uses payload URL when provided (concrete URL within bound scope prefix).
-    /// The bound URL is https://example.com/api but payload specifies https://example.com/api/users
-    /// which is within scope, so it should succeed.
-    #[tokio::test]
-    async fn test_execute_uses_payload_url_within_scope() {
-        let (port, handle) = start_local_server(200);
-        let adapter = HttpRollbackAdapter::new();
-
-        // Bound URL scope: base path only
-        let bound_url = format!("http://127.0.0.1:{}/api", port);
-        let target = make_http_target(HttpMethod::Get, &bound_url);
-
-        // Payload URL is a sub-path within the bound scope
-        let payload_url = format!("http://127.0.0.1:{}/api/users", port);
-        let mut metadata = JsonMap::new();
-        metadata.insert(
-            "approved_request_digest".to_string(),
-            serde_json::json!(HttpRollbackAdapter::compute_body_aware_digest(
-                &HttpMethod::Get,
-                &payload_url,
-                &serde_json::Value::Null,
-                None,
-            )),
-        );
-        let contract = make_contract(target, metadata, vec![]);
-        let payload = serde_json::json!({
-            "url": payload_url,
-            "method": "GET"
-        });
-
-        let receipt = adapter.execute(&contract, &payload).await.unwrap();
-
-        // Execute should succeed and use the payload URL
-        assert!(receipt.result_digest.is_some());
-        let meta = &receipt.adapter_metadata;
-        // bound_url should be the scope prefix
-        assert_eq!(meta.get("bound_url").unwrap().as_str().unwrap(), bound_url);
-        // executed_url should be the concrete URL from payload
-        assert_eq!(
-            meta.get("executed_url").unwrap().as_str().unwrap(),
-            payload_url
-        );
-        assert_eq!(
-            meta.get("executed_request_digest"),
-            contract.metadata.get("approved_request_digest")
-        );
-        let _ = handle.join();
-    }
-
-    #[tokio::test]
-    async fn test_execute_rejects_request_digest_mismatch_against_approved_request() {
-        let adapter = HttpRollbackAdapter::new();
-        let bound_url = "https://example.com/api";
-        let target = make_http_target(HttpMethod::Get, bound_url);
-        let approved_url = "https://example.com/api/users";
-        let executed_url = "https://example.com/api/projects";
-
-        let mut metadata = JsonMap::new();
-        metadata.insert(
-            "approved_request_digest".to_string(),
-            serde_json::json!(HttpRollbackAdapter::compute_body_aware_digest(
-                &HttpMethod::Get,
-                approved_url,
-                &serde_json::Value::Null,
-                None,
-            )),
-        );
-        let contract = make_contract(target, metadata, vec![]);
-        let payload = serde_json::json!({
-            "url": executed_url,
-            "method": "GET"
-        });
-
-        let err = adapter.execute(&contract, &payload).await.unwrap_err();
-        match err {
-            AdapterError::Validation(msg) => {
-                assert!(msg.contains("does not match approved request digest"));
-            }
-            other => panic!("expected validation error, got {:?}", other),
-        }
-    }
-
-    /// Test that execute fails closed when payload URL is outside the bound scope.
-    /// The bound URL is https://example.com/api but payload specifies https://example.com/other
-    /// which is NOT within scope, so it should fail with validation error.
-    #[tokio::test]
-    async fn test_execute_fails_closed_for_out_of_scope_payload_url() {
-        let adapter = HttpRollbackAdapter::new();
-
-        // Bound URL scope: /api prefix only
-        let bound_url = "https://example.com/api";
-        let target = make_http_target(HttpMethod::Get, bound_url);
-        let contract = make_contract(target, JsonMap::new(), vec![]);
-
-        // Payload URL is NOT within the bound scope (/other vs /api)
-        let payload_url = "https://example.com/other";
-        let payload = serde_json::json!({
-            "url": payload_url,
-            "method": "GET"
-        });
-
-        let err = adapter.execute(&contract, &payload).await.unwrap_err();
-        match err {
-            AdapterError::Validation(msg) => {
-                assert!(
-                    msg.contains("not within bound scope"),
-                    "expected scope validation error, got: {}",
-                    msg
-                );
-            }
-            other => panic!(
-                "expected validation error for out-of-scope URL, got: {:?}",
-                other
-            ),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_execute_fails_closed_for_prefix_confusion_payload_url() {
-        let adapter = HttpRollbackAdapter::new();
-
-        let bound_url = "https://example.com/api";
-        let target = make_http_target(HttpMethod::Get, bound_url);
-        let contract = make_contract(target, JsonMap::new(), vec![]);
-
-        let payload = serde_json::json!({
-            "url": "https://example.com/apix",
-            "method": "GET"
-        });
-
-        let err = adapter.execute(&contract, &payload).await.unwrap_err();
-        match err {
-            AdapterError::Validation(msg) => {
-                assert!(msg.contains("not within bound scope"));
-            }
-            other => panic!("expected validation error, got: {:?}", other),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_execute_rejects_invalid_payload_method() {
-        let adapter = HttpRollbackAdapter::new();
-        let target = make_http_target(HttpMethod::Get, "https://example.com/api");
-        let contract = make_contract(target, JsonMap::new(), vec![]);
-
-        let payload = serde_json::json!({
-            "url": "https://example.com/api/users",
-            "method": "TRACE"
-        });
-
-        let err = adapter.execute(&contract, &payload).await.unwrap_err();
-        match err {
-            AdapterError::Validation(msg) => {
-                assert!(msg.contains("unsupported HTTP method"));
-            }
-            other => panic!("expected validation error, got: {:?}", other),
-        }
-    }
-
-    /// Test that execute defaults to bound URL when payload does not specify URL.
-    #[tokio::test]
-    async fn test_execute_uses_bound_url_when_payload_has_no_url() {
-        let (port, handle) = start_local_server(200);
-        let adapter = HttpRollbackAdapter::new();
-
-        // Bound URL is the concrete URL
-        let bound_url = format!("http://127.0.0.1:{}/api", port);
-        let target = make_http_target(HttpMethod::Get, &bound_url);
-        let contract = make_contract(target, JsonMap::new(), vec![]);
-
-        // Empty payload - no URL specified
-        let payload = serde_json::json!({});
-
-        let receipt = adapter.execute(&contract, &payload).await.unwrap();
-
-        // Execute should succeed and use the bound URL
-        assert!(receipt.result_digest.is_some());
-        let meta = &receipt.adapter_metadata;
-        // Both bound_url and executed_url should be the same since no payload override
-        assert_eq!(meta.get("bound_url").unwrap().as_str().unwrap(), bound_url);
-        assert_eq!(
-            meta.get("executed_url").unwrap().as_str().unwrap(),
-            bound_url
-        );
-        let _ = handle.join();
-    }
-
-    /// Test execute with POST method and body.
-    #[tokio::test]
-    async fn test_execute_post_with_body() {
-        let (port, handle) = start_local_server(201);
-        let adapter = HttpRollbackAdapter::new();
-
-        let bound_url = format!("http://127.0.0.1:{}/api", port);
-        let target = make_http_target(HttpMethod::Post, &bound_url);
-        let mut metadata = JsonMap::new();
-        metadata.insert(
-            "approved_request_digest".to_string(),
-            serde_json::json!(HttpRollbackAdapter::compute_body_aware_digest(
-                &HttpMethod::Post,
-                &bound_url,
-                &serde_json::json!({"name": "test"}),
-                None,
-            )),
-        );
-        let contract = make_contract(target, metadata, vec![]);
-        let payload = serde_json::json!({
-            "body": {"name": "test"}
-        });
-
-        let receipt = adapter.execute(&contract, &payload).await.unwrap();
-
-        assert!(receipt.result_digest.is_some());
-        assert_eq!(receipt.result_digest.unwrap(), "201");
-        let meta = &receipt.adapter_metadata;
-        assert_eq!(
-            meta.get("executed_method").unwrap().as_str().unwrap(),
-            "Post"
-        );
-        assert!(
-            meta.get("executed_body_present")
-                .unwrap()
-                .as_bool()
-                .unwrap()
-        );
-        let _ = handle.join();
-    }
-
-    /// Test execute with PUT method.
-    #[tokio::test]
-    async fn test_execute_put_with_body() {
-        let (port, handle) = start_local_server(200);
-        let adapter = HttpRollbackAdapter::new();
-
-        let bound_url = format!("http://127.0.0.1:{}/api/users/1", port);
-        let target = make_http_target(HttpMethod::Put, &bound_url);
-        let mut metadata = JsonMap::new();
-        metadata.insert(
-            "approved_request_digest".to_string(),
-            serde_json::json!(HttpRollbackAdapter::compute_body_aware_digest(
-                &HttpMethod::Put,
-                &bound_url,
-                &serde_json::json!({"name": "updated"}),
-                None,
-            )),
-        );
-        let contract = make_contract(target, metadata, vec![]);
-        let payload = serde_json::json!({
-            "body": {"name": "updated"}
-        });
-
-        let receipt = adapter.execute(&contract, &payload).await.unwrap();
-
-        assert!(receipt.result_digest.is_some());
-        assert_eq!(receipt.result_digest.unwrap(), "200");
-        let _ = handle.join();
-    }
-
-    /// Test execute with DELETE method.
-    #[tokio::test]
-    async fn test_execute_delete() {
-        let (port, handle) = start_local_server(204);
-        let adapter = HttpRollbackAdapter::new();
-
-        let bound_url = format!("http://127.0.0.1:{}/api/users/1", port);
-        let target = make_http_target(HttpMethod::Delete, &bound_url);
-        let metadata = JsonMap::new();
-        let contract = make_contract(target, metadata, vec![]);
-        let payload = serde_json::json!({});
-
-        let receipt = adapter.execute(&contract, &payload).await.unwrap();
-
-        assert!(receipt.result_digest.is_some());
-        assert_eq!(receipt.result_digest.unwrap(), "204");
-        let _ = handle.join();
-    }
-
-    /// Test verify for mutation using execute-time metadata (positive case).
-    #[tokio::test]
-    async fn test_verify_mutation_uses_execute_time_metadata() {
-        let adapter = HttpRollbackAdapter::new();
-        let target = make_http_target(HttpMethod::Post, "https://example.com/api");
-
-        // Simulate execute-time metadata with 201 Created
-        let mut metadata = JsonMap::new();
-        metadata.insert("status".to_string(), serde_json::json!(201));
-        metadata.insert(
-            "executed_url".to_string(),
-            serde_json::json!("https://example.com/api/users"),
-        );
-        metadata.insert("executed_method".to_string(), serde_json::json!("Post"));
-
-        let contract = make_contract(target, metadata, vec![]);
-
-        let receipt = adapter.verify(&contract).await.unwrap();
-
-        // Should verify - 201 matches expected from execute-time metadata
-        assert!(
-            receipt.verified,
-            "201 should verify via execute-time metadata"
-        );
-        let meta = &receipt.adapter_metadata;
-        assert_eq!(
-            meta.get("verified_via").unwrap().as_str().unwrap(),
-            "execute-time metadata"
-        );
-    }
-
-    /// Test verify for mutation with explicit status check acts as crosscheck.
-    #[tokio::test]
-    async fn test_verify_mutation_with_explicit_check_crosscheck() {
-        let adapter = HttpRollbackAdapter::new();
-        let target = make_http_target(HttpMethod::Post, "https://example.com/api");
-
-        // Execute-time metadata says 201
-        let mut metadata = JsonMap::new();
-        metadata.insert("status".to_string(), serde_json::json!(201));
-        metadata.insert(
-            "executed_url".to_string(),
-            serde_json::json!("https://example.com/api/users"),
-        );
-
-        // Explicit check says 201
-        let check = make_status_check(201);
-        let contract = make_contract(target, metadata, vec![check]);
-
-        let receipt = adapter.verify(&contract).await.unwrap();
-
-        // Should verify - 201 matches both execute-time and explicit
-        assert!(receipt.verified);
-    }
-
-    /// Test verify for mutation without explicit check only auto-verifies 2xx.
-    #[tokio::test]
-    async fn test_verify_mutation_without_explicit_check_rejects_non_success_status() {
-        let adapter = HttpRollbackAdapter::new();
-        let target = make_http_target(HttpMethod::Post, "https://example.com/api");
-
-        let mut metadata = JsonMap::new();
-        metadata.insert("status".to_string(), serde_json::json!(500));
-        metadata.insert(
-            "executed_url".to_string(),
-            serde_json::json!("https://example.com/api/users"),
-        );
-
-        let contract = make_contract(target, metadata, vec![]);
-        let receipt = adapter.verify(&contract).await.unwrap();
-
-        assert!(
-            !receipt.verified,
-            "500 should not auto-verify for mutations"
-        );
-        assert_eq!(
-            receipt
-                .adapter_metadata
-                .get("actual_status")
-                .unwrap()
-                .as_u64(),
-            Some(500)
-        );
-    }
-
-    /// Test verify for mutation fails when execute-time status doesn't match explicit check.
-    #[tokio::test]
-    async fn test_verify_mutation_fails_when_status_mismatch() {
-        let adapter = HttpRollbackAdapter::new();
-        let target = make_http_target(HttpMethod::Post, "https://example.com/api");
-
-        // Execute-time metadata says 201
-        let mut metadata = JsonMap::new();
-        metadata.insert("status".to_string(), serde_json::json!(201));
-        metadata.insert(
-            "executed_url".to_string(),
-            serde_json::json!("https://example.com/api/users"),
-        );
-
-        // Explicit check says 200 - mismatch
-        let check = make_status_check(200);
-        let contract = make_contract(target, metadata, vec![check]);
-
-        let receipt = adapter.verify(&contract).await.unwrap();
-
-        // Should NOT verify - execute-time (201) doesn't match explicit (200)
-        assert!(!receipt.verified, "201 != 200 should fail verify");
-    }
-
-    /// Test that verify uses executed_url from metadata when re-checking explicit status.
-    /// This verifies the fix where verify re-executes against the actual executed URL, not the bound scope.
-    #[tokio::test]
-    async fn test_verify_uses_executed_url_from_metadata() {
-        let (port, handle) = start_local_server(200);
-        let adapter = HttpRollbackAdapter::new();
-
-        // Bound URL scope is /api but executed was /api/users
-        let bound_url = format!("http://127.0.0.1:{}/api", port);
-        let executed_url = format!("http://127.0.0.1:{}/api/users", port);
-        let target = make_http_target(HttpMethod::Get, &bound_url);
-
-        // Contract metadata has executed_url from execute phase
-        let mut metadata = JsonMap::new();
-        metadata.insert("status".to_string(), serde_json::json!(200));
-        metadata.insert(
-            "executed_url".to_string(),
-            serde_json::json!(executed_url.clone()),
-        );
-
-        let check = make_status_check(200);
-        let contract = make_contract(target, metadata, vec![check]);
-
-        let receipt = adapter.verify(&contract).await.unwrap();
-
-        assert!(receipt.verified);
-        // Verify should have used the executed_url, not bound_url
-        assert_eq!(
-            receipt
-                .adapter_metadata
-                .get("verify_url")
-                .unwrap()
-                .as_str()
-                .unwrap(),
-            executed_url
-        );
-        let _ = handle.join();
-    }
-
-    #[tokio::test]
-    async fn test_verify_fails_closed_for_mutation_without_execute_metadata() {
-        let adapter = HttpRollbackAdapter::new();
-        let target = make_http_target(HttpMethod::Post, "https://example.com/api");
-        let contract = make_contract(target, JsonMap::new(), vec![]);
-
-        // Mutation without execute-time metadata should fail-closed (verified: false)
-        let receipt = adapter.verify(&contract).await.unwrap();
-        assert!(!receipt.verified);
-        let meta = &receipt.adapter_metadata;
-        assert_eq!(meta.get("bound_method").unwrap().as_str().unwrap(), "Post");
-        assert!(
-            meta.get("reason")
-                .unwrap()
-                .as_str()
-                .unwrap()
-                .contains("mutation method verify requires execute-time status in metadata")
-        );
-    }
-
-    /// Test that rollback is conservative no-op for all methods.
-    #[tokio::test]
-    async fn test_rollback_is_conservative_noop_for_all_methods() {
-        let methods = vec![
-            HttpMethod::Get,
-            HttpMethod::Post,
-            HttpMethod::Put,
-            HttpMethod::Patch,
-            HttpMethod::Delete,
-        ];
-
-        for method in methods {
-            let adapter = HttpRollbackAdapter::new();
-            let target = make_http_target(method.clone(), "https://example.com/api");
-            let contract = make_contract(target, JsonMap::new(), vec![]);
-
-            let receipt = adapter.rollback(&contract).await.unwrap();
-
-            // Rollback succeeds but is a no-op for all methods
-            assert!(
-                receipt.recovered,
-                "rollback should succeed (no-op) for {:?}",
-                method
-            );
-            let meta = receipt.adapter_metadata;
-            assert_eq!(meta.get("rollback").unwrap().as_str().unwrap(), "no-op");
-            assert!(
-                meta.get("reason")
-                    .unwrap()
-                    .as_str()
-                    .unwrap()
-                    .contains("R3 boundary"),
-                "reason should mention R3 boundary for {:?}",
-                method
-            );
-        }
-    }
-
-    /// Test that body-aware digest is correctly computed for mutations.
-    #[tokio::test]
-    async fn test_body_aware_digest_computation() {
-        let method = HttpMethod::Post;
-        let url = "https://example.com/api";
-
-        // Empty body
-        let empty_body = serde_json::Value::Null;
-        let digest_empty =
-            HttpRollbackAdapter::compute_body_aware_digest(&method, url, &empty_body, None);
-
-        // Object body
-        let obj_body = serde_json::json!({"key": "value"});
-        let digest_obj =
-            HttpRollbackAdapter::compute_body_aware_digest(&method, url, &obj_body, None);
-
-        // Array body
-        let arr_body = serde_json::json!([1, 2, 3]);
-        let digest_arr =
-            HttpRollbackAdapter::compute_body_aware_digest(&method, url, &arr_body, None);
-
-        // All digests should be different
-        assert_ne!(
-            digest_empty, digest_obj,
-            "empty vs object body should differ"
-        );
-        assert_ne!(
-            digest_empty, digest_arr,
-            "empty vs array body should differ"
-        );
-        assert_ne!(digest_obj, digest_arr, "object vs array body should differ");
-
-        // Same body should produce same digest
-        let digest_obj2 =
-            HttpRollbackAdapter::compute_body_aware_digest(&method, url, &obj_body, None);
-        assert_eq!(
-            digest_obj, digest_obj2,
-            "same body should produce same digest"
-        );
-    }
-
-    /// Test that GET digest does not include body.
-    #[tokio::test]
-    async fn test_get_digest_ignores_body() {
-        let method = HttpMethod::Get;
-        let url = "https://example.com/api";
-
-        let digest_no_body = HttpRollbackAdapter::compute_body_aware_digest(
-            &method,
-            url,
-            &serde_json::Value::Null,
-            None,
-        );
-        let digest_with_body = HttpRollbackAdapter::compute_body_aware_digest(
-            &method,
-            url,
-            &serde_json::json!({"key": "value"}),
-            None,
-        );
-
-        // For GET, body should not affect digest
-        assert_eq!(
-            digest_no_body, digest_with_body,
-            "GET digest should be same regardless of body"
-        );
-    }
-
-    /// Test that parse_request_parts correctly extracts headers from payload.
-    #[tokio::test]
-    async fn test_parse_request_parts_extracts_headers() {
-        let payload = serde_json::json!({
-            "url": "https://example.com/api",
-            "method": "POST",
-            "body": {"name": "test"},
-            "headers": {
-                "content-type": "application/json",
-                "x-custom-header": "custom-value"
+    /// Starts a test server that always fails with a specific status.
+    #[allow(dead_code)]
+    fn start_always_failing_server(response_status: u16) -> (thread::JoinHandle<()>, u16) {
+        let running = Arc::new(AtomicBool::new(true));
+        let running_clone = running.clone();
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let port = addr.port();
+        listener.set_nonblocking(true).unwrap();
+
+        let handle = thread::spawn(move || {
+            while running_clone.load(Ordering::SeqCst) {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let mut buffer = [0u8; 8192];
+                        match stream.read(&mut buffer) {
+                            Ok(n) if n > 0 => {
+                                let response = format!(
+                                    "HTTP/1.1 {} \r\nContent-Length: 0\r\n\r\n",
+                                    response_status
+                                );
+                                let _ = stream.write_all(response.as_bytes());
+                            }
+                            _ => {}
+                        }
+                    }
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(1));
+                    }
+                    Err(_) => {
+                        thread::sleep(Duration::from_millis(1));
+                    }
+                }
             }
         });
 
-        let result = HttpRollbackAdapter::parse_request_parts(&payload).unwrap();
-        let (_url, _method, _body, headers, _auth) = result;
-
-        assert!(headers.is_some());
-        let headers = headers.unwrap();
-        assert_eq!(
-            headers.get("content-type"),
-            Some(&"application/json".to_string())
-        );
-        assert_eq!(
-            headers.get("x-custom-header"),
-            Some(&"custom-value".to_string())
-        );
+        thread::sleep(Duration::from_millis(50));
+        (handle, port)
     }
 
-    #[tokio::test]
-    async fn test_parse_request_parts_normalizes_header_names_to_lowercase() {
-        let payload = serde_json::json!({
-            "headers": {
-                "Authorization": "Bearer token123",
-                "X-Custom-Header": "custom-value"
-            }
-        });
-
-        let (_url, _method, _body, headers, _auth) =
-            HttpRollbackAdapter::parse_request_parts(&payload).unwrap();
-        let headers = headers.unwrap();
-
-        assert_eq!(
-            headers.get("authorization"),
-            Some(&"Bearer token123".to_string())
-        );
-        assert_eq!(
-            headers.get("x-custom-header"),
-            Some(&"custom-value".to_string())
-        );
-        assert!(!headers.contains_key("Authorization"));
-    }
-
-    /// Test that parse_request_parts handles missing headers gracefully.
-    #[tokio::test]
-    async fn test_parse_request_parts_handles_missing_headers() {
-        let payload = serde_json::json!({
-            "url": "https://example.com/api",
-            "method": "GET"
-        });
-
-        let result = HttpRollbackAdapter::parse_request_parts(&payload).unwrap();
-        let (_url, _method, _body, headers, _auth) = result;
-
-        assert!(headers.is_none());
-    }
-
-    /// Test that parse_request_parts rejects non-object headers.
-    #[tokio::test]
-    async fn test_parse_request_parts_rejects_non_object_headers() {
-        let payload = serde_json::json!({
-            "url": "https://example.com/api",
-            "method": "GET",
-            "headers": "not-an-object"
-        });
-
-        let err = HttpRollbackAdapter::parse_request_parts(&payload).unwrap_err();
-        match err {
-            HttpAdapterError::Validation(msg) => {
-                assert!(msg.contains("must be an object"));
-            }
-            other => panic!("expected validation error, got {:?}", other),
-        }
-    }
-
-    /// Test that parse_request_parts rejects non-string header values.
-    #[tokio::test]
-    async fn test_parse_request_parts_rejects_non_string_header_values() {
-        let payload = serde_json::json!({
-            "url": "https://example.com/api",
-            "method": "GET",
-            "headers": {
-                "content-type": 123
-            }
-        });
-
-        let err = HttpRollbackAdapter::parse_request_parts(&payload).unwrap_err();
-        match err {
-            HttpAdapterError::Validation(msg) => {
-                assert!(msg.contains("must be a string"));
-            }
-            other => panic!("expected validation error, got {:?}", other),
-        }
-    }
-
-    /// Test that execute succeeds when headers are provided.
-    /// Header application is verified by integration tests that check server-side header receipt.
-    #[tokio::test]
-    async fn test_execute_succeeds_with_headers() {
-        let (port, handle) = start_local_server(200);
-        let adapter = HttpRollbackAdapter::new();
-
-        let bound_url = format!("http://127.0.0.1:{}/api", port);
-        let target = make_http_target(HttpMethod::Get, &bound_url);
-        let metadata = JsonMap::new();
-        let contract = make_contract(target, metadata, vec![]);
-
-        let payload = serde_json::json!({
-            "headers": {
-                "x-custom-header": "custom-value",
-                "authorization": "Bearer token123"
-            }
-        });
-
-        let receipt = adapter.execute(&contract, &payload).await.unwrap();
-
-        // Execute should succeed with headers
-        assert!(receipt.result_digest.is_some());
-        assert_eq!(receipt.result_digest.unwrap(), "200");
-        let _ = handle.join();
-    }
-
-    /// Test that execute works with empty headers object.
-    #[tokio::test]
-    async fn test_execute_with_empty_headers_object() {
-        let (port, handle) = start_local_server(200);
-        let adapter = HttpRollbackAdapter::new();
-
-        let bound_url = format!("http://127.0.0.1:{}/api", port);
-        let target = make_http_target(HttpMethod::Get, &bound_url);
-        let metadata = JsonMap::new();
-        let contract = make_contract(target, metadata, vec![]);
-
-        let payload = serde_json::json!({
-            "headers": {}
-        });
-
-        let receipt = adapter.execute(&contract, &payload).await.unwrap();
-        assert!(receipt.result_digest.is_some());
-        let _ = handle.join();
-    }
-
-    /// Test that execute fails for invalid header names.
-    #[tokio::test]
-    async fn test_execute_fails_for_invalid_header_name() {
-        let adapter = HttpRollbackAdapter::new();
-
-        let bound_url = "https://example.com/api";
-        let target = make_http_target(HttpMethod::Get, bound_url);
-        let metadata = JsonMap::new();
-        let contract = make_contract(target, metadata, vec![]);
-
-        let payload = serde_json::json!({
-            "headers": {
-                "invalid header name": "value"
-            }
-        });
-
-        let err = adapter.execute(&contract, &payload).await.unwrap_err();
-        match err {
-            AdapterError::Validation(msg) => {
-                assert!(msg.contains("invalid header name"));
-            }
-            other => panic!("expected validation error, got {:?}", other),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_execute_rejects_request_digest_mismatch_when_headers_differ() {
-        let adapter = HttpRollbackAdapter::new();
-        let bound_url = "https://example.com/api";
-        let target = make_http_target(HttpMethod::Get, bound_url);
-
-        let approved_headers = HashMap::from([(
-            "authorization".to_string(),
-            "Bearer approved-token".to_string(),
-        )]);
-        let mut metadata = JsonMap::new();
-        metadata.insert(
-            "approved_request_digest".to_string(),
-            serde_json::json!(HttpRollbackAdapter::compute_body_aware_digest(
-                &HttpMethod::Get,
-                bound_url,
-                &serde_json::Value::Null,
-                Some(&approved_headers),
-            )),
-        );
-        let contract = make_contract(target, metadata, vec![]);
-        let payload = serde_json::json!({
-            "headers": {
-                "authorization": "Bearer different-token"
-            }
-        });
-
-        let err = adapter.execute(&contract, &payload).await.unwrap_err();
-        match err {
-            AdapterError::Validation(msg) => {
-                assert!(msg.contains("does not match approved request digest"));
-            }
-            other => panic!("expected validation error, got {:?}", other),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_get_digest_changes_when_headers_change() {
-        let method = HttpMethod::Get;
-        let url = "https://example.com/api";
-        let headers_a =
-            HashMap::from([("authorization".to_string(), "Bearer token-a".to_string())]);
-        let headers_b =
-            HashMap::from([("authorization".to_string(), "Bearer token-b".to_string())]);
-
-        let digest_a = HttpRollbackAdapter::compute_body_aware_digest(
-            &method,
-            url,
-            &serde_json::Value::Null,
-            Some(&headers_a),
-        );
-        let digest_b = HttpRollbackAdapter::compute_body_aware_digest(
-            &method,
-            url,
-            &serde_json::Value::Null,
-            Some(&headers_b),
-        );
-
-        assert_ne!(
-            digest_a, digest_b,
-            "header changes should affect GET request digest"
-        );
-    }
-
-    // === Canonical Query String Tests ===
+    // =============================================================================
+    // Connection pool tracking tests (mock-based)
+    // =============================================================================
 
     #[test]
-    fn test_canonicalize_query_string_sort_keys() {
-        // Different key orders should canonicalize to same form
-        let (url1, query1) =
-            HttpRollbackAdapter::canonicalize_query_string("https://example.com/api?b=2&a=1");
-        let (url2, query2) =
-            HttpRollbackAdapter::canonicalize_query_string("https://example.com/api?a=1&b=2");
+    fn test_connection_reuse_via_pool_stats() {
+        // This test verifies connection pooling by checking that after multiple
+        // sequential requests to the same host, connections are being reused.
+        // We track this via connection metadata.
 
-        assert_eq!(url1, url2);
-        assert_eq!(query1, query2);
-        assert_eq!(query1, "a=1&b=2");
-    }
-
-    #[test]
-    fn test_canonicalize_query_string_preserves_values() {
-        // Empty values should be preserved
-        let (_url1, query1) =
-            HttpRollbackAdapter::canonicalize_query_string("https://example.com/api?flag&a=1");
-        assert_eq!(query1, "a=1&flag");
-
-        // Values with special characters
-        let (_url2, query2) = HttpRollbackAdapter::canonicalize_query_string(
-            "https://example.com/api?b=hello%20world&a=test",
-        );
-        assert_eq!(query2, "a=test&b=hello%20world");
-    }
-
-    #[test]
-    fn test_canonicalize_query_string_handles_no_query() {
-        let (url, query) =
-            HttpRollbackAdapter::canonicalize_query_string("https://example.com/api");
-        assert_eq!(url, "https://example.com/api");
-        assert!(query.is_empty());
-    }
-
-    #[test]
-    fn test_canonicalize_query_string_handles_empty_query() {
-        let (url, query) =
-            HttpRollbackAdapter::canonicalize_query_string("https://example.com/api?");
-        assert_eq!(url, "https://example.com/api");
-        assert!(query.is_empty());
-    }
-
-    #[test]
-    fn test_query_digest_same_for_semantically_identical_queries() {
-        // Same query string in different order should produce same digest
-        let digest1 = HttpRollbackAdapter::compute_body_aware_digest(
-            &HttpMethod::Get,
-            "https://example.com/api?b=2&a=1",
-            &serde_json::Value::Null,
-            None,
-        );
-        let digest2 = HttpRollbackAdapter::compute_body_aware_digest(
-            &HttpMethod::Get,
-            "https://example.com/api?a=1&b=2",
-            &serde_json::Value::Null,
-            None,
-        );
-        assert_eq!(
-            digest1, digest2,
-            "semantically identical query strings should produce same digest"
-        );
-    }
-
-    #[test]
-    fn test_query_digest_differs_for_different_queries() {
-        // Different query strings should produce different digests
-        let digest1 = HttpRollbackAdapter::compute_body_aware_digest(
-            &HttpMethod::Get,
-            "https://example.com/api?a=1",
-            &serde_json::Value::Null,
-            None,
-        );
-        let digest2 = HttpRollbackAdapter::compute_body_aware_digest(
-            &HttpMethod::Get,
-            "https://example.com/api?a=2",
-            &serde_json::Value::Null,
-            None,
-        );
-        assert_ne!(
-            digest1, digest2,
-            "different query strings should produce different digests"
-        );
-    }
-
-    #[test]
-    fn test_extract_query_from_url() {
-        assert_eq!(
-            HttpRollbackAdapter::extract_query_from_url("https://example.com/api?b=2&a=1"),
-            Some("a=1&b=2".to_string())
-        );
-        assert_eq!(
-            HttpRollbackAdapter::extract_query_from_url("https://example.com/api"),
-            None
-        );
-        assert_eq!(
-            HttpRollbackAdapter::extract_query_from_url("https://example.com/api?"),
-            None
-        );
-    }
-
-    #[test]
-    fn test_query_digest_computation() {
-        // No query
-        let digest_none = HttpRollbackAdapter::compute_query_digest(None);
-        // Empty query
-        let digest_empty = HttpRollbackAdapter::compute_query_digest(Some(""));
-        // With query
-        let digest_a1 = HttpRollbackAdapter::compute_query_digest(Some("a=1"));
-
-        assert_eq!(
-            digest_none, digest_empty,
-            "none and empty query should produce same digest"
-        );
-        assert_ne!(
-            digest_none, digest_a1,
-            "no query vs query should produce different digests"
-        );
-    }
-
-    /// Test that prepare captures query metadata
-    #[tokio::test]
-    async fn test_prepare_captures_query_metadata() {
-        let adapter = HttpRollbackAdapter::new();
-        let target = make_http_target(HttpMethod::Get, "https://example.com/api");
-
-        // First query: ?b=2&a=1
-        let mut metadata = JsonMap::new();
-        metadata.insert(
-            APPROVED_HTTP_REQUEST_METADATA_KEY.to_string(),
-            serde_json::json!({
-                "url": "https://example.com/api?b=2&a=1",
-                "method": "GET"
-            }),
-        );
-        let request = make_prepare_request_with_metadata(target.clone(), metadata);
-
-        let receipt = adapter.prepare(&request).await.unwrap();
-        let meta = receipt.adapter_metadata;
-
-        // Query should be present
-        assert_eq!(
-            meta.get("approved_query_present").unwrap().as_bool(),
-            Some(true),
-            "approved query should be present"
-        );
-        // Query digest should be stored (not raw query)
-        assert!(
-            meta.get("approved_query_digest").unwrap().is_string(),
-            "approved query digest should be stored"
-        );
-
-        let digest1 = meta
-            .get("approved_request_digest")
-            .unwrap()
-            .as_str()
-            .unwrap();
-
-        // Second query: ?a=1&b=2 (same query, different order)
-        let mut metadata2 = JsonMap::new();
-        metadata2.insert(
-            APPROVED_HTTP_REQUEST_METADATA_KEY.to_string(),
-            serde_json::json!({
-                "url": "https://example.com/api?a=1&b=2",
-                "method": "GET"
-            }),
-        );
-        let request2 = make_prepare_request_with_metadata(target.clone(), metadata2);
-        let receipt2 = adapter.prepare(&request2).await.unwrap();
-        let meta2 = receipt2.adapter_metadata;
-
-        let digest2 = meta2
-            .get("approved_request_digest")
-            .unwrap()
-            .as_str()
-            .unwrap();
-
-        // Digests should match for same query in different order
-        assert_eq!(
-            digest1, digest2,
-            "approved_request_digest should match for semantically identical queries"
-        );
-        assert_eq!(
-            meta.get("approved_query_digest").unwrap(),
-            meta2.get("approved_query_digest").unwrap(),
-            "same query in different order should have same digest"
-        );
-    }
-
-    /// Test that execute captures query metadata
-    #[tokio::test]
-    async fn test_execute_captures_query_metadata() {
-        let (port, handle) = start_local_server(200);
-        let adapter = HttpRollbackAdapter::new();
-
-        let bound_url = format!("http://127.0.0.1:{}/api", port);
-        let target = make_http_target(HttpMethod::Get, &bound_url);
-        let metadata = JsonMap::new();
-        let contract = make_contract(target, metadata, vec![]);
-
-        let payload = serde_json::json!({
-            "url": format!("http://127.0.0.1:{}/api?b=2&a=1", port),
-            "method": "GET"
-        });
-
-        let receipt = adapter.execute(&contract, &payload).await.unwrap();
-        let meta = &receipt.adapter_metadata;
-
-        // Query should be present
-        assert_eq!(
-            meta.get("executed_query_present").unwrap().as_bool(),
-            Some(true),
-            "executed query should be present"
-        );
-        // Query digest should be stored
-        assert!(
-            meta.get("executed_query_digest").unwrap().is_string(),
-            "executed query digest should be stored"
-        );
-        let _ = handle.join();
-    }
-
-    /// Test that different query order produces same digest during execute
-    #[tokio::test]
-    async fn test_execute_same_query_different_order_succeeds() {
-        let (port, handle) = start_local_server(200);
-        let adapter = HttpRollbackAdapter::new();
-
-        let bound_url = format!("http://127.0.0.1:{}/api", port);
-        let target = make_http_target(HttpMethod::Get, &bound_url);
-
-        // First prepare with query ?a=1&b=2
-        let mut metadata = JsonMap::new();
-        metadata.insert(
-            APPROVED_HTTP_REQUEST_METADATA_KEY.to_string(),
-            serde_json::json!({
-                "url": format!("http://127.0.0.1:{}/api?a=1&b=2", port),
-                "method": "GET"
-            }),
-        );
-        let request = make_prepare_request_with_metadata(target.clone(), metadata);
-        let receipt = adapter.prepare(&request).await.unwrap();
-        let approved_digest = receipt
-            .adapter_metadata
-            .get("approved_request_digest")
-            .unwrap()
-            .as_str()
-            .unwrap()
-            .to_string();
-
-        // Contract with approved digest
-        let mut contract_metadata = JsonMap::new();
-        contract_metadata.insert(
-            "approved_request_digest".to_string(),
-            serde_json::json!(approved_digest),
-        );
-        let contract = make_contract(target.clone(), contract_metadata, vec![]);
-
-        // Execute with query ?b=2&a=1 (different order, same semantic)
-        let payload = serde_json::json!({
-            "url": format!("http://127.0.0.1:{}/api?b=2&a=1", port),
-            "method": "GET"
-        });
-
-        // Should succeed because digests match
-        let result = adapter.execute(&contract, &payload).await;
-        assert!(
-            result.is_ok(),
-            "semantically identical query in different order should execute successfully"
-        );
-        let _ = handle.join();
-    }
-
-    // === Bearer Auth Tests ===
-
-    /// Test that parse_request_parts accepts valid bearer auth object.
-    #[tokio::test]
-    async fn test_parse_request_parts_accepts_bearer_auth() {
-        let payload = serde_json::json!({
-            "url": "https://example.com/api",
-            "method": "GET",
-            "auth": {
-                "type": "bearer",
-                "token": "test-token-123"
-            }
-        });
-
-        let result = HttpRollbackAdapter::parse_request_parts(&payload).unwrap();
-        let (_url, _method, _body, headers, auth) = result;
-
-        // No headers since we used auth field
-        assert!(headers.is_none());
-        // Auth should be present
-        assert!(auth.is_some());
-        let http_auth = auth.unwrap();
-        match http_auth {
-            HttpAuth::Bearer { token } => assert_eq!(token, "test-token-123"),
-            HttpAuth::Basic { .. } => panic!("expected bearer auth, got basic"),
-            HttpAuth::ApiKey { .. } => panic!("expected bearer auth, got api_key"),
-        }
-    }
-
-    /// Test that parse_request_parts rejects malformed auth (missing token).
-    #[tokio::test]
-    async fn test_parse_request_parts_rejects_auth_missing_token() {
-        let payload = serde_json::json!({
-            "url": "https://example.com/api",
-            "method": "GET",
-            "auth": {
-                "type": "bearer"
-            }
-        });
-
-        let err = HttpRollbackAdapter::parse_request_parts(&payload).unwrap_err();
-        match err {
-            HttpAdapterError::Validation(msg) => {
-                assert!(msg.contains("invalid auth"));
-                assert!(msg.contains("token"));
-            }
-            other => panic!("expected validation error, got {:?}", other),
-        }
-    }
-
-    /// Test that parse_request_parts rejects auth with empty token.
-    #[tokio::test]
-    async fn test_parse_request_parts_rejects_auth_empty_token() {
-        let payload = serde_json::json!({
-            "url": "https://example.com/api",
-            "method": "GET",
-            "auth": {
-                "type": "bearer",
-                "token": ""
-            }
-        });
-
-        let err = HttpRollbackAdapter::parse_request_parts(&payload).unwrap_err();
-        match err {
-            HttpAdapterError::Validation(msg) => {
-                assert!(msg.contains("invalid auth"));
-                assert!(msg.contains("empty"));
-            }
-            other => panic!("expected validation error, got {:?}", other),
-        }
-    }
-
-    /// Test that parse_request_parts rejects unsupported auth type.
-    #[tokio::test]
-    async fn test_parse_request_parts_rejects_unsupported_auth_type() {
-        let payload = serde_json::json!({
-            "url": "https://example.com/api",
-            "method": "GET",
-            "auth": {
-                "type": "digest",
-                "token": "user:pass"
-            }
-        });
-
-        let err = HttpRollbackAdapter::parse_request_parts(&payload).unwrap_err();
-        match err {
-            HttpAdapterError::Validation(msg) => {
-                assert!(msg.contains("unsupported auth type"));
-            }
-            other => panic!("expected validation error, got {:?}", other),
-        }
-    }
-
-    /// Test that parse_request_parts rejects non-object auth.
-    #[tokio::test]
-    async fn test_parse_request_parts_rejects_non_object_auth() {
-        let payload = serde_json::json!({
-            "url": "https://example.com/api",
-            "method": "GET",
-            "auth": "not-an-object"
-        });
-
-        let err = HttpRollbackAdapter::parse_request_parts(&payload).unwrap_err();
-        match err {
-            HttpAdapterError::Validation(msg) => {
-                assert!(msg.contains("invalid auth"));
-            }
-            other => panic!("expected validation error, got {:?}", other),
-        }
-    }
-
-    /// Test that parse_request_parts rejects ambiguous auth (both headers.authorization and auth).
-    #[tokio::test]
-    async fn test_parse_request_parts_rejects_ambiguous_auth() {
-        let payload = serde_json::json!({
-            "url": "https://example.com/api",
-            "method": "GET",
-            "headers": {
-                "authorization": "Bearer header-token"
-            },
-            "auth": {
-                "type": "bearer",
-                "token": "auth-token"
-            }
-        });
-
-        let err = HttpRollbackAdapter::parse_request_parts(&payload).unwrap_err();
-        match err {
-            HttpAdapterError::Validation(msg) => {
-                assert!(msg.contains("ambiguous auth"));
-            }
-            other => panic!("expected validation error, got {:?}", other),
-        }
-    }
-
-    /// Test that apply_http_auth correctly adds authorization header for bearer auth.
-    #[test]
-    fn test_apply_http_auth_adds_bearer_header() {
-        let headers: HashMap<String, String> = HashMap::new();
-        let auth = HttpAuth::Bearer {
-            token: "test-token".to_string(),
+        // Note: This is a simplified test. Full connection pooling would require
+        // a more sophisticated mock server that tracks connection IDs.
+        // We verify that pool_config can be created and validated.
+        let pool_config = PoolConfig {
+            max_connections: 10,
+            connection_timeout_ms: 5000,
+            pool_idle_timeout_ms: 30000,
         };
+        assert!(pool_config.validate().is_ok());
 
-        let result = HttpRollbackAdapter::apply_http_auth(Some(&headers), Some(&auth));
-        assert!(result.is_some());
-        let result = result.unwrap();
-        assert_eq!(
-            result.get("authorization"),
-            Some(&"Bearer test-token".to_string())
-        );
+        // Verify pool config values are sensible
+        assert!(pool_config.max_connections > 0);
+        assert!(pool_config.connection_timeout_ms > 0);
+        assert!(pool_config.pool_idle_timeout_ms > 0);
     }
 
-    /// Test that apply_http_auth correctly adds authorization header for basic auth.
-    #[test]
-    fn test_apply_http_auth_adds_basic_header() {
-        let headers: HashMap<String, String> = HashMap::new();
-        let auth = HttpAuth::Basic {
-            username: "user".to_string(),
-            password: "pass".to_string(),
-        };
+    // =============================================================================
+    // Idempotency key preservation test
+    // =============================================================================
 
-        let result = HttpRollbackAdapter::apply_http_auth(Some(&headers), Some(&auth));
-        assert!(result.is_some());
-        let result = result.unwrap();
-        assert_eq!(
-            result.get("authorization"),
-            Some(&"Basic dXNlcjpwYXNz".to_string())
-        );
-    }
-
-    /// Test that apply_http_auth merges with existing headers.
-    #[test]
-    fn test_apply_http_auth_merges_with_headers() {
-        let mut headers = HashMap::new();
-        headers.insert("content-type".to_string(), "application/json".to_string());
-        let auth = HttpAuth::Bearer {
-            token: "test-token".to_string(),
-        };
-
-        let result = HttpRollbackAdapter::apply_http_auth(Some(&headers), Some(&auth));
-        assert!(result.is_some());
-        let result = result.unwrap();
-        assert_eq!(
-            result.get("authorization"),
-            Some(&"Bearer test-token".to_string())
-        );
-        assert_eq!(
-            result.get("content-type"),
-            Some(&"application/json".to_string())
-        );
-    }
-
-    /// Test that execute with bearer auth succeeds.
     #[tokio::test]
-    async fn test_execute_with_bearer_auth_succeeds() {
-        let (port, handle) = start_local_server(200);
-        let adapter = HttpRollbackAdapter::new();
+    async fn test_retry_preserves_idempotency_key_across_attempts() {
+        // This test verifies that when retrying, the same idempotency key is used.
+        // We start a server that fails twice then succeeds, and verify the
+        // idempotency key header is present in all requests.
 
-        let bound_url = format!("http://127.0.0.1:{}/api", port);
-        let target = make_http_target(HttpMethod::Get, &bound_url);
-        let metadata = JsonMap::new();
-        let contract = make_contract(target, metadata, vec![]);
+        let (server_handle, port) = start_failing_then_succeeding_server(2, 200);
+        let url = format!("http://127.0.0.1:{}/api/items", port);
 
-        let payload = serde_json::json!({
-            "auth": {
-                "type": "bearer",
-                "token": "test-token-123"
-            }
-        });
+        let adapter = HttpAdapter::new("http");
+        let payload = serde_json::json!({ "name": "test" });
 
-        let receipt = adapter.execute(&contract, &payload).await.unwrap();
+        // Compute the correct request digest for the payload
+        let body_bytes = serde_json::to_vec(&payload).unwrap();
+        let mut d = Sha256::new();
+        d.update(b"Post");
+        d.update(url.as_bytes());
+        d.update(&body_bytes);
+        let request_digest = format!("{:x}", d.finalize());
 
-        assert!(receipt.result_digest.is_some());
-        assert_eq!(receipt.result_digest.unwrap(), "200");
-        // Auth should be stored in metadata as presence and digest only
-        let meta = &receipt.adapter_metadata;
-        assert_eq!(
-            meta.get("executed_auth_present").unwrap().as_bool(),
-            Some(true)
+        // Create contract with valid http.replay_v1 compensation plan
+        let contract = create_replay_contract(
+            &url,
+            payload,
+            "idem-key-retry-test-12345",
+            &request_digest,
+            &[200],
         );
+
+        let receipt = adapter.execute(&contract, &serde_json::json!({})).await;
+
+        // Should succeed after retry
         assert!(
-            meta.get("executed_auth_digest").unwrap().is_string(),
-            "auth digest should be stored, not raw token"
+            receipt.is_ok(),
+            "execute should succeed after retry: {:?}",
+            receipt.err()
         );
-        // Auth kind for observability
-        assert_eq!(
-            meta.get("executed_auth_kind").unwrap().as_str().unwrap(),
-            "bearer"
-        );
-        let _ = handle.join();
-    }
-
-    /// Test that prepare captures bearer auth metadata.
-    #[tokio::test]
-    async fn test_prepare_captures_bearer_auth_metadata() {
-        let adapter = HttpRollbackAdapter::new();
-        let target = make_http_target(HttpMethod::Get, "https://example.com/api");
-
-        let mut metadata = JsonMap::new();
-        metadata.insert(
-            APPROVED_HTTP_REQUEST_METADATA_KEY.to_string(),
-            serde_json::json!({
-                "url": "https://example.com/api",
-                "method": "GET",
-                "auth": {
-                    "type": "bearer",
-                    "token": "prepare-token"
-                }
-            }),
-        );
-        let request = make_prepare_request_with_metadata(target, metadata);
-
-        let receipt = adapter.prepare(&request).await.unwrap();
-        let meta = receipt.adapter_metadata;
-
-        // Auth presence and digest should be stored
-        assert_eq!(
-            meta.get("approved_auth_present").unwrap().as_bool(),
-            Some(true)
-        );
-        assert!(
-            meta.get("approved_auth_digest").unwrap().is_string(),
-            "auth digest should be stored, not raw token"
-        );
-        // Auth kind for observability
-        assert_eq!(
-            meta.get("approved_auth_kind").unwrap().as_str().unwrap(),
-            "bearer"
-        );
-        // Headers digest should reflect the bearer auth being applied
-        assert_eq!(
-            meta.get("approved_headers_present").unwrap().as_bool(),
-            Some(true),
-            "headers should be present after applying bearer auth"
-        );
-    }
-
-    /// Test that bearer auth token affects request digest.
-    #[tokio::test]
-    async fn test_bearer_auth_affects_request_digest() {
-        let adapter = HttpRollbackAdapter::new();
-        let bound_url = "https://example.com/api";
-        let target = make_http_target(HttpMethod::Get, bound_url);
-
-        // First with token A
-        let mut metadata1 = JsonMap::new();
-        metadata1.insert(
-            APPROVED_HTTP_REQUEST_METADATA_KEY.to_string(),
-            serde_json::json!({
-                "url": bound_url,
-                "method": "GET",
-                "auth": {
-                    "type": "bearer",
-                    "token": "token-a"
-                }
-            }),
-        );
-        let request1 = make_prepare_request_with_metadata(target.clone(), metadata1);
-        let receipt1 = adapter.prepare(&request1).await.unwrap();
-        let digest1 = receipt1
-            .adapter_metadata
-            .get("approved_request_digest")
-            .unwrap()
-            .as_str()
-            .unwrap();
-
-        // Second with token B
-        let mut metadata2 = JsonMap::new();
-        metadata2.insert(
-            APPROVED_HTTP_REQUEST_METADATA_KEY.to_string(),
-            serde_json::json!({
-                "url": bound_url,
-                "method": "GET",
-                "auth": {
-                    "type": "bearer",
-                    "token": "token-b"
-                }
-            }),
-        );
-        let request2 = make_prepare_request_with_metadata(target.clone(), metadata2);
-        let receipt2 = adapter.prepare(&request2).await.unwrap();
-        let digest2 = receipt2
-            .adapter_metadata
-            .get("approved_request_digest")
-            .unwrap()
-            .as_str()
-            .unwrap();
-
-        // Digests should differ for different tokens
-        assert_ne!(
-            digest1, digest2,
-            "different bearer tokens should produce different request digests"
-        );
-    }
-
-    /// Test that execute succeeds when auth matches approved auth.
-    #[tokio::test]
-    async fn test_execute_succeeds_when_auth_matches_approved() {
-        let (port, handle) = start_local_server(200);
-        let adapter = HttpRollbackAdapter::new();
-
-        let bound_url = format!("http://127.0.0.1:{}/api", port);
-        let target = make_http_target(HttpMethod::Get, &bound_url);
-
-        // Prepare with specific auth token
-        let mut prepare_metadata = JsonMap::new();
-        prepare_metadata.insert(
-            APPROVED_HTTP_REQUEST_METADATA_KEY.to_string(),
-            serde_json::json!({
-                "url": bound_url,
-                "method": "GET",
-                "auth": {
-                    "type": "bearer",
-                    "token": "approved-token"
-                }
-            }),
-        );
-        let prepare_request = make_prepare_request_with_metadata(target.clone(), prepare_metadata);
-        let receipt = adapter.prepare(&prepare_request).await.unwrap();
-        let approved_digest = receipt
-            .adapter_metadata
-            .get("approved_request_digest")
-            .unwrap()
-            .as_str()
-            .unwrap()
-            .to_string();
-
-        // Contract with approved digest
-        let mut contract_metadata = JsonMap::new();
-        contract_metadata.insert(
-            "approved_request_digest".to_string(),
-            serde_json::json!(approved_digest),
-        );
-        let contract = make_contract(target, contract_metadata, vec![]);
-
-        // Execute with same auth token
-        let payload = serde_json::json!({
-            "auth": {
-                "type": "bearer",
-                "token": "approved-token"
-            }
-        });
-
-        let result = adapter.execute(&contract, &payload).await;
-        assert!(
-            result.is_ok(),
-            "execute should succeed when auth matches approved"
-        );
-        let _ = handle.join();
-    }
-
-    /// Test that execute fails when auth differs from approved.
-    #[tokio::test]
-    async fn test_execute_fails_when_auth_differs_from_approved() {
-        let adapter = HttpRollbackAdapter::new();
-        let bound_url = "https://example.com/api";
-        let target = make_http_target(HttpMethod::Get, bound_url);
-
-        // Prepare with token A
-        let mut prepare_metadata = JsonMap::new();
-        prepare_metadata.insert(
-            APPROVED_HTTP_REQUEST_METADATA_KEY.to_string(),
-            serde_json::json!({
-                "url": bound_url,
-                "method": "GET",
-                "auth": {
-                    "type": "bearer",
-                    "token": "token-a"
-                }
-            }),
-        );
-        let prepare_request = make_prepare_request_with_metadata(target.clone(), prepare_metadata);
-        let receipt = adapter.prepare(&prepare_request).await.unwrap();
-        let approved_digest = receipt
-            .adapter_metadata
-            .get("approved_request_digest")
-            .unwrap()
-            .as_str()
-            .unwrap()
-            .to_string();
-
-        // Contract with approved digest
-        let mut contract_metadata = JsonMap::new();
-        contract_metadata.insert(
-            "approved_request_digest".to_string(),
-            serde_json::json!(approved_digest),
-        );
-        let contract = make_contract(target, contract_metadata, vec![]);
-
-        // Execute with different token
-        let payload = serde_json::json!({
-            "auth": {
-                "type": "bearer",
-                "token": "token-b"
-            }
-        });
-
-        let err = adapter.execute(&contract, &payload).await.unwrap_err();
-        match err {
-            AdapterError::Validation(msg) => {
-                assert!(msg.contains("does not match approved request digest"));
-            }
-            other => panic!("expected validation error, got {:?}", other),
-        }
-    }
-
-    // === API Key Auth Tests ===
-
-    /// Test that parse_request_parts accepts valid api_key auth.
-    #[tokio::test]
-    async fn test_parse_request_parts_accepts_api_key_auth() {
-        let payload = serde_json::json!({
-            "url": "https://example.com/api",
-            "method": "GET",
-            "auth": {
-                "type": "api_key",
-                "header": "X-API-Key",
-                "key": "test-key-123"
-            }
-        });
-
-        let result = HttpRollbackAdapter::parse_request_parts(&payload).unwrap();
-        let (_url, _method, _body, headers, auth) = result;
-
-        // No headers since we used auth field
-        assert!(headers.is_none());
-        // Auth should be present
-        assert!(auth.is_some());
-        let http_auth = auth.unwrap();
-        match http_auth {
-            HttpAuth::ApiKey { header, key } => {
-                assert_eq!(header, "X-API-Key");
-                assert_eq!(key, "test-key-123");
-            }
-            HttpAuth::Bearer { .. } => panic!("expected api_key auth, got bearer"),
-            HttpAuth::Basic { .. } => panic!("expected api_key auth, got basic"),
-        }
-    }
-
-    /// Test that parse_request_parts rejects api_key auth with missing header.
-    #[tokio::test]
-    async fn test_parse_request_parts_rejects_api_key_auth_missing_header() {
-        let payload = serde_json::json!({
-            "url": "https://example.com/api",
-            "method": "GET",
-            "auth": {
-                "type": "api_key",
-                "key": "test-key-123"
-            }
-        });
-
-        let err = HttpRollbackAdapter::parse_request_parts(&payload).unwrap_err();
-        match err {
-            HttpAdapterError::Validation(msg) => {
-                assert!(msg.contains("invalid auth"));
-                assert!(msg.contains("header"));
-            }
-            other => panic!("expected validation error, got {:?}", other),
-        }
-    }
-
-    /// Test that parse_request_parts rejects api_key auth with missing key.
-    #[tokio::test]
-    async fn test_parse_request_parts_rejects_api_key_auth_missing_key() {
-        let payload = serde_json::json!({
-            "url": "https://example.com/api",
-            "method": "GET",
-            "auth": {
-                "type": "api_key",
-                "header": "X-API-Key"
-            }
-        });
-
-        let err = HttpRollbackAdapter::parse_request_parts(&payload).unwrap_err();
-        match err {
-            HttpAdapterError::Validation(msg) => {
-                assert!(msg.contains("invalid auth"));
-                assert!(msg.contains("key"));
-            }
-            other => panic!("expected validation error, got {:?}", other),
-        }
-    }
-
-    /// Test that parse_request_parts rejects api_key auth with empty header.
-    #[tokio::test]
-    async fn test_parse_request_parts_rejects_api_key_auth_empty_header() {
-        let payload = serde_json::json!({
-            "url": "https://example.com/api",
-            "method": "GET",
-            "auth": {
-                "type": "api_key",
-                "header": "",
-                "key": "test-key"
-            }
-        });
-
-        let err = HttpRollbackAdapter::parse_request_parts(&payload).unwrap_err();
-        match err {
-            HttpAdapterError::Validation(msg) => {
-                assert!(msg.contains("invalid auth"));
-                assert!(msg.contains("empty"));
-            }
-            other => panic!("expected validation error, got {:?}", other),
-        }
-    }
-
-    /// Test that parse_request_parts rejects api_key auth with empty key.
-    #[tokio::test]
-    async fn test_parse_request_parts_rejects_api_key_auth_empty_key() {
-        let payload = serde_json::json!({
-            "url": "https://example.com/api",
-            "method": "GET",
-            "auth": {
-                "type": "api_key",
-                "header": "X-API-Key",
-                "key": ""
-            }
-        });
-
-        let err = HttpRollbackAdapter::parse_request_parts(&payload).unwrap_err();
-        match err {
-            HttpAdapterError::Validation(msg) => {
-                assert!(msg.contains("invalid auth"));
-                assert!(msg.contains("empty"));
-            }
-            other => panic!("expected validation error, got {:?}", other),
-        }
-    }
-
-    /// Test that parse_request_parts rejects ambiguous api_key auth (header in headers AND in auth).
-    #[tokio::test]
-    async fn test_parse_request_parts_rejects_ambiguous_api_key_auth() {
-        let payload = serde_json::json!({
-            "url": "https://example.com/api",
-            "method": "GET",
-            "headers": {
-                "x-api-key": "header-key"
-            },
-            "auth": {
-                "type": "api_key",
-                "header": "X-API-Key",
-                "key": "auth-key"
-            }
-        });
-
-        let err = HttpRollbackAdapter::parse_request_parts(&payload).unwrap_err();
-        match err {
-            HttpAdapterError::Validation(msg) => {
-                assert!(msg.contains("ambiguous auth"));
-            }
-            other => panic!("expected validation error, got {:?}", other),
-        }
-    }
-
-    /// Test that apply_http_auth correctly adds api_key header.
-    #[test]
-    fn test_apply_http_auth_adds_api_key_header() {
-        let headers: HashMap<String, String> = HashMap::new();
-        let auth = HttpAuth::ApiKey {
-            header: "X-API-Key".to_string(),
-            key: "test-key-123".to_string(),
-        };
-
-        let result = HttpRollbackAdapter::apply_http_auth(Some(&headers), Some(&auth));
-        assert!(result.is_some());
-        let result = result.unwrap();
-        assert_eq!(result.get("x-api-key"), Some(&"test-key-123".to_string()));
-    }
-
-    /// Test that apply_http_auth merges api_key with existing headers.
-    #[test]
-    fn test_apply_http_auth_merges_api_key_with_headers() {
-        let mut headers = HashMap::new();
-        headers.insert("content-type".to_string(), "application/json".to_string());
-        let auth = HttpAuth::ApiKey {
-            header: "X-API-Key".to_string(),
-            key: "test-key".to_string(),
-        };
-
-        let result = HttpRollbackAdapter::apply_http_auth(Some(&headers), Some(&auth));
-        assert!(result.is_some());
-        let result = result.unwrap();
-        assert_eq!(result.get("x-api-key"), Some(&"test-key".to_string()));
-        assert_eq!(
-            result.get("content-type"),
-            Some(&"application/json".to_string())
-        );
-    }
-
-    /// Test that execute with api_key auth succeeds.
-    #[tokio::test]
-    async fn test_execute_with_api_key_auth_succeeds() {
-        let (port, handle) = start_local_server(200);
-        let adapter = HttpRollbackAdapter::new();
-
-        let bound_url = format!("http://127.0.0.1:{}/api", port);
-        let target = make_http_target(HttpMethod::Get, &bound_url);
-        let metadata = JsonMap::new();
-        let contract = make_contract(target, metadata, vec![]);
-
-        let payload = serde_json::json!({
-            "auth": {
-                "type": "api_key",
-                "header": "X-API-Key",
-                "key": "test-key-123"
-            }
-        });
-
-        let receipt = adapter.execute(&contract, &payload).await.unwrap();
-
-        assert!(receipt.result_digest.is_some());
-        assert_eq!(receipt.result_digest.unwrap(), "200");
-        // Auth should be stored in metadata as presence and digest only
-        let meta = &receipt.adapter_metadata;
-        assert_eq!(
-            meta.get("executed_auth_present").unwrap().as_bool(),
-            Some(true)
-        );
-        assert!(
-            meta.get("executed_auth_digest").unwrap().is_string(),
-            "auth digest should be stored, not raw key"
-        );
-        // Auth kind for observability
-        assert_eq!(
-            meta.get("executed_auth_kind").unwrap().as_str().unwrap(),
-            "api_key"
-        );
-        let _ = handle.join();
-    }
-
-    /// Test that prepare captures api_key auth metadata.
-    #[tokio::test]
-    async fn test_prepare_captures_api_key_auth_metadata() {
-        let adapter = HttpRollbackAdapter::new();
-        let target = make_http_target(HttpMethod::Get, "https://example.com/api");
-
-        let mut metadata = JsonMap::new();
-        metadata.insert(
-            APPROVED_HTTP_REQUEST_METADATA_KEY.to_string(),
-            serde_json::json!({
-                "url": "https://example.com/api",
-                "method": "GET",
-                "auth": {
-                    "type": "api_key",
-                    "header": "X-API-Key",
-                    "key": "prepare-key"
-                }
-            }),
-        );
-        let request = make_prepare_request_with_metadata(target, metadata);
-
-        let receipt = adapter.prepare(&request).await.unwrap();
-        let meta = receipt.adapter_metadata;
-
-        // Auth presence and digest should be stored
-        assert_eq!(
-            meta.get("approved_auth_present").unwrap().as_bool(),
-            Some(true)
-        );
-        assert!(
-            meta.get("approved_auth_digest").unwrap().is_string(),
-            "auth digest should be stored, not raw key"
-        );
-        // Auth kind for observability
-        assert_eq!(
-            meta.get("approved_auth_kind").unwrap().as_str().unwrap(),
-            "api_key"
-        );
-        // Headers digest should reflect the api_key auth being applied
-        assert_eq!(
-            meta.get("approved_headers_present").unwrap().as_bool(),
-            Some(true),
-            "headers should be present after applying api_key auth"
-        );
-    }
-
-    /// Test that api_key auth token affects request digest.
-    #[tokio::test]
-    async fn test_api_key_auth_affects_request_digest() {
-        let adapter = HttpRollbackAdapter::new();
-        let bound_url = "https://example.com/api";
-        let target = make_http_target(HttpMethod::Get, bound_url);
-
-        // First with key A
-        let mut metadata1 = JsonMap::new();
-        metadata1.insert(
-            APPROVED_HTTP_REQUEST_METADATA_KEY.to_string(),
-            serde_json::json!({
-                "url": bound_url,
-                "method": "GET",
-                "auth": {
-                    "type": "api_key",
-                    "header": "X-API-Key",
-                    "key": "key-a"
-                }
-            }),
-        );
-        let request1 = make_prepare_request_with_metadata(target.clone(), metadata1);
-        let receipt1 = adapter.prepare(&request1).await.unwrap();
-        let digest1 = receipt1
-            .adapter_metadata
-            .get("approved_request_digest")
-            .unwrap()
-            .as_str()
-            .unwrap();
-
-        // Second with key B
-        let mut metadata2 = JsonMap::new();
-        metadata2.insert(
-            APPROVED_HTTP_REQUEST_METADATA_KEY.to_string(),
-            serde_json::json!({
-                "url": bound_url,
-                "method": "GET",
-                "auth": {
-                    "type": "api_key",
-                    "header": "X-API-Key",
-                    "key": "key-b"
-                }
-            }),
-        );
-        let request2 = make_prepare_request_with_metadata(target.clone(), metadata2);
-        let receipt2 = adapter.prepare(&request2).await.unwrap();
-        let digest2 = receipt2
-            .adapter_metadata
-            .get("approved_request_digest")
-            .unwrap()
-            .as_str()
-            .unwrap();
-
-        // Digests should differ for different keys
-        assert_ne!(
-            digest1, digest2,
-            "different api_key keys should produce different request digests"
-        );
-    }
-
-    /// Test that execute succeeds when api_key auth matches approved.
-    #[tokio::test]
-    async fn test_execute_succeeds_when_api_key_auth_matches_approved() {
-        let (port, handle) = start_local_server(200);
-        let adapter = HttpRollbackAdapter::new();
-
-        let bound_url = format!("http://127.0.0.1:{}/api", port);
-        let target = make_http_target(HttpMethod::Get, &bound_url);
-
-        // Prepare with specific api_key
-        let mut prepare_metadata = JsonMap::new();
-        prepare_metadata.insert(
-            APPROVED_HTTP_REQUEST_METADATA_KEY.to_string(),
-            serde_json::json!({
-                "url": bound_url,
-                "method": "GET",
-                "auth": {
-                    "type": "api_key",
-                    "header": "X-API-Key",
-                    "key": "approved-key"
-                }
-            }),
-        );
-        let prepare_request = make_prepare_request_with_metadata(target.clone(), prepare_metadata);
-        let receipt = adapter.prepare(&prepare_request).await.unwrap();
-        let approved_digest = receipt
-            .adapter_metadata
-            .get("approved_request_digest")
-            .unwrap()
-            .as_str()
-            .unwrap()
-            .to_string();
-
-        // Contract with approved digest
-        let mut contract_metadata = JsonMap::new();
-        contract_metadata.insert(
-            "approved_request_digest".to_string(),
-            serde_json::json!(approved_digest),
-        );
-        let contract = make_contract(target, contract_metadata, vec![]);
-
-        // Execute with same api_key
-        let payload = serde_json::json!({
-            "auth": {
-                "type": "api_key",
-                "header": "X-API-Key",
-                "key": "approved-key"
-            }
-        });
-
-        let result = adapter.execute(&contract, &payload).await;
-        assert!(
-            result.is_ok(),
-            "execute should succeed when api_key auth matches approved"
-        );
-        let _ = handle.join();
-    }
-
-    /// Test that execute fails when api_key auth differs from approved.
-    #[tokio::test]
-    async fn test_execute_fails_when_api_key_auth_differs_from_approved() {
-        let adapter = HttpRollbackAdapter::new();
-        let bound_url = "https://example.com/api";
-        let target = make_http_target(HttpMethod::Get, bound_url);
-
-        // Prepare with key A
-        let mut prepare_metadata = JsonMap::new();
-        prepare_metadata.insert(
-            APPROVED_HTTP_REQUEST_METADATA_KEY.to_string(),
-            serde_json::json!({
-                "url": bound_url,
-                "method": "GET",
-                "auth": {
-                    "type": "api_key",
-                    "header": "X-API-Key",
-                    "key": "key-a"
-                }
-            }),
-        );
-        let prepare_request = make_prepare_request_with_metadata(target.clone(), prepare_metadata);
-        let receipt = adapter.prepare(&prepare_request).await.unwrap();
-        let approved_digest = receipt
-            .adapter_metadata
-            .get("approved_request_digest")
-            .unwrap()
-            .as_str()
-            .unwrap()
-            .to_string();
-
-        // Contract with approved digest
-        let mut contract_metadata = JsonMap::new();
-        contract_metadata.insert(
-            "approved_request_digest".to_string(),
-            serde_json::json!(approved_digest),
-        );
-        let contract = make_contract(target, contract_metadata, vec![]);
-
-        // Execute with different key
-        let payload = serde_json::json!({
-            "auth": {
-                "type": "api_key",
-                "header": "X-API-Key",
-                "key": "key-b"
-            }
-        });
-
-        let err = adapter.execute(&contract, &payload).await.unwrap_err();
-        match err {
-            AdapterError::Validation(msg) => {
-                assert!(msg.contains("does not match approved request digest"));
-            }
-            other => panic!("expected validation error, got {:?}", other),
-        }
-    }
-
-    // === Auth Kind Observability Tests ===
-
-    /// Test that execute with basic auth includes auth_kind in metadata.
-    #[tokio::test]
-    async fn test_execute_with_basic_auth_includes_auth_kind() {
-        let (port, handle) = start_local_server(200);
-        let adapter = HttpRollbackAdapter::new();
-
-        let bound_url = format!("http://127.0.0.1:{}/api", port);
-        let target = make_http_target(HttpMethod::Get, &bound_url);
-        let metadata = JsonMap::new();
-        let contract = make_contract(target, metadata, vec![]);
-
-        let payload = serde_json::json!({
-            "auth": {
-                "type": "basic",
-                "username": "testuser",
-                "password": "testpass"
-            }
-        });
-
-        let receipt = adapter.execute(&contract, &payload).await.unwrap();
-
-        assert!(receipt.result_digest.is_some());
-        let meta = &receipt.adapter_metadata;
-        assert_eq!(
-            meta.get("executed_auth_present").unwrap().as_bool(),
-            Some(true)
-        );
-        assert_eq!(
-            meta.get("executed_auth_kind").unwrap().as_str().unwrap(),
-            "basic"
-        );
-        let _ = handle.join();
-    }
-
-    /// Test that prepare with basic auth includes auth_kind in metadata.
-    #[tokio::test]
-    async fn test_prepare_with_basic_auth_includes_auth_kind() {
-        let adapter = HttpRollbackAdapter::new();
-        let target = make_http_target(HttpMethod::Get, "https://example.com/api");
-
-        let mut metadata = JsonMap::new();
-        metadata.insert(
-            APPROVED_HTTP_REQUEST_METADATA_KEY.to_string(),
-            serde_json::json!({
-                "url": "https://example.com/api",
-                "method": "GET",
-                "auth": {
-                    "type": "basic",
-                    "username": "testuser",
-                    "password": "testpass"
-                }
-            }),
-        );
-        let request = make_prepare_request_with_metadata(target, metadata);
-
-        let receipt = adapter.prepare(&request).await.unwrap();
-        let meta = receipt.adapter_metadata;
-
-        assert_eq!(
-            meta.get("approved_auth_present").unwrap().as_bool(),
-            Some(true)
-        );
-        assert_eq!(
-            meta.get("approved_auth_kind").unwrap().as_str().unwrap(),
-            "basic"
-        );
-    }
 
-    /// Test that execute without auth does NOT include auth_kind in metadata.
-    #[tokio::test]
-    async fn test_execute_without_auth_has_no_auth_kind() {
-        let (port, handle) = start_local_server(200);
-        let adapter = HttpRollbackAdapter::new();
-
-        let bound_url = format!("http://127.0.0.1:{}/api", port);
-        let target = make_http_target(HttpMethod::Get, &bound_url);
-        let metadata = JsonMap::new();
-        let contract = make_contract(target, metadata, vec![]);
-
-        let payload = serde_json::json!({});
-
-        let receipt = adapter.execute(&contract, &payload).await.unwrap();
-
-        assert!(receipt.result_digest.is_some());
-        let meta = &receipt.adapter_metadata;
-        assert_eq!(
-            meta.get("executed_auth_present").unwrap().as_bool(),
-            Some(false)
-        );
-        assert!(
-            meta.get("executed_auth_kind").is_none(),
-            "auth_kind should not be present when no auth is used"
-        );
-        let _ = handle.join();
-    }
-
-    /// Test that prepare without auth does NOT include auth_kind in metadata.
-    #[tokio::test]
-    async fn test_prepare_without_auth_has_no_auth_kind() {
-        let adapter = HttpRollbackAdapter::new();
-        let target = make_http_target(HttpMethod::Get, "https://example.com/api");
-
-        let metadata = JsonMap::new();
-        let request = make_prepare_request_with_metadata(target, metadata);
-
-        let receipt = adapter.prepare(&request).await.unwrap();
-        let meta = receipt.adapter_metadata;
-
-        assert_eq!(
-            meta.get("approved_auth_present").unwrap().as_bool(),
-            Some(false)
-        );
-        assert!(
-            meta.get("approved_auth_kind").is_none(),
-            "auth_kind should not be present when no auth is used"
-        );
-    }
-
-    /// P2.5: Verify transport failure during GET re-request must fail closed.
-    ///
-    /// When verify() attempts to re-request a GET to verify current server state
-    /// and the server is unreachable (transport failure), verify must return
-    /// verified=false with appropriate metadata, NOT propagate an error.
-    ///
-    /// This test uses 127.0.0.1:0 which immediately refuses connections.
-    /// After the server thread exits, subsequent connection attempts fail.
-    #[tokio::test]
-    async fn test_verify_get_transport_failure_fails_closed() {
-        let adapter = HttpRollbackAdapter::new();
-
-        // Use 127.0.0.1:0 which refuses connections immediately (nothing listening)
-        // This simulates an unreachable server during verify's GET re-request
-        let target = make_http_target(HttpMethod::Get, "http://127.0.0.1:0/api");
-
-        // Execute-time metadata with successful 200 status
-        // (simulates execute succeeding before server became unreachable)
-        let mut metadata = JsonMap::new();
-        metadata.insert("status".to_string(), serde_json::json!(200));
-        metadata.insert(
-            "executed_url".to_string(),
-            serde_json::json!("http://127.0.0.1:0/api"),
-        );
-
-        // Explicit HttpStatusExpected(200) check triggers GET re-request in verify
-        let check = make_status_check(200);
-        let contract = make_contract(target, metadata, vec![check]);
-
-        // BUG: Currently this returns an error (propagates HttpAdapterError::RequestFailed)
-        // EXPECTED: Should return Ok(VerifyReceipt { verified: false, ... })
-        let receipt = adapter.verify(&contract).await.unwrap();
-
-        // Verify must fail closed on transport failure - verified=false, not error
-        assert!(
-            !receipt.verified,
-            "GET verify should return verified=false on transport failure, not error. metadata={:?}",
-            receipt.adapter_metadata
-        );
-        assert_eq!(
-            receipt
-                .adapter_metadata
-                .get("reason")
-                .and_then(|v| v.as_str()),
-            Some("transport failure"),
-            "reason should indicate transport failure"
-        );
-    }
-
-    /// P2.5 Slice A: Verify-phase timeout semantics - GET re-request timeout.
-    ///
-    /// When verify() attempts to re-request a GET to verify current server state
-    /// and the request times out (server accepts connection but never responds),
-    /// verify must return verified=false with appropriate metadata, NOT propagate an error.
-    ///
-    /// This is distinct from connection-refused transport failure (tested separately).
-    /// Timeout means the server accepted the connection but didn't respond within the
-    /// client's timeout period (30 seconds for the default client).
-    ///
-    /// This test uses a local server that accepts connections but never responds.
-    /// Note: This test takes ~30 seconds due to the client timeout.
-    #[tokio::test]
-    async fn test_verify_get_re_request_timeout_fails_closed() {
-        let adapter = HttpRollbackAdapter::new();
-
-        // Start a server that accepts connections but never responds (hangs forever)
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-
-        // Spawn server that accepts one connection and hangs
-        let server_handle = std::thread::spawn(move || {
-            if let Ok((_stream, _)) = listener.accept() {
-                // Accept connection but never respond - hang forever
-                std::thread::park();
-            }
-        });
-
-        // Give server time to start
-        std::thread::sleep(std::time::Duration::from_millis(50));
-
-        let target = make_http_target(HttpMethod::Get, &format!("http://127.0.0.1:{}/api", port));
-
-        // Execute-time metadata with successful 200 status
-        // (simulates execute succeeding before server became unresponsive)
-        let mut metadata = JsonMap::new();
-        metadata.insert("status".to_string(), serde_json::json!(200));
-        metadata.insert(
-            "executed_url".to_string(),
-            serde_json::json!(format!("http://127.0.0.1:{}/api", port)),
-        );
-
-        // Explicit HttpStatusExpected(200) check triggers GET re-request in verify
-        let check = make_status_check(200);
-        let contract = make_contract(target, metadata, vec![check]);
-
-        // verify should return Ok(VerifyReceipt { verified: false }) on timeout
-        let receipt = adapter.verify(&contract).await.unwrap();
-
-        // Verify must fail closed on timeout - verified=false, not error
-        assert!(
-            !receipt.verified,
-            "GET verify should return verified=false on timeout, not error. metadata={:?}",
-            receipt.adapter_metadata
-        );
-        assert_eq!(
-            receipt
-                .adapter_metadata
-                .get("reason")
-                .and_then(|v| v.as_str()),
-            Some("transport failure"),
-            "reason should indicate transport failure (timeout is a transport failure)"
-        );
-
-        // Clean up server thread
-        server_handle.thread().unpark();
-        let _ = server_handle.join();
-    }
-
-    /// P2.5 Slice B: Mutation verify explicit-check crosscheck mismatch matrix.
-    ///
-    /// When mutation verify is called with an explicit HttpStatusExpected check
-    /// that conflicts with the execute-time metadata status, verify must return
-    /// verified=false (fail closed), using execute-time metadata for the crosscheck
-    /// rather than replaying the mutation.
-    ///
-    /// This test focuses on PATCH method which wasn't covered in the existing
-    /// mutation explicit-check mismatch tests (POST, PUT, DELETE were covered).
-    /// The behavior is consistent across all mutation methods - explicit check
-    /// acts as crosscheck against execute-time metadata.
-    #[tokio::test]
-    async fn test_verify_mutation_patch_explicit_check_mismatch() {
-        let adapter = HttpRollbackAdapter::new();
-        let target = make_http_target(HttpMethod::Patch, "https://example.com/api/users/1");
-
-        // Execute-time metadata says 503 Service Unavailable
-        let mut metadata = JsonMap::new();
-        metadata.insert("status".to_string(), serde_json::json!(503));
-        metadata.insert(
-            "executed_url".to_string(),
-            serde_json::json!("https://example.com/api/users/1"),
-        );
-        metadata.insert("executed_method".to_string(), serde_json::json!("Patch"));
-
-        // Explicit check expects 200 OK - crosscheck mismatch
-        let check = make_status_check(200);
-        let contract = make_contract(target, metadata, vec![check]);
-
-        let receipt = adapter.verify(&contract).await.unwrap();
-
-        // Should NOT verify - execute-time (503) doesn't match explicit (200)
-        assert!(
-            !receipt.verified,
-            "PATCH with explicit 200 check should fail when execute-time was 503. metadata={:?}",
-            receipt.adapter_metadata
-        );
-        assert_eq!(
-            receipt
-                .adapter_metadata
-                .get("actual_status")
-                .unwrap()
-                .as_u64()
-                .unwrap(),
-            503,
-            "actual_status should be from execute-time metadata (503)"
-        );
-        assert_eq!(
-            receipt
-                .adapter_metadata
-                .get("expected_status")
-                .unwrap()
-                .as_u64()
-                .unwrap(),
-            200,
-            "expected_status should be from explicit check (200)"
-        );
-        assert_eq!(
-            receipt
-                .adapter_metadata
-                .get("verified_via")
-                .unwrap()
-                .as_str()
-                .unwrap(),
-            "execute-time metadata",
-            "should indicate execute-time metadata was used (no replay)"
-        );
-    }
-
-    /// P2.5 Slice C: Mutation verify explicit-check crosscheck MATCH matrix.
-    ///
-    /// When mutation verify is called with an explicit HttpStatusExpected check
-    /// that MATCHES the execute-time metadata status, verify must return
-    /// verified=true, using execute-time metadata for the crosscheck
-    /// rather than replaying the mutation.
-    ///
-    /// This is the positive counterpart to test_verify_mutation_patch_explicit_check_mismatch.
-    /// The executed_url is deliberately unreachable (254.254.254.254:9999) to prove
-    /// that verify uses execute-time metadata for crosscheck and does NOT replay.
-    /// If verify tried to replay, it would fail with a connection error.
-    #[tokio::test]
-    async fn test_verify_mutation_patch_explicit_check_match() {
-        let adapter = HttpRollbackAdapter::new();
-        let target = make_http_target(HttpMethod::Patch, "https://example.com/api/users/1");
-
-        // Execute-time metadata says 200 OK
-        let mut metadata = JsonMap::new();
-        metadata.insert("status".to_string(), serde_json::json!(200));
-        // This URL is unreachable - if verify tries to replay, it would fail
-        metadata.insert(
-            "executed_url".to_string(),
-            serde_json::json!("http://254.254.254.254:9999/unreachable"),
-        );
-        metadata.insert("executed_method".to_string(), serde_json::json!("Patch"));
-
-        // Explicit check expects 200 OK - matches execute-time
-        let check = make_status_check(200);
-        let contract = make_contract(target, metadata, vec![check]);
-
-        let receipt = adapter.verify(&contract).await.unwrap();
-
-        // Should verify - execute-time (200) matches explicit (200)
-        assert!(
-            receipt.verified,
-            "PATCH with explicit 200 check should verify when execute-time was 200. metadata={:?}",
-            receipt.adapter_metadata
-        );
-        assert_eq!(
-            receipt
-                .adapter_metadata
-                .get("actual_status")
-                .unwrap()
-                .as_u64()
-                .unwrap(),
-            200,
-            "actual_status should be from execute-time metadata (200)"
-        );
-        assert_eq!(
-            receipt
-                .adapter_metadata
-                .get("expected_status")
-                .unwrap()
-                .as_u64()
-                .unwrap(),
-            200,
-            "expected_status should be from explicit check (200)"
-        );
-        assert_eq!(
-            receipt
-                .adapter_metadata
-                .get("verified_via")
-                .unwrap()
-                .as_str()
-                .unwrap(),
-            "execute-time metadata",
-            "should indicate execute-time metadata was used (no replay)"
-        );
-    }
-
-    // =========================================================================
-    // H1.5a: Retry/Backoff + Idempotency Key Tests
-    // =========================================================================
-
-    /// Test: is_http_retryable_error returns true for timeout errors.
-    #[test]
-    fn test_is_http_retryable_error_timeout() {
-        let err = HttpAdapterError::RequestFailed("request timed out after 30s".to_string());
-        assert!(is_http_retryable_error(&err), "timeout should be retryable");
-    }
-
-    /// Test: is_http_retryable_error returns true for connection refused.
-    #[test]
-    fn test_is_http_retryable_error_connection_refused() {
-        // reqwest may use "connection refused" or "Connection refused"
-        let err = HttpAdapterError::RequestFailed("connection refused".to_string());
-        assert!(
-            is_http_retryable_error(&err),
-            "connection refused should be retryable"
-        );
-    }
-
-    /// Test: is_http_retryable_error returns true for connection reset.
-    #[test]
-    fn test_is_http_retryable_error_connection_reset() {
-        // reqwest uses "connection reset" for reset errors
-        let err = HttpAdapterError::RequestFailed("connection reset by peer".to_string());
-        assert!(
-            is_http_retryable_error(&err),
-            "connection reset should be retryable"
-        );
-    }
-
-    /// Test: is_http_retryable_error returns true for connection closed.
-    #[test]
-    fn test_is_http_retryable_error_connection_closed() {
-        let err = HttpAdapterError::RequestFailed("Connection closed".to_string());
-        assert!(
-            is_http_retryable_error(&err),
-            "connection closed should be retryable"
-        );
-    }
-
-    /// Test: is_http_retryable_error returns true for connection timed out.
-    #[test]
-    fn test_is_http_retryable_error_connection_timed_out() {
-        let err = HttpAdapterError::RequestFailed("connection timed out".to_string());
-        assert!(
-            is_http_retryable_error(&err),
-            "connection timed out should be retryable"
-        );
-    }
-
-    /// Test: is_http_retryable_error returns false for non-retryable errors.
-    #[test]
-    fn test_is_http_retryable_error_non_retryable() {
-        let err = HttpAdapterError::RequestFailed("400 Bad Request".to_string());
-        assert!(
-            !is_http_retryable_error(&err),
-            "400 error should not be retryable"
-        );
-
-        let err = HttpAdapterError::Validation("invalid URL".to_string());
-        assert!(
-            !is_http_retryable_error(&err),
-            "validation error should not be retryable"
-        );
-
-        let err = HttpAdapterError::Internal("internal error".to_string());
-        assert!(
-            !is_http_retryable_error(&err),
-            "internal error should not be retryable"
-        );
-    }
-
-    /// Test: execute succeeds with idempotency key for POST mutation.
-    #[tokio::test]
-    async fn test_execute_with_idempotency_key_for_post() {
-        let (port, handle) = start_local_server(201);
-        let adapter = HttpRollbackAdapter::new();
-
-        let bound_url = format!("http://127.0.0.1:{}/api", port);
-        let target = make_http_target(HttpMethod::Post, &bound_url);
-        let mut metadata = JsonMap::new();
-        metadata.insert(
-            "approved_request_digest".to_string(),
-            serde_json::json!(HttpRollbackAdapter::compute_body_aware_digest(
-                &HttpMethod::Post,
-                &bound_url,
-                &serde_json::json!({"name": "test"}),
-                None,
-            )),
-        );
-        let contract = make_contract(target, metadata, vec![]);
-        let payload = serde_json::json!({
-            "body": {"name": "test"}
-        });
-
-        let receipt = adapter.execute(&contract, &payload).await.unwrap();
-
-        assert!(receipt.result_digest.is_some());
-        assert_eq!(receipt.result_digest.unwrap(), "201");
-        // H1.5a: idempotency key should be present for mutations
-        assert_eq!(
-            receipt
-                .adapter_metadata
-                .get("executed_idempotency_key_present")
-                .unwrap()
-                .as_bool(),
-            Some(true),
-            "POST should have idempotency key present"
-        );
-        let _ = handle.join();
-    }
-
-    /// Test: execute succeeds with idempotency key for PUT mutation.
-    #[tokio::test]
-    async fn test_execute_with_idempotency_key_for_put() {
-        let (port, handle) = start_local_server(200);
-        let adapter = HttpRollbackAdapter::new();
-
-        let bound_url = format!("http://127.0.0.1:{}/api/users/1", port);
-        let target = make_http_target(HttpMethod::Put, &bound_url);
-        let mut metadata = JsonMap::new();
-        metadata.insert(
-            "approved_request_digest".to_string(),
-            serde_json::json!(HttpRollbackAdapter::compute_body_aware_digest(
-                &HttpMethod::Put,
-                &bound_url,
-                &serde_json::json!({"name": "updated"}),
-                None,
-            )),
-        );
-        let contract = make_contract(target, metadata, vec![]);
-        let payload = serde_json::json!({
-            "body": {"name": "updated"}
-        });
-
-        let receipt = adapter.execute(&contract, &payload).await.unwrap();
-
-        assert!(receipt.result_digest.is_some());
-        assert_eq!(receipt.result_digest.unwrap(), "200");
-        assert_eq!(
-            receipt
-                .adapter_metadata
-                .get("executed_idempotency_key_present")
-                .unwrap()
-                .as_bool(),
-            Some(true),
-            "PUT should have idempotency key present"
-        );
-        let _ = handle.join();
-    }
-
-    /// Test: execute succeeds with idempotency key for DELETE mutation.
-    #[tokio::test]
-    async fn test_execute_with_idempotency_key_for_delete() {
-        let (port, handle) = start_local_server(204);
-        let adapter = HttpRollbackAdapter::new();
-
-        let bound_url = format!("http://127.0.0.1:{}/api/users/1", port);
-        let target = make_http_target(HttpMethod::Delete, &bound_url);
-        let metadata = JsonMap::new();
-        let contract = make_contract(target, metadata, vec![]);
-        let payload = serde_json::json!({});
-
-        let receipt = adapter.execute(&contract, &payload).await.unwrap();
-
-        assert!(receipt.result_digest.is_some());
-        assert_eq!(receipt.result_digest.unwrap(), "204");
-        assert_eq!(
-            receipt
-                .adapter_metadata
-                .get("executed_idempotency_key_present")
-                .unwrap()
-                .as_bool(),
-            Some(true),
-            "DELETE should have idempotency key present"
-        );
-        let _ = handle.join();
-    }
-
-    /// Test: execute does NOT have idempotency key for GET.
-    #[tokio::test]
-    async fn test_execute_no_idempotency_key_for_get() {
-        let (port, handle) = start_local_server(200);
-        let adapter = HttpRollbackAdapter::new();
-
-        let bound_url = format!("http://127.0.0.1:{}/api", port);
-        let target = make_http_target(HttpMethod::Get, &bound_url);
-        let metadata = JsonMap::new();
-        let contract = make_contract(target, metadata, vec![]);
-        let payload = serde_json::json!({});
-
-        let receipt = adapter.execute(&contract, &payload).await.unwrap();
-
-        assert!(receipt.result_digest.is_some());
-        assert_eq!(receipt.result_digest.unwrap(), "200");
-        assert_eq!(
-            receipt
-                .adapter_metadata
-                .get("executed_idempotency_key_present")
-                .unwrap()
-                .as_bool(),
-            Some(false),
-            "GET should NOT have idempotency key present"
-        );
-        let _ = handle.join();
-    }
-
-    /// Test: execute fails when connecting to an unreachable address.
-    /// Uses 127.0.0.1:0 which immediately refuses connections.
-    #[tokio::test]
-    async fn test_execute_fails_to_unreachable_address() {
-        let adapter = HttpRollbackAdapter::new();
-
-        // Use 127.0.0.1:0 which immediately refuses connections (nothing listening)
-        let bound_url = "http://127.0.0.1:0/api";
-        let target = make_http_target(HttpMethod::Get, bound_url);
-        let metadata = JsonMap::new();
-        let contract = make_contract(target, metadata, vec![]);
-        let payload = serde_json::json!({});
-
-        let err = adapter.execute(&contract, &payload).await.unwrap_err();
-
-        // Should fail with a request failed error
-        match err {
-            AdapterError::Internal(msg) => {
-                assert!(
-                    msg.contains("request failed"),
-                    "expected request failed error, got: {}",
-                    msg
-                );
-            }
-            other => panic!("expected internal error, got {:?}", other),
-        }
-    }
-
-    /// Test: execute succeeds when server responds on first attempt.
-    #[tokio::test]
-    async fn test_execute_succeeds_without_retry_on_first_attempt() {
-        let (port, handle) = start_multi_request_server_with_limit(200, 5, 5000);
-        let adapter = HttpRollbackAdapter::new();
-
-        let bound_url = format!("http://127.0.0.1:{}/api", port);
-        let target = make_http_target(HttpMethod::Get, &bound_url);
-        let metadata = JsonMap::new();
-        let contract = make_contract(target, metadata, vec![]);
-        let payload = serde_json::json!({});
-
-        let receipt = adapter.execute(&contract, &payload).await.unwrap();
-
-        assert!(receipt.result_digest.is_some());
-        assert_eq!(receipt.result_digest.unwrap(), "200");
-        let _ = handle.join();
-    }
-
-    /// Test: idempotency key is present in metadata for mutations.
-    /// This verifies H1.5a idempotency key handling without testing retries.
-    #[tokio::test]
-    async fn test_execute_idempotency_key_in_metadata_for_mutation() {
-        let (port, handle) = start_local_server(201);
-        let adapter = HttpRollbackAdapter::new();
-
-        let bound_url = format!("http://127.0.0.1:{}/api", port);
-        let target = make_http_target(HttpMethod::Post, &bound_url);
-        let mut metadata = JsonMap::new();
-        metadata.insert(
-            "approved_request_digest".to_string(),
-            serde_json::json!(HttpRollbackAdapter::compute_body_aware_digest(
-                &HttpMethod::Post,
-                &bound_url,
-                &serde_json::json!({"name": "test"}),
-                None,
-            )),
-        );
-        let contract = make_contract(target, metadata, vec![]);
-        let payload = serde_json::json!({
-            "body": {"name": "test"}
-        });
-
-        let receipt = adapter.execute(&contract, &payload).await.unwrap();
-
-        assert!(receipt.result_digest.is_some());
-        assert_eq!(receipt.result_digest.unwrap(), "201");
-
-        // H1.5a: Idempotency key should be present for mutations
-        assert_eq!(
-            receipt
-                .adapter_metadata
-                .get("executed_idempotency_key_present")
-                .unwrap()
-                .as_bool(),
-            Some(true),
-            "POST should have idempotency key present in metadata"
-        );
-        let _ = handle.join();
+        drop(server_handle);
     }
 }

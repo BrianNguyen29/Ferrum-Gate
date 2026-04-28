@@ -1,26 +1,44 @@
 use async_trait::async_trait;
-use chrono::Utc;
 use ferrum_proto::{CapabilityId, CapabilityLease, CapabilityStatus, IntentId};
-use sqlx::{Row, SqlitePool};
+use sqlx::SqlitePool;
+use tokio::sync::oneshot;
 
-use crate::{CapabilityRepo, Result};
+use crate::sqlite::write_queue::WriteQueue;
+use crate::{CapabilityRepo, Result, transitions};
 
-use super::helpers::{enum_text, fetch_entities, fetch_entity_by_id, from_json, to_json};
+use super::helpers::{enum_text, fetch_entities, fetch_entity_by_id, to_json};
 
 #[derive(Clone)]
 pub struct SqliteCapabilityRepo {
     pool: SqlitePool,
+    write_queue: Option<WriteQueue>,
 }
 
 impl SqliteCapabilityRepo {
     pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            write_queue: None,
+        }
+    }
+
+    pub fn with_write_queue(mut self, queue: WriteQueue) -> Self {
+        self.write_queue = Some(queue);
+        self
     }
 }
 
 #[async_trait]
 impl CapabilityRepo for SqliteCapabilityRepo {
     async fn insert(&self, capability: &CapabilityLease) -> Result<()> {
+        if let Some(ref queue) = self.write_queue {
+            let (reply_tx, _) = oneshot::channel();
+            let op = crate::sqlite::write_queue::WriteOp::InsertCapability {
+                data: capability.clone(),
+                reply: reply_tx,
+            };
+            return queue.send(op).await;
+        }
         let raw_json = to_json(capability)?;
         sqlx::query(
             "INSERT INTO capabilities (
@@ -54,6 +72,14 @@ impl CapabilityRepo for SqliteCapabilityRepo {
     }
 
     async fn update(&self, capability: &CapabilityLease) -> Result<()> {
+        if let Some(ref queue) = self.write_queue {
+            let (reply_tx, _) = oneshot::channel();
+            let op = crate::sqlite::write_queue::WriteOp::UpdateCapability {
+                data: capability.clone(),
+                reply: reply_tx,
+            };
+            return queue.send(op).await;
+        }
         let raw_json = to_json(capability)?;
         sqlx::query(
             "UPDATE capabilities
@@ -80,9 +106,25 @@ impl CapabilityRepo for SqliteCapabilityRepo {
         capability_id: CapabilityId,
         status: CapabilityStatus,
     ) -> Result<()> {
+        if let Some(ref queue) = self.write_queue {
+            let (reply_tx, _) = oneshot::channel();
+            let op = crate::sqlite::write_queue::WriteOp::UpdateCapabilityStatus {
+                capability_id,
+                status,
+                reply: reply_tx,
+            };
+            return queue.send(op).await;
+        }
         let Some(mut capability) = self.get(capability_id).await? else {
             return Ok(());
         };
+        // Validate state transition
+        if !transitions::is_valid_capability_transition(&capability.status, &status) {
+            return Err(crate::StoreError::InvalidState(format!(
+                "invalid capability transition from {:?} to {:?}",
+                capability.status, status
+            )));
+        }
         capability.status = status;
         self.update(&capability).await
     }
@@ -91,83 +133,8 @@ impl CapabilityRepo for SqliteCapabilityRepo {
         fetch_entities(
             &self.pool,
             "SELECT raw_json FROM capabilities WHERE intent_id = ?1 ORDER BY issued_at DESC",
-            intent_id.to_string(),
+            |query| query.bind(intent_id.to_string()),
         )
         .await
-    }
-
-    async fn mark_used_if_active(&self, capability_id: CapabilityId) -> Result<bool> {
-        let Some(mut capability) = self.get(capability_id).await? else {
-            return Ok(false);
-        };
-
-        if !matches!(capability.status, CapabilityStatus::Active) {
-            return Ok(false);
-        }
-
-        capability.status = CapabilityStatus::Used;
-        let raw_json = to_json(&capability)?;
-        let updated = sqlx::query(
-            "UPDATE capabilities
-             SET status = ?2,
-                 raw_json = ?3
-             WHERE capability_id = ?1
-               AND status = ?4
-               AND revoked_at IS NULL
-               AND expires_at > ?5",
-        )
-        .bind(capability_id.to_string())
-        .bind(enum_text(&CapabilityStatus::Used)?)
-        .bind(raw_json)
-        .bind(enum_text(&CapabilityStatus::Active)?)
-        .bind(Utc::now())
-        .execute(&self.pool)
-        .await?;
-
-        Ok(updated.rows_affected() == 1)
-    }
-
-    async fn revoke(&self, capability_id: CapabilityId) -> Result<()> {
-        let Some(mut capability) = self.get(capability_id).await? else {
-            return Ok(());
-        };
-
-        capability.status = CapabilityStatus::Revoked;
-        capability.revoked_at = Some(Utc::now());
-        let raw_json = to_json(&capability)?;
-        sqlx::query(
-            "UPDATE capabilities
-             SET status = ?2,
-                 revoked_at = ?3,
-                 raw_json = ?4
-             WHERE capability_id = ?1",
-        )
-        .bind(capability_id.to_string())
-        .bind(enum_text(&CapabilityStatus::Revoked)?)
-        .bind(capability.revoked_at)
-        .bind(raw_json)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
-    }
-
-    async fn list_active(&self) -> Result<Vec<CapabilityLease>> {
-        let rows = sqlx::query(
-            "SELECT raw_json
-             FROM capabilities
-             WHERE status = ?1
-               AND revoked_at IS NULL
-               AND expires_at > ?2
-             ORDER BY issued_at DESC",
-        )
-        .bind(enum_text(&CapabilityStatus::Active)?)
-        .bind(Utc::now())
-        .fetch_all(&self.pool)
-        .await?;
-
-        rows.into_iter()
-            .map(|row| from_json(&row.try_get::<String, _>("raw_json")?))
-            .collect()
     }
 }

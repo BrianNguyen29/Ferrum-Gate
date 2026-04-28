@@ -24,7 +24,7 @@ pub struct RollbackContract {
     pub metadata: JsonMap,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub enum RollbackState {
     PendingPrepare,
     Prepared,
@@ -42,15 +42,25 @@ pub enum RollbackState {
 pub enum ActionType {
     FileWrite,
     FileDelete,
+    FileMove,
+    FileCopy,
+    FileAppend,
+    FileChmod,
+    DirCreate,
+    DirDelete,
     GitCommit,
     GitBranchCreate,
+    GitBranchDelete,
+    GitTagCreate,
+    GitTagDelete,
     GitPush,
-    GitFetch,
     GitPull,
+    GitFetch,
     SqlMutation,
     HttpMutation,
     EmailDraftCreate,
     EmailSend,
+    MailDraft,
     McpToolMutation,
     Unknown,
 }
@@ -111,6 +121,21 @@ pub struct CompensationStep {
     pub operation: String,
     pub args: JsonMap,
     pub idempotency_key: String,
+}
+
+/// Auto-generated execution plan from a PlannableAdapter.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ExecutionPlan {
+    /// Suggested prepare checks (pre-conditions).
+    pub prepare_checks: Vec<CheckSpec>,
+    /// Suggested verify checks (post-conditions).
+    pub verify_checks: Vec<CheckSpec>,
+    /// Suggested compensation steps for rollback.
+    pub compensation_plan: Vec<CompensationStep>,
+    /// Whether auto-commit should be enabled for this plan.
+    pub auto_commit: bool,
+    /// Human-readable explanation of the plan.
+    pub plan_description: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

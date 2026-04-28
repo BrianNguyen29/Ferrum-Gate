@@ -12,12 +12,9 @@ tokio = { workspace = true }
 async-trait = { workspace = true }
 sqlx = { workspace = true }
 ferrum-proto = { path = "../ferrum-proto" }
-ferrum-ledger = { path = "../ferrum-ledger" }
 ferrum-sync = { path = "../ferrum-sync" }
 tracing = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 
-[dev-dependencies]
-tempfile = "3"
-tokio = { workspace = true, features = ["test-util"] }
+[build-dependencies]

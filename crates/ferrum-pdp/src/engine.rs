@@ -1,8 +1,10 @@
 use async_trait::async_trait;
 use ferrum_proto::{
-    ActionProposal, Decision, EffectType, EvaluateProposalResponse, IntentEnvelope, OutcomeClause,
-    RollbackClass, Timestamp, TrustContextSummary,
+    ActionProposal, ApprovalMode, Decision, EffectType, EvaluateOutcomeResponse,
+    EvaluateProposalResponse, IntentEnvelope, OutcomeClause, OutcomeReport, RiskTier,
+    RollbackClass, TrustContextSummary,
 };
+use std::mem;
 
 #[async_trait]
 pub trait PdpEngine: Send + Sync {
@@ -12,214 +14,149 @@ pub trait PdpEngine: Send + Sync {
         proposal: &ActionProposal,
         trust: &TrustContextSummary,
     ) -> anyhow::Result<EvaluateProposalResponse>;
-}
 
-#[derive(Debug, Default)]
-pub struct StaticPdpEngine;
-
-impl StaticPdpEngine {
-    /// Infer the EffectType from a proposal's expected_effect description.
-    /// This uses keyword matching to classify the effect.
-    pub fn infer_effect_type(effect_description: &str) -> EffectType {
-        let lower = effect_description.to_lowercase();
-        let words: Vec<&str> = lower
-            .split(|c: char| !c.is_alphanumeric() && c != '_')
-            .filter(|w| !w.is_empty())
-            .collect();
-
-        // Helper to check if any word exactly matches a read-only keyword
-        let has_read_word = words.iter().any(|w| {
-            *w == "read"
-                || *w == "inspect"
-                || *w == "view"
-                || *w == "get"
-                || *w == "fetch"
-                || *w == "list"
-                || *w == "search"
-                || *w == "query"
-                || *w == "analyze"
-                || *w == "check"
-                || *w == "query"
-        });
-
-        // Helper to check if any word exactly matches a mutating keyword
-        let has_mutate_word = words.iter().any(|w| {
-            *w == "write"
-                || *w == "create"
-                || *w == "delete"
-                || *w == "remove"
-                || *w == "modify"
-                || *w == "update"
-                || *w == "insert"
-                || *w == "drop"
-                || *w == "alter"
-                || *w == "mutate"
-                || *w == "commit"
-                || *w == "push"
-                || *w == "send"
-        });
-
-        let has_git_word = words
-            .iter()
-            .any(|w| *w == "git" || *w == "commit" || *w == "push" || *w == "merge");
-        // Database-specific keywords only (not "delete"/"insert"/"update" which are handled by mutate_word)
-        let has_db_word = words.iter().any(|w| {
-            *w == "sql"
-                || *w == "database"
-                || *w == "db"
-                || *w == "table"
-                || *w == "row"
-                || *w == "column"
-        });
-        let has_api_word = words
-            .iter()
-            .any(|w| *w == "api" || *w == "http" || *w == "request" || *w == "post");
-        let has_comm_word = words
-            .iter()
-            .any(|w| *w == "email" || *w == "send" || *w == "message" || *w == "notify");
-        let has_schedule_word = words
-            .iter()
-            .any(|w| *w == "schedule" || *w == "cron" || *w == "timer" || *w == "delay");
-        let has_admin_word = words
-            .iter()
-            .any(|w| *w == "admin" || *w == "config" || *w == "setting" || *w == "permission");
-
-        // Priority: mutating > read-only > unknown (treat unknown as mutating for fail-closed)
-        if has_git_word {
-            EffectType::GitMutation
-        } else if has_db_word {
-            EffectType::DatabaseMutation
-        } else if has_api_word {
-            EffectType::ExternalApiCall
-        } else if has_comm_word {
-            EffectType::ExternalCommunication
-        } else if has_schedule_word {
-            EffectType::Scheduling
-        } else if has_admin_word {
-            EffectType::AdministrativeChange
-        } else if has_mutate_word {
-            EffectType::FileMutation
-        } else if has_read_word {
-            EffectType::ReadOnlyAnalysis
-        } else {
-            // Unknown effect - bias toward mutating (fail-closed)
-            EffectType::FileMutation
-        }
-    }
-
-    /// Check if a clause is temporally active at the given timestamp.
-    /// Returns true if no temporal constraints are present, or if the
-    /// timestamp falls within the validity window.
-    fn is_temporally_valid(clause: &OutcomeClause, timestamp: &Timestamp) -> bool {
-        if let Some(ref temporal) = clause.temporal {
-            temporal.is_active_at(timestamp)
-        } else {
-            true
-        }
-    }
-
-    /// Check if the proposal's effect matches any forbidden outcome in the intent.
-    /// Returns Some(reason) if a forbidden outcome is matched (should deny).
-    fn check_forbidden_outcomes(
+    /// Evaluate whether an execution's actual outcome aligns with the intent's
+    /// outcome expectations (allowed_outcomes / forbidden_outcomes).
+    async fn evaluate_outcome(
         &self,
         intent: &IntentEnvelope,
-        proposal_effect: &EffectType,
-        timestamp: &Timestamp,
+        report: &OutcomeReport,
+    ) -> anyhow::Result<EvaluateOutcomeResponse>;
+}
+
+impl StaticPdpEngine {
+    /// Infer the EffectType from an action proposal based on its characteristics.
+    pub fn infer_effect_type(proposal: &ActionProposal) -> EffectType {
+        let tool_name = proposal.tool_name.to_lowercase();
+        let server_name = proposal.server_name.to_lowercase();
+        let expected_effect = proposal.expected_effect.to_lowercase();
+
+        // Check for database-related tools
+        if tool_name.contains("sql") || tool_name.contains("db") || tool_name.contains("database") {
+            return EffectType::DatabaseMutation;
+        }
+
+        // Check for git-related tools
+        if tool_name.contains("git") || server_name.contains("git") {
+            return EffectType::GitMutation;
+        }
+
+        // Check for file mutation keywords (careful about overlaps)
+        let has_file_word = expected_effect.contains("file")
+            || expected_effect.contains("directory")
+            || expected_effect.contains("folder")
+            || expected_effect.contains("path");
+        let has_mutation_word = expected_effect.contains("delete")
+            || expected_effect.contains("remove")
+            || expected_effect.contains("rename")
+            || expected_effect.contains("move")
+            || expected_effect.contains("create")
+            || expected_effect.contains("write")
+            || expected_effect.contains("modify");
+
+        // FileMutation requires both "file" concept AND mutation action
+        if has_file_word && has_mutation_word {
+            return EffectType::FileMutation;
+        }
+
+        // Check for external API calls
+        if tool_name.contains("http") || tool_name.contains("api") || tool_name.contains("fetch") {
+            return EffectType::ExternalApiCall;
+        }
+
+        // Check for external communication (email, slack, etc.)
+        if tool_name.contains("email")
+            || tool_name.contains("slack")
+            || tool_name.contains("message")
+            || tool_name.contains("send")
+        {
+            return EffectType::ExternalCommunication;
+        }
+
+        // Check for scheduling
+        if tool_name.contains("schedule")
+            || tool_name.contains("cron")
+            || tool_name.contains("timer")
+        {
+            return EffectType::Scheduling;
+        }
+
+        // Check for administrative changes
+        if tool_name.contains("admin")
+            || tool_name.contains("user")
+            || tool_name.contains("permission")
+            || tool_name.contains("role")
+        {
+            return EffectType::AdministrativeChange;
+        }
+
+        // Check for draft creation
+        if expected_effect.contains("draft") || expected_effect.contains("create") {
+            return EffectType::DraftCreation;
+        }
+
+        // Default to ReadOnlyAnalysis for R0 with read-like effects
+        if matches!(
+            proposal.requested_rollback_class,
+            RollbackClass::R0NativeReversible
+        ) {
+            return EffectType::ReadOnlyAnalysis;
+        }
+
+        // For R3 (IrreversibleHighConsequence), be conservative
+        if matches!(
+            proposal.requested_rollback_class,
+            RollbackClass::R3IrreversibleHighConsequence
+        ) {
+            return EffectType::AdministrativeChange;
+        }
+
+        EffectType::ReadOnlyAnalysis
+    }
+
+    /// Check if the inferred effect matches any forbidden outcome. Returns Some(reason) if denied.
+    pub fn check_forbidden_outcomes(
+        inferred: &EffectType,
+        forbidden_outcomes: &[OutcomeClause],
     ) -> Option<String> {
-        for forbidden in &intent.forbidden_outcomes {
-            // H1.2a: Skip temporally inactive forbidden outcomes
-            if !Self::is_temporally_valid(forbidden, timestamp) {
-                continue;
-            }
-            if std::mem::discriminant(&forbidden.effect_type)
-                == std::mem::discriminant(proposal_effect)
-            {
+        for clause in forbidden_outcomes {
+            if mem::discriminant(inferred) == mem::discriminant(&clause.effect_type) {
                 return Some(format!(
-                    "proposal effect '{:?}' matches forbidden outcome '{}': {}",
-                    proposal_effect, forbidden.id, forbidden.description
+                    "forbidden outcome detected: {} (effect_type={:?})",
+                    clause.description, clause.effect_type
                 ));
             }
         }
         None
     }
 
-    /// Check if the proposal's effect aligns with any allowed outcome in the intent.
-    /// Returns (is_aligned, warnings) where warnings contain advisory messages if not aligned.
-    fn check_allowed_outcomes(
-        &self,
-        intent: &IntentEnvelope,
-        proposal_effect: &EffectType,
-        timestamp: &Timestamp,
-    ) -> (bool, Vec<String>) {
-        // If intent has no allowed_outcomes specified, any effect is acceptable
-        if intent.allowed_outcomes.is_empty() {
-            return (true, Vec::new());
+    /// Check if inferred effect is allowed (when allowed_outcomes is non-empty).
+    /// Returns a warning message if the effect is not in the allowed list.
+    pub fn check_allowed_outcomes(
+        inferred: &EffectType,
+        allowed_outcomes: &[OutcomeClause],
+    ) -> Option<String> {
+        // Empty allowed_outcomes means no restrictions
+        if allowed_outcomes.is_empty() {
+            return None;
         }
 
-        let mut aligned = false;
-        let mut warnings = Vec::new();
-
-        for allowed in &intent.allowed_outcomes {
-            // H1.2a: Skip temporally inactive allowed outcomes when checking alignment
-            if !Self::is_temporally_valid(allowed, timestamp) {
-                continue;
-            }
-            if std::mem::discriminant(&allowed.effect_type)
-                == std::mem::discriminant(proposal_effect)
-            {
-                aligned = true;
-                break;
+        for clause in allowed_outcomes {
+            if mem::discriminant(inferred) == mem::discriminant(&clause.effect_type) {
+                return None; // Found a match, no warning
             }
         }
 
-        if !aligned {
-            // Collect all temporally active allowed effect types for the warning message
-            let allowed_effects: Vec<String> = intent
-                .allowed_outcomes
-                .iter()
-                .filter(|a| Self::is_temporally_valid(a, timestamp))
-                .map(|a| format!("{:?}", a.effect_type))
-                .collect();
-            warnings.push(format!(
-                "proposal effect '{:?}' does not match any allowed outcome; allowed effects: {}",
-                proposal_effect,
-                allowed_effects.join(", ")
-            ));
-        }
-
-        (aligned, warnings)
-    }
-
-    /// Assess outcome alignment for a proposal against an intent's outcome clauses.
-    /// Returns (deny_reason, warnings) where:
-    /// - deny_reason is Some if the proposal should be denied (forbidden match)
-    /// - warnings contains advisory messages for misalignment
-    pub fn assess_outcome_alignment(
-        &self,
-        intent: &IntentEnvelope,
-        proposal: &ActionProposal,
-    ) -> (Option<String>, Vec<String>) {
-        let proposal_effect = Self::infer_effect_type(&proposal.expected_effect);
-        let timestamp = &proposal.created_at;
-
-        // First check: explicit forbidden outcome match → deny
-        if let Some(reason) = self.check_forbidden_outcomes(intent, &proposal_effect, timestamp) {
-            return (Some(reason), Vec::new());
-        }
-
-        // Second check: allowed outcome alignment → advisory warning if not aligned
-        let (is_aligned, warnings) =
-            self.check_allowed_outcomes(intent, &proposal_effect, timestamp);
-
-        // If not aligned with allowed outcomes, it's an advisory warning only (unless there's already a deny reason)
-        if !is_aligned {
-            // Return the warnings for advisory case
-            (None, warnings)
-        } else {
-            (None, Vec::new())
-        }
+        // Advisory mismatch - warn but don't deny
+        Some(format!(
+            "advisory mismatch: inferred effect {:?} is not in allowed outcomes",
+            inferred
+        ))
     }
 }
+
+#[derive(Debug, Default)]
+pub struct StaticPdpEngine;
 
 #[async_trait]
 impl PdpEngine for StaticPdpEngine {
@@ -249,16 +186,14 @@ impl PdpEngine for StaticPdpEngine {
             });
         }
 
-        // U1: Outcome-aware governance check
-        // Check forbidden outcomes first (explicit deny), then allowed outcomes (advisory)
-        let (deny_reason, outcome_warnings) = self.assess_outcome_alignment(intent, proposal);
-        warnings.extend(outcome_warnings);
-
-        if let Some(reason) = deny_reason {
-            matched_rule_ids.push("forbidden.outcome.match".to_string());
+        // Invariant 2: Critical risk with no approval mode requires approval
+        if proposal.estimated_risk == RiskTier::Critical
+            && matches!(intent.approval_mode, ApprovalMode::None)
+        {
+            matched_rule_ids.push("approval.critical.risk.required".to_string());
             return Ok(EvaluateProposalResponse {
-                decision: Decision::Deny,
-                reason,
+                decision: Decision::RequireApproval,
+                reason: "critical risk tier requires explicit approval mode".to_string(),
                 matched_rule_ids,
                 warnings,
             });
@@ -303,10 +238,83 @@ impl PdpEngine for StaticPdpEngine {
             });
         }
 
+        // U1: Outcome-aware governance - infer effect type and check against outcomes
+        let inferred_effect = Self::infer_effect_type(proposal);
+
+        // Check for explicit forbidden outcome match - this is a DENY
+        if let Some(reason) =
+            Self::check_forbidden_outcomes(&inferred_effect, &intent.forbidden_outcomes)
+        {
+            matched_rule_ids.push("outcome.forbidden".to_string());
+            return Ok(EvaluateProposalResponse {
+                decision: Decision::Deny,
+                reason,
+                matched_rule_ids,
+                warnings,
+            });
+        }
+
+        // Check for advisory allowed outcome mismatch - this is a WARNING
+        if let Some(warning) =
+            Self::check_allowed_outcomes(&inferred_effect, &intent.allowed_outcomes)
+        {
+            matched_rule_ids.push("outcome.advisory.mismatch".to_string());
+            warnings.push(warning);
+        }
+
         matched_rule_ids.push("allow.default".to_string());
         Ok(EvaluateProposalResponse {
             decision: Decision::Allow,
             reason: "proposal passed default scaffold policy".to_string(),
+            matched_rule_ids,
+            warnings,
+        })
+    }
+
+    async fn evaluate_outcome(
+        &self,
+        intent: &IntentEnvelope,
+        report: &OutcomeReport,
+    ) -> anyhow::Result<EvaluateOutcomeResponse> {
+        let mut matched_rule_ids = Vec::new();
+        let mut warnings = Vec::new();
+
+        // Check forbidden outcomes — DENY alignment if matched
+        if let Some(reason) =
+            Self::check_forbidden_outcomes(&report.actual_effect, &intent.forbidden_outcomes)
+        {
+            matched_rule_ids.push("outcome.forbidden".to_string());
+            return Ok(EvaluateOutcomeResponse {
+                aligned: false,
+                reason,
+                matched_rule_ids,
+                warnings,
+            });
+        }
+
+        // Check allowed outcomes — advisory mismatch
+        if let Some(warning) =
+            Self::check_allowed_outcomes(&report.actual_effect, &intent.allowed_outcomes)
+        {
+            matched_rule_ids.push("outcome.advisory.mismatch".to_string());
+            warnings.push(warning);
+        }
+
+        // Adapter failure = not aligned
+        if !report.adapter_success {
+            matched_rule_ids.push("outcome.adapter.failure".to_string());
+            return Ok(EvaluateOutcomeResponse {
+                aligned: false,
+                reason: "adapter reported execution failure".to_string(),
+                matched_rule_ids,
+                warnings,
+            });
+        }
+
+        matched_rule_ids.push("outcome.aligned".to_string());
+        Ok(EvaluateOutcomeResponse {
+            aligned: true,
+            reason: "outcome matches intent expectations".to_string(),
             matched_rule_ids,
             warnings,
         })
@@ -317,549 +325,678 @@ impl PdpEngine for StaticPdpEngine {
 mod tests {
     use super::*;
     use ferrum_proto::{
-        IntentId, OutcomeTemporalConstraints, PrincipalId, ProposalId, RiskTier, RollbackClass,
+        ApprovalMode, EffectType, IntentEnvelope, IntentStatus, JsonMap, OutcomeClause,
+        OutcomeReport, RiskTier, TimeBudget, TrustContextSummary,
     };
+    use ferrum_proto::{ExecutionId, IntentId, PrincipalId, ProposalId};
 
-    /// Helper to create a proposal at a specific timestamp
-    fn make_proposal_at(intent_id: IntentId, effect: &str, timestamp: Timestamp) -> ActionProposal {
-        ActionProposal {
-            proposal_id: ProposalId::new(),
-            intent_id,
-            step_index: 1,
-            title: "test proposal".to_string(),
-            tool_name: "test.tool".to_string(),
-            server_name: "test".to_string(),
-            raw_arguments: serde_json::json!({}),
-            expected_effect: effect.to_string(),
-            estimated_risk: RiskTier::Medium,
-            requested_rollback_class: RollbackClass::R0NativeReversible,
-            decision: None,
-            taint_inputs: vec![],
-            metadata: ferrum_proto::JsonMap::new(),
-            created_at: timestamp,
+    fn make_trust_context() -> TrustContextSummary {
+        TrustContextSummary {
+            input_labels: vec![],
+            sensitivity_labels: vec![],
+            taint_score: 0,
+            contains_external_metadata: false,
+            contains_tool_output: false,
+            contains_untrusted_text: false,
         }
     }
 
-    /// Helper to create an intent with forbidden FileMutation
-    fn make_intent_with_forbidden(intent_id: IntentId) -> IntentEnvelope {
+    fn make_intent() -> IntentEnvelope {
         IntentEnvelope {
-            intent_id,
+            intent_id: IntentId::new(),
             principal_id: PrincipalId::new(),
             session_id: None,
             channel_id: None,
-            title: "test".to_string(),
-            goal: "test".to_string(),
-            normalized_goal: "test".to_string(),
+            title: "test intent".to_string(),
+            goal: "test goal".to_string(),
+            normalized_goal: "test goal".to_string(),
             allowed_outcomes: vec![],
-            forbidden_outcomes: vec![OutcomeClause {
-                id: "forbid-mutation".to_string(),
-                description: "forbid file mutations".to_string(),
-                effect_type: EffectType::FileMutation,
-                required: true,
-                selectors: None,
-                temporal: None,
-            }],
-            resource_scope: vec![],
-            risk_tier: RiskTier::Medium,
-            approval_mode: ferrum_proto::ApprovalMode::None,
-            default_rollback_class: RollbackClass::R0NativeReversible,
-            time_budget: ferrum_proto::TimeBudget {
-                max_duration_ms: 30_000,
-                max_steps: 8,
-                max_retries_per_step: 1,
-            },
-            trust_context: TrustContextSummary {
-                input_labels: vec![],
-                sensitivity_labels: vec![],
-                taint_score: 0,
-                contains_external_metadata: false,
-                contains_tool_output: false,
-                contains_untrusted_text: false,
-            },
-            derived_from_event_ids: vec![],
-            tags: vec![],
-            metadata: ferrum_proto::JsonMap::new(),
-            status: ferrum_proto::IntentStatus::Active,
-            policy_bundle_fingerprint: None,
-            created_at: chrono::Utc::now(),
-            expires_at: chrono::Utc::now() + chrono::Duration::days(1),
-        }
-    }
-
-    /// Helper to create a temporal constraint that is valid from start to end
-    fn make_temporal(
-        start: Option<Timestamp>,
-        end: Option<Timestamp>,
-    ) -> Option<OutcomeTemporalConstraints> {
-        Some(OutcomeTemporalConstraints {
-            valid_from: start,
-            valid_until: end,
-        })
-    }
-
-    // =============================================================================
-    // H1.2a: Temporal constraint tests
-    // =============================================================================
-
-    #[test]
-    fn test_temporal_constraints_no_temporal_is_always_valid() {
-        let engine = StaticPdpEngine;
-        let intent_id = IntentId::new();
-        let intent = make_intent_with_forbidden(intent_id);
-
-        // Proposal at any time should match the forbidden outcome (no temporal constraints)
-        let timestamps = vec![
-            chrono::Utc::now() - chrono::Duration::days(10),
-            chrono::Utc::now(),
-            chrono::Utc::now() + chrono::Duration::days(10),
-        ];
-
-        for ts in timestamps {
-            let proposal = make_proposal_at(intent_id, "write a file", ts);
-            let (deny_reason, _) = engine.assess_outcome_alignment(&intent, &proposal);
-            assert!(
-                deny_reason.is_some(),
-                "proposal at {:?} should match forbidden (no temporal constraints)",
-                ts
-            );
-        }
-    }
-
-    #[test]
-    fn test_temporal_constraints_valid_within_window() {
-        let engine = StaticPdpEngine;
-        let intent_id = IntentId::new();
-
-        let now = chrono::Utc::now();
-        let valid_from = now - chrono::Duration::hours(1);
-        let valid_until = now + chrono::Duration::hours(1);
-
-        let intent = IntentEnvelope {
-            intent_id,
-            principal_id: PrincipalId::new(),
-            session_id: None,
-            channel_id: None,
-            title: "test".to_string(),
-            goal: "test".to_string(),
-            normalized_goal: "test".to_string(),
-            allowed_outcomes: vec![],
-            forbidden_outcomes: vec![OutcomeClause {
-                id: "forbid-mutation".to_string(),
-                description: "forbid file mutations".to_string(),
-                effect_type: EffectType::FileMutation,
-                required: true,
-                selectors: None,
-                temporal: make_temporal(Some(valid_from), Some(valid_until)),
-            }],
-            resource_scope: vec![],
-            risk_tier: RiskTier::Medium,
-            approval_mode: ferrum_proto::ApprovalMode::None,
-            default_rollback_class: RollbackClass::R0NativeReversible,
-            time_budget: ferrum_proto::TimeBudget {
-                max_duration_ms: 30_000,
-                max_steps: 8,
-                max_retries_per_step: 1,
-            },
-            trust_context: TrustContextSummary {
-                input_labels: vec![],
-                sensitivity_labels: vec![],
-                taint_score: 0,
-                contains_external_metadata: false,
-                contains_tool_output: false,
-                contains_untrusted_text: false,
-            },
-            derived_from_event_ids: vec![],
-            tags: vec![],
-            metadata: ferrum_proto::JsonMap::new(),
-            status: ferrum_proto::IntentStatus::Active,
-            policy_bundle_fingerprint: None,
-            created_at: now - chrono::Duration::days(1),
-            expires_at: now + chrono::Duration::days(1),
-        };
-
-        // Proposal within the window should match forbidden
-        let proposal_in_window = make_proposal_at(intent_id, "write a file", now);
-        let (deny_reason, _) = engine.assess_outcome_alignment(&intent, &proposal_in_window);
-        assert!(
-            deny_reason.is_some(),
-            "proposal within temporal window should match forbidden"
-        );
-    }
-
-    #[test]
-    fn test_temporal_constraints_not_yet_valid() {
-        let engine = StaticPdpEngine;
-        let intent_id = IntentId::new();
-
-        let now = chrono::Utc::now();
-        let valid_from = now + chrono::Duration::hours(1); // starts in the future
-        let valid_until = now + chrono::Duration::hours(2);
-
-        let intent = IntentEnvelope {
-            intent_id,
-            principal_id: PrincipalId::new(),
-            session_id: None,
-            channel_id: None,
-            title: "test".to_string(),
-            goal: "test".to_string(),
-            normalized_goal: "test".to_string(),
-            allowed_outcomes: vec![],
-            forbidden_outcomes: vec![OutcomeClause {
-                id: "forbid-mutation".to_string(),
-                description: "forbid file mutations".to_string(),
-                effect_type: EffectType::FileMutation,
-                required: true,
-                selectors: None,
-                temporal: make_temporal(Some(valid_from), Some(valid_until)),
-            }],
-            resource_scope: vec![],
-            risk_tier: RiskTier::Medium,
-            approval_mode: ferrum_proto::ApprovalMode::None,
-            default_rollback_class: RollbackClass::R0NativeReversible,
-            time_budget: ferrum_proto::TimeBudget {
-                max_duration_ms: 30_000,
-                max_steps: 8,
-                max_retries_per_step: 1,
-            },
-            trust_context: TrustContextSummary {
-                input_labels: vec![],
-                sensitivity_labels: vec![],
-                taint_score: 0,
-                contains_external_metadata: false,
-                contains_tool_output: false,
-                contains_untrusted_text: false,
-            },
-            derived_from_event_ids: vec![],
-            tags: vec![],
-            metadata: ferrum_proto::JsonMap::new(),
-            status: ferrum_proto::IntentStatus::Active,
-            policy_bundle_fingerprint: None,
-            created_at: now - chrono::Duration::days(1),
-            expires_at: now + chrono::Duration::days(1),
-        };
-
-        // Proposal before the window should NOT match forbidden (temporal skip)
-        let proposal_before = make_proposal_at(intent_id, "write a file", now);
-        let (deny_reason, warnings) = engine.assess_outcome_alignment(&intent, &proposal_before);
-        assert!(
-            deny_reason.is_none(),
-            "proposal before temporal window should NOT match forbidden"
-        );
-        // Note: When allowed_outcomes is empty, PDP returns "aligned" (backward compatible).
-        // This means no warning is generated even though no explicit allowed outcome exists.
-        // The temporal skip of forbidden is the key behavior being tested.
-        assert!(
-            warnings.is_empty(),
-            "with empty allowed_outcomes, no warning is generated (backward compatible)"
-        );
-    }
-
-    #[test]
-    fn test_temporal_constraints_expired() {
-        let engine = StaticPdpEngine;
-        let intent_id = IntentId::new();
-
-        let now = chrono::Utc::now();
-        let valid_from = now - chrono::Duration::hours(2);
-        let valid_until = now - chrono::Duration::hours(1); // already expired
-
-        let intent = IntentEnvelope {
-            intent_id,
-            principal_id: PrincipalId::new(),
-            session_id: None,
-            channel_id: None,
-            title: "test".to_string(),
-            goal: "test".to_string(),
-            normalized_goal: "test".to_string(),
-            allowed_outcomes: vec![],
-            forbidden_outcomes: vec![OutcomeClause {
-                id: "forbid-mutation".to_string(),
-                description: "forbid file mutations".to_string(),
-                effect_type: EffectType::FileMutation,
-                required: true,
-                selectors: None,
-                temporal: make_temporal(Some(valid_from), Some(valid_until)),
-            }],
-            resource_scope: vec![],
-            risk_tier: RiskTier::Medium,
-            approval_mode: ferrum_proto::ApprovalMode::None,
-            default_rollback_class: RollbackClass::R0NativeReversible,
-            time_budget: ferrum_proto::TimeBudget {
-                max_duration_ms: 30_000,
-                max_steps: 8,
-                max_retries_per_step: 1,
-            },
-            trust_context: TrustContextSummary {
-                input_labels: vec![],
-                sensitivity_labels: vec![],
-                taint_score: 0,
-                contains_external_metadata: false,
-                contains_tool_output: false,
-                contains_untrusted_text: false,
-            },
-            derived_from_event_ids: vec![],
-            tags: vec![],
-            metadata: ferrum_proto::JsonMap::new(),
-            status: ferrum_proto::IntentStatus::Active,
-            policy_bundle_fingerprint: None,
-            created_at: now - chrono::Duration::days(1),
-            expires_at: now + chrono::Duration::days(1),
-        };
-
-        // Proposal after expiry should NOT match forbidden (temporal skip)
-        let proposal_after = make_proposal_at(intent_id, "write a file", now);
-        let (deny_reason, warnings) = engine.assess_outcome_alignment(&intent, &proposal_after);
-        assert!(
-            deny_reason.is_none(),
-            "proposal after expiration should NOT match forbidden"
-        );
-        // Note: When allowed_outcomes is empty, PDP returns "aligned" (backward compatible).
-        // This means no warning is generated even though no explicit allowed outcome exists.
-        // The temporal skip of forbidden is the key behavior being tested.
-        assert!(
-            warnings.is_empty(),
-            "with empty allowed_outcomes, no warning is generated (backward compatible)"
-        );
-    }
-
-    #[test]
-    fn test_temporal_constraints_valid_from_only() {
-        let engine = StaticPdpEngine;
-        let intent_id = IntentId::new();
-
-        let now = chrono::Utc::now();
-        let valid_from = now - chrono::Duration::hours(1); // started 1 hour ago, no end
-
-        let intent = IntentEnvelope {
-            intent_id,
-            principal_id: PrincipalId::new(),
-            session_id: None,
-            channel_id: None,
-            title: "test".to_string(),
-            goal: "test".to_string(),
-            normalized_goal: "test".to_string(),
-            allowed_outcomes: vec![],
-            forbidden_outcomes: vec![OutcomeClause {
-                id: "forbid-mutation".to_string(),
-                description: "forbid file mutations".to_string(),
-                effect_type: EffectType::FileMutation,
-                required: true,
-                selectors: None,
-                temporal: make_temporal(Some(valid_from), None), // valid from start, no end
-            }],
-            resource_scope: vec![],
-            risk_tier: RiskTier::Medium,
-            approval_mode: ferrum_proto::ApprovalMode::None,
-            default_rollback_class: RollbackClass::R0NativeReversible,
-            time_budget: ferrum_proto::TimeBudget {
-                max_duration_ms: 30_000,
-                max_steps: 8,
-                max_retries_per_step: 1,
-            },
-            trust_context: TrustContextSummary {
-                input_labels: vec![],
-                sensitivity_labels: vec![],
-                taint_score: 0,
-                contains_external_metadata: false,
-                contains_tool_output: false,
-                contains_untrusted_text: false,
-            },
-            derived_from_event_ids: vec![],
-            tags: vec![],
-            metadata: ferrum_proto::JsonMap::new(),
-            status: ferrum_proto::IntentStatus::Active,
-            policy_bundle_fingerprint: None,
-            created_at: now - chrono::Duration::days(1),
-            expires_at: now + chrono::Duration::days(1),
-        };
-
-        // Proposal now (after valid_from) should match forbidden
-        let proposal_now = make_proposal_at(intent_id, "write a file", now);
-        let (deny_reason, _) = engine.assess_outcome_alignment(&intent, &proposal_now);
-        assert!(
-            deny_reason.is_some(),
-            "proposal after valid_from should match forbidden"
-        );
-
-        // Proposal 2 hours ago (before valid_from) should NOT match
-        let proposal_before =
-            make_proposal_at(intent_id, "write a file", now - chrono::Duration::hours(2));
-        let (deny_reason_before, _) = engine.assess_outcome_alignment(&intent, &proposal_before);
-        assert!(
-            deny_reason_before.is_none(),
-            "proposal before valid_from should NOT match forbidden"
-        );
-    }
-
-    #[test]
-    fn test_temporal_constraints_valid_until_only() {
-        let engine = StaticPdpEngine;
-        let intent_id = IntentId::new();
-
-        let now = chrono::Utc::now();
-        let valid_until = now + chrono::Duration::hours(1); // expires in 1 hour, no start
-
-        let intent = IntentEnvelope {
-            intent_id,
-            principal_id: PrincipalId::new(),
-            session_id: None,
-            channel_id: None,
-            title: "test".to_string(),
-            goal: "test".to_string(),
-            normalized_goal: "test".to_string(),
-            allowed_outcomes: vec![],
-            forbidden_outcomes: vec![OutcomeClause {
-                id: "forbid-mutation".to_string(),
-                description: "forbid file mutations".to_string(),
-                effect_type: EffectType::FileMutation,
-                required: true,
-                selectors: None,
-                temporal: make_temporal(None, Some(valid_until)), // no start, valid until end
-            }],
-            resource_scope: vec![],
-            risk_tier: RiskTier::Medium,
-            approval_mode: ferrum_proto::ApprovalMode::None,
-            default_rollback_class: RollbackClass::R0NativeReversible,
-            time_budget: ferrum_proto::TimeBudget {
-                max_duration_ms: 30_000,
-                max_steps: 8,
-                max_retries_per_step: 1,
-            },
-            trust_context: TrustContextSummary {
-                input_labels: vec![],
-                sensitivity_labels: vec![],
-                taint_score: 0,
-                contains_external_metadata: false,
-                contains_tool_output: false,
-                contains_untrusted_text: false,
-            },
-            derived_from_event_ids: vec![],
-            tags: vec![],
-            metadata: ferrum_proto::JsonMap::new(),
-            status: ferrum_proto::IntentStatus::Active,
-            policy_bundle_fingerprint: None,
-            created_at: now - chrono::Duration::days(1),
-            expires_at: now + chrono::Duration::days(1),
-        };
-
-        // Proposal now (before valid_until) should match forbidden
-        let proposal_now = make_proposal_at(intent_id, "write a file", now);
-        let (deny_reason, _) = engine.assess_outcome_alignment(&intent, &proposal_now);
-        assert!(
-            deny_reason.is_some(),
-            "proposal before valid_until should match forbidden"
-        );
-
-        // Proposal in 2 hours (after valid_until) should NOT match
-        let proposal_after =
-            make_proposal_at(intent_id, "write a file", now + chrono::Duration::hours(2));
-        let (deny_reason_after, _) = engine.assess_outcome_alignment(&intent, &proposal_after);
-        assert!(
-            deny_reason_after.is_none(),
-            "proposal after valid_until should NOT match forbidden"
-        );
-    }
-
-    #[test]
-    fn test_temporal_constraints_allowed_outcome_temporal() {
-        let engine = StaticPdpEngine;
-        let intent_id = IntentId::new();
-
-        let now = chrono::Utc::now();
-        let valid_from = now + chrono::Duration::hours(1); // starts in the future
-        let valid_until = now + chrono::Duration::hours(2);
-
-        // Intent with ALLOWED FileMutation that starts in the future
-        let intent = IntentEnvelope {
-            intent_id,
-            principal_id: PrincipalId::new(),
-            session_id: None,
-            channel_id: None,
-            title: "test".to_string(),
-            goal: "test".to_string(),
-            normalized_goal: "test".to_string(),
-            allowed_outcomes: vec![OutcomeClause {
-                id: "allow-mutation".to_string(),
-                description: "allow file mutations after 1 hour".to_string(),
-                effect_type: EffectType::FileMutation,
-                required: false,
-                selectors: None,
-                temporal: make_temporal(Some(valid_from), Some(valid_until)),
-            }],
             forbidden_outcomes: vec![],
             resource_scope: vec![],
-            risk_tier: RiskTier::Medium,
-            approval_mode: ferrum_proto::ApprovalMode::None,
-            default_rollback_class: RollbackClass::R0NativeReversible,
-            time_budget: ferrum_proto::TimeBudget {
-                max_duration_ms: 30_000,
-                max_steps: 8,
-                max_retries_per_step: 1,
+            risk_tier: RiskTier::Low,
+            approval_mode: ApprovalMode::None,
+            default_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+            time_budget: TimeBudget {
+                max_duration_ms: 60000,
+                max_steps: 100,
+                max_retries_per_step: 3,
             },
-            trust_context: TrustContextSummary {
-                input_labels: vec![],
-                sensitivity_labels: vec![],
-                taint_score: 0,
-                contains_external_metadata: false,
-                contains_tool_output: false,
-                contains_untrusted_text: false,
-            },
+            trust_context: make_trust_context(),
             derived_from_event_ids: vec![],
             tags: vec![],
-            metadata: ferrum_proto::JsonMap::new(),
-            status: ferrum_proto::IntentStatus::Active,
-            policy_bundle_fingerprint: None,
-            created_at: now - chrono::Duration::days(1),
-            expires_at: now + chrono::Duration::days(1),
-        };
+            metadata: JsonMap::new(),
+            status: IntentStatus::Active,
+            created_at: chrono::Utc::now(),
+            expires_at: chrono::Utc::now(),
+        }
+    }
 
-        // Proposal now (before allowed outcome is valid) should NOT be aligned
-        let proposal_now = make_proposal_at(intent_id, "write a file", now);
-        let (_, warnings) = engine.assess_outcome_alignment(&intent, &proposal_now);
-        assert!(
-            !warnings.is_empty(),
-            "proposal before allowed temporal window should get warning"
+    async fn make_intent_with_outcomes(
+        allowed: Vec<OutcomeClause>,
+        forbidden: Vec<OutcomeClause>,
+    ) -> IntentEnvelope {
+        let mut intent = make_intent();
+        intent.allowed_outcomes = allowed;
+        intent.forbidden_outcomes = forbidden;
+        intent
+    }
+
+    fn make_proposal(
+        tool_name: &str,
+        expected_effect: &str,
+        rollback_class: RollbackClass,
+    ) -> ActionProposal {
+        ActionProposal {
+            proposal_id: ProposalId::new(),
+            intent_id: IntentId::new(),
+            step_index: 0,
+            title: "test proposal".to_string(),
+            tool_name: tool_name.to_string(),
+            server_name: "test-server".to_string(),
+            raw_arguments: serde_json::json!({}),
+            expected_effect: expected_effect.to_string(),
+            estimated_risk: RiskTier::Low,
+            requested_rollback_class: rollback_class,
+            taint_inputs: vec![],
+            metadata: JsonMap::new(),
+            created_at: chrono::Utc::now(),
+        }
+    }
+
+    fn make_proposal_with_risk(
+        tool_name: &str,
+        expected_effect: &str,
+        rollback_class: RollbackClass,
+        risk: RiskTier,
+    ) -> ActionProposal {
+        ActionProposal {
+            proposal_id: ProposalId::new(),
+            intent_id: IntentId::new(),
+            step_index: 0,
+            title: "test proposal".to_string(),
+            tool_name: tool_name.to_string(),
+            server_name: "test-server".to_string(),
+            raw_arguments: serde_json::json!({}),
+            expected_effect: expected_effect.to_string(),
+            estimated_risk: risk,
+            requested_rollback_class: rollback_class,
+            taint_inputs: vec![],
+            metadata: JsonMap::new(),
+            created_at: chrono::Utc::now(),
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Branch 1: scope deny — empty resource_scope + non-R0 mutation
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_evaluate_scope_deny_empty_scope() {
+        let engine = StaticPdpEngine;
+        let intent = make_intent(); // resource_scope is empty
+        let proposal = make_proposal(
+            "git.commit",
+            "create a commit",
+            RollbackClass::R1SnapshotRecoverable,
         );
+        let trust = make_trust_context();
+        let result = engine.evaluate(&intent, &proposal, &trust).await.unwrap();
+        assert!(matches!(result.decision, Decision::Deny));
+        assert!(result.reason.contains("scope mismatch"));
+        assert!(
+            result
+                .matched_rule_ids
+                .contains(&"scope.mismatch.empty.scope".to_string())
+        );
+    }
 
-        // Proposal within window should be aligned (no warning)
-        let proposal_in_window = make_proposal_at(
-            intent_id,
+    // ─────────────────────────────────────────────────────────────────────────
+    // Branch 2: taint quarantine — taint_score >= 70 + non-R0 mutation
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_evaluate_taint_quarantine() {
+        let engine = StaticPdpEngine;
+        let mut intent = make_intent();
+        // non-empty resource_scope bypasses scope-deny guard
+        intent.resource_scope = vec![ferrum_proto::ResourceSelector::FilesystemPath {
+            path: "/tmp".to_string(),
+            mode: ferrum_proto::ResourceMode::Write,
+            content_hash: None,
+        }];
+        let proposal = make_proposal(
+            "git.commit",
+            "create a commit",
+            RollbackClass::R1SnapshotRecoverable,
+        );
+        let mut trust = make_trust_context();
+        trust.taint_score = 85;
+        let result = engine.evaluate(&intent, &proposal, &trust).await.unwrap();
+        assert!(matches!(result.decision, Decision::Quarantine));
+        assert!(result.reason.contains("taint score"));
+        assert!(
+            result
+                .matched_rule_ids
+                .contains(&"quarantine.high.taint.mutation".to_string())
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Branch 3: R3 require approval
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_evaluate_r3_require_approval() {
+        let engine = StaticPdpEngine;
+        let mut intent = make_intent();
+        intent.resource_scope = vec![ferrum_proto::ResourceSelector::FilesystemPath {
+            path: "/tmp".to_string(),
+            mode: ferrum_proto::ResourceMode::Write,
+            content_hash: None,
+        }];
+        let proposal = make_proposal(
+            "git.push",
+            "push to remote",
+            RollbackClass::R3IrreversibleHighConsequence,
+        );
+        let trust = make_trust_context();
+        let result = engine.evaluate(&intent, &proposal, &trust).await.unwrap();
+        assert!(matches!(result.decision, Decision::RequireApproval));
+        assert!(result.reason.contains("R3"));
+        assert!(
+            result
+                .matched_rule_ids
+                .contains(&"approval.r3.required".to_string())
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Branch 4: draft-only intent
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_evaluate_draft_only() {
+        let engine = StaticPdpEngine;
+        let mut intent = make_intent();
+        intent.approval_mode = ApprovalMode::DraftOnly;
+        let proposal = make_proposal(
+            "file.write",
             "write a file",
-            now + chrono::Duration::minutes(90),
+            RollbackClass::R0NativeReversible,
         );
-        let (_, warnings_in_window) = engine.assess_outcome_alignment(&intent, &proposal_in_window);
+        let trust = make_trust_context();
+        let result = engine.evaluate(&intent, &proposal, &trust).await.unwrap();
+        assert!(matches!(result.decision, Decision::AllowDraftOnly));
+        assert!(result.reason.contains("draft-only"));
         assert!(
-            warnings_in_window.is_empty(),
-            "proposal within allowed temporal window should be aligned"
+            result
+                .matched_rule_ids
+                .contains(&"draft.only.intent".to_string())
+        );
+        assert!(!result.warnings.is_empty()); // "intent enforces draft-only mode"
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Branch 5: forbidden outcome
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_evaluate_forbidden_outcome() {
+        let engine = StaticPdpEngine;
+        let intent = make_intent_with_outcomes(
+            vec![],
+            vec![OutcomeClause {
+                id: "no-git".to_string(),
+                effect_type: EffectType::GitMutation,
+                description: "no git mutations allowed".to_string(),
+                required: true,
+            }],
+        )
+        .await;
+        // tool/inference will produce GitMutation
+        let proposal = make_proposal(
+            "git.commit",
+            "commit changes",
+            RollbackClass::R0NativeReversible,
+        );
+        let trust = make_trust_context();
+        let result = engine.evaluate(&intent, &proposal, &trust).await.unwrap();
+        assert!(matches!(result.decision, Decision::Deny));
+        assert!(result.reason.contains("forbidden outcome"));
+        assert!(
+            result
+                .matched_rule_ids
+                .contains(&"outcome.forbidden".to_string())
         );
     }
 
-    #[test]
-    fn test_temporal_constraints_invalid_range_rejected() {
-        // valid_from >= valid_until should be rejected by validation
-        let now = chrono::Utc::now();
-        let temporal = OutcomeTemporalConstraints {
-            valid_from: Some(now),
-            valid_until: Some(now - chrono::Duration::hours(1)), // valid_from > valid_until
-        };
+    // ─────────────────────────────────────────────────────────────────────────
+    // Branch 6: advisory mismatch (allowed_outcomes non-empty, no match)
+    // ─────────────────────────────────────────────────────────────────────────
 
-        let err = temporal.validate();
-        assert!(err.is_some(), "invalid temporal range should be rejected");
+    #[tokio::test]
+    async fn test_evaluate_advisory_mismatch() {
+        let engine = StaticPdpEngine;
+        let intent = make_intent_with_outcomes(
+            vec![OutcomeClause {
+                id: "file-only".to_string(),
+                effect_type: EffectType::FileMutation,
+                description: "file changes only".to_string(),
+                required: false,
+            }],
+            vec![],
+        )
+        .await;
+        // inferred effect will be ExternalApiCall (no file/http keywords)
+        let proposal = make_proposal(
+            "fetch.http",
+            "call external API",
+            RollbackClass::R0NativeReversible,
+        );
+        let trust = make_trust_context();
+        let result = engine.evaluate(&intent, &proposal, &trust).await.unwrap();
+        assert!(matches!(result.decision, Decision::Allow)); // warn but allow
         assert!(
-            err.unwrap().contains("valid_from"),
-            "error should mention valid_from"
+            result
+                .matched_rule_ids
+                .contains(&"outcome.advisory.mismatch".to_string())
+        );
+        assert!(!result.warnings.is_empty());
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|w| w.contains("advisory mismatch"))
         );
     }
 
-    #[test]
-    fn test_temporal_constraints_valid_range_accepted() {
-        let now = chrono::Utc::now();
-        let temporal = OutcomeTemporalConstraints {
-            valid_from: Some(now - chrono::Duration::hours(1)),
-            valid_until: Some(now + chrono::Duration::hours(1)),
-        };
+    // ─────────────────────────────────────────────────────────────────────────
+    // Branch 7: default allow
+    // ─────────────────────────────────────────────────────────────────────────
 
-        let err = temporal.validate();
-        assert!(err.is_none(), "valid temporal range should be accepted");
+    #[tokio::test]
+    async fn test_evaluate_default_allow() {
+        let engine = StaticPdpEngine;
+        let intent = make_intent(); // empty allowed/forbidden outcomes
+        let proposal = make_proposal(
+            "read.file",
+            "read a file",
+            RollbackClass::R0NativeReversible,
+        );
+        let trust = make_trust_context();
+        let result = engine.evaluate(&intent, &proposal, &trust).await.unwrap();
+        assert!(matches!(result.decision, Decision::Allow));
+        assert!(result.reason.contains("default scaffold"));
+        assert!(
+            result
+                .matched_rule_ids
+                .contains(&"allow.default".to_string())
+        );
+        assert!(result.warnings.is_empty());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Ordering test 1: R3 supersedes DraftOnly
+    // (R3 check fires before DraftOnly check in evaluate())
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_evaluate_ordering_r3_before_draft_only() {
+        let engine = StaticPdpEngine;
+        let mut intent = make_intent();
+        intent.approval_mode = ApprovalMode::DraftOnly;
+        intent.resource_scope = vec![ferrum_proto::ResourceSelector::FilesystemPath {
+            path: "/tmp".to_string(),
+            mode: ferrum_proto::ResourceMode::Write,
+            content_hash: None,
+        }];
+        // R3 + DraftOnly intent — R3 check should fire first → RequireApproval
+        let proposal = make_proposal(
+            "git.push",
+            "push to remote",
+            RollbackClass::R3IrreversibleHighConsequence,
+        );
+        let trust = make_trust_context();
+        let result = engine.evaluate(&intent, &proposal, &trust).await.unwrap();
+        assert!(matches!(result.decision, Decision::RequireApproval));
+        assert!(
+            result
+                .matched_rule_ids
+                .contains(&"approval.r3.required".to_string())
+        );
+        // DraftOnly rule must NOT appear (R3 took priority)
+        assert!(
+            !result
+                .matched_rule_ids
+                .contains(&"draft.only.intent".to_string())
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Ordering test 2: scope deny supersedes DraftOnly
+    // (scope deny check fires before DraftOnly check in evaluate())
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_evaluate_ordering_scope_deny_before_draft_only() {
+        let engine = StaticPdpEngine;
+        let mut intent = make_intent();
+        intent.approval_mode = ApprovalMode::DraftOnly;
+        intent.resource_scope = vec![]; // empty scope → scope deny fires
+        // Non-R0 mutation with empty scope + DraftOnly intent
+        let proposal = make_proposal(
+            "git.commit",
+            "create commit",
+            RollbackClass::R1SnapshotRecoverable,
+        );
+        let trust = make_trust_context();
+        let result = engine.evaluate(&intent, &proposal, &trust).await.unwrap();
+        assert!(matches!(result.decision, Decision::Deny));
+        assert!(
+            result
+                .matched_rule_ids
+                .contains(&"scope.mismatch.empty.scope".to_string())
+        );
+        // DraftOnly rule must NOT appear (scope deny took priority)
+        assert!(
+            !result
+                .matched_rule_ids
+                .contains(&"draft.only.intent".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_evaluate_outcome_aligned() {
+        let engine = StaticPdpEngine;
+        let intent = make_intent_with_outcomes(
+            vec![OutcomeClause {
+                id: "clause-1".to_string(),
+                effect_type: EffectType::FileMutation,
+                description: "file changes".to_string(),
+                required: true,
+            }],
+            vec![],
+        )
+        .await;
+        let report = OutcomeReport {
+            execution_id: ExecutionId::new(),
+            actual_effect: EffectType::FileMutation,
+            description: "file was modified".to_string(),
+            result_digest: None,
+            adapter_success: true,
+            adapter_metadata: ferrum_proto::JsonMap::new(),
+        };
+        let result = engine.evaluate_outcome(&intent, &report).await.unwrap();
+        assert!(result.aligned);
+        assert!(result.warnings.is_empty());
+        assert!(
+            result
+                .matched_rule_ids
+                .contains(&"outcome.aligned".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_evaluate_outcome_forbidden() {
+        let engine = StaticPdpEngine;
+        let intent = make_intent_with_outcomes(
+            vec![],
+            vec![OutcomeClause {
+                id: "clause-1".to_string(),
+                effect_type: EffectType::GitMutation,
+                description: "no git changes".to_string(),
+                required: true,
+            }],
+        )
+        .await;
+        let report = OutcomeReport {
+            execution_id: ExecutionId::new(),
+            actual_effect: EffectType::GitMutation,
+            description: "git was modified".to_string(),
+            result_digest: None,
+            adapter_success: true,
+            adapter_metadata: ferrum_proto::JsonMap::new(),
+        };
+        let result = engine.evaluate_outcome(&intent, &report).await.unwrap();
+        assert!(!result.aligned);
+        assert!(
+            result
+                .matched_rule_ids
+                .contains(&"outcome.forbidden".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_evaluate_outcome_adapter_failure() {
+        let engine = StaticPdpEngine;
+        let intent = make_intent_with_outcomes(vec![], vec![]).await;
+        let report = OutcomeReport {
+            execution_id: ExecutionId::new(),
+            actual_effect: EffectType::ReadOnlyAnalysis,
+            description: "failed".to_string(),
+            result_digest: None,
+            adapter_success: false,
+            adapter_metadata: ferrum_proto::JsonMap::new(),
+        };
+        let result = engine.evaluate_outcome(&intent, &report).await.unwrap();
+        assert!(!result.aligned);
+        assert!(
+            result
+                .matched_rule_ids
+                .contains(&"outcome.adapter.failure".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_evaluate_outcome_advisory_mismatch() {
+        let engine = StaticPdpEngine;
+        let intent = make_intent_with_outcomes(
+            vec![OutcomeClause {
+                id: "clause-1".to_string(),
+                effect_type: EffectType::FileMutation,
+                description: "expected file changes".to_string(),
+                required: true,
+            }],
+            vec![],
+        )
+        .await;
+        let report = OutcomeReport {
+            execution_id: ExecutionId::new(),
+            actual_effect: EffectType::ReadOnlyAnalysis,
+            description: "read-only analysis happened".to_string(),
+            result_digest: None,
+            adapter_success: true,
+            adapter_metadata: ferrum_proto::JsonMap::new(),
+        };
+        let result = engine.evaluate_outcome(&intent, &report).await.unwrap();
+        assert!(result.aligned); // still aligned — advisory only
+        assert!(!result.warnings.is_empty());
+        assert!(
+            result
+                .matched_rule_ids
+                .contains(&"outcome.advisory.mismatch".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_evaluate_outcome_empty_allowed() {
+        let engine = StaticPdpEngine;
+        let intent = make_intent_with_outcomes(vec![], vec![]).await;
+        let report = OutcomeReport {
+            execution_id: ExecutionId::new(),
+            actual_effect: EffectType::ExternalApiCall,
+            description: "api call happened".to_string(),
+            result_digest: None,
+            adapter_success: true,
+            adapter_metadata: ferrum_proto::JsonMap::new(),
+        };
+        let result = engine.evaluate_outcome(&intent, &report).await.unwrap();
+        assert!(result.aligned);
+        assert!(result.warnings.is_empty());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Invariant 2: Critical risk + None approval => RequireApproval
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Invariant 2: Critical risk with no approval mode requires approval.
+    #[tokio::test]
+    async fn test_evaluate_invariant2_critical_risk_none_approval() {
+        let engine = StaticPdpEngine;
+        let mut intent = make_intent();
+        intent.approval_mode = ApprovalMode::None;
+        intent.resource_scope = vec![ferrum_proto::ResourceSelector::FilesystemPath {
+            path: "/tmp".to_string(),
+            mode: ferrum_proto::ResourceMode::Write,
+            content_hash: None,
+        }];
+        let proposal = make_proposal_with_risk(
+            "db.execute",
+            "execute database query",
+            RollbackClass::R1SnapshotRecoverable,
+            RiskTier::Critical,
+        );
+        let trust = make_trust_context();
+        let result = engine.evaluate(&intent, &proposal, &trust).await.unwrap();
+        assert!(matches!(result.decision, Decision::RequireApproval));
+        assert!(
+            result
+                .matched_rule_ids
+                .contains(&"approval.critical.risk.required".to_string())
+        );
+    }
+
+    /// Invariant 2: Critical risk with explicit approval mode should pass through
+    /// to other rules (not blocked by Invariant 2).
+    #[tokio::test]
+    async fn test_evaluate_invariant2_critical_risk_with_approval() {
+        let engine = StaticPdpEngine;
+        let mut intent = make_intent();
+        intent.approval_mode = ApprovalMode::Required; // explicit approval
+        intent.resource_scope = vec![ferrum_proto::ResourceSelector::FilesystemPath {
+            path: "/tmp".to_string(),
+            mode: ferrum_proto::ResourceMode::Write,
+            content_hash: None,
+        }];
+        let proposal = make_proposal_with_risk(
+            "db.execute",
+            "execute database query",
+            RollbackClass::R1SnapshotRecoverable,
+            RiskTier::Critical,
+        );
+        let trust = make_trust_context();
+        let result = engine.evaluate(&intent, &proposal, &trust).await.unwrap();
+        // Should NOT trigger approval.critical.risk.required since approval_mode != None
+        assert!(
+            !result
+                .matched_rule_ids
+                .contains(&"approval.critical.risk.required".to_string())
+        );
+        // And should allow (other rules pass)
+        assert!(matches!(result.decision, Decision::Allow));
+    }
+
+    /// Invariant 2 + R3 ordering: Critical+None should be checked before R3.
+    /// Critical+None should trigger RequireApproval via Invariant 2, not R3.
+    #[tokio::test]
+    async fn test_evaluate_invariant2_ordering_before_r3() {
+        let engine = StaticPdpEngine;
+        let mut intent = make_intent();
+        intent.approval_mode = ApprovalMode::None;
+        intent.resource_scope = vec![ferrum_proto::ResourceSelector::FilesystemPath {
+            path: "/tmp".to_string(),
+            mode: ferrum_proto::ResourceMode::Write,
+            content_hash: None,
+        }];
+        // R3 + Critical + None - Invariant 2 should fire first
+        let proposal = make_proposal_with_risk(
+            "git.push",
+            "push to remote",
+            RollbackClass::R3IrreversibleHighConsequence,
+            RiskTier::Critical,
+        );
+        let trust = make_trust_context();
+        let result = engine.evaluate(&intent, &proposal, &trust).await.unwrap();
+        assert!(matches!(result.decision, Decision::RequireApproval));
+        // Invariant 2 fires before R3 rule
+        assert!(
+            result
+                .matched_rule_ids
+                .contains(&"approval.critical.risk.required".to_string())
+        );
+        // R3 rule should NOT also fire (Invariant 2 took priority)
+        assert!(
+            !result
+                .matched_rule_ids
+                .contains(&"approval.r3.required".to_string())
+        );
+    }
+
+    /// Invariant 2 + Draft ordering: Critical+None should be checked before DraftOnly.
+    /// When approval_mode == DraftOnly (not None), Invariant 2 does NOT fire;
+    /// the DraftOnly rule fires instead.
+    #[tokio::test]
+    async fn test_evaluate_invariant2_draft_only_mode_not_blocked() {
+        let engine = StaticPdpEngine;
+        let mut intent = make_intent();
+        intent.approval_mode = ApprovalMode::DraftOnly;
+        intent.resource_scope = vec![ferrum_proto::ResourceSelector::FilesystemPath {
+            path: "/tmp".to_string(),
+            mode: ferrum_proto::ResourceMode::Write,
+            content_hash: None,
+        }];
+        // Critical + DraftOnly - Invariant 2 does NOT fire because approval_mode != None
+        // Instead DraftOnly rule fires
+        let proposal = make_proposal_with_risk(
+            "file.write",
+            "write a file",
+            RollbackClass::R0NativeReversible,
+            RiskTier::Critical,
+        );
+        let trust = make_trust_context();
+        let result = engine.evaluate(&intent, &proposal, &trust).await.unwrap();
+        // DraftOnly rule should fire since approval_mode == DraftOnly
+        assert!(matches!(result.decision, Decision::AllowDraftOnly));
+        assert!(
+            result
+                .matched_rule_ids
+                .contains(&"draft.only.intent".to_string())
+        );
+        // Invariant 2 should NOT fire (approval_mode is DraftOnly, not None)
+        assert!(
+            !result
+                .matched_rule_ids
+                .contains(&"approval.critical.risk.required".to_string())
+        );
+    }
+
+    /// Invariant 2 + scope-deny ordering: scope-deny fires before Invariant 2.
+    #[tokio::test]
+    async fn test_evaluate_invariant2_ordering_after_scope_deny() {
+        let engine = StaticPdpEngine;
+        let mut intent = make_intent();
+        intent.approval_mode = ApprovalMode::None;
+        // Empty resource_scope triggers scope-deny
+        let proposal = make_proposal_with_risk(
+            "db.execute",
+            "execute database query",
+            RollbackClass::R1SnapshotRecoverable,
+            RiskTier::Critical,
+        );
+        let trust = make_trust_context();
+        let result = engine.evaluate(&intent, &proposal, &trust).await.unwrap();
+        // Scope-deny fires first
+        assert!(matches!(result.decision, Decision::Deny));
+        assert!(
+            result
+                .matched_rule_ids
+                .contains(&"scope.mismatch.empty.scope".to_string())
+        );
+        // Invariant 2 should NOT fire since scope-deny already denied
+        assert!(
+            !result
+                .matched_rule_ids
+                .contains(&"approval.critical.risk.required".to_string())
+        );
     }
 }

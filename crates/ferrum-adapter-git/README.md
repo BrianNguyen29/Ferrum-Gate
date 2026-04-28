@@ -1,47 +1,32 @@
 # ferrum-adapter-git
 
-Local git rollback adapter primitives.
+Local git repository rollback adapter primitive.
 
-Trạng thái:
-- prepare captures the current local `HEAD` as `before_ref`
-- rollback/compensate reset the repo back to `before_ref`
-- verify checks the current `HEAD` against `after_ref` or `before_ref`
-- full git mutation execution and gateway wiring remain out of scope for this slice
+## Status
 
-## GitBranchCreate Support
+Initial implementation slice complete. Provides local git ref capture and reset primitives.
 
-This slice also supports local branch creation with automatic switch and rollback cleanup:
+## Supported Operations
 
-- **prepare**: Captures `before_ref`, `original_branch`, and validates:
-  - Repo is not dirty (fail-closed if uncommitted changes exist)
-  - Target branch does not already exist (fail-closed if branch exists)
-- **execute**: Creates new branch and switches to it via `git branch <name> && git checkout <name>`
-- **verify**: Confirms current branch matches expected branch and HEAD matches expected ref
-- **rollback/compensate**: Switches back to original branch and deletes the created branch
+| Operation  | Behavior                                                                 |
+|------------|--------------------------------------------------------------------------|
+| `prepare`  | Captures current HEAD SHA as `before_ref` in adapter metadata           |
+| `rollback` | Hard resets repository to `before_ref`                                    |
+| `verify`   | Returns true if current HEAD matches `after_ref` (or `before_ref`)       |
+| `compensate` | Alias for `rollback` in this slice                                     |
+| `execute`  | Captures `after_ref` from payload when provided; errors on other inputs |
 
-## GitPush Support (P2.4 Slice 1)
+## Metadata Keys
 
-This slice adds local-to-remote push support with rollback compensation for local remotes:
+- `repo_path`: Absolute path to the git repository work tree
+- `before_ref`: SHA of HEAD at prepare time
+- `after_ref`: SHA captured at execute time (when payload provides it)
+- `current_ref`: SHA of current HEAD at verify/rollback time
 
-- **prepare**: Captures pre-push remote ref (if exists), validates:
-  - Repo is not dirty (fail-closed if uncommitted changes exist)
-  - Remote exists (fail-closed if remote does not exist)
-- **execute**: Performs `git push <remote> <refspec>`
-- **verify**: Confirms remote ref matches expected (from `after_ref` or local HEAD fallback)
-- **rollback/compensate**: Attempts force-push of pre-push ref if captured; limited compensation for initial pushes (no pre_push_ref available)
+## Limitations (This Slice)
 
-**Note:** Rollback/compensation for GitPush is bounded to local temporary remotes in this slice. Full push rollback to external remotes is not guaranteed.
-
-## GitPull Support (P2.4 Slice 3)
-
-This slice adds local-to-local pull support with fast-forward-only semantics and rollback:
-
-- **prepare**: Captures `before_ref`, `remote_ref`, `current_branch`, validates:
-  - Repo is not dirty (fail-closed if uncommitted changes exist)
-  - Remote exists (fail-closed if remote does not exist)
-  - Pull is fast-forward possible (fail-closed if local has diverged from remote)
-- **execute**: Performs `git pull --ff-only <remote> <refspec>`
-- **verify**: Confirms local HEAD matches the expected remote ref
-- **rollback/compensate**: Resets to `before_ref` via `git reset --hard <before_ref>`
-
-**Note:** GitPull is bounded to local temporary remotes with fast-forward-only semantics. Divergent histories are rejected fail-closed.
+- No gateway/runtime wiring
+- No ferrumd registration
+- No HTTP adapter integration
+- No branch creation or commit mutation
+- Uses local `git` CLI only

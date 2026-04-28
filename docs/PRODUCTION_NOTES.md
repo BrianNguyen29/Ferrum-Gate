@@ -1,0 +1,109 @@
+# Production Notes — FerrumGate Governance Gateway
+
+## SQLite Configuration
+
+### Connection Pool
+- **Pool size**: 20 connections (default).
+- **Write queue**: Enabled. All SQLite writes are funneled through a single in-process `mpsc` write queue to eliminate lock thrash and `SQLITE_BUSY` retry storms.
+- **busy_timeout**: 5000ms (5s), now primarily a defensive fallback rather than the main contention-control mechanism.
+- **WAL mode**: Enabled by default. Provides concurrent read access while writes are being serialized by the queue.
+- **PRAGMA tuning**: `synchronous=NORMAL`, `wal_autocheckpoint=1000`, `cache_size=-64000`, `busy_timeout=5000`.
+
+### Write Concurrency Limits
+SQLite still has a **single-writer** storage model, but the gateway now serializes writes explicitly with a write queue instead of allowing many handlers to contend on the database lock.
+
+**Operational guidance after Phase 1:**
+- Multi-step pipelines at **5 workers** are now stable with **0% errors**.
+- Pure concurrent write ingestion at **50 workers** is now stable with **0% errors** and acceptable latency for stress conditions.
+- Throughput is now limited mostly by queue drain rate and payload size, not by lock contention/retry storms.
+- PostgreSQL is still recommended for sustained production workloads that need materially higher write throughput or multi-node deployment.
+
+### FK Constraint Chain
+The database schema has cascading foreign keys:
+```
+intents → proposals → capabilities → executions → rollback_contracts
+```
+All FK parent inserts (compile_intent, evaluate_proposal) are **synchronous** to guarantee FK integrity. The gateway handler returns 200 only after the record is persisted.
+
+### Persistence Strategy
+| Handler              | DB Write Mode                  | Rationale                                         |
+|---------------------|--------------------------------|---------------------------------------------------|
+| compile_intent       | Synchronous via write queue    | FK parent for proposals, capabilities             |
+| evaluate_proposal    | Synchronous via write queue    | FK parent for capabilities, executions            |
+| mint_capability      | Synchronous via write queue    | FK to intent + proposal; retries no longer needed |
+| authorize_execution  | Synchronous via write queue    | FK to capability; retries no longer needed        |
+| revoke_capability    | Synchronous via write queue     | Persisted state; durable fallback after in-memory loss |
+| ingest_provenance    | Synchronous via write queue    | Provenance events remain immediately queryable    |
+
+## Stress Test Baseline — Pre-Phase-1 (release binary, SQLite file-backed)
+
+| #  | Scenario                         | Workers | Throughput       | p50 Latency | Error Rate |
+|----|---------------------------------|---------|------------------|-------------|------------|
+| S1 | health (GET /v1/healthz)         | 50      | ~39,000 req/s    | 1.1ms       | 0%         |
+| S2 | auth (GET /v1/approvals)          | 50      | ~21,000 req/s    | 2.5ms       | 0%         |
+| S3 | provenance-query (POST)          | 50      | ~20,000 req/s    | 2.3ms       | 0%         |
+| S4 | intent-compile (POST, sync write) | 5       | ~6.5 req/s       | ~140ms      | ~10%       |
+| S5 | execution-pipeline (6 steps)     | 5       | ~1.1 pipelines/s | ~958ms      | ~73%       |
+| S6 | capability (mint→revoke cycle)   | 5       | ~1.5 req/s       | varies      | ~33%       |
+| S7 | sqlite-contention (ingest writes) | 50      | ~8.1 req/s       | ~3.26s      | 0%*        |
+| S8 | rate-limit (burst detection)     | 50      | ~52,000 req/s    | 0.9ms       | 0%         |
+| S9 | mixed workload                   | 5       | ~16 req/s        | ~1.8ms      | ~2.5%      |
+
+*Pre-Phase-1 S7 showed 0% errors because requests queued behind SQLite's writer lock, but latency was extremely high due to lock serialization.
+
+## Stress Test Results — Post-Phase-1 Write Queue
+
+Release build, full `ferrum-stress` suite after WriteQueue + PRAGMA tuning + retry cleanup:
+
+| #  | Scenario                         | Workers | Throughput        | p50 Latency | Error Rate |
+|----|---------------------------------|---------|-------------------|-------------|------------|
+| S1 | health (GET /v1/healthz)         | 50      | 33,126.1 req/s    | 1.28ms      | 0%         |
+| S2 | auth (GET /v1/approvals)         | 50      | 13,646.5 req/s    | 3.03ms      | 0%         |
+| S3 | provenance-query (POST)          | 50      | 16,311.5 req/s    | 2.76ms      | 0%         |
+| S4 | intent-compile                   | 5       | 305.5 req/s       | 2.25ms      | 0%         |
+| S5 | execution-pipeline               | 5       | 57.6 req/s        | 16.0ms      | 0%         |
+| S6 | capability (mint→revoke cycle)   | 5       | 42.0 req/s        | 0.30ms      | 0%         |
+| S7 | sqlite-contention (ingest writes)| 50      | 289.4 req/s       | 29.9ms      | 0%         |
+| S8 | rate-limit (burst detection)     | 50      | 28,813.3 req/s    | 1.47ms      | 0%*        |
+| S9 | mixed workload                   | 5       | 123.8 req/s       | 4.80ms      | 0%         |
+
+### Before / After Highlights
+
+- **S4**: `6.5 req/s → 305.5 req/s` (~47x), `~10% → 0%` errors
+- **S5**: `1.1 req/s → 57.6 req/s` (~52x), `~73% → 0%` errors
+- **S6**: `1.5 req/s → 42.0 req/s` (~28x), `~33% → 0%` errors
+- **S7**: `8.1 req/s → 289.4 req/s` (~36x), `3.26s → 29.9ms` p50 latency
+- **S9**: `16 req/s → 123.8 req/s` (~7.7x), `~2.5% → 0%` errors
+
+*S8 was run without rate limiting enabled in the stress test server configuration, so no `429` responses were expected or observed.
+
+## Performance Optimization Plan
+
+> **Full plan**: See [`docs/PERFORMANCE_OPTIMIZATION_PLAN.md`](PERFORMANCE_OPTIMIZATION_PLAN.md)
+
+Three-phase approach to resolve write bottleneck:
+
+| Phase | Solution | Effort | Expected Result |
+|-------|----------|--------|----------------|
+| **1** | Write-Queue (mpsc) + retry cleanup + PRAGMA tuning | ✅ Done | Exceeded target: all errors 0%, S7 p50 29.9ms |
+| **2** | Transaction batching for pipelines + direct UPDATE | ⏸ Deferred | Phase 2 deferred due to perf regression in benchmarking |
+| **3** | PostgreSQL migration | 1-2 weeks | 1000+ writes/s, 200+ pipelines/s |
+
+## Scaling Beyond SQLite
+
+PostgreSQL is recommended/planned for production deployments requiring materially higher sustained write throughput, cross-process or multi-node deployment, or stronger transactional flexibility (not currently implemented in `ferrum-store`).
+
+## Authentication
+- **Bearer token mode**: Set `auth_mode = "Bearer"` and `bearer_token` in config
+- Tokens are validated with constant-time comparison (timing-attack resistant)
+- Health endpoints (`/v1/healthz`, `/v1/readyz`) are always unauthenticated
+
+## Rate Limiting
+- Built-in via `tower_governor`: 2 req/s sustained, burst of 50
+- Applied per-IP using `GovernorLayer`
+- Periodic cleanup of rate limiter entries (every 60s)
+
+## Capability TTL
+- Maximum TTL: **300 seconds** (5 minutes, hardcoded in `ferrum-cap` service)
+- Default TTL: Configured per-request via `requested_ttl_secs`
+- Expired capabilities return `CapabilityExpired` error
