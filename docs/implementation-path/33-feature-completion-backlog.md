@@ -78,12 +78,12 @@ These items improve production posture but are not v1 RC blockers.
 
 | Aspect | Detail |
 |--------|--------|
-| **Current state** | `/v1/healthz` and `/v1/readyz` are shallow (process alive only); `/v1/readyz/deep` implemented with store probe |
-| **Gap** | Previously: `/v1/readyz/deep` is P3 bounded — not all deep health paths verified |
+| **Current state** | `/v1/healthz` and `/v1/readyz` are shallow (process alive only); `/v1/readyz/deep` implemented with store probe; `/v1/metrics` exposes bounded health/metrics counters and store up/down gauge |
+| **Gap** | Broader observability remains bounded: no latency histograms, broad per-route error counters, WAL/page gauges, or pool saturation metrics |
 | **Verification** | ✅ S2 improved — 2026-04-28: bounded tests added covering unhealthy store response (503/degraded/healthy=false/component error) |
 | **Risk** | LOW — deep readiness exists and verified for failure mode |
 | **Production ready** | **Partial** — deep probe verified for store-unhealthy path; broader failure modes (adapter failure, corruption) remain post-v1 scope |
-| **Next action** | None for v1 — bounded failure-mode tests now in place |
+| **Next action** | Future: add latency/error/WAL/pool metrics if Phase 3 or pilot operations require them |
 
 ### S3 — Backup/restore: bounded SQLite-only; external scheduling is v1 architecture
 

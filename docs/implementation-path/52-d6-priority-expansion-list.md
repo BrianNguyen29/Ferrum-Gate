@@ -51,7 +51,7 @@ These items improve production posture and operational confidence but are not bl
 | Priority | Item | D5 Domain | Evidence | Phase |
 |----------|------|-----------|----------|-------|
 | **3** | Backup automation / retention / encryption | Domain 6 (Backup/restore limits) | Bounded SQLite-only backup exists; no scheduling, retention, or encryption in v1; S3 in `33-feature-completion-backlog.md` | Pilot (operator-owned) or Phase 3+ |
-| **4** | Observability / metrics | Domain 9 (Health check depth), Dimension 4 §4.4 (Operational monitoring baseline) | Minimum observability not yet implemented; `../ferrumgate-roadmap-v1/21-v1-single-node-observability-minimums.md` documents requirements | Pilot or Phase 3+ |
+| **4** | Observability / metrics | Domain 9 (Health check depth), Dimension 4 §4.4 (Operational monitoring baseline) | Bounded `/v1/metrics` endpoint implemented for health/metrics counters and store up/down gauge; broader latency/error/WAL/pool metrics remain future work | Pilot or Phase 3+ |
 | **5** | Adapter hardening | Domain 4 (Adapter compensation non-uniformity), Domain 5 (Adapter surface boundedness) | P3–P6 in `33-feature-completion-backlog.md`; compensation guarantees vary by adapter | Pilot or Phase 3+ |
 
 ### Deferred — Explicit Phase 3+

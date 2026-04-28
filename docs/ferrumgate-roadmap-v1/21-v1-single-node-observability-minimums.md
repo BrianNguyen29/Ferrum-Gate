@@ -5,7 +5,7 @@ logs, probes, derived signals, and minimum alert thresholds.
 
 **Scope**: single-node, SQLite-backed, v1 only.
 **Audience**: operators, on-call engineers, SREs.
-**Last updated**: 2026-03-30.
+**Last updated**: 2026-04-28.
 
 ---
 
@@ -18,8 +18,9 @@ operators of a FerrumGate v1 single-node deployment. It covers logs that
 exist today, probe-based signals, derived signals, known blind spots, and
 conservative escalation thresholds.
 
-This document is **operator-facing and practical**. It does not describe
-metrics or tracing infrastructure that does not exist in v1.
+This document is **operator-facing and practical**. It describes the bounded
+built-in metrics surface available in the current code and the blind spots that
+still require external tooling.
 
 ---
 
@@ -64,24 +65,33 @@ The default log filter is `info`.
 |---|---|---|
 | `GET /v1/healthz` | None | Server process is alive, HTTP endpoint reachable |
 | `GET /v1/readyz`  | None | Same as healthz; shallow only |
+| `GET /v1/readyz/deep` | None | Store health probe via `StoreFacade::health_check()` |
+| `GET /v1/metrics` | None | Bounded Prometheus-style text metrics for health/metrics routes and store health |
 
-**Both healthz and readyz are shallow.** They confirm only that the HTTP
-server goroutine is running. They do **not** validate:
-- The SQLite store connection
-- That migrations completed successfully
-- That the governance loop is functional
-- That any internal state is accessible
+**healthz and readyz are shallow.** They confirm only that the HTTP server
+goroutine is running. They do **not** validate the SQLite store connection or
+that the governance loop is functional. Use `/v1/readyz/deep` for the built-in
+store probe, and use the functional probe in Section 5 for end-to-end readiness.
 
-A 200 from healthz or readyz does not mean the node is ready to serve
-workload traffic. See Section 5 for the functional probe definition.
+A 200 from healthz or readyz does not mean the node is ready to serve workload
+traffic. See Section 5 for the functional probe definition.
 
-### 3.3 No Native Metrics Endpoint
+### 3.3 Built-In Metrics Endpoint
 
-FerrumGate v1 does **not** expose a native metrics endpoint (Prometheus,
-OpenTelemetry, StatsD, or similar). There is no `/metrics` route.
+FerrumGate exposes a bounded `GET /v1/metrics` endpoint using Prometheus text
+format without a Prometheus/OpenTelemetry runtime dependency. The endpoint is
+unauthenticated like health/readiness endpoints and currently reports:
 
-Alerting must be built from log analysis, probe responses, and periodic
-CLI/REST calls.
+- `ferrumgate_http_requests_total{route="/v1/healthz"}`
+- `ferrumgate_http_requests_total{route="/v1/readyz"}`
+- `ferrumgate_http_requests_total{route="/v1/readyz/deep"}`
+- `ferrumgate_http_requests_total{route="/v1/metrics"}`
+- `ferrumgate_store_health_up` (`1` when `store.health_check()` passes, `0` otherwise)
+- `ferrumgate_metrics_scrapes_total`
+
+This is intentionally a minimal built-in surface. It does not yet provide
+latency histograms, per-route error counters for all governance endpoints, WAL
+size/page-count gauges, or connection-pool saturation signals.
 
 ### 3.4 Derived Signals
 
@@ -102,9 +112,9 @@ The following cannot be observed in v1 without external tooling:
 
 | Blind spot | Description |
 |---|---|
-| No request latency histograms | No `/metrics` endpoint; latency must be measured client-side |
-| No error rate counters | Error rates must be inferred from probe failures or log scraping |
-| No SQLite WAL size or page count | Store health must be checked via `sqlite3` CLI directly |
+| No request latency histograms | `/v1/metrics` exposes counters only; latency must be measured client-side |
+| No broad error rate counters | `/v1/metrics` currently exposes bounded health/metrics counters only; governance endpoint errors still require log scraping or client-side measurement |
+| No SQLite WAL size or page count | `/v1/metrics` exposes store up/down only; WAL/page details still require `sqlite3` CLI directly |
 | No connection pool saturation signal | sqlx pool exhaustion is not exposed as a metric |
 | No rollback class enforcement signal | R3 `auto_commit=false` bypass at prepare is not observable |
 | No single-use capability reuse detection | Reuse is not enforced server-side at authorize |
@@ -223,10 +233,12 @@ These are intrinsic to the v1 single-node design and are documented
 here for completeness. They cannot be resolved without architectural
 changes beyond v1 scope.
 
-### 7.1 No Metrics Endpoint
+### 7.1 Metrics Endpoint is Bounded
 
-There is no Prometheus, OpenTelemetry, or similar endpoint in v1.
-All alerting must use log scraping or periodic HTTP probing.
+`GET /v1/metrics` exists, but it is intentionally minimal. It reports counters
+for health/metrics routes and a store up/down gauge only. Operators still need
+external tooling for latency histograms, broad per-route error rates, WAL/page
+size, and pool saturation.
 
 ### 7.2 healthz and readyz are Shallow
 
@@ -247,25 +259,24 @@ Gaps in the event chain are not detected or flagged automatically.
 Manual lineage verification is required if completeness is needed for
 audit.
 
-### 7.5 Rollback Class Bypass at Prepare
+### 7.5 Rollback Class Signal is Limited
 
-The gateway's prepare handler hardcodes `rollback_class = R0` before
-transitioning to `PREPARED` state. An R3 intent could reach `PREPARED`
-with `rollback_class = R0`, bypassing the `auto_commit = false` control.
-This is not observable from outside the process. See
-`19-v1-single-node-support-contract.md` Section 4.1.
+R3 `auto_commit=false` handling is verified by the current invariant evidence,
+but `/v1/metrics` does not expose rollback-class distribution or per-class
+prepare/execute counters. Operators should use lineage/provenance inspection for
+case-specific review.
 
-### 7.6 No Single-Use Capability Enforcement at Authorize
+### 7.6 Capability Reuse Signal is Limited
 
-The capability service's `mark_used` is not called by the gateway's
-authorize path. Reuse of single-use capabilities is not rejected
-server-side. See `19-v1-single-node-support-contract.md` Section 4.2.
+Durable single-use capability handling is verified by the current invariant
+evidence, but `/v1/metrics` does not expose rejected-reuse counters. Operators
+should use logs and provenance/capability inspection for incident review.
 
-### 7.7 SQLite Store Health
+### 7.7 SQLite Store Health is Up/Down Only
 
-There is no built-in store health endpoint. Operators must use
-`sqlite3 /path/to/db "PRAGMA integrity_check;"` directly to verify
-store integrity.
+`/v1/readyz/deep` and `/v1/metrics` expose store health as a cheap up/down probe.
+Operators must still use `sqlite3 /path/to/db "PRAGMA integrity_check;"`
+directly to verify full store integrity.
 
 ---
 

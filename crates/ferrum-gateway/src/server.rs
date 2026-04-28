@@ -31,6 +31,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tower::ServiceBuilder;
 use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
 use tower_http::trace::TraceLayer;
@@ -43,6 +44,29 @@ struct AppState {
     runtime: GatewayRuntime,
     #[allow(dead_code)]
     server_config: ServerConfig,
+    metrics: Arc<Metrics>,
+}
+
+/// Metrics state for the /v1/metrics endpoint.
+/// Counters are scoped to health and metrics endpoints only.
+struct Metrics {
+    healthz_requests: AtomicU64,
+    readyz_requests: AtomicU64,
+    readyz_deep_requests: AtomicU64,
+    metrics_scrapes: AtomicU64,
+    store_health_up: AtomicU64,
+}
+
+impl Metrics {
+    fn new() -> Self {
+        Self {
+            healthz_requests: AtomicU64::new(0),
+            readyz_requests: AtomicU64::new(0),
+            readyz_deep_requests: AtomicU64::new(0),
+            metrics_scrapes: AtomicU64::new(0),
+            store_health_up: AtomicU64::new(0),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -150,6 +174,7 @@ fn build_router_core(runtime: GatewayRuntime, server_config: Option<ServerConfig
     let state = Arc::new(AppState {
         runtime,
         server_config: server_config.clone().unwrap_or_default(),
+        metrics: Arc::new(Metrics::new()),
     });
 
     let mut router = Router::new()
@@ -157,6 +182,8 @@ fn build_router_core(runtime: GatewayRuntime, server_config: Option<ServerConfig
         .route("/v1/healthz", get(healthz))
         .route("/v1/readyz", get(readyz))
         .route("/v1/readyz/deep", get(readyz_deep))
+        // Metrics endpoint - always unauthenticated
+        .route("/v1/metrics", get(metrics_handler))
         // Provenance query endpoint
         .route("/v1/provenance/query", post(query_provenance))
         // Execution lineage endpoint
@@ -250,9 +277,13 @@ async fn bearer_auth_middleware(
     request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
-    // Skip auth for health endpoints
+    // Skip auth for health and metrics endpoints
     let path = request.uri().path();
-    if path == "/v1/healthz" || path == "/v1/readyz" || path == "/v1/readyz/deep" {
+    if path == "/v1/healthz"
+        || path == "/v1/readyz"
+        || path == "/v1/readyz/deep"
+        || path == "/v1/metrics"
+    {
         return next.run(request).await;
     }
 
@@ -285,13 +316,21 @@ async fn bearer_auth_middleware(
     (StatusCode::UNAUTHORIZED, Json(error)).into_response()
 }
 
-async fn healthz() -> Json<HealthResponse> {
+async fn healthz(State(state): State<Arc<AppState>>) -> Json<HealthResponse> {
+    state
+        .metrics
+        .healthz_requests
+        .fetch_add(1, Ordering::Relaxed);
     Json(HealthResponse {
         status: "ok".to_string(),
     })
 }
 
-async fn readyz() -> Json<HealthResponse> {
+async fn readyz(State(state): State<Arc<AppState>>) -> Json<HealthResponse> {
+    state
+        .metrics
+        .readyz_requests
+        .fetch_add(1, Ordering::Relaxed);
     Json(HealthResponse {
         status: "ready".to_string(),
     })
@@ -302,6 +341,10 @@ async fn readyz() -> Json<HealthResponse> {
 /// Returns HTTP 200 with "ok" status when store is healthy.
 /// Returns HTTP 503 with "degraded" status when store is unhealthy.
 async fn readyz_deep(State(state): State<Arc<AppState>>) -> (StatusCode, Json<DeepHealthResponse>) {
+    state
+        .metrics
+        .readyz_deep_requests
+        .fetch_add(1, Ordering::Relaxed);
     let store_status = match state.runtime.store.health_check().await {
         Ok(()) => ComponentStatus {
             component: "store".to_string(),
@@ -331,6 +374,55 @@ async fn readyz_deep(State(state): State<Arc<AppState>>) -> (StatusCode, Json<De
     } else {
         (StatusCode::SERVICE_UNAVAILABLE, Json(response))
     }
+}
+
+/// Metrics endpoint handler.
+/// Returns Prometheus-compatible text format with request counters and store health.
+async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
+    state
+        .metrics
+        .metrics_scrapes
+        .fetch_add(1, Ordering::Relaxed);
+
+    let store_healthy = match state.runtime.store.health_check().await {
+        Ok(()) => 1u64,
+        Err(_) => 0u64,
+    };
+    state
+        .metrics
+        .store_health_up
+        .store(store_healthy, Ordering::Relaxed);
+
+    let healthz_count = state.metrics.healthz_requests.load(Ordering::Relaxed);
+    let readyz_count = state.metrics.readyz_requests.load(Ordering::Relaxed);
+    let readyz_deep_count = state.metrics.readyz_deep_requests.load(Ordering::Relaxed);
+    let metrics_count = state.metrics.metrics_scrapes.load(Ordering::Relaxed);
+    let store_up = state.metrics.store_health_up.load(Ordering::Relaxed);
+
+    let body = format!(
+        "# HELP ferrumgate_http_requests_total HTTP requests total by route\n\
+         # TYPE ferrumgate_http_requests_total counter\n\
+         ferrumgate_http_requests_total{{route=\"/v1/healthz\"}} {}\n\
+         ferrumgate_http_requests_total{{route=\"/v1/readyz\"}} {}\n\
+         ferrumgate_http_requests_total{{route=\"/v1/readyz/deep\"}} {}\n\
+         ferrumgate_http_requests_total{{route=\"/v1/metrics\"}} {}\n\
+         # HELP ferrumgate_store_health_up Store health status (1=ok, 0=unhealthy)\n\
+         # TYPE ferrumgate_store_health_up gauge\n\
+         ferrumgate_store_health_up {}\n\
+         # HELP ferrumgate_metrics_scrapes_total Number of times /v1/metrics was scraped\n\
+         # TYPE ferrumgate_metrics_scrapes_total counter\n\
+         ferrumgate_metrics_scrapes_total {}\n",
+        healthz_count, readyz_count, readyz_deep_count, metrics_count, store_up, metrics_count
+    );
+
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4",
+        )],
+        body,
+    )
+        .into_response()
 }
 
 async fn compile_intent(
@@ -4836,5 +4928,150 @@ mod tests {
         ];
         let result = validate_resource_bindings_subset_of_scope(&bindings, &scope);
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_metrics_endpoint_is_public_under_bearer_auth() {
+        let runtime = test_runtime().await;
+        let config = ServerConfig {
+            auth_mode: AuthMode::Bearer,
+            bearer_token: Some("secret-token".to_string()),
+            ..ServerConfig::default()
+        };
+
+        let response = build_router_with_auth(runtime, config)
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_metrics_endpoint_returns_prometheus_text() {
+        let runtime = test_runtime().await;
+
+        let response = build_router(runtime)
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+
+        // Verify Prometheus text format
+        assert!(body_str.contains("# HELP ferrumgate_http_requests_total"));
+        assert!(body_str.contains("# TYPE ferrumgate_http_requests_total counter"));
+        assert!(body_str.contains("ferrumgate_http_requests_total{route=\"/v1/healthz\"}"));
+        assert!(body_str.contains("ferrumgate_http_requests_total{route=\"/v1/readyz\"}"));
+        assert!(body_str.contains("ferrumgate_http_requests_total{route=\"/v1/readyz/deep\"}"));
+        assert!(body_str.contains("ferrumgate_http_requests_total{route=\"/v1/metrics\"}"));
+        assert!(body_str.contains("ferrumgate_store_health_up"));
+        assert!(body_str.contains("ferrumgate_metrics_scrapes_total"));
+    }
+
+    #[tokio::test]
+    async fn test_metrics_endpoint_counters_increment() {
+        let runtime = test_runtime().await;
+        let router = build_router(runtime);
+
+        // Call healthz
+        let _ = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/healthz")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Call readyz
+        let _ = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/readyz")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Call readyz/deep
+        let _ = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/readyz/deep")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Call metrics
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+
+        // Verify counters have incremented
+        assert!(body_str.contains("ferrumgate_http_requests_total{route=\"/v1/healthz\"} 1"));
+        assert!(body_str.contains("ferrumgate_http_requests_total{route=\"/v1/readyz\"} 1"));
+        assert!(body_str.contains("ferrumgate_http_requests_total{route=\"/v1/readyz/deep\"} 1"));
+        assert!(body_str.contains("ferrumgate_http_requests_total{route=\"/v1/metrics\"} 1"));
+        assert!(body_str.contains("ferrumgate_metrics_scrapes_total 1"));
+        // Store should be healthy
+        assert!(body_str.contains("ferrumgate_store_health_up 1"));
+    }
+
+    #[tokio::test]
+    async fn test_metrics_endpoint_store_health_reflects_status() {
+        let runtime = test_runtime_with_unhealthy_store().await;
+
+        let response = build_router(runtime)
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+
+        // Store should be unhealthy (0)
+        assert!(body_str.contains("ferrumgate_store_health_up 0"));
     }
 }

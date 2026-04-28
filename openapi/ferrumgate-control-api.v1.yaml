@@ -4,19 +4,19 @@ info:
   version: 0.1.0
   description: |
     REST control plane API for FerrumGate v1.
-    
+
     ## Authentication
-    
-    When auth mode is set to "bearer", all endpoints except `/v1/healthz` and `/v1/readyz` 
+
+    When auth mode is set to "bearer", all endpoints except `/v1/healthz`, `/v1/readyz`, `/v1/readyz/deep`, and `/v1/metrics`
     require a Bearer token in the Authorization header:
-    
+
     ```
     Authorization: Bearer <token>
     ```
-    
+
     ## TLS
-    
-    This API does not terminate TLS. Deploy behind a TLS-terminating proxy 
+
+    This API does not terminate TLS. Deploy behind a TLS-terminating proxy
     (e.g., nginx, cloud load balancer) for production use.
 
 servers:
@@ -38,7 +38,7 @@ paths:
 
   /v1/readyz:
     get:
-      summary: Deep readiness check (unauthenticated)
+      summary: Shallow readiness check (unauthenticated)
       operationId: readyz
       security: []
       responses:
@@ -48,6 +48,38 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HealthResponse'
+
+  /v1/readyz/deep:
+    get:
+      summary: Deep readiness check (unauthenticated)
+      operationId: readyzDeep
+      security: []
+      responses:
+        '200':
+          description: Store is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeepHealthResponse'
+        '503':
+          description: Store health check failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeepHealthResponse'
+
+  /v1/metrics:
+    get:
+      summary: Bounded Prometheus-style metrics (unauthenticated)
+      operationId: metrics
+      security: []
+      responses:
+        '200':
+          description: Metrics in Prometheus text exposition format
+          content:
+            text/plain:
+              schema:
+                type: string
 
   /v1/intents/compile:
     post:
@@ -529,6 +561,32 @@ components:
       properties:
         status:
           type: string
+
+    ComponentStatus:
+      type: object
+      required: [component, status, healthy]
+      properties:
+        component:
+          type: string
+        status:
+          type: string
+        healthy:
+          type: boolean
+        error:
+          type: string
+
+    DeepHealthResponse:
+      type: object
+      required: [status, healthy, components]
+      properties:
+        status:
+          type: string
+        healthy:
+          type: boolean
+        components:
+          type: array
+          items:
+            $ref: '#/components/schemas/ComponentStatus'
 
     IntentCompileRequest:
       type: object
