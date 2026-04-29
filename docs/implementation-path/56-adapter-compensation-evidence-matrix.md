@@ -151,3 +151,6 @@ Before using compensation in a pilot or production-like workflow:
 - [52-d6-priority-expansion-list.md](./52-d6-priority-expansion-list.md) — adapter hardening priority
 - [54-operator-signoff-packet.md](./54-operator-signoff-packet.md) — operator acceptance for production pilot risk
 - [57-workload-compensation-drill-plan.md](./57-workload-compensation-drill-plan.md) — operator drill plan for verifying compensation behavior
+- [58-workload-compensation-drill-evidence-template.md](./58-workload-compensation-drill-evidence-template.md) — D1–D6 drill evidence capture template
+- [59-pilot-readiness-evidence-packet.md](./59-pilot-readiness-evidence-packet.md) — G2.1–G2.8 evidence sections
+- [60-bounded-hardening-examples.md](./60-bounded-hardening-examples.md) — bounded hardening examples including HTTP replay and git push fail-closed

@@ -333,6 +333,9 @@ Operator sign-off requires:
 | `57-workload-compensation-drill-plan.md` | `33-feature-completion-backlog.md` | P6 non-uniform compensation status |
 | `57-workload-compensation-drill-plan.md` | `45-current-feature-audit.md` | G2 gap tracking |
 | `57-workload-compensation-drill-plan.md` | `52-d6-priority-expansion-list.md` | Priority 5 adapter hardening |
+| `57-workload-compensation-drill-plan.md` | `58-workload-compensation-drill-evidence-template.md` | Operator-fillable evidence capture |
+| `57-workload-compensation-drill-plan.md` | `59-pilot-readiness-evidence-packet.md` | G2.1–G2.8 evidence sections |
+| `57-workload-compensation-drill-plan.md` | `60-bounded-hardening-examples.md` | Bounded hardening examples |
 
 ---
 

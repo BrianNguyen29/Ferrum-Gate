@@ -141,6 +141,9 @@ Before the first production pilot deployment, the following must be all confirme
 | `26-EV-v1-single-node-invariant-control-test-evidence-matrix.md` | Weak Spots 1–4 resolved |
 | `23-production-readiness-assessment.md` | RC-ready declaration |
 | `31-release-paths-todo.md` §Path 2 | Full production pilot path with G2 gates |
+| `58-workload-compensation-drill-evidence-template.md` | D1–D6 drill evidence capture template |
+| `59-pilot-readiness-evidence-packet.md` | G2.1–G2.8 evidence sections |
+| `60-bounded-hardening-examples.md` | Bounded hardening drill examples |
 
 ---
 

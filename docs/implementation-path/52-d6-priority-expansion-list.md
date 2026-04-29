@@ -140,6 +140,9 @@ Production posture is governed by:
 - `31-release-paths-todo.md` — Release paths and gate criteria
 - `56-adapter-compensation-evidence-matrix.md` — Priority 5 adapter hardening evidence
 - `57-workload-compensation-drill-plan.md` — Priority 5 operator drill plan
+- `58-workload-compensation-drill-evidence-template.md` — Priority 5 drill evidence template
+- `59-pilot-readiness-evidence-packet.md` — Priority 5 G2.1–G2.8 evidence packet
+- `60-bounded-hardening-examples.md` — Priority 5 bounded hardening examples
 
 ---
 

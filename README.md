@@ -97,3 +97,6 @@ Full G1 evidence: [`53-rc-tag-checklist.md`](./docs/implementation-path/53-rc-ta
 - Production evaluation: `docs/implementation-path/27-production-evaluation-plan.md`
 - Adapter compensation evidence: `docs/implementation-path/56-adapter-compensation-evidence-matrix.md`
 - Workload compensation drill plan: `docs/implementation-path/57-workload-compensation-drill-plan.md`
+- Workload compensation drill evidence template: `docs/implementation-path/58-workload-compensation-drill-evidence-template.md`
+- Pilot readiness evidence packet (G2.1–G2.8): `docs/implementation-path/59-pilot-readiness-evidence-packet.md`
+- Bounded hardening examples: `docs/implementation-path/60-bounded-hardening-examples.md`

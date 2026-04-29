@@ -284,6 +284,9 @@ Per `50-p4-postgres-store-facade-adr.md` §3 Phase P1:
 | `RELEASE.md` | `27-production-evaluation-plan.md` | Production evaluation framework cross-reference |
 | `RELEASE.md` | `56-adapter-compensation-evidence-matrix.md` | Adapter compensation evidence cross-reference |
 | `RELEASE.md` | `57-workload-compensation-drill-plan.md` | Workload compensation drill plan cross-reference |
+| `RELEASE.md` | `58-workload-compensation-drill-evidence-template.md` | Drill evidence template cross-reference |
+| `RELEASE.md` | `59-pilot-readiness-evidence-packet.md` | G2.1–G2.8 evidence packet cross-reference |
+| `RELEASE.md` | `60-bounded-hardening-examples.md` | Bounded hardening examples cross-reference |
 
 ---
 

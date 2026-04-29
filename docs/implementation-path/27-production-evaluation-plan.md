@@ -486,3 +486,6 @@ Do not begin Phase P1 until v1 RC tag is cut and the production pilot has confir
 - Release paths (RC tag / production pilot / Phase 3 PostgreSQL): `docs/implementation-path/31-release-paths-todo.md`
 - Adapter compensation evidence: `docs/implementation-path/56-adapter-compensation-evidence-matrix.md`
 - Workload compensation drill plan: `docs/implementation-path/57-workload-compensation-drill-plan.md`
+- Workload compensation drill evidence template: `docs/implementation-path/58-workload-compensation-drill-evidence-template.md`
+- Pilot readiness evidence packet (G2.1–G2.8): `docs/implementation-path/59-pilot-readiness-evidence-packet.md`
+- Bounded hardening examples: `docs/implementation-path/60-bounded-hardening-examples.md`

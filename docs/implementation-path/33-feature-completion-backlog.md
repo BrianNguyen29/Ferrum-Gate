@@ -208,6 +208,9 @@ These require PostgreSQL, multi-node, or broader adapter surface — not in v1 s
 | `33-feature-completion-backlog.md` | `PERFORMANCE_OPTIMIZATION_PLAN.md` | Phase 2/3 perf path |
 | `33-feature-completion-backlog.md` | `56-adapter-compensation-evidence-matrix.md` | P6 compensation evidence |
 | `33-feature-completion-backlog.md` | `57-workload-compensation-drill-plan.md` | P6 operator drill plan |
+| `33-feature-completion-backlog.md` | `58-workload-compensation-drill-evidence-template.md` | P6 drill evidence template |
+| `33-feature-completion-backlog.md` | `59-pilot-readiness-evidence-packet.md` | G2.1–G2.8 evidence packet |
+| `33-feature-completion-backlog.md` | `60-bounded-hardening-examples.md` | Bounded hardening examples |
 | `01-current-state.md` | `33-feature-completion-backlog.md` | Backlog cross-link |
 | `32-feature-completeness-audit.md` | `33-feature-completion-backlog.md` | Backlog cross-link |
 | `45-current-feature-audit.md` | `33-feature-completion-backlog.md` | Backlog cross-link |
