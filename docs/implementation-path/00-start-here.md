@@ -14,6 +14,8 @@ Bạn phải đi tiếp implementation theo plan hiện có.
 - nếu đi production pilot: dùng `54-operator-signoff-packet.md` và không tự mark G2 complete
 - nếu đi Phase 3/PostgreSQL: chỉ bắt đầu sau khi G3.2–G3.4 thỏa mãn
 - không phá invariants
+- kiểm tra adapter compensation evidence: `56-adapter-compensation-evidence-matrix.md`
+- kiểm tra workload compensation drill plan: `57-workload-compensation-drill-plan.md`
 
 ## Việc tuyệt đối không làm
 - bypass gateway

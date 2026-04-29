@@ -21,6 +21,21 @@ Thư mục này là điểm vào duy nhất để agent khác tiếp tục tri�
 23. `23-production-readiness-assessment.md`
 25. `25-EV-v1-single-node-rc-evidence.md`
 26. [26-EV-v1-single-node-invariant-control-test-evidence-matrix.md](26-EV-v1-single-node-invariant-control-test-evidence-matrix.md)
+27. [27-production-evaluation-plan.md](27-production-evaluation-plan.md)
+30. `30-production-roadmap.md`
+31. [31-release-paths-todo.md](31-release-paths-todo.md)
+32. `32-feature-completeness-audit.md`
+33. `33-feature-completion-backlog.md`
+44. `44-v1-review-readiness-template.md`
+45. [45-current-feature-audit.md](45-current-feature-audit.md)
+47. `47-novelty-roadmap.md`
+51. `51-d5-bottleneck-analysis-report.md`
+52. `52-d6-priority-expansion-list.md`
+53. `53-rc-tag-checklist.md`
+54. `54-operator-signoff-packet.md`
+55. `55-phase-3-go-no-go-review.md`
+56. [56-adapter-compensation-evidence-matrix.md](56-adapter-compensation-evidence-matrix.md)
+57. [57-workload-compensation-drill-plan.md](57-workload-compensation-drill-plan.md)
 
 ## Luật ưu tiên
 Khi mâu thuẫn, ưu tiên:

@@ -282,6 +282,8 @@ Per `50-p4-postgres-store-facade-adr.md` §3 Phase P1:
 | `RELEASE.md` | `25-EV-v1-single-node-rc-evidence.md` | RC evidence cross-reference |
 | `RELEASE.md` | `26-EV-v1-single-node-invariant-control-test-evidence-matrix.md` | Invariant matrix cross-reference |
 | `RELEASE.md` | `27-production-evaluation-plan.md` | Production evaluation framework cross-reference |
+| `RELEASE.md` | `56-adapter-compensation-evidence-matrix.md` | Adapter compensation evidence cross-reference |
+| `RELEASE.md` | `57-workload-compensation-drill-plan.md` | Workload compensation drill plan cross-reference |
 
 ---
 

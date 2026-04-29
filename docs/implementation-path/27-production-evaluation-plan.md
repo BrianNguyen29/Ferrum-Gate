@@ -484,3 +484,5 @@ Do not begin Phase P1 until v1 RC tag is cut and the production pilot has confir
 - Observability minimums: `../ferrumgate-roadmap-v1/21-v1-single-node-observability-minimums.md`
 - Operations runbook: `docs/ferrumgate-roadmap-v1/18-single-node-operations-runbook.md`
 - Release paths (RC tag / production pilot / Phase 3 PostgreSQL): `docs/implementation-path/31-release-paths-todo.md`
+- Adapter compensation evidence: `docs/implementation-path/56-adapter-compensation-evidence-matrix.md`
+- Workload compensation drill plan: `docs/implementation-path/57-workload-compensation-drill-plan.md`

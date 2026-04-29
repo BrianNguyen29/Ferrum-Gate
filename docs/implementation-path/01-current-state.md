@@ -26,7 +26,7 @@ Single-node v1 scope unless noted.
 - `ferrum-testkit` — test helpers
 
 ### Adapters
-- `ferrum-adapter-fs` — filesystem adapter (partial: prepare/verify/validation/execute/rollback for FileWrite/FileDelete/FileMove/FileCopy/DirCreate/DirDelete/FileAppend/FileChmod; FileWrite/FileDelete: snapshot-recovery for existing files via deterministic snapshot paths, new-file FileWrite with cleanup-on-rollback; FileMove (rename with snapshot-based rollback, dest/source dual-check verify, hash verification); FileCopy (copy with dest snapshotting, hash-matching verify, idempotent cleanup/restore rollback); DirCreate (validate parent exists + dir absent, mkdir, verify dir exists, rollback removes created dir); DirDelete (reject non-empty dirs, rm empty dir, verify dir gone, rollback recreates dir); **FileAppend** (prepare captures original hash + length, execute appends data, verify confirms file growth, rollback truncates to original length with hash verification); **FileChmod** (prepare captures current permissions, execute changes mode bits, verify confirms new permissions, rollback restores original mode with verification); explicit checks fail-closed on target-state invariants, target-path mismatch, malformed config, unsupported checks with phase-aware validation, plus phase-consistent normalization for fs/internal prepare/verify/execute/rollback failures; 135 tests passing)
+- `ferrum-adapter-fs` — filesystem adapter (partial: prepare/verify/validation/execute/rollback for FileWrite/FileDelete/FileMove/FileCopy/DirCreate/DirDelete/FileAppend/FileChmod; FileWrite/FileDelete: snapshot-recovery for existing files via deterministic snapshot paths, new-file FileWrite with cleanup-on-rollback; FileMove (rename with snapshot-based rollback, dest/source dual-check verify, hash verification); FileCopy (copy with dest snapshotting, hash-matching verify, idempotent cleanup/restore rollback); DirCreate (validate parent exists + dir absent, mkdir, verify dir exists, rollback removes created dir); DirDelete (reject non-empty dirs, rm empty dir, verify dir gone, rollback recreates dir); **FileAppend** (prepare captures original hash + length, execute appends data, verify confirms file growth, rollback truncates to original length with hash verification); **FileChmod** (prepare captures current permissions, execute changes mode bits, verify confirms new permissions, rollback restores original mode with verification); explicit checks fail-closed on target-state invariants, target-path mismatch, malformed config, unsupported checks with phase-aware validation, plus phase-consistent normalization for fs/internal prepare/verify/execute/rollback failures; 146 tests passing)
 - `ferrum-adapter-sqlite` — SQLite adapter (transaction-based rollback implementation; not production-verified)
 - `ferrum-adapter-maildraft` — maildraft adapter (16 tests: create/update/delete lifecycle + rollback idempotency)
 - `ferrum-adapter-git` — git adapter (local rollback/recovery implementation: prepare captures HEAD ref, rollback resets hard with dirty-worktree guard, verify checks ref matches, execute captures after_ref from payload, GitBranchCreate support with branch creation/deletion, base_ref validation/resolution, prepare-time rejection of existing branches and detached-HEAD-without-explicit-base, branch-name validation during prepare using git-native `git check-ref-format --branch` (fail-closed), verify fail-closed when the created branch is currently checked out, and detached-HEAD / safe-delete fail-closed guards; P2.3 slice adds implicit HEAD base_ref_sha persistence and enriched verify audit metadata; **GitTagCreate/GitTagDelete added**: GitTagCreate (prepare validates tag name + rejects existing tag, execute creates lightweight tag at HEAD, verify confirms tag exists, rollback deletes tag idempotently); GitTagDelete (prepare validates tag exists + captures tag_sha, execute deletes tag, verify confirms tag gone, rollback recreates tag at captured SHA with hash verification); **GitBranchDelete added**: safe branch deletion with recreate rollback (prepare captures branch SHA + current HEAD, execute deletes branch, verify confirms deletion, rollback recreates branch at captured SHA); 86 tests passing)
@@ -57,7 +57,7 @@ Single-node v1 scope unless noted.
 - (none) — open gaps list documented in `11-remaining-tasks.md`
 
 ### P2 — v1 polish
-Current verified slices are green: `ferrum-adapter-fs` (135 tests, FileWrite/FileDelete/FileMove/FileCopy/DirCreate/DirDelete/FileAppend/FileChmod), `ferrum-adapter-git` (86 tests, GitCommit/GitBranchCreate/GitTagCreate/GitTagDelete/GitBranchDelete), `ferrum-adapter-http` (103 tests, POST/PUT/PATCH replay), clippy passes on those packages, and `scripts/generate_rc_evidence.py` exists and passes
+Current verified slices are green: `ferrum-adapter-fs` (146 tests, FileWrite/FileDelete/FileMove/FileCopy/DirCreate/DirDelete/FileAppend/FileChmod), `ferrum-adapter-git` (86 tests, GitCommit/GitBranchCreate/GitTagCreate/GitTagDelete/GitBranchDelete), `ferrum-adapter-http` (103 tests, POST/PUT/PATCH replay), clippy passes on those packages, and `scripts/generate_rc_evidence.py` exists and passes
 
 ## Phase status summary
 
@@ -85,7 +85,7 @@ Full workspace check/clippy/test pass locally with 0 failures. Prefer command-le
 
 | Crate | Tests | Status |
 |---|---|---|
-| ferrum-adapter-fs | 135 | FileWrite/FileDelete/FileMove/FileCopy/DirCreate/DirDelete/FileAppend/FileChmod + cross-filesystem + PlannableFsAdapter |
+| ferrum-adapter-fs | 146 | FileWrite/FileDelete/FileMove/FileCopy/DirCreate/DirDelete/FileAppend/FileChmod + cross-filesystem + PlannableFsAdapter |
 | ferrum-adapter-git | 86 | GitCommit/GitBranchCreate/GitTagCreate/GitTagDelete/GitBranchDelete + GitPush/GitPull |
 | ferrum-adapter-http | 103 | HttpMutation + http.replay_v1 (POST/PUT/PATCH) + pooling/retry |
 | ferrum-adapter-sqlite | 16 | SqlRowCountRange checks + transaction rollback + G-E1 verify fail-closed |
@@ -94,12 +94,12 @@ Full workspace check/clippy/test pass locally with 0 failures. Prefer command-le
 | ferrum-firewall | 21 | TaintScoringFirewall, taint scoring, contradiction detection, sanitizer |
 | ferrum-graph | 10 | HashMap adjacency indexing, BFS ancestor/descendant traversal |
 | ferrum-ledger | 13 | SHA-256 hash chain with chain integrity verification |
-| ferrum-gateway | 44 | Server endpoints + evaluate-outcome + provenance ingest + bridge endpoints + readiness + deep readiness failure-mode (S2 improved) |
+| ferrum-gateway | 50 | Server endpoints + evaluate-outcome + provenance ingest + bridge endpoints + readiness + deep readiness failure-mode (S2 improved) |
 | ferrum-pdp | 19 | Outcome-aware governance |
 | ferrum-proto | 18 | Intent validation + canonical action digest + schemas |
-| ferrum-store | 60 | SQLite persistence + StoreFacade + readiness health check |
+| ferrum-store | 82 | SQLite persistence + StoreFacade + readiness health check |
 | ferrum-sync | 65 | ExternalEventSource + RuntimeBridge + McpBridge + preflight/decision/diff-classifier |
-| ferrumctl | 35 | list-intents/cancel-execution/pause-execution + policy bundle CRUD + author bundle bump + backup/restore |
+| ferrumctl | 48 | list-intents/cancel-execution/pause-execution + policy bundle CRUD + author bundle bump + backup/restore |
 | ferrumd | 6 | Daemon config + unsupported DSN guardrails |
 | Integration tests | 82 | contracts(2) + fs-roundtrip(7) + gateway-flow(65) + lineage-chain(8) |
 | ferrum-rollback | 11 | ExecutionPlan + PlannableAdapter + auto-planning in RollbackService |
@@ -116,3 +116,5 @@ Remaining work is documented in:
 - [33-feature-completion-backlog.md](./33-feature-completion-backlog.md) — Must/Should/Production-only backlog for incomplete/partial features
 - [45-current-feature-audit.md](./45-current-feature-audit.md) — Phase 3 D5 bottleneck analysis complete; D6 priority list complete. Full report: [51-d5-bottleneck-analysis-report.md](./51-d5-bottleneck-analysis-report.md); Priority list: [52-d6-priority-expansion-list.md](./52-d6-priority-expansion-list.md)
 - [32-feature-completeness-audit.md](./32-feature-completeness-audit.md) — Route/API reconciliation
+- [56-adapter-compensation-evidence-matrix.md](./56-adapter-compensation-evidence-matrix.md) — Adapter compensation behavior evidence
+- [57-workload-compensation-drill-plan.md](./57-workload-compensation-drill-plan.md) — Operator drill plan for compensation verification

@@ -291,7 +291,7 @@ Kiểm toán được coi là hoàn thành khi:
 
 | Crate | Tests | Ghi chú |
 |---|---|---|
-| ferrum-adapter-fs | 135 | FileWrite/FileDelete/FileMove/FileCopy/DirCreate/DirDelete/FileAppend/FileChmod + PlannableFsAdapter |
+| ferrum-adapter-fs | 146 | FileWrite/FileDelete/FileMove/FileCopy/DirCreate/DirDelete/FileAppend/FileChmod + PlannableFsAdapter |
 | ferrum-adapter-git | 86 | GitCommit/GitBranchCreate/GitTagCreate/GitTagDelete/GitBranchDelete |
 | ferrum-adapter-http | 103 | HttpMutation + http.replay_v1 (POST/PUT/PATCH) + pooling/retry |
 | ferrum-adapter-sqlite | 16 | SqlRowCountRange + transaction rollback |
@@ -300,18 +300,18 @@ Kiểm toán được coi là hoàn thành khi:
 | ferrum-firewall | 21 | TaintScoringFirewall + contradiction detection + sanitizer |
 | ferrum-graph | 10 | BFS ancestor/descendant traversal |
 | ferrum-ledger | 13 | SHA-256 hash chain |
-| ferrum-gateway | 44 | Endpoints + outcome evaluation + provenance ingest + bridges + readiness + S2 deep readiness failure-mode tests |
+| ferrum-gateway | 50 | Endpoints + outcome evaluation + provenance ingest + bridges + readiness + S2 deep readiness failure-mode tests |
 | ferrum-pdp | 19 | Outcome-aware governance |
 | ferrum-proto | 18 | Intent validation + canonical action digest + schemas |
 | ferrum-rollback | 11 | ExecutionPlan + PlannableAdapter |
-| ferrum-store | 60 | SQLite persistence + StoreFacade + readiness health check |
+| ferrum-store | 82 | SQLite persistence + StoreFacade + readiness health check |
 | ferrum-sync | 65 | ExternalEventSource + RuntimeBridge + McpBridge |
-| ferrumctl | 35 | CLI utilities + policy bundle CRUD + SQLite backup/restore |
+| ferrumctl | 48 | CLI utilities + policy bundle CRUD + SQLite backup/restore |
 | ferrumd | 6 | Daemon config + unsupported DSN guardrails |
 | ferrum-stress | 0 | Stress binary compile coverage |
 | ferrum-testkit | 0 | Testkit compile coverage |
 | Integration tests | 82 | contracts(2) + fs-roundtrip(7) + gateway-flow(65) + lineage-chain(8) |
-| **Tổng** | **~763** | includes integration tests, invalid_transitions(22), and ferrum-sync doctest |
+| **Tổng** | **~797** | includes integration tests, invalid_transitions(22), and ferrum-sync doctest |
 
 ---
 

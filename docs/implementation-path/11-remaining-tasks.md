@@ -44,7 +44,7 @@ Scope is single-node v1 unless labeled post-v1.
 These are explicitly out of v1 scope. Do not treat as blockers.
 
 Current partial adapter progress already verified in local package-scoped checks:
-- `ferrum-adapter-fs`: 135 tests passing; bounded FileWrite/FileDelete/FileMove/FileCopy/DirCreate/DirDelete/FileAppend/FileChmod local slice implemented with phase-aware error normalization.
+- `ferrum-adapter-fs`: 146 tests passing; bounded FileWrite/FileDelete/FileMove/FileCopy/DirCreate/DirDelete/FileAppend/FileChmod local slice implemented with phase-aware error normalization.
 - `ferrum-adapter-git`: 86 tests passing; bounded GitCommit/GitBranchCreate/GitTagCreate/GitTagDelete/GitBranchDelete local slice implemented with stricter prepare/verify metadata and safety guards.
 
 - [x] ledger hash chain (SHA-256 hash chain with chain integrity verification; 13 tests)
@@ -53,7 +53,7 @@ Current partial adapter progress already verified in local package-scoped checks
 - [ ] fs adapter — remaining surface (post-v1)
   - Src: `docs/implementation-path/08-next-issue-backlog.md` P2
   - Src: `docs/implementation-path/04-crate-by-crate-tasks.md` "adapters: fs -> sqlite -> maildraft -> git/http"
-  - Current verified local slice: FileWrite/FileDelete (existing-file snapshot recovery), new-file FileWrite (cleanup-on-rollback when parent dir exists), **FileMove** (rename with snapshot-based rollback, dest/source dual-check verify, hash verification on restore), **FileCopy** (copy with dest snapshotting, hash-matching verify, idempotent cleanup/restore rollback), **DirCreate** (validate parent exists + dir absent, mkdir, verify dir exists, rollback removes created dir, cross-instance rollback), **DirDelete** (reject non-empty, rm empty dir, verify dir gone, rollback recreates dir, cross-instance rollback), **FileAppend** (prepare captures original hash + length, execute appends data, verify confirms file growth, rollback truncates to original length with hash verification, idempotent rollback, cross-instance rollback), **FileChmod** (prepare captures current permissions, execute changes mode bits, verify confirms new permissions, rollback restores original mode with verification), FileExists/FileHashMatches checks, phase-aware error normalization, explicit-check fail-closed, target-path mismatch checks. 135 tests passing.
+  - Current verified local slice: FileWrite/FileDelete (existing-file snapshot recovery), new-file FileWrite (cleanup-on-rollback when parent dir exists), **FileMove** (rename with snapshot-based rollback, dest/source dual-check verify, hash verification on restore), **FileCopy** (copy with dest snapshotting, hash-matching verify, idempotent cleanup/restore rollback), **DirCreate** (validate parent exists + dir absent, mkdir, verify dir exists, rollback removes created dir, cross-instance rollback), **DirDelete** (reject non-empty, rm empty dir, verify dir gone, rollback recreates dir, cross-instance rollback), **FileAppend** (prepare captures original hash + length, execute appends data, verify confirms file growth, rollback truncates to original length with hash verification, idempotent rollback, cross-instance rollback), **FileChmod** (prepare captures current permissions, execute changes mode bits, verify confirms new permissions, rollback restores original mode with verification), FileExists/FileHashMatches checks, phase-aware error normalization, explicit-check fail-closed, target-path mismatch checks. 146 tests passing.
   - Remaining surface (concrete sub-areas for post-v1):
     - Permissions / ownership / symlink handling
     - Cross-filesystem or mount-point boundary handling
@@ -112,7 +112,7 @@ Current partial adapter progress already verified in local package-scoped checks
 - Phase C firewall logic confirmed present; curated regression fixtures DONE (6 tests)
 - `scripts/generate_rc_evidence.py` EXISTS and PASS
 - clippy: PASS with no warnings
-- adapter slice counts: `ferrum-adapter-fs` 135 tests (FileWrite/FileDelete/FileMove/FileCopy/DirCreate/DirDelete/FileAppend/FileChmod + PlannableFsAdapter), `ferrum-adapter-git` 86 tests (GitCommit/GitBranchCreate/GitTagCreate/GitTagDelete/GitBranchDelete + GitFetch rollback fail-closed), `ferrum-adapter-http` 103 tests (POST/PUT/PATCH replay), `ferrum-adapter-sqlite` 16 tests (transaction rollback + G-E1 verify fail-closed hardening); observed workspace total: ~797 tests (fresh feature-completeness validation 2026-04-28)
+- adapter slice counts: `ferrum-adapter-fs` 146 tests (FileWrite/FileDelete/FileMove/FileCopy/DirCreate/DirDelete/FileAppend/FileChmod + PlannableFsAdapter), `ferrum-adapter-git` 86 tests (GitCommit/GitBranchCreate/GitTagCreate/GitTagDelete/GitBranchDelete + GitFetch rollback fail-closed), `ferrum-adapter-http` 103 tests (POST/PUT/PATCH replay), `ferrum-adapter-sqlite` 16 tests (transaction rollback + G-E1 verify fail-closed hardening); observed workspace total: ~797 tests (fresh feature-completeness validation 2026-04-28)
 
 ---
 
@@ -133,7 +133,7 @@ Current partial adapter progress already verified in local package-scoped checks
 
 | Status | Crates |
 |---|---|
-| ✅ Production-ready | ferrum-proto, ferrum-gateway, ferrum-store, ferrum-pdp, ferrum-cap, ferrum-rollback, ferrum-adapter-fs (135 tests), ferrum-adapter-sqlite (16 tests), ferrum-adapter-git (86 tests), ferrum-adapter-http (103 tests) |
+| ✅ Verified local slices | ferrum-proto, ferrum-gateway, ferrum-store, ferrum-pdp, ferrum-cap, ferrum-rollback, ferrum-adapter-fs (146 tests), ferrum-adapter-sqlite (16 tests), ferrum-adapter-git (86 tests), ferrum-adapter-http (103 tests) |
 | 🟡 Partial | ferrum-sync (65 tests, infrastructure + preflight) |
 | ✅ Tier 2 | ferrum-firewall (21 tests, TaintScoringFirewall with taint scoring, contradiction detection, sanitizer), ferrum-graph (10 tests, HashMap adjacency indexing + BFS traversal), ferrum-ledger (13 tests, SHA-256 hash chain with integrity verification), ferrum-adapter-maildraft (13 tests, create/update/delete lifecycle) |
 

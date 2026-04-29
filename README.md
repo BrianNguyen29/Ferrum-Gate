@@ -1,6 +1,6 @@
 # FerrumGate Unified Project
 
-> **⚠️ Status (2026-04-28/RC tag):** This README reflects P6/P7 plus M1–M3/S1 feature-completeness validation (~797 current workspace tests, all passing; RC tag evidence dated 2026-04-28). FerrumGate v1 is **RC-ready for single-node SQLite-backed deployment only**. Do not claim production-ready. PostgreSQL/multi-node/HA are not implemented. Default package version: `0.1.0`. Repository: `https://github.com/BrianNguyen29/Ferrum-Gate` (upstream/original — private, accessible with authorized GitHub credentials). See [19-v1-single-node-support-contract.md](./docs/ferrumgate-roadmap-v1/19-v1-single-node-support-contract.md) for the authoritative v1 boundary.
+> **⚠️ Status (2026-04-29/RC tag):** This README reflects P6/P7 plus M1–M3/S1 feature-completeness validation (~797 current workspace tests, all passing; RC tag evidence dated 2026-04-28). FerrumGate v1 is **RC-ready for single-node SQLite-backed deployment only**. Do not claim production-ready. PostgreSQL/multi-node/HA are not implemented. Default package version: `0.1.0`. Repository: `https://github.com/BrianNguyen29/Ferrum-Gate` (upstream/original — private, accessible with authorized GitHub credentials). See [19-v1-single-node-support-contract.md](./docs/ferrumgate-roadmap-v1/19-v1-single-node-support-contract.md) for the authoritative v1 boundary.
 
 FerrumGate la mot **intent-scoped reversible execution plane** cho MCP agents.
 
@@ -59,7 +59,7 @@ Full G1 evidence: [`53-rc-tag-checklist.md`](./docs/implementation-path/53-rc-ta
 - **Security enforcement**: trust labeler, taint scorer, contradiction checks, taint-based quarantine
 - **CLI (`ferrumctl`)**: health, inspect-execution, inspect-approvals, inspect-approval, inspect-lineage, inspect-provenance, policy bundle CRUD, backup/restore
 - **Verified adapter slices** (bounded local scope, post-v1 for broader surface):
-  - `ferrum-adapter-fs`: 135 tests — FileWrite/FileDelete/FileMove/FileCopy/DirCreate/DirDelete/FileAppend/FileChmod + PlannableFsAdapter
+  - `ferrum-adapter-fs`: 146 tests — FileWrite/FileDelete/FileMove/FileCopy/DirCreate/DirDelete/FileAppend/FileChmod + PlannableFsAdapter
   - `ferrum-adapter-git`: 86 tests — GitCommit/GitBranchCreate/GitTagCreate/GitTagDelete/GitBranchDelete + rollback fail-closed
   - `ferrum-adapter-http`: 103 tests — HttpMutation + http.replay_v1 (POST/PUT/PATCH) + pooling/retry
   - `ferrum-adapter-sqlite`: 16 tests — transaction rollback + G-E1 verify fail-closed
@@ -95,3 +95,5 @@ Full G1 evidence: [`53-rc-tag-checklist.md`](./docs/implementation-path/53-rc-ta
 - Feature completeness: `docs/implementation-path/32-feature-completeness-audit.md`
 - Feature completion backlog: `docs/implementation-path/33-feature-completion-backlog.md`
 - Production evaluation: `docs/implementation-path/27-production-evaluation-plan.md`
+- Adapter compensation evidence: `docs/implementation-path/56-adapter-compensation-evidence-matrix.md`
+- Workload compensation drill plan: `docs/implementation-path/57-workload-compensation-drill-plan.md`
