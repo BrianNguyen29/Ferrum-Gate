@@ -520,6 +520,48 @@ The following appear in some documentation examples but are **not currently impl
 
 ---
 
+## Example 5 — Evidence Skeleton Helper
+
+### Context
+
+Operators can use `scripts/generate_evidence_skeleton.py` to convert captured command output into markdown sections for D1-D6 compensation drill evidence and G2 pilot readiness evidence. The helper is a **prefill aid only**: it does not complete evidence, does not sign G2, and does not authorize a production pilot.
+
+### Usage
+
+```bash
+# Generate G2 skeleton from readiness/helper output
+python3 scripts/check_pilot_readiness.py \
+  --server-url http://127.0.0.1:8080 \
+  --bearer-token "$FERRUMD_BEARER_TOKEN" \
+  > /tmp/ferrum-g2-readiness.log
+
+python3 scripts/generate_evidence_skeleton.py \
+  --type g2 \
+  --file /tmp/ferrum-g2-readiness.log \
+  > /tmp/ferrum-g2-evidence-skeleton.md
+
+# Generate D1-D6 skeleton from captured drill output
+cat /tmp/ferrum-d1-d6-drills.log | \
+  python3 scripts/generate_evidence_skeleton.py --type d1-d6 \
+  > /tmp/ferrum-d1-d6-evidence-skeleton.md
+
+# Generate both sections from multiple log files
+python3 scripts/generate_evidence_skeleton.py \
+  --type all \
+  --file /tmp/ferrum-d1-d6-drills.log /tmp/ferrum-g2-readiness.log \
+  > /tmp/ferrum-combined-evidence-skeleton.md
+```
+
+### Operator Rules
+
+- Review generated markdown before copying into docs 58 or 59.
+- Remove secrets/tokens/hostnames that should not be committed.
+- Fill every `<operator fill>` field manually.
+- Treat any anomaly as a blocker or accepted exception with explicit signoff.
+- Do not mark G2 complete until `54-operator-signoff-packet.md` is signed by the responsible operator.
+
+---
+
 ## Cross-References
 
 | This Doc | Links To | Purpose |
@@ -530,6 +572,7 @@ The following appear in some documentation examples but are **not currently impl
 | `60-bounded-hardening-examples.md` | `59-pilot-readiness-evidence-packet.md` | G2.4 restore drill evidence |
 | `60-bounded-hardening-examples.md` | `27-production-evaluation-plan.md` | Observability minimums |
 | `60-bounded-hardening-examples.md` | `21-v1-single-node-observability-minimums.md` | Observability requirements |
+| `60-bounded-hardening-examples.md` | `scripts/generate_evidence_skeleton.py` | Optional evidence skeleton prefill helper |
 
 ---
 

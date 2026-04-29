@@ -144,9 +144,11 @@ See `docs/implementation-path/31-release-paths-todo.md` §Path 1 for rollback/ab
 | `docs/implementation-path/57-workload-compensation-drill-plan.md` | Operator drill plan for compensation verification (post-RC docs-only) |
 | `docs/implementation-path/58-workload-compensation-drill-evidence-template.md` | Operator-fillable drill evidence template (post-RC docs-only) |
 | `docs/implementation-path/59-pilot-readiness-evidence-packet.md` | G2.1–G2.8 evidence packet for Path 2 pilot (post-RC docs-only) |
-| `docs/implementation-path/60-bounded-hardening-examples.md` | Bounded hardening drill examples (post-RC docs-only) |
+| `docs/implementation-path/60-bounded-hardening-examples.md` | Bounded hardening drill examples (post-RC docs/operator-aid) |
+| `scripts/check_pilot_readiness.py` | Optional Path 2 readiness/metrics probe prefill helper (post-RC operator-aid) |
+| `scripts/generate_evidence_skeleton.py` | Optional command-output-to-markdown evidence skeleton helper (post-RC operator-aid) |
 
-> **Note (2026-04-29)**: Docs 56–60 are post-RC documentation-only operator evidence/templates. They do not alter the `v0.1.0-rc.1` release tag, do not claim production readiness, and do not complete any G2 gate on behalf of the operator.
+> **Note (2026-04-29)**: Docs 56–60 and helper scripts are post-RC operator aids. They do not alter the `v0.1.0-rc.1` release tag, do not claim production readiness, and do not complete any G2 gate on behalf of the operator.
 
 ---
 
