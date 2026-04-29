@@ -1,6 +1,6 @@
 # FerrumGate Unified Project
 
-> **⚠️ Status (2026-04-28):** This README reflects P6/P7 plus M1–M3/S1 feature-completeness validation (~761 tests, all passing). FerrumGate v1 is **RC-ready for single-node SQLite-backed deployment only**. Do not claim production-ready. PostgreSQL/multi-node/HA are not implemented. Default package version: `0.1.0`. Repository: `https://github.com/BrianNguyen29/Ferrum-Gate` (upstream/original — private, accessible with authorized GitHub credentials). See [19-v1-single-node-support-contract.md](./docs/ferrumgate-roadmap-v1/19-v1-single-node-support-contract.md) for the authoritative v1 boundary.
+> **⚠️ Status (2026-04-28/RC tag):** This README reflects P6/P7 plus M1–M3/S1 feature-completeness validation (~797 current workspace tests, all passing; RC tag evidence dated 2026-04-28). FerrumGate v1 is **RC-ready for single-node SQLite-backed deployment only**. Do not claim production-ready. PostgreSQL/multi-node/HA are not implemented. Default package version: `0.1.0`. Repository: `https://github.com/BrianNguyen29/Ferrum-Gate` (upstream/original — private, accessible with authorized GitHub credentials). See [19-v1-single-node-support-contract.md](./docs/ferrumgate-roadmap-v1/19-v1-single-node-support-contract.md) for the authoritative v1 boundary.
 
 FerrumGate la mot **intent-scoped reversible execution plane** cho MCP agents.
 
@@ -36,7 +36,7 @@ FerrumGate dang o **Phase 3 bottleneck analysis documented, single-node v1 RC-re
 - `cargo check --workspace`: ✅ PASS
 - `cargo fmt --all -- --check`: ✅ PASS
 - `cargo clippy --workspace --all-targets -- -D warnings`: ✅ PASS
-- `cargo test --workspace`: ✅ PASS — **~761 tests passing**
+- `cargo test --workspace`: ✅ PASS — **~797 tests passing**
 - `scripts/generate_rc_evidence.py`: ✅ PASS — **Overall: ALL PASS**
 - Layout/contract validation: ✅ PASS
 

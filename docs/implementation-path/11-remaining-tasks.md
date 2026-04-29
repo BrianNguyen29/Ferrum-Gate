@@ -112,7 +112,7 @@ Current partial adapter progress already verified in local package-scoped checks
 - Phase C firewall logic confirmed present; curated regression fixtures DONE (6 tests)
 - `scripts/generate_rc_evidence.py` EXISTS and PASS
 - clippy: PASS with no warnings
-- adapter slice counts: `ferrum-adapter-fs` 135 tests (FileWrite/FileDelete/FileMove/FileCopy/DirCreate/DirDelete/FileAppend/FileChmod + PlannableFsAdapter), `ferrum-adapter-git` 86 tests (GitCommit/GitBranchCreate/GitTagCreate/GitTagDelete/GitBranchDelete + GitFetch rollback fail-closed), `ferrum-adapter-http` 103 tests (POST/PUT/PATCH replay), `ferrum-adapter-sqlite` 16 tests (transaction rollback + G-E1 verify fail-closed hardening); observed workspace total: ~761 tests (fresh feature-completeness validation 2026-04-28)
+- adapter slice counts: `ferrum-adapter-fs` 135 tests (FileWrite/FileDelete/FileMove/FileCopy/DirCreate/DirDelete/FileAppend/FileChmod + PlannableFsAdapter), `ferrum-adapter-git` 86 tests (GitCommit/GitBranchCreate/GitTagCreate/GitTagDelete/GitBranchDelete + GitFetch rollback fail-closed), `ferrum-adapter-http` 103 tests (POST/PUT/PATCH replay), `ferrum-adapter-sqlite` 16 tests (transaction rollback + G-E1 verify fail-closed hardening); observed workspace total: ~797 tests (fresh feature-completeness validation 2026-04-28)
 
 ---
 
@@ -122,7 +122,7 @@ Current partial adapter progress already verified in local package-scoped checks
 
 | Metric | Value |
 |---|---|
-| Total workspace tests | ~761 observed (all passing in fresh feature-completeness validation) |
+| Total workspace tests | ~797 observed (all passing in fresh feature-completeness validation) |
 | Clippy | Clean (`cargo clippy --workspace --all-targets -- -D warnings`) |
 | Crates | 20 workspace members; all current v1 invariant controls verified, with PostgreSQL/multi-node deferred |
 | P0/P1/P2 blockers | All resolved |
@@ -185,4 +185,4 @@ Each slice is designed to be completable in a single session with local verifica
 - **Tier 1** (5 slices, 4 done, 1 in progress): ✅ DONE — 33 new tests added (GitBranchDelete +7, FileChmod +8, PUT/PATCH +10, SQLite transaction rollback +8), all passing; G-E1 SQLite hardening slice in progress (+2 tests)
 - **Tier 2** (4 slices): ✅ DONE — current coverage includes ferrum-ledger 13, ferrum-firewall 21, ferrum-graph 10, ferrum-adapter-maildraft 13; all passing
 - **Total projected**: historical estimate superseded by fresh P6 validation
-- **After Tier 1+2+3+U1-U4**: All 19 crates have real implementations with test coverage; observed workspace total is ~761 tests in fresh feature-completeness validation
+- **After Tier 1+2+3+U1-U4**: All 19 crates have real implementations with test coverage; observed workspace total is ~797 tests in fresh feature-completeness validation

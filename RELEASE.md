@@ -21,7 +21,7 @@ FerrumGate v1 is **RC-ready** for single-node SQLite-backed deployment.
 All P0/P1/P2 items verified complete as of 2026-04-28 (fresh P6 validation):
 - **P0**: scope-mismatch deny implemented in PDP (`crates/ferrum-pdp/src/engine.rs:31-46`)
 - **P1**: poisoned-context fixtures (6 tests), Phase F docs pack finalized, supported flows documented
-- **P2**: clippy passes (`--all-targets`), ~761 workspace tests pass, RC evidence script present and passing
+- **P2**: clippy passes (`--all-targets`), ~797 workspace tests pass, RC evidence script present and passing
 
 **Production posture is conditional.** Full production-ready is not claimed because operational
 constraints remain (see Accepted Risks below). Operators must evaluate against the production
@@ -65,7 +65,7 @@ evaluation plan before any production deployment.
 | `cargo check --workspace` | PASS | Fresh P6 validation 2026-04-28 |
 | `cargo fmt --all --check` | PASS | Fresh P6 validation 2026-04-28 |
 | `cargo clippy --workspace --all-targets -- -D warnings` | PASS | Fresh P6 validation 2026-04-28 |
-| `cargo test --workspace` | PASS (~761 tests) | Fresh feature-completeness validation 2026-04-28 |
+| `cargo test --workspace` | PASS (~797 tests) | Fresh feature-completeness validation 2026-04-28 |
 | `scripts/validate_repo_layout.sh` | PASS | "Repository layout looks OK" |
 | `scripts/check_contract_consistency.py` | PASS | "VALIDATION PASSED" |
 | `scripts/generate_rc_evidence.py` | PASS | "Overall: ALL PASS" |
@@ -118,7 +118,7 @@ The following gates were completed before cutting the `v0.1.0-rc.1` git tag. `Ca
 | G1.1 | `cargo check --workspace` passes | ☑ PASS |
 | G1.2 | `cargo fmt --all --check` passes | ☑ PASS |
 | G1.3 | `cargo clippy --workspace --all-targets -- -D warnings` passes | ☑ PASS |
-| G1.4 | `cargo test --workspace` passes (~761 tests) | ☑ PASS |
+| G1.4 | `cargo test --workspace` passes (~797 tests) | ☑ PASS |
 | G1.5 | `scripts/generate_rc_evidence.py` passes all five checks | ☑ PASS |
 | G1.6 | `scripts/validate_repo_layout.sh` passes | ☑ PASS |
 | G1.7 | `python3 scripts/check_contract_consistency.py` passes | ☑ PASS |

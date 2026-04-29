@@ -65,7 +65,7 @@ Source: `crates/ferrum-integration-tests/src/integration_gateway_flow.rs`,
 - adapter-sqlite: 16 | ferrum-cap: 4 | ferrum-firewall: 21 | ferrum-gateway: 41
 - integration tests: 82 total = contracts(2) + fs-roundtrip(7) + gateway-flow(65) + lineage-chain(8)
 - ferrumctl: 35 | ferrumd: 6 | ferrum-store: 60 | ferrum-sync: 65 | invalid_transitions: 22
-- Observed total: ~761 workspace tests including integration tests and doc-tests
+- Observed total: ~797 workspace tests including integration tests and doc-tests
 
 ---
 
@@ -203,7 +203,7 @@ FerrumGate v1 single-node is **RC-ready** for SQLite-backed deployment.
 All P0/P1/P2 items verified complete as of 2026-04-28 (fresh P6 validation):
 - P0: scope-mismatch deny implemented in PDP
 - P1: poisoned-context fixtures (6 tests), Phase F docs pack finalized, supported flows documented
-- P2: clippy passes (`--all-targets`), ~761 observed workspace tests pass, RC evidence script present and passing
+- P2: clippy passes (`--all-targets`), ~797 observed workspace tests pass, RC evidence script present and passing
 
 **P3–P5 evidence summary** (bounded, post-v1 backlog context):
 - **P3 (readiness/observability)**: `/v1/healthz`, `/v1/readyz`, `/v1/readyz/deep` all return 200 with expected payloads.

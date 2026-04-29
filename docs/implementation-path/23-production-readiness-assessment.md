@@ -27,7 +27,7 @@ Remaining gaps are post-v1 backlog documented in `11-remaining-tasks.md` P3.
 | Workspace compiles | PASS | Fresh P6 validation (2026-04-28): `cargo check --workspace` exit 0 |
 | `cargo fmt --all --check` | PASS | Fresh P6 validation: `cargo fmt --all -- --check` exit 0 |
 | `cargo clippy --workspace --all-targets -- -D warnings` | PASS | Fresh P6 validation (2026-04-28) exit 0 |
-| Core tests pass | PASS | Fresh feature-completeness validation: `cargo test --workspace` ~761 observed tests pass |
+| Core tests pass | PASS | Fresh feature-completeness validation: `cargo test --workspace` ~797 observed tests pass |
 | Integration tests pass | PASS | `ferrum-integration-tests` suite |
 | No R3 auto-commit violations | PASS | `test_r3_contracts_have_auto_commit_false` |
 | Single-use capability enforced (durable mark-used in authorize path) | PASS | `test_single_use_capability_cannot_be_reused` — see Weak Spot 3 (resolved) |
@@ -124,7 +124,7 @@ Remaining gaps are post-v1 backlog documented in `11-remaining-tasks.md` P3.
 (all resolved):
 1. `scripts/generate_rc_evidence.py` exists and PASS with all five checks — evidence: fresh P6 run (2026-04-28) → "Overall: ALL PASS".
 2. clippy passes: `cargo clippy --workspace --all-targets -- -D warnings` PASS — evidence: fresh P6 validation.
-3. `cargo test --workspace` PASS — evidence: fresh feature-completeness validation (~761 observed tests).
+3. `cargo test --workspace` PASS — evidence: fresh feature-completeness validation (~797 observed tests).
 
 ---
 
@@ -137,7 +137,7 @@ All P0/P1/P2 items verified complete:
 - Poisoned-context fixtures curated (6 tests)
 - Phase F docs pack finalized
 - clippy passes with no warnings
-- ~761 observed workspace tests pass (fresh feature-completeness validation 2026-04-28)
+- ~797 observed workspace tests pass (fresh feature-completeness validation 2026-04-28)
 - RC evidence script present and passing
 
 The governance loop, persistence layer, and integration test coverage are strong.

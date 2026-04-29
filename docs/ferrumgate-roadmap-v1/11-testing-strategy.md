@@ -2,7 +2,7 @@
 
 > **⚠️ Historical / Planning-era**: This document describes the intended testing strategy at time of planning. Some items listed as mandatory for v1 are now verified or have been superseded by P6/P7 validation evidence.
 >
-> **For current test coverage**: See `docs/implementation-path/01-current-state.md` §Test coverage matrix. Current workspace has ~761 tests all passing.
+> **For current test coverage**: See `docs/implementation-path/01-current-state.md` §Test coverage matrix. Current workspace has ~797 tests all passing.
 
 
 

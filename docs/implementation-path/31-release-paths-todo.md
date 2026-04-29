@@ -30,7 +30,7 @@ Release engineer / documentation owner.
 | G1.1 | `cargo check --workspace` passes | Fresh P6 validation (2026-04-28) | ☑ PASS |
 | G1.2 | `cargo fmt --all --check` passes | Fresh P6 validation | ☑ PASS |
 | G1.3 | `cargo clippy --workspace --all-targets -- -D warnings` passes | Fresh P6 validation | ☑ PASS |
-| G1.4 | `cargo test --workspace` passes (~761 tests) | Fresh feature-completeness validation | ☑ PASS |
+| G1.4 | `cargo test --workspace` passes (~797 tests) | Fresh feature-completeness validation | ☑ PASS |
 | G1.5 | `scripts/generate_rc_evidence.py` passes all five checks | `docs/artifacts/2026-03-30/05-contract-consistency.txt` or fresh run | ☑ PASS |
 | G1.6 | `scripts/validate_repo_layout.sh` passes | "Repository layout looks OK" | ☑ PASS |
 | G1.7 | `python3 scripts/check_contract_consistency.py` passes | "VALIDATION PASSED" | ☑ PASS |

@@ -230,7 +230,7 @@ See `../ferrumgate-roadmap-v1/21-v1-single-node-observability-minimums.md` for f
 - `cargo check --workspace` passes
 - `cargo fmt --all --check` passes
 - `cargo clippy --workspace --all-targets -- -D warnings` passes
-- `cargo test --workspace` passes (~761 observed tests)
+- `cargo test --workspace` passes (~797 observed tests)
 
 **Pass criteria**: All above pass in the release build. Evidence: fresh P6 validation (2026-04-28).
 

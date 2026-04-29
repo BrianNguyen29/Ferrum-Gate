@@ -16,7 +16,7 @@ This RC candidate resolves all P0/P1/P2 items identified during Phase F evidence
 
 - **P0**: Scope-mismatch deny implemented in PDP (`crates/ferrum-pdp/src/engine.rs:31-46`)
 - **P1**: Poisoned-context regression fixtures (6 tests), Phase F docs pack finalized, supported flows documented
-- **P2**: clippy clean (`cargo clippy --workspace --all-targets -- -D warnings` passes), RC evidence script present and passing, ~761 workspace tests pass
+- **P2**: clippy clean (`cargo clippy --workspace --all-targets -- -D warnings` passes), RC evidence script present and passing, ~797 workspace tests pass
 
 ### Evidence Base
 
