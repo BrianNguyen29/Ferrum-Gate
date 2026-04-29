@@ -150,3 +150,4 @@ Before using compensation in a pilot or production-like workflow:
 - [45-current-feature-audit.md](./45-current-feature-audit.md) — G2 gap tracking
 - [52-d6-priority-expansion-list.md](./52-d6-priority-expansion-list.md) — adapter hardening priority
 - [54-operator-signoff-packet.md](./54-operator-signoff-packet.md) — operator acceptance for production pilot risk
+- [57-workload-compensation-drill-plan.md](./57-workload-compensation-drill-plan.md) — operator drill plan for verifying compensation behavior

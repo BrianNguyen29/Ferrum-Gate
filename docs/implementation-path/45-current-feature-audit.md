@@ -461,5 +461,7 @@ Kiểm toán được coi là hoàn thành khi:
 - `docs/implementation-path/01-current-state.md` — Trạng thái hiện tại (test coverage, phase status)
 - `docs/implementation-path/32-feature-completeness-audit.md` — Route/API reconciliation (this doc complements the Phase 1 feature matrix with v1 boundary audit)
 - `docs/implementation-path/33-feature-completion-backlog.md` — Must/Should/Production-only backlog for incomplete/partial features
+- `docs/implementation-path/56-adapter-compensation-evidence-matrix.md` — G2 adapter compensation gap evidence
+- `docs/implementation-path/57-workload-compensation-drill-plan.md` — Operator drill plan for compensation verification
 - `AGENTS.md` — Trạng thái xác minh (check/clippy/test pass)
 - `docs/PRODUCTION_NOTES.md` — Stress test evidence

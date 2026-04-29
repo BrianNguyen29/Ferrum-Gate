@@ -206,6 +206,8 @@ These require PostgreSQL, multi-node, or broader adapter surface — not in v1 s
 | `33-feature-completion-backlog.md` | `52-d6-priority-expansion-list.md` | Priority ranking derived from D5 bottleneck analysis |
 | `33-feature-completion-backlog.md` | `19-v1-single-node-support-contract.md` | v1 support boundary |
 | `33-feature-completion-backlog.md` | `PERFORMANCE_OPTIMIZATION_PLAN.md` | Phase 2/3 perf path |
+| `33-feature-completion-backlog.md` | `56-adapter-compensation-evidence-matrix.md` | P6 compensation evidence |
+| `33-feature-completion-backlog.md` | `57-workload-compensation-drill-plan.md` | P6 operator drill plan |
 | `01-current-state.md` | `33-feature-completion-backlog.md` | Backlog cross-link |
 | `32-feature-completeness-audit.md` | `33-feature-completion-backlog.md` | Backlog cross-link |
 | `45-current-feature-audit.md` | `33-feature-completion-backlog.md` | Backlog cross-link |

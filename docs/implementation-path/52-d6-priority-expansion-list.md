@@ -138,6 +138,8 @@ Production posture is governed by:
 - `23-production-readiness-assessment.md` — RC-ready declaration
 - `19-v1-single-node-support-contract.md` — Support constraints
 - `31-release-paths-todo.md` — Release paths and gate criteria
+- `56-adapter-compensation-evidence-matrix.md` — Priority 5 adapter hardening evidence
+- `57-workload-compensation-drill-plan.md` — Priority 5 operator drill plan
 
 ---
 
