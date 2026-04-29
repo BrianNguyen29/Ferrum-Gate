@@ -7,6 +7,40 @@
 
 ---
 
+## Local Staging-Like Readiness Prefill (Pending Operator Review/Signoff)
+
+> **Operator review required**: This section summarizes local smoke evidence captured on 2026-04-29. It does **not** complete G2 and does **not** authorize production pilot deployment. All G2 items remain pending operator signoff.
+
+### Local Smoke Summary
+
+| Item | Local Evidence | Status |
+|------|----------------|--------|
+| Readiness helper | `scripts/check_pilot_readiness.py --server-url http://127.0.0.1:18080` | PASS locally |
+| Shallow readiness | `/v1/readyz` via `ferrumctl server readiness` | PASS locally |
+| Deep readiness | `/v1/readyz/deep` via `ferrumctl server readiness --deep` | PASS locally |
+| Functional readiness | `/v1/approvals?limit=1` via `ferrumctl server readiness --functional` | PASS locally |
+| Metrics endpoint | `/v1/metrics` contained expected v1 metrics | PASS locally |
+| D1–D6 drill prefill | See `58-workload-compensation-drill-evidence-template.md` local prefill | Pending operator review |
+
+**Local smoke environment**: `ferrumd 127.0.0.1:18080`, SQLite in-memory, `auth_mode=disabled`, repo `d7f19ea44a530ef6d7982402862c855fa1ea0849`.
+
+### G2 Status After Local Prefill
+
+| Gate | Current status | Reason |
+|------|----------------|--------|
+| G2.1 Workload Model | Pending operator signoff | Requires operator workload model for target deployment |
+| G2.2 Auth/TLS Configuration | Pending operator signoff | Local smoke used `auth_mode=disabled`; target bearer/TLS still operator-owned |
+| G2.3 Backup Schedule | Pending operator signoff | External backup scheduling remains operator-owned |
+| G2.4 Restore Drill | Partially prefilled / pending operator signoff | Backup dry-run/local helper exists; real restore drill evidence must be reviewed |
+| G2.5 RPO/RTO Acceptance | Pending operator signoff | Requires target workload SLA acceptance |
+| G2.6 Production Evaluation | Pending operator signoff | Evaluation framework remains operator-owned |
+| G2.7 Accepted-Risk Review | Pending operator signoff | Risks require explicit operator acceptance |
+| G2.8 Compensate Noop Acceptance | Pending operator signoff | D1–D6 prefill requires operator review and signature |
+
+**No G2 complete claim. No production-ready claim. No pilot authorization is made by this prefill.**
+
+---
+
 ## Purpose
 
 This packet provides fillable evidence sections for the G2 gates defined in Path 2 of `31-release-paths-todo.md`. Each section captures evidence of operator-verified readiness dimensions before the production pilot begins.

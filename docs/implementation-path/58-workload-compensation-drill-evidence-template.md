@@ -7,6 +7,46 @@
 
 ---
 
+## Local Staging-Like Evidence Prefill (Not Operator-Signed)
+
+> **Operator review required**: This section summarizes local staging-like evidence captured on 2026-04-29. It is a prefill aid only. It does **not** complete G2, does **not** authorize a production pilot, and does **not** replace operator-run drills in the target environment.
+
+### Run Context
+
+| Field | Value |
+|-------|-------|
+| Environment | Local staging-like only |
+| Server smoke | `ferrumd 127.0.0.1:18080`, SQLite in-memory, `auth_mode=disabled` |
+| Repo commit | `d7f19ea44a530ef6d7982402862c855fa1ea0849` |
+| Evidence logs | `/tmp/ferrum-local-drills/*.log` |
+| Generated skeletons | `/tmp/ferrum-local-drills/d1-d6-evidence-skeleton.md`, `/tmp/ferrum-local-drills/g2-evidence-skeleton.md` |
+
+### Local Evidence Summary
+
+| Drill | Scope exercised | Result | Operator drill status |
+|-------|-----------------|--------|-----------------------|
+| D1 — FS | Gateway compensate integration test `test_compensate_endpoint_restores_file_via_fs_adapter` | PASS — 1 passed, 0 failed | Pending operator review/execution |
+| D1 — FS adapter | Adapter compensate tests | PASS — 11 passed, 0 failed | Adapter-level substitute only |
+| D2 — Git local | Adapter compensate/rollback tests | PASS — 4 passed, 0 failed | Adapter-level substitute only |
+| D3 — Git remote fail-closed | `test_git_push_rollback_returns_recovered_false_on_remote_deletion_failure` | PASS — 1 passed, 0 failed | Adapter-level fail-closed substitute only |
+| D4 — HTTP replay/fail-closed | Adapter compensate/replay tests | PASS — 24 passed, 0 failed | Adapter-level substitute only; no live external HTTP target |
+| D5 — SQLite | Adapter compensate + rollback tests | PASS — 1 compensate + 6 rollback passed, 0 failed | Adapter-level substitute only |
+| D6 — Maildraft | Adapter compensate + rollback tests | PASS — 1 compensate + 7 rollback passed, 0 failed | Adapter-level substitute only; in-memory draft semantics |
+
+**Total local evidence run**: 55 adapter-level tests + 1 gateway-level integration test = **56 passed, 0 failed**.
+
+### Limitations / Operator Follow-Up
+
+- D1 has one gateway-level compensate integration test; full D1.1–D1.3 operator drill evidence still requires operator review of observed file state.
+- D2–D6 are adapter-level local test substitutes, not full end-to-end operator drills through a live production/staging gateway.
+- D4 did not exercise a live external HTTP service; replay/idempotency evidence is adapter-level only.
+- D3 confirms fail-closed behavior at adapter level; operator must still evaluate target remote branch protection/permissions.
+- Signature fields below remain blank until the operator reviews evidence and signs.
+
+**Operator initials**: _____ **Date**: _________
+
+---
+
 ## Purpose
 
 This template provides structured evidence capture for each compensation drill (D1–D6). It is **operator-fillable documentation only** — completing this template does not claim production readiness and does not complete any G2 gate on behalf of the operator.

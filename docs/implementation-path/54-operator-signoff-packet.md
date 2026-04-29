@@ -7,6 +7,16 @@
 
 ---
 
+## Prepared-Signoff Note (Operator Action Required)
+
+> **Unsigned status**: This document remains unsigned. The local staging-like prefills in docs 58 and 59 are evidence aids only. The operator must review all evidence, execute any pending target-environment drills, and provide their own signatures where indicated.
+>
+> **Current state**: Pending operator review/signoff.
+> **Next action**: User/operator reviews docs 58/59 and signs the Pilot Acceptance Statement only if all G2 gates are truly satisfied.
+> **Boundary**: No G2 complete status, no production-ready claim, and no production pilot authorization is made by this note.
+
+---
+
 ## Purpose
 
 This packet is the formal operator acceptance checklist before any production pilot deployment. It is **documentation-only** — completing these items does not claim production readiness; it confirms the operator has evaluated and accepted the known constraints.
