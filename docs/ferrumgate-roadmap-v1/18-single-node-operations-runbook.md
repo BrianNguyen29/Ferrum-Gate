@@ -95,10 +95,10 @@ After startup, verify the node is operational. **For the full verification ladde
 see** [20-v1-single-node-operator-checks.md §3](./20-v1-single-node-operator-checks.md#3-startup-health-verification-ladder).
 
 Summary:
-1. `GET /v1/healthz` — shallow check (no auth)
-2. `GET /v1/readyz` — shallow check (no auth)
-3. `GET /v1/readyz/deep` — deep check with store probe; returns HTTP 200 if store healthy, HTTP 503 if not (no auth)
-4. Functional probe: `GET /v1/approvals?limit=1` with bearer auth — confirms store, auth, and governance loop
+1. `ferrumctl server health` — shallow check (no auth); or `curl http://127.0.0.1:8080/v1/healthz`
+2. `ferrumctl server readiness` — shallow readiness (no auth); or `curl http://127.0.0.1:8080/v1/readyz`
+3. `ferrumctl server readiness --deep` — deep readiness with store probe (no auth); or `curl http://127.0.0.1:8080/v1/readyz/deep`
+4. `ferrumctl server readiness --functional` — functional probe with bearer auth; confirms store, auth, and governance loop; or `curl http://127.0.0.1:8080/v1/approvals?limit=1 -H "Authorization: Bearer $FERRUM_BEARER_TOKEN"`
 
 > **Important:** healthz and readyz are shallow checks. They confirm the
 > server process is alive and the HTTP endpoint is reachable, but they do

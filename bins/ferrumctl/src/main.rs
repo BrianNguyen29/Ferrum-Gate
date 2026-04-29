@@ -253,6 +253,19 @@ enum BackupCommand {
 enum ServerCommand {
     /// Check server health.
     Health,
+    /// Check server readiness.
+    Readiness {
+        /// Deep readiness probe with store connectivity check.
+        /// Calls GET /v1/readyz/deep instead of shallow /v1/readyz.
+        #[arg(long)]
+        deep: bool,
+
+        /// Functional readiness probe.
+        /// Calls GET /v1/approvals?limit=1 with bearer auth to confirm
+        /// store, auth, and governance loop are functional.
+        #[arg(long)]
+        functional: bool,
+    },
     /// Inspect an execution by ID.
     InspectExecution {
         /// Execution ID.
@@ -635,6 +648,34 @@ async fn main() -> Result<()> {
                 ServerCommand::Health => {
                     let health = client.health().await?;
                     println!("{}", serde_json::to_string_pretty(&health)?);
+                }
+                ServerCommand::Readiness { deep, functional } => {
+                    if deep {
+                        // Deep probe: GET /v1/readyz/deep
+                        let ready = client.readiness_deep().await?;
+                        println!("{}", serde_json::to_string_pretty(&ready)?);
+                    }
+
+                    if functional {
+                        // Functional probe: GET /v1/approvals?limit=1
+                        match client.functional_readiness().await {
+                            Ok(items) => {
+                                println!(
+                                    "{{\"status\":\"ready\",\"probe\":\"functional\",\"approvals_found\":{}}}",
+                                    items.len()
+                                );
+                            }
+                            Err(e) => {
+                                bail!("functional readiness probe failed: {}", e);
+                            }
+                        }
+                    }
+
+                    if !deep && !functional {
+                        // Shallow probe: GET /v1/readyz
+                        let ready = client.readiness().await?;
+                        println!("{}", serde_json::to_string_pretty(&ready)?);
+                    }
                 }
                 ServerCommand::InspectExecution { execution_id } => {
                     let execution = client.get_execution(&execution_id).await?;
@@ -1295,5 +1336,97 @@ rules: []
                 original, bump_type, expected
             );
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Readiness probe CLI parsing tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_server_readiness_cli_default_flags() {
+        let cli = Cli::parse_from(["ferrumctl", "server", "readiness"]);
+        let Command::Server { sub } = cli.command else {
+            panic!("expected Server command");
+        };
+        match sub {
+            ServerCommand::Readiness { deep, functional } => {
+                assert!(!deep, "deep should be false by default");
+                assert!(!functional, "functional should be false by default");
+            }
+            other => panic!("expected Readiness command, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_server_readiness_cli_deep_flag() {
+        let cli = Cli::parse_from(["ferrumctl", "server", "readiness", "--deep"]);
+        let Command::Server { sub } = cli.command else {
+            panic!("expected Server command");
+        };
+        match sub {
+            ServerCommand::Readiness { deep, functional } => {
+                assert!(deep, "deep should be true with --deep");
+                assert!(!functional, "functional should be false");
+            }
+            other => panic!("expected Readiness command, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_server_readiness_cli_functional_flag() {
+        let cli = Cli::parse_from(["ferrumctl", "server", "readiness", "--functional"]);
+        let Command::Server { sub } = cli.command else {
+            panic!("expected Server command");
+        };
+        match sub {
+            ServerCommand::Readiness { deep, functional } => {
+                assert!(!deep, "deep should be false");
+                assert!(functional, "functional should be true with --functional");
+            }
+            other => panic!("expected Readiness command, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_server_readiness_cli_deep_and_functional_flags() {
+        let cli = Cli::parse_from(["ferrumctl", "server", "readiness", "--deep", "--functional"]);
+        let Command::Server { sub } = cli.command else {
+            panic!("expected Server command");
+        };
+        match sub {
+            ServerCommand::Readiness { deep, functional } => {
+                assert!(deep, "deep should be true");
+                assert!(functional, "functional should be true");
+            }
+            other => panic!("expected Readiness command, got {:?}", other),
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // ReadinessResponse deserialization tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_readiness_response_deserializes_shallow() {
+        let json = r#"{"status":"ready"}"#;
+        let resp: client::ReadinessResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.status, "ready");
+    }
+
+    #[test]
+    fn test_readiness_response_deserializes_with_status() {
+        // Test various status values that the server might return
+        for status in ["ready", "not_ready", "initializing"] {
+            let json = format!(r#"{{"status":"{}"}}"#, status);
+            let resp: client::ReadinessResponse = serde_json::from_str(&json).unwrap();
+            assert_eq!(resp.status, status);
+        }
+    }
+
+    #[test]
+    fn test_health_response_deserializes() {
+        let json = r#"{"status":"ok"}"#;
+        let resp: client::HealthResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.status, "ok");
     }
 }

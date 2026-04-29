@@ -25,6 +25,11 @@ pub struct HealthResponse {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+pub struct ReadinessResponse {
+    pub status: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ExecutionRecord {
     pub execution_id: String,
     pub proposal_id: String,
@@ -202,6 +207,34 @@ impl Client {
         let resp = self.add_auth(self.http.get(&url)).send().await?;
         resp.error_for_status_ref()?;
         Ok(resp.json().await?)
+    }
+
+    /// Shallow readiness probe: GET /v1/readyz
+    /// No auth required; confirms the HTTP endpoint is reachable.
+    pub async fn readiness(&self) -> Result<ReadinessResponse> {
+        let url = format!("{}/v1/readyz", self.base_url);
+        let resp = self.add_auth(self.http.get(&url)).send().await?;
+        resp.error_for_status_ref()?;
+        Ok(resp.json().await?)
+    }
+
+    /// Deep readiness probe: GET /v1/readyz/deep
+    /// No auth required; includes store connectivity check.
+    pub async fn readiness_deep(&self) -> Result<ReadinessResponse> {
+        let url = format!("{}/v1/readyz/deep", self.base_url);
+        let resp = self.add_auth(self.http.get(&url)).send().await?;
+        resp.error_for_status_ref()?;
+        Ok(resp.json().await?)
+    }
+
+    /// Functional readiness probe: GET /v1/approvals?limit=1
+    /// Requires bearer auth; confirms store, auth, and governance loop are functional.
+    pub async fn functional_readiness(&self) -> Result<Vec<ApprovalRequest>> {
+        let url = format!("{}/v1/approvals?limit=1", self.base_url);
+        let resp = self.add_auth(self.http.get(&url)).send().await?;
+        resp.error_for_status_ref()?;
+        let list: ApprovalListEnvelope = resp.json().await?;
+        Ok(list.items)
     }
 
     pub async fn get_execution(&self, execution_id: &str) -> Result<ExecutionRecord> {

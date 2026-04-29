@@ -31,7 +31,9 @@ For observability standards (logs, probes, thresholds), see:
 | Check | CLI command | HTTP fallback | Notes |
 |---|---|---|---|
 | Shallow process health | `ferrumctl server health` | `GET /v1/healthz` | No auth required |
-| Shallow readiness | — | `GET /v1/readyz` | No auth required; shallow only |
+| Shallow readiness | `ferrumctl server readiness` | `GET /v1/readyz` | No auth required |
+| Deep readiness | `ferrumctl server readiness --deep` | `GET /v1/readyz/deep` | No auth required; includes store probe |
+| Functional readiness | `ferrumctl server readiness --functional` | `GET /v1/approvals?limit=1` | Requires bearer auth; confirms store, auth, and governance loop |
 | Inspect execution record | `ferrumctl server inspect-execution <id>` | `GET /v1/executions/<id>` | Requires bearer auth |
 | List approvals (unpaginated) | `ferrumctl server inspect-approvals` | `GET /v1/approvals` | Requires bearer auth |
 | Inspect single approval | `ferrumctl server inspect-approval <id>` | `GET /v1/approvals/<id>` | Requires bearer auth |
@@ -181,6 +183,53 @@ ferrumctl --server-url http://127.0.0.1:8080 --bearer-token "$FERRUM_BEARER_TOKE
 **What it checks**: GET /v1/healthz endpoint, confirms JSON parse.
 **What it does not check**: store, migrations, governance loop.
 **Auth**: None required (healthz is unauthenticated in the gateway).
+
+---
+
+### ferrumctl server readiness
+
+Shallow readiness check via CLI.
+
+```bash
+ferrumctl server readiness
+# Or with explicit server URL:
+ferrumctl --server-url http://127.0.0.1:8080 server readiness
+```
+
+**What it checks**: GET /v1/readyz endpoint.
+**Auth**: None required (readyz is unauthenticated in the gateway).
+
+---
+
+### ferrumctl server readiness --deep
+
+Deep readiness check with store probe.
+
+```bash
+ferrumctl server readiness --deep
+# Or with explicit server URL:
+ferrumctl --server-url http://127.0.0.1:8080 server readiness --deep
+```
+
+**What it checks**: GET /v1/readyz/deep endpoint; includes store connectivity check.
+**Auth**: None required (readyz/deep is unauthenticated in the gateway).
+**Note**: Returns HTTP 200 if store is healthy, HTTP 503 if store is unreachable.
+
+---
+
+### ferrumctl server readiness --functional
+
+Functional readiness probe confirming store, auth, and governance loop.
+
+```bash
+ferrumctl server readiness --functional
+# Or with explicit server URL and token:
+ferrumctl --server-url http://127.0.0.1:8080 --bearer-token "$FERRUM_BEARER_TOKEN" server readiness --functional
+```
+
+**What it checks**: GET /v1/approvals?limit=1 with bearer auth; a successful response (200 with valid JSON, empty or non-empty list) confirms end-to-end readiness.
+**Auth**: Required (bearer). The gateway skips auth for healthz/readyz but not for /v1/approvals.
+**Note**: Empty list `{"items":[]}` is normal and indicates readiness, not a failure.
 
 ---
 
