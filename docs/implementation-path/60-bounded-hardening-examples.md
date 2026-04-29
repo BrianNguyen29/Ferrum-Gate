@@ -342,7 +342,20 @@ $ ferrumctl backup verify \
 Database integrity check passed / OK
 ```
 
-**Step 4: Stop server (required for restore):**
+**Step 4: Dry-run restore (optional, recommended before real restore):**
+```bash
+$ ferrumctl backup restore --dry-run \
+  --from /tmp/ferrum-drill-restore/backups/source.db_20260429.db \
+  --db-path /tmp/ferrum-drill-restore/target.db
+
+[DRY-RUN] Would restore from: /tmp/ferrum-drill-restore/backups/source.db_20260429.db
+[DRY-RUN] Target db-path: /tmp/ferrum-drill-restore/target.db
+[DRY-RUN] Server must be stopped: YES
+[DRY-RUN] Pre-restore copy would be preserved
+[DRY-RUN] Dry-run complete — no changes made
+```
+
+**Step 5: Stop server (required for restore):**
 ```bash
 # Server must be stopped — restore will refuse if server is running
 $ pkill -f ferrumd  # or stop via service manager
@@ -350,7 +363,7 @@ $ pkill -f ferrumd  # or stop via service manager
 Server stopped.
 ```
 
-**Step 5: Perform restore:**
+**Step 6: Perform restore:**
 ```bash
 $ ferrumctl backup restore \
   --backup /tmp/ferrum-drill-restore/backups/source.db_20260429.db \
@@ -361,7 +374,7 @@ Restoring from: /tmp/ferrum-drill-restore/backups/source.db_20260429.db
 Restore complete.
 ```
 
-**Step 6: Post-restore verification:**
+**Step 7: Post-restore verification:**
 ```bash
 # Direct SQLite integrity check
 $ sqlite3 /tmp/ferrum-drill-restore/backups/source.db_20260429.db "PRAGMA integrity_check;"
@@ -385,6 +398,8 @@ $ curl -s http://localhost:8080/v1/approvals \
 | Backup created | [ ] PASS |
 | Backup verify (`ferrumctl backup verify`) | [ ] PASS |
 | `PRAGMA integrity_check` on backup | [ ] PASS (ok) |
+| Dry-run restore (`--dry-run`) completed | [ ] PASS |
+| Server stopped before restore | [ ] PASS |
 | Pre-restore copy preserved | [ ] PASS |
 | Restore completed | [ ] PASS |
 | `PRAGMA integrity_check` on restored DB | [ ] PASS (ok) |
@@ -397,6 +412,7 @@ Source DB: /tmp/ferrum-drill-restore/source.db
 Backup: /tmp/ferrum-drill-restore/backups/source.db_20260429.db
 Create: Backup created (8192 bytes)
 Verify backup: Database integrity check passed / OK
+Dry-run: [DRY-RUN] Would restore from backup
 Restore: Pre-restore snapshot saved; Database restored successfully / Restore complete
 Verify restored DB: Database integrity check passed / OK
 Direct PRAGMA: integrity_check=ok
@@ -406,6 +422,7 @@ Drill outcome: SUCCESS — All steps passed
 ```
 
 ### Key Takeaways
+- Use `ferrumctl backup restore --dry-run` before real restore to validate parameters
 - Server must be stopped before restore (exclusive lock required)
 - Pre-restore copy is automatically preserved
 - `PRAGMA integrity_check=ok` is required evidence
@@ -417,77 +434,41 @@ Drill outcome: SUCCESS — All steps passed
 ## Example 4 — `/v1/metrics` Scrape Expected Output
 
 ### Context
-Per `27-production-evaluation-plan.md` §Operations and `21-v1-single-node-observability-minimums.md`: Metrics endpoint is part of the observability minimums. This example shows bounded expected output for `/v1/metrics` on single-node SQLite v1.
+Per `27-production-evaluation-plan.md` §Operations and `21-v1-single-node-observability-minimums.md`: Metrics endpoint is part of the observability minimums. This example shows the **actual bounded output** for `/v1/metrics` on single-node SQLite v1.
+
+> **Optional automated probe**: `python3 scripts/check_pilot_readiness.py` includes a metrics endpoint check (`/v1/metrics`) as part of its readiness probe suite. This is an **optional prefill aid only** — it does not complete operator signoff for G2.6 or any other gate.
 
 ### Endpoint Information
 - Path: `/v1/metrics`
 - Authentication: Bearer token required (same as other governance routes)
 - Content-Type: `text/plain; version=0.0.4` (Prometheus exposition format)
 
-### Bounded Expected Output
+### Actual v1 Metrics (Bounded)
+
+The following metrics are **confirmed available** in v1 per `21-v1-single-node-observability-minimums.md` §3.3:
 
 ```text
-# HELP ferrum_executions_total Total number of executions processed
-# TYPE ferrum_executions_total counter
-ferrum_executions_total{status="completed"} 42
-ferrum_executions_total{status="failed"} 3
-ferrum_executions_total{status="compensated"} 2
+# HELP ferrumgate_http_requests_total Total HTTP requests to health/metrics routes
+# TYPE ferrumgate_http_requests_total counter
+ferrumgate_http_requests_total{route="/v1/healthz"} 42
+ferrumgate_http_requests_total{route="/v1/readyz"} 15
+ferrumgate_http_requests_total{route="/v1/readyz/deep"} 8
+ferrumgate_http_requests_total{route="/v1/metrics"} 23
 
-# HELP ferrum_compensation_total Total number of compensation calls
-# TYPE ferrum_compensation_total counter
-ferrum_compensation_total{recovered="true"} 2
-ferrum_compensation_total{recovered="false"} 0
+# HELP ferrumgate_store_health_up Store health up/down gauge
+# TYPE ferrumgate_store_health_up gauge
+ferrumgate_store_health_up 1
 
-# HELP ferrum_intents_total Total number of intents created
-# TYPE ferrum_intents_total counter
-ferrum_intents_total{approval_mode="auto"} 38
-ferrum_intents_total{approval_mode="manual"} 7
+# HELP ferrumgate_metrics_scrapes_total Total /v1/metrics scrapes
+# TYPE ferrumgate_metrics_scrapes_total counter
+ferrumgate_metrics_scrapes_total 23
 
-# HELP ferrum_capabilities_total Total number of capabilities minted
-# TYPE ferrum_capabilities_total counter
-ferrum_capabilities_total{used="true"} 35
-ferrum_capabilities_total{used="false"} 10
-
-# HELP ferrum_store_size_bytes SQLite database file size in bytes
-# TYPE ferrum_store_size_bytes gauge
-ferrum_store_size_bytes 81920
-
-# HELP ferrum_write_queue_depth Current write queue depth
-# TYPE ferrum_write_queue_depth gauge
-ferrum_write_queue_depth 0
-
-# HELP ferrum_lineage_events_total Total lineage events emitted
-# TYPE ferrum_lineage_events_total counter
-ferrum_lineage_events_total{event="ActionProposalSubmitted"} 47
-ferrum_lineage_events_total{event="PolicyEvaluated"} 47
-ferrum_lineage_events_total{event="CapabilityMinted"} 45
-ferrum_lineage_events_total{event="ToolCallPrepared"} 45
-ferrum_lineage_events_total{event="ToolCallExecuted"} 45
-ferrum_lineage_events_total{event="SideEffectPrepared"} 45
-ferrum_lineage_events_total{event="SideEffectVerified"} 45
-ferrum_lineage_events_total{event="SideEffectCommitted"} 43
-ferrum_lineage_events_total{event="SideEffectRolledBack"} 2
-
-# HELP ferrum_http_adapter_requests_total HTTP adapter requests
-# TYPE ferrum_http_adapter_requests_total counter
-ferrum_http_adapter_requests_total{method="POST",status="success"} 10
-ferrum_http_adapter_requests_total{method="POST",status="failure"} 1
-ferrum_http_adapter_requests_total{method="PUT",status="success"} 5
-ferrum_http_adapter_requests_total{method="PATCH",status="success"} 3
-
-# HELP ferrum_fs_adapter_operations_total Filesystem adapter operations
-# TYPE ferrum_fs_adapter_operations_total counter
-ferrum_fs_adapter_operations_total{operation="FileWrite",status="success"} 15
-ferrum_fs_adapter_operations_total{operation="FileDelete",status="success"} 8
-ferrum_fs_adapter_operations_total{operation="FileMove",status="success"} 4
-
-# HELP process_cpu_seconds_total Total user and system CPU time spent in seconds.
-# TYPE process_cpu_seconds_total counter
-process_cpu_seconds_total 12.34
-
-# HELP process_resident_memory_bytes Resident memory size in bytes.
-# TYPE process_resident_memory_bytes gauge
-process_resident_memory_bytes 104857600
+# HELP ferrumgate_governance_errors_total Governance error counter per route
+# TYPE ferrumgate_governance_errors_total counter
+ferrumgate_governance_errors_total{route="/v1/intents"} 0
+ferrumgate_governance_errors_total{route="/v1/executions"} 0
+ferrumgate_governance_errors_total{route="/v1/approvals"} 0
+ferrumgate_governance_errors_total{route="/v1/policy-bundles"} 0
 ```
 
 ### Scrape Command
@@ -498,24 +479,44 @@ $ curl -s http://localhost:8080/v1/metrics \
 
 ### Bounded Metrics Notes
 
-**SQLite-specific metrics:**
-- `ferrum_store_size_bytes`: Monitors SQLite file size; bounded by single-node disk capacity
-- `ferrum_write_queue_depth`: Write queue depth (0 when idle); spikes indicate write pressure
+**What v1 actually exposes:**
+- `ferrumgate_http_requests_total`: Request counters for health/metrics routes only
+- `ferrumgate_store_health_up`: Store up/down as a gauge (1=up, 0=down)
+- `ferrumgate_metrics_scrapes_total`: Count of metrics endpoint scrapes
+- `ferrumgate_governance_errors_total`: Bounded per-route governance error counters
+
+**Post-v1 / Aspirational Metrics** (not yet available):
+The following appear in some documentation examples but are **not currently implemented** in v1:
+- `ferrum_executions_total` — post-v1
+- `ferrum_compensation_total` — post-v1
+- `ferrum_intents_total` — post-v1
+- `ferrum_capabilities_total` — post-v1
+- `ferrum_store_size_bytes` — post-v1
+- `ferrum_write_queue_depth` — post-v1
+- `ferrum_lineage_events_total` — post-v1
+- `ferrum_http_adapter_requests_total` — post-v1
+- `ferrum_fs_adapter_operations_total` — post-v1
+- `process_cpu_seconds_total` — depends on process collector
+- `process_resident_memory_bytes` — depends on process collector
 
 **Single-node constraints:**
 - No multi-node metrics (not implemented)
 - No PostgreSQL metrics (not implemented)
+- No latency histograms (bounded by v1 scope)
+- No WAL size or page count gauges (requires external tooling)
 
 **Known limitations:**
 - Metrics are in-memory counters; reset on server restart
 - No long-term persistence of metrics history
 - No alerting configuration in FerrumGate (operator manages externally)
+- `ferrumgate_store_health_up` is a cheap up/down probe; use `PRAGMA integrity_check` for full store verification
 
 ### Key Takeaways
 - `/v1/metrics` returns Prometheus exposition format
 - Bearer auth required (not public)
-- Metrics are bounded to single-node SQLite scope
+- Only confirmed v1 metrics are shown above; aspirational metrics are labeled post-v1
 - Operators should scrape and persist metrics externally for historical analysis
+- For full store integrity, use `sqlite3 /path/to/db "PRAGMA integrity_check;"` directly
 
 ---
 

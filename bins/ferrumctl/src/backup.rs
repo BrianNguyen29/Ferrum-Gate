@@ -195,9 +195,18 @@ pub fn backup_verify(db_path: &Path) -> Result<()> {
 /// If the transaction cannot be acquired, restore is refused; operators must still stop ferrumd.
 /// Preserves a pre-restore copy before overwriting.
 /// Verifies the restored database passes integrity_check.
-pub fn backup_restore(db_path: &Path, from_path: &Path, confirm: bool) -> Result<()> {
-    if !confirm {
-        bail!("--confirm flag is required to restore a database");
+///
+/// When dry_run is true, all preconditions are validated but no files are mutated.
+pub fn backup_restore(
+    db_path: &Path,
+    from_path: &Path,
+    confirm: bool,
+    dry_run: bool,
+) -> Result<()> {
+    if !confirm && !dry_run {
+        bail!(
+            "--confirm flag is required to restore a database (or use --dry-run to validate without restoring)"
+        );
     }
 
     // Validate from_path exists
@@ -220,6 +229,10 @@ pub fn backup_restore(db_path: &Path, from_path: &Path, confirm: bool) -> Result
                 result
             );
         }
+        eprintln!(
+            "[dry-run] Backup file integrity check passed: {}",
+            from_path.display()
+        );
     }
 
     // Try a best-effort exclusive transaction on the current db before restore.
@@ -242,6 +255,10 @@ pub fn backup_restore(db_path: &Path, from_path: &Path, confirm: bool) -> Result
                         // Successfully acquired exclusive transaction. Rollback to release it
                         // and allow us to proceed with restore.
                         let _ = conn.execute_batch("ROLLBACK");
+                        eprintln!(
+                            "[dry-run] Exclusive lock check passed: {} is not locked",
+                            db_path.display()
+                        );
                     }
                     Err(rusqlite::Error::SqliteFailure(ref err, _))
                         if err.code == rusqlite::ErrorCode::DatabaseLocked =>
@@ -283,6 +300,28 @@ pub fn backup_restore(db_path: &Path, from_path: &Path, confirm: bool) -> Result
                 );
             }
         }
+    } else {
+        eprintln!(
+            "[dry-run] No existing database at {} — no lock check needed",
+            db_path.display()
+        );
+    }
+
+    // Report what would happen without actually doing it
+    if dry_run {
+        eprintln!(
+            "[dry-run] Would restore {} from {}",
+            db_path.display(),
+            from_path.display()
+        );
+        if db_path.exists() {
+            eprintln!(
+                "[dry-run] Would create pre-restore snapshot: {}.pre_restore",
+                db_path.display()
+            );
+        }
+        eprintln!("[dry-run] Dry-run complete — no files were mutated.");
+        return Ok(());
     }
 
     // Create pre-restore snapshot if current db exists
@@ -406,8 +445,8 @@ mod tests {
             "CREATE TABLE test (id INTEGER PRIMARY KEY); INSERT INTO test (id) VALUES (1);",
         );
 
-        // Restore without --confirm should fail
-        let result = backup_restore(&db_path, &backup_path, false);
+        // Restore without --confirm and without --dry-run should fail
+        let result = backup_restore(&db_path, &backup_path, false, false);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("--confirm"));
     }
@@ -433,7 +472,7 @@ mod tests {
         let pre_restore_path = PathBuf::from(format!("{}.pre_restore", db_path.display()));
 
         // Restore with --confirm
-        backup_restore(&db_path, &backup_path, true).expect("restore should succeed");
+        backup_restore(&db_path, &backup_path, true, false).expect("restore should succeed");
 
         // Pre-restore copy should exist
         assert!(pre_restore_path.exists(), "pre-restore copy should exist");
@@ -469,7 +508,7 @@ mod tests {
             "CREATE TABLE test (id INTEGER PRIMARY KEY); INSERT INTO test (id) VALUES (1);",
         );
 
-        backup_restore(&db_path, &backup_path, true).expect("restore should succeed");
+        backup_restore(&db_path, &backup_path, true, false).expect("restore should succeed");
 
         // Verify the restored db
         backup_verify(&db_path).expect("restored db should pass integrity check");
@@ -487,7 +526,7 @@ mod tests {
         // Create a "corrupt" backup by just touching a file
         std::fs::write(&backup_path, b"this is not a valid sqlite database").unwrap();
 
-        let result = backup_restore(&db_path, &backup_path, true);
+        let result = backup_restore(&db_path, &backup_path, true, false);
         assert!(result.is_err(), "restore should refuse corrupt backup");
         assert!(
             result.unwrap_err().to_string().contains("integrity check"),
@@ -504,7 +543,7 @@ mod tests {
         // Create original database so db_path exists
         create_test_db(&db_path, "CREATE TABLE test (id INTEGER PRIMARY KEY);");
 
-        let result = backup_restore(&db_path, &backup_path, true);
+        let result = backup_restore(&db_path, &backup_path, true, false);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("does not exist"));
     }
@@ -539,7 +578,7 @@ mod tests {
             .expect("should be able to begin exclusive transaction");
 
         // Attempt to restore — should fail because DB is locked
-        let result = backup_restore(&db_path, &backup_path, true);
+        let result = backup_restore(&db_path, &backup_path, true, false);
         assert!(
             result.is_err(),
             "restore should refuse when DB is locked by another connection"
@@ -571,6 +610,68 @@ mod tests {
             data, "original",
             "original data should be unchanged after failed restore"
         );
+    }
+
+    #[test]
+    fn test_backup_restore_dry_run_no_mutation() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let backup_path = temp_dir.path().join("backup.db");
+
+        // Create original database with known data
+        create_test_db(
+            &db_path,
+            "CREATE TABLE test (id INTEGER PRIMARY KEY, data TEXT); INSERT INTO test (data) VALUES ('original');",
+        );
+
+        // Create backup with different data
+        create_test_db(
+            &backup_path,
+            "CREATE TABLE test (id INTEGER PRIMARY KEY, data TEXT); INSERT INTO test (data) VALUES ('restored');",
+        );
+
+        let pre_restore_path = PathBuf::from(format!("{}.pre_restore", db_path.display()));
+
+        // Dry-run restore — should validate preconditions but not mutate anything
+        let result = backup_restore(&db_path, &backup_path, false, true);
+        assert!(
+            result.is_ok(),
+            "dry-run should succeed: {}",
+            result.unwrap_err()
+        );
+
+        // Pre-restore copy should NOT exist (no mutation in dry-run)
+        assert!(
+            !pre_restore_path.exists(),
+            "pre_restore copy should NOT exist in dry-run mode"
+        );
+
+        // Original database should be completely unchanged
+        let conn = Connection::open(&db_path).unwrap();
+        let data: String = conn
+            .query_row("SELECT data FROM test", [], |row: &rusqlite::Row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(
+            data, "original",
+            "original data should be unchanged after dry-run"
+        );
+    }
+
+    #[test]
+    fn test_backup_restore_dry_run_with_nonexistent_backup() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let backup_path = temp_dir.path().join("nonexistent.db");
+
+        // Create original database so db_path exists
+        create_test_db(&db_path, "CREATE TABLE test (id INTEGER PRIMARY KEY);");
+
+        // Dry-run with nonexistent backup should still fail (validates path exists check)
+        let result = backup_restore(&db_path, &backup_path, false, true);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("does not exist"));
     }
 
     // -------------------------------------------------------------------------

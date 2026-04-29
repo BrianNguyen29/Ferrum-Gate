@@ -243,9 +243,14 @@ enum BackupCommand {
         from: PathBuf,
 
         /// Explicitly confirm the restore operation.
-        /// Required. Restore is destructive and cannot be undone without a pre-restore copy.
+        /// Required unless --dry-run is used.
         #[arg(long)]
         confirm: bool,
+
+        /// Validate preconditions and report what would happen without mutating the database.
+        /// When set, --confirm is not required.
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 
@@ -636,9 +641,14 @@ async fn main() -> Result<()> {
                 db_path,
                 from,
                 confirm,
+                dry_run,
             } => {
-                backup::backup_restore(&db_path, &from, confirm)?;
-                println!("Restore complete");
+                backup::backup_restore(&db_path, &from, confirm, dry_run)?;
+                if dry_run {
+                    println!("Dry-run complete");
+                } else {
+                    println!("Restore complete");
+                }
             }
         },
         Command::Server { sub } => {

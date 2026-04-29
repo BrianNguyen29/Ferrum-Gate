@@ -19,6 +19,8 @@ This packet provides fillable evidence sections for the G2 gates defined in Path
 
 ## G2 Readiness Overview
 
+> **Optional Automated Prefill/Probe Helper**: `python3 scripts/check_pilot_readiness.py` runs shallow, deep, functional, and metrics probes via `ferrumctl` or HTTP and reports pass/fail status. This is an **optional prefill/probe aid only** — it does **NOT** complete G2/operator signoff. Operator review and explicit signoff is still required for all G2 gates.
+
 | Gate | Title | Evidence Required | Status |
 |------|-------|-------------------|--------|
 | G2.1 | Workload Model | Write workload modeled against SQLite capacity | [ ] Pending operator signoff |
