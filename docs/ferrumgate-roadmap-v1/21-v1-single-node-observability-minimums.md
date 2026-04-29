@@ -88,10 +88,10 @@ unauthenticated like health/readiness endpoints and currently reports:
 - `ferrumgate_http_requests_total{route="/v1/metrics"}`
 - `ferrumgate_store_health_up` (`1` when `store.health_check()` passes, `0` otherwise)
 - `ferrumgate_metrics_scrapes_total`
+- `ferrumgate_governance_errors_total{route="/v1/..."}` - bounded per-route governance error counters for all governance endpoints
 
 This is intentionally a minimal built-in surface. It does not yet provide
-latency histograms, per-route error counters for all governance endpoints, WAL
-size/page-count gauges, or connection-pool saturation signals.
+latency histograms, WAL size/page-count gauges, or connection-pool saturation signals.
 
 ### 3.4 Derived Signals
 
@@ -113,7 +113,7 @@ The following cannot be observed in v1 without external tooling:
 | Blind spot | Description |
 |---|---|
 | No request latency histograms | `/v1/metrics` exposes counters only; latency must be measured client-side |
-| No broad error rate counters | `/v1/metrics` currently exposes bounded health/metrics counters only; governance endpoint errors still require log scraping or client-side measurement |
+| No broad error rate counters (bounded governance error counters now available) | `/v1/metrics` now exposes bounded `ferrumgate_governance_errors_total` for governance endpoints; WAL/page gauges still require external tooling |
 | No SQLite WAL size or page count | `/v1/metrics` exposes store up/down only; WAL/page details still require `sqlite3` CLI directly |
 | No connection pool saturation signal | sqlx pool exhaustion is not exposed as a metric |
 | No rollback class enforcement signal | R3 `auto_commit=false` bypass at prepare is not observable |
@@ -236,9 +236,8 @@ changes beyond v1 scope.
 ### 7.1 Metrics Endpoint is Bounded
 
 `GET /v1/metrics` exists, but it is intentionally minimal. It reports counters
-for health/metrics routes and a store up/down gauge only. Operators still need
-external tooling for latency histograms, broad per-route error rates, WAL/page
-size, and pool saturation.
+for health/metrics routes, store up/down gauge, and bounded governance error counters.
+Operators still need external tooling for latency histograms, WAL/page size, and pool saturation.
 
 ### 7.2 healthz and readyz are Shallow
 

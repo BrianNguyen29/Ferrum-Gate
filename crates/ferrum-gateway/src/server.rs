@@ -48,13 +48,36 @@ struct AppState {
 }
 
 /// Metrics state for the /v1/metrics endpoint.
-/// Counters are scoped to health and metrics endpoints only.
+/// Tracks health/metrics request counters, store health gauge, and bounded
+/// governance error counters for all governance API endpoints.
 struct Metrics {
     healthz_requests: AtomicU64,
     readyz_requests: AtomicU64,
     readyz_deep_requests: AtomicU64,
     metrics_scrapes: AtomicU64,
     store_health_up: AtomicU64,
+    // Governance error counters keyed by static route template
+    governance_errors_v1_intents_compile: AtomicU64,
+    governance_errors_v1_proposals_evaluate: AtomicU64,
+    governance_errors_v1_capabilities_mint: AtomicU64,
+    governance_errors_v1_capabilities_revoke: AtomicU64,
+    governance_errors_v1_executions_authorize: AtomicU64,
+    governance_errors_v1_executions_prepare: AtomicU64,
+    governance_errors_v1_executions_execute: AtomicU64,
+    governance_errors_v1_executions_verify: AtomicU64,
+    governance_errors_v1_executions_compensate: AtomicU64,
+    governance_errors_v1_executions_cancel: AtomicU64,
+    governance_errors_v1_executions_evaluate_outcome: AtomicU64,
+    governance_errors_v1_executions_execution_id: AtomicU64,
+    governance_errors_v1_approvals: AtomicU64,
+    governance_errors_v1_approvals_approval_id: AtomicU64,
+    governance_errors_v1_policy_bundles: AtomicU64,
+    governance_errors_v1_policy_bundles_bundle_id: AtomicU64,
+    governance_errors_v1_provenance_query: AtomicU64,
+    governance_errors_v1_provenance_lineage: AtomicU64,
+    governance_errors_v1_provenance_lineage_execution_id: AtomicU64,
+    governance_errors_v1_provenance_ingest: AtomicU64,
+    governance_errors_v1_bridges_bridge_id_tools: AtomicU64,
 }
 
 impl Metrics {
@@ -65,8 +88,180 @@ impl Metrics {
             readyz_deep_requests: AtomicU64::new(0),
             metrics_scrapes: AtomicU64::new(0),
             store_health_up: AtomicU64::new(0),
+            governance_errors_v1_intents_compile: AtomicU64::new(0),
+            governance_errors_v1_proposals_evaluate: AtomicU64::new(0),
+            governance_errors_v1_capabilities_mint: AtomicU64::new(0),
+            governance_errors_v1_capabilities_revoke: AtomicU64::new(0),
+            governance_errors_v1_executions_authorize: AtomicU64::new(0),
+            governance_errors_v1_executions_prepare: AtomicU64::new(0),
+            governance_errors_v1_executions_execute: AtomicU64::new(0),
+            governance_errors_v1_executions_verify: AtomicU64::new(0),
+            governance_errors_v1_executions_compensate: AtomicU64::new(0),
+            governance_errors_v1_executions_cancel: AtomicU64::new(0),
+            governance_errors_v1_executions_evaluate_outcome: AtomicU64::new(0),
+            governance_errors_v1_executions_execution_id: AtomicU64::new(0),
+            governance_errors_v1_approvals: AtomicU64::new(0),
+            governance_errors_v1_approvals_approval_id: AtomicU64::new(0),
+            governance_errors_v1_policy_bundles: AtomicU64::new(0),
+            governance_errors_v1_policy_bundles_bundle_id: AtomicU64::new(0),
+            governance_errors_v1_provenance_query: AtomicU64::new(0),
+            governance_errors_v1_provenance_lineage: AtomicU64::new(0),
+            governance_errors_v1_provenance_lineage_execution_id: AtomicU64::new(0),
+            governance_errors_v1_provenance_ingest: AtomicU64::new(0),
+            governance_errors_v1_bridges_bridge_id_tools: AtomicU64::new(0),
         }
     }
+
+    /// Increments the governance error counter for the given route.
+    fn increment_governance_error(&self, route: GovernanceRoute) {
+        match route {
+            GovernanceRoute::IntentsCompile => self
+                .governance_errors_v1_intents_compile
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::ProposalsEvaluate => self
+                .governance_errors_v1_proposals_evaluate
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::CapabilitiesMint => self
+                .governance_errors_v1_capabilities_mint
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::CapabilitiesRevoke => self
+                .governance_errors_v1_capabilities_revoke
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::ExecutionsAuthorize => self
+                .governance_errors_v1_executions_authorize
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::ExecutionsPrepare => self
+                .governance_errors_v1_executions_prepare
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::ExecutionsExecute => self
+                .governance_errors_v1_executions_execute
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::ExecutionsVerify => self
+                .governance_errors_v1_executions_verify
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::ExecutionsCompensate => self
+                .governance_errors_v1_executions_compensate
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::ExecutionsCancel => self
+                .governance_errors_v1_executions_cancel
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::ExecutionsEvaluateOutcome => self
+                .governance_errors_v1_executions_evaluate_outcome
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::ExecutionsExecutionId => self
+                .governance_errors_v1_executions_execution_id
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::Approvals => self
+                .governance_errors_v1_approvals
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::ApprovalsApprovalId => self
+                .governance_errors_v1_approvals_approval_id
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::PolicyBundles => self
+                .governance_errors_v1_policy_bundles
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::PolicyBundlesBundleId => self
+                .governance_errors_v1_policy_bundles_bundle_id
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::ProvenanceQuery => self
+                .governance_errors_v1_provenance_query
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::ProvenanceLineage => self
+                .governance_errors_v1_provenance_lineage
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::ProvenanceLineageExecutionId => self
+                .governance_errors_v1_provenance_lineage_execution_id
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::ProvenanceIngest => self
+                .governance_errors_v1_provenance_ingest
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::BridgesBridgeIdTools => self
+                .governance_errors_v1_bridges_bridge_id_tools
+                .fetch_add(1, Ordering::Relaxed),
+        };
+    }
+
+    /// Increments the governance error counter for the given route and returns the error.
+    /// Use this in `map_err` closures: `.map_err(|e| state.metrics.record_governance_error(route, e))`
+    fn record_governance_error(&self, route: GovernanceRoute, err: ApiProblem) -> ApiProblem {
+        self.increment_governance_error(route);
+        err
+    }
+}
+
+/// Static route templates for governance error counters.
+/// Each variant corresponds to a route path template with {param} placeholders normalized to fixed strings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code, clippy::enum_variant_names)]
+enum GovernanceRoute {
+    IntentsCompile,
+    ProposalsEvaluate,
+    CapabilitiesMint,
+    CapabilitiesRevoke,
+    ExecutionsAuthorize,
+    ExecutionsPrepare,
+    ExecutionsExecute,
+    ExecutionsVerify,
+    ExecutionsCompensate,
+    ExecutionsCancel,
+    ExecutionsEvaluateOutcome,
+    ExecutionsExecutionId,
+    Approvals,
+    ApprovalsApprovalId,
+    PolicyBundles,
+    PolicyBundlesBundleId,
+    ProvenanceQuery,
+    ProvenanceLineage,
+    ProvenanceLineageExecutionId,
+    ProvenanceIngest,
+    BridgesBridgeIdTools,
+}
+
+impl GovernanceRoute {
+    #[allow(dead_code)]
+    fn path(&self) -> &'static str {
+        match self {
+            GovernanceRoute::IntentsCompile => "/v1/intents/compile",
+            GovernanceRoute::ProposalsEvaluate => "/v1/proposals/{proposal_id}/evaluate",
+            GovernanceRoute::CapabilitiesMint => "/v1/capabilities/mint",
+            GovernanceRoute::CapabilitiesRevoke => "/v1/capabilities/{capability_id}/revoke",
+            GovernanceRoute::ExecutionsAuthorize => "/v1/executions/authorize",
+            GovernanceRoute::ExecutionsPrepare => "/v1/executions/{execution_id}/prepare",
+            GovernanceRoute::ExecutionsExecute => "/v1/executions/{execution_id}/execute",
+            GovernanceRoute::ExecutionsVerify => "/v1/executions/{execution_id}/verify",
+            GovernanceRoute::ExecutionsCompensate => "/v1/executions/{execution_id}/compensate",
+            GovernanceRoute::ExecutionsCancel => "/v1/executions/{execution_id}/cancel",
+            GovernanceRoute::ExecutionsEvaluateOutcome => {
+                "/v1/executions/{execution_id}/evaluate-outcome"
+            }
+            GovernanceRoute::ExecutionsExecutionId => "/v1/executions/{execution_id}",
+            GovernanceRoute::Approvals => "/v1/approvals",
+            GovernanceRoute::ApprovalsApprovalId => "/v1/approvals/{approval_id}",
+            GovernanceRoute::PolicyBundles => "/v1/policy-bundles",
+            GovernanceRoute::PolicyBundlesBundleId => "/v1/policy-bundles/{bundle_id}",
+            GovernanceRoute::ProvenanceQuery => "/v1/provenance/query",
+            GovernanceRoute::ProvenanceLineage => "/v1/provenance/lineage",
+            GovernanceRoute::ProvenanceLineageExecutionId => {
+                "/v1/provenance/lineage/{execution_id}"
+            }
+            GovernanceRoute::ProvenanceIngest => "/v1/provenance/ingest",
+            GovernanceRoute::BridgesBridgeIdTools => "/v1/bridges/{bridge_id}/tools",
+        }
+    }
+}
+
+/// Macro to increment governance error counter and return an ApiProblem error.
+/// Usage (governance route + ApiProblem, increments counter):
+///   `governance_err!(state, GovernanceRoute::IntentsCompile, ApiProblem::new(...))`
+/// Usage (error code + message, no counter increment, status defaults to BAD_REQUEST):
+///   `governance_err!(ApiErrorCode::NotFound, "resource not found")`
+///   (use in `ok_or_else(|| governance_err!(...))` or `return Err(governance_err!(...))`)
+macro_rules! governance_err {
+    ($state:expr, $route:expr, $err:expr) => {{
+        $state.metrics.increment_governance_error($route);
+        Err($err)
+    }};
+    ($code:expr, $msg:expr) => {{ ApiProblem::new(StatusCode::BAD_REQUEST, $code, $msg) }};
 }
 
 // ---------------------------------------------------------------------------
@@ -399,6 +594,92 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
     let metrics_count = state.metrics.metrics_scrapes.load(Ordering::Relaxed);
     let store_up = state.metrics.store_health_up.load(Ordering::Relaxed);
 
+    // Load governance error counters
+    let gov_err_intents_compile = state
+        .metrics
+        .governance_errors_v1_intents_compile
+        .load(Ordering::Relaxed);
+    let gov_err_proposals_evaluate = state
+        .metrics
+        .governance_errors_v1_proposals_evaluate
+        .load(Ordering::Relaxed);
+    let gov_err_capabilities_mint = state
+        .metrics
+        .governance_errors_v1_capabilities_mint
+        .load(Ordering::Relaxed);
+    let gov_err_capabilities_revoke = state
+        .metrics
+        .governance_errors_v1_capabilities_revoke
+        .load(Ordering::Relaxed);
+    let gov_err_executions_authorize = state
+        .metrics
+        .governance_errors_v1_executions_authorize
+        .load(Ordering::Relaxed);
+    let gov_err_executions_prepare = state
+        .metrics
+        .governance_errors_v1_executions_prepare
+        .load(Ordering::Relaxed);
+    let gov_err_executions_execute = state
+        .metrics
+        .governance_errors_v1_executions_execute
+        .load(Ordering::Relaxed);
+    let gov_err_executions_verify = state
+        .metrics
+        .governance_errors_v1_executions_verify
+        .load(Ordering::Relaxed);
+    let gov_err_executions_compensate = state
+        .metrics
+        .governance_errors_v1_executions_compensate
+        .load(Ordering::Relaxed);
+    let gov_err_executions_cancel = state
+        .metrics
+        .governance_errors_v1_executions_cancel
+        .load(Ordering::Relaxed);
+    let gov_err_executions_evaluate_outcome = state
+        .metrics
+        .governance_errors_v1_executions_evaluate_outcome
+        .load(Ordering::Relaxed);
+    let gov_err_executions_execution_id = state
+        .metrics
+        .governance_errors_v1_executions_execution_id
+        .load(Ordering::Relaxed);
+    let gov_err_approvals = state
+        .metrics
+        .governance_errors_v1_approvals
+        .load(Ordering::Relaxed);
+    let gov_err_approvals_approval_id = state
+        .metrics
+        .governance_errors_v1_approvals_approval_id
+        .load(Ordering::Relaxed);
+    let gov_err_policy_bundles = state
+        .metrics
+        .governance_errors_v1_policy_bundles
+        .load(Ordering::Relaxed);
+    let gov_err_policy_bundles_bundle_id = state
+        .metrics
+        .governance_errors_v1_policy_bundles_bundle_id
+        .load(Ordering::Relaxed);
+    let gov_err_provenance_query = state
+        .metrics
+        .governance_errors_v1_provenance_query
+        .load(Ordering::Relaxed);
+    let gov_err_provenance_lineage = state
+        .metrics
+        .governance_errors_v1_provenance_lineage
+        .load(Ordering::Relaxed);
+    let gov_err_provenance_lineage_execution_id = state
+        .metrics
+        .governance_errors_v1_provenance_lineage_execution_id
+        .load(Ordering::Relaxed);
+    let gov_err_provenance_ingest = state
+        .metrics
+        .governance_errors_v1_provenance_ingest
+        .load(Ordering::Relaxed);
+    let gov_err_bridges_bridge_id_tools = state
+        .metrics
+        .governance_errors_v1_bridges_bridge_id_tools
+        .load(Ordering::Relaxed);
+
     let body = format!(
         "# HELP ferrumgate_http_requests_total HTTP requests total by route\n\
          # TYPE ferrumgate_http_requests_total counter\n\
@@ -411,8 +692,57 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
          ferrumgate_store_health_up {}\n\
          # HELP ferrumgate_metrics_scrapes_total Number of times /v1/metrics was scraped\n\
          # TYPE ferrumgate_metrics_scrapes_total counter\n\
-         ferrumgate_metrics_scrapes_total {}\n",
-        healthz_count, readyz_count, readyz_deep_count, metrics_count, store_up, metrics_count
+         ferrumgate_metrics_scrapes_total {}\n\
+         # HELP ferrumgate_governance_errors_total Governance errors by route\n\
+         # TYPE ferrumgate_governance_errors_total counter\n\
+         ferrumgate_governance_errors_total{{route=\"/v1/intents/compile\"}} {}\n\
+         ferrumgate_governance_errors_total{{route=\"/v1/proposals/{{proposal_id}}/evaluate\"}} {}\n\
+         ferrumgate_governance_errors_total{{route=\"/v1/capabilities/mint\"}} {}\n\
+         ferrumgate_governance_errors_total{{route=\"/v1/capabilities/{{capability_id}}/revoke\"}} {}\n\
+         ferrumgate_governance_errors_total{{route=\"/v1/executions/authorize\"}} {}\n\
+         ferrumgate_governance_errors_total{{route=\"/v1/executions/{{execution_id}}/prepare\"}} {}\n\
+         ferrumgate_governance_errors_total{{route=\"/v1/executions/{{execution_id}}/execute\"}} {}\n\
+         ferrumgate_governance_errors_total{{route=\"/v1/executions/{{execution_id}}/verify\"}} {}\n\
+         ferrumgate_governance_errors_total{{route=\"/v1/executions/{{execution_id}}/compensate\"}} {}\n\
+         ferrumgate_governance_errors_total{{route=\"/v1/executions/{{execution_id}}/cancel\"}} {}\n\
+         ferrumgate_governance_errors_total{{route=\"/v1/executions/{{execution_id}}/evaluate-outcome\"}} {}\n\
+         ferrumgate_governance_errors_total{{route=\"/v1/executions/{{execution_id}}\"}} {}\n\
+         ferrumgate_governance_errors_total{{route=\"/v1/approvals\"}} {}\n\
+         ferrumgate_governance_errors_total{{route=\"/v1/approvals/{{approval_id}}\"}} {}\n\
+         ferrumgate_governance_errors_total{{route=\"/v1/policy-bundles\"}} {}\n\
+         ferrumgate_governance_errors_total{{route=\"/v1/policy-bundles/{{bundle_id}}\"}} {}\n\
+         ferrumgate_governance_errors_total{{route=\"/v1/provenance/query\"}} {}\n\
+         ferrumgate_governance_errors_total{{route=\"/v1/provenance/lineage\"}} {}\n\
+         ferrumgate_governance_errors_total{{route=\"/v1/provenance/lineage/{{execution_id}}\"}} {}\n\
+         ferrumgate_governance_errors_total{{route=\"/v1/provenance/ingest\"}} {}\n\
+         ferrumgate_governance_errors_total{{route=\"/v1/bridges/{{bridge_id}}/tools\"}} {}\n",
+        healthz_count,
+        readyz_count,
+        readyz_deep_count,
+        metrics_count,
+        store_up,
+        metrics_count,
+        gov_err_intents_compile,
+        gov_err_proposals_evaluate,
+        gov_err_capabilities_mint,
+        gov_err_capabilities_revoke,
+        gov_err_executions_authorize,
+        gov_err_executions_prepare,
+        gov_err_executions_execute,
+        gov_err_executions_verify,
+        gov_err_executions_compensate,
+        gov_err_executions_cancel,
+        gov_err_executions_evaluate_outcome,
+        gov_err_executions_execution_id,
+        gov_err_approvals,
+        gov_err_approvals_approval_id,
+        gov_err_policy_bundles,
+        gov_err_policy_bundles_bundle_id,
+        gov_err_provenance_query,
+        gov_err_provenance_lineage,
+        gov_err_provenance_lineage_execution_id,
+        gov_err_provenance_ingest,
+        gov_err_bridges_bridge_id_tools,
     );
 
     (
@@ -493,11 +823,11 @@ async fn compile_intent(
 
     // I1: Validate envelope before persisting.
     if let Err(msg) = envelope.validate() {
-        return Err(ApiProblem::new(
-            StatusCode::BAD_REQUEST,
-            ApiErrorCode::ValidationError,
-            msg,
-        ));
+        return governance_err!(
+            state,
+            GovernanceRoute::IntentsCompile,
+            ApiProblem::new(StatusCode::BAD_REQUEST, ApiErrorCode::ValidationError, msg,)
+        );
     }
 
     // Persist the intent envelope so foreign-key constraints in proposals
@@ -505,7 +835,11 @@ async fn compile_intent(
     // Synchronous write: must complete before response to guarantee FK constraints.
     if let Err(e) = state.runtime.store.intents().insert(&envelope).await {
         tracing::warn!(error = %e, "failed to persist intent to DB");
-        return Err(ApiProblem::internal(anyhow::Error::from(e)));
+        return governance_err!(
+            state,
+            GovernanceRoute::IntentsCompile,
+            ApiProblem::internal(anyhow::Error::from(e))
+        );
     }
 
     Ok(Json(IntentCompileResponse {
@@ -519,19 +853,20 @@ async fn evaluate_proposal(
     Path(_proposal_id): Path<String>,
     Json(proposal): Json<ferrum_proto::ActionProposal>,
 ) -> Result<Json<EvaluateProposalResponse>, ApiProblem> {
-    let intent = state
-        .runtime
-        .store
-        .intents()
-        .get(proposal.intent_id)
-        .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?
-        .unwrap_or_else(|| {
-            minimal_intent_for(
-                proposal.intent_id,
-                proposal.requested_rollback_class.clone(),
-            )
-        });
+    let intent = match state.runtime.store.intents().get(proposal.intent_id).await {
+        Ok(Some(intent)) => intent,
+        Ok(None) => minimal_intent_for(
+            proposal.intent_id,
+            proposal.requested_rollback_class.clone(),
+        ),
+        Err(e) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ProposalsEvaluate,
+                ApiProblem::internal(anyhow::Error::from(e))
+            );
+        }
+    };
 
     // Determine if proposal is external based on intent trust labels and proposal attributes.
     let is_external = intent_has_external_label(&intent)
@@ -567,22 +902,34 @@ async fn evaluate_proposal(
         // Synchronous write: must complete before response to guarantee FK constraints.
         if let Err(e) = state.runtime.store.proposals().insert(&proposal).await {
             tracing::warn!(error = %e, "failed to persist proposal to DB");
-            return Err(ApiProblem::internal(anyhow::Error::from(e)));
+            return governance_err!(
+                state,
+                GovernanceRoute::ProposalsEvaluate,
+                ApiProblem::internal(anyhow::Error::from(e))
+            );
         }
         out
     } else {
-        let out = state
-            .runtime
-            .pdp
-            .evaluate(&intent, &proposal, &trust)
-            .await
-            .map_err(ApiProblem::internal)?;
+        let out = match state.runtime.pdp.evaluate(&intent, &proposal, &trust).await {
+            Ok(out) => out,
+            Err(e) => {
+                return governance_err!(
+                    state,
+                    GovernanceRoute::ProposalsEvaluate,
+                    ApiProblem::internal(e)
+                );
+            }
+        };
 
         // Persist the proposal so foreign-key constraints in executions table are satisfied.
         // Synchronous write: must complete before response to guarantee FK constraints.
         if let Err(e) = state.runtime.store.proposals().insert(&proposal).await {
             tracing::warn!(error = %e, "failed to persist proposal to DB");
-            return Err(ApiProblem::internal(anyhow::Error::from(e)));
+            return governance_err!(
+                state,
+                GovernanceRoute::ProposalsEvaluate,
+                ApiProblem::internal(anyhow::Error::from(e))
+            );
         }
         out
     };
@@ -624,13 +971,19 @@ async fn evaluate_proposal(
         metadata: policy_metadata,
         source_runtime_id: None,
     };
-    state
+    if let Err(e) = state
         .runtime
         .store
         .provenance()
         .append_event(&policy_event)
         .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+    {
+        return governance_err!(
+            state,
+            GovernanceRoute::ProposalsEvaluate,
+            ApiProblem::internal(anyhow::Error::from(e))
+        );
+    }
 
     Ok(Json(out))
 }
@@ -639,23 +992,33 @@ async fn mint_capability(
     State(state): State<Arc<AppState>>,
     Json(request): Json<CapabilityMintRequest>,
 ) -> Result<Json<CapabilityMintResponse>, ApiProblem> {
-    let response = state
-        .runtime
-        .cap
-        .mint(request)
-        .await
-        .map_err(ApiProblem::from_capability)?;
+    let response = match state.runtime.cap.mint(request).await {
+        Ok(response) => response,
+        Err(e) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::CapabilitiesMint,
+                ApiProblem::from_capability(e)
+            );
+        }
+    };
 
     // Persist the capability to the store so foreign-key constraints in
     // executions and other tables are satisfied.
     // Write-queue ensures serialized writes - no more SQLite lock contention.
-    state
+    if let Err(e) = state
         .runtime
         .store
         .capabilities()
         .insert(&response.lease)
         .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+    {
+        return governance_err!(
+            state,
+            GovernanceRoute::CapabilitiesMint,
+            ApiProblem::internal(anyhow::Error::from(e))
+        );
+    }
 
     // Emit CapabilityMinted provenance event.
     let cap_event = ProvenanceEvent {
@@ -690,13 +1053,19 @@ async fn mint_capability(
         metadata: ferrum_proto::JsonMap::new(),
         source_runtime_id: None,
     };
-    state
+    if let Err(e) = state
         .runtime
         .store
         .provenance()
         .append_event(&cap_event)
         .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+    {
+        return governance_err!(
+            state,
+            GovernanceRoute::CapabilitiesMint,
+            ApiProblem::internal(anyhow::Error::from(e))
+        );
+    }
 
     Ok(Json(response))
 }
@@ -705,7 +1074,11 @@ async fn revoke_capability(
     State(state): State<Arc<AppState>>,
     Path(capability_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiProblem> {
-    let id = parse_capability_id(&capability_id)?;
+    let id = parse_capability_id(&capability_id).inspect_err(|_| {
+        state
+            .metrics
+            .increment_governance_error(GovernanceRoute::CapabilitiesRevoke)
+    })?;
 
     // Revoke the capability in the capability service (in-memory)
     // If NotFound, fall back to store and revoke there synchronously
@@ -713,45 +1086,71 @@ async fn revoke_capability(
         Ok(lease) => lease,
         Err(CapabilityError::NotFound) => {
             // In-memory miss: load from store, validate, revoke, persist synchronously
-            let Some(mut lease) = state
-                .runtime
-                .store
-                .capabilities()
-                .get(id)
-                .await
-                .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?
-            else {
-                return Err(ApiProblem::from_capability(CapabilityError::NotFound));
+            let lease = match state.runtime.store.capabilities().get(id).await {
+                Ok(Some(lease)) => lease,
+                Ok(None) => {
+                    return governance_err!(
+                        state,
+                        GovernanceRoute::CapabilitiesRevoke,
+                        ApiProblem::from_capability(CapabilityError::NotFound)
+                    );
+                }
+                Err(e) => {
+                    return governance_err!(
+                        state,
+                        GovernanceRoute::CapabilitiesRevoke,
+                        ApiProblem::internal(anyhow::Error::from(e))
+                    );
+                }
             };
 
             // Validate status
             if matches!(lease.status, CapabilityStatus::Revoked) {
-                return Err(ApiProblem::from_capability(CapabilityError::Revoked));
+                return governance_err!(
+                    state,
+                    GovernanceRoute::CapabilitiesRevoke,
+                    ApiProblem::from_capability(CapabilityError::Revoked)
+                );
             }
             if matches!(lease.status, CapabilityStatus::Used) {
                 // Already used capabilities cannot be revoked (they're consumed, not active)
-                return Err(ApiProblem::from_capability(CapabilityError::AlreadyUsed));
+                return governance_err!(
+                    state,
+                    GovernanceRoute::CapabilitiesRevoke,
+                    ApiProblem::from_capability(CapabilityError::AlreadyUsed)
+                );
             }
             if lease.expires_at < Utc::now() {
-                return Err(ApiProblem::from_capability(CapabilityError::Expired));
+                return governance_err!(
+                    state,
+                    GovernanceRoute::CapabilitiesRevoke,
+                    ApiProblem::from_capability(CapabilityError::Expired)
+                );
             }
 
             // Set revoked status
+            let mut lease = lease;
             lease.status = CapabilityStatus::Revoked;
             lease.revoked_at = Some(Utc::now());
 
             // Persist synchronously before returning
-            state
-                .runtime
-                .store
-                .capabilities()
-                .update(&lease)
-                .await
-                .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+            if let Err(e) = state.runtime.store.capabilities().update(&lease).await {
+                return governance_err!(
+                    state,
+                    GovernanceRoute::CapabilitiesRevoke,
+                    ApiProblem::internal(anyhow::Error::from(e))
+                );
+            }
 
             lease
         }
-        Err(e) => return Err(ApiProblem::from_capability(e)),
+        Err(e) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::CapabilitiesRevoke,
+                ApiProblem::from_capability(e)
+            );
+        }
     };
 
     // Build provenance event
@@ -790,21 +1189,21 @@ async fn revoke_capability(
 
     // Persist capability revocation and append provenance event synchronously.
     // Return error if persistence fails rather than fire-and-forget.
-    state
-        .runtime
-        .store
-        .capabilities()
-        .update(&lease)
-        .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+    if let Err(e) = state.runtime.store.capabilities().update(&lease).await {
+        return governance_err!(
+            state,
+            GovernanceRoute::CapabilitiesRevoke,
+            ApiProblem::internal(anyhow::Error::from(e))
+        );
+    }
 
-    state
-        .runtime
-        .store
-        .provenance()
-        .append_event(&event)
-        .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+    if let Err(e) = state.runtime.store.provenance().append_event(&event).await {
+        return governance_err!(
+            state,
+            GovernanceRoute::CapabilitiesRevoke,
+            ApiProblem::internal(anyhow::Error::from(e))
+        );
+    }
 
     let response = serde_json::json!({
         "ok": true,
@@ -1010,39 +1409,59 @@ async fn authorize_execution(
 ) -> Result<Json<AuthorizeExecutionResponse>, ApiProblem> {
     // Load capability from in-memory service, falling back to persisted store.
     // This ensures capability survives in-memory state loss.
-    let lease = get_capability_for_authorize(
+    let lease = match get_capability_for_authorize(
         &state.runtime.cap,
         &state.runtime.store,
         request.capability_id,
     )
     .await
-    .map_err(ApiProblem::from_capability)?;
+    {
+        Ok(lease) => lease,
+        Err(e) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsAuthorize,
+                ApiProblem::from_capability(e)
+            );
+        }
+    };
 
     // I5: Validate that capability resource_bindings is a subset of intent resource_scope.
     // This prevents a capability from expanding beyond the intent's authorized scope.
-    let intent = state
-        .runtime
-        .store
-        .intents()
-        .get(lease.intent_id)
-        .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?
-        .ok_or_else(|| {
-            ApiProblem::new(
-                StatusCode::NOT_FOUND,
-                ApiErrorCode::NotFound,
-                "intent not found for capability",
-            )
-        })?;
+    let intent = match state.runtime.store.intents().get(lease.intent_id).await {
+        Ok(Some(intent)) => intent,
+        Ok(None) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsAuthorize,
+                ApiProblem::new(
+                    StatusCode::NOT_FOUND,
+                    ApiErrorCode::NotFound,
+                    "intent not found for capability",
+                )
+            );
+        }
+        Err(e) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsAuthorize,
+                ApiProblem::internal(anyhow::Error::from(e))
+            );
+        }
+    };
 
     if let Err(scope_violation) =
         validate_resource_bindings_subset_of_scope(&lease.resource_bindings, &intent.resource_scope)
     {
-        return Err(ApiProblem::new(
-            StatusCode::FORBIDDEN,
-            ApiErrorCode::PolicyDenied,
-            scope_violation,
-        ));
+        return governance_err!(
+            state,
+            GovernanceRoute::ExecutionsAuthorize,
+            ApiProblem::new(
+                StatusCode::FORBIDDEN,
+                ApiErrorCode::PolicyDenied,
+                scope_violation,
+            )
+        );
     }
 
     // I6: Validate approval binding digest if present.
@@ -1050,19 +1469,33 @@ async fn authorize_execution(
     // Skipped when approval_binding=None (backward compatible).
     if let Some(ref binding) = lease.approval_binding {
         validate_approval_binding_digest(&state.runtime.store, binding, request.proposal_id)
-            .await?;
+            .await
+            .map_err(|e| {
+                state
+                    .metrics
+                    .record_governance_error(GovernanceRoute::ExecutionsAuthorize, e)
+            })?;
     }
 
     // Mark the capability as used - returns AlreadyUsed if already consumed.
     // This enforces single-use: first authorize succeeds, subsequent ones fail.
     // Persists the updated status to store for durability.
-    mark_capability_used_durable(
+    match mark_capability_used_durable(
         &state.runtime.cap,
         &state.runtime.store,
         request.capability_id,
     )
     .await
-    .map_err(ApiProblem::from_capability)?;
+    {
+        Ok(lease) => lease,
+        Err(e) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsAuthorize,
+                ApiProblem::from_capability(e)
+            );
+        }
+    };
 
     let record = ExecutionRecord {
         execution_id: ExecutionId::new(),
@@ -1084,13 +1517,13 @@ async fn authorize_execution(
 
     // Persist the execution record so subsequent prepare/execute can find it.
     // Write-queue ensures serialized writes - no more SQLite lock contention.
-    state
-        .runtime
-        .store
-        .executions()
-        .insert(&record)
-        .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+    if let Err(e) = state.runtime.store.executions().insert(&record).await {
+        return governance_err!(
+            state,
+            GovernanceRoute::ExecutionsAuthorize,
+            ApiProblem::internal(anyhow::Error::from(e))
+        );
+    }
 
     // Emit provenance event for authorization (Q1-P5 conservative chain: authorize).
     let auth_event = ProvenanceEvent {
@@ -1125,13 +1558,19 @@ async fn authorize_execution(
         metadata: ferrum_proto::JsonMap::new(),
         source_runtime_id: None,
     };
-    state
+    if let Err(e) = state
         .runtime
         .store
         .provenance()
         .append_event(&auth_event)
         .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+    {
+        return governance_err!(
+            state,
+            GovernanceRoute::ExecutionsAuthorize,
+            ApiProblem::internal(anyhow::Error::from(e))
+        );
+    }
 
     Ok(Json(AuthorizeExecutionResponse {
         execution: record,
@@ -1143,66 +1582,102 @@ async fn prepare_execution(
     State(state): State<Arc<AppState>>,
     Path(execution_id): Path<String>,
 ) -> Result<Json<ferrum_proto::PrepareExecutionResponse>, ApiProblem> {
-    let execution_id = parse_execution_id(&execution_id)?;
+    let execution_id = match parse_execution_id(&execution_id) {
+        Ok(id) => id,
+        Err(e) => {
+            return governance_err!(state, GovernanceRoute::ExecutionsPrepare, e);
+        }
+    };
 
     // Look up the existing execution record
-    let execution = state
-        .runtime
-        .store
-        .executions()
-        .get(execution_id)
-        .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?
-        .ok_or_else(|| {
-            ApiProblem::new(
-                StatusCode::NOT_FOUND,
-                ApiErrorCode::NotFound,
-                "execution not found",
-            )
-        })?;
+    let execution = match state.runtime.store.executions().get(execution_id).await {
+        Ok(Some(execution)) => execution,
+        Ok(None) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsPrepare,
+                ApiProblem::new(
+                    StatusCode::NOT_FOUND,
+                    ApiErrorCode::NotFound,
+                    "execution not found",
+                )
+            );
+        }
+        Err(e) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsPrepare,
+                ApiProblem::internal(anyhow::Error::from(e))
+            );
+        }
+    };
 
     // Look up the proposal to retrieve the real rollback_class.
     // The proposal is the most reliable existing linked record for this execution.
-    let proposal = state
+    let proposal = match state
         .runtime
         .store
         .proposals()
         .get(execution.proposal_id)
         .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?
-        .ok_or_else(|| {
-            ApiProblem::new(
-                StatusCode::NOT_FOUND,
-                ApiErrorCode::NotFound,
-                "proposal not found",
-            )
-        })?;
+    {
+        Ok(Some(proposal)) => proposal,
+        Ok(None) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsPrepare,
+                ApiProblem::new(
+                    StatusCode::NOT_FOUND,
+                    ApiErrorCode::NotFound,
+                    "proposal not found",
+                )
+            );
+        }
+        Err(e) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsPrepare,
+                ApiProblem::internal(anyhow::Error::from(e))
+            );
+        }
+    };
     let rollback_class = proposal.requested_rollback_class.clone();
 
     // WS3: Enforce draft-only guard at prepare checkpoint.
     // Look up the intent and reject preparation if the intent enforces draft-only mode.
     // This prevents a draft-only intent from bypassing evaluate and reaching prepare.
-    let intent = state
-        .runtime
-        .store
-        .intents()
-        .get(execution.intent_id)
-        .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?
-        .ok_or_else(|| {
-            ApiProblem::new(
-                StatusCode::NOT_FOUND,
-                ApiErrorCode::NotFound,
-                "intent not found",
-            )
-        })?;
+    let intent = match state.runtime.store.intents().get(execution.intent_id).await {
+        Ok(Some(intent)) => intent,
+        Ok(None) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsPrepare,
+                ApiProblem::new(
+                    StatusCode::NOT_FOUND,
+                    ApiErrorCode::NotFound,
+                    "intent not found",
+                )
+            );
+        }
+        Err(e) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsPrepare,
+                ApiProblem::internal(anyhow::Error::from(e))
+            );
+        }
+    };
 
     if matches!(intent.approval_mode, ApprovalMode::DraftOnly) {
-        return Err(ApiProblem::new(
-            StatusCode::FORBIDDEN,
-            ApiErrorCode::PolicyDenied,
-            "draft-only intent cannot proceed to prepare",
-        ));
+        return governance_err!(
+            state,
+            GovernanceRoute::ExecutionsPrepare,
+            ApiProblem::new(
+                StatusCode::FORBIDDEN,
+                ApiErrorCode::PolicyDenied,
+                "draft-only intent cannot proceed to prepare",
+            )
+        );
     }
 
     let request = build_prepare_request_for_proposal(
@@ -1215,21 +1690,31 @@ async fn prepare_execution(
         &intent.resource_scope,
     );
 
-    let response = state
-        .runtime
-        .rollback
-        .prepare(request)
-        .await
-        .map_err(ApiProblem::internal)?;
+    let response = match state.runtime.rollback.prepare(request).await {
+        Ok(response) => response,
+        Err(e) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsPrepare,
+                ApiProblem::internal(e)
+            );
+        }
+    };
 
     // Store the contract in the database
-    state
+    if let Err(e) = state
         .runtime
         .store
         .rollback_contracts()
         .insert(&response.contract)
         .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+    {
+        return governance_err!(
+            state,
+            GovernanceRoute::ExecutionsPrepare,
+            ApiProblem::internal(anyhow::Error::from(e))
+        );
+    }
 
     // Capture execution IDs for provenance before moving into updated_execution
     let execution_intent_id = execution.intent_id;
@@ -1238,13 +1723,19 @@ async fn prepare_execution(
     // Link the contract to the execution by updating rollback_contract_id
     let mut updated_execution = execution;
     updated_execution.rollback_contract_id = Some(response.contract.contract_id);
-    state
+    if let Err(e) = state
         .runtime
         .store
         .executions()
         .update(&updated_execution)
         .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+    {
+        return governance_err!(
+            state,
+            GovernanceRoute::ExecutionsPrepare,
+            ApiProblem::internal(anyhow::Error::from(e))
+        );
+    }
 
     // Emit provenance event for preparation (Q1-P5 conservative chain: prepare).
     let prepare_event = ProvenanceEvent {
@@ -1279,13 +1770,19 @@ async fn prepare_execution(
         metadata: ferrum_proto::JsonMap::new(),
         source_runtime_id: None,
     };
-    state
+    if let Err(e) = state
         .runtime
         .store
         .provenance()
         .append_event(&prepare_event)
         .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+    {
+        return governance_err!(
+            state,
+            GovernanceRoute::ExecutionsPrepare,
+            ApiProblem::internal(anyhow::Error::from(e))
+        );
+    }
 
     // Emit ToolCallPrepared provenance event.
     let tool_prepared_event = ProvenanceEvent {
@@ -1320,13 +1817,19 @@ async fn prepare_execution(
         metadata: ferrum_proto::JsonMap::new(),
         source_runtime_id: None,
     };
-    state
+    if let Err(e) = state
         .runtime
         .store
         .provenance()
         .append_event(&tool_prepared_event)
         .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+    {
+        return governance_err!(
+            state,
+            GovernanceRoute::ExecutionsPrepare,
+            ApiProblem::internal(anyhow::Error::from(e))
+        );
+    }
 
     Ok(Json(ferrum_proto::PrepareExecutionResponse {
         execution_id,
@@ -1341,48 +1844,80 @@ async fn execute_execution(
     Path(execution_id): Path<String>,
     Json(request): Json<ferrum_proto::ExecuteExecutionRequest>,
 ) -> Result<Json<ferrum_proto::ExecuteExecutionResponse>, ApiProblem> {
-    let execution_id = parse_execution_id(&execution_id)?;
+    let execution_id = match parse_execution_id(&execution_id) {
+        Ok(id) => id,
+        Err(e) => {
+            return governance_err!(state, GovernanceRoute::ExecutionsExecute, e);
+        }
+    };
 
     // Look up the execution record
-    let execution = state
-        .runtime
-        .store
-        .executions()
-        .get(execution_id)
-        .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?
-        .ok_or_else(|| {
-            ApiProblem::new(
-                StatusCode::NOT_FOUND,
-                ApiErrorCode::NotFound,
-                "execution not found",
-            )
-        })?;
+    let execution = match state.runtime.store.executions().get(execution_id).await {
+        Ok(Some(execution)) => execution,
+        Ok(None) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsExecute,
+                ApiProblem::new(
+                    StatusCode::NOT_FOUND,
+                    ApiErrorCode::NotFound,
+                    "execution not found",
+                )
+            );
+        }
+        Err(e) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsExecute,
+                ApiProblem::internal(anyhow::Error::from(e))
+            );
+        }
+    };
 
     // Get the rollback contract ID from the execution
-    let rollback_contract_id = execution.rollback_contract_id.ok_or_else(|| {
-        ApiProblem::new(
-            StatusCode::NOT_FOUND,
-            ApiErrorCode::NotFound,
-            "execution has no rollback contract",
-        )
-    })?;
+    let rollback_contract_id = match execution.rollback_contract_id {
+        Some(id) => id,
+        None => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsExecute,
+                ApiProblem::new(
+                    StatusCode::NOT_FOUND,
+                    ApiErrorCode::NotFound,
+                    "execution has no rollback contract",
+                )
+            );
+        }
+    };
 
     // Look up the rollback contract
-    let contract = state
+    let contract = match state
         .runtime
         .store
         .rollback_contracts()
         .get(rollback_contract_id)
         .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?
-        .ok_or_else(|| {
-            ApiProblem::new(
-                StatusCode::NOT_FOUND,
-                ApiErrorCode::NotFound,
-                "rollback contract not found",
-            )
-        })?;
+    {
+        Ok(Some(contract)) => contract,
+        Ok(None) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsExecute,
+                ApiProblem::new(
+                    StatusCode::NOT_FOUND,
+                    ApiErrorCode::NotFound,
+                    "rollback contract not found",
+                )
+            );
+        }
+        Err(e) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsExecute,
+                ApiProblem::internal(anyhow::Error::from(e))
+            );
+        }
+    };
 
     // WS-Execute guard: contract must be Prepared and execution must be Prepared or Authorized.
     // Return 409 Conflict for invalid state transitions.
@@ -1391,24 +1926,37 @@ async fn execute_execution(
         | (ferrum_proto::RollbackState::Prepared, ferrum_proto::ExecutionState::Authorized)
         | (ferrum_proto::RollbackState::Prepared, ferrum_proto::ExecutionState::Proposed) => {}
         _ => {
-            return Err(ApiProblem::new(
-                StatusCode::CONFLICT,
-                ApiErrorCode::Conflict,
-                format!(
-                    "execute not allowed in current state: contract={:?}, execution={:?}",
-                    contract.state, execution.state,
-                ),
-            ));
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsExecute,
+                ApiProblem::new(
+                    StatusCode::CONFLICT,
+                    ApiErrorCode::Conflict,
+                    format!(
+                        "execute not allowed in current state: contract={:?}, execution={:?}",
+                        contract.state, execution.state,
+                    ),
+                )
+            );
         }
     }
 
     // Call execute on the adapter via the rollback service
-    let receipt = state
+    let receipt = match state
         .runtime
         .rollback
         .execute(&contract, &request.payload)
         .await
-        .map_err(ApiProblem::internal)?;
+    {
+        Ok(receipt) => receipt,
+        Err(e) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsExecute,
+                ApiProblem::internal(e)
+            );
+        }
+    };
 
     // Update contract state to ExecutedAwaitingVerify and capture after_hash from
     // the execute receipt so after_hash is available for inspection immediately
@@ -1421,25 +1969,37 @@ async fn execute_execution(
     {
         *after_hash = receipt.result_digest.clone();
     }
-    state
+    if let Err(e) = state
         .runtime
         .store
         .rollback_contracts()
         .update(&updated_contract)
         .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+    {
+        return governance_err!(
+            state,
+            GovernanceRoute::ExecutionsExecute,
+            ApiProblem::internal(anyhow::Error::from(e))
+        );
+    }
 
     // Update execution state to Running
     let mut updated_execution = execution;
     updated_execution.state = ferrum_proto::ExecutionState::Running;
     updated_execution.result_digest = receipt.result_digest.clone();
-    state
+    if let Err(e) = state
         .runtime
         .store
         .executions()
         .update(&updated_execution)
         .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+    {
+        return governance_err!(
+            state,
+            GovernanceRoute::ExecutionsExecute,
+            ApiProblem::internal(anyhow::Error::from(e))
+        );
+    }
 
     // Emit ToolCallExecuted provenance event.
     let tool_executed_event = ProvenanceEvent {
@@ -1474,13 +2034,19 @@ async fn execute_execution(
         metadata: ferrum_proto::JsonMap::new(),
         source_runtime_id: None,
     };
-    state
+    if let Err(e) = state
         .runtime
         .store
         .provenance()
         .append_event(&tool_executed_event)
         .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+    {
+        return governance_err!(
+            state,
+            GovernanceRoute::ExecutionsExecute,
+            ApiProblem::internal(anyhow::Error::from(e))
+        );
+    }
 
     Ok(Json(ferrum_proto::ExecuteExecutionResponse {
         execution_id,
@@ -1495,48 +2061,80 @@ async fn verify_execution(
     State(state): State<Arc<AppState>>,
     Path(execution_id): Path<String>,
 ) -> Result<Json<ferrum_proto::VerifyExecutionResponse>, ApiProblem> {
-    let execution_id = parse_execution_id(&execution_id)?;
+    let execution_id = match parse_execution_id(&execution_id) {
+        Ok(id) => id,
+        Err(e) => {
+            return governance_err!(state, GovernanceRoute::ExecutionsVerify, e);
+        }
+    };
 
     // Look up the execution record
-    let execution = state
-        .runtime
-        .store
-        .executions()
-        .get(execution_id)
-        .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?
-        .ok_or_else(|| {
-            ApiProblem::new(
-                StatusCode::NOT_FOUND,
-                ApiErrorCode::NotFound,
-                "execution not found",
-            )
-        })?;
+    let execution = match state.runtime.store.executions().get(execution_id).await {
+        Ok(Some(execution)) => execution,
+        Ok(None) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsVerify,
+                ApiProblem::new(
+                    StatusCode::NOT_FOUND,
+                    ApiErrorCode::NotFound,
+                    "execution not found",
+                )
+            );
+        }
+        Err(e) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsVerify,
+                ApiProblem::internal(anyhow::Error::from(e))
+            );
+        }
+    };
 
     // Get the rollback contract ID from the execution
-    let rollback_contract_id = execution.rollback_contract_id.ok_or_else(|| {
-        ApiProblem::new(
-            StatusCode::NOT_FOUND,
-            ApiErrorCode::NotFound,
-            "execution has no rollback contract",
-        )
-    })?;
+    let rollback_contract_id = match execution.rollback_contract_id {
+        Some(id) => id,
+        None => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsVerify,
+                ApiProblem::new(
+                    StatusCode::NOT_FOUND,
+                    ApiErrorCode::NotFound,
+                    "execution has no rollback contract",
+                )
+            );
+        }
+    };
 
     // Look up the rollback contract
-    let contract = state
+    let contract = match state
         .runtime
         .store
         .rollback_contracts()
         .get(rollback_contract_id)
         .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?
-        .ok_or_else(|| {
-            ApiProblem::new(
-                StatusCode::NOT_FOUND,
-                ApiErrorCode::NotFound,
-                "rollback contract not found",
-            )
-        })?;
+    {
+        Ok(Some(contract)) => contract,
+        Ok(None) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsVerify,
+                ApiProblem::new(
+                    StatusCode::NOT_FOUND,
+                    ApiErrorCode::NotFound,
+                    "rollback contract not found",
+                )
+            );
+        }
+        Err(e) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsVerify,
+                ApiProblem::internal(anyhow::Error::from(e))
+            );
+        }
+    };
 
     // WS-Verify guard: contract must be ExecutedAwaitingVerify and execution must be
     // Running or AwaitingVerification. Return 409 Conflict for invalid state transitions.
@@ -1550,14 +2148,18 @@ async fn verify_execution(
             ferrum_proto::ExecutionState::AwaitingVerification,
         ) => {}
         _ => {
-            return Err(ApiProblem::new(
-                StatusCode::CONFLICT,
-                ApiErrorCode::Conflict,
-                format!(
-                    "verify not allowed in current state: contract={:?}, execution={:?}",
-                    contract.state, execution.state,
-                ),
-            ));
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsVerify,
+                ApiProblem::new(
+                    StatusCode::CONFLICT,
+                    ApiErrorCode::Conflict,
+                    format!(
+                        "verify not allowed in current state: contract={:?}, execution={:?}",
+                        contract.state, execution.state,
+                    ),
+                )
+            );
         }
     }
 
@@ -1583,12 +2185,16 @@ async fn verify_execution(
         }
     }
 
-    let verified = state
-        .runtime
-        .rollback
-        .verify(&verify_contract)
-        .await
-        .map_err(ApiProblem::internal)?;
+    let verified = match state.runtime.rollback.verify(&verify_contract).await {
+        Ok(verified) => verified,
+        Err(e) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsVerify,
+                ApiProblem::internal(e)
+            );
+        }
+    };
 
     // Update contract state based on verification result.
     // Persist verify_contract (not the original contract) so that verify-time
@@ -1600,13 +2206,19 @@ async fn verify_execution(
     } else {
         ferrum_proto::RollbackState::Failed
     };
-    state
+    if let Err(e) = state
         .runtime
         .store
         .rollback_contracts()
         .update(&updated_contract)
         .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+    {
+        return governance_err!(
+            state,
+            GovernanceRoute::ExecutionsVerify,
+            ApiProblem::internal(anyhow::Error::from(e))
+        );
+    }
 
     // Update execution state to AwaitingVerification or Committed based on verify result
     let mut updated_execution = execution;
@@ -1615,13 +2227,19 @@ async fn verify_execution(
     } else {
         ferrum_proto::ExecutionState::Failed
     };
-    state
+    if let Err(e) = state
         .runtime
         .store
         .executions()
         .update(&updated_execution)
         .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+    {
+        return governance_err!(
+            state,
+            GovernanceRoute::ExecutionsVerify,
+            ApiProblem::internal(anyhow::Error::from(e))
+        );
+    }
 
     // Emit SideEffectVerified provenance event (regardless of verification result).
     let verified_event = ProvenanceEvent {
@@ -1660,13 +2278,19 @@ async fn verify_execution(
         },
         source_runtime_id: None,
     };
-    state
+    if let Err(e) = state
         .runtime
         .store
         .provenance()
         .append_event(&verified_event)
         .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+    {
+        return governance_err!(
+            state,
+            GovernanceRoute::ExecutionsVerify,
+            ApiProblem::internal(anyhow::Error::from(e))
+        );
+    }
 
     // Emit SideEffectCommitted provenance event only when verification succeeded.
     if verified {
@@ -1702,13 +2326,19 @@ async fn verify_execution(
             metadata: ferrum_proto::JsonMap::new(),
             source_runtime_id: None,
         };
-        state
+        if let Err(e) = state
             .runtime
             .store
             .provenance()
             .append_event(&committed_event)
             .await
-            .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+        {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsVerify,
+                ApiProblem::internal(anyhow::Error::from(e))
+            );
+        }
     }
 
     Ok(Json(ferrum_proto::VerifyExecutionResponse {
@@ -1723,66 +2353,82 @@ async fn compensate_execution(
     State(state): State<Arc<AppState>>,
     Path(execution_id): Path<String>,
 ) -> Result<Json<ferrum_proto::CompensateExecutionResponse>, ApiProblem> {
-    let execution_id = parse_execution_id(&execution_id)?;
+    let execution_id = match parse_execution_id(&execution_id) {
+        Ok(id) => id,
+        Err(e) => {
+            return governance_err!(state, GovernanceRoute::ExecutionsCompensate, e);
+        }
+    };
 
     // Look up the execution record
-    let execution = state
-        .runtime
-        .store
-        .executions()
-        .get(execution_id)
-        .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?
-        .ok_or_else(|| {
-            ApiProblem::new(
-                StatusCode::NOT_FOUND,
-                ApiErrorCode::NotFound,
-                "execution not found",
-            )
-        })?;
+    let execution = match state.runtime.store.executions().get(execution_id).await {
+        Ok(Some(execution)) => execution,
+        Ok(None) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsCompensate,
+                ApiProblem::new(
+                    StatusCode::NOT_FOUND,
+                    ApiErrorCode::NotFound,
+                    "execution not found",
+                )
+            );
+        }
+        Err(e) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsCompensate,
+                ApiProblem::internal(anyhow::Error::from(e))
+            );
+        }
+    };
 
     // Get the rollback contract ID from the execution
-    let rollback_contract_id = execution.rollback_contract_id.ok_or_else(|| {
-        ApiProblem::new(
-            StatusCode::NOT_FOUND,
-            ApiErrorCode::NotFound,
-            "execution has no rollback contract",
-        )
-    })?;
+    let rollback_contract_id = match execution.rollback_contract_id {
+        Some(id) => id,
+        None => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsCompensate,
+                ApiProblem::new(
+                    StatusCode::NOT_FOUND,
+                    ApiErrorCode::NotFound,
+                    "execution has no rollback contract",
+                )
+            );
+        }
+    };
 
     // Look up the rollback contract
-    let contract = state
+    let contract = match state
         .runtime
         .store
         .rollback_contracts()
         .get(rollback_contract_id)
         .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?
-        .ok_or_else(|| {
-            ApiProblem::new(
-                StatusCode::NOT_FOUND,
-                ApiErrorCode::NotFound,
-                "rollback contract not found",
-            )
-        })?;
+    {
+        Ok(Some(contract)) => contract,
+        Ok(None) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsCompensate,
+                ApiProblem::new(
+                    StatusCode::NOT_FOUND,
+                    ApiErrorCode::NotFound,
+                    "rollback contract not found",
+                )
+            );
+        }
+        Err(e) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsCompensate,
+                ApiProblem::internal(anyhow::Error::from(e))
+            );
+        }
+    };
 
-    // ------------------------------------------------------------------
-    // WS-Compensate state guard (fs-first FileWrite slice)
-    //
-    // Valid states for compensate:
-    //   contract: ExecutedAwaitingVerify
-    //   execution: Running | AwaitingVerification
-    //
-    // CompensationPending is no longer used in the current flow; the guard
-    // is simplified to only ExecutedAwaitingVerify which is the state set
-    // by execute before compensate is called.
-    //
-    // All other states return 409 Conflict:
-    //   - Terminal states: Verified, Committed, Compensated, RolledBack, Failed, Expired
-    //   - Pre-execution states: PendingPrepare, Prepared, CompensationPending
-    //   - Invalid execution states: Proposed, Authorized, Prepared, AwaitingApproval,
-    //     Committed, Compensated, RolledBack, Denied, Quarantined, Failed
-    // ------------------------------------------------------------------
+    // WS-Compensate state guard
     match (&contract.state, &execution.state) {
         (
             ferrum_proto::RollbackState::ExecutedAwaitingVerify,
@@ -1793,49 +2439,65 @@ async fn compensate_execution(
             ferrum_proto::ExecutionState::AwaitingVerification,
         ) => {}
         _ => {
-            return Err(ApiProblem::new(
-                StatusCode::CONFLICT,
-                ApiErrorCode::Conflict,
-                format!(
-                    "compensate not allowed in current state: contract={:?}, execution={:?}",
-                    contract.state, execution.state,
-                ),
-            ));
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsCompensate,
+                ApiProblem::new(
+                    StatusCode::CONFLICT,
+                    ApiErrorCode::Conflict,
+                    format!(
+                        "compensate not allowed in current state: contract={:?}, execution={:?}",
+                        contract.state, execution.state,
+                    ),
+                )
+            );
         }
     }
 
     // Call compensate on the contract
-    state
-        .runtime
-        .rollback
-        .compensate(&contract)
-        .await
-        .map_err(ApiProblem::internal)?;
+    if let Err(e) = state.runtime.rollback.compensate(&contract).await {
+        return governance_err!(
+            state,
+            GovernanceRoute::ExecutionsCompensate,
+            ApiProblem::internal(e)
+        );
+    }
 
     // Update contract state to Compensated
     let mut updated_contract = contract.clone();
     updated_contract.state = ferrum_proto::RollbackState::Compensated;
-    state
+    if let Err(e) = state
         .runtime
         .store
         .rollback_contracts()
         .update(&updated_contract)
         .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+    {
+        return governance_err!(
+            state,
+            GovernanceRoute::ExecutionsCompensate,
+            ApiProblem::internal(anyhow::Error::from(e))
+        );
+    }
 
-    // Update execution state to Compensated via full update to avoid write queue
-    // race conditions with update_state() + get()
+    // Update execution state to Compensated
     let mut updated_execution = execution;
     updated_execution.state = ferrum_proto::ExecutionState::Compensated;
-    state
+    if let Err(e) = state
         .runtime
         .store
         .executions()
         .update(&updated_execution)
         .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+    {
+        return governance_err!(
+            state,
+            GovernanceRoute::ExecutionsCompensate,
+            ApiProblem::internal(anyhow::Error::from(e))
+        );
+    }
 
-    // Emit provenance event for compensation completion (Q1-P5 conservative chain: terminal-present).
+    // Emit provenance event
     let terminal_event = ProvenanceEvent {
         event_id: EventId::new(),
         kind: ferrum_proto::ProvenanceEventKind::SideEffectCompensated,
@@ -1868,13 +2530,19 @@ async fn compensate_execution(
         metadata: ferrum_proto::JsonMap::new(),
         source_runtime_id: None,
     };
-    state
+    if let Err(e) = state
         .runtime
         .store
         .provenance()
         .append_event(&terminal_event)
         .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+    {
+        return governance_err!(
+            state,
+            GovernanceRoute::ExecutionsCompensate,
+            ApiProblem::internal(anyhow::Error::from(e))
+        );
+    }
 
     Ok(Json(ferrum_proto::CompensateExecutionResponse {
         execution_id,
@@ -1888,7 +2556,11 @@ async fn cancel_execution(
     State(state): State<Arc<AppState>>,
     Path(execution_id): Path<String>,
 ) -> Result<Json<ferrum_proto::CancelExecutionResponse>, ApiProblem> {
-    let execution_id = parse_execution_id(&execution_id)?;
+    let execution_id = parse_execution_id(&execution_id).map_err(|e| {
+        state
+            .metrics
+            .record_governance_error(GovernanceRoute::ExecutionsCancel, e)
+    })?;
 
     // Look up the execution record
     let execution = state
@@ -1897,12 +2569,20 @@ async fn cancel_execution(
         .executions()
         .get(execution_id)
         .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?
+        .map_err(|e| {
+            state.metrics.record_governance_error(
+                GovernanceRoute::ExecutionsCancel,
+                ApiProblem::internal(anyhow::Error::from(e)),
+            )
+        })?
         .ok_or_else(|| {
-            ApiProblem::new(
-                StatusCode::NOT_FOUND,
-                ApiErrorCode::NotFound,
-                "execution not found",
+            state.metrics.record_governance_error(
+                GovernanceRoute::ExecutionsCancel,
+                ApiProblem::new(
+                    StatusCode::NOT_FOUND,
+                    ApiErrorCode::NotFound,
+                    "execution not found",
+                ),
             )
         })?;
 
@@ -1926,14 +2606,15 @@ async fn cancel_execution(
     );
 
     if !is_cancelable {
-        return Err(ApiProblem::new(
-            StatusCode::CONFLICT,
-            ApiErrorCode::Conflict,
-            format!(
-                "cancel not allowed: execution is in terminal state {:?}",
-                previous_state
-            ),
-        ));
+        return governance_err!(
+            state,
+            GovernanceRoute::ExecutionsCancel,
+            ApiProblem::new(
+                StatusCode::CONFLICT,
+                ApiErrorCode::Conflict,
+                "cancel not allowed: execution is in terminal state",
+            )
+        );
     }
 
     // Update execution state to Canceled
@@ -1946,7 +2627,12 @@ async fn cancel_execution(
         .executions()
         .update(&updated_execution)
         .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+        .map_err(|e| {
+            state.metrics.record_governance_error(
+                GovernanceRoute::ExecutionsCancel,
+                ApiProblem::internal(anyhow::Error::from(e)),
+            )
+        })?;
 
     // Emit SideEffectRolledBack provenance event for cancel operation.
     // Cancel triggers a rollback-like effect even if no contract exists.
@@ -1995,7 +2681,12 @@ async fn cancel_execution(
         .provenance()
         .append_event(&cancel_event)
         .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+        .map_err(|e| {
+            state.metrics.record_governance_error(
+                GovernanceRoute::ExecutionsCancel,
+                ApiProblem::internal(anyhow::Error::from(e)),
+            )
+        })?;
 
     Ok(Json(ferrum_proto::CancelExecutionResponse {
         execution_id,
@@ -2010,15 +2701,23 @@ async fn evaluate_outcome(
     Path(execution_id): Path<String>,
     Json(report): Json<OutcomeReport>,
 ) -> Result<Json<EvaluateOutcomeResponse>, ApiProblem> {
-    let execution_id = parse_execution_id(&execution_id)?;
+    let execution_id = parse_execution_id(&execution_id).map_err(|e| {
+        state
+            .metrics
+            .record_governance_error(GovernanceRoute::ExecutionsEvaluateOutcome, e)
+    })?;
 
     // Validate execution_id matches report
     if report.execution_id != execution_id {
-        return Err(ApiProblem::new(
-            StatusCode::BAD_REQUEST,
-            ApiErrorCode::ValidationError,
-            "execution_id in path does not match report",
-        ));
+        return governance_err!(
+            state,
+            GovernanceRoute::ExecutionsEvaluateOutcome,
+            ApiProblem::new(
+                StatusCode::BAD_REQUEST,
+                ApiErrorCode::ValidationError,
+                "execution_id in path does not match report",
+            )
+        );
     }
 
     // Look up execution to get intent_id
@@ -2028,12 +2727,20 @@ async fn evaluate_outcome(
         .executions()
         .get(execution_id)
         .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?
+        .map_err(|e| {
+            state.metrics.record_governance_error(
+                GovernanceRoute::ExecutionsEvaluateOutcome,
+                ApiProblem::internal(anyhow::Error::from(e)),
+            )
+        })?
         .ok_or_else(|| {
-            ApiProblem::new(
-                StatusCode::NOT_FOUND,
-                ApiErrorCode::NotFound,
-                "execution not found",
+            state.metrics.record_governance_error(
+                GovernanceRoute::ExecutionsEvaluateOutcome,
+                ApiProblem::new(
+                    StatusCode::NOT_FOUND,
+                    ApiErrorCode::NotFound,
+                    "execution not found",
+                ),
             )
         })?;
 
@@ -2044,12 +2751,20 @@ async fn evaluate_outcome(
         .intents()
         .get(execution.intent_id)
         .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?
+        .map_err(|e| {
+            state.metrics.record_governance_error(
+                GovernanceRoute::ExecutionsEvaluateOutcome,
+                ApiProblem::internal(anyhow::Error::from(e)),
+            )
+        })?
         .ok_or_else(|| {
-            ApiProblem::new(
-                StatusCode::NOT_FOUND,
-                ApiErrorCode::NotFound,
-                "intent not found for execution",
+            state.metrics.record_governance_error(
+                GovernanceRoute::ExecutionsEvaluateOutcome,
+                ApiProblem::new(
+                    StatusCode::NOT_FOUND,
+                    ApiErrorCode::NotFound,
+                    "intent not found for execution",
+                ),
             )
         })?;
 
@@ -2058,7 +2773,12 @@ async fn evaluate_outcome(
         .pdp
         .evaluate_outcome(&intent, &report)
         .await
-        .map_err(ApiProblem::internal)?;
+        .map_err(|e| {
+            state.metrics.record_governance_error(
+                GovernanceRoute::ExecutionsEvaluateOutcome,
+                ApiProblem::internal(e),
+            )
+        })?;
 
     Ok(Json(response))
 }
@@ -2067,7 +2787,11 @@ async fn get_execution_lineage(
     State(state): State<Arc<AppState>>,
     Path(execution_id): Path<String>,
 ) -> Result<Json<LineageResponse>, ApiProblem> {
-    let execution_id = parse_execution_id(&execution_id)?;
+    let execution_id = parse_execution_id(&execution_id).map_err(|e| {
+        state
+            .metrics
+            .record_governance_error(GovernanceRoute::ProvenanceLineageExecutionId, e)
+    })?;
 
     let request = ProvenanceQueryRequest {
         intent_id: None,
@@ -2085,7 +2809,12 @@ async fn get_execution_lineage(
         .provenance()
         .query(&request)
         .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+        .map_err(|e| {
+            state.metrics.record_governance_error(
+                GovernanceRoute::ProvenanceLineageExecutionId,
+                ApiProblem::internal(anyhow::Error::from(e)),
+            )
+        })?;
 
     // Build a map of target_event_id -> edges for efficient parent edge lookup
     let mut edges_by_target: HashMap<String, Vec<ferrum_proto::ProvenanceEdge>> = HashMap::new();
@@ -2096,7 +2825,12 @@ async fn get_execution_lineage(
             .provenance()
             .get_edges_to(event.event_id)
             .await
-            .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+            .map_err(|e| {
+                state.metrics.record_governance_error(
+                    GovernanceRoute::ProvenanceLineageExecutionId,
+                    ApiProblem::internal(anyhow::Error::from(e)),
+                )
+            })?;
         edges_by_target.insert(event.event_id.to_string(), edges);
     }
 
@@ -2117,11 +2851,19 @@ async fn get_execution_lineage(
         events,
     };
     // I11: sanitize response to strip control characters from string fields
-    let json_val = serde_json::to_value(&response)
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+    let json_val = serde_json::to_value(&response).map_err(|e| {
+        state.metrics.record_governance_error(
+            GovernanceRoute::ProvenanceLineageExecutionId,
+            ApiProblem::internal(anyhow::Error::from(e)),
+        )
+    })?;
     let sanitized = sanitize_json(&state.runtime.firewall, json_val);
-    let sanitized_response: LineageResponse = serde_json::from_value(sanitized)
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+    let sanitized_response: LineageResponse = serde_json::from_value(sanitized).map_err(|e| {
+        state.metrics.record_governance_error(
+            GovernanceRoute::ProvenanceLineageExecutionId,
+            ApiProblem::internal(anyhow::Error::from(e)),
+        )
+    })?;
     Ok(Json(sanitized_response))
 }
 
@@ -2140,12 +2882,20 @@ async fn query_lineage(
         .provenance()
         .get_event(request.event_id)
         .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?
+        .map_err(|e| {
+            state.metrics.record_governance_error(
+                GovernanceRoute::ProvenanceLineage,
+                ApiProblem::internal(anyhow::Error::from(e)),
+            )
+        })?
         .ok_or_else(|| {
-            ApiProblem::new(
-                StatusCode::NOT_FOUND,
-                ApiErrorCode::NotFound,
-                "seed event not found",
+            state.metrics.record_governance_error(
+                GovernanceRoute::ProvenanceLineage,
+                ApiProblem::new(
+                    StatusCode::NOT_FOUND,
+                    ApiErrorCode::NotFound,
+                    "seed event not found",
+                ),
             )
         })?;
 
@@ -2170,10 +2920,13 @@ async fn query_lineage(
                     .parse::<uuid::Uuid>()
                     .map(EventId)
                     .map_err(|_| {
-                        ApiProblem::new(
-                            StatusCode::BAD_REQUEST,
-                            ApiErrorCode::ValidationError,
-                            "invalid event_id format: must be a valid UUID".to_string(),
+                        state.metrics.record_governance_error(
+                            GovernanceRoute::ProvenanceLineage,
+                            ApiProblem::new(
+                                StatusCode::BAD_REQUEST,
+                                ApiErrorCode::ValidationError,
+                                "invalid event_id format: must be a valid UUID",
+                            ),
                         )
                     })?;
 
@@ -2188,7 +2941,12 @@ async fn query_lineage(
                     .provenance()
                     .get_edges_to(event_id)
                     .await
-                    .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+                    .map_err(|e| {
+                        state.metrics.record_governance_error(
+                            GovernanceRoute::ProvenanceLineage,
+                            ApiProblem::internal(anyhow::Error::from(e)),
+                        )
+                    })?;
 
                 for edge in &parent_edges {
                     if visited.insert(edge.from_event_id.to_string()) {
@@ -2199,7 +2957,12 @@ async fn query_lineage(
                             .provenance()
                             .get_event(edge.from_event_id)
                             .await
-                            .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?
+                            .map_err(|e| {
+                                state.metrics.record_governance_error(
+                                    GovernanceRoute::ProvenanceLineage,
+                                    ApiProblem::internal(anyhow::Error::from(e)),
+                                )
+                            })?
                         {
                             events.push(parent_event);
                             next_frontier.push(edge.from_event_id.to_string());
@@ -2220,7 +2983,12 @@ async fn query_lineage(
                     .provenance()
                     .get_edges_from(&[event_id])
                     .await
-                    .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+                    .map_err(|e| {
+                        state.metrics.record_governance_error(
+                            GovernanceRoute::ProvenanceLineage,
+                            ApiProblem::internal(anyhow::Error::from(e)),
+                        )
+                    })?;
 
                 for edge in &child_edges {
                     if let Some(to_id) = &edge.to_event_id {
@@ -2232,7 +3000,12 @@ async fn query_lineage(
                                 .provenance()
                                 .get_event(*to_id)
                                 .await
-                                .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?
+                                .map_err(|e| {
+                                    state.metrics.record_governance_error(
+                                        GovernanceRoute::ProvenanceLineage,
+                                        ApiProblem::internal(anyhow::Error::from(e)),
+                                    )
+                                })?
                             {
                                 events.push(child_event);
                                 next_frontier.push(to_id.to_string());
@@ -2250,11 +3023,20 @@ async fn query_lineage(
 
     let response = LineageQueryResponse { events, edges };
     // I11: sanitize response to strip control characters from string fields
-    let json_val = serde_json::to_value(&response)
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+    let json_val = serde_json::to_value(&response).map_err(|e| {
+        state.metrics.record_governance_error(
+            GovernanceRoute::ProvenanceLineage,
+            ApiProblem::internal(anyhow::Error::from(e)),
+        )
+    })?;
     let sanitized = sanitize_json(&state.runtime.firewall, json_val);
-    let sanitized_response: LineageQueryResponse = serde_json::from_value(sanitized)
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+    let sanitized_response: LineageQueryResponse =
+        serde_json::from_value(sanitized).map_err(|e| {
+            state.metrics.record_governance_error(
+                GovernanceRoute::ProvenanceLineage,
+                ApiProblem::internal(anyhow::Error::from(e)),
+            )
+        })?;
     Ok(Json(sanitized_response))
 }
 
@@ -2262,33 +3044,53 @@ async fn get_execution(
     State(state): State<Arc<AppState>>,
     Path(execution_id): Path<String>,
 ) -> Result<Json<ExecutionDetailResponse>, ApiProblem> {
-    let execution_id = parse_execution_id(&execution_id)?;
-    let record = state
-        .runtime
-        .store
-        .executions()
-        .get(execution_id)
-        .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?
-        .ok_or_else(|| {
-            ApiProblem::new(
-                StatusCode::NOT_FOUND,
-                ApiErrorCode::NotFound,
-                "execution not found",
-            )
-        })?;
+    let execution_id = parse_execution_id(&execution_id).map_err(|e| {
+        state
+            .metrics
+            .record_governance_error(GovernanceRoute::ExecutionsExecutionId, e)
+    })?;
+    let record = match state.runtime.store.executions().get(execution_id).await {
+        Ok(Some(record)) => record,
+        Ok(None) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsExecutionId,
+                ApiProblem::new(
+                    StatusCode::NOT_FOUND,
+                    ApiErrorCode::NotFound,
+                    "execution not found",
+                )
+            );
+        }
+        Err(e) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsExecutionId,
+                ApiProblem::internal(anyhow::Error::from(e))
+            );
+        }
+    };
 
     // Look up the rollback contract if present, for fs-first rollback inspection.
     // This enables operators to inspect contract state, target path, before_hash,
     // after_hash, compensation_plan, and verify_checks via GET /v1/executions/{id}.
     let rollback_contract = if let Some(contract_id) = record.rollback_contract_id {
-        state
+        match state
             .runtime
             .store
             .rollback_contracts()
             .get(contract_id)
             .await
-            .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?
+        {
+            Ok(contract) => contract,
+            Err(e) => {
+                return governance_err!(
+                    state,
+                    GovernanceRoute::ExecutionsExecutionId,
+                    ApiProblem::internal(anyhow::Error::from(e))
+                );
+            }
+        }
     } else {
         None
     };
@@ -2298,11 +3100,27 @@ async fn get_execution(
         rollback_contract,
     };
     // I11: sanitize response to strip control characters from string fields
-    let json_val = serde_json::to_value(&response)
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+    let json_val = match serde_json::to_value(&response) {
+        Ok(val) => val,
+        Err(e) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsExecutionId,
+                ApiProblem::internal(anyhow::Error::from(e))
+            );
+        }
+    };
     let sanitized = sanitize_json(&state.runtime.firewall, json_val);
-    let sanitized_response: ExecutionDetailResponse = serde_json::from_value(sanitized)
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+    let sanitized_response: ExecutionDetailResponse = match serde_json::from_value(sanitized) {
+        Ok(resp) => resp,
+        Err(e) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsExecutionId,
+                ApiProblem::internal(anyhow::Error::from(e))
+            );
+        }
+    };
     Ok(Json(sanitized_response))
 }
 
@@ -2310,17 +3128,29 @@ async fn list_approvals(
     State(state): State<Arc<AppState>>,
     Query(params): Query<PaginationParams>,
 ) -> Result<Json<ApprovalListEnvelope>, ApiProblem> {
-    let limit = params.limit()?;
+    let limit = params.limit().map_err(|e| {
+        state
+            .metrics
+            .record_governance_error(GovernanceRoute::Approvals, e)
+    })?;
 
     // Determine whether to use cursor-based or offset-based pagination
     let (items, next_cursor) = if let Some(ref cursor) = params.cursor {
         // Cursor-based pagination path
-        let (created_at, approval_id) = decode_cursor(cursor)?;
+        let (created_at, approval_id) = decode_cursor(cursor).map_err(|e| {
+            state
+                .metrics
+                .record_governance_error(GovernanceRoute::Approvals, e)
+        })?;
         let limit_plus_one = limit + 1; // Fetch one extra to determine if there are more
 
         let approvals = if let Some(ref proposal_id) = params.proposal_id {
             // Validate proposal_id format - fail closed on invalid UUID
-            let parsed_proposal_id = parse_proposal_id(proposal_id)?;
+            let parsed_proposal_id = parse_proposal_id(proposal_id).map_err(|e| {
+                state
+                    .metrics
+                    .record_governance_error(GovernanceRoute::Approvals, e)
+            })?;
             state
                 .runtime
                 .store
@@ -2332,7 +3162,12 @@ async fn list_approvals(
                     limit_plus_one,
                 )
                 .await
-                .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?
+                .map_err(|e| {
+                    state.metrics.record_governance_error(
+                        GovernanceRoute::Approvals,
+                        ApiProblem::internal(anyhow::Error::from(e)),
+                    )
+                })?
         } else {
             state
                 .runtime
@@ -2340,7 +3175,12 @@ async fn list_approvals(
                 .approvals()
                 .list_pending_cursor(created_at, approval_id, limit_plus_one)
                 .await
-                .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?
+                .map_err(|e| {
+                    state.metrics.record_governance_error(
+                        GovernanceRoute::Approvals,
+                        ApiProblem::internal(anyhow::Error::from(e)),
+                    )
+                })?
         };
 
         // Determine if there are more results
@@ -2359,14 +3199,23 @@ async fn list_approvals(
         let offset = params.offset();
         let approvals = if let Some(ref proposal_id) = params.proposal_id {
             // Validate proposal_id format - fail closed on invalid UUID
-            let parsed_proposal_id = parse_proposal_id(proposal_id)?;
+            let parsed_proposal_id = parse_proposal_id(proposal_id).map_err(|e| {
+                state
+                    .metrics
+                    .record_governance_error(GovernanceRoute::Approvals, e)
+            })?;
             state
                 .runtime
                 .store
                 .approvals()
                 .list_pending_by_proposal_paginated(parsed_proposal_id, limit, offset)
                 .await
-                .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?
+                .map_err(|e| {
+                    state.metrics.record_governance_error(
+                        GovernanceRoute::Approvals,
+                        ApiProblem::internal(anyhow::Error::from(e)),
+                    )
+                })?
         } else {
             state
                 .runtime
@@ -2374,7 +3223,12 @@ async fn list_approvals(
                 .approvals()
                 .list_pending_paginated(limit, offset)
                 .await
-                .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?
+                .map_err(|e| {
+                    state.metrics.record_governance_error(
+                        GovernanceRoute::Approvals,
+                        ApiProblem::internal(anyhow::Error::from(e)),
+                    )
+                })?
         };
         // Offset pagination cannot determine next_cursor reliably, so we return None
         (approvals, None)
@@ -2387,19 +3241,31 @@ async fn get_approval(
     State(state): State<Arc<AppState>>,
     Path(approval_id): Path<String>,
 ) -> Result<Json<ferrum_proto::ApprovalRequest>, ApiProblem> {
-    let approval_id = parse_approval_id(&approval_id)?;
+    let approval_id = parse_approval_id(&approval_id).map_err(|e| {
+        state
+            .metrics
+            .record_governance_error(GovernanceRoute::ApprovalsApprovalId, e)
+    })?;
     let approval = state
         .runtime
         .store
         .approvals()
         .get(approval_id)
         .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?
+        .map_err(|e| {
+            state.metrics.record_governance_error(
+                GovernanceRoute::ApprovalsApprovalId,
+                ApiProblem::internal(anyhow::Error::from(e)),
+            )
+        })?
         .ok_or_else(|| {
-            ApiProblem::new(
-                StatusCode::NOT_FOUND,
-                ApiErrorCode::NotFound,
-                "approval not found",
+            state.metrics.record_governance_error(
+                GovernanceRoute::ApprovalsApprovalId,
+                ApiProblem::new(
+                    StatusCode::NOT_FOUND,
+                    ApiErrorCode::NotFound,
+                    "approval not found",
+                ),
             )
         })?;
     Ok(Json(approval))
@@ -2415,7 +3281,12 @@ async fn query_provenance(
         .provenance()
         .query(&request)
         .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+        .map_err(|e| {
+            state.metrics.record_governance_error(
+                GovernanceRoute::ProvenanceQuery,
+                ApiProblem::internal(anyhow::Error::from(e)),
+            )
+        })?;
     Ok(Json(ProvenanceQueryResponse { events }))
 }
 
@@ -2431,11 +3302,15 @@ async fn ingest_provenance(
         .find(|b| b.runtime_id() == request.source_runtime_id);
 
     if bridge.is_none() {
-        return Err(ApiProblem::new(
-            StatusCode::BAD_REQUEST,
-            ApiErrorCode::ValidationError,
-            format!("unknown source_runtime_id: {}", request.source_runtime_id),
-        ));
+        return governance_err!(
+            state,
+            GovernanceRoute::ProvenanceIngest,
+            ApiProblem::new(
+                StatusCode::BAD_REQUEST,
+                ApiErrorCode::ValidationError,
+                format!("unknown source_runtime_id: {}", request.source_runtime_id),
+            )
+        );
     }
 
     // Build ProvenanceEvent from request
@@ -2480,7 +3355,12 @@ async fn ingest_provenance(
         .provenance()
         .append_event(&event)
         .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+        .map_err(|e| {
+            state.metrics.record_governance_error(
+                GovernanceRoute::ProvenanceIngest,
+                ApiProblem::internal(anyhow::Error::from(e)),
+            )
+        })?;
 
     Ok(Json(ProvenanceIngestResponse {
         event_id,
@@ -2511,36 +3391,54 @@ async fn list_bridge_tools(
         .iter()
         .find(|b| b.runtime_id() == bridge_id)
         .ok_or_else(|| {
-            ApiProblem::new(
-                StatusCode::NOT_FOUND,
-                ApiErrorCode::NotFound,
-                format!("bridge not found: {}", bridge_id),
+            state.metrics.record_governance_error(
+                GovernanceRoute::BridgesBridgeIdTools,
+                ApiProblem::new(
+                    StatusCode::NOT_FOUND,
+                    ApiErrorCode::NotFound,
+                    format!("bridge not found: {}", bridge_id),
+                ),
             )
         })?;
 
     if !bridge.is_connected() {
-        return Err(ApiProblem::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            ApiErrorCode::Internal,
-            format!("bridge '{}' is not connected", bridge_id),
-        ));
+        return governance_err!(
+            state,
+            GovernanceRoute::BridgesBridgeIdTools,
+            ApiProblem::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                ApiErrorCode::Internal,
+                format!("bridge '{}' is not connected", bridge_id),
+            )
+        );
     }
 
-    let tools = bridge
-        .list_tools()
-        .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+    let tools = bridge.list_tools().await.map_err(|e| {
+        state.metrics.record_governance_error(
+            GovernanceRoute::BridgesBridgeIdTools,
+            ApiProblem::internal(anyhow::Error::from(e)),
+        )
+    })?;
 
     let response = BridgeToolsResponse {
         runtime_id: bridge_id,
         tools,
     };
     // I11: sanitize response to strip control characters from string fields
-    let json_val = serde_json::to_value(&response)
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+    let json_val = serde_json::to_value(&response).map_err(|e| {
+        state.metrics.record_governance_error(
+            GovernanceRoute::BridgesBridgeIdTools,
+            ApiProblem::internal(anyhow::Error::from(e)),
+        )
+    })?;
     let sanitized = sanitize_json(&state.runtime.firewall, json_val);
-    let sanitized_response: BridgeToolsResponse = serde_json::from_value(sanitized)
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+    let sanitized_response: BridgeToolsResponse =
+        serde_json::from_value(sanitized).map_err(|e| {
+            state.metrics.record_governance_error(
+                GovernanceRoute::BridgesBridgeIdTools,
+                ApiProblem::internal(anyhow::Error::from(e)),
+            )
+        })?;
     Ok(Json(sanitized_response))
 }
 
@@ -3116,10 +4014,13 @@ async fn create_policy_bundle(
 ) -> Result<Json<ferrum_proto::PolicyBundleResponse>, ApiProblem> {
     // Parse and validate the YAML
     let bundle = parse_policy_bundle_yaml(&request.yaml_content).map_err(|e| {
-        ApiProblem::new(
-            StatusCode::BAD_REQUEST,
-            ApiErrorCode::ValidationError,
-            format!("invalid policy bundle YAML: {}", e),
+        state.metrics.record_governance_error(
+            GovernanceRoute::PolicyBundles,
+            ApiProblem::new(
+                StatusCode::BAD_REQUEST,
+                ApiErrorCode::ValidationError,
+                format!("invalid policy bundle YAML: {}", e),
+            ),
         )
     })?;
 
@@ -3146,7 +4047,12 @@ async fn create_policy_bundle(
         .policy_bundles()
         .insert(&bundle)
         .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+        .map_err(|e| {
+            state.metrics.record_governance_error(
+                GovernanceRoute::PolicyBundles,
+                ApiProblem::internal(anyhow::Error::from(e)),
+            )
+        })?;
 
     Ok(Json(ferrum_proto::PolicyBundleResponse {
         bundle,
@@ -3163,7 +4069,12 @@ async fn list_policy_bundles(
         .policy_bundles()
         .list()
         .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+        .map_err(|e| {
+            state.metrics.record_governance_error(
+                GovernanceRoute::PolicyBundles,
+                ApiProblem::internal(anyhow::Error::from(e)),
+            )
+        })?;
 
     let total = bundles.len();
     Ok(Json(ferrum_proto::PolicyBundleListResponse {
@@ -3182,12 +4093,20 @@ async fn get_policy_bundle(
         .policy_bundles()
         .get(&bundle_id)
         .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?
+        .map_err(|e| {
+            state.metrics.record_governance_error(
+                GovernanceRoute::PolicyBundlesBundleId,
+                ApiProblem::internal(anyhow::Error::from(e)),
+            )
+        })?
         .ok_or_else(|| {
-            ApiProblem::new(
-                StatusCode::NOT_FOUND,
-                ApiErrorCode::NotFound,
-                format!("policy bundle '{}' not found", bundle_id),
+            state.metrics.record_governance_error(
+                GovernanceRoute::PolicyBundlesBundleId,
+                ApiProblem::new(
+                    StatusCode::NOT_FOUND,
+                    ApiErrorCode::NotFound,
+                    format!("policy bundle '{}' not found", bundle_id),
+                ),
             )
         })?;
 
@@ -3205,23 +4124,30 @@ async fn update_policy_bundle(
 ) -> Result<Json<ferrum_proto::PolicyBundleResponse>, ApiProblem> {
     // Parse and validate the YAML
     let mut bundle = parse_policy_bundle_yaml(&request.yaml_content).map_err(|e| {
-        ApiProblem::new(
-            StatusCode::BAD_REQUEST,
-            ApiErrorCode::ValidationError,
-            format!("invalid policy bundle YAML: {}", e),
+        state.metrics.record_governance_error(
+            GovernanceRoute::PolicyBundlesBundleId,
+            ApiProblem::new(
+                StatusCode::BAD_REQUEST,
+                ApiErrorCode::ValidationError,
+                format!("invalid policy bundle YAML: {}", e),
+            ),
         )
     })?;
 
     // Ensure the bundle_id matches the path
     if bundle.bundle_id != bundle_id {
-        return Err(ApiProblem::new(
-            StatusCode::BAD_REQUEST,
-            ApiErrorCode::ValidationError,
-            format!(
-                "bundle_id in YAML ('{}') does not match path ('{}')",
-                bundle.bundle_id, bundle_id
-            ),
-        ));
+        return governance_err!(
+            state,
+            GovernanceRoute::PolicyBundlesBundleId,
+            ApiProblem::new(
+                StatusCode::BAD_REQUEST,
+                ApiErrorCode::ValidationError,
+                format!(
+                    "bundle_id in YAML ('{}') does not match path ('{}')",
+                    bundle.bundle_id, bundle_id
+                ),
+            )
+        );
     }
 
     // Get existing bundle to preserve created_at and check existence
@@ -3231,12 +4157,20 @@ async fn update_policy_bundle(
         .policy_bundles()
         .get(&bundle_id)
         .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?
+        .map_err(|e| {
+            state.metrics.record_governance_error(
+                GovernanceRoute::PolicyBundlesBundleId,
+                ApiProblem::internal(anyhow::Error::from(e)),
+            )
+        })?
         .ok_or_else(|| {
-            ApiProblem::new(
-                StatusCode::NOT_FOUND,
-                ApiErrorCode::NotFound,
-                format!("policy bundle '{}' not found", bundle_id),
+            state.metrics.record_governance_error(
+                GovernanceRoute::PolicyBundlesBundleId,
+                ApiProblem::new(
+                    StatusCode::NOT_FOUND,
+                    ApiErrorCode::NotFound,
+                    format!("policy bundle '{}' not found", bundle_id),
+                ),
             )
         })?;
 
@@ -3254,7 +4188,12 @@ async fn update_policy_bundle(
         .policy_bundles()
         .update(&bundle)
         .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+        .map_err(|e| {
+            state.metrics.record_governance_error(
+                GovernanceRoute::PolicyBundlesBundleId,
+                ApiProblem::internal(anyhow::Error::from(e)),
+            )
+        })?;
 
     Ok(Json(ferrum_proto::PolicyBundleResponse {
         bundle,
@@ -3267,17 +4206,27 @@ async fn delete_policy_bundle(
     Path(bundle_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiProblem> {
     // Check if bundle exists
+    let not_found = {
+        let msg = format!("policy bundle '{}' not found", bundle_id);
+        state.runtime.firewall.sanitize(&msg)
+    };
     state
         .runtime
         .store
         .policy_bundles()
         .get(&bundle_id)
         .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?
+        .map_err(|e| {
+            state.metrics.record_governance_error(
+                GovernanceRoute::PolicyBundlesBundleId,
+                ApiProblem::internal(anyhow::Error::from(e)),
+            )
+        })?
         .ok_or_else(|| {
-            let msg = format!("policy bundle '{}' not found", bundle_id);
-            let sanitized = state.runtime.firewall.sanitize(&msg);
-            ApiProblem::new(StatusCode::NOT_FOUND, ApiErrorCode::NotFound, sanitized)
+            state.metrics.record_governance_error(
+                GovernanceRoute::PolicyBundlesBundleId,
+                ApiProblem::new(StatusCode::NOT_FOUND, ApiErrorCode::NotFound, not_found),
+            )
         })?;
 
     state
@@ -3286,7 +4235,12 @@ async fn delete_policy_bundle(
         .policy_bundles()
         .delete(&bundle_id)
         .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+        .map_err(|e| {
+            state.metrics.record_governance_error(
+                GovernanceRoute::PolicyBundlesBundleId,
+                ApiProblem::internal(anyhow::Error::from(e)),
+            )
+        })?;
 
     let response = serde_json::json!({ "ok": true, "bundle_id": bundle_id });
     let sanitized = sanitize_json(&state.runtime.firewall, response);
@@ -3299,17 +4253,27 @@ async fn set_policy_bundle_active(
     Json(request): Json<ferrum_proto::SetPolicyBundleActiveRequest>,
 ) -> Result<Json<serde_json::Value>, ApiProblem> {
     // Check if bundle exists
+    let not_found = {
+        let msg = format!("policy bundle '{}' not found", bundle_id);
+        state.runtime.firewall.sanitize(&msg)
+    };
     state
         .runtime
         .store
         .policy_bundles()
         .get(&bundle_id)
         .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?
+        .map_err(|e| {
+            state.metrics.record_governance_error(
+                GovernanceRoute::PolicyBundlesBundleId,
+                ApiProblem::internal(anyhow::Error::from(e)),
+            )
+        })?
         .ok_or_else(|| {
-            let msg = format!("policy bundle '{}' not found", bundle_id);
-            let sanitized = state.runtime.firewall.sanitize(&msg);
-            ApiProblem::new(StatusCode::NOT_FOUND, ApiErrorCode::NotFound, sanitized)
+            state.metrics.record_governance_error(
+                GovernanceRoute::PolicyBundlesBundleId,
+                ApiProblem::new(StatusCode::NOT_FOUND, ApiErrorCode::NotFound, not_found),
+            )
         })?;
 
     state
@@ -3318,7 +4282,12 @@ async fn set_policy_bundle_active(
         .policy_bundles()
         .set_active(&bundle_id, request.active)
         .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+        .map_err(|e| {
+            state.metrics.record_governance_error(
+                GovernanceRoute::PolicyBundlesBundleId,
+                ApiProblem::internal(anyhow::Error::from(e)),
+            )
+        })?;
 
     let response = serde_json::json!({
         "ok": true,
@@ -5073,5 +6042,81 @@ mod tests {
 
         // Store should be unhealthy (0)
         assert!(body_str.contains("ferrumgate_store_health_up 0"));
+    }
+
+    #[tokio::test]
+    async fn test_metrics_endpoint_governance_errors_increment() {
+        let runtime = test_runtime().await;
+        let router = build_router(runtime);
+
+        // Trigger a governance error by calling get_execution with non-existent execution_id
+        // Use a valid UUID format that doesn't exist in the store
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/executions/00000000-0000-0000-0000-000000000001")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Should return NOT_FOUND (404)
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        // Now check metrics endpoint
+        let metrics_response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(metrics_response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(metrics_response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+
+        // Verify governance error counter incremented for the route
+        assert!(body_str.contains("ferrumgate_governance_errors_total"));
+        assert!(body_str.contains(
+            "ferrumgate_governance_errors_total{route=\"/v1/executions/{execution_id}\"} 1"
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_metrics_endpoint_governance_errors_zero_when_no_errors() {
+        let runtime = test_runtime().await;
+        let router = build_router(runtime);
+
+        // Call metrics without triggering any governance errors
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+
+        // Verify governance error counters exist but are zero
+        assert!(body_str.contains("ferrumgate_governance_errors_total"));
+        // Check that at least one route shows 0 (healthz/readyz/metrics should not be tracked)
+        assert!(
+            body_str
+                .contains("ferrumgate_governance_errors_total{route=\"/v1/intents/compile\"} 0")
+        );
     }
 }

@@ -79,7 +79,7 @@ These items improve production posture but are not v1 RC blockers.
 | Aspect | Detail |
 |--------|--------|
 | **Current state** | `/v1/healthz` and `/v1/readyz` are shallow (process alive only); `/v1/readyz/deep` implemented with store probe; `/v1/metrics` exposes bounded health/metrics counters and store up/down gauge |
-| **Gap** | Broader observability remains bounded: no latency histograms, broad per-route error counters, WAL/page gauges, or pool saturation metrics |
+| **Gap** | Broader observability remains bounded: no latency histograms, WAL/page gauges, or pool saturation metrics; bounded governance error counters (`ferrumgate_governance_errors_total`) now implemented |
 | **Verification** | ✅ S2 improved — 2026-04-28: bounded tests added covering unhealthy store response (503/degraded/healthy=false/component error) |
 | **Risk** | LOW — deep readiness exists and verified for failure mode |
 | **Production ready** | **Partial** — deep probe verified for store-unhealthy path; broader failure modes (adapter failure, corruption) remain post-v1 scope |

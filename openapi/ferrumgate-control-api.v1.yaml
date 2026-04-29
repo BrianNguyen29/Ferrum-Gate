@@ -72,6 +72,17 @@ paths:
     get:
       summary: Bounded Prometheus-style metrics (unauthenticated)
       operationId: metrics
+      description: |
+        Returns Prometheus text exposition format with the following metric families:
+
+        - `ferrumgate_http_requests_total` - HTTP request counters by route
+        - `ferrumgate_store_health_up` - Store health gauge (1=ok, 0=unhealthy)
+        - `ferrumgate_metrics_scrapes_total` - Metrics endpoint scrape counter
+        - `ferrumgate_governance_errors_total` - Governance error counters by route
+
+        **Note**: This endpoint is intentionally bounded. It does not expose
+        latency histograms, WAL/page gauges, or connection-pool saturation signals.
+      operationId: metrics
       security: []
       responses:
         '200':
