@@ -116,5 +116,8 @@ Remaining work is documented in:
 - [33-feature-completion-backlog.md](./33-feature-completion-backlog.md) — Must/Should/Production-only backlog for incomplete/partial features
 - [45-current-feature-audit.md](./45-current-feature-audit.md) — Phase 3 D5 bottleneck analysis complete; D6 priority list complete. Full report: [51-d5-bottleneck-analysis-report.md](./51-d5-bottleneck-analysis-report.md); Priority list: [52-d6-priority-expansion-list.md](./52-d6-priority-expansion-list.md)
 - [32-feature-completeness-audit.md](./32-feature-completeness-audit.md) — Route/API reconciliation
-- [56-adapter-compensation-evidence-matrix.md](./56-adapter-compensation-evidence-matrix.md) — Adapter compensation behavior evidence
-- [57-workload-compensation-drill-plan.md](./57-workload-compensation-drill-plan.md) — Operator drill plan for compensation verification
+- [56-adapter-compensation-evidence-matrix.md](./56-adapter-compensation-evidence-matrix.md) — Adapter compensation behavior evidence (post-RC docs-only)
+- [57-workload-compensation-drill-plan.md](./57-workload-compensation-drill-plan.md) — Operator drill plan for compensation verification (post-RC docs-only)
+- [58-workload-compensation-drill-evidence-template.md](./58-workload-compensation-drill-evidence-template.md) — Operator-fillable drill evidence template (post-RC docs-only)
+- [59-pilot-readiness-evidence-packet.md](./59-pilot-readiness-evidence-packet.md) — G2.1–G2.8 evidence packet for Path 2 pilot (post-RC docs-only)
+- [60-bounded-hardening-examples.md](./60-bounded-hardening-examples.md) — Bounded hardening drill examples (post-RC docs-only)

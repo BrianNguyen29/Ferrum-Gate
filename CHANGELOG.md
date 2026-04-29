@@ -10,6 +10,18 @@ All notable changes for FerrumGate v1 release candidates are documented in [RELE
 
 See [RELEASE.md](./RELEASE.md) for full release notes, accepted risks, evidence summary, and pre-tag checklist.
 
+### Unreleased — Post-RC Documentation-Only (2026-04-29)
+
+Added operator evidence/templates (docs-only; no release tag change):
+
+- `56-adapter-compensation-evidence-matrix.md` — Adapter compensation behavior evidence
+- `57-workload-compensation-drill-plan.md` — Operator drill plan for compensation verification
+- `58-workload-compensation-drill-evidence-template.md` — Operator-fillable drill evidence template
+- `59-pilot-readiness-evidence-packet.md` — G2.1–G2.8 evidence packet for Path 2 pilot
+- `60-bounded-hardening-examples.md` — Bounded hardening drill examples
+
+> **Note**: These are documentation-only additions. No G2 gate is completed by these documents. No production deployment claim is made. RC tag `v0.1.0-rc.1` remains at target commit `5fce844d2850be45268db37544f17dd4dba988a9`.
+
 ### Summary of Changes
 
 This RC candidate resolves all P0/P1/P2 items identified during Phase F evidence gate:

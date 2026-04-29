@@ -140,6 +140,13 @@ See `docs/implementation-path/31-release-paths-todo.md` §Path 1 for rollback/ab
 | `docs/implementation-path/50-p4-postgres-store-facade-adr.md` | ADR-50: PostgreSQL phased implementation plan |
 | `docs/ferrumgate-roadmap-v1/19-v1-single-node-support-contract.md` | Support contract with accepted risks §4 |
 | `docs/PRODUCTION_NOTES.md` | Production notes with stress test evidence |
+| `docs/implementation-path/56-adapter-compensation-evidence-matrix.md` | Adapter compensation behavior evidence (post-RC docs-only) |
+| `docs/implementation-path/57-workload-compensation-drill-plan.md` | Operator drill plan for compensation verification (post-RC docs-only) |
+| `docs/implementation-path/58-workload-compensation-drill-evidence-template.md` | Operator-fillable drill evidence template (post-RC docs-only) |
+| `docs/implementation-path/59-pilot-readiness-evidence-packet.md` | G2.1–G2.8 evidence packet for Path 2 pilot (post-RC docs-only) |
+| `docs/implementation-path/60-bounded-hardening-examples.md` | Bounded hardening drill examples (post-RC docs-only) |
+
+> **Note (2026-04-29)**: Docs 56–60 are post-RC documentation-only operator evidence/templates. They do not alter the `v0.1.0-rc.1` release tag, do not claim production readiness, and do not complete any G2 gate on behalf of the operator.
 
 ---
 

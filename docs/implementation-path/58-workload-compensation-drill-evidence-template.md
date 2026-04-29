@@ -566,6 +566,7 @@ Operator signature: _________________ Date: _________
 | `58-workload-compensation-drill-evidence-template.md` | `56-adapter-compensation-evidence-matrix.md` | Classification reference |
 | `58-workload-compensation-drill-evidence-template.md` | `54-operator-signoff-packet.md` | G2 gate context |
 | `58-workload-compensation-drill-evidence-template.md` | `59-pilot-readiness-evidence-packet.md` | G2.1–G2.8 evidence packet |
+| `58-workload-compensation-drill-evidence-template.md` | `60-bounded-hardening-examples.md` | Bounded hardening examples |
 
 ---
 
