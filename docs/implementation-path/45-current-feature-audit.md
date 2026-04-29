@@ -320,7 +320,7 @@ Kiểm toán được coi là hoàn thành khi:
 | # | Gap | Risk Level | Hành động |
 |---|---|---|---|
 | G1 | Gateway events không liên kết đầy đủ với ledger hash fields | Medium | Duyệt thủ công + integration test bổ sung |
-| G2 | Adapter compensation guarantees phụ thuộc adapter (không đồng nhất) | Medium | Duyệt từng adapter + manual verification |
+| G2 | Adapter compensation guarantees phụ thuộc adapter (không đồng nhất) | Medium | ✅ Evidence matrix complete — xem `56-adapter-compensation-evidence-matrix.md`; production use vẫn cần workload-specific drill/operator acceptance |
 | G3 | Rate limiting không có dedicated test suite | Low | ✅ Đã bổ sung 3 rate-limit integration tests (per-IP isolation, recovery, concurrent burst) — M2 IMPLEMENTED |
 | G4 | Output sanitization — gateway-wide response path chưa integration | Medium | ✅ Bounded wiring hoàn thành per design note 48 — M1 IMPLEMENTED (docs-only design) |
 | G5 | DLP stub only (không có triển khai thực) | Low | Stub — post-v1 scope — S1 DOCS-ONLY |

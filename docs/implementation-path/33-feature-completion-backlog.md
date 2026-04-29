@@ -167,11 +167,12 @@ These require PostgreSQL, multi-node, or broader adapter surface — not in v1 s
 
 | Aspect | Detail |
 |--------|--------|
-| **Current state** | Adapter compensation guarantees vary by adapter; `compensate` endpoint may be noop-backed |
-| **Gap** | No uniform compensation guarantee across all adapters |
+| **Current state** | Adapter compensation guarantees vary by adapter; per-adapter evidence matrix completed in [`56-adapter-compensation-evidence-matrix.md`](./56-adapter-compensation-evidence-matrix.md) |
+| **Audit result** | fs/maildraft/sqlite provide bounded real-undo slices; git is real-undo for local/ref actions but fail-closed for remote-sensitive push; http uses strict `http.replay_v1` replay compensation, not true undo |
+| **Gap** | No uniform compensation guarantee across all adapters; operator/workload-specific acceptance still required |
 | **Risk** | MED |
-| **Production ready** | **No** — manual verification per adapter required |
-| **Next action** | Per-adapter compensation audit before production use |
+| **Production ready** | **No / Partial by adapter-action** — evidence exists, but semantics are non-uniform and broader production guarantees remain workload-dependent |
+| **Next action** | Use the matrix during pilot/operator signoff; run target-workload compensation drills before production use |
 
 ---
 

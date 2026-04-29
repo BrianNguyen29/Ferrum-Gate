@@ -52,7 +52,7 @@ These items improve production posture and operational confidence but are not bl
 |----------|------|-----------|----------|-------|
 | **3** | Backup automation / retention / encryption | Domain 6 (Backup/restore limits) | Bounded SQLite-only backup with opt-in retention pruning (`--retention-days N`); no scheduling or encryption in v1; S3 in `33-feature-completion-backlog.md` | Pilot (operator-owned) or Phase 3+ |
 | **4** | Observability / metrics | Domain 9 (Health check depth), Dimension 4 §4.4 (Operational monitoring baseline) | Bounded `/v1/metrics` endpoint implemented with health/metrics counters, store up/down gauge, and bounded governance error counters (`ferrumgate_governance_errors_total`); latency histograms and WAL/page/pool metrics remain future work | Pilot or Phase 3+ |
-| **5** | Adapter hardening | Domain 4 (Adapter compensation non-uniformity), Domain 5 (Adapter surface boundedness) | P3–P6 in `33-feature-completion-backlog.md`; compensation guarantees vary by adapter | Pilot or Phase 3+ |
+| **5** | Adapter hardening | Domain 4 (Adapter compensation non-uniformity), Domain 5 (Adapter surface boundedness) | P3–P6 in `33-feature-completion-backlog.md`; compensation evidence matrix exists in `56-adapter-compensation-evidence-matrix.md`, but guarantees remain non-uniform by adapter/action | Pilot or Phase 3+ |
 
 ### Deferred — Explicit Phase 3+
 
