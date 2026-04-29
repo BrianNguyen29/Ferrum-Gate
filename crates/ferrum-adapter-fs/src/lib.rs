@@ -119,6 +119,9 @@ pub enum FsAdapterError {
 pub struct FsAdapter {
     key: &'static str,
     bounds: FsBoundsConfig,
+    /// Optional workdir for sandbox enforcement. When set, all file operations
+    /// must resolve to paths within this directory.
+    workdir: Option<PathBuf>,
 }
 
 impl FsAdapter {
@@ -126,17 +129,38 @@ impl FsAdapter {
         Self {
             key,
             bounds: FsBoundsConfig::default(),
+            workdir: None,
         }
     }
 
     /// Creates a new FsAdapter with custom bounds configuration.
     pub fn new_with_bounds(key: &'static str, bounds: FsBoundsConfig) -> Self {
-        Self { key, bounds }
+        Self {
+            key,
+            bounds,
+            workdir: None,
+        }
+    }
+
+    /// Creates a new FsAdapter with custom bounds and explicit workdir for sandboxing.
+    /// When workdir is set, all file operations must resolve to paths within this directory.
+    /// This enables testing and explicit opt-in for production use.
+    pub fn new_with_workdir(key: &'static str, bounds: FsBoundsConfig, workdir: PathBuf) -> Self {
+        Self {
+            key,
+            bounds,
+            workdir: Some(workdir),
+        }
     }
 
     /// Returns a reference to the bounds configuration.
     fn bounds(&self) -> &FsBoundsConfig {
         &self.bounds
+    }
+
+    /// Returns a reference to the workdir if set.
+    fn workdir(&self) -> Option<&Path> {
+        self.workdir.as_deref()
     }
 
     /// Returns the stable snapshot directory path.
@@ -250,6 +274,56 @@ impl FsAdapter {
                     )));
                 }
             }
+        }
+
+        Ok(())
+    }
+
+    /// Revalidates path sandbox constraints before execute phase.
+    /// This catches symlink swaps or sandbox escapes that may have occurred
+    /// between prepare and execute.
+    fn revalidate_path_for_execute(&self, file_path: &str) -> Result<(), AdapterError> {
+        let bounds = self.bounds();
+        let workdir = self.workdir();
+
+        // Re-check path depth
+        if let Err(e) = Self::validate_path_depth(file_path, bounds.max_path_depth) {
+            return Err(Self::phase_wrap_validation(PHASE_EXECUTE, e.to_string()));
+        }
+
+        // Re-check symlinks and sandbox escape
+        if let Err(e) = Self::validate_path_sandbox(
+            file_path,
+            workdir,
+            bounds.allow_symlinks,
+            bounds.sandbox_to_workdir,
+        ) {
+            return Err(Self::phase_wrap_validation(PHASE_EXECUTE, e.to_string()));
+        }
+
+        Ok(())
+    }
+
+    /// Revalidates path sandbox constraints before rollback phase.
+    /// This catches symlink swaps or sandbox escapes that may have occurred
+    /// between execute and rollback.
+    fn revalidate_path_for_rollback(&self, file_path: &str) -> Result<(), AdapterError> {
+        let bounds = self.bounds();
+        let workdir = self.workdir();
+
+        // Re-check path depth
+        if let Err(e) = Self::validate_path_depth(file_path, bounds.max_path_depth) {
+            return Err(Self::phase_wrap_validation(PHASE_ROLLBACK, e.to_string()));
+        }
+
+        // Re-check symlinks and sandbox escape
+        if let Err(e) = Self::validate_path_sandbox(
+            file_path,
+            workdir,
+            bounds.allow_symlinks,
+            bounds.sandbox_to_workdir,
+        ) {
+            return Err(Self::phase_wrap_validation(PHASE_ROLLBACK, e.to_string()));
         }
 
         Ok(())
@@ -582,7 +656,7 @@ impl RollbackAdapter for FsAdapter {
         // Check for symlinks and sandbox escape
         if let Err(e) = Self::validate_path_sandbox(
             file_path,
-            None, // workdir - None means we don't enforce workdir boundary strictly
+            self.workdir(),
             bounds.allow_symlinks,
             bounds.sandbox_to_workdir,
         ) {
@@ -998,6 +1072,11 @@ impl RollbackAdapter for FsAdapter {
     ) -> Result<ExecuteReceipt, AdapterError> {
         let file_path = Self::extract_path(&contract.target)?;
 
+        // Revalidate path sandbox constraints before execute.
+        // This catches symlink swaps or sandbox escapes that may have occurred
+        // between prepare and execute.
+        self.revalidate_path_for_execute(file_path)?;
+
         match contract.action_type {
             ActionType::FileWrite => {
                 // Payload should contain the new file contents
@@ -1091,6 +1170,11 @@ impl RollbackAdapter for FsAdapter {
                     )
                 })?;
 
+                // Revalidate destination path sandbox constraints before execute.
+                // This catches symlink swaps or sandbox escapes that may have occurred
+                // between prepare and execute.
+                self.revalidate_path_for_execute(&destination)?;
+
                 let mut metadata = JsonMap::new();
                 metadata.insert(
                     "destination_path".to_string(),
@@ -1163,6 +1247,11 @@ impl RollbackAdapter for FsAdapter {
                         "FileCopy execute payload requires 'destination' field".into(),
                     )
                 })?;
+
+                // Revalidate destination path sandbox constraints before execute.
+                // This catches symlink swaps or sandbox escapes that may have occurred
+                // between prepare and execute.
+                self.revalidate_path_for_execute(&destination)?;
 
                 let dest_path = Path::new(&destination);
                 let created_new_dest = !dest_path.exists();
@@ -1784,6 +1873,11 @@ impl RollbackAdapter for FsAdapter {
 
         let file_path = Self::extract_path(&contract.target)?;
 
+        // Revalidate path sandbox constraints before rollback.
+        // This catches symlink swaps or sandbox escapes that may have occurred
+        // between execute and rollback.
+        self.revalidate_path_for_rollback(file_path)?;
+
         // Handle DirCreate rollback: delete the created directory
         if matches!(contract.action_type, ActionType::DirCreate) {
             let dir_path = Path::new(file_path);
@@ -2062,6 +2156,11 @@ impl RollbackAdapter for FsAdapter {
                 )
             })?;
 
+            // Revalidate destination path sandbox constraints before rollback.
+            // This catches symlink swaps or sandbox escapes that may have occurred
+            // between execute and rollback.
+            self.revalidate_path_for_rollback(&destination)?;
+
             // Check if this was a cross-filesystem move
             let cross_fs_move = contract
                 .metadata
@@ -2265,6 +2364,11 @@ impl RollbackAdapter for FsAdapter {
                     "FileCopy rollback requires destination_path in metadata".into(),
                 )
             })?;
+
+            // Revalidate destination path sandbox constraints before rollback.
+            // This catches symlink swaps or sandbox escapes that may have occurred
+            // between execute and rollback.
+            self.revalidate_path_for_rollback(&destination)?;
 
             let created_new_dest = contract
                 .metadata
@@ -8767,6 +8871,754 @@ mod tests {
                 .and_then(|v| v.as_bool())
                 == Some(true),
             "Expected rollback_failed=true in metadata"
+        );
+    }
+
+    // =============================================================================
+    // Symlink Hardening: Final-Path Symlink Rejection Tests
+    // =============================================================================
+
+    #[tokio::test]
+    async fn test_symlink_final_path_rejected_at_prepare() {
+        // Test that a symlink as the final path is rejected at prepare.
+        let temp_dir = tempdir().unwrap();
+        let target_file = temp_dir.path().join("target.txt");
+        let symlink_path = temp_dir.path().join("link");
+        std::fs::write(&target_file, b"target").unwrap();
+
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&target_file, &symlink_path).unwrap();
+
+        #[cfg(not(unix))]
+        return; // Skip on non-Unix
+
+        let symlink_str = symlink_path.display().to_string();
+        let adapter = FsAdapter::new("fs");
+
+        let mut request = create_test_request(&symlink_str);
+        request.action_type = ActionType::FileWrite;
+
+        let result = adapter.prepare(&request).await;
+        assert!(
+            result.is_err(),
+            "prepare should reject symlink as final path"
+        );
+        match result.unwrap_err() {
+            AdapterError::Validation(msg) => {
+                assert!(
+                    msg.contains("symlink"),
+                    "Expected error about symlink, got: {}",
+                    msg
+                );
+            }
+            other => panic!("expected validation error for symlink, got: {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_symlink_intermediate_path_rejected_at_prepare() {
+        // Test that a symlink in an intermediate path component is rejected at prepare.
+        let temp_dir = tempdir().unwrap();
+        let real_dir = temp_dir.path().join("real_dir");
+        std::fs::create_dir(&real_dir).unwrap();
+        let target_file = real_dir.join("target.txt");
+        std::fs::write(&target_file, b"target").unwrap();
+
+        // Create a symlink to the real directory
+        let symlink_dir = temp_dir.path().join("link_dir");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&real_dir, &symlink_dir).unwrap();
+
+        #[cfg(not(unix))]
+        return; // Skip on non-Unix
+
+        // Path that goes through the symlink: link_dir/target.txt
+        let path_through_symlink = symlink_dir.join("target.txt");
+        let path_str = path_through_symlink.display().to_string();
+
+        let adapter = FsAdapter::new("fs");
+
+        let mut request = create_test_request(&path_str);
+        request.action_type = ActionType::FileWrite;
+
+        let result = adapter.prepare(&request).await;
+        assert!(
+            result.is_err(),
+            "prepare should reject path with intermediate symlink"
+        );
+        match result.unwrap_err() {
+            AdapterError::Validation(msg) => {
+                assert!(
+                    msg.contains("symlink"),
+                    "Expected error about symlink, got: {}",
+                    msg
+                );
+            }
+            other => panic!(
+                "expected validation error for intermediate symlink, got: {:?}",
+                other
+            ),
+        }
+    }
+
+    // =============================================================================
+    // Symlink Hardening: Execute-Phase Revalidation Tests
+    // =============================================================================
+
+    #[tokio::test]
+    async fn test_symlink_swap_between_prepare_and_execute_fails_execute() {
+        // Test that if a symlink is swapped between prepare and execute,
+        // execute fails with validation error (fail-closed).
+        let temp_dir = tempdir().unwrap();
+        let work_dir = temp_dir.path().join("work");
+        let escape_dir = temp_dir.path().join("escape");
+        std::fs::create_dir(&work_dir).unwrap();
+        std::fs::create_dir(&escape_dir).unwrap();
+
+        // Create target file in escape directory
+        let target_file = escape_dir.join("secret.txt");
+        std::fs::write(&target_file, b"secret").unwrap();
+
+        // Create initial file in work directory
+        let initial_file = work_dir.join("file.txt");
+        std::fs::write(&initial_file, b"initial").unwrap();
+
+        let initial_str = initial_file.display().to_string();
+
+        let adapter = FsAdapter::new("fs");
+
+        // Prepare with the initial file
+        let mut request = create_test_request(&initial_str);
+        request.action_type = ActionType::FileWrite;
+        let prep_receipt = adapter.prepare(&request).await.unwrap();
+
+        // Build contract
+        let contract = RollbackContract {
+            contract_id: RollbackContractId::new(),
+            intent_id: IntentId::new(),
+            proposal_id: ProposalId::new(),
+            execution_id: request.execution_id,
+            action_type: ActionType::FileWrite,
+            rollback_class: ferrum_proto::RollbackClass::R1SnapshotRecoverable,
+            adapter_key: "fs".to_string(),
+            target: RollbackTarget::FilePath {
+                path: initial_str.clone(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: prep_receipt.adapter_metadata,
+        };
+
+        // Swap the initial file to a symlink pointing to escape
+        #[cfg(unix)]
+        {
+            std::fs::remove_file(&initial_file).unwrap();
+            std::os::unix::fs::symlink(&target_file, &initial_file).unwrap();
+        }
+
+        #[cfg(not(unix))]
+        return; // Skip on non-Unix
+
+        // Execute should fail because the path is now a symlink
+        let result = adapter
+            .execute(&contract, &serde_json::json!("new content"))
+            .await;
+        assert!(
+            result.is_err(),
+            "execute should fail when path becomes a symlink"
+        );
+        match result.unwrap_err() {
+            AdapterError::Validation(msg) => {
+                assert!(
+                    msg.contains("symlink") || msg.contains("[execute]"),
+                    "Expected symlink or execute-phase error, got: {}",
+                    msg
+                );
+            }
+            other => panic!(
+                "expected validation error for symlink at execute, got: {:?}",
+                other
+            ),
+        }
+    }
+
+    // =============================================================================
+    // Symlink Hardening: Rollback-Phase Revalidation Tests
+    // =============================================================================
+
+    #[tokio::test]
+    async fn test_symlink_swap_between_execute_and_rollback_fails_rollback() {
+        // Test that if a symlink is introduced between execute and rollback,
+        // rollback fails with validation error (fail-closed).
+        let temp_dir = tempdir().unwrap();
+        let work_dir = temp_dir.path().join("work");
+        let escape_dir = temp_dir.path().join("escape");
+        std::fs::create_dir(&work_dir).unwrap();
+        std::fs::create_dir(&escape_dir).unwrap();
+
+        // Create target file in escape directory
+        let target_file = escape_dir.join("secret.txt");
+        std::fs::write(&target_file, b"secret").unwrap();
+
+        // Create initial file in work directory
+        let initial_file = work_dir.join("file.txt");
+        std::fs::write(&initial_file, b"initial").unwrap();
+
+        let initial_str = initial_file.display().to_string();
+
+        let adapter = FsAdapter::new("fs");
+
+        // Prepare
+        let mut request = create_test_request(&initial_str);
+        request.action_type = ActionType::FileWrite;
+        let prep_receipt = adapter.prepare(&request).await.unwrap();
+
+        // Build contract
+        let contract = RollbackContract {
+            contract_id: RollbackContractId::new(),
+            intent_id: IntentId::new(),
+            proposal_id: ProposalId::new(),
+            execution_id: request.execution_id,
+            action_type: ActionType::FileWrite,
+            rollback_class: ferrum_proto::RollbackClass::R1SnapshotRecoverable,
+            adapter_key: "fs".to_string(),
+            target: RollbackTarget::FilePath {
+                path: initial_str.clone(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: prep_receipt.adapter_metadata.clone(),
+        };
+
+        // Execute succeeds
+        adapter
+            .execute(&contract, &serde_json::json!("modified"))
+            .await
+            .unwrap();
+
+        // Swap the file to a symlink after execute
+        #[cfg(unix)]
+        {
+            std::fs::remove_file(&initial_file).unwrap();
+            std::os::unix::fs::symlink(&target_file, &initial_file).unwrap();
+        }
+
+        #[cfg(not(unix))]
+        return; // Skip on non-Unix
+
+        // Rollback should fail because the path is now a symlink
+        let result = adapter.rollback(&contract).await;
+        assert!(
+            result.is_err(),
+            "rollback should fail when path becomes a symlink"
+        );
+        match result.unwrap_err() {
+            AdapterError::Validation(msg) => {
+                assert!(
+                    msg.contains("symlink") || msg.contains("[rollback]"),
+                    "Expected symlink or rollback-phase error, got: {}",
+                    msg
+                );
+            }
+            other => panic!(
+                "expected validation error for symlink at rollback, got: {:?}",
+                other
+            ),
+        }
+    }
+
+    // =============================================================================
+    // Workdir Sandbox: Constructor and Enforcement Tests
+    // =============================================================================
+
+    #[tokio::test]
+    async fn test_workdir_sandbox_enforcement_via_constructor() {
+        // Test that workdir sandbox is enforced when set via constructor.
+        // We use a file OUTSIDE the workdir to test the escape detection.
+        let temp_dir = tempdir().unwrap();
+        let work_dir = temp_dir.path().join("work");
+        std::fs::create_dir(&work_dir).unwrap();
+
+        // Create a file in a DIFFERENT temp directory (outside workdir)
+        let outside_dir = tempdir().unwrap();
+        let outside_file = outside_dir.path().join("outside.txt");
+        std::fs::write(&outside_file, b"outside").unwrap();
+
+        // Path to file outside workdir
+        let outside_str = outside_file.display().to_string();
+
+        // Create adapter with workdir set to temp_dir (which contains 'work' subdir)
+        // The outside_file is in a completely different temp directory
+        let bounds = FsBoundsConfig {
+            allow_symlinks: false,
+            sandbox_to_workdir: true,
+            ..Default::default()
+        };
+        let adapter = FsAdapter::new_with_workdir("fs", bounds, temp_dir.path().to_path_buf());
+
+        let mut request = create_test_request(&outside_str);
+        request.action_type = ActionType::FileWrite;
+
+        // File outside workdir should be rejected because it escapes the sandbox
+        let result = adapter.prepare(&request).await;
+        assert!(
+            result.is_err(),
+            "prepare should reject file outside workdir"
+        );
+        match result.unwrap_err() {
+            AdapterError::Validation(msg) => {
+                assert!(
+                    msg.contains("escape") || msg.contains("workdir"),
+                    "Expected workdir escape error, got: {}",
+                    msg
+                );
+            }
+            other => panic!(
+                "expected validation error for workdir escape, got: {:?}",
+                other
+            ),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_workdir_with_symlink_escape_rejected() {
+        // Test that workdir sandbox catches symlink escape.
+        let temp_dir = tempdir().unwrap();
+        let work_dir = temp_dir.path().join("work");
+        let escape_dir = temp_dir.path().join("escape");
+        std::fs::create_dir(&work_dir).unwrap();
+        std::fs::create_dir(&escape_dir).unwrap();
+
+        // Create target file in escape directory
+        let target_file = escape_dir.join("secret.txt");
+        std::fs::write(&target_file, b"secret").unwrap();
+
+        // Create a symlink in work_dir pointing to escape directory
+        let symlink_path = work_dir.join("link");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&target_file, &symlink_path).unwrap();
+
+        #[cfg(not(unix))]
+        return; // Skip on non-Unix
+
+        let symlink_str = symlink_path.display().to_string();
+
+        // Create adapter with workdir set to temp_dir (which includes both work and escape)
+        // But the sandbox_to_workdir=true should catch the escape via symlink
+        let bounds = FsBoundsConfig {
+            allow_symlinks: false,
+            sandbox_to_workdir: true,
+            ..Default::default()
+        };
+        let adapter = FsAdapter::new_with_workdir("fs", bounds, temp_dir.path().to_path_buf());
+
+        let mut request = create_test_request(&symlink_str);
+        request.action_type = ActionType::FileWrite;
+
+        let result = adapter.prepare(&request).await;
+        assert!(result.is_err(), "prepare should reject symlink escape");
+        match result.unwrap_err() {
+            AdapterError::Validation(msg) => {
+                assert!(
+                    msg.contains("symlink") || msg.contains("escape"),
+                    "Expected symlink or escape error, got: {}",
+                    msg
+                );
+            }
+            other => panic!(
+                "expected validation error for symlink escape, got: {:?}",
+                other
+            ),
+        }
+    }
+
+    // =============================================================================
+    // FS Compensation Audit: Real-Undo Behavior Tests
+    // =============================================================================
+
+    #[tokio::test]
+    async fn test_compensation_audit_file_write_real_undo() {
+        // Audit test: FileWrite rollback actually restores original content.
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("audit_write.txt");
+        let file_path_str = file_path.display().to_string();
+        std::fs::write(&file_path, b"original content").unwrap();
+
+        let adapter = FsAdapter::new("fs");
+
+        // Prepare (captures snapshot)
+        let request = create_test_request(&file_path_str);
+        let prep_receipt = adapter.prepare(&request).await.unwrap();
+
+        // Execute with new content
+        let contract = RollbackContract {
+            contract_id: RollbackContractId::new(),
+            intent_id: IntentId::new(),
+            proposal_id: ProposalId::new(),
+            execution_id: request.execution_id,
+            action_type: ActionType::FileWrite,
+            rollback_class: ferrum_proto::RollbackClass::R1SnapshotRecoverable,
+            adapter_key: "fs".to_string(),
+            target: RollbackTarget::FilePath {
+                path: file_path_str.clone(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: prep_receipt.adapter_metadata,
+        };
+
+        adapter
+            .execute(&contract, &serde_json::json!("new content"))
+            .await
+            .unwrap();
+
+        assert_eq!(std::fs::read(&file_path).unwrap(), b"new content");
+
+        // Compensate should restore original content
+        let compensate_receipt = adapter.compensate(&contract).await.unwrap();
+        assert!(compensate_receipt.recovered);
+        assert_eq!(
+            std::fs::read(&file_path).unwrap(),
+            b"original content",
+            "FileWrite compensate should restore original content"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_compensation_audit_file_delete_real_undo() {
+        // Audit test: FileDelete rollback actually restores deleted file.
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("audit_delete.txt");
+        let file_path_str = file_path.display().to_string();
+        std::fs::write(&file_path, b"content to delete").unwrap();
+
+        let adapter = FsAdapter::new("fs");
+
+        // Prepare
+        let request = RollbackPrepareRequest {
+            intent_id: IntentId::new(),
+            proposal_id: ProposalId::new(),
+            execution_id: ExecutionId::new(),
+            action_type: ActionType::FileDelete,
+            rollback_class: ferrum_proto::RollbackClass::R1SnapshotRecoverable,
+            adapter_key: "fs".to_string(),
+            target: RollbackTarget::FilePath {
+                path: file_path_str.clone(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            metadata: JsonMap::new(),
+        };
+        let prep_receipt = adapter.prepare(&request).await.unwrap();
+
+        let contract = RollbackContract {
+            contract_id: RollbackContractId::new(),
+            intent_id: IntentId::new(),
+            proposal_id: ProposalId::new(),
+            execution_id: request.execution_id,
+            action_type: ActionType::FileDelete,
+            rollback_class: ferrum_proto::RollbackClass::R1SnapshotRecoverable,
+            adapter_key: "fs".to_string(),
+            target: RollbackTarget::FilePath {
+                path: file_path_str.clone(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: prep_receipt.adapter_metadata,
+        };
+
+        // Execute deletes the file
+        adapter
+            .execute(&contract, &serde_json::json!({}))
+            .await
+            .unwrap();
+        assert!(!file_path.exists(), "File should be deleted after execute");
+
+        // Compensate should restore the file
+        let compensate_receipt = adapter.compensate(&contract).await.unwrap();
+        assert!(compensate_receipt.recovered);
+        assert!(
+            file_path.exists(),
+            "FileDelete compensate should restore file"
+        );
+        assert_eq!(
+            std::fs::read(&file_path).unwrap(),
+            b"content to delete",
+            "FileDelete compensate should restore original content"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_compensation_audit_file_move_real_undo() {
+        // Audit test: FileMove rollback actually moves destination back to source.
+        let temp_dir = tempdir().unwrap();
+        let source_file = temp_dir.path().join("source.txt");
+        let dest_file = temp_dir.path().join("dest.txt");
+        let source_str = source_file.display().to_string();
+        let dest_str = dest_file.display().to_string();
+        std::fs::write(&source_file, b"content to move").unwrap();
+
+        let adapter = FsAdapter::new("fs");
+
+        // Prepare
+        let request = RollbackPrepareRequest {
+            intent_id: IntentId::new(),
+            proposal_id: ProposalId::new(),
+            execution_id: ExecutionId::new(),
+            action_type: ActionType::FileMove,
+            rollback_class: ferrum_proto::RollbackClass::R1SnapshotRecoverable,
+            adapter_key: "fs".to_string(),
+            target: RollbackTarget::FilePath {
+                path: source_str.clone(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            metadata: JsonMap::new(),
+        };
+        let prep_receipt = adapter.prepare(&request).await.unwrap();
+
+        let mut meta = prep_receipt.adapter_metadata;
+        meta.insert(
+            "destination_path".to_string(),
+            serde_json::Value::String(dest_str.clone()),
+        );
+
+        let contract = RollbackContract {
+            contract_id: RollbackContractId::new(),
+            intent_id: IntentId::new(),
+            proposal_id: ProposalId::new(),
+            execution_id: request.execution_id,
+            action_type: ActionType::FileMove,
+            rollback_class: ferrum_proto::RollbackClass::R1SnapshotRecoverable,
+            adapter_key: "fs".to_string(),
+            target: RollbackTarget::FilePath {
+                path: source_str.clone(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: meta,
+        };
+
+        // Execute moves the file
+        adapter
+            .execute(&contract, &serde_json::json!({ "destination": &dest_str }))
+            .await
+            .unwrap();
+        assert!(!source_file.exists(), "Source should be moved");
+        assert!(dest_file.exists(), "Destination should exist");
+
+        // Compensate should move the file back
+        let compensate_receipt = adapter.compensate(&contract).await.unwrap();
+        assert!(compensate_receipt.recovered);
+        assert!(
+            source_file.exists(),
+            "Source should be restored after compensate"
+        );
+        assert!(
+            !dest_file.exists(),
+            "Destination should be removed after compensate"
+        );
+        assert_eq!(
+            std::fs::read(&source_file).unwrap(),
+            b"content to move",
+            "FileMove compensate should restore original content"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_compensation_audit_file_copy_real_undo() {
+        // Audit test: FileCopy rollback of new destination deletes it (idempotent).
+        let temp_dir = tempdir().unwrap();
+        let source_file = temp_dir.path().join("source.txt");
+        let dest_file = temp_dir.path().join("dest.txt");
+        let source_str = source_file.display().to_string();
+        let dest_str = dest_file.display().to_string();
+        std::fs::write(&source_file, b"source content").unwrap();
+
+        let adapter = FsAdapter::new("fs");
+
+        // Prepare
+        let request = RollbackPrepareRequest {
+            intent_id: IntentId::new(),
+            proposal_id: ProposalId::new(),
+            execution_id: ExecutionId::new(),
+            action_type: ActionType::FileCopy,
+            rollback_class: ferrum_proto::RollbackClass::R1SnapshotRecoverable,
+            adapter_key: "fs".to_string(),
+            target: RollbackTarget::FilePath {
+                path: source_str.clone(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            metadata: JsonMap::new(),
+        };
+        let prep_receipt = adapter.prepare(&request).await.unwrap();
+
+        let mut meta = prep_receipt.adapter_metadata;
+        meta.insert(
+            "destination_path".to_string(),
+            serde_json::Value::String(dest_str.clone()),
+        );
+
+        let contract = RollbackContract {
+            contract_id: RollbackContractId::new(),
+            intent_id: IntentId::new(),
+            proposal_id: ProposalId::new(),
+            execution_id: request.execution_id,
+            action_type: ActionType::FileCopy,
+            rollback_class: ferrum_proto::RollbackClass::R1SnapshotRecoverable,
+            adapter_key: "fs".to_string(),
+            target: RollbackTarget::FilePath {
+                path: source_str.clone(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: meta,
+        };
+
+        // Execute copies the file
+        adapter
+            .execute(&contract, &serde_json::json!({ "destination": &dest_str }))
+            .await
+            .unwrap();
+        assert!(source_file.exists(), "Source should still exist");
+        assert!(dest_file.exists(), "Destination should exist after copy");
+
+        // Compensate should delete the new destination (since it was new)
+        let compensate_receipt = adapter.compensate(&contract).await.unwrap();
+        assert!(compensate_receipt.recovered);
+        assert!(
+            source_file.exists(),
+            "Source should still exist after compensate"
+        );
+        assert!(
+            !dest_file.exists(),
+            "New destination should be deleted after compensate"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_compensation_audit_file_append_real_undo() {
+        // Audit test: FileAppend rollback truncates to original length.
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("audit_append.txt");
+        let file_path_str = file_path.display().to_string();
+        std::fs::write(&file_path, b"original").unwrap();
+
+        let adapter = FsAdapter::new("fs");
+
+        // Prepare
+        let request = RollbackPrepareRequest {
+            intent_id: IntentId::new(),
+            proposal_id: ProposalId::new(),
+            execution_id: ExecutionId::new(),
+            action_type: ActionType::FileAppend,
+            rollback_class: ferrum_proto::RollbackClass::R1SnapshotRecoverable,
+            adapter_key: "fs".to_string(),
+            target: RollbackTarget::FilePath {
+                path: file_path_str.clone(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            metadata: JsonMap::new(),
+        };
+        let prep_receipt = adapter.prepare(&request).await.unwrap();
+
+        let contract = RollbackContract {
+            contract_id: RollbackContractId::new(),
+            intent_id: IntentId::new(),
+            proposal_id: ProposalId::new(),
+            execution_id: request.execution_id,
+            action_type: ActionType::FileAppend,
+            rollback_class: ferrum_proto::RollbackClass::R1SnapshotRecoverable,
+            adapter_key: "fs".to_string(),
+            target: RollbackTarget::FilePath {
+                path: file_path_str.clone(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: prep_receipt.adapter_metadata,
+        };
+
+        // Execute appends data
+        adapter
+            .execute(&contract, &serde_json::json!(" appended"))
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read(&file_path).unwrap(), b"original appended");
+
+        // Compensate should truncate to original length
+        let compensate_receipt = adapter.compensate(&contract).await.unwrap();
+        assert!(compensate_receipt.recovered);
+        assert_eq!(
+            std::fs::read(&file_path).unwrap(),
+            b"original",
+            "FileAppend compensate should restore original content"
         );
     }
 }
