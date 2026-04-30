@@ -442,6 +442,7 @@ Complete steps in order. Do not mark complete on behalf of the operator.
 | This doc | [`58-workload-compensation-drill-evidence-template.md`](./58-workload-compensation-drill-evidence-template.md) | D1–D6 drill template |
 | This doc | [`59-pilot-readiness-evidence-packet.md`](./59-pilot-readiness-evidence-packet.md) | G2.1–G2.8 evidence packet |
 | This doc | [`60-bounded-hardening-examples.md`](./60-bounded-hardening-examples.md) | Bounded hardening examples |
+| This doc | [`62-path-2-operator-runbook.md`](./62-path-2-operator-runbook.md) | Operator runbook with exact command sequences |
 | This doc | [`18-single-node-operations-runbook.md`](../ferrumgate-roadmap-v1/18-single-node-operations-runbook.md) | Backup/restore procedures |
 | This doc | [`50-p4-postgres-store-facade-adr.md`](./50-p4-postgres-store-facade-adr.md) | Phase 3 PostgreSQL plan |
 | This doc | [`55-phase-3-go-no-go-review.md`](./55-phase-3-go-no-go-review.md) | Phase 3 go/no-go gates |
