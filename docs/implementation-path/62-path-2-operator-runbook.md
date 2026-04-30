@@ -25,6 +25,8 @@ complete on behalf of the operator.
 |-------|----------|---------|
 | Execution plan | [`61-path-2-execution-plan.md`](./61-path-2-execution-plan.md) | Ordered checklist and dependencies |
 | **This runbook** | **62-path-2-operator-runbook.md** | **Exact operator command sequences** |
+| Target environment spec | [`63-path-2-target-environment-spec.md`](./63-path-2-target-environment-spec.md) | Target environment spec template (Option 2) |
+| Local simulation | [`64-local-staging-simulation-guide.md`](./64-local-staging-simulation-guide.md) | Local staging simulation guide (Option 3) |
 | Drill template | [`58-workload-compensation-drill-evidence-template.md`](./58-workload-compensation-drill-evidence-template.md) | D1–D6 evidence capture |
 | Readiness evidence | [`59-pilot-readiness-evidence-packet.md`](./59-pilot-readiness-evidence-packet.md) | G2.1–G2.8 evidence packet |
 | Signoff packet | [`54-operator-signoff-packet.md`](./54-operator-signoff-packet.md) | Operator signoff form |
@@ -107,17 +109,19 @@ FerrumGate ships two example configs:
 
 | File | Purpose | Auth |
 |------|---------|------|
-| `configs/ferrumgate.dev.toml` | Development (auth disabled, in-memory SQLite) | Disabled |
-| `configs/ferrumgate.prod.toml` | Production (bearer auth required) | Bearer |
+| `configs/ferrumgate.dev.toml` | Development/local simulation (auth disabled, in-memory SQLite) | Disabled |
+| `configs/examples/nonprod-ferrumgate.toml` | Path 2 non-prod target template (bearer auth, file SQLite) | Bearer |
+| `configs/ferrumgate.prod.toml` | Production baseline (bearer auth required) | Bearer |
 
-**For Option B non-prod**: Use `ferrumgate.prod.toml` as base (bearer auth enabled) but
-deploy in non-prod network zone.
+**For Option B / Option 2 non-prod**: Prefer `configs/examples/nonprod-ferrumgate.toml`
+as the starting template. Use `configs/ferrumgate.prod.toml` only when intentionally mirroring
+production posture.
 
 ### 1.2 Config Adaptation Commands
 
 ```bash
 # 1. Copy production template to working location
-cp configs/ferrumgate.prod.toml /path/to/<non-prod-url>-ferrumgate.toml
+cp configs/examples/nonprod-ferrumgate.toml /path/to/<non-prod-url>-ferrumgate.toml
 
 # 2. Review and update bind address (use non-prod host)
 #    NOTE: Do NOT hardcode bearer tokens; use env var or config placeholder

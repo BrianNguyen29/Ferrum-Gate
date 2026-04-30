@@ -1,0 +1,47 @@
+# FerrumGate non-production configuration example
+# Use with: ferrumd --config configs/examples/nonprod-ferrumgate.toml
+# Adapt all paths, hostnames, and tokens before deploying to a non-prod host.
+
+[server]
+# Bind address for the HTTP server
+# Use the non-prod host address or 127.0.0.1 for local-only
+bind_addr = "127.0.0.1:8080"
+
+# Store data source name (DSN)
+# NOTE: PostgreSQL and MySQL are NOT implemented. See ADR-50.
+# Examples:
+#   sqlite://nonprod-ferrumgate.db - file-based SQLite in current directory
+#   sqlite:///var/lib/ferrumgate/nonprod-ferrumgate.db - absolute path
+store_dsn = "sqlite:///var/lib/ferrumgate/nonprod-ferrumgate.db"
+
+# Authentication mode: "disabled" or "bearer"
+# WARNING: Never use "disabled" with a non-loopback bind address in non-prod
+# Non-prod environments should use bearer auth to match production configuration
+auth_mode = "bearer"
+
+# Bearer token for authentication (required when auth_mode is "bearer")
+# IMPORTANT: Generate a secure token for non-prod use
+# Generate with: openssl rand -hex 32
+# WARNING: Do not commit real tokens to version control
+# Use environment variable FERRUMD_BEARER_TOKEN instead of hardcoding
+bearer_token = ""  # Set via FERRUMD_BEARER_TOKEN env var
+
+# Allow binding to non-loopback addresses when auth is disabled.
+# DANGEROUS: Only enable for development/local testing with auth disabled.
+# In non-prod with auth enabled, this can remain false.
+allow_insecure_nonlocal_bind = false
+
+# Log filter (info, debug, warn, error)
+log_filter = "info"
+
+# Store synchronous mode (EXTRA_NOSYNC, NORMAL, OFF)
+# NORMAL is recommended for non-prod; provides durability without full sync overhead
+store_synchronous = "NORMAL"
+
+# Store WAL autocheckpoint (default 1000 pages)
+# Reduce for more frequent checkpoints during testing
+# store_wal_autocheckpoint = 1000
+
+# Store busy timeout in milliseconds (default 5000)
+# Adjust based on expected concurrency
+# store_busy_timeout = 5000

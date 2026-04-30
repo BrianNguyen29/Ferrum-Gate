@@ -609,6 +609,7 @@ Operator signature: _________________ Date: _________
 | `58-workload-compensation-drill-evidence-template.md` | `54-operator-signoff-packet.md` | G2 gate context |
 | `58-workload-compensation-drill-evidence-template.md` | `59-pilot-readiness-evidence-packet.md` | G2.1–G2.8 evidence packet |
 | `58-workload-compensation-drill-evidence-template.md` | `60-bounded-hardening-examples.md` | Bounded hardening examples |
+| `58-workload-compensation-drill-evidence-template.md` | `64-local-staging-simulation-guide.md` | Local D1–D6 drill practice (bridging to target evidence) |
 
 ---
 

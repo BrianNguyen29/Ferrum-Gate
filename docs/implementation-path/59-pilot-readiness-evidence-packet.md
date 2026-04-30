@@ -436,6 +436,8 @@ All G2.1–G2.8 gates above require operator signoff. Once all eight gates are s
 | `59-pilot-readiness-evidence-packet.md` | `57-workload-compensation-drill-plan.md` | Drill procedures |
 | `59-pilot-readiness-evidence-packet.md` | `58-workload-compensation-drill-evidence-template.md` | Drill evidence template |
 | `59-pilot-readiness-evidence-packet.md` | `60-bounded-hardening-examples.md` | Bounded hardening examples |
+| `59-pilot-readiness-evidence-packet.md` | `63-path-2-target-environment-spec.md` | Target environment spec (bridging from local simulation) |
+| `59-pilot-readiness-evidence-packet.md` | `64-local-staging-simulation-guide.md` | Local simulation guide (bridging to target) |
 | `59-pilot-readiness-evidence-packet.md` | `19-v1-single-node-support-contract.md` | Accepted risks |
 | `59-pilot-readiness-evidence-packet.md` | `26-EV-v1-single-node-invariant-control-test-evidence-matrix.md` | Weak Spots |
 | `59-pilot-readiness-evidence-packet.md` | `23-production-readiness-assessment.md` | RC-ready declaration |
