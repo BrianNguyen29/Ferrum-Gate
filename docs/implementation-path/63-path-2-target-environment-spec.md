@@ -7,6 +7,21 @@
 
 ---
 
+## Field Provenance Markers
+
+Each field in this document carries one of three provenance markers indicating who provides the value:
+
+| Marker | Meaning | When Filled |
+|--------|---------|-------------|
+| **PROVIDE** | Operator supplies from their infrastructure | Before deployment |
+| **OPERATOR-GENERATED** | Operator generates via command | Before deployment |
+| **DERIVED DURING DEPLOY** | Produced by a deployment command; recorded here | During/after deployment |
+
+**Real secrets** (tokens, credentials) must be generated out-of-band. Use safe placeholders in documentation.
+Do NOT store real values in this spec.
+
+---
+
 ## Purpose
 
 This document provides a fillable template for capturing the target non-prod or production-like
