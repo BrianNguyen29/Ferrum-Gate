@@ -10,6 +10,8 @@
 ## Local Staging-Like Evidence Prefill (Not Operator-Signed)
 
 > **Operator review required**: This section summarizes local staging-like evidence captured on 2026-04-29. It is a prefill aid only. It does **not** complete G2, does **not** authorize a production pilot, and does **not** replace operator-run drills in the target environment.
+>
+> **Automated Drill Runner**: `python3 scripts/run_d1_d6_drills.py` automates local D1–D6 evidence collection via bounded adapter-level cargo tests. It outputs evidence to `/tmp/ferrum-drill-evidence/` by default with markdown and JSON summaries. The runner labels all evidence as "local/test-drill" and does not complete any G2 gate.
 
 ### Run Context
 

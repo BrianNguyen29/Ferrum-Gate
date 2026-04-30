@@ -297,6 +297,26 @@ This plan supplements `56-adapter-compensation-evidence-matrix.md` with actionab
 
 ## Running the Drill Plan
 
+### Optional Automated Runner
+
+Operators may use the automated drill runner to execute D1–D6 evidence commands locally:
+
+```bash
+# Run all D1–D6 drills (bounded adapter-level tests)
+python3 scripts/run_d1_d6_drills.py
+
+# Skip cargo tests, use with --server-url for smoke only
+python3 scripts/run_d1_d6_drills.py --skip-cargo --server-url http://127.0.0.1:8080
+
+# Custom output directory
+python3 scripts/run_d1_d6_drills.py --output-dir /tmp/my-drill-evidence
+
+# Dry-run to see what would be executed
+python3 scripts/run_d1_d6_drills.py --dry-run
+```
+
+> **Important**: The automated runner executes adapter-level cargo tests as evidence commands. It does NOT complete G2, does NOT require a live ferrumd server (unless `--server-url` is provided), and does NOT replace operator-executed end-to-end drills in the target environment. Operator review per docs 58/59 is still required.
+
 ### Prerequisites
 - Isolated test environment (not production)
 - Access to FerrumGate server logs

@@ -103,6 +103,7 @@ Operator / site reliability / deployment authority.
 - `26-EV-v1-single-node-invariant-control-test-evidence-matrix.md` — Weak Spots 1–4 resolved
 - `23-production-readiness-assessment.md` — RC-ready declaration
 - `25-EV-v1-single-node-rc-evidence.md` — evidence record
+- `61-path-2-execution-plan.md` — ordered Path 2 execution plan: D1–D6 runner, restore drill, backup scheduler, TLS/reverse proxy, Phase 3 decision gate
 
 ### Workload-fit review checklist
 - [ ] Confirm expected sustained write rate ≤300 writes/s

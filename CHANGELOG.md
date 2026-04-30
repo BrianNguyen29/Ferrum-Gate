@@ -21,6 +21,9 @@ Added operator evidence/templates and bounded helper scripts (no release tag cha
 - `60-bounded-hardening-examples.md` — Bounded hardening drill examples
 - `scripts/check_pilot_readiness.py` — Optional readiness/metrics probe prefill helper
 - `scripts/generate_evidence_skeleton.py` — Optional command-output-to-markdown evidence skeleton helper
+- `scripts/run_d1_d6_drills.py` — Automated D1–D6 local evidence drill runner (bounded adapter-level tests, local/test-drill only, operator review required)
+- `docs/implementation-path/61-path-2-execution-plan.md` — Ordered Path 2 execution plan/checklist before any Phase 3 decision
+- `configs/examples/*` — Operator-owned examples for backup scheduling and nginx TLS reverse proxy
 
 > **Note**: These are post-RC operator aids. No G2 gate is completed by these documents/scripts. No production deployment claim is made. RC tag `v0.1.0-rc.1` remains at target commit `5fce844d2850be45268db37544f17dd4dba988a9`.
 

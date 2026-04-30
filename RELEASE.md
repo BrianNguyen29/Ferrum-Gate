@@ -147,6 +147,9 @@ See `docs/implementation-path/31-release-paths-todo.md` §Path 1 for rollback/ab
 | `docs/implementation-path/60-bounded-hardening-examples.md` | Bounded hardening drill examples (post-RC docs/operator-aid) |
 | `scripts/check_pilot_readiness.py` | Optional Path 2 readiness/metrics probe prefill helper (post-RC operator-aid) |
 | `scripts/generate_evidence_skeleton.py` | Optional command-output-to-markdown evidence skeleton helper (post-RC operator-aid) |
+| `scripts/run_d1_d6_drills.py` | Automated D1–D6 local evidence drill runner, bounded adapter-level tests (post-RC operator-aid) |
+| `docs/implementation-path/61-path-2-execution-plan.md` | Ordered Path 2 execution checklist before Phase 3 decision (post-RC operator-aid) |
+| `configs/examples/*` | Example backup scheduler and TLS reverse proxy configs for operator adaptation |
 
 > **Note (2026-04-29)**: Docs 56–60 and helper scripts are post-RC operator aids. They do not alter the `v0.1.0-rc.1` release tag, do not claim production readiness, and do not complete any G2 gate on behalf of the operator.
 

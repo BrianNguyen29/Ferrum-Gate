@@ -10,6 +10,8 @@
 ## Local Staging-Like Readiness Prefill (Pending Operator Review/Signoff)
 
 > **Operator review required**: This section summarizes local smoke evidence captured on 2026-04-29. It does **not** complete G2 and does **not** authorize production pilot deployment. All G2 items remain pending operator signoff.
+>
+> **Automated Drill Runner**: `python3 scripts/run_d1_d6_drills.py` automates local D1–D6 evidence collection. Run with `--server-url http://127.0.0.1:8080` to include optional server smoke probes. Output is labeled "local/test-drill" and requires operator review per docs 58/59.
 
 ### Local Smoke Summary
 
@@ -178,6 +180,25 @@ backup:
 Operator signature: _________________ Date: _________
 
 ---
+
+
+### Local Non-Prod Restore Drill Prefill (Pending Operator Review)
+
+> **Operator review required**: This local restore drill used temporary SQLite files under `/tmp/ferrum-restore-drill`. It demonstrates the backup/restore workflow but does **not** complete G2.4 for a target deployment.
+
+| Step | Evidence | Status |
+|------|----------|--------|
+| Backup create | `ferrumctl backup create --db-path /tmp/ferrum-restore-drill/source.db --output-dir /tmp/ferrum-restore-drill/backups` | PASS |
+| Backup verify | `ferrumctl backup verify --db-path <backup>` returned `OK` | PASS |
+| Restore with confirm | `ferrumctl backup restore --db-path /tmp/ferrum-restore-drill/target.db --from <backup> --confirm` | PASS |
+| Exclusive lock precheck | Restore reported `Exclusive lock check passed` | PASS |
+| Pre-restore copy | Restore saved `/tmp/ferrum-restore-drill/target.db.pre_restore` | PASS |
+| Restored DB verify | `ferrumctl backup verify --db-path /tmp/ferrum-restore-drill/target.db` returned `OK` | PASS |
+| Data verification | Query returned `backup-source` after restore | PASS |
+
+**Raw evidence log**: `/tmp/ferrum-restore-drill/restore-drill.log`
+
+**Boundary**: Target-environment restore drill remains operator-owned before G2.4 signoff.
 
 ## G2.4 — Restore Drill Evidence
 

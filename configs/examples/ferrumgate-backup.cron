@@ -1,0 +1,7 @@
+# FerrumGate SQLite backup cron example
+# Review paths/user before installing. Operator-owned; not managed by FerrumGate.
+SHELL=/bin/bash
+PATH=/usr/local/bin:/usr/bin:/bin
+
+# Daily backup at 02:00, keep 7 days via ferrumctl retention pruning.
+0 2 * * * ferrumgate /usr/local/bin/ferrumctl backup create --db-path /var/lib/ferrumgate/ferrumgate.db --output-dir /var/backups/ferrumgate --retention-days 7 && /usr/bin/find /var/backups/ferrumgate -name "ferrumgate_*.db" -type f -mtime +7 -delete

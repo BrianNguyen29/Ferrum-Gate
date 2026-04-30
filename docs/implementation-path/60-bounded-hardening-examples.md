@@ -526,6 +526,29 @@ The following appear in some documentation examples but are **not currently impl
 
 Operators can use `scripts/generate_evidence_skeleton.py` to convert captured command output into markdown sections for D1-D6 compensation drill evidence and G2 pilot readiness evidence. The helper is a **prefill aid only**: it does not complete evidence, does not sign G2, and does not authorize a production pilot.
 
+### Automated Drill Runner
+
+The `scripts/run_d1_d6_drills.py` script automates local D1–D6 evidence collection:
+
+```bash
+# Run all D1–D6 drills (bounded adapter-level cargo tests)
+python3 scripts/run_d1_d6_drills.py
+
+# With optional server smoke
+python3 scripts/run_d1_d6_drills.py --server-url http://127.0.0.1:8080
+
+# Skip cargo tests (JSON/MD output only)
+python3 scripts/run_d1_d6_drills.py --skip-cargo --json-out --markdown-out
+```
+
+Output is written to `/tmp/ferrum-drill-evidence/` by default and includes:
+- `drill_summary.md` — markdown summary with disclaimer
+- `drill_summary.json` — JSON summary with drill results
+- `<drill>_test_output.txt` — raw test command output
+- `d1-d6_evidence_skeleton.md` — evidence skeleton (calls `generate_evidence_skeleton.py`)
+
+> **Important**: The runner does NOT complete G2/operator signoff. All evidence requires operator review and explicit signoff per docs/implementation-path/59-pilot-readiness-evidence-packet.md.
+
 ### Usage
 
 ```bash
