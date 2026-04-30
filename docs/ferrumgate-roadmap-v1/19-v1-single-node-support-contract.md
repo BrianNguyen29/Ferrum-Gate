@@ -76,8 +76,8 @@ The following are explicitly out of scope for FerrumGate v1 single-node:
 
 ### 2.2 Adapter-backed integrations
 
-- Real adapter implementations: `ferrum-adapter-fs`, `ferrum-adapter-sqlite`, `ferrum-adapter-maildraft`, `ferrum-adapter-git`, `ferrum-adapter-http`.
-  These are skeleton crate/API shapes only; no production-verified side-effect integrations exist in v1.
+- Adapter implementations: `ferrum-adapter-fs`, `ferrum-adapter-sqlite`, `ferrum-adapter-maildraft`, `ferrum-adapter-git`, `ferrum-adapter-http`.
+  Verified local slices exist for all five adapters (fs: 146 tests, git: 86 tests, http: 103 tests, sqlite: 16 tests, maildraft: 16 tests). These are not production-verified integrations and remain outside the v1 support contract; compensate may be noop-backed for adapter-backed operations.
 - Guaranteed external undo via adapter. Compensate may be noop-backed.
 
 ### 2.3 Routes not in v1 router

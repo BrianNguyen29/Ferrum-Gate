@@ -135,7 +135,7 @@ Current partial adapter progress already verified in local package-scoped checks
 |---|---|
 | ✅ Verified local slices | ferrum-proto, ferrum-gateway, ferrum-store, ferrum-pdp, ferrum-cap, ferrum-rollback, ferrum-adapter-fs (146 tests), ferrum-adapter-sqlite (16 tests), ferrum-adapter-git (86 tests), ferrum-adapter-http (103 tests) |
 | 🟡 Partial | ferrum-sync (65 tests, infrastructure + preflight) |
-| ✅ Tier 2 | ferrum-firewall (21 tests, TaintScoringFirewall with taint scoring, contradiction detection, sanitizer), ferrum-graph (10 tests, HashMap adjacency indexing + BFS traversal), ferrum-ledger (13 tests, SHA-256 hash chain with integrity verification), ferrum-adapter-maildraft (13 tests, create/update/delete lifecycle) |
+| ✅ Tier 2 | ferrum-firewall (21 tests, TaintScoringFirewall with taint scoring, contradiction detection, sanitizer), ferrum-graph (10 tests, HashMap adjacency indexing + BFS traversal), ferrum-ledger (13 tests, SHA-256 hash chain with integrity verification), ferrum-adapter-maildraft (16 tests, create/update/delete lifecycle) |
 
 ### Recommended completion order (bounded slices)
 
@@ -183,6 +183,6 @@ Each slice is designed to be completable in a single session with local verifica
 ### Estimated effort to complete Tier 1+2
 
 - **Tier 1** (5 slices, 4 done, 1 in progress): ✅ DONE — 33 new tests added (GitBranchDelete +7, FileChmod +8, PUT/PATCH +10, SQLite transaction rollback +8), all passing; G-E1 SQLite hardening slice in progress (+2 tests)
-- **Tier 2** (4 slices): ✅ DONE — current coverage includes ferrum-ledger 13, ferrum-firewall 21, ferrum-graph 10, ferrum-adapter-maildraft 13; all passing
+- **Tier 2** (4 slices): ✅ DONE — current coverage includes ferrum-ledger 13, ferrum-firewall 21, ferrum-graph 10, ferrum-adapter-maildraft 16; all passing
 - **Total projected**: historical estimate superseded by fresh P6 validation
 - **After Tier 1+2+3+U1-U4**: All 19 crates have real implementations with test coverage; observed workspace total is ~797 tests in fresh feature-completeness validation

@@ -59,9 +59,9 @@ FerrumGate v1 Supported scope:
 
 > **⚠️ Note**: As of P6/P7 validation, verified local slices exist for all five adapter crates. The characterization below as "skeleton (no real implementation)" is stale. See `docs/implementation-path/01-current-state.md` for current adapter test counts and verified surface areas.
 
-- `ferrum-adapter-fs` — filesystem adapter (verified local slice: 135 tests)
+- `ferrum-adapter-fs` — filesystem adapter (verified local slice: 146 tests)
 - `ferrum-adapter-sqlite` — SQLite adapter (verified local slice: 16 tests)
-- `ferrum-adapter-maildraft` — maildraft adapter (verified local slice: 13 tests)
+- `ferrum-adapter-maildraft` — maildraft adapter (verified local slice: 16 tests)
 - `ferrum-adapter-git` — git adapter (verified local slice: 86 tests)
 - `ferrum-adapter-http` — HTTP adapter (verified local slice: 103 tests)
 

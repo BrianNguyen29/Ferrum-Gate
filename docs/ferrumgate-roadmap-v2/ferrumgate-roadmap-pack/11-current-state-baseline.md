@@ -1,6 +1,6 @@
 # 11 — Current-state baseline
 
-> **⚠️ Historical / Snapshot**: This document was a P6/P7-era snapshot reference. Some content may now be stale (e.g., adapter "skeleton/partial" descriptions, test counts). For current state, see `docs/implementation-path/01-current-state.md` which is maintained with the latest phase status and test coverage matrix.
+> **⚠️ Historical / Snapshot**: This document was a P6/P7-era snapshot reference. Some surrounding roadmap-pack content may now be stale (for example, older adapter descriptions or test counts). For current state, see `docs/implementation-path/01-current-state.md` which is maintained with the latest phase status and test coverage matrix.
 >
 > **For current support scope**: Always refer to `19-v1-single-node-support-contract.md` — the only authoritative v1 boundary document.
 
@@ -31,11 +31,11 @@ crates/ferrum-firewall   — trust and taint enforcement
 crates/ferrum-store      — persistence layer (SQLite)
 crates/ferrum-graph      — provenance and lineage query helpers
 crates/ferrum-ledger    — append-only audit trail
-crates/ferrum-adapter-fs       — filesystem adapter (skeleton/partial)
-crates/ferrum-adapter-git      — git adapter (skeleton/partial)
-crates/ferrum-adapter-sqlite   — SQLite adapter (skeleton/partial)
-crates/ferrum-adapter-http     — HTTP adapter (skeleton/partial)
-crates/ferrum-adapter-maildraft — maildraft adapter (skeleton/partial)
+crates/ferrum-adapter-fs       — filesystem adapter (verified local slice: 146 tests)
+crates/ferrum-adapter-git      — git adapter (verified local slice: 86 tests)
+crates/ferrum-adapter-sqlite   — SQLite adapter (verified local slice: 16 tests)
+crates/ferrum-adapter-http     — HTTP adapter (verified local slice: 103 tests)
+crates/ferrum-adapter-maildraft — maildraft adapter (verified local slice: 16 tests)
 crates/ferrum-testkit    — test utilities
 crates/ferrum-integration-tests — integration test suite
 crates/ferrum-sync       — synchronization utilities
@@ -113,11 +113,11 @@ post-v1 scope.
 
 | Adapter | Status | Notes |
 |---|---|---|
-| `ferrum-adapter-fs` | Skeleton/partial | Out of v1 scope per support contract |
-| `ferrum-adapter-git` | Skeleton/partial | Out of v1 scope per support contract |
-| `ferrum-adapter-sqlite` | Skeleton/partial | Out of v1 scope per support contract |
-| `ferrum-adapter-http` | Skeleton/partial | Out of v1 scope per support contract |
-| `ferrum-adapter-maildraft` | Skeleton/partial | Out of v1 scope per support contract |
+| `ferrum-adapter-fs` | Verified local slice (146 tests) | Out of v1 scope per support contract |
+| `ferrum-adapter-git` | Verified local slice (86 tests) | Out of v1 scope per support contract |
+| `ferrum-adapter-sqlite` | Verified local slice (16 tests) | Out of v1 scope per support contract |
+| `ferrum-adapter-http` | Verified local slice (103 tests) | Out of v1 scope per support contract |
+| `ferrum-adapter-maildraft` | Verified local slice (16 tests) | Out of v1 scope per support contract |
 
 The existence of adapter crate code in the repo does not expand v1 scope.
 The v1 support contract is the only authoritative boundary.
@@ -175,7 +175,7 @@ These are not v1 defects; they are future work tracks.
 - **No operator UI in v1** — operator UI is post-v1 scope
 - **No postgres in v1** — postgres support is Q3 post-v1 scope
 - **No commit/rollback routes** — v1 router terminates at compensate; commit/rollback routes not exposed
-- **All adapters are skeleton/partial** — real adapter implementations are post-v1 scope; compensate may be noop-backed
+- **Adapters have verified local slices** — broader production-verified adapter integrations remain post-v1 scope; compensate may be noop-backed
 - **Mutating CLI commands are post-v1** — all `ferrumctl` mutating operations are out of v1 scope
 - **The repo may contain code beyond the v1 support baseline** — adapter crate shapes, non-v1 routes, CLI commands marked post-v1. This code does not expand the v1 support contract.
 

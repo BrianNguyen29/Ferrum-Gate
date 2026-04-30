@@ -61,7 +61,7 @@ Source: `crates/ferrum-integration-tests/src/integration_gateway_flow.rs`,
 `tests/integration_lineage_chain.rs`.
 
 **P6 Fresh test counts** (2026-04-28 `cargo test --workspace`):
-- adapter-fs: 135 | adapter-git: 86 | adapter-http: 103 | adapter-maildraft: 13
+- adapter-fs: 146 | adapter-git: 86 | adapter-http: 103 | adapter-sqlite: 16 | adapter-maildraft: 16
 - adapter-sqlite: 16 | ferrum-cap: 4 | ferrum-firewall: 21 | ferrum-gateway: 41
 - integration tests: 82 total = contracts(2) + fs-roundtrip(7) + gateway-flow(65) + lineage-chain(8)
 - ferrumctl: 35 | ferrumd: 6 | ferrum-store: 60 | ferrum-sync: 65 | invalid_transitions: 22

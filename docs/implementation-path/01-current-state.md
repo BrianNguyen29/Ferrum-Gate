@@ -64,7 +64,7 @@ Current verified slices are green: `ferrum-adapter-fs` (146 tests, FileWrite/Fil
 - **Phase A** (compile/shape stability): DONE
 - **Phase B** (SQLite storage boundary): DONE
 - **Phase C** (firewall MVP): DONE — logic exists, curated regression fixtures implemented (6 tests)
-- **Phase D** (adapters): PARTIAL — fs has verified local slices (135 tests: FileWrite/FileDelete/FileMove/FileCopy/DirCreate/DirDelete/FileAppend/FileChmod), git has verified local slices (86 tests), http has a bounded prepare/verify slice with PUT/PATCH replay (103 tests), sqlite has a transaction-based rollback implementation (16 tests), maildraft has full lifecycle implementation (13 tests: create/update/delete), and broader adapter completion is post-v1
+- **Phase D** (adapters): PARTIAL — fs has verified local slices (146 tests: FileWrite/FileDelete/FileMove/FileCopy/DirCreate/DirDelete/FileAppend/FileChmod), git has verified local slices (86 tests), http has a bounded prepare/verify slice with PUT/PATCH replay (103 tests), sqlite has a transaction-based rollback implementation (16 tests), maildraft has full lifecycle implementation (16 tests: create/update/delete), and broader adapter completion is post-v1
 - **Phase E** (gateway orchestration): DONE for SQLite-backed single-node flow
 - **Phase F** (hardening/evidence): DONE — integration tests strong, poisoned-context fixtures curated, supported flows and gaps documented, evidence script present
 

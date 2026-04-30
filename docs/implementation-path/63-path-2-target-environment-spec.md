@@ -167,7 +167,7 @@ any production pilot.
 | Check | Status | Notes |
 |-------|--------|-------|
 | Proxy configured for TLS 443 | [ ] Confirmed | |
-| `proxy_set_header Authorization "Bearer $http_authorization"` | [ ] Confirmed | Token forwarding |
+| `proxy_set_header Authorization $http_authorization` | [ ] Confirmed | Forward exact client `Authorization` header; do not prepend `Bearer` in nginx |
 | Health endpoints accessible through proxy | [ ] Confirmed | |
 | HTTP → HTTPS redirect configured | [ ] Confirmed | |
 | Certificate valid and not expired | [ ] Confirmed | |

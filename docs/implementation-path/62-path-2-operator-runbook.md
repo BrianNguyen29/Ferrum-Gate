@@ -221,6 +221,35 @@ curl -s "${FERRUM_BASE}/v1/metrics" | head -20
 | `/v1/approvals` returns 200 without auth | Auth misconfigured; fix before proceeding |
 | ferrumd crashes on startup | Check store path, permissions, config syntax |
 
+### 2.5 Minimal Monitoring and Logging Guidance
+
+Path 2 does not require a full dashboard stack, but the operator needs enough telemetry to
+detect pilot failure modes. At minimum, capture these controls in the evidence directory:
+
+| Control | Minimum evidence | Stop / alert condition |
+|---------|------------------|------------------------|
+| Service logs | `journalctl -u ferrumd.service --since <pilot-start>` or equivalent log path | ferrumd crash loop or repeated 5xx errors |
+| Readiness probe | Periodic `GET /v1/readyz/deep` or `check_pilot_readiness.py` output | non-200 response |
+| Backup job | cron/systemd timer log and latest `ferrumctl backup verify` output | missed backup or verify failure |
+| Disk/store directory | `df -h <store-dir> <backup-dir>` captured during pilot | low free disk space for store or backups |
+
+Prometheus users may scrape `/v1/metrics`; this is a baseline metrics feed only and does not
+complete G2.6 production evaluation until the operator confirms the endpoint and records the
+observed metrics.
+
+```yaml
+# prometheus.yml snippet (example only)
+scrape_configs:
+  - job_name: ferrumgate
+    metrics_path: /v1/metrics
+    static_configs:
+      - targets: ["<target-host>:8080"]
+```
+
+If using systemd, install `configs/examples/ferrumd.service` as a starting point and keep
+secrets in an environment file such as `/etc/ferrumgate/ferrumd.env`; do not paste bearer
+tokens into evidence logs.
+
 ---
 
 ## Phase 3 — D1–D6 Compensation Drills

@@ -5,11 +5,11 @@
 > **For current crate status**: See `docs/implementation-path/01-current-state.md` for what exists now.
 >
 > **Known historical stale descriptions**:
-> - `ferrum-adapter-fs`: described as "no real implementation" — 135 tests now exist with verified local slice
+> - `ferrum-adapter-fs`: described as "no real implementation" — 146 tests now exist with verified local slice
 > - `ferrum-adapter-git`: described as "no real implementation" — 86 tests now exist with verified local slice
 > - `ferrum-adapter-http`: described as "no real implementation" — 103 tests now exist with bounded replay support
 > - `ferrum-adapter-sqlite`: described as "no real implementation" — 16 tests now exist with transaction rollback
-> - `ferrum-adapter-maildraft`: described as "no real implementation" — 13 tests now exist with full lifecycle
+> - `ferrum-adapter-maildraft`: described as "no real implementation" — 16 tests now exist with full lifecycle
 
 
 

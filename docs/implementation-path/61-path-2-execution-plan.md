@@ -19,6 +19,19 @@ Do not mark items complete on behalf of the operator.
 
 ---
 
+## Readiness Tiers
+
+Path 2 is intentionally split into three readiness tiers. Do not promote evidence from one tier
+into another without the required environment and operator action.
+
+| Tier | Name | Requires target host? | Output | Boundary |
+|---|---|---:|---|---|
+| Tier 0 | Local/tooling readiness | No | Local smoke output and prefilled evidence skeletons | Practice only; does not complete G2 |
+| Tier 1 | Target environment evidence | Yes | Target-host probe, D1–D6, restore, backup, TLS evidence | Evidence only; still requires operator review |
+| Tier 2 | Operator signoff | Yes | Signed G2 packet and final signoff | Required before any pilot authorization |
+
+---
+
 ## Ordered Execution Strategy
 
 Execute steps in the order listed. Do not skip ahead or claim completion prematurely.
@@ -45,14 +58,14 @@ Complete [`59-pilot-readiness-evidence-packet.md`](./59-pilot-readiness-evidence
 
 | G2 Item | Description | Evidence Required | Status |
 |---|---|---|---|
-| G2.1 | Backup/Restore Drill | `PRAGMA integrity_check` passes on restored DB | ☐ Pending |
-| G2.2 | Compensation Drill (D1–D6) | Per [`58-workload-compensation-drill-evidence-template.md`](./58-workload-compensation-drill-evidence-template.md) | ☐ Pending |
-| G2.3 | Readiness Probe | `GET /v1/readyz/deep` returns HTTP 200 | ☐ Pending |
-| G2.4 | Metrics Baseline | `/v1/metrics` returns Prometheus-compatible output | ☐ Pending |
-| G2.5 | Known Limitation Acceptance | All limitations reviewed and accepted | ☐ Pending |
-| G2.6 | Rollback Acceptance | R0/R1/R2/R3 semantics understood | ☐ Pending |
-| G2.7 | SQLite Capacity Acceptance | Workload model confirms ≤300 writes/s sustained | ☐ Pending |
-| G2.8 | Operator Signoff | Signed acceptance statement | ☐ Pending |
+| G2.1 | Workload Model | Write workload modeled against SQLite capacity | ☐ Pending |
+| G2.2 | Auth/TLS Configuration | Bearer auth + TLS/reverse proxy confirmed | ☐ Pending |
+| G2.3 | Backup Schedule | External backup scheduling implemented | ☐ Pending |
+| G2.4 | Restore Drill | Restore drill with `PRAGMA integrity_check` passing | ☐ Pending |
+| G2.5 | RPO/RTO Acceptance | Backup/restore objectives formally accepted | ☐ Pending |
+| G2.6 | Production Evaluation | Evaluation framework completed as SATISFIED or CONDITIONAL | ☐ Pending |
+| G2.7 | Accepted-Risk Review | Known limitations and weak spots reviewed | ☐ Pending |
+| G2.8 | Compensate Noop Acceptance | Adapter compensate/noop semantics accepted for target workload | ☐ Pending |
 
 ### 1.2 Workload-Fit Review Checklist
 
@@ -266,7 +279,7 @@ PATH=/usr/local/bin:/usr/bin:/bin
 0 2 * * * root /usr/local/bin/ferrumctl backup create \
     --db-path "/var/lib/ferrumgate/ferrumgate.db" \
     --output-dir "/var/backups/ferrumgate" \
-    && find /var/backups/ferrumgate -name "ferrumgate_*.db" -mtime +7 -delete
+    --retention-days 7
 ```
 
 #### systemd timer example
@@ -317,7 +330,7 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header Authorization "Bearer $http_authorization";
+        proxy_set_header Authorization $http_authorization;
     }
 }
 

@@ -63,7 +63,7 @@ Full G1 evidence: [`53-rc-tag-checklist.md`](./docs/implementation-path/53-rc-ta
   - `ferrum-adapter-git`: 86 tests — GitCommit/GitBranchCreate/GitTagCreate/GitTagDelete/GitBranchDelete + rollback fail-closed
   - `ferrum-adapter-http`: 103 tests — HttpMutation + http.replay_v1 (POST/PUT/PATCH) + pooling/retry
   - `ferrum-adapter-sqlite`: 16 tests — transaction rollback + G-E1 verify fail-closed
-  - `ferrum-adapter-maildraft`: 13 tests — create/update/delete lifecycle
+  - `ferrum-adapter-maildraft`: 16 tests — create/update/delete lifecycle
 - **U1–U4 upgrade tracks** (implemented, post-v1 scope per support contract): Outcome-aware Governance, Reversible Execution Planner, Cross-runtime Provenance Fabric, MCP/local/NemoClaw integrations
 - **Integration tests**: 82 tests — contracts(2) + fs-roundtrip(7) + gateway-flow(65) + lineage-chain(8)
 - **CI pipeline**: cargo check, repo layout validation, contract consistency

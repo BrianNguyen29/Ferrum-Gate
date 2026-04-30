@@ -10,7 +10,7 @@
 > - Phase A (compile/shape stability): ✅ DONE
 > - Phase B (SQLite storage boundary): ✅ DONE
 > - Phase C (firewall MVP): ✅ DONE
-> - Phase D (adapters): **PARTIAL** — verified local slices exist (fs:135, git:86, http:103, sqlite:16, maildraft:13); broader surface is post-v1
+> - Phase D (adapters): **PARTIAL** — verified local slices exist (fs:146, git:86, http:103, sqlite:16, maildraft:16); broader surface is post-v1
 > - Phase E (gateway orchestration): ✅ DONE
 > - Phase F (hardening/evidence): ✅ DONE
 

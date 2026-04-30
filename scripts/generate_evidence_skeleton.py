@@ -59,8 +59,6 @@ D1_D6_TEMPLATE = """## D1 — FS Adapter Compensation Drill
 {file_content}
 ```
 
-**Evidence fields**:
-
 | Field | Value |
 |-------|-------|
 | `recovered` | true / false |
@@ -79,8 +77,6 @@ D1_D6_TEMPLATE = """## D1 — FS Adapter Compensation Drill
 {file_content}
 ```
 
-**Evidence fields**:
-
 | Field | Value |
 |-------|-------|
 | `recovered` | true / false |
@@ -91,7 +87,7 @@ D1_D6_TEMPLATE = """## D1 — FS Adapter Compensation Drill
 
 ---
 
-## D2 — Git Adapter Compensation Drill
+## D2 — Git Local Compensation Drill
 
 ### D2.1 GitCommit Compensation Drill
 
@@ -99,8 +95,6 @@ D1_D6_TEMPLATE = """## D1 — FS Adapter Compensation Drill
 ```
 {file_content}
 ```
-
-**Evidence fields**:
 
 | Field | Value |
 |-------|-------|
@@ -113,18 +107,18 @@ D1_D6_TEMPLATE = """## D1 — FS Adapter Compensation Drill
 
 ---
 
-### D2.2 GitPush Compensation Drill (Fail-Closed Verification)
+## D3 — Git Remote Push / Fail-Closed Drill
+
+### D3.1 GitPush Remote Rollback Fail-Closed Verification
 
 **Command output**:
 ```
 {file_content}
 ```
 
-**Evidence fields**:
-
 | Field | Value |
 |-------|-------|
-| `compensate_http_status` | <200> |
+| `compensate_http_status` | <200|400|500> |
 | `compensation_result` | <describe outcome> |
 | `remote_ref_unchanged` | true / false |
 | `fail_closed_verified` | true / false |
@@ -134,16 +128,14 @@ D1_D6_TEMPLATE = """## D1 — FS Adapter Compensation Drill
 
 ---
 
-## D3 — HTTP Adapter Compensation Drill
+## D4 — HTTP Adapter Compensation Drill
 
-### D3.1 HTTP POST Replay Compensation Drill
+### D4.1 HTTP POST Replay Compensation Drill
 
 **Command output**:
 ```
 {file_content}
 ```
-
-**Evidence fields**:
 
 | Field | Value |
 |-------|-------|
@@ -156,14 +148,12 @@ D1_D6_TEMPLATE = """## D1 — FS Adapter Compensation Drill
 
 ---
 
-### D3.2 HTTP Non-Idempotent Method Fail-Closed Drill
+### D4.2 HTTP Non-Idempotent Method Fail-Closed Drill
 
 **Command output**:
 ```
 {file_content}
 ```
-
-**Evidence fields**:
 
 | Field | Value |
 |-------|-------|
@@ -175,14 +165,12 @@ D1_D6_TEMPLATE = """## D1 — FS Adapter Compensation Drill
 
 ---
 
-## D4 — SQLite Adapter Compensation Drill
+## D5 — SQLite Adapter Compensation Drill
 
 **Command output**:
 ```
 {file_content}
 ```
-
-**Evidence fields**:
 
 | Field | Value |
 |-------|-------|
@@ -194,14 +182,12 @@ D1_D6_TEMPLATE = """## D1 — FS Adapter Compensation Drill
 
 ---
 
-## D5 — Maildraft Adapter Compensation Drill
+## D6 — Maildraft Adapter Compensation Drill
 
 **Command output**:
 ```
 {file_content}
 ```
-
-**Evidence fields**:
 
 | Field | Value |
 |-------|-------|
@@ -213,7 +199,7 @@ D1_D6_TEMPLATE = """## D1 — FS Adapter Compensation Drill
 
 ---
 
-## D6 — Accepted Exception Fields
+## Accepted Exception Fields
 
 For any drill item where `recovered: false` or unexpected behavior observed:
 
@@ -230,14 +216,51 @@ For any drill item where `recovered: false` or unexpected behavior observed:
 
 """
 
-G2_TEMPLATE = """## G2.1 — Backup/Restore Drill Evidence
+G2_TEMPLATE = """## G2.1 — Workload Model
 
-**Command output**:
+**Command output or workload notes**:
 ```
 {file_content}
 ```
 
-**Evidence fields**:
+| Metric | Modeled Value | SQLite Phase 1 Limit | Fit? |
+|-------|---------------|----------------------|------|
+| Expected sustained write rate | _____ writes/s | ≤300 writes/s | YES / NO |
+| Expected peak write rate | _____ writes/s | Operator-reviewed | YES / NO |
+| Expected daily write volume | _____ writes/day | Operator-reviewed | YES / NO |
+| Single-node topology acceptable | YES / NO | Required for Path 2 | YES / NO |
+
+Operator signature: _________________ Date: _________
+
+---
+
+## G2.2 — Auth/TLS Configuration
+
+| Item | Evidence Required | Captured Value |
+|------|-------------------|----------------|
+| `auth_mode` | Bearer, not disabled | _________________ |
+| Bearer token handling | env var or secret manager; redacted in evidence | _________________ |
+| TLS termination | reverse proxy config/certificate evidence | _________________ |
+| Auth challenge | protected endpoint returns 401 without token | _________________ |
+
+Operator signature: _________________ Date: _________
+
+---
+
+## G2.3 — Backup Schedule
+
+| Item | Evidence Required | Captured Value |
+|------|-------------------|----------------|
+| Backup tool | `ferrumctl backup create` available | _________________ |
+| Scheduler | cron/systemd/other configured | _________________ |
+| Retention | retention value and command/log evidence | _________________ |
+| Latest backup verify | `ferrumctl backup verify` passes | _________________ |
+
+Operator signature: _________________ Date: _________
+
+---
+
+## G2.4 — Restore Drill
 
 | Field | Value |
 |-------|-------|
@@ -246,183 +269,68 @@ G2_TEMPLATE = """## G2.1 — Backup/Restore Drill Evidence
 | `restore_completed` | true / false |
 | `pre_restore_copy_created` | true / false |
 | `backup_verify_post_restore` | OK / FAILED |
-| `ferrumd_restarted` | true / false |
 | `readyz_deep_returns_200` | true / false |
 | `operator_annotation` | <any anomalies or deviations> |
 
-**Signoff phrase**: "Operator has performed a restore drill in a non-production environment,
-confirmed `PRAGMA integrity_check` passes on the restored database, and verified server
-restart succeeds."
+Operator signature: _________________ Date: _________
+
+---
+
+## G2.5 — RPO/RTO Acceptance
+
+| Objective | Modeled Value | Accepted? |
+|-----------|---------------|-----------|
+| Backup interval / RPO | _____ | YES / NO |
+| Restore duration | _____ | YES / NO |
+| Restart + verify duration | _____ | YES / NO |
+| Total RTO | _____ | YES / NO |
 
 Operator signature: _________________ Date: _________
 
 ---
 
-## G2.2 — Compensation Drill Evidence
+## G2.6 — Production Evaluation
+
+| Dimension | Result | Notes |
+|-----------|--------|-------|
+| Architecture fit | SATISFIED / CONDITIONAL / BLOCKED | |
+| Security posture | SATISFIED / CONDITIONAL / BLOCKED | |
+| Operations | SATISFIED / CONDITIONAL / BLOCKED | |
+| Recovery | SATISFIED / CONDITIONAL / BLOCKED | |
+| Observability | SATISFIED / CONDITIONAL / BLOCKED | |
+
+Operator signature: _________________ Date: _________
+
+---
+
+## G2.7 — Accepted-Risk Review
+
+| Risk / limitation | Accepted? | Compensating control |
+|-------------------|-----------|----------------------|
+| SQLite single-node only | YES / NO | |
+| No PostgreSQL/multi-node/HA in v1 | YES / NO | |
+| Compensate may be noop-backed | YES / NO | |
+| External backup scheduling required | YES / NO | |
+| Health/readiness scope limitations | YES / NO | |
+
+Operator signature: _________________ Date: _________
+
+---
+
+## G2.8 — Compensate Noop Acceptance
 
 **Prerequisite**: D1–D6 drills completed per `58-workload-compensation-drill-evidence-template.md`.
 
-**Reference to Drill Results**:
-
-| Adapter | Drill Item | recovered | Accepted Exception? | Operator Initials |
-|---------|-----------|-----------|---------------------|------------------|
-| FS (FileWrite) | D1.1 | true/false | yes/no | |
-| FS (FileDelete) | D1.2 | true/false | yes/no | |
-| Git (GitCommit) | D2.1 | true/false | yes/no | |
-| Git (GitPush) | D2.2 | N/A (fail-closed) | yes/no | |
-| HTTP (POST replay) | D3.1 | true/false | yes/no | |
-| HTTP (fail-closed) | D3.2 | verified | yes/no | |
-| SQLite (DML) | D4 | true/false | yes/no | |
-| Maildraft | D5 | true/false | yes/no | |
-
-**Signoff phrase**: "Operator has executed compensation drills for target adapters and
-accepts the compensate noop risk as documented. For adapters where `recovered: false`,
-compensating controls have been accepted or the risk has been formally accepted."
+| Adapter | Drill Item | recovered / fail-closed | Accepted Exception? | Operator Initials |
+|---------|------------|-------------------------|---------------------|-------------------|
+| FS | D1 | true/false | yes/no | |
+| Git local | D2 | true/false | yes/no | |
+| Git remote | D3 | fail-closed verified | yes/no | |
+| HTTP | D4 | true/false or fail-closed | yes/no | |
+| SQLite | D5 | true/false | yes/no | |
+| Maildraft | D6 | true/false | yes/no | |
 
 Operator signature: _________________ Date: _________
-
----
-
-## G2.3 — Readiness Probe Evidence
-
-**Command output**:
-```
-{file_content}
-```
-
-**Evidence fields**:
-
-| Probe | HTTP Status | Pass? |
-|-------|-------------|-------|
-| `healthz` | 200 / other | |
-| `readyz` | 200 / other | |
-| `readyz/deep` | 200 / 503 / other | |
-| `approvals?limit=1` (authed) | 200 / other | |
-
-**Signoff phrase**: "Operator has confirmed `readyz/deep` returns HTTP 200 and functional
-probe succeeds. Health endpoints are intentionally shallow; functional probe is used for
-governance loop confirmation."
-
-Operator signature: _________________ Date: _________
-
----
-
-## G2.4 — Metrics Baseline Evidence
-
-**Command output**:
-```
-{file_content}
-```
-
-**Evidence fields**:
-
-| Metric | Expected | Observed |
-|--------|----------|----------|
-| `ferrumgate_http_requests_total` present | yes | |
-| `ferrumgate_store_health_up` equals 1 | yes | |
-| `ferrumgate_metrics_scrapes_total` increments | yes | |
-| Prometheus format valid | yes | |
-
-**Signoff phrase**: "Operator has confirmed `/v1/metrics` returns Prometheus-compatible
-output with expected metrics. Scope limitations (no latency histograms, no per-route error
-counters, no WAL metrics) are accepted."
-
-Operator signature: _________________ Date: _________
-
----
-
-## G2.5 — Known Limitation Acceptance
-
-**Known Limitations Checklist**:
-
-| Limitation | Reference | Accepted (Y/N) | Operator Initials |
-|------------|-----------|----------------|------------------|
-| Healthz/readyz are shallow probes | `21-v1-single-node-observability-minimums.md` §3.2 | | |
-| `/v1/metrics` has limited metrics | `21-v1-single-node-observability-minimums.md` §3.3 | | |
-| Compensate may be noop-backed | `27-production-evaluation-plan.md` §3.6 | | |
-| GitPush rollback is fail-closed | `54-adapter-compensation-matrix.md` §Git | | |
-| HTTP replay is NOT true undo | `54-adapter-compensation-matrix.md` §HTTP | | |
-| Maildraft in-memory only | `54-adapter-compensation-matrix.md` §Maildraft | | |
-| No incremental backup | `27-production-evaluation-plan.md` §3.5 | | |
-| No built-in backup scheduling | `18-single-node-operations-runbook.md` §5.4 | | |
-| RPO = time since last backup | `27-production-evaluation-plan.md` §3.5 | | |
-| RTO includes manual restore + restart | `18-single-node-operations-runbook.md` §7 | | |
-| SQLite single-node only (no HA/replica) | `19-v1-single-node-support-contract.md` | | |
-| Phase 2 transaction batching deferred | `31-release-paths-todo.md` | | |
-| PostgreSQL not implemented | `27-production-evaluation-plan.md` §4 | | |
-
-**Signoff phrase**: "Operator has reviewed all known limitations above and accepts them
-as documented constraints of the v1 single-node SQLite deployment."
-
-Operator signature: _________________ Date: _________
-
----
-
-## G2.6 — Rollback Acceptance
-
-**Command output** (if applicable):
-```
-{file_content}
-```
-
-**Evidence fields**:
-
-| Item | Verification |
-|------|-------------|
-| `rollback_class` correctly set at intent creation | Operator confirms caller sets correct class |
-| R3 `auto_commit=false` verified at prepare | Confirmed per `26-v1-single-node-invariant-control-test-evidence-matrix.md` |
-| Rollback/compensate distinction understood | Operator confirms understanding |
-
-**Signoff phrase**: "Operator understands rollback class semantics and confirms caller
-responsibility for correct `rollback_class` at intent creation. R3 `auto_commit=false`
-control verified by integration test evidence."
-
-Operator signature: _________________ Date: _________
-
----
-
-## G2.7 — SQLite Capacity Acceptance
-
-**Workload Model Evidence**:
-
-| Parameter | Modeled Value | Capacity Limit | Fit (Y/N) |
-|-----------|---------------|----------------|-----------|
-| Expected sustained write rate (writes/s) | | ≤300 | |
-| Expected peak write rate (writes/s) | | ≤500 (brief) | |
-| Single-node topology confirmed | | Yes (no multi-node) | |
-| Bounded execution history acceptable | | Yes/No | |
-
-**Source of workload model**: <operator-specified source document>
-
-**Signoff phrase**: "Operator has modeled the expected production workload against
-SQLite single-node capacity limits and confirms fit for the target pilot workload."
-
-Operator signature: _________________ Date: _________
-
----
-
-## G2.8 — Operator Signoff
-
-**Gate criterion**: All G2.1–G2.7 satisfied; formal operator acceptance statement signed.
-
-### G2.8 — Final Acceptance Statement
-
-> **Operator acceptance**: "I, [Operator Name], acting in my capacity as [Role], have
-> evaluated FerrumGate v1 single-node SQLite against the production evaluation plan
-> (`27-production-evaluation-plan.md`). I have reviewed and accepted all known limitations,
-> completed all G2.1–G2.7 evidence items above, executed the compensation drills per
-> `58-workload-compensation-drill-evidence-template.md`, and formally accept the compensate
-> noop risk for the target adapters in the production pilot. I confirm the workload fits
-> within Phase 1 SQLite constraints and I authorize the limited production pilot deployment
-> as described in `31-release-paths-todo.md` §Path 2. **This is not a production-ready claim.**
-> FerrumGate v1 remains RC-ready/conditional."
-
-### G2.8 — Signature Block
-
-| Role | Name | Date | Signature |
-|------|------|------|-----------|
-| Operator | | | |
-| Owner/Supervisor countersignature (if required) | | | |
 
 ---
 
