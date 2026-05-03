@@ -16,5 +16,6 @@ ferrum-sync = { path = "../ferrum-sync" }
 tracing = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
+base64 = { workspace = true }
 
 [build-dependencies]

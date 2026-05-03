@@ -1,10 +1,11 @@
 use async_trait::async_trait;
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use ferrum_proto::{IntentEnvelope, IntentId, IntentStatus};
-use sqlx::SqlitePool;
+use sqlx::{Row, SqlitePool};
 use tokio::sync::oneshot;
 
 use crate::sqlite::write_queue::WriteQueue;
-use crate::{IntentRepo, Result};
+use crate::{IntentRepo, Result, StoreError};
 
 use super::helpers::{enum_text, fetch_entities, fetch_entity_by_id, to_json};
 
@@ -125,5 +126,93 @@ impl IntentRepo for SqliteIntentRepo {
             |query| query.bind(enum_text(&status).expect("intent status should serialize")),
         )
         .await
+    }
+
+    async fn list_intents(
+        &self,
+        intent_id: Option<IntentId>,
+        statuses: &[IntentStatus],
+        cursor: Option<&str>,
+        limit: u32,
+    ) -> Result<(Vec<IntentEnvelope>, Option<String>)> {
+        // Build dynamic WHERE clause
+        let mut conditions = Vec::new();
+        let mut params: Vec<String> = Vec::new();
+
+        if let Some(ref id) = intent_id {
+            conditions.push("intent_id = ?".to_string());
+            params.push(id.to_string());
+        }
+
+        if !statuses.is_empty() {
+            let placeholders: Vec<String> = statuses.iter().map(|_| "?".to_string()).collect();
+            conditions.push(format!("status IN ({})", placeholders.join(", ")));
+            for s in statuses {
+                params.push(enum_text(s).expect("intent status should serialize"));
+            }
+        }
+
+        // Cursor-based pagination: cursor encodes (created_at, intent_id)
+        // Items are ordered by (created_at DESC, intent_id DESC)
+        if let Some(c) = cursor {
+            let decoded = URL_SAFE_NO_PAD
+                .decode(c)
+                .map_err(|_| StoreError::Other("invalid cursor encoding".to_string()))?;
+            let decoded_str = String::from_utf8(decoded)
+                .map_err(|_| StoreError::Other("invalid cursor string".to_string()))?;
+            let parts: Vec<&str> = decoded_str.splitn(2, ':').collect();
+            if parts.len() == 2 {
+                // Cursor points to items older than this timestamp and intent_id
+                let cursor_created_at = parts[0];
+                let cursor_intent_id = parts[1];
+                conditions
+                    .push("(created_at < ? OR (created_at = ? AND intent_id < ?))".to_string());
+                params.push(cursor_created_at.to_string());
+                params.push(cursor_created_at.to_string());
+                params.push(cursor_intent_id.to_string());
+            }
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
+
+        // Build SQL with ORDER BY and LIMIT (fetch limit+1 to check if there are more)
+        let sql = format!(
+            "SELECT raw_json, intent_id, created_at FROM intents {} ORDER BY created_at DESC, intent_id DESC LIMIT ?",
+            where_clause
+        );
+
+        // Bind params dynamically
+        let mut query = sqlx::query(&sql);
+        for param in &params {
+            query = query.bind(param);
+        }
+        query = query.bind(limit + 1); // Fetch one extra to check if there are more
+
+        let rows = query.fetch_all(&self.pool).await?;
+
+        let has_more = rows.len() > limit as usize;
+        let items: Vec<IntentEnvelope> = rows
+            .iter()
+            .take(limit as usize)
+            .map(|row| {
+                let raw: String = row.get("raw_json");
+                serde_json::from_str(&raw).map_err(|e| StoreError::Other(e.to_string()))
+            })
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        let next_cursor = if has_more {
+            items.last().map(|intent| {
+                let cursor_data = format!("{}:{}", intent.created_at, intent.intent_id);
+                URL_SAFE_NO_PAD.encode(cursor_data.as_bytes())
+            })
+        } else {
+            None
+        };
+
+        Ok((items, next_cursor))
     }
 }

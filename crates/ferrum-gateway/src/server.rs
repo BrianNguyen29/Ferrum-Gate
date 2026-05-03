@@ -521,6 +521,7 @@ fn build_router_core(runtime: GatewayRuntime, server_config: Option<ServerConfig
         .route("/v1/approvals/{approval_id}", get(get_approval))
         // Policy/evaluation endpoints
         .route("/v1/intents/compile", post(compile_intent))
+        .route("/v1/intents", get(list_intents))
         .route(
             "/v1/proposals/{proposal_id}/evaluate",
             post(evaluate_proposal),
@@ -1100,6 +1101,130 @@ async fn compile_intent(
             envelope,
             warnings: Vec::new(),
         }))
+    )
+}
+
+/// Query parameters for GET /v1/intents
+#[derive(Debug, Deserialize)]
+struct ListIntentsParams {
+    #[serde(default)]
+    intent_id: Option<String>,
+    #[serde(default)]
+    state: Vec<String>,
+    #[serde(default)]
+    cursor: Option<String>,
+    #[serde(default = "default_intent_list_limit")]
+    limit: u32,
+}
+
+fn default_intent_list_limit() -> u32 {
+    50
+}
+
+const MAX_INTENT_LIST_LIMIT: u32 = 200;
+
+/// Response item for intent list
+#[derive(Debug, serde::Serialize)]
+struct IntentListItem {
+    intent_id: String,
+    principal_id: String,
+    title: String,
+    status: String,
+    risk_tier: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exec_state: Option<String>,
+    created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expires_at: Option<String>,
+}
+
+impl From<&IntentEnvelope> for IntentListItem {
+    fn from(intent: &IntentEnvelope) -> Self {
+        Self {
+            intent_id: intent.intent_id.to_string(),
+            principal_id: intent.principal_id.to_string(),
+            title: intent.title.clone(),
+            status: format!("{:?}", intent.status),
+            risk_tier: format!("{:?}", intent.risk_tier),
+            exec_state: None, // exec_state not available without JOIN; limitation documented
+            created_at: intent.created_at.to_rfc3339(),
+            expires_at: Some(intent.expires_at.to_rfc3339()),
+        }
+    }
+}
+
+/// Response envelope for intent list
+#[derive(Debug, serde::Serialize)]
+struct IntentListEnvelope {
+    items: Vec<IntentListItem>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    next_cursor: Option<String>,
+}
+
+async fn list_intents(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ListIntentsParams>,
+) -> Result<Json<IntentListEnvelope>, ApiProblem> {
+    // Validate and clamp limit
+    let limit = if params.limit == 0 || params.limit > MAX_INTENT_LIST_LIMIT {
+        return Err(ApiProblem::new(
+            StatusCode::BAD_REQUEST,
+            ApiErrorCode::ValidationError,
+            format!("limit must be between 1 and {}", MAX_INTENT_LIST_LIMIT),
+        ));
+    } else {
+        params.limit
+    };
+
+    // Parse intent_id filter if provided
+    let intent_id = if let Some(ref id) = params.intent_id {
+        let uuid = uuid::Uuid::parse_str(id).map_err(|_| {
+            ApiProblem::new(
+                StatusCode::BAD_REQUEST,
+                ApiErrorCode::ValidationError,
+                "invalid intent_id format",
+            )
+        })?;
+        Some(ferrum_proto::IntentId(uuid))
+    } else {
+        None
+    };
+
+    // Parse status filters - convert string to IntentStatus
+    let mut statuses = Vec::new();
+    for s in &params.state {
+        let status = match s.to_lowercase().as_str() {
+            "active" => IntentStatus::Active,
+            "closed" => IntentStatus::Closed,
+            "expired" => IntentStatus::Expired,
+            "quarantined" => IntentStatus::Quarantined,
+            "revoked" => IntentStatus::Revoked,
+            _ => {
+                return Err(ApiProblem::new(
+                    StatusCode::BAD_REQUEST,
+                    ApiErrorCode::ValidationError,
+                    format!("unknown intent status: {}", s),
+                ));
+            }
+        };
+        statuses.push(status);
+    }
+
+    // Query the store
+    let (intents, next_cursor) = state
+        .runtime
+        .store
+        .intents()
+        .list_intents(intent_id, &statuses, params.cursor.as_deref(), limit)
+        .await
+        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+
+    let items: Vec<IntentListItem> = intents.iter().map(IntentListItem::from).collect();
+
+    governance_ok!(
+        state,
+        GovernanceRoute::IntentsCompile,
+        Ok(Json(IntentListEnvelope { items, next_cursor }))
     )
 }
 

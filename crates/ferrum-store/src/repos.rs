@@ -29,6 +29,15 @@ pub trait IntentRepo: Send + Sync {
     async fn update(&self, intent: &IntentEnvelope) -> Result<()>;
     async fn update_status(&self, intent_id: IntentId, status: IntentStatus) -> Result<()>;
     async fn list_by_status(&self, status: IntentStatus) -> Result<Vec<IntentEnvelope>>;
+    /// List intents with optional filters and cursor-based pagination.
+    /// Returns (items, next_cursor) where next_cursor is None when no more pages.
+    async fn list_intents(
+        &self,
+        intent_id: Option<IntentId>,
+        statuses: &[IntentStatus],
+        cursor: Option<&str>,
+        limit: u32,
+    ) -> Result<(Vec<IntentEnvelope>, Option<String>)>;
 }
 
 #[async_trait]

@@ -115,6 +115,64 @@ paths:
       security:
         - BearerAuth: []
 
+  /v1/intents:
+    get:
+      summary: List intents with optional filters
+      operationId: listIntents
+      parameters:
+        - name: intent_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: Filter by intent ID (exact match)
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: array
+            items:
+              type: string
+          description: |
+            Filter by intent status. Multiple values can be specified.
+            Valid values: Active, Closed, Expired, Quarantined, Revoked
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Pagination cursor from previous response
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+          description: Maximum number of intents to return
+      responses:
+        '200':
+          description: List of intents
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/IntentListItem'
+                  next_cursor:
+                    type: string
+                    nullable: true
+                    description: Cursor for next page, null if no more results
+        '400':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
   /v1/proposals/{proposal_id}/evaluate:
     post:
       summary: Evaluate proposal via policy
@@ -446,6 +504,32 @@ paths:
       security:
         - BearerAuth: []
 
+  /v1/executions/{execution_id}/cancel:
+    post:
+      summary: Cancel a running or pending execution
+      description: |
+        Cancels an execution that is in a non-terminal state (Proposed, Authorized, Prepared,
+        Running, AwaitingApproval, or AwaitingVerification). Terminal executions (Verified,
+        Committed, Compensated, RolledBack, Failed, Expired, Denied, Quarantined) cannot be canceled
+        and return 409 Conflict.
+      operationId: cancelExecution
+      parameters:
+        - $ref: '#/components/parameters/ExecutionId'
+      responses:
+        '200':
+          description: Execution canceled successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CancelExecutionResponse'
+        '404':
+          $ref: '#/components/responses/ApiError'
+        '409':
+          description: Execution is in a terminal state and cannot be canceled
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
   /v1/executions/{execution_id}/evaluate-outcome:
     post:
       summary: Evaluate an execution outcome against intent policy
@@ -659,6 +743,36 @@ components:
         event_id:
           type: string
           format: uuid
+          nullable: true
+
+    IntentListItem:
+      type: object
+      required: [intent_id, principal_id, title, status, risk_tier, created_at]
+      properties:
+        intent_id:
+          type: string
+          format: uuid
+        principal_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        status:
+          type: string
+          description: Intent status (Active, Closed, Expired, Quarantined, Revoked)
+        risk_tier:
+          type: string
+          description: Risk tier (Low, Medium, High, Critical)
+        exec_state:
+          type: string
+          nullable: true
+          description: Current execution state if an execution exists for this intent, null otherwise. This field is returned as null when listing intents (execution state JOIN not available in current implementation).
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
           nullable: true
 
     IntentCompileResponse:
@@ -1429,6 +1543,23 @@ components:
           type: array
           items:
             type: string
+
+    CancelExecutionResponse:
+      type: object
+      required: [execution_id, previous_state, current_state, canceled_at]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+        previous_state:
+          type: string
+          description: The execution state before cancellation
+        current_state:
+          type: string
+          description: The execution state after cancellation (Canceled)
+        canceled_at:
+          type: string
+          format: date-time
 
     EvaluateOutcomeResponse:
       type: object
