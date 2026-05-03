@@ -134,6 +134,11 @@ for ex in "${REQUIRED_EXAMPLES[@]}"; do
 done
 $ALL_EXAMPLES_PRESENT && echo "[PASS] All required config examples present"
 
+# --- 6. Local bearer-auth smoke ---
+
+run_check "Local bearer-auth smoke" \
+    "bash '$SCRIPT_DIR/run_local_auth_smoke.sh'"
+
 # --- Summary ---
 
 echo ""
