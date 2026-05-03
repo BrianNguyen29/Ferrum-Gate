@@ -245,8 +245,11 @@ impl StressServer {
                 bind_addr: "127.0.0.1:0".parse().unwrap(),
                 store_dsn: dsn,
                 log_filter: "warn".to_string(),
+                log_format: ferrum_gateway::LogFormat::Text,
                 store_synchronous: None,
                 store_wal_autocheckpoint: None,
+                rate_limit_per_second: 2,
+                rate_limit_burst: 50,
             };
             ferrum_gateway::build_router_with_auth(runtime, config)
         } else {

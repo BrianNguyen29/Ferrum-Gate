@@ -169,6 +169,7 @@ Phase B is complete when:
 | This doc | `61-path-2-execution-plan.md` | Path 2 execution checklist |
 | This doc | `62-path-2-operator-runbook.md` | Exact operator command sequences |
 | This doc | `54-operator-signoff-packet.md` | Final operator signoff form |
+| This doc | `67-production-readiness-roadmap.md` | Consolidated roadmap with priorities, blockers, owners, evidence |
 
 ---
 

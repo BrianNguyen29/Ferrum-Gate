@@ -302,10 +302,10 @@ async fn shutdown_signal() {
 pub async fn run_http_server(config: ServerConfig, runtime: GatewayRuntime) -> anyhow::Result<()> {
     let app = build_router_with_auth(runtime, config.clone());
 
-    // Rate limiting: ~120 requests/minute per IP with burst of 50
+    // Rate limiting: configurable per IP via config
     let governor_conf = GovernorConfigBuilder::default()
-        .per_second(2)
-        .burst_size(50)
+        .per_second(config.rate_limit_per_second)
+        .burst_size(config.rate_limit_burst)
         .finish()
         .unwrap();
 

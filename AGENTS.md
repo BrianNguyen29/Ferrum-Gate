@@ -14,9 +14,10 @@ make test    # cargo test --workspace
 ```
 - Check formatting without mutation: `cargo fmt --all -- --check`
 - Layout/contract validation: `bash scripts/validate_repo_layout.sh && python3 scripts/check_contract_consistency.py`
-- CI only runs layout validation, contract consistency, and `cargo check --workspace || true` (check failure swallowed)
+- CI runs: layout validation, contract consistency, fmt check, cargo check, clippy, and cargo test (no `|| true` — failures are not swallowed)
+- Pre-target gate (local only): `bash scripts/run_pre_target_gate.sh` — validates config examples, restore drill, evidence skeleton generator, docs present, bearer-auth smoke
 
-## Current Verification Status (2026-04-29)
+## Current Verification Status (2026-05-03)
 - Layout/contract validation: PASSES locally
 - `cargo fmt --all -- --check`: PASSES locally
 - `cargo check --workspace`: PASSES locally
@@ -46,6 +47,12 @@ README.md and CONTRIBUTING.md now correctly reference actual onboarding paths. O
 ## Production Notes
 - SQLite write queue enabled (eliminates lock thrash); PRAGMA: synchronous=NORMAL, wal_autocheckpoint=1000, cache_size=-64000, busy_timeout=5000ms
 - PostgreSQL recommended for sustained high write throughput or multi-node deployment
+
+## Production Readiness Roadmap
+- Durable todo list with priorities, blockers, owners, evidence: `docs/implementation-path/67-production-readiness-roadmap.md`
+- P0 blockers: CI swallow fixed; target-host evidence, G2 signoff, backup automation, operator signoff remain pending (operator-owned)
+- P1 items: readiness semantics, configurable rate limit, structured logging, metrics/observability
+- No production-ready claim; FerrumGate v1 is RC-ready/conditional; G2 requires operator action
 
 ## Contributing Rules
 - Pick one crate or document boundary at a time

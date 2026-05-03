@@ -66,6 +66,40 @@ impl std::str::FromStr for AuthMode {
     }
 }
 
+/// Log format for the gateway.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LogFormat {
+    /// Human-readable text format (default).
+    #[default]
+    Text,
+    /// Structured JSON format.
+    Json,
+}
+
+impl std::fmt::Display for LogFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LogFormat::Text => write!(f, "text"),
+            LogFormat::Json => write!(f, "json"),
+        }
+    }
+}
+
+impl std::str::FromStr for LogFormat {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "text" | "compact" => Ok(LogFormat::Text),
+            "json" => Ok(LogFormat::Json),
+            _ => Err(format!(
+                "invalid log format: {} (expected 'text' or 'json')",
+                s
+            )),
+        }
+    }
+}
+
 /// Server configuration for the gateway.
 #[derive(Clone)]
 pub struct ServerConfig {
@@ -81,10 +115,16 @@ pub struct ServerConfig {
     pub allow_insecure_nonlocal_bind: bool,
     /// Log filter (e.g., debug, info, warn).
     pub log_filter: String,
+    /// Log format: "text" (human-readable) or "json" (structured).
+    pub log_format: LogFormat,
     /// SQLite synchronous pragma value (off, normal, full, extra).
     pub store_synchronous: Option<String>,
     /// SQLite wal_autocheckpoint pragma value (frames between checkpoints).
     pub store_wal_autocheckpoint: Option<u32>,
+    /// Rate limit: sustained requests per second per IP.
+    pub rate_limit_per_second: u64,
+    /// Rate limit: burst size per IP.
+    pub rate_limit_burst: u32,
 }
 
 impl Default for ServerConfig {
@@ -96,8 +136,11 @@ impl Default for ServerConfig {
             bearer_token: None,
             allow_insecure_nonlocal_bind: false,
             log_filter: "info".to_string(),
+            log_format: LogFormat::Text,
             store_synchronous: None,
             store_wal_autocheckpoint: None,
+            rate_limit_per_second: 2,
+            rate_limit_burst: 50,
         }
     }
 }
@@ -127,6 +170,17 @@ impl ServerConfig {
 
         // Validate store DSN is SQLite (PostgreSQL and MySQL not implemented)
         validate_store_dsn(&self.store_dsn)?;
+
+        // Validate rate limit settings
+        if self.rate_limit_per_second == 0 {
+            return Err("rate_limit_per_second must be at least 1".to_string());
+        }
+        if self.rate_limit_burst == 0 {
+            return Err("rate_limit_burst must be at least 1".to_string());
+        }
+        if self.rate_limit_burst > 10_000 {
+            return Err("rate_limit_burst must be at most 10000".to_string());
+        }
 
         Ok(())
     }

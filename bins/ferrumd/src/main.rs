@@ -56,6 +56,18 @@ struct Args {
     /// SQLite wal_autocheckpoint pragma: number of frames between checkpoints.
     #[arg(long)]
     store_wal_autocheckpoint: Option<u32>,
+
+    /// Rate limit: sustained requests per second per IP (default 2).
+    #[arg(long)]
+    rate_limit_per_second: Option<u64>,
+
+    /// Rate limit: burst size per IP (default 50).
+    #[arg(long)]
+    rate_limit_burst: Option<u32>,
+
+    /// Log format: "text" or "json" (default "text").
+    #[arg(long)]
+    log_format: Option<String>,
 }
 
 fn get_env<T: std::str::FromStr>(key: &str) -> Option<T> {
@@ -86,6 +98,12 @@ struct ServerSection {
     store_synchronous: Option<String>,
     #[serde(default)]
     store_wal_autocheckpoint: Option<u32>,
+    #[serde(default)]
+    rate_limit_per_second: Option<u64>,
+    #[serde(default)]
+    rate_limit_burst: Option<u32>,
+    #[serde(default)]
+    log_format: Option<String>,
 }
 
 fn load_config_file(path: &PathBuf) -> Result<ConfigFile> {
@@ -156,6 +174,17 @@ fn resolve_config(args: &Args) -> Result<ServerConfig> {
         .or_else(|| server.as_ref().and_then(|s| s.log_filter.clone()))
         .unwrap_or_else(|| DEFAULT_LOG_FILTER.to_string());
 
+    let log_format = args
+        .log_format
+        .clone()
+        .or_else(|| get_env("FERRUMD_LOG_FORMAT"))
+        .or_else(|| server.as_ref().and_then(|s| s.log_format.clone()))
+        .unwrap_or_else(|| "text".to_string());
+
+    let log_format_parsed: ferrum_gateway::LogFormat = log_format
+        .parse()
+        .map_err(|e: String| anyhow::anyhow!("invalid log format: {}", e))?;
+
     let store_synchronous = args
         .store_synchronous
         .clone()
@@ -170,6 +199,18 @@ fn resolve_config(args: &Args) -> Result<ServerConfig> {
                 .ok()
         })
         .or_else(|| server.as_ref().and_then(|s| s.store_wal_autocheckpoint));
+
+    let rate_limit_per_second = args
+        .rate_limit_per_second
+        .or_else(|| get_env("FERRUMD_RATE_LIMIT_PER_SECOND"))
+        .or_else(|| server.as_ref().and_then(|s| s.rate_limit_per_second))
+        .unwrap_or(2);
+
+    let rate_limit_burst = args
+        .rate_limit_burst
+        .or_else(|| get_env("FERRUMD_RATE_LIMIT_BURST"))
+        .or_else(|| server.as_ref().and_then(|s| s.rate_limit_burst))
+        .unwrap_or(50);
 
     let bind_addr_parsed: SocketAddr = bind_addr
         .parse()
@@ -186,8 +227,11 @@ fn resolve_config(args: &Args) -> Result<ServerConfig> {
         bearer_token,
         allow_insecure_nonlocal_bind,
         log_filter,
+        log_format: log_format_parsed,
         store_synchronous,
         store_wal_autocheckpoint,
+        rate_limit_per_second,
+        rate_limit_burst,
     };
 
     // Validate configuration
@@ -209,13 +253,25 @@ async fn main() -> Result<()> {
     let env_filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.log_filter));
 
-    fmt().with_env_filter(env_filter).with_target(false).init();
+    match config.log_format {
+        ferrum_gateway::LogFormat::Json => {
+            fmt()
+                .with_env_filter(env_filter)
+                .with_target(false)
+                .json()
+                .init();
+        }
+        ferrum_gateway::LogFormat::Text => {
+            fmt().with_env_filter(env_filter).with_target(false).init();
+        }
+    }
 
     tracing::info!(
-        "starting ferrumd with config: auth_mode={}, bind_addr={}, store_dsn={}",
+        "starting ferrumd with config: auth_mode={}, bind_addr={}, store_dsn={}, log_format={}",
         config.auth_mode,
         config.bind_addr,
-        config.store_dsn
+        config.store_dsn,
+        config.log_format
     );
 
     let pdp = Arc::new(StaticPdpEngine);
@@ -268,6 +324,9 @@ mod tests {
             "FERRUMD_BEARER_TOKEN",
             "FERRUMD_ALLOW_INSECURE_NONLOCAL_BIND",
             "FERRUMD_LOG_FILTER",
+            "FERRUMD_RATE_LIMIT_PER_SECOND",
+            "FERRUMD_RATE_LIMIT_BURST",
+            "FERRUMD_LOG_FORMAT",
         ] {
             unsafe { std::env::remove_var(key) };
         }
@@ -313,6 +372,9 @@ log_filter = "warn"
             log_filter: None,
             store_synchronous: None,
             store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -352,6 +414,9 @@ allow_insecure_nonlocal_bind = false
             log_filter: None,
             store_synchronous: None,
             store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -385,6 +450,9 @@ auth_mode = "bearer"
             log_filter: None,
             store_synchronous: None,
             store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -416,6 +484,9 @@ auth_mode = "disabled"
             log_filter: None,
             store_synchronous: None,
             store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -451,6 +522,9 @@ auth_mode = "disabled"
             log_filter: None,
             store_synchronous: None,
             store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -486,6 +560,9 @@ auth_mode = "disabled"
             log_filter: None,
             store_synchronous: None,
             store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -494,6 +571,481 @@ auth_mode = "disabled"
             "expected MySQL not implemented error, got: {}",
             error
         );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_resolve_config_rate_limit_defaults() {
+        let _guard = env_lock().lock().unwrap();
+        clear_test_env();
+
+        let path = write_temp_config(
+            r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+"#,
+        );
+
+        let args = Args {
+            config: Some(path.clone()),
+            bind_addr: None,
+            store_dsn: None,
+            auth_mode: None,
+            bearer_token: None,
+            allow_insecure_nonlocal_bind: false,
+            log_filter: None,
+            store_synchronous: None,
+            store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
+        };
+
+        let config = resolve_config(&args).unwrap();
+
+        assert_eq!(config.rate_limit_per_second, 2);
+        assert_eq!(config.rate_limit_burst, 50);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_resolve_config_rate_limit_from_config_file() {
+        let _guard = env_lock().lock().unwrap();
+        clear_test_env();
+
+        let path = write_temp_config(
+            r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+rate_limit_per_second = 5
+rate_limit_burst = 100
+"#,
+        );
+
+        let args = Args {
+            config: Some(path.clone()),
+            bind_addr: None,
+            store_dsn: None,
+            auth_mode: None,
+            bearer_token: None,
+            allow_insecure_nonlocal_bind: false,
+            log_filter: None,
+            store_synchronous: None,
+            store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
+        };
+
+        let config = resolve_config(&args).unwrap();
+
+        assert_eq!(config.rate_limit_per_second, 5);
+        assert_eq!(config.rate_limit_burst, 100);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_resolve_config_rate_limit_cli_overrides_config_file() {
+        let _guard = env_lock().lock().unwrap();
+        clear_test_env();
+
+        let path = write_temp_config(
+            r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+rate_limit_per_second = 5
+rate_limit_burst = 100
+"#,
+        );
+
+        let args = Args {
+            config: Some(path.clone()),
+            bind_addr: None,
+            store_dsn: None,
+            auth_mode: None,
+            bearer_token: None,
+            allow_insecure_nonlocal_bind: false,
+            log_filter: None,
+            store_synchronous: None,
+            store_wal_autocheckpoint: None,
+            rate_limit_per_second: Some(10),
+            rate_limit_burst: Some(200),
+            log_format: None,
+        };
+
+        let config = resolve_config(&args).unwrap();
+
+        assert_eq!(config.rate_limit_per_second, 10);
+        assert_eq!(config.rate_limit_burst, 200);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_resolve_config_rate_limit_env_overrides_config_file() {
+        let _guard = env_lock().lock().unwrap();
+        clear_test_env();
+
+        let path = write_temp_config(
+            r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+rate_limit_per_second = 5
+rate_limit_burst = 100
+"#,
+        );
+
+        unsafe {
+            std::env::set_var("FERRUMD_RATE_LIMIT_PER_SECOND", "15");
+            std::env::set_var("FERRUMD_RATE_LIMIT_BURST", "300");
+        }
+
+        let args = Args {
+            config: Some(path.clone()),
+            bind_addr: None,
+            store_dsn: None,
+            auth_mode: None,
+            bearer_token: None,
+            allow_insecure_nonlocal_bind: false,
+            log_filter: None,
+            store_synchronous: None,
+            store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
+        };
+
+        let config = resolve_config(&args).unwrap();
+
+        assert_eq!(config.rate_limit_per_second, 15);
+        assert_eq!(config.rate_limit_burst, 300);
+
+        let _ = fs::remove_file(path);
+        clear_test_env();
+    }
+
+    #[test]
+    fn test_resolve_config_rejects_zero_rate_limit_per_second() {
+        let _guard = env_lock().lock().unwrap();
+        clear_test_env();
+
+        let path = write_temp_config(
+            r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+rate_limit_per_second = 0
+"#,
+        );
+
+        let args = Args {
+            config: Some(path.clone()),
+            bind_addr: None,
+            store_dsn: None,
+            auth_mode: None,
+            bearer_token: None,
+            allow_insecure_nonlocal_bind: false,
+            log_filter: None,
+            store_synchronous: None,
+            store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
+        };
+
+        let error = resolve_config(&args).err().expect("expected config error");
+        assert!(
+            error
+                .to_string()
+                .contains("rate_limit_per_second must be at least 1")
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_resolve_config_rejects_zero_rate_limit_burst() {
+        let _guard = env_lock().lock().unwrap();
+        clear_test_env();
+
+        let path = write_temp_config(
+            r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+rate_limit_burst = 0
+"#,
+        );
+
+        let args = Args {
+            config: Some(path.clone()),
+            bind_addr: None,
+            store_dsn: None,
+            auth_mode: None,
+            bearer_token: None,
+            allow_insecure_nonlocal_bind: false,
+            log_filter: None,
+            store_synchronous: None,
+            store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
+        };
+
+        let error = resolve_config(&args).err().expect("expected config error");
+        assert!(
+            error
+                .to_string()
+                .contains("rate_limit_burst must be at least 1")
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_resolve_config_rejects_rate_limit_burst_too_large() {
+        let _guard = env_lock().lock().unwrap();
+        clear_test_env();
+
+        let path = write_temp_config(
+            r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+rate_limit_burst = 20000
+"#,
+        );
+
+        let args = Args {
+            config: Some(path.clone()),
+            bind_addr: None,
+            store_dsn: None,
+            auth_mode: None,
+            bearer_token: None,
+            allow_insecure_nonlocal_bind: false,
+            log_filter: None,
+            store_synchronous: None,
+            store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
+        };
+
+        let error = resolve_config(&args).err().expect("expected config error");
+        assert!(
+            error
+                .to_string()
+                .contains("rate_limit_burst must be at most 10000")
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_resolve_config_log_format_defaults_to_text() {
+        let _guard = env_lock().lock().unwrap();
+        clear_test_env();
+
+        let path = write_temp_config(
+            r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+"#,
+        );
+
+        let args = Args {
+            config: Some(path.clone()),
+            bind_addr: None,
+            store_dsn: None,
+            auth_mode: None,
+            bearer_token: None,
+            allow_insecure_nonlocal_bind: false,
+            log_filter: None,
+            store_synchronous: None,
+            store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
+        };
+
+        let config = resolve_config(&args).unwrap();
+        assert_eq!(config.log_format, ferrum_gateway::LogFormat::Text);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_resolve_config_log_format_from_config_file() {
+        let _guard = env_lock().lock().unwrap();
+        clear_test_env();
+
+        let path = write_temp_config(
+            r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+log_format = "json"
+"#,
+        );
+
+        let args = Args {
+            config: Some(path.clone()),
+            bind_addr: None,
+            store_dsn: None,
+            auth_mode: None,
+            bearer_token: None,
+            allow_insecure_nonlocal_bind: false,
+            log_filter: None,
+            store_synchronous: None,
+            store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
+        };
+
+        let config = resolve_config(&args).unwrap();
+        assert_eq!(config.log_format, ferrum_gateway::LogFormat::Json);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_resolve_config_log_format_cli_overrides_config_file() {
+        let _guard = env_lock().lock().unwrap();
+        clear_test_env();
+
+        let path = write_temp_config(
+            r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+log_format = "text"
+"#,
+        );
+
+        let args = Args {
+            config: Some(path.clone()),
+            bind_addr: None,
+            store_dsn: None,
+            auth_mode: None,
+            bearer_token: None,
+            allow_insecure_nonlocal_bind: false,
+            log_filter: None,
+            store_synchronous: None,
+            store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: Some("json".to_string()),
+        };
+
+        let config = resolve_config(&args).unwrap();
+        assert_eq!(config.log_format, ferrum_gateway::LogFormat::Json);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_resolve_config_log_format_env_overrides_config_file() {
+        let _guard = env_lock().lock().unwrap();
+        clear_test_env();
+
+        let path = write_temp_config(
+            r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+log_format = "text"
+"#,
+        );
+
+        unsafe {
+            std::env::set_var("FERRUMD_LOG_FORMAT", "json");
+        }
+
+        let args = Args {
+            config: Some(path.clone()),
+            bind_addr: None,
+            store_dsn: None,
+            auth_mode: None,
+            bearer_token: None,
+            allow_insecure_nonlocal_bind: false,
+            log_filter: None,
+            store_synchronous: None,
+            store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
+        };
+
+        let config = resolve_config(&args).unwrap();
+        assert_eq!(config.log_format, ferrum_gateway::LogFormat::Json);
+
+        let _ = fs::remove_file(path);
+        clear_test_env();
+    }
+
+    #[test]
+    fn test_resolve_config_rejects_invalid_log_format() {
+        let _guard = env_lock().lock().unwrap();
+        clear_test_env();
+
+        let path = write_temp_config(
+            r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+log_format = "invalid"
+"#,
+        );
+
+        let args = Args {
+            config: Some(path.clone()),
+            bind_addr: None,
+            store_dsn: None,
+            auth_mode: None,
+            bearer_token: None,
+            allow_insecure_nonlocal_bind: false,
+            log_filter: None,
+            store_synchronous: None,
+            store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
+        };
+
+        let error = resolve_config(&args).err().expect("expected config error");
+        assert!(error.to_string().contains("invalid log format"));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_resolve_config_accepts_compact_as_text_format() {
+        let _guard = env_lock().lock().unwrap();
+        clear_test_env();
+
+        let path = write_temp_config(
+            r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+log_format = "compact"
+"#,
+        );
+
+        let args = Args {
+            config: Some(path.clone()),
+            bind_addr: None,
+            store_dsn: None,
+            auth_mode: None,
+            bearer_token: None,
+            allow_insecure_nonlocal_bind: false,
+            log_filter: None,
+            store_synchronous: None,
+            store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
+        };
+
+        let config = resolve_config(&args).unwrap();
+        // "compact" is accepted as alias for "text"
+        assert_eq!(config.log_format, ferrum_gateway::LogFormat::Text);
 
         let _ = fs::remove_file(path);
     }

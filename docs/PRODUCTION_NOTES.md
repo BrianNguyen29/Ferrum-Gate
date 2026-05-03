@@ -96,7 +96,54 @@ PostgreSQL is recommended/planned for production deployments requiring materiall
 ## Authentication
 - **Bearer token mode**: Set `auth_mode = "Bearer"` and `bearer_token` in config
 - Tokens are validated with constant-time comparison (timing-attack resistant)
-- Health endpoints (`/v1/healthz`, `/v1/readyz`) are always unauthenticated
+- Health/readiness endpoints are always unauthenticated
+
+## Health and Readiness Endpoints
+
+| Endpoint | Purpose | Store Check | Always Returns 200 |
+|----------|---------|------------|-------------------|
+| `/v1/healthz` | Liveness probe | No | Yes |
+| `/v1/readyz` | Readiness probe (shallow) | No | Yes |
+| `/v1/readyz/deep` | **Functional readiness probe** | **Yes** | **No (200 when healthy, 503 when unhealthy)** |
+| `/v1/metrics` | Prometheus-compatible metrics | Yes | Yes |
+
+**Load balancer / Kubernetes guidance**:
+- Use **`/v1/readyz/deep`** for load balancer health checks and Kubernetes readiness probes.
+  This endpoint returns HTTP 503 when the SQLite store is unreachable or unhealthy,
+  allowing load balancers to route traffic away from degraded instances.
+- **`/v1/healthz`** and **`/v1/readyz`** always return HTTP 200 — do NOT use these
+  for load balancer or Kubernetes readiness probes. They do not check store health.
+- **`/v1/metrics`** (`GET /v1/metrics`) returns Prometheus text format with request counters
+  and `ferrumgate_store_health_up` gauge. It does not cause 503 on store failure.
+
+**Metrics** (`/v1/metrics`) are **baseline only** — basic request counters and store health gauge.
+Full production observability (histograms, queue depth, latency percentiles) is out of scope for v1.
+See [`67-production-readiness-roadmap.md`](./docs/implementation-path/67-production-readiness-roadmap.md) P1.4.
+
+## Logging
+
+**Default format**: Human-readable text (compact style). This is the default when `log_format` is
+not specified.
+
+**JSON format**: Structured JSON logs for production log aggregation systems (ELK, Loki, etc.).
+Enable via CLI (`--log-format json`), environment variable (`FERRUMD_LOG_FORMAT=json`), or config
+file (`log_format = "json"` under `[server]`).
+
+Config precedence: CLI > env > config file > defaults.
+
+```toml
+# Example: enable JSON logging via config file
+[server]
+log_format = "json"
+```
+
+```bash
+# Example: enable JSON logging via environment variable
+FERRUMD_LOG_FORMAT=json ferrumd --config /path/to/prod.toml
+```
+
+**Log fields** (JSON format): `timestamp`, `level`, `message`, `target`, and `spans` (if any).
+Text format includes: `timestamp`, `level`, `target`, `message`.
 
 ## Rate Limiting
 - Built-in via `tower_governor`: 2 req/s sustained, burst of 50

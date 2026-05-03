@@ -34,6 +34,10 @@ allow_insecure_nonlocal_bind = false
 # Log filter (info, debug, warn, error)
 log_filter = "info"
 
+# Log format: "text" (human-readable, default) or "json" (structured)
+# Use "json" in production for log aggregation systems (ELK, Loki, etc.)
+# log_format = "text"
+
 # Store synchronous mode (EXTRA_NOSYNC, NORMAL, OFF)
 # NORMAL is recommended for non-prod; provides durability without full sync overhead
 store_synchronous = "NORMAL"
@@ -45,3 +49,9 @@ store_synchronous = "NORMAL"
 # Store busy timeout in milliseconds (default 5000)
 # Adjust based on expected concurrency
 # store_busy_timeout = 5000
+
+# Rate limiting (tower_governor, per-IP)
+# Default: 2 requests/second sustained, burst of 50
+# Adjust based on expected client behavior and server capacity
+# rate_limit_per_second = 2
+# rate_limit_burst = 50
