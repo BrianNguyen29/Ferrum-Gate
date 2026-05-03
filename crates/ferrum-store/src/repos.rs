@@ -192,6 +192,10 @@ pub trait StoreFacade: Send + Sync {
     fn proposals(&self) -> Arc<dyn ProposalRepo>;
     fn policy_bundles(&self) -> Arc<dyn PolicyBundleRepo>;
 
+    /// Returns the current number of pending write operations in the queue.
+    /// This represents operations that have been sent but not yet completed processing.
+    fn write_queue_depth(&self) -> usize;
+
     /// Performs a cheap health check on the store.
     /// Returns Ok(()) if the store is reachable and functional.
     /// Returns Err if the store is unavailable or not functional.

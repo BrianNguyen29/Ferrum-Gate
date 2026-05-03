@@ -358,6 +358,10 @@ impl StoreFacade for SqliteStore {
         )
     }
 
+    fn write_queue_depth(&self) -> usize {
+        self.write_queue.pending_depth()
+    }
+
     async fn health_check(&self) -> crate::Result<()> {
         // Use SELECT 1 as a cheap probe to verify the database is reachable.
         // This is faster than PRAGMA quick_check which scans pages.

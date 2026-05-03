@@ -20,7 +20,7 @@ use ferrum_proto::{
     RollbackState,
 };
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use sqlx::SqlitePool;
 use tokio::sync::{Notify, mpsc, oneshot};
@@ -136,19 +136,31 @@ pub enum WriteOp {
 #[derive(Clone)]
 pub struct WriteQueue {
     sender: mpsc::Sender<WriteOp>,
+    /// Tracks the number of pending operations awaiting processing.
+    /// Incremented when an operation is sent via `send`, decremented when completed.
+    pending_ops: Arc<AtomicUsize>,
 }
 
 impl WriteQueue {
     /// Send a write operation and wait for the result.
+    /// Pending count is incremented when accepted into the channel and decremented
+    /// by the writer loop after processing. If the caller drops this future after
+    /// enqueue but before completion, the writer loop still decrements, preventing leaks.
     pub async fn send(&self, op: WriteOp) -> crate::Result<()> {
         let (reply, recv) = oneshot::channel();
         let op_with_reply = Self::attach_reply(op, reply);
 
-        self.sender
-            .send(op_with_reply)
-            .await
-            .map_err(|_| StoreError::Other("write queue closed".to_string()))?;
+        // Track pending operation - decrement happens in writer_loop after processing
+        self.pending_ops.fetch_add(1, Ordering::Relaxed);
 
+        let send_result = self.sender.send(op_with_reply).await;
+        if send_result.is_err() {
+            // Channel closed before acceptance; decrement to avoid leak
+            self.pending_ops.fetch_sub(1, Ordering::Relaxed);
+            return Err(StoreError::Other("write queue closed".to_string()));
+        }
+
+        // Wait for result; decrement happens in writer_loop after execute_write_op
         recv.await
             .map_err(|_| StoreError::Other("write operation cancelled".to_string()))?
     }
@@ -160,18 +172,34 @@ impl WriteQueue {
 
     /// Non-blocking fire-and-forget: returns immediately.
     /// If the queue is full, the operation is dropped silently (best-effort).
+    /// Pending operation count is incremented when successfully queued and decremented
+    /// by the writer loop after processing (including drain during shutdown).
     pub fn try_fire_and_forget(&self, op: WriteOp) -> crate::Result<()> {
         let fire_and_forget = WriteOp::FireAndForget(Box::new(op));
+
+        // Track pending operation - decrement happens in writer_loop after processing
+        self.pending_ops.fetch_add(1, Ordering::Relaxed);
+
         match self.sender.try_send(fire_and_forget) {
             Ok(()) => Ok(()),
             Err(mpsc::error::TrySendError::Full(_)) => {
+                // Op was dropped due to full queue; decrement since it was never queued
+                self.pending_ops.fetch_sub(1, Ordering::Relaxed);
                 tracing::warn!("write queue full, dropping fire-and-forget operation");
                 Ok(())
             }
             Err(mpsc::error::TrySendError::Closed(_)) => {
+                // Op was never sent; decrement before returning error
+                self.pending_ops.fetch_sub(1, Ordering::Relaxed);
                 Err(StoreError::Other("write queue closed".to_string()))
             }
         }
+    }
+
+    /// Returns the current number of pending operations in the write queue.
+    /// This represents operations that have been sent but not yet completed processing.
+    pub fn pending_depth(&self) -> usize {
+        self.pending_ops.load(Ordering::Relaxed)
     }
 
     fn attach_reply(op: WriteOp, reply: oneshot::Sender<crate::Result<()>>) -> WriteOp {
@@ -425,28 +453,47 @@ pub(crate) fn spawn_writer_task(
     pool: SqlitePool,
 ) -> (WriteQueue, JoinHandle<()>, Arc<WriterState>) {
     let (tx, rx) = mpsc::channel::<WriteOp>(WRITE_QUEUE_CAPACITY);
-    let queue = WriteQueue { sender: tx };
+    let pending_ops = Arc::new(AtomicUsize::new(0));
+    let queue = WriteQueue {
+        sender: tx,
+        pending_ops: pending_ops.clone(),
+    };
     let state = Arc::new(WriterState::new());
     let state_clone = state.clone();
 
     let handle = tokio::spawn(async move {
-        writer_loop(pool, rx, state_clone).await;
+        writer_loop(pool, rx, state_clone, pending_ops).await;
     });
 
     (queue, handle, state)
 }
 
 /// Writer task main loop.
-async fn writer_loop(pool: SqlitePool, mut rx: mpsc::Receiver<WriteOp>, state: Arc<WriterState>) {
+/// Processes write operations from the channel and tracks pending operation count
+/// for fire-and-forget operations.
+async fn writer_loop(
+    pool: SqlitePool,
+    mut rx: mpsc::Receiver<WriteOp>,
+    state: Arc<WriterState>,
+    pending_ops: Arc<AtomicUsize>,
+) {
     while let Some(op) = rx.recv().await {
         // Check for shutdown signal - reject new ops but drain the queue
         if state.is_shutdown_requested() {
+            // Handle the current op that was already received (not yet processed)
+            if let Err(e) = execute_write_op(&pool, op).await {
+                tracing::warn!(error = %e, "write queue shutdown drain operation failed");
+            }
+            // Decrement pending count for all accepted operations
+            pending_ops.fetch_sub(1, Ordering::Relaxed);
             // Drain remaining operations before shutdown
             tracing::debug!("write queue draining remaining operations during shutdown");
             while let Some(drain_op) = rx.recv().await {
                 if let Err(e) = execute_write_op(&pool, drain_op).await {
                     tracing::warn!(error = %e, "write queue drain operation failed");
                 }
+                // Decrement pending count for all accepted operations
+                pending_ops.fetch_sub(1, Ordering::Relaxed);
             }
             break;
         }
@@ -454,6 +501,8 @@ async fn writer_loop(pool: SqlitePool, mut rx: mpsc::Receiver<WriteOp>, state: A
         if let Err(e) = execute_write_op(&pool, op).await {
             tracing::warn!(error = %e, "write queue operation failed");
         }
+        // Decrement pending count after processing all accepted operations
+        pending_ops.fetch_sub(1, Ordering::Relaxed);
     }
     state.notify_shutdown_complete();
     tracing::info!("write queue writer task shutting down");

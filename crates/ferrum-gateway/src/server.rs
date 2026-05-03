@@ -715,6 +715,7 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
     let readyz_deep_count = state.metrics.readyz_deep_requests.load(Ordering::Relaxed);
     let metrics_count = state.metrics.metrics_scrapes.load(Ordering::Relaxed);
     let store_up = state.metrics.store_health_up.load(Ordering::Relaxed);
+    let write_queue_depth = state.runtime.store.write_queue_depth();
 
     // Load governance error counters
     let gov_err_intents_compile = state
@@ -898,6 +899,9 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
          # HELP ferrumgate_store_health_up Store health status (1=ok, 0=unhealthy)\n\
          # TYPE ferrumgate_store_health_up gauge\n\
          ferrumgate_store_health_up {}\n\
+         # HELP ferrumgate_write_queue_depth Number of pending SQLite write operations\n\
+         # TYPE ferrumgate_write_queue_depth gauge\n\
+         ferrumgate_write_queue_depth {}\n\
          # HELP ferrumgate_metrics_scrapes_total Number of times /v1/metrics was scraped\n\
          # TYPE ferrumgate_metrics_scrapes_total counter\n\
          ferrumgate_metrics_scrapes_total {}\n\
@@ -952,6 +956,7 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
         readyz_deep_count,
         metrics_count,
         store_up,
+        write_queue_depth,
         metrics_count,
         gov_err_intents_compile,
         gov_err_proposals_evaluate,
@@ -5014,6 +5019,9 @@ mod tests {
         fn policy_bundles(&self) -> Arc<dyn PolicyBundleRepo> {
             self.inner.policy_bundles()
         }
+        fn write_queue_depth(&self) -> usize {
+            self.inner.write_queue_depth()
+        }
         async fn health_check(&self) -> Result<(), StoreError> {
             Err(StoreError::Other(
                 "store unavailable for testing".to_string(),
@@ -6421,6 +6429,7 @@ mod tests {
         assert!(body_str.contains("ferrumgate_http_requests_total{route=\"/v1/readyz/deep\"}"));
         assert!(body_str.contains("ferrumgate_http_requests_total{route=\"/v1/metrics\"}"));
         assert!(body_str.contains("ferrumgate_store_health_up"));
+        assert!(body_str.contains("ferrumgate_write_queue_depth"));
         assert!(body_str.contains("ferrumgate_metrics_scrapes_total"));
     }
 
