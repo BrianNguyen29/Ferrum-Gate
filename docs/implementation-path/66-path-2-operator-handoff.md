@@ -153,7 +153,7 @@ Phase B is complete when:
 
 | Phase | Owner | Status | Completion Criteria |
 |-------|-------|--------|---------------------|
-| Phase A (Repo-Side) | FerrumGate team | ☐ Complete | All artifacts present, no secrets in docs |
+| Phase A (Repo-Side) | FerrumGate team | ☑ Complete | All artifacts present, no secrets in docs |
 | Phase B (Target Execution) | Operator | ☐ Blocked | All blockers resolved; drills executed |
 | G2 Signoff | Operator | ☐ Blocked | Doc 59 G2.1–G2.8 filled and signed |
 | Doc 54 Signoff | Operator | ☐ Blocked | Pilot acceptance statement signed |
