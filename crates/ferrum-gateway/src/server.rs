@@ -78,6 +78,28 @@ struct Metrics {
     governance_errors_v1_provenance_lineage_execution_id: AtomicU64,
     governance_errors_v1_provenance_ingest: AtomicU64,
     governance_errors_v1_bridges_bridge_id_tools: AtomicU64,
+    // Governance success counters keyed by static route template
+    governance_success_v1_intents_compile: AtomicU64,
+    governance_success_v1_proposals_evaluate: AtomicU64,
+    governance_success_v1_capabilities_mint: AtomicU64,
+    governance_success_v1_capabilities_revoke: AtomicU64,
+    governance_success_v1_executions_authorize: AtomicU64,
+    governance_success_v1_executions_prepare: AtomicU64,
+    governance_success_v1_executions_execute: AtomicU64,
+    governance_success_v1_executions_verify: AtomicU64,
+    governance_success_v1_executions_compensate: AtomicU64,
+    governance_success_v1_executions_cancel: AtomicU64,
+    governance_success_v1_executions_evaluate_outcome: AtomicU64,
+    governance_success_v1_executions_execution_id: AtomicU64,
+    governance_success_v1_approvals: AtomicU64,
+    governance_success_v1_approvals_approval_id: AtomicU64,
+    governance_success_v1_policy_bundles: AtomicU64,
+    governance_success_v1_policy_bundles_bundle_id: AtomicU64,
+    governance_success_v1_provenance_query: AtomicU64,
+    governance_success_v1_provenance_lineage: AtomicU64,
+    governance_success_v1_provenance_lineage_execution_id: AtomicU64,
+    governance_success_v1_provenance_ingest: AtomicU64,
+    governance_success_v1_bridges_bridge_id_tools: AtomicU64,
 }
 
 impl Metrics {
@@ -109,6 +131,27 @@ impl Metrics {
             governance_errors_v1_provenance_lineage_execution_id: AtomicU64::new(0),
             governance_errors_v1_provenance_ingest: AtomicU64::new(0),
             governance_errors_v1_bridges_bridge_id_tools: AtomicU64::new(0),
+            governance_success_v1_intents_compile: AtomicU64::new(0),
+            governance_success_v1_proposals_evaluate: AtomicU64::new(0),
+            governance_success_v1_capabilities_mint: AtomicU64::new(0),
+            governance_success_v1_capabilities_revoke: AtomicU64::new(0),
+            governance_success_v1_executions_authorize: AtomicU64::new(0),
+            governance_success_v1_executions_prepare: AtomicU64::new(0),
+            governance_success_v1_executions_execute: AtomicU64::new(0),
+            governance_success_v1_executions_verify: AtomicU64::new(0),
+            governance_success_v1_executions_compensate: AtomicU64::new(0),
+            governance_success_v1_executions_cancel: AtomicU64::new(0),
+            governance_success_v1_executions_evaluate_outcome: AtomicU64::new(0),
+            governance_success_v1_executions_execution_id: AtomicU64::new(0),
+            governance_success_v1_approvals: AtomicU64::new(0),
+            governance_success_v1_approvals_approval_id: AtomicU64::new(0),
+            governance_success_v1_policy_bundles: AtomicU64::new(0),
+            governance_success_v1_policy_bundles_bundle_id: AtomicU64::new(0),
+            governance_success_v1_provenance_query: AtomicU64::new(0),
+            governance_success_v1_provenance_lineage: AtomicU64::new(0),
+            governance_success_v1_provenance_lineage_execution_id: AtomicU64::new(0),
+            governance_success_v1_provenance_ingest: AtomicU64::new(0),
+            governance_success_v1_bridges_bridge_id_tools: AtomicU64::new(0),
         }
     }
 
@@ -177,6 +220,75 @@ impl Metrics {
                 .fetch_add(1, Ordering::Relaxed),
             GovernanceRoute::BridgesBridgeIdTools => self
                 .governance_errors_v1_bridges_bridge_id_tools
+                .fetch_add(1, Ordering::Relaxed),
+        };
+    }
+
+    /// Increments the governance success counter for the given route.
+    fn increment_governance_success(&self, route: GovernanceRoute) {
+        match route {
+            GovernanceRoute::IntentsCompile => self
+                .governance_success_v1_intents_compile
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::ProposalsEvaluate => self
+                .governance_success_v1_proposals_evaluate
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::CapabilitiesMint => self
+                .governance_success_v1_capabilities_mint
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::CapabilitiesRevoke => self
+                .governance_success_v1_capabilities_revoke
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::ExecutionsAuthorize => self
+                .governance_success_v1_executions_authorize
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::ExecutionsPrepare => self
+                .governance_success_v1_executions_prepare
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::ExecutionsExecute => self
+                .governance_success_v1_executions_execute
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::ExecutionsVerify => self
+                .governance_success_v1_executions_verify
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::ExecutionsCompensate => self
+                .governance_success_v1_executions_compensate
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::ExecutionsCancel => self
+                .governance_success_v1_executions_cancel
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::ExecutionsEvaluateOutcome => self
+                .governance_success_v1_executions_evaluate_outcome
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::ExecutionsExecutionId => self
+                .governance_success_v1_executions_execution_id
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::Approvals => self
+                .governance_success_v1_approvals
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::ApprovalsApprovalId => self
+                .governance_success_v1_approvals_approval_id
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::PolicyBundles => self
+                .governance_success_v1_policy_bundles
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::PolicyBundlesBundleId => self
+                .governance_success_v1_policy_bundles_bundle_id
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::ProvenanceQuery => self
+                .governance_success_v1_provenance_query
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::ProvenanceLineage => self
+                .governance_success_v1_provenance_lineage
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::ProvenanceLineageExecutionId => self
+                .governance_success_v1_provenance_lineage_execution_id
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::ProvenanceIngest => self
+                .governance_success_v1_provenance_ingest
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::BridgesBridgeIdTools => self
+                .governance_success_v1_bridges_bridge_id_tools
                 .fetch_add(1, Ordering::Relaxed),
         };
     }
@@ -262,6 +374,15 @@ macro_rules! governance_err {
         Err($err)
     }};
     ($code:expr, $msg:expr) => {{ ApiProblem::new(StatusCode::BAD_REQUEST, $code, $msg) }};
+}
+
+/// Macro to increment governance success counter and return an Ok value.
+/// Usage: `governance_ok!(state, GovernanceRoute::IntentsCompile, Ok(Json(response)))`
+macro_rules! governance_ok {
+    ($state:expr, $route:expr, $ok:expr) => {{
+        $state.metrics.increment_governance_success($route);
+        $ok
+    }};
 }
 
 // ---------------------------------------------------------------------------
@@ -680,6 +801,92 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
         .governance_errors_v1_bridges_bridge_id_tools
         .load(Ordering::Relaxed);
 
+    // Load governance success counters
+    let gov_ok_intents_compile = state
+        .metrics
+        .governance_success_v1_intents_compile
+        .load(Ordering::Relaxed);
+    let gov_ok_proposals_evaluate = state
+        .metrics
+        .governance_success_v1_proposals_evaluate
+        .load(Ordering::Relaxed);
+    let gov_ok_capabilities_mint = state
+        .metrics
+        .governance_success_v1_capabilities_mint
+        .load(Ordering::Relaxed);
+    let gov_ok_capabilities_revoke = state
+        .metrics
+        .governance_success_v1_capabilities_revoke
+        .load(Ordering::Relaxed);
+    let gov_ok_executions_authorize = state
+        .metrics
+        .governance_success_v1_executions_authorize
+        .load(Ordering::Relaxed);
+    let gov_ok_executions_prepare = state
+        .metrics
+        .governance_success_v1_executions_prepare
+        .load(Ordering::Relaxed);
+    let gov_ok_executions_execute = state
+        .metrics
+        .governance_success_v1_executions_execute
+        .load(Ordering::Relaxed);
+    let gov_ok_executions_verify = state
+        .metrics
+        .governance_success_v1_executions_verify
+        .load(Ordering::Relaxed);
+    let gov_ok_executions_compensate = state
+        .metrics
+        .governance_success_v1_executions_compensate
+        .load(Ordering::Relaxed);
+    let gov_ok_executions_cancel = state
+        .metrics
+        .governance_success_v1_executions_cancel
+        .load(Ordering::Relaxed);
+    let gov_ok_executions_evaluate_outcome = state
+        .metrics
+        .governance_success_v1_executions_evaluate_outcome
+        .load(Ordering::Relaxed);
+    let gov_ok_executions_execution_id = state
+        .metrics
+        .governance_success_v1_executions_execution_id
+        .load(Ordering::Relaxed);
+    let gov_ok_approvals = state
+        .metrics
+        .governance_success_v1_approvals
+        .load(Ordering::Relaxed);
+    let gov_ok_approvals_approval_id = state
+        .metrics
+        .governance_success_v1_approvals_approval_id
+        .load(Ordering::Relaxed);
+    let gov_ok_policy_bundles = state
+        .metrics
+        .governance_success_v1_policy_bundles
+        .load(Ordering::Relaxed);
+    let gov_ok_policy_bundles_bundle_id = state
+        .metrics
+        .governance_success_v1_policy_bundles_bundle_id
+        .load(Ordering::Relaxed);
+    let gov_ok_provenance_query = state
+        .metrics
+        .governance_success_v1_provenance_query
+        .load(Ordering::Relaxed);
+    let gov_ok_provenance_lineage = state
+        .metrics
+        .governance_success_v1_provenance_lineage
+        .load(Ordering::Relaxed);
+    let gov_ok_provenance_lineage_execution_id = state
+        .metrics
+        .governance_success_v1_provenance_lineage_execution_id
+        .load(Ordering::Relaxed);
+    let gov_ok_provenance_ingest = state
+        .metrics
+        .governance_success_v1_provenance_ingest
+        .load(Ordering::Relaxed);
+    let gov_ok_bridges_bridge_id_tools = state
+        .metrics
+        .governance_success_v1_bridges_bridge_id_tools
+        .load(Ordering::Relaxed);
+
     let body = format!(
         "# HELP ferrumgate_http_requests_total HTTP requests total by route\n\
          # TYPE ferrumgate_http_requests_total counter\n\
@@ -715,7 +922,30 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
          ferrumgate_governance_errors_total{{route=\"/v1/provenance/lineage\"}} {}\n\
          ferrumgate_governance_errors_total{{route=\"/v1/provenance/lineage/{{execution_id}}\"}} {}\n\
          ferrumgate_governance_errors_total{{route=\"/v1/provenance/ingest\"}} {}\n\
-         ferrumgate_governance_errors_total{{route=\"/v1/bridges/{{bridge_id}}/tools\"}} {}\n",
+         ferrumgate_governance_errors_total{{route=\"/v1/bridges/{{bridge_id}}/tools\"}} {}\n\
+         # HELP ferrumgate_governance_success_total Governance successes by route\n\
+         # TYPE ferrumgate_governance_success_total counter\n\
+         ferrumgate_governance_success_total{{route=\"/v1/intents/compile\"}} {}\n\
+         ferrumgate_governance_success_total{{route=\"/v1/proposals/{{proposal_id}}/evaluate\"}} {}\n\
+         ferrumgate_governance_success_total{{route=\"/v1/capabilities/mint\"}} {}\n\
+         ferrumgate_governance_success_total{{route=\"/v1/capabilities/{{capability_id}}/revoke\"}} {}\n\
+         ferrumgate_governance_success_total{{route=\"/v1/executions/authorize\"}} {}\n\
+         ferrumgate_governance_success_total{{route=\"/v1/executions/{{execution_id}}/prepare\"}} {}\n\
+         ferrumgate_governance_success_total{{route=\"/v1/executions/{{execution_id}}/execute\"}} {}\n\
+         ferrumgate_governance_success_total{{route=\"/v1/executions/{{execution_id}}/verify\"}} {}\n\
+         ferrumgate_governance_success_total{{route=\"/v1/executions/{{execution_id}}/compensate\"}} {}\n\
+         ferrumgate_governance_success_total{{route=\"/v1/executions/{{execution_id}}/cancel\"}} {}\n\
+         ferrumgate_governance_success_total{{route=\"/v1/executions/{{execution_id}}/evaluate-outcome\"}} {}\n\
+         ferrumgate_governance_success_total{{route=\"/v1/executions/{{execution_id}}\"}} {}\n\
+         ferrumgate_governance_success_total{{route=\"/v1/approvals\"}} {}\n\
+         ferrumgate_governance_success_total{{route=\"/v1/approvals/{{approval_id}}\"}} {}\n\
+         ferrumgate_governance_success_total{{route=\"/v1/policy-bundles\"}} {}\n\
+         ferrumgate_governance_success_total{{route=\"/v1/policy-bundles/{{bundle_id}}\"}} {}\n\
+         ferrumgate_governance_success_total{{route=\"/v1/provenance/query\"}} {}\n\
+         ferrumgate_governance_success_total{{route=\"/v1/provenance/lineage\"}} {}\n\
+         ferrumgate_governance_success_total{{route=\"/v1/provenance/lineage/{{execution_id}}\"}} {}\n\
+         ferrumgate_governance_success_total{{route=\"/v1/provenance/ingest\"}} {}\n\
+         ferrumgate_governance_success_total{{route=\"/v1/bridges/{{bridge_id}}/tools\"}} {}\n",
         healthz_count,
         readyz_count,
         readyz_deep_count,
@@ -743,6 +973,27 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
         gov_err_provenance_lineage_execution_id,
         gov_err_provenance_ingest,
         gov_err_bridges_bridge_id_tools,
+        gov_ok_intents_compile,
+        gov_ok_proposals_evaluate,
+        gov_ok_capabilities_mint,
+        gov_ok_capabilities_revoke,
+        gov_ok_executions_authorize,
+        gov_ok_executions_prepare,
+        gov_ok_executions_execute,
+        gov_ok_executions_verify,
+        gov_ok_executions_compensate,
+        gov_ok_executions_cancel,
+        gov_ok_executions_evaluate_outcome,
+        gov_ok_executions_execution_id,
+        gov_ok_approvals,
+        gov_ok_approvals_approval_id,
+        gov_ok_policy_bundles,
+        gov_ok_policy_bundles_bundle_id,
+        gov_ok_provenance_query,
+        gov_ok_provenance_lineage,
+        gov_ok_provenance_lineage_execution_id,
+        gov_ok_provenance_ingest,
+        gov_ok_bridges_bridge_id_tools,
     );
 
     (
@@ -842,10 +1093,14 @@ async fn compile_intent(
         );
     }
 
-    Ok(Json(IntentCompileResponse {
-        envelope,
-        warnings: Vec::new(),
-    }))
+    governance_ok!(
+        state,
+        GovernanceRoute::IntentsCompile,
+        Ok(Json(IntentCompileResponse {
+            envelope,
+            warnings: Vec::new(),
+        }))
+    )
 }
 
 async fn evaluate_proposal(
@@ -985,7 +1240,7 @@ async fn evaluate_proposal(
         );
     }
 
-    Ok(Json(out))
+    governance_ok!(state, GovernanceRoute::ProposalsEvaluate, Ok(Json(out)))
 }
 
 async fn mint_capability(
@@ -1067,7 +1322,7 @@ async fn mint_capability(
         );
     }
 
-    Ok(Json(response))
+    governance_ok!(state, GovernanceRoute::CapabilitiesMint, Ok(Json(response)))
 }
 
 async fn revoke_capability(
@@ -1210,7 +1465,11 @@ async fn revoke_capability(
         "capability_id": lease.capability_id.to_string()
     });
     let sanitized = sanitize_json(&state.runtime.firewall, response);
-    Ok(Json(sanitized))
+    governance_ok!(
+        state,
+        GovernanceRoute::CapabilitiesRevoke,
+        Ok(Json(sanitized))
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1572,10 +1831,14 @@ async fn authorize_execution(
         );
     }
 
-    Ok(Json(AuthorizeExecutionResponse {
-        execution: record,
-        warnings: Vec::new(),
-    }))
+    governance_ok!(
+        state,
+        GovernanceRoute::ExecutionsAuthorize,
+        Ok(Json(AuthorizeExecutionResponse {
+            execution: record,
+            warnings: Vec::new(),
+        }))
+    )
 }
 
 async fn prepare_execution(
@@ -1831,12 +2094,16 @@ async fn prepare_execution(
         );
     }
 
-    Ok(Json(ferrum_proto::PrepareExecutionResponse {
-        execution_id,
-        prepared: response.accepted,
-        rollback_contract: Some(response.contract),
-        warnings: response.warnings,
-    }))
+    governance_ok!(
+        state,
+        GovernanceRoute::ExecutionsPrepare,
+        Ok(Json(ferrum_proto::PrepareExecutionResponse {
+            execution_id,
+            prepared: response.accepted,
+            rollback_contract: Some(response.contract),
+            warnings: response.warnings,
+        }))
+    )
 }
 
 async fn execute_execution(
@@ -2048,13 +2315,17 @@ async fn execute_execution(
         );
     }
 
-    Ok(Json(ferrum_proto::ExecuteExecutionResponse {
-        execution_id,
-        executed: true,
-        result_digest: receipt.result_digest,
-        rollback_contract: Some(updated_contract),
-        warnings: Vec::new(),
-    }))
+    governance_ok!(
+        state,
+        GovernanceRoute::ExecutionsExecute,
+        Ok(Json(ferrum_proto::ExecuteExecutionResponse {
+            execution_id,
+            executed: true,
+            result_digest: receipt.result_digest,
+            rollback_contract: Some(updated_contract),
+            warnings: Vec::new(),
+        }))
+    )
 }
 
 async fn verify_execution(
@@ -2341,12 +2612,16 @@ async fn verify_execution(
         }
     }
 
-    Ok(Json(ferrum_proto::VerifyExecutionResponse {
-        execution_id,
-        verified,
-        rollback_contract: Some(updated_contract),
-        warnings: Vec::new(),
-    }))
+    governance_ok!(
+        state,
+        GovernanceRoute::ExecutionsVerify,
+        Ok(Json(ferrum_proto::VerifyExecutionResponse {
+            execution_id,
+            verified,
+            rollback_contract: Some(updated_contract),
+            warnings: Vec::new(),
+        }))
+    )
 }
 
 async fn compensate_execution(
@@ -2544,12 +2819,16 @@ async fn compensate_execution(
         );
     }
 
-    Ok(Json(ferrum_proto::CompensateExecutionResponse {
-        execution_id,
-        compensated: true,
-        rollback_contract: Some(updated_contract),
-        warnings: Vec::new(),
-    }))
+    governance_ok!(
+        state,
+        GovernanceRoute::ExecutionsCompensate,
+        Ok(Json(ferrum_proto::CompensateExecutionResponse {
+            execution_id,
+            compensated: true,
+            rollback_contract: Some(updated_contract),
+            warnings: Vec::new(),
+        }))
+    )
 }
 
 async fn cancel_execution(
@@ -2688,12 +2967,16 @@ async fn cancel_execution(
             )
         })?;
 
-    Ok(Json(ferrum_proto::CancelExecutionResponse {
-        execution_id,
-        previous_state,
-        current_state: ExecutionState::Canceled,
-        canceled_at: Utc::now(),
-    }))
+    governance_ok!(
+        state,
+        GovernanceRoute::ExecutionsCancel,
+        Ok(Json(ferrum_proto::CancelExecutionResponse {
+            execution_id,
+            previous_state,
+            current_state: ExecutionState::Canceled,
+            canceled_at: Utc::now(),
+        }))
+    )
 }
 
 async fn evaluate_outcome(
@@ -2780,7 +3063,11 @@ async fn evaluate_outcome(
             )
         })?;
 
-    Ok(Json(response))
+    governance_ok!(
+        state,
+        GovernanceRoute::ExecutionsEvaluateOutcome,
+        Ok(Json(response))
+    )
 }
 
 async fn get_execution_lineage(
@@ -2864,7 +3151,11 @@ async fn get_execution_lineage(
             ApiProblem::internal(anyhow::Error::from(e)),
         )
     })?;
-    Ok(Json(sanitized_response))
+    governance_ok!(
+        state,
+        GovernanceRoute::ProvenanceLineageExecutionId,
+        Ok(Json(sanitized_response))
+    )
 }
 
 /// Multi-hop lineage query from a seed event_id.
@@ -3037,7 +3328,11 @@ async fn query_lineage(
                 ApiProblem::internal(anyhow::Error::from(e)),
             )
         })?;
-    Ok(Json(sanitized_response))
+    governance_ok!(
+        state,
+        GovernanceRoute::ProvenanceLineage,
+        Ok(Json(sanitized_response))
+    )
 }
 
 async fn get_execution(
@@ -3121,7 +3416,11 @@ async fn get_execution(
             );
         }
     };
-    Ok(Json(sanitized_response))
+    governance_ok!(
+        state,
+        GovernanceRoute::ExecutionsExecutionId,
+        Ok(Json(sanitized_response))
+    )
 }
 
 async fn list_approvals(
@@ -3234,7 +3533,11 @@ async fn list_approvals(
         (approvals, None)
     };
 
-    Ok(Json(ApprovalListEnvelope { items, next_cursor }))
+    governance_ok!(
+        state,
+        GovernanceRoute::Approvals,
+        Ok(Json(ApprovalListEnvelope { items, next_cursor }))
+    )
 }
 
 async fn get_approval(
@@ -3268,7 +3571,11 @@ async fn get_approval(
                 ),
             )
         })?;
-    Ok(Json(approval))
+    governance_ok!(
+        state,
+        GovernanceRoute::ApprovalsApprovalId,
+        Ok(Json(approval))
+    )
 }
 
 async fn query_provenance(
@@ -3287,7 +3594,11 @@ async fn query_provenance(
                 ApiProblem::internal(anyhow::Error::from(e)),
             )
         })?;
-    Ok(Json(ProvenanceQueryResponse { events }))
+    governance_ok!(
+        state,
+        GovernanceRoute::ProvenanceQuery,
+        Ok(Json(ProvenanceQueryResponse { events }))
+    )
 }
 
 async fn ingest_provenance(
@@ -3362,10 +3673,14 @@ async fn ingest_provenance(
             )
         })?;
 
-    Ok(Json(ProvenanceIngestResponse {
-        event_id,
-        linked: true,
-    }))
+    governance_ok!(
+        state,
+        GovernanceRoute::ProvenanceIngest,
+        Ok(Json(ProvenanceIngestResponse {
+            event_id,
+            linked: true,
+        }))
+    )
 }
 
 async fn list_bridges(State(state): State<Arc<AppState>>) -> Json<BridgeListResponse> {
@@ -3439,7 +3754,11 @@ async fn list_bridge_tools(
                 ApiProblem::internal(anyhow::Error::from(e)),
             )
         })?;
-    Ok(Json(sanitized_response))
+    governance_ok!(
+        state,
+        GovernanceRoute::BridgesBridgeIdTools,
+        Ok(Json(sanitized_response))
+    )
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -4034,10 +4353,14 @@ async fn create_policy_bundle(
         .get_by_content_hash(&content_hash)
         .await
     {
-        return Ok(Json(ferrum_proto::PolicyBundleResponse {
-            bundle: existing,
-            content_hash,
-        }));
+        return governance_ok!(
+            state,
+            GovernanceRoute::PolicyBundles,
+            Ok(Json(ferrum_proto::PolicyBundleResponse {
+                bundle: existing,
+                content_hash,
+            }))
+        );
     }
 
     // Insert the new bundle
@@ -4054,10 +4377,14 @@ async fn create_policy_bundle(
             )
         })?;
 
-    Ok(Json(ferrum_proto::PolicyBundleResponse {
-        bundle,
-        content_hash,
-    }))
+    governance_ok!(
+        state,
+        GovernanceRoute::PolicyBundles,
+        Ok(Json(ferrum_proto::PolicyBundleResponse {
+            bundle,
+            content_hash,
+        }))
+    )
 }
 
 async fn list_policy_bundles(
@@ -4077,10 +4404,14 @@ async fn list_policy_bundles(
         })?;
 
     let total = bundles.len();
-    Ok(Json(ferrum_proto::PolicyBundleListResponse {
-        bundles,
-        total,
-    }))
+    governance_ok!(
+        state,
+        GovernanceRoute::PolicyBundles,
+        Ok(Json(ferrum_proto::PolicyBundleListResponse {
+            bundles,
+            total,
+        }))
+    )
 }
 
 async fn get_policy_bundle(
@@ -4111,10 +4442,14 @@ async fn get_policy_bundle(
         })?;
 
     let content_hash = bundle.content_hash.clone().unwrap_or_default();
-    Ok(Json(ferrum_proto::PolicyBundleResponse {
-        bundle,
-        content_hash,
-    }))
+    governance_ok!(
+        state,
+        GovernanceRoute::PolicyBundlesBundleId,
+        Ok(Json(ferrum_proto::PolicyBundleResponse {
+            bundle,
+            content_hash,
+        }))
+    )
 }
 
 async fn update_policy_bundle(
@@ -4195,10 +4530,14 @@ async fn update_policy_bundle(
             )
         })?;
 
-    Ok(Json(ferrum_proto::PolicyBundleResponse {
-        bundle,
-        content_hash,
-    }))
+    governance_ok!(
+        state,
+        GovernanceRoute::PolicyBundlesBundleId,
+        Ok(Json(ferrum_proto::PolicyBundleResponse {
+            bundle,
+            content_hash,
+        }))
+    )
 }
 
 async fn delete_policy_bundle(
@@ -4244,7 +4583,11 @@ async fn delete_policy_bundle(
 
     let response = serde_json::json!({ "ok": true, "bundle_id": bundle_id });
     let sanitized = sanitize_json(&state.runtime.firewall, response);
-    Ok(Json(sanitized))
+    governance_ok!(
+        state,
+        GovernanceRoute::PolicyBundlesBundleId,
+        Ok(Json(sanitized))
+    )
 }
 
 async fn set_policy_bundle_active(
@@ -4295,7 +4638,11 @@ async fn set_policy_bundle_active(
         "active": request.active
     });
     let sanitized = sanitize_json(&state.runtime.firewall, response);
-    Ok(Json(sanitized))
+    governance_ok!(
+        state,
+        GovernanceRoute::PolicyBundlesBundleId,
+        Ok(Json(sanitized))
+    )
 }
 
 #[derive(Debug)]
@@ -6117,6 +6464,37 @@ mod tests {
         assert!(
             body_str
                 .contains("ferrumgate_governance_errors_total{route=\"/v1/intents/compile\"} 0")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_metrics_endpoint_governance_success_counters_present() {
+        let runtime = test_runtime().await;
+        let router = build_router(runtime);
+
+        // Call metrics without triggering any governance successes
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+
+        // Verify governance success counters exist (HELP and TYPE lines)
+        assert!(body_str.contains("ferrumgate_governance_success_total"));
+        // Check that at least one route shows 0
+        assert!(
+            body_str
+                .contains("ferrumgate_governance_success_total{route=\"/v1/intents/compile\"} 0")
         );
     }
 }

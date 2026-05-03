@@ -79,10 +79,11 @@ paths:
         - `ferrumgate_store_health_up` - Store health gauge (1=ok, 0=unhealthy)
         - `ferrumgate_metrics_scrapes_total` - Metrics endpoint scrape counter
         - `ferrumgate_governance_errors_total` - Governance error counters by route
+        - `ferrumgate_governance_success_total` - Governance success counters by route
 
         **Note**: This endpoint is intentionally bounded. It does not expose
-        latency histograms, WAL/page gauges, or connection-pool saturation signals.
-      operationId: metrics
+        latency histograms, HTTP method/status labels, WAL/page gauges, or connection-pool
+        saturation signals.
       security: []
       responses:
         '200':

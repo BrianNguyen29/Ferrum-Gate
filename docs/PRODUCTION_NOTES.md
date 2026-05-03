@@ -113,11 +113,13 @@ PostgreSQL is recommended/planned for production deployments requiring materiall
   allowing load balancers to route traffic away from degraded instances.
 - **`/v1/healthz`** and **`/v1/readyz`** always return HTTP 200 — do NOT use these
   for load balancer or Kubernetes readiness probes. They do not check store health.
-- **`/v1/metrics`** (`GET /v1/metrics`) returns Prometheus text format with request counters
-  and `ferrumgate_store_health_up` gauge. It does not cause 503 on store failure.
+- **`/v1/metrics`** (`GET /v1/metrics`) returns Prometheus text format with request counters,
+  `ferrumgate_store_health_up` gauge, `ferrumgate_governance_errors_total` per route, and
+  `ferrumgate_governance_success_total` per route. It does not cause 503 on store failure.
 
-**Metrics** (`/v1/metrics`) are **baseline only** — basic request counters and store health gauge.
-Full production observability (histograms, queue depth, latency percentiles) is out of scope for v1.
+**Metrics** (`/v1/metrics`) are **baseline only** — request counters, store health gauge, and
+governance error/success counters. Full production observability (latency histograms, HTTP
+method/status labels, queue depth, latency percentiles) is out of scope for v1.
 See [`67-production-readiness-roadmap.md`](./docs/implementation-path/67-production-readiness-roadmap.md) P1.4.
 
 ## Logging

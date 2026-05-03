@@ -440,7 +440,7 @@ Per `27-production-evaluation-plan.md` §Operations and `21-v1-single-node-obser
 
 ### Endpoint Information
 - Path: `/v1/metrics`
-- Authentication: Bearer token required (same as other governance routes)
+- Authentication: None (public, unauthenticated — no auth required)
 - Content-Type: `text/plain; version=0.0.4` (Prometheus exposition format)
 
 ### Actual v1 Metrics (Bounded)
@@ -465,16 +465,36 @@ ferrumgate_metrics_scrapes_total 23
 
 # HELP ferrumgate_governance_errors_total Governance error counter per route
 # TYPE ferrumgate_governance_errors_total counter
-ferrumgate_governance_errors_total{route="/v1/intents"} 0
-ferrumgate_governance_errors_total{route="/v1/executions"} 0
+ferrumgate_governance_errors_total{route="/v1/intents/compile"} 0
+ferrumgate_governance_errors_total{route="/v1/proposals/{proposal_id}/evaluate"} 0
+ferrumgate_governance_errors_total{route="/v1/capabilities/mint"} 0
+ferrumgate_governance_errors_total{route="/v1/executions/authorize"} 0
+ferrumgate_governance_errors_total{route="/v1/executions/{execution_id}/prepare"} 0
+ferrumgate_governance_errors_total{route="/v1/executions/{execution_id}/execute"} 0
+ferrumgate_governance_errors_total{route="/v1/executions/{execution_id}/verify"} 0
+ferrumgate_governance_errors_total{route="/v1/executions/{execution_id}/compensate"} 0
+ferrumgate_governance_errors_total{route="/v1/executions/{execution_id}/cancel"} 0
 ferrumgate_governance_errors_total{route="/v1/approvals"} 0
 ferrumgate_governance_errors_total{route="/v1/policy-bundles"} 0
+
+# HELP ferrumgate_governance_success_total Governance success counter per route
+# TYPE ferrumgate_governance_success_total counter
+ferrumgate_governance_success_total{route="/v1/intents/compile"} 0
+ferrumgate_governance_success_total{route="/v1/proposals/{proposal_id}/evaluate"} 0
+ferrumgate_governance_success_total{route="/v1/capabilities/mint"} 0
+ferrumgate_governance_success_total{route="/v1/executions/authorize"} 0
+ferrumgate_governance_success_total{route="/v1/executions/{execution_id}/prepare"} 0
+ferrumgate_governance_success_total{route="/v1/executions/{execution_id}/execute"} 0
+ferrumgate_governance_success_total{route="/v1/executions/{execution_id}/verify"} 0
+ferrumgate_governance_success_total{route="/v1/executions/{execution_id}/compensate"} 0
+ferrumgate_governance_success_total{route="/v1/executions/{execution_id}/cancel"} 0
+ferrumgate_governance_success_total{route="/v1/approvals"} 0
+ferrumgate_governance_success_total{route="/v1/policy-bundles"} 0
 ```
 
 ### Scrape Command
 ```bash
-$ curl -s http://localhost:8080/v1/metrics \
-  -H "Authorization: Bearer {token}"
+$ curl -s http://localhost:8080/v1/metrics
 ```
 
 ### Bounded Metrics Notes
@@ -484,6 +504,7 @@ $ curl -s http://localhost:8080/v1/metrics \
 - `ferrumgate_store_health_up`: Store up/down as a gauge (1=up, 0=down)
 - `ferrumgate_metrics_scrapes_total`: Count of metrics endpoint scrapes
 - `ferrumgate_governance_errors_total`: Bounded per-route governance error counters
+- `ferrumgate_governance_success_total`: Bounded per-route governance success counters
 
 **Post-v1 / Aspirational Metrics** (not yet available):
 The following appear in some documentation examples but are **not currently implemented** in v1:
@@ -513,7 +534,7 @@ The following appear in some documentation examples but are **not currently impl
 
 ### Key Takeaways
 - `/v1/metrics` returns Prometheus exposition format
-- Bearer auth required (not public)
+- No auth required (public)
 - Only confirmed v1 metrics are shown above; aspirational metrics are labeled post-v1
 - Operators should scrape and persist metrics externally for historical analysis
 - For full store integrity, use `sqlite3 /path/to/db "PRAGMA integrity_check;"` directly
