@@ -45,6 +45,9 @@ The following artifacts have been prepared in the repository for the operator's 
 | Pilot readiness evidence packet | `docs/implementation-path/59-pilot-readiness-evidence-packet.md` | ✅ Repo-side (operator-fillable) |
 | Compensation drill template | `docs/implementation-path/58-workload-compensation-drill-evidence-template.md` | ✅ Repo-side (operator-fillable) |
 | Evidence skeleton generator | `scripts/generate_evidence_skeleton.py` | ✅ Repo-side |
+| Pre-target gate script | `scripts/run_pre_target_gate.sh` | ✅ Repo-side |
+| Config examples validator | `scripts/validate_config_examples.sh` | ✅ Repo-side |
+| Local restore drill script | `scripts/run_local_restore_drill.sh` | ✅ Repo-side |
 
 ### A.2 What This Phase Does NOT Produce
 
@@ -69,6 +72,7 @@ This phase is complete when:
 - No real secrets or host-specific values are baked into documentation
 - All example configs use safe placeholders
 - All constrained claims (no G2 complete, no production-ready) are present
+- `make pretarget` / `bash scripts/run_pre_target_gate.sh` passes locally (Tier 0 validation)
 
 ### A.4 Phase A Disclaimer
 

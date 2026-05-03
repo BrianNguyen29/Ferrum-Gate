@@ -1,4 +1,4 @@
-.PHONY: help check fmt lint test docs validate tree
+.PHONY: help check fmt lint test docs validate tree pretarget
 
 help:
 	@echo "make check     - cargo check workspace"
@@ -8,6 +8,7 @@ help:
 	@echo "make docs      - build docs placeholder"
 	@echo "make validate  - validate contracts/openapi/schemas placeholder"
 	@echo "make tree      - print repository tree"
+	@echo "make pretarget - local pre-target gate (config validation, restore drill, doc presence)"
 
 check:
 	cargo check --workspace
@@ -29,3 +30,7 @@ validate:
 
 tree:
 	find . -maxdepth 4 | sort
+
+pretarget:
+	@echo "Running local pre-target gate..."
+	@bash scripts/run_pre_target_gate.sh
