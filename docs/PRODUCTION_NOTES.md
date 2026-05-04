@@ -100,16 +100,23 @@ PostgreSQL is recommended/planned for production deployments requiring materiall
 
 ## Health and Readiness Endpoints
 
-| Endpoint | Purpose | Store Check | Always Returns 200 |
-|----------|---------|------------|-------------------|
-| `/v1/healthz` | Liveness probe | No | Yes |
-| `/v1/readyz` | Readiness probe (shallow) | No | Yes |
-| `/v1/readyz/deep` | **Functional readiness probe** | **Yes** | **No (200 when healthy, 503 when unhealthy)** |
-| `/v1/metrics` | Prometheus-compatible metrics | Yes | Yes |
+| Endpoint | Purpose | Store Check | Queue Check | Always Returns 200 |
+|----------|---------|-------------|-------------|-------------------|
+| `/v1/healthz` | Liveness probe | No | No | Yes |
+| `/v1/readyz` | Readiness probe (shallow) | No | No | Yes |
+| `/v1/readyz/deep` | **Functional readiness probe** | **Yes** | **Yes (threshold: 100)** | **No (200 when healthy, 503 when degraded)** |
+| `/v1/metrics` | Prometheus-compatible metrics | Yes | Yes | Yes |
+
+### `/v1/readyz/deep` Components
+The deep readiness probe returns two components:
+1. **store**: Database connectivity and health
+2. **write_queue**: SQLite write queue backpressure (healthy when depth ≤ 100, unhealthy when depth > 100)
+
+The `write_queue` component provides bounded backpressure detection only; it does not indicate full dependency health, ledger scan status, adapter health, rollback health, connection pool saturation, or schema integrity.
 
 **Load balancer / Kubernetes guidance**:
 - Use **`/v1/readyz/deep`** for load balancer health checks and Kubernetes readiness probes.
-  This endpoint returns HTTP 503 when the SQLite store is unreachable or unhealthy,
+  This endpoint returns HTTP 503 when the SQLite store is unreachable, unhealthy, or when the write queue depth exceeds 100,
   allowing load balancers to route traffic away from degraded instances.
 - **`/v1/healthz`** and **`/v1/readyz`** always return HTTP 200 — do NOT use these
   for load balancer or Kubernetes readiness probes. They do not check store health.

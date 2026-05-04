@@ -38,7 +38,7 @@ paths:
 
   /v1/readyz:
     get:
-      summary: Shallow readiness check (unauthenticated)
+      summary: Basic readiness check (unauthenticated)
       operationId: readyz
       security: []
       responses:
@@ -51,18 +51,23 @@ paths:
 
   /v1/readyz/deep:
     get:
-      summary: Deep readiness check (unauthenticated)
+      summary: Deep readiness check with component status (unauthenticated)
+      description: |
+        Returns detailed component-level readiness including store health and write queue backpressure.
+        The write_queue component provides bounded backpressure detection only; it does not
+        indicate full dependency health, ledger scan status, adapter health, rollback health,
+        connection pool saturation, or schema integrity.
       operationId: readyzDeep
       security: []
       responses:
         '200':
-          description: Store is healthy
+          description: All components healthy
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/DeepHealthResponse'
         '503':
-          description: Store health check failed
+          description: One or more components degraded or unhealthy
           content:
             application/json:
               schema:

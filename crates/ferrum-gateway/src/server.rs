@@ -747,15 +747,21 @@ async fn readyz(State(state): State<Arc<AppState>>) -> Json<HealthResponse> {
     })
 }
 
-/// Deep readiness probe that checks the store health.
+/// Deep readiness probe that checks the store health and write queue backpressure.
 ///
-/// Returns HTTP 200 with "ok" status when store is healthy.
-/// Returns HTTP 503 with "degraded" status when store is unhealthy.
+/// Returns HTTP 200 with "ok" status when store is healthy and queue depth is within threshold.
+/// Returns HTTP 503 with "degraded" status when store is unhealthy or queue depth exceeds threshold.
+/// The `write_queue` component provides bounded backpressure detection only; it does not
+/// indicate full dependency health, ledger scan status, adapter health, rollback health,
+/// connection pool saturation, or schema integrity.
+const WRITE_QUEUE_THRESHOLD: usize = 100;
+
 async fn readyz_deep(State(state): State<Arc<AppState>>) -> (StatusCode, Json<DeepHealthResponse>) {
     state
         .metrics
         .readyz_deep_requests
         .fetch_add(1, Ordering::Relaxed);
+
     let store_status = match state.runtime.store.health_check().await {
         Ok(()) => ComponentStatus {
             component: "store".to_string(),
@@ -771,13 +777,40 @@ async fn readyz_deep(State(state): State<Arc<AppState>>) -> (StatusCode, Json<De
         },
     };
 
-    let healthy = store_status.healthy;
+    let queue_depth = state.runtime.store.write_queue_depth();
+    let queue_healthy = queue_depth <= WRITE_QUEUE_THRESHOLD;
+    let queue_status = if queue_healthy {
+        ComponentStatus {
+            component: "write_queue".to_string(),
+            status: format!(
+                "ok: depth={}, threshold={}",
+                queue_depth, WRITE_QUEUE_THRESHOLD
+            ),
+            healthy: true,
+            error: None,
+        }
+    } else {
+        ComponentStatus {
+            component: "write_queue".to_string(),
+            status: format!(
+                "degraded: depth={} exceeds threshold={}",
+                queue_depth, WRITE_QUEUE_THRESHOLD
+            ),
+            healthy: false,
+            error: Some(format!(
+                "queue depth {} exceeds threshold {}",
+                queue_depth, WRITE_QUEUE_THRESHOLD
+            )),
+        }
+    };
+
+    let healthy = store_status.healthy && queue_healthy;
     let status = if healthy { "ok" } else { "degraded" };
 
     let response = DeepHealthResponse {
         status: status.to_string(),
         healthy,
-        components: vec![store_status],
+        components: vec![store_status, queue_status],
     };
 
     if healthy {
@@ -5354,7 +5387,8 @@ mod tests {
         // Verify the response indicates degraded status
         assert_eq!(deep.status, "degraded");
         assert!(!deep.healthy);
-        assert_eq!(deep.components.len(), 1);
+        assert_eq!(deep.components.len(), 2);
+        // First component: store (unhealthy)
         assert_eq!(deep.components[0].component, "store");
         assert!(!deep.components[0].healthy);
         assert!(deep.components[0].error.is_some());
@@ -5364,6 +5398,161 @@ mod tests {
                 .as_ref()
                 .unwrap()
                 .contains("store unavailable")
+        );
+        // Second component: write_queue (healthy since queue depth is 0 in test)
+        assert_eq!(deep.components[1].component, "write_queue");
+        assert!(deep.components[1].healthy);
+        assert!(deep.components[1].error.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_readyz_deep_includes_write_queue_component_when_healthy() {
+        let runtime = test_runtime().await;
+
+        let response = build_router(runtime)
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/readyz/deep")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let deep: DeepHealthResponse = serde_json::from_slice(&body).unwrap();
+
+        // Verify both components are present
+        assert_eq!(deep.status, "ok");
+        assert!(deep.healthy);
+        assert_eq!(deep.components.len(), 2);
+
+        // First component: store
+        assert_eq!(deep.components[0].component, "store");
+        assert!(deep.components[0].healthy);
+        assert!(deep.components[0].error.is_none());
+
+        // Second component: write_queue
+        assert_eq!(deep.components[1].component, "write_queue");
+        assert!(deep.components[1].healthy);
+        assert!(deep.components[1].error.is_none());
+        // Status text should include depth and threshold
+        assert!(deep.components[1].status.contains("depth="));
+        assert!(deep.components[1].status.contains("threshold="));
+    }
+
+    /// A test-only StoreFacade that wraps a real store but allows controlling queue depth.
+    /// Used to verify /v1/readyz/deep returns 503 when queue depth exceeds threshold.
+    struct HighQueueDepthStoreFacade {
+        inner: Arc<dyn StoreFacade>,
+        queue_depth: usize,
+    }
+
+    impl HighQueueDepthStoreFacade {
+        fn new(inner: Arc<dyn StoreFacade>, queue_depth: usize) -> Self {
+            Self { inner, queue_depth }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl StoreFacade for HighQueueDepthStoreFacade {
+        fn capabilities(&self) -> Arc<dyn CapabilityRepo> {
+            self.inner.capabilities()
+        }
+        fn executions(&self) -> Arc<dyn ExecutionRepo> {
+            self.inner.executions()
+        }
+        fn rollback_contracts(&self) -> Arc<dyn RollbackRepo> {
+            self.inner.rollback_contracts()
+        }
+        fn approvals(&self) -> Arc<dyn ApprovalRepo> {
+            self.inner.approvals()
+        }
+        fn provenance(&self) -> Arc<dyn ProvenanceRepo> {
+            self.inner.provenance()
+        }
+        fn ledger(&self) -> Arc<dyn LedgerRepo> {
+            self.inner.ledger()
+        }
+        fn intents(&self) -> Arc<dyn IntentRepo> {
+            self.inner.intents()
+        }
+        fn proposals(&self) -> Arc<dyn ProposalRepo> {
+            self.inner.proposals()
+        }
+        fn policy_bundles(&self) -> Arc<dyn PolicyBundleRepo> {
+            self.inner.policy_bundles()
+        }
+        fn write_queue_depth(&self) -> usize {
+            self.queue_depth
+        }
+        async fn health_check(&self) -> Result<(), StoreError> {
+            self.inner.health_check().await
+        }
+    }
+
+    async fn test_runtime_with_high_queue_depth(queue_depth: usize) -> GatewayRuntime {
+        let pdp = Arc::new(StaticPdpEngine);
+        let cap = Arc::new(InMemoryCapabilityService::default());
+
+        let mut registry = AdapterRegistry::default();
+        registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
+        let rollback = Arc::new(RollbackService::new(Arc::new(registry)));
+
+        let store = Arc::new(SqliteStore::connect("sqlite::memory:").await.unwrap());
+        store.apply_embedded_migrations().await.unwrap();
+
+        let high_queue_store =
+            Arc::new(HighQueueDepthStoreFacade::new(store, queue_depth)) as Arc<dyn StoreFacade>;
+
+        GatewayRuntime::new(pdp, cap, rollback, high_queue_store, vec![])
+    }
+
+    #[tokio::test]
+    async fn test_readyz_deep_returns_503_when_queue_depth_exceeds_threshold() {
+        // Queue depth > 100 should make write_queue component unhealthy
+        let runtime = test_runtime_with_high_queue_depth(101).await;
+
+        let response = build_router(runtime)
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/readyz/deep")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Should return 503 Service Unavailable when queue depth exceeds threshold
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let deep: DeepHealthResponse = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(deep.status, "degraded");
+        assert!(!deep.healthy);
+        assert_eq!(deep.components.len(), 2);
+
+        // First component: store (healthy)
+        assert_eq!(deep.components[0].component, "store");
+        assert!(deep.components[0].healthy);
+
+        // Second component: write_queue (unhealthy due to high depth)
+        assert_eq!(deep.components[1].component, "write_queue");
+        assert!(!deep.components[1].healthy);
+        assert!(deep.components[1].error.is_some());
+        assert!(
+            deep.components[1]
+                .error
+                .as_ref()
+                .unwrap()
+                .contains("exceeds threshold")
         );
     }
 
