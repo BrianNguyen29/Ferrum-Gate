@@ -53,7 +53,8 @@ struct AppState {
 struct Metrics {
     healthz_requests: AtomicU64,
     readyz_requests: AtomicU64,
-    readyz_deep_requests: AtomicU64,
+    readyz_deep_requests_200: AtomicU64,
+    readyz_deep_requests_503: AtomicU64,
     metrics_scrapes: AtomicU64,
     store_health_up: AtomicU64,
     // Governance error counters keyed by static route template
@@ -117,7 +118,8 @@ impl Metrics {
         Self {
             healthz_requests: AtomicU64::new(0),
             readyz_requests: AtomicU64::new(0),
-            readyz_deep_requests: AtomicU64::new(0),
+            readyz_deep_requests_200: AtomicU64::new(0),
+            readyz_deep_requests_503: AtomicU64::new(0),
             metrics_scrapes: AtomicU64::new(0),
             store_health_up: AtomicU64::new(0),
             governance_errors_v1_intents_compile: AtomicU64::new(0),
@@ -754,13 +756,8 @@ async fn readyz(State(state): State<Arc<AppState>>) -> Json<HealthResponse> {
 /// The `write_queue` component provides bounded backpressure detection only; it does not
 /// indicate full dependency health, ledger scan status, adapter health, rollback health,
 /// connection pool saturation, or schema integrity.
-const WRITE_QUEUE_THRESHOLD: usize = 100;
-
 async fn readyz_deep(State(state): State<Arc<AppState>>) -> (StatusCode, Json<DeepHealthResponse>) {
-    state
-        .metrics
-        .readyz_deep_requests
-        .fetch_add(1, Ordering::Relaxed);
+    let threshold = state.server_config.write_queue_threshold;
 
     let store_status = match state.runtime.store.health_check().await {
         Ok(()) => ComponentStatus {
@@ -778,14 +775,11 @@ async fn readyz_deep(State(state): State<Arc<AppState>>) -> (StatusCode, Json<De
     };
 
     let queue_depth = state.runtime.store.write_queue_depth();
-    let queue_healthy = queue_depth <= WRITE_QUEUE_THRESHOLD;
+    let queue_healthy = queue_depth <= threshold as usize;
     let queue_status = if queue_healthy {
         ComponentStatus {
             component: "write_queue".to_string(),
-            status: format!(
-                "ok: depth={}, threshold={}",
-                queue_depth, WRITE_QUEUE_THRESHOLD
-            ),
+            status: format!("ok: depth={}, threshold={}", queue_depth, threshold),
             healthy: true,
             error: None,
         }
@@ -794,12 +788,12 @@ async fn readyz_deep(State(state): State<Arc<AppState>>) -> (StatusCode, Json<De
             component: "write_queue".to_string(),
             status: format!(
                 "degraded: depth={} exceeds threshold={}",
-                queue_depth, WRITE_QUEUE_THRESHOLD
+                queue_depth, threshold
             ),
             healthy: false,
             error: Some(format!(
                 "queue depth {} exceeds threshold {}",
-                queue_depth, WRITE_QUEUE_THRESHOLD
+                queue_depth, threshold
             )),
         }
     };
@@ -813,9 +807,18 @@ async fn readyz_deep(State(state): State<Arc<AppState>>) -> (StatusCode, Json<De
         components: vec![store_status, queue_status],
     };
 
+    // Track request with status label
     if healthy {
+        state
+            .metrics
+            .readyz_deep_requests_200
+            .fetch_add(1, Ordering::Relaxed);
         (StatusCode::OK, Json(response))
     } else {
+        state
+            .metrics
+            .readyz_deep_requests_503
+            .fetch_add(1, Ordering::Relaxed);
         (StatusCode::SERVICE_UNAVAILABLE, Json(response))
     }
 }
@@ -839,7 +842,14 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
 
     let healthz_count = state.metrics.healthz_requests.load(Ordering::Relaxed);
     let readyz_count = state.metrics.readyz_requests.load(Ordering::Relaxed);
-    let readyz_deep_count = state.metrics.readyz_deep_requests.load(Ordering::Relaxed);
+    let readyz_deep_count_200 = state
+        .metrics
+        .readyz_deep_requests_200
+        .load(Ordering::Relaxed);
+    let readyz_deep_count_503 = state
+        .metrics
+        .readyz_deep_requests_503
+        .load(Ordering::Relaxed);
     let metrics_count = state.metrics.metrics_scrapes.load(Ordering::Relaxed);
     let store_up = state.metrics.store_health_up.load(Ordering::Relaxed);
     let write_queue_depth = state.runtime.store.write_queue_depth();
@@ -1057,12 +1067,13 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
         .load(Ordering::Relaxed);
 
     let body = format!(
-        "# HELP ferrumgate_http_requests_total HTTP requests total by route\n\
+        "# HELP ferrumgate_http_requests_total HTTP requests total by route and status\n\
          # TYPE ferrumgate_http_requests_total counter\n\
-         ferrumgate_http_requests_total{{route=\"/v1/healthz\",method=\"GET\"}} {}\n\
-         ferrumgate_http_requests_total{{route=\"/v1/readyz\",method=\"GET\"}} {}\n\
-         ferrumgate_http_requests_total{{route=\"/v1/readyz/deep\",method=\"GET\"}} {}\n\
-         ferrumgate_http_requests_total{{route=\"/v1/metrics\",method=\"GET\"}} {}\n\
+         ferrumgate_http_requests_total{{route=\"/v1/healthz\",method=\"GET\",status=\"200\"}} {}\n\
+         ferrumgate_http_requests_total{{route=\"/v1/readyz\",method=\"GET\",status=\"200\"}} {}\n\
+         ferrumgate_http_requests_total{{route=\"/v1/readyz/deep\",method=\"GET\",status=\"200\"}} {}\n\
+         ferrumgate_http_requests_total{{route=\"/v1/readyz/deep\",method=\"GET\",status=\"503\"}} {}\n\
+         ferrumgate_http_requests_total{{route=\"/v1/metrics\",method=\"GET\",status=\"200\"}} {}\n\
          # HELP ferrumgate_store_health_up Store health status (1=ok, 0=unhealthy)\n\
          # TYPE ferrumgate_store_health_up gauge\n\
          ferrumgate_store_health_up {}\n\
@@ -1130,7 +1141,8 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
          ferrumgate_governance_success_total{{route=\"/v1/bridges/{{bridge_id}}/tools\",method=\"GET\"}} {}\n",
         healthz_count,
         readyz_count,
-        readyz_deep_count,
+        readyz_deep_count_200,
+        readyz_deep_count_503,
         metrics_count,
         store_up,
         write_queue_depth,
@@ -1330,21 +1342,6 @@ struct IntentListItem {
     expires_at: Option<String>,
 }
 
-impl From<&IntentEnvelope> for IntentListItem {
-    fn from(intent: &IntentEnvelope) -> Self {
-        Self {
-            intent_id: intent.intent_id.to_string(),
-            principal_id: intent.principal_id.to_string(),
-            title: intent.title.clone(),
-            status: format!("{:?}", intent.status),
-            risk_tier: format!("{:?}", intent.risk_tier),
-            exec_state: None, // exec_state not available without JOIN; limitation documented
-            created_at: intent.created_at.to_rfc3339(),
-            expires_at: Some(intent.expires_at.to_rfc3339()),
-        }
-    }
-}
-
 /// Response envelope for intent list
 #[derive(Debug, serde::Serialize)]
 struct IntentListEnvelope {
@@ -1403,15 +1400,27 @@ async fn list_intents(
     }
 
     // Query the store
-    let (intents, next_cursor) = state
+    let (intents_with_state, next_cursor) = state
         .runtime
         .store
         .intents()
-        .list_intents(intent_id, &statuses, params.cursor.as_deref(), limit)
+        .list_intents_with_exec_state(intent_id, &statuses, params.cursor.as_deref(), limit)
         .await
         .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
 
-    let items: Vec<IntentListItem> = intents.iter().map(IntentListItem::from).collect();
+    let items: Vec<IntentListItem> = intents_with_state
+        .into_iter()
+        .map(|(intent, exec_state)| IntentListItem {
+            intent_id: intent.intent_id.to_string(),
+            principal_id: intent.principal_id.to_string(),
+            title: intent.title.clone(),
+            status: format!("{:?}", intent.status),
+            risk_tier: format!("{:?}", intent.risk_tier),
+            exec_state,
+            created_at: intent.created_at.to_rfc3339(),
+            expires_at: Some(intent.expires_at.to_rfc3339()),
+        })
+        .collect();
 
     governance_ok!(
         state,
@@ -6767,23 +6776,20 @@ mod tests {
         // Verify Prometheus text format
         assert!(body_str.contains("# HELP ferrumgate_http_requests_total"));
         assert!(body_str.contains("# TYPE ferrumgate_http_requests_total counter"));
-        assert!(
-            body_str
-                .contains("ferrumgate_http_requests_total{route=\"/v1/healthz\",method=\"GET\"}")
-        );
-        assert!(
-            body_str
-                .contains("ferrumgate_http_requests_total{route=\"/v1/readyz\",method=\"GET\"}")
-        );
+        assert!(body_str.contains(
+            "ferrumgate_http_requests_total{route=\"/v1/healthz\",method=\"GET\",status=\"200\"}"
+        ));
+        assert!(body_str.contains(
+            "ferrumgate_http_requests_total{route=\"/v1/readyz\",method=\"GET\",status=\"200\"}"
+        ));
         assert!(
             body_str.contains(
-                "ferrumgate_http_requests_total{route=\"/v1/readyz/deep\",method=\"GET\"}"
+                "ferrumgate_http_requests_total{route=\"/v1/readyz/deep\",method=\"GET\",status=\"200\"}"
             )
         );
-        assert!(
-            body_str
-                .contains("ferrumgate_http_requests_total{route=\"/v1/metrics\",method=\"GET\"}")
-        );
+        assert!(body_str.contains(
+            "ferrumgate_http_requests_total{route=\"/v1/metrics\",method=\"GET\",status=\"200\"}"
+        ));
         assert!(body_str.contains("ferrumgate_store_health_up"));
         assert!(body_str.contains("ferrumgate_write_queue_depth"));
         assert!(body_str.contains("ferrumgate_metrics_scrapes_total"));
@@ -6848,21 +6854,18 @@ mod tests {
         let body_str = String::from_utf8(body.to_vec()).unwrap();
 
         // Verify counters have incremented
-        assert!(
-            body_str
-                .contains("ferrumgate_http_requests_total{route=\"/v1/healthz\",method=\"GET\"} 1")
-        );
-        assert!(
-            body_str
-                .contains("ferrumgate_http_requests_total{route=\"/v1/readyz\",method=\"GET\"} 1")
-        );
         assert!(body_str.contains(
-            "ferrumgate_http_requests_total{route=\"/v1/readyz/deep\",method=\"GET\"} 1"
+            "ferrumgate_http_requests_total{route=\"/v1/healthz\",method=\"GET\",status=\"200\"} 1"
         ));
-        assert!(
-            body_str
-                .contains("ferrumgate_http_requests_total{route=\"/v1/metrics\",method=\"GET\"} 1")
-        );
+        assert!(body_str.contains(
+            "ferrumgate_http_requests_total{route=\"/v1/readyz\",method=\"GET\",status=\"200\"} 1"
+        ));
+        assert!(body_str.contains(
+            "ferrumgate_http_requests_total{route=\"/v1/readyz/deep\",method=\"GET\",status=\"200\"} 1"
+        ));
+        assert!(body_str.contains(
+            "ferrumgate_http_requests_total{route=\"/v1/metrics\",method=\"GET\",status=\"200\"} 1"
+        ));
         assert!(body_str.contains("ferrumgate_metrics_scrapes_total 1"));
         // Store should be healthy
         assert!(body_str.contains("ferrumgate_store_health_up 1"));

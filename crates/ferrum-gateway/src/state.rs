@@ -125,6 +125,9 @@ pub struct ServerConfig {
     pub rate_limit_per_second: u64,
     /// Rate limit: burst size per IP.
     pub rate_limit_burst: u32,
+    /// Write queue depth threshold for deep readiness probe.
+    /// Valid range: 1..=10000. Default: 100.
+    pub write_queue_threshold: u64,
 }
 
 impl Default for ServerConfig {
@@ -141,6 +144,7 @@ impl Default for ServerConfig {
             store_wal_autocheckpoint: None,
             rate_limit_per_second: 2,
             rate_limit_burst: 50,
+            write_queue_threshold: 100,
         }
     }
 }
@@ -180,6 +184,14 @@ impl ServerConfig {
         }
         if self.rate_limit_burst > 10_000 {
             return Err("rate_limit_burst must be at most 10000".to_string());
+        }
+
+        // Validate write_queue_threshold range
+        if !(1..=10000).contains(&self.write_queue_threshold) {
+            return Err(format!(
+                "write_queue_threshold must be between 1 and 10000, got {}",
+                self.write_queue_threshold
+            ));
         }
 
         Ok(())

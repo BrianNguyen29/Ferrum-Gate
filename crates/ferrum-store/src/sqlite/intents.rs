@@ -215,4 +215,110 @@ impl IntentRepo for SqliteIntentRepo {
 
         Ok((items, next_cursor))
     }
+
+    async fn list_intents_with_exec_state(
+        &self,
+        intent_id: Option<IntentId>,
+        statuses: &[IntentStatus],
+        cursor: Option<&str>,
+        limit: u32,
+    ) -> Result<(Vec<(IntentEnvelope, Option<String>)>, Option<String>)> {
+        // Build dynamic WHERE clause
+        let mut conditions = Vec::new();
+        let mut params: Vec<String> = Vec::new();
+
+        if let Some(ref id) = intent_id {
+            conditions.push("i.intent_id = ?".to_string());
+            params.push(id.to_string());
+        }
+
+        if !statuses.is_empty() {
+            let placeholders: Vec<String> = statuses.iter().map(|_| "?".to_string()).collect();
+            conditions.push(format!("i.status IN ({})", placeholders.join(", ")));
+            for s in statuses {
+                params.push(enum_text(s).expect("intent status should serialize"));
+            }
+        }
+
+        // Cursor-based pagination: cursor encodes (created_at, intent_id)
+        // Items are ordered by (created_at DESC, intent_id DESC)
+        if let Some(c) = cursor {
+            let decoded = URL_SAFE_NO_PAD
+                .decode(c)
+                .map_err(|_| StoreError::Other("invalid cursor encoding".to_string()))?;
+            let decoded_str = String::from_utf8(decoded)
+                .map_err(|_| StoreError::Other("invalid cursor string".to_string()))?;
+            let parts: Vec<&str> = decoded_str.splitn(2, ':').collect();
+            if parts.len() == 2 {
+                let cursor_created_at = parts[0];
+                let cursor_intent_id = parts[1];
+                conditions.push(
+                    "(i.created_at < ? OR (i.created_at = ? AND i.intent_id < ?))".to_string(),
+                );
+                params.push(cursor_created_at.to_string());
+                params.push(cursor_created_at.to_string());
+                params.push(cursor_intent_id.to_string());
+            }
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
+
+        // Build SQL with LEFT JOIN to get latest execution state for each intent
+        // Uses a CTE with ROW_NUMBER to get the latest execution per intent
+        let sql = format!(
+            r#"WITH latest_executions AS (
+                SELECT
+                    intent_id,
+                    state,
+                    started_at,
+                    ROW_NUMBER() OVER (PARTITION BY intent_id ORDER BY started_at DESC) as rn
+                FROM executions
+            )
+            SELECT
+                i.raw_json,
+                i.intent_id,
+                i.created_at,
+                le.state as exec_state
+            FROM intents i
+            LEFT JOIN latest_executions le ON i.intent_id = le.intent_id AND le.rn = 1
+            {} ORDER BY i.created_at DESC, i.intent_id DESC LIMIT ?"#,
+            where_clause
+        );
+
+        let mut query = sqlx::query(&sql);
+        for param in &params {
+            query = query.bind(param);
+        }
+        query = query.bind(limit + 1);
+
+        let rows = query.fetch_all(&self.pool).await?;
+
+        let has_more = rows.len() > limit as usize;
+        let items: Vec<(IntentEnvelope, Option<String>)> = rows
+            .iter()
+            .take(limit as usize)
+            .map(|row| {
+                let raw: String = row.get("raw_json");
+                let intent: IntentEnvelope =
+                    serde_json::from_str(&raw).map_err(|e| StoreError::Other(e.to_string()))?;
+                let exec_state: Option<String> = row.get("exec_state");
+                Ok::<_, StoreError>((intent, exec_state))
+            })
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        let next_cursor = if has_more {
+            items.last().map(|(intent, _)| {
+                let cursor_data = format!("{}:{}", intent.created_at, intent.intent_id);
+                URL_SAFE_NO_PAD.encode(cursor_data.as_bytes())
+            })
+        } else {
+            None
+        };
+
+        Ok((items, next_cursor))
+    }
 }

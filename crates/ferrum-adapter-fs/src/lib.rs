@@ -109,6 +109,8 @@ pub enum FsAdapterError {
     PathEscape(String),
     #[error("symlinks are not allowed: {0}")]
     SymlinkNotAllowed(String),
+    #[error("cross-device access not allowed: {0}")]
+    CrossDevice(String),
 }
 
 /// Filesystem adapter implementing the RollbackAdapter trait.
@@ -273,6 +275,46 @@ impl FsAdapter {
                         canonical_workdir.display()
                     )));
                 }
+
+                // On Unix, verify the resolved path is on the same device as workdir.
+                // This prevents crossing mount boundaries which could allow escaping
+                // the workdir even when the resolved path appears to be within it.
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::MetadataExt;
+                    let workdir_dev = std::fs::metadata(&canonical_workdir)
+                        .map_err(|e| {
+                            FsAdapterError::Validation(format!(
+                                "failed to get metadata for workdir {}: {}",
+                                canonical_workdir.display(),
+                                e
+                            ))
+                        })?
+                        .dev();
+
+                    let resolved_meta = std::fs::metadata(&resolved).map_err(|e| {
+                        FsAdapterError::Validation(format!(
+                            "failed to get metadata for resolved path {}: {}",
+                            resolved.display(),
+                            e
+                        ))
+                    })?;
+
+                    if resolved_meta.dev() != workdir_dev {
+                        return Err(FsAdapterError::CrossDevice(format!(
+                            "path {} is on a different device ({}) than workdir ({}); \
+                             cross-device access is not allowed when sandbox_to_workdir=true",
+                            path,
+                            resolved_meta.dev(),
+                            workdir_dev
+                        )));
+                    }
+                }
+                // On non-Unix platforms, device boundary checking is not supported
+                // (MetadataExt::dev is not available), so we skip this check.
+                // The path-prefix check above still provides basic sandboxing.
+                #[cfg(not(unix))]
+                let _ = (path, wd);
             }
         }
 
@@ -688,6 +730,7 @@ impl From<FsAdapterError> for AdapterError {
             }
             FsAdapterError::PathEscape(msg) => AdapterError::Validation(msg),
             FsAdapterError::SymlinkNotAllowed(msg) => AdapterError::Validation(msg),
+            FsAdapterError::CrossDevice(msg) => AdapterError::Validation(msg),
         }
     }
 }

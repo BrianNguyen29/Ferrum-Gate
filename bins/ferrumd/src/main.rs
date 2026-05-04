@@ -68,6 +68,10 @@ struct Args {
     /// Log format: "text" or "json" (default "text").
     #[arg(long)]
     log_format: Option<String>,
+
+    /// Write queue depth threshold for deep readiness probe (1..=10000).
+    #[arg(long)]
+    write_queue_threshold: Option<u64>,
 }
 
 fn get_env<T: std::str::FromStr>(key: &str) -> Option<T> {
@@ -104,6 +108,8 @@ struct ServerSection {
     rate_limit_burst: Option<u32>,
     #[serde(default)]
     log_format: Option<String>,
+    #[serde(default)]
+    write_queue_threshold: Option<u64>,
 }
 
 fn load_config_file(path: &PathBuf) -> Result<ConfigFile> {
@@ -212,6 +218,12 @@ fn resolve_config(args: &Args) -> Result<ServerConfig> {
         .or_else(|| server.as_ref().and_then(|s| s.rate_limit_burst))
         .unwrap_or(50);
 
+    let write_queue_threshold = args
+        .write_queue_threshold
+        .or_else(|| get_env("FERRUMD_WRITE_QUEUE_THRESHOLD"))
+        .or_else(|| server.as_ref().and_then(|s| s.write_queue_threshold))
+        .unwrap_or(100);
+
     let bind_addr_parsed: SocketAddr = bind_addr
         .parse()
         .with_context(|| format!("failed to parse bind address: {}", bind_addr))?;
@@ -232,6 +244,7 @@ fn resolve_config(args: &Args) -> Result<ServerConfig> {
         store_wal_autocheckpoint,
         rate_limit_per_second,
         rate_limit_burst,
+        write_queue_threshold,
     };
 
     // Validate configuration
@@ -327,6 +340,7 @@ mod tests {
             "FERRUMD_RATE_LIMIT_PER_SECOND",
             "FERRUMD_RATE_LIMIT_BURST",
             "FERRUMD_LOG_FORMAT",
+            "FERRUMD_WRITE_QUEUE_THRESHOLD",
         ] {
             unsafe { std::env::remove_var(key) };
         }
@@ -375,6 +389,7 @@ log_filter = "warn"
             rate_limit_per_second: None,
             rate_limit_burst: None,
             log_format: None,
+            write_queue_threshold: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -417,6 +432,7 @@ allow_insecure_nonlocal_bind = false
             rate_limit_per_second: None,
             rate_limit_burst: None,
             log_format: None,
+            write_queue_threshold: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -453,6 +469,7 @@ auth_mode = "bearer"
             rate_limit_per_second: None,
             rate_limit_burst: None,
             log_format: None,
+            write_queue_threshold: None,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -487,6 +504,7 @@ auth_mode = "disabled"
             rate_limit_per_second: None,
             rate_limit_burst: None,
             log_format: None,
+            write_queue_threshold: None,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -525,6 +543,7 @@ auth_mode = "disabled"
             rate_limit_per_second: None,
             rate_limit_burst: None,
             log_format: None,
+            write_queue_threshold: None,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -563,6 +582,7 @@ auth_mode = "disabled"
             rate_limit_per_second: None,
             rate_limit_burst: None,
             log_format: None,
+            write_queue_threshold: None,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -600,6 +620,7 @@ auth_mode = "disabled"
             rate_limit_per_second: None,
             rate_limit_burst: None,
             log_format: None,
+            write_queue_threshold: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -637,6 +658,7 @@ rate_limit_burst = 100
             rate_limit_per_second: None,
             rate_limit_burst: None,
             log_format: None,
+            write_queue_threshold: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -674,6 +696,7 @@ rate_limit_burst = 100
             rate_limit_per_second: Some(10),
             rate_limit_burst: Some(200),
             log_format: None,
+            write_queue_threshold: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -716,6 +739,7 @@ rate_limit_burst = 100
             rate_limit_per_second: None,
             rate_limit_burst: None,
             log_format: None,
+            write_queue_threshold: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -753,6 +777,7 @@ rate_limit_per_second = 0
             rate_limit_per_second: None,
             rate_limit_burst: None,
             log_format: None,
+            write_queue_threshold: None,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -791,6 +816,7 @@ rate_limit_burst = 0
             rate_limit_per_second: None,
             rate_limit_burst: None,
             log_format: None,
+            write_queue_threshold: None,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -829,6 +855,7 @@ rate_limit_burst = 20000
             rate_limit_per_second: None,
             rate_limit_burst: None,
             log_format: None,
+            write_queue_threshold: None,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -866,6 +893,7 @@ auth_mode = "disabled"
             rate_limit_per_second: None,
             rate_limit_burst: None,
             log_format: None,
+            write_queue_threshold: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -900,6 +928,7 @@ log_format = "json"
             rate_limit_per_second: None,
             rate_limit_burst: None,
             log_format: None,
+            write_queue_threshold: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -934,6 +963,7 @@ log_format = "text"
             rate_limit_per_second: None,
             rate_limit_burst: None,
             log_format: Some("json".to_string()),
+            write_queue_threshold: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -972,6 +1002,7 @@ log_format = "text"
             rate_limit_per_second: None,
             rate_limit_burst: None,
             log_format: None,
+            write_queue_threshold: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -1007,6 +1038,7 @@ log_format = "invalid"
             rate_limit_per_second: None,
             rate_limit_burst: None,
             log_format: None,
+            write_queue_threshold: None,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -1041,11 +1073,239 @@ log_format = "compact"
             rate_limit_per_second: None,
             rate_limit_burst: None,
             log_format: None,
+            write_queue_threshold: None,
         };
 
         let config = resolve_config(&args).unwrap();
         // "compact" is accepted as alias for "text"
         assert_eq!(config.log_format, ferrum_gateway::LogFormat::Text);
+
+        let _ = fs::remove_file(path);
+    }
+
+    // === write_queue_threshold tests ===
+
+    #[test]
+    fn test_resolve_config_write_queue_threshold_defaults() {
+        let _guard = env_lock().lock().unwrap();
+        clear_test_env();
+
+        let path = write_temp_config(
+            r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+"#,
+        );
+
+        let args = Args {
+            config: Some(path.clone()),
+            bind_addr: None,
+            store_dsn: None,
+            auth_mode: None,
+            bearer_token: None,
+            allow_insecure_nonlocal_bind: false,
+            log_filter: None,
+            store_synchronous: None,
+            store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
+            write_queue_threshold: None,
+        };
+
+        let config = resolve_config(&args).unwrap();
+
+        assert_eq!(config.write_queue_threshold, 100);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_resolve_config_write_queue_threshold_from_config_file() {
+        let _guard = env_lock().lock().unwrap();
+        clear_test_env();
+
+        let path = write_temp_config(
+            r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+write_queue_threshold = 500
+"#,
+        );
+
+        let args = Args {
+            config: Some(path.clone()),
+            bind_addr: None,
+            store_dsn: None,
+            auth_mode: None,
+            bearer_token: None,
+            allow_insecure_nonlocal_bind: false,
+            log_filter: None,
+            store_synchronous: None,
+            store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
+            write_queue_threshold: None,
+        };
+
+        let config = resolve_config(&args).unwrap();
+
+        assert_eq!(config.write_queue_threshold, 500);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_resolve_config_write_queue_threshold_cli_overrides_config_file() {
+        let _guard = env_lock().lock().unwrap();
+        clear_test_env();
+
+        let path = write_temp_config(
+            r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+write_queue_threshold = 500
+"#,
+        );
+
+        let args = Args {
+            config: Some(path.clone()),
+            bind_addr: None,
+            store_dsn: None,
+            auth_mode: None,
+            bearer_token: None,
+            allow_insecure_nonlocal_bind: false,
+            log_filter: None,
+            store_synchronous: None,
+            store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
+            write_queue_threshold: Some(200),
+        };
+
+        let config = resolve_config(&args).unwrap();
+
+        assert_eq!(config.write_queue_threshold, 200);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_resolve_config_write_queue_threshold_env_overrides_config_file() {
+        let _guard = env_lock().lock().unwrap();
+        clear_test_env();
+
+        let path = write_temp_config(
+            r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+write_queue_threshold = 500
+"#,
+        );
+
+        unsafe {
+            std::env::set_var("FERRUMD_WRITE_QUEUE_THRESHOLD", "300");
+        }
+
+        let args = Args {
+            config: Some(path.clone()),
+            bind_addr: None,
+            store_dsn: None,
+            auth_mode: None,
+            bearer_token: None,
+            allow_insecure_nonlocal_bind: false,
+            log_filter: None,
+            store_synchronous: None,
+            store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
+            write_queue_threshold: None,
+        };
+
+        let config = resolve_config(&args).unwrap();
+
+        assert_eq!(config.write_queue_threshold, 300);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_resolve_config_rejects_zero_write_queue_threshold() {
+        let _guard = env_lock().lock().unwrap();
+        clear_test_env();
+
+        let path = write_temp_config(
+            r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+write_queue_threshold = 0
+"#,
+        );
+
+        let args = Args {
+            config: Some(path.clone()),
+            bind_addr: None,
+            store_dsn: None,
+            auth_mode: None,
+            bearer_token: None,
+            allow_insecure_nonlocal_bind: false,
+            log_filter: None,
+            store_synchronous: None,
+            store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
+            write_queue_threshold: None,
+        };
+
+        let error = resolve_config(&args).err().expect("expected config error");
+        assert!(
+            error
+                .to_string()
+                .contains("write_queue_threshold must be between 1 and 10000")
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_resolve_config_rejects_write_queue_threshold_too_large() {
+        let _guard = env_lock().lock().unwrap();
+        clear_test_env();
+
+        let path = write_temp_config(
+            r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+write_queue_threshold = 10001
+"#,
+        );
+
+        let args = Args {
+            config: Some(path.clone()),
+            bind_addr: None,
+            store_dsn: None,
+            auth_mode: None,
+            bearer_token: None,
+            allow_insecure_nonlocal_bind: false,
+            log_filter: None,
+            store_synchronous: None,
+            store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
+            write_queue_threshold: None,
+        };
+
+        let error = resolve_config(&args).err().expect("expected config error");
+        assert!(
+            error
+                .to_string()
+                .contains("write_queue_threshold must be between 1 and 10000")
+        );
 
         let _ = fs::remove_file(path);
     }

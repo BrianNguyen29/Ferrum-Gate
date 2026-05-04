@@ -250,6 +250,7 @@ impl StressServer {
                 store_wal_autocheckpoint: None,
                 rate_limit_per_second: 2,
                 rate_limit_burst: 50,
+                write_queue_threshold: 100,
             };
             ferrum_gateway::build_router_with_auth(runtime, config)
         } else {

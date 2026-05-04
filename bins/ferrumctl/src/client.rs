@@ -429,4 +429,13 @@ impl Client {
         resp.error_for_status_ref()?;
         Ok(resp.json().await?)
     }
+
+    /// Fetch metrics from /v1/metrics endpoint.
+    /// Returns the raw Prometheus text format.
+    pub async fn metrics(&self) -> Result<String> {
+        let url = format!("{}/v1/metrics", self.base_url);
+        let resp = self.add_auth(self.http.get(&url)).send().await?;
+        resp.error_for_status_ref()?;
+        Ok(resp.text().await?)
+    }
 }

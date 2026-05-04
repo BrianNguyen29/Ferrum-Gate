@@ -36,7 +36,7 @@ The key result is intentionally conservative:
 
 | Adapter | Overall classification | Evidence level | Key caveat |
 |---|---|---|---|
-| fs | `alias_to_rollback` + `real_undo` for bounded local actions | High for tested local actions | Snapshots are local temp artifacts; broader `O_NOFOLLOW`, mount-boundary, and permission/ownership surfaces remain post-v1. |
+| fs | `alias_to_rollback` + `real_undo` for bounded local actions | High for tested local actions | Snapshots are local temp artifacts; `O_NOFOLLOW` and Unix mount-boundary checks are bounded hardening only; detailed permission/ownership surfaces remain post-v1. |
 | git | `alias_to_rollback`; mostly `real_undo` for local/ref actions; `fail_closed` for remote-sensitive push | Medium-High | Remote rollback depends on permissions and remote state; dirty worktree/current-branch guards intentionally fail closed. |
 | http | `replay_compensation` for strict `http.replay_v1`; `fail_closed` for unsupported shapes | Medium | Replay is not true undo; production use requires server-side idempotency/compensation support. |
 | sqlite | `alias_to_rollback` + SQL compensation for bounded mutations | Medium | Correctness depends on the generated/persisted compensation plan and schema drift guards. |
@@ -59,7 +59,7 @@ The key result is intentionally conservative:
 | DirCreate | Aliases rollback | `real_undo` — remove created directory | dir create rollback/compensate tests | Only bounded empty-created-dir semantics. |
 | DirDelete | Aliases rollback | `real_undo` — recreate deleted empty directory | dir delete rollback/compensate tests | Non-empty directory deletion is rejected. |
 
-**Current hardening note:** fs now denies symlinks by default at prepare and revalidates symlink/sandbox constraints before execute and rollback, including FileMove/FileCopy destination paths. O_NOFOLLOW is now applied to file-open/read/write paths (compute_file_hash, FileWrite execute, FileAppend execute/open, FileAppend rollback read/write) with ELOOP mapped to SymlinkNotAllowed; non-Unix falls back to standard fs operations. mount-boundary detection and detailed ownership handling remain post-v1.
+**Current hardening note:** fs now denies symlinks by default at prepare and revalidates symlink/sandbox constraints before execute and rollback, including FileMove/FileCopy destination paths. O_NOFOLLOW is now applied to file-open/read/write paths (compute_file_hash, FileWrite execute, FileAppend execute/open, FileAppend rollback read/write) with ELOOP mapped to SymlinkNotAllowed; non-Unix falls back to standard fs operations. mount-boundary detection is now implemented on Unix (device boundary validation via MetadataExt::dev() when sandbox_to_workdir=true); non-Unix platforms skip this check (safe no-op). detailed ownership handling remains post-v1.
 
 ---
 

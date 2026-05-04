@@ -38,6 +38,17 @@ pub trait IntentRepo: Send + Sync {
         cursor: Option<&str>,
         limit: u32,
     ) -> Result<(Vec<IntentEnvelope>, Option<String>)>;
+    /// List intents with the latest execution state for each intent.
+    /// Returns (items, next_cursor) where items are (intent, exec_state) tuples.
+    /// exec_state is None when no execution exists for the intent.
+    /// Bounded by limit (fetches limit+1 to determine if there are more pages).
+    async fn list_intents_with_exec_state(
+        &self,
+        intent_id: Option<IntentId>,
+        statuses: &[IntentStatus],
+        cursor: Option<&str>,
+        limit: u32,
+    ) -> Result<(Vec<(IntentEnvelope, Option<String>)>, Option<String>)>;
 }
 
 #[async_trait]

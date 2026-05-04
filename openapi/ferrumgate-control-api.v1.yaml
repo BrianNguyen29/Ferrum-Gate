@@ -80,7 +80,7 @@ paths:
       description: |
         Returns Prometheus text exposition format with the following metric families:
 
-        - `ferrumgate_http_requests_total` - HTTP request counters by route and method
+        - `ferrumgate_http_requests_total` - HTTP request counters by route, method, and status code (bounded status labels: 200, 503)
         - `ferrumgate_store_health_up` - Store health gauge (1=ok, 0=unhealthy)
         - `ferrumgate_write_queue_depth` - SQLite write queue depth gauge (accepted ops not yet processed by writer loop)
         - `ferrumgate_metrics_scrapes_total` - Metrics endpoint scrape counter
@@ -88,8 +88,9 @@ paths:
         - `ferrumgate_governance_success_total` - Governance success counters by route and method
 
         **Note**: This endpoint is intentionally bounded. It does not expose
-        latency histograms, HTTP status labels, WAL/page gauges, or connection-pool
-        saturation signals.
+        latency histograms, WAL/page gauges, or connection-pool
+        saturation signals. HTTP status labels are implemented for public endpoints
+        (healthz, readyz, readyz/deep, metrics) only.
       security: []
       responses:
         '200':
@@ -772,7 +773,7 @@ components:
         exec_state:
           type: string
           nullable: true
-          description: Current execution state if an execution exists for this intent, null otherwise. This field is returned as null when listing intents (execution state JOIN not available in current implementation).
+          description: Latest execution state for this intent when an execution exists; null when no execution exists.
         created_at:
           type: string
           format: date-time

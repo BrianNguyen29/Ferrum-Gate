@@ -258,6 +258,8 @@ enum BackupCommand {
 enum ServerCommand {
     /// Check server health.
     Health,
+    /// Fetch Prometheus metrics from /v1/metrics.
+    Metrics,
     /// Check server readiness.
     Readiness {
         /// Deep readiness probe with store connectivity check.
@@ -659,6 +661,10 @@ async fn main() -> Result<()> {
                     let health = client.health().await?;
                     println!("{}", serde_json::to_string_pretty(&health)?);
                 }
+                ServerCommand::Metrics => {
+                    let metrics = client.metrics().await?;
+                    println!("{}", metrics);
+                }
                 ServerCommand::Readiness { deep, functional } => {
                     if deep {
                         // Deep probe: GET /v1/readyz/deep
@@ -950,6 +956,7 @@ async fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::CommandFactory;
 
     #[test]
     fn test_escape_dot_label_basic() {
@@ -1438,5 +1445,26 @@ rules: []
         let json = r#"{"status":"ok"}"#;
         let resp: client::HealthResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.status, "ok");
+    }
+
+    // -------------------------------------------------------------------------
+    // ServerCommand::Metrics parsing tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_server_metrics_command_parses() {
+        // Test that "metrics" subcommand under "server" parses correctly
+        let matches = Cli::command()
+            .try_get_matches_from(["ferrumctl", "server", "metrics"])
+            .unwrap();
+
+        let sub = matches
+            .subcommand_matches("server")
+            .unwrap()
+            .subcommand_matches("metrics");
+        assert!(
+            sub.is_some(),
+            "metrics subcommand should parse successfully"
+        );
     }
 }

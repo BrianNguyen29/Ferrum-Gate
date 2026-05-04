@@ -74,7 +74,7 @@ Phase 3 PostgreSQL (Path 3) — both are outside the scope of this roadmap.
 | P1.1 | **Readiness semantics: `/v1/readyz/deep` functional probe** | Engineering | Load balancers and Kubernetes should use `/v1/readyz/deep` as functional readiness probe; `/v1/healthz` and `/v1/readyz` are shallow and always return 200 | ✅ Done — documented in `PRODUCTION_NOTES.md` §Health and Readiness Endpoints; `/v1/readyz/deep` returns 200 when store healthy and write queue depth <= 100, 503 when store unhealthy or write queue depth > 100 |
 | P1.2 | **Configurable rate limit** | Engineering | Rate limit configurable via CLI/env/config file (2 req/s, burst 50 default); operator confirms fit for target workload | ✅ Done — CLI: `--rate-limit-per-second` and `--rate-limit-burst`; env: `FERRUMD_RATE_LIMIT_PER_SECOND` and `FERRUMD_RATE_LIMIT_BURST`; config file: `rate_limit_per_second` and `rate_limit_burst` under `[server]` |
 | P1.3 | **Structured logging (JSON)** | Engineering | Logs are unstructured text; production debugging and log aggregation benefit from JSON structured output | ✅ Done — CLI: `--log-format`; env: `FERRUMD_LOG_FORMAT`; config file: `log_format` under `[server]`; default is "text" (human-readable); accepted values: "text", "compact", "json"; documented in `PRODUCTION_NOTES.md` |
-| P1.4 | **Full metrics/observability** | Engineering | `/v1/metrics` with method labels on request/governance counters, but no latency histograms or HTTP status labels | 🟡 Partial — `/v1/metrics` provides: request counters per endpoint with HTTP method labels (healthz, readyz, readyz/deep, metrics), store health gauge (`ferrumgate_store_health_up`), SQLite write queue depth gauge (`ferrumgate_write_queue_depth`), governance error counters per route with HTTP method labels (25 routes), governance success counters per route with HTTP method labels (25 routes); missing: latency histograms and HTTP status labels |
+| P1.4 | **Full metrics/observability** | Engineering | `/v1/metrics` with method labels on request/governance counters, but no latency histograms or HTTP status labels | 🟡 Partial — `/v1/metrics` provides: request counters per endpoint with HTTP method labels (healthz, readyz, readyz/deep, metrics), bounded HTTP status labels for public endpoints (status="200" for healthz/readyz/metrics; status="200"/"503" for readyz/deep), store health gauge (`ferrumgate_store_health_up`), SQLite write queue depth gauge (`ferrumgate_write_queue_depth`), governance error counters per route with HTTP method labels (25 routes), governance success counters per route with HTTP method labels (25 routes); missing: latency histograms |
 | P1.5 | **RPO/RTO formally accepted** | Operator | Backup/restore objectives formally accepted per `27-production-evaluation-plan.md` §Operator Signoff Packet §3 | ☐ Pending (operator-owned) |
 | P1.6 | **Compensate noop risk accepted** | Operator | Operator acknowledges compensate may be noop-backed for target adapters per G2.8 | ☐ Pending (operator-owned) |
 
@@ -95,14 +95,15 @@ Phase 3 PostgreSQL (Path 3) — both are outside the scope of this roadmap.
   "compact" (both are the same human-readable format), "json" (structured JSON for log aggregation).
   Config precedence: CLI > env > config file > defaults. Documented in `PRODUCTION_NOTES.md`.
 - P1.4: `/v1/metrics` provides: request counters per endpoint with HTTP method labels (healthz,
-  readyz, readyz/deep, metrics),
+  readyz, readyz/deep, metrics), bounded HTTP status labels for public endpoints (status="200" for
+  healthz/readyz/metrics; status="200"/"503" for readyz/deep based on health),
   `ferrumgate_store_health_up` gauge, `ferrumgate_write_queue_depth` gauge for accepted SQLite write
   operations not yet processed by the writer loop, `ferrumgate_metrics_scrapes_total`,
   `ferrumgate_governance_errors_total` per route with HTTP method labels (25 governance endpoints), and
   `ferrumgate_governance_success_total` per route with HTTP method labels (25 governance endpoints).
-  Missing: latency histograms and HTTP status labels. Adding latency histograms would require wrapping with
-  timing middleware — out of scope for a bounded change. HTTP status labels would require per-handler
-  instrumentation or a metrics middleware bridge from TraceLayer.
+  Missing: latency histograms. Adding latency histograms would require wrapping with
+  timing middleware — out of scope for a bounded change. HTTP status labels are implemented
+  for public endpoints only (bounded change, per-handler instrumentation).
 - See [`27-production-evaluation-plan.md`](./27-production-evaluation-plan.md) for the full
   production evaluation framework.
 
@@ -126,8 +127,8 @@ Phase 3 PostgreSQL (Path 3) — both are outside the scope of this roadmap.
   remote push/pull for git, broader replay for http) is post-v1 scope.
 - P2.2: `GET /v1/intents` supports `intent_id`, repeated `state`, `cursor`, and `limit`
   parameters and returns the JSON shape expected by `ferrumctl list-intents`. `exec_state` is
-  currently `null` in list output; joining latest execution state per intent remains a future
-  observability enhancement, not a pilot blocker. `POST /v1/executions/{execution_id}/cancel`
+  populated from the latest execution state when one exists and remains `null` when no execution
+  exists. `POST /v1/executions/{execution_id}/cancel`
   remains available via `ferrumctl cancel-execution --confirm` and is documented in OpenAPI.
 - P2.4: FerrumGate v1 does not include TLS termination. Deploy behind a TLS-terminating
   reverse proxy. Example nginx config in `configs/examples/nginx-ferrumgate.conf`.

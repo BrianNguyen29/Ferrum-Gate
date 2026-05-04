@@ -142,7 +142,7 @@ These require PostgreSQL, multi-node, or broader adapter surface — not in v1 s
 | **Symlink hardening (this slice)** | Symlink deny-by-default at prepare; execute-phase revalidation catches swap attacks; rollback-phase revalidation catches swap attacks; optional workdir sandbox via explicit constructor |
 | **O_NOFOLLOW hardening (this slice)** | O_NOFOLLOW applied to compute_file_hash (read), FileWrite execute, FileAppend execute/open, FileAppend rollback read/write; ELOOP mapped to SymlinkNotAllowed; non-Unix falls back to standard read/write |
 | **Compensation audit (this slice)** | Real-undo verified for FileWrite (restores original content), FileDelete (restores deleted file), FileMove (moves back to source), FileCopy (deletes new dest), FileAppend (truncates to original) |
-| **Remaining surface** | mount-point detection (O_NOFOLLOW covers final-component symlink defense); permissions/ownership detailed handling; cross-filesystem or mount-point boundary handling; boundedness guarantees for non-transactional fs operations |
+| **Remaining surface** | mount-point detection partially implemented on Unix via device boundary validation when sandbox_to_workdir=true (O_NOFOLLOW covers final-component symlink defense); permissions/ownership detailed handling; boundedness guarantees for non-transactional fs operations |
 | **Risk** | MED |
 | **Production ready** | **Partial** — verified local slice is bounded; symlink hardening and compensation audit improved but broader adapter surface remains post-v1 |
 
