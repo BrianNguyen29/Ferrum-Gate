@@ -59,7 +59,7 @@ The key result is intentionally conservative:
 | DirCreate | Aliases rollback | `real_undo` — remove created directory | dir create rollback/compensate tests | Only bounded empty-created-dir semantics. |
 | DirDelete | Aliases rollback | `real_undo` — recreate deleted empty directory | dir delete rollback/compensate tests | Non-empty directory deletion is rejected. |
 
-**Current hardening note:** fs now denies symlinks by default at prepare and revalidates symlink/sandbox constraints before execute and rollback, including FileMove/FileCopy destination paths. Broader symlink-following support, `O_NOFOLLOW`, mount-boundary detection, and detailed ownership handling remain post-v1.
+**Current hardening note:** fs now denies symlinks by default at prepare and revalidates symlink/sandbox constraints before execute and rollback, including FileMove/FileCopy destination paths. O_NOFOLLOW is now applied to file-open/read/write paths (compute_file_hash, FileWrite execute, FileAppend execute/open, FileAppend rollback read/write) with ELOOP mapped to SymlinkNotAllowed; non-Unix falls back to standard fs operations. mount-boundary detection and detailed ownership handling remain post-v1.
 
 ---
 

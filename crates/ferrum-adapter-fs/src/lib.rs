@@ -406,7 +406,7 @@ impl FsAdapter {
 
     /// Computes the SHA-256 hash of a file at the given path.
     fn compute_file_hash(path: &str) -> Result<String, FsAdapterError> {
-        let contents = std::fs::read(path)?;
+        let contents = Self::read_file_nofollow(path)?;
         let mut hasher = Sha256::new();
         hasher.update(&contents);
         let result = hasher.finalize();
@@ -434,6 +434,84 @@ impl FsAdapter {
             // Assume octal (e.g., "755")
             u32::from_str_radix(mode_str, 8)
                 .map_err(|e| format!("invalid octal mode '{}': {}", mode_str, e))
+        }
+    }
+
+    /// Maps an IO error to FsAdapterError, converting Unix ELOOP to SymlinkNotAllowed.
+    fn map_io_error_to_fs(err: std::io::Error, path: &str) -> FsAdapterError {
+        #[cfg(unix)]
+        {
+            use std::io::ErrorKind;
+            if err.kind() == ErrorKind::Other {
+                if let Some(code) = err.raw_os_error() {
+                    // ELOOP = too many symbolic links encountered
+                    if code == libc::ELOOP {
+                        return FsAdapterError::SymlinkNotAllowed(format!(
+                            "symbolic link in final component not allowed: {}",
+                            path
+                        ));
+                    }
+                }
+            }
+            // Handle NotFound as well since O_NOFOLLOW can cause it
+            if err.kind() == ErrorKind::NotFound {
+                return FsAdapterError::SymlinkNotAllowed(format!(
+                    "file does not exist or is a symlink (O_NOFOLLOW): {}",
+                    path
+                ));
+            }
+        }
+        FsAdapterError::Io(err)
+    }
+
+    /// Reads a file without following symbolic links in the final component (Unix O_NOFOLLOW).
+    /// On Unix: uses OpenOptions with custom_flags(O_NOFOLLOW) to open the file.
+    /// On non-Unix: falls back to std::fs::read.
+    fn read_file_nofollow(path: &str) -> Result<Vec<u8>, FsAdapterError> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            let file = std::fs::OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_NOFOLLOW)
+                .open(path)
+                .map_err(|e| Self::map_io_error_to_fs(e, path))?;
+            use std::io::Read;
+            let mut reader = file;
+            let mut contents = Vec::new();
+            reader
+                .read_to_end(&mut contents)
+                .map_err(|e| Self::map_io_error_to_fs(e, path))?;
+            Ok(contents)
+        }
+        #[cfg(not(unix))]
+        {
+            std::fs::read(path).map_err(FsAdapterError::Io)
+        }
+    }
+
+    /// Writes to a file without following symbolic links in the final component (Unix O_NOFOLLOW).
+    /// On Unix: uses OpenOptions with custom_flags(O_NOFOLLOW) to create/truncate the file.
+    /// On non-Unix: falls back to std::fs::write.
+    fn write_file_nofollow(path: &str, contents: &[u8]) -> Result<(), FsAdapterError> {
+        #[cfg(unix)]
+        {
+            use std::io::Write;
+            use std::os::unix::fs::OpenOptionsExt;
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .custom_flags(libc::O_NOFOLLOW)
+                .open(path)
+                .map_err(|e| Self::map_io_error_to_fs(e, path))?
+                .write_all(contents)
+                .map_err(|e| Self::map_io_error_to_fs(e, path))?;
+            Ok(())
+        }
+        #[cfg(not(unix))]
+        {
+            std::fs::write(path, contents).map_err(FsAdapterError::Io)
         }
     }
 
@@ -1108,7 +1186,7 @@ impl RollbackAdapter for FsAdapter {
 
                 // Write the new contents to the target file
                 // This overwrites the existing file (which was snapshotted during prepare)
-                std::fs::write(file_path, &content).map_err(|e| {
+                Self::write_file_nofollow(file_path, &content).map_err(|e| {
                     Self::phase_wrap_internal(
                         PHASE_EXECUTE,
                         format!("FileWrite failed for {}: {}", file_path, e),
@@ -1382,16 +1460,39 @@ impl RollbackAdapter for FsAdapter {
                 hasher.update(&data);
                 let data_hash = hex::encode(hasher.finalize());
 
-                // Open file in append mode and write data
-                let file = std::fs::OpenOptions::new()
-                    .append(true)
-                    .open(file_path)
-                    .map_err(|e| {
-                        Self::phase_wrap_internal(
-                            PHASE_EXECUTE,
-                            format!("FileAppend failed to open {}: {}", file_path, e),
-                        )
-                    })?;
+                // Open file in append mode and write data (O_NOFOLLOW on Unix)
+                let file = {
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::OpenOptionsExt;
+                        std::fs::OpenOptions::new()
+                            .append(true)
+                            .custom_flags(libc::O_NOFOLLOW)
+                            .open(file_path)
+                            .map_err(|e| {
+                                Self::phase_wrap_internal(
+                                    PHASE_EXECUTE,
+                                    format!(
+                                        "FileAppend failed to open {}: {}",
+                                        file_path,
+                                        Self::map_io_error_to_fs(e, file_path)
+                                    ),
+                                )
+                            })
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        std::fs::OpenOptions::new()
+                            .append(true)
+                            .open(file_path)
+                            .map_err(|e| {
+                                Self::phase_wrap_internal(
+                                    PHASE_EXECUTE,
+                                    format!("FileAppend failed to open {}: {}", file_path, e),
+                                )
+                            })
+                    }
+                }?;
 
                 // Write the data
                 use std::io::Write;
@@ -1991,15 +2092,15 @@ impl RollbackAdapter for FsAdapter {
                 .and_then(|v| v.as_str())
                 .map(String::from);
 
-            // Read current file content (fail-closed on I/O error)
-            let current_content = match std::fs::read(file_path) {
+            // Read current file content using O_NOFOLLOW (fail-closed on I/O error)
+            let current_content = match Self::read_file_nofollow(file_path) {
                 Ok(c) => c,
                 Err(e) => {
                     return Ok(Self::fail_closed_recovery(
                         PHASE_ROLLBACK,
                         "read",
                         file_path,
-                        e,
+                        std::io::Error::other(e.to_string()),
                     ));
                 }
             };
@@ -2012,13 +2113,13 @@ impl RollbackAdapter for FsAdapter {
                 current_content
             };
 
-            // Write truncated content back (fail-closed on I/O error)
-            if let Err(e) = std::fs::write(file_path, &truncated_content) {
+            // Write truncated content back using O_NOFOLLOW (fail-closed on I/O error)
+            if let Err(e) = Self::write_file_nofollow(file_path, &truncated_content) {
                 return Ok(Self::fail_closed_recovery(
                     PHASE_ROLLBACK,
                     "write",
                     file_path,
-                    e,
+                    std::io::Error::other(e.to_string()),
                 ));
             }
 
@@ -9139,6 +9240,238 @@ mod tests {
                 other
             ),
         }
+    }
+
+    // =============================================================================
+    // O_NOFOLLOW Hardening: Defense-in-Depth Tests
+    // =============================================================================
+
+    #[tokio::test]
+    async fn test_nofollow_blocks_symlink_write_on_unix() {
+        // Test that O_NOFOLLOW blocks write operations on symlinks (Unix only).
+        let temp_dir = tempdir().unwrap();
+        let target_file = temp_dir.path().join("target.txt");
+        let symlink_path = temp_dir.path().join("link");
+        std::fs::write(&target_file, b"target content").unwrap();
+
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&target_file, &symlink_path).unwrap();
+
+        #[cfg(not(unix))]
+        return; // O_NOFOLLOW is Unix-only
+
+        let symlink_str = symlink_path.display().to_string();
+        let adapter = FsAdapter::new("fs");
+
+        // Prepare on the symlink should fail because prepare validates path
+        let mut request = create_test_request(&symlink_str);
+        request.action_type = ActionType::FileWrite;
+        let result = adapter.prepare(&request).await;
+        assert!(result.is_err(), "prepare should reject symlink path");
+
+        // Verify the error is about symlinks
+        match result.unwrap_err() {
+            AdapterError::Validation(msg) => {
+                assert!(
+                    msg.contains("symlink"),
+                    "Expected symlink error, got: {}",
+                    msg
+                );
+            }
+            other => panic!("expected validation error for symlink, got: {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_nofollow_normal_file_write_still_works() {
+        // Test that normal file operations still work with O_NOFOLLOW.
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("normal.txt");
+        let file_path_str = file_path.display().to_string();
+        std::fs::write(&file_path, b"original").unwrap();
+
+        let adapter = FsAdapter::new("fs");
+
+        // Prepare should succeed
+        let request = create_test_request(&file_path_str);
+        let prep_receipt = adapter.prepare(&request).await.unwrap();
+
+        // Build contract
+        let contract = RollbackContract {
+            contract_id: RollbackContractId::new(),
+            intent_id: IntentId::new(),
+            proposal_id: ProposalId::new(),
+            execution_id: request.execution_id,
+            action_type: ActionType::FileWrite,
+            rollback_class: ferrum_proto::RollbackClass::R1SnapshotRecoverable,
+            adapter_key: "fs".to_string(),
+            target: RollbackTarget::FilePath {
+                path: file_path_str.clone(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: prep_receipt.adapter_metadata,
+        };
+
+        // Execute should succeed with normal file
+        let exec_receipt = adapter
+            .execute(&contract, &serde_json::json!("new content"))
+            .await
+            .unwrap();
+
+        assert!(exec_receipt.result_digest.is_some());
+        // Verify file has new content
+        let content = std::fs::read(&file_path).unwrap();
+        assert_eq!(content, b"new content");
+    }
+
+    #[tokio::test]
+    async fn test_nofollow_file_append_rollback_truncation() {
+        // Test that FileAppend rollback correctly truncates using O_NOFOLLOW helpers.
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("append_rollback.txt");
+        let file_path_str = file_path.display().to_string();
+        std::fs::write(&file_path, b"original content").unwrap();
+
+        let adapter = FsAdapter::new("fs");
+
+        // Prepare
+        let request = RollbackPrepareRequest {
+            intent_id: IntentId::new(),
+            proposal_id: ProposalId::new(),
+            execution_id: ExecutionId::new(),
+            action_type: ActionType::FileAppend,
+            rollback_class: ferrum_proto::RollbackClass::R1SnapshotRecoverable,
+            adapter_key: "fs".to_string(),
+            target: RollbackTarget::FilePath {
+                path: file_path_str.clone(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            metadata: JsonMap::new(),
+        };
+        let prep_receipt = adapter.prepare(&request).await.unwrap();
+
+        // Build contract
+        let contract = RollbackContract {
+            contract_id: RollbackContractId::new(),
+            intent_id: IntentId::new(),
+            proposal_id: ProposalId::new(),
+            execution_id: request.execution_id,
+            action_type: ActionType::FileAppend,
+            rollback_class: ferrum_proto::RollbackClass::R1SnapshotRecoverable,
+            adapter_key: "fs".to_string(),
+            target: RollbackTarget::FilePath {
+                path: file_path_str.clone(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: prep_receipt.adapter_metadata,
+        };
+
+        // Execute append
+        adapter
+            .execute(&contract, &serde_json::json!(" appended data"))
+            .await
+            .unwrap();
+
+        // Verify content was appended
+        let content = std::fs::read(&file_path).unwrap();
+        assert_eq!(content, b"original content appended data");
+
+        // Now rollback
+        let rollback_receipt = adapter.rollback(&contract).await.unwrap();
+        assert!(rollback_receipt.recovered);
+
+        // File should be truncated to original length (rollback uses write_file_nofollow)
+        let content_after = std::fs::read(&file_path).unwrap();
+        assert_eq!(content_after, b"original content");
+    }
+
+    #[tokio::test]
+    async fn test_nofollow_file_append_normal_still_works() {
+        // Test that FileAppend still works on normal files.
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("append_test.txt");
+        let file_path_str = file_path.display().to_string();
+        std::fs::write(&file_path, b"original").unwrap();
+
+        let adapter = FsAdapter::new("fs");
+
+        // Prepare
+        let request = RollbackPrepareRequest {
+            intent_id: IntentId::new(),
+            proposal_id: ProposalId::new(),
+            execution_id: ExecutionId::new(),
+            action_type: ActionType::FileAppend,
+            rollback_class: ferrum_proto::RollbackClass::R1SnapshotRecoverable,
+            adapter_key: "fs".to_string(),
+            target: RollbackTarget::FilePath {
+                path: file_path_str.clone(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            metadata: JsonMap::new(),
+        };
+        let prep_receipt = adapter.prepare(&request).await.unwrap();
+
+        // Build contract
+        let contract = RollbackContract {
+            contract_id: RollbackContractId::new(),
+            intent_id: IntentId::new(),
+            proposal_id: ProposalId::new(),
+            execution_id: request.execution_id,
+            action_type: ActionType::FileAppend,
+            rollback_class: ferrum_proto::RollbackClass::R1SnapshotRecoverable,
+            adapter_key: "fs".to_string(),
+            target: RollbackTarget::FilePath {
+                path: file_path_str.clone(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: prep_receipt.adapter_metadata,
+        };
+
+        // Execute append
+        let exec_receipt = adapter
+            .execute(&contract, &serde_json::json!(" appended"))
+            .await
+            .unwrap();
+
+        assert!(exec_receipt.result_digest.is_some());
+
+        // Verify content was appended
+        let content = std::fs::read(&file_path).unwrap();
+        assert_eq!(content, b"original appended");
     }
 
     // =============================================================================

@@ -16,3 +16,6 @@ chrono = { workspace = true }
 tempfile = { workspace = true }
 ferrum-proto = { path = "../ferrum-proto" }
 ferrum-rollback = { path = "../ferrum-rollback" }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
