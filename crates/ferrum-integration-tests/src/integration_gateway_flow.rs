@@ -5198,6 +5198,121 @@ async fn test_rate_limit_recovery_after_cooldown() {
     );
 }
 
+/// Verify that under sustained concurrent overload, the rate governor correctly
+/// distributes 200s and 429s without deadlocking or collapsing.
+///
+/// Bounded sustained coverage test: exercises governor behavior under sustained
+/// overload for ~1.5s in-process, no external host required.
+#[tokio::test]
+async fn test_sustained_concurrent_rate_limit_overload() {
+    let pdp: Arc<dyn PdpEngine> = Arc::new(StaticPdpEngine);
+    let cap: Arc<dyn CapabilityService> = Arc::new(InMemoryCapabilityService::default());
+
+    let mut registry = AdapterRegistry::default();
+    registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
+    let rollback = Arc::new(RollbackService::new(Arc::new(registry)));
+
+    let store = Arc::new(
+        SqliteStore::connect("sqlite::memory:")
+            .await
+            .expect("connect to sqlite"),
+    );
+    store
+        .apply_embedded_migrations()
+        .await
+        .expect("apply migrations");
+
+    let runtime = GatewayRuntime::new(
+        pdp,
+        cap.clone(),
+        rollback,
+        store.clone() as Arc<dyn StoreFacade>,
+        vec![],
+    );
+
+    // Governor: 5 req/sec, burst 10. Sustained concurrent workers will exceed
+    // burst repeatedly, producing a mix of 200s and 429s over time.
+    let router = build_router_with_governor(runtime, 5, 10);
+
+    let client_ip = "192.168.1.200";
+    let duration = std::time::Duration::from_millis(1500);
+    let num_workers = 4_usize;
+
+    let deadline = tokio::time::Instant::now() + duration;
+
+    // Concurrent workers each hammer the same IP bucket until deadline
+    let mut handles = Vec::new();
+    for worker_id in 0..num_workers {
+        let client_ip = client_ip.to_string();
+        let request_factory = move || {
+            axum::http::Request::builder()
+                .method(axum::http::Method::GET)
+                .uri("/v1/healthz")
+                .header("content-type", "application/json")
+                .header("x-real-ip", client_ip.clone())
+                .body(axum::body::Body::empty())
+                .unwrap()
+        };
+
+        let router = router.clone();
+        handles.push(tokio::spawn(async move {
+            let mut count = 0_usize;
+            let mut results = Vec::new();
+            while tokio::time::Instant::now() < deadline {
+                let request = request_factory();
+                let response = tower::ServiceExt::oneshot(router.clone(), request)
+                    .await
+                    .expect("healthz request should complete");
+                results.push(response.status());
+                count += 1;
+                // Brief yield to let other workers run
+                tokio::task::yield_now().await;
+            }
+            (worker_id, count, results)
+        }));
+    }
+
+    // Collect all results
+    let mut all_statuses = Vec::new();
+    for handle in handles {
+        let (_worker_id, count, statuses) = handle.await.expect("task should not panic");
+        eprintln!("Worker {} completed {} requests", _worker_id, count);
+        all_statuses.extend(statuses);
+    }
+
+    let total = all_statuses.len();
+    let successes: usize = all_statuses
+        .iter()
+        .filter(|s| **s == axum::http::StatusCode::OK)
+        .count();
+    let rate_limited: usize = all_statuses
+        .iter()
+        .filter(|s| **s == axum::http::StatusCode::TOO_MANY_REQUESTS)
+        .count();
+
+    eprintln!(
+        "Sustained overload results: total={}, successes={}, 429s={}",
+        total, successes, rate_limited
+    );
+
+    // Robust assertions: both status classes observed, total exceeds burst
+    assert!(
+        successes > 0,
+        "expected some 200s from initial burst, got {}",
+        successes
+    );
+    assert!(
+        rate_limited > 0,
+        "expected some 429s under sustained overload, got {}",
+        rate_limited
+    );
+    assert!(
+        total > 10,
+        "total requests ({}) should exceed burst size (10)",
+        total
+    );
+}
+
 // ---------------------------------------------------------------------------
 // M3: cancel_execution integration tests
 // ---------------------------------------------------------------------------
