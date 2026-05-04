@@ -80,14 +80,15 @@ paths:
       description: |
         Returns Prometheus text exposition format with the following metric families:
 
-        - `ferrumgate_http_requests_total` - HTTP request counters by route
+        - `ferrumgate_http_requests_total` - HTTP request counters by route and method
         - `ferrumgate_store_health_up` - Store health gauge (1=ok, 0=unhealthy)
+        - `ferrumgate_write_queue_depth` - SQLite write queue depth gauge (accepted ops not yet processed by writer loop)
         - `ferrumgate_metrics_scrapes_total` - Metrics endpoint scrape counter
-        - `ferrumgate_governance_errors_total` - Governance error counters by route
-        - `ferrumgate_governance_success_total` - Governance success counters by route
+        - `ferrumgate_governance_errors_total` - Governance error counters by route and method
+        - `ferrumgate_governance_success_total` - Governance success counters by route and method
 
         **Note**: This endpoint is intentionally bounded. It does not expose
-        latency histograms, HTTP method/status labels, WAL/page gauges, or connection-pool
+        latency histograms, HTTP status labels, WAL/page gauges, or connection-pool
         saturation signals.
       security: []
       responses:

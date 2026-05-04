@@ -83,7 +83,41 @@ def check_deep_readiness(server_url, bearer_token):
         "readiness",
         "--deep",
     ]
-    return run_command(cmd, "Deep Readiness (/v1/readyz/deep)", capture_json=True)
+    success, output = run_command(cmd, "Deep Readiness (/v1/readyz/deep)", capture_json=True)
+
+    # Attempt to parse JSON body and verify components if safe
+    # Skip if output format is unpredictable or parsing failed
+    if success:
+        try:
+            # Try to extract JSON from output (output may contain stderr/stdout mix)
+            json_match = re.search(r'\{.*\}', output, re.DOTALL)
+            if json_match:
+                body = json.loads(json_match.group())
+                if "components" in body and isinstance(body["components"], list):
+                    component_names = {c.get("component") for c in body["components"] if isinstance(c, dict)}
+                    has_store = "store" in component_names
+                    has_write_queue = "write_queue" in component_names
+
+                    if has_store:
+                        print("  -> Found component: store")
+                    else:
+                        print("  -> MISSING component: store")
+
+                    if has_write_queue:
+                        print("  -> Found component: write_queue")
+                    else:
+                        print("  -> MISSING component: write_queue")
+
+                    if not (has_store and has_write_queue):
+                        print("  -> FAIL: Missing required components (store or write_queue)")
+                        success = False
+                else:
+                    print("  -> Skipped body parsing: components field not found or not an array")
+            else:
+                print("  -> Skipped body parsing: no JSON object found in output")
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            print(f"  -> Skipped body parsing: {type(e).__name__} — output format may be unsafe")
+    return success, output
 
 
 def check_functional_readiness(server_url, bearer_token):
@@ -100,19 +134,9 @@ def check_functional_readiness(server_url, bearer_token):
 
 
 def check_metrics_endpoint(server_url, bearer_token):
-    """Check /v1/metrics endpoint is accessible."""
+    """Check /v1/metrics endpoint is accessible and contains required metrics."""
     # Use curl directly since ferrumctl doesn't have a metrics subcommand
     auth_header = f"Bearer {bearer_token}" if bearer_token else ""
-    cmd = [
-        "curl",
-        "-s",
-        "-w", "\\n%{http_code}",
-        "-o", "-",
-        "-H", f"Authorization: {auth_header}" if auth_header else "",
-        f"{server_url}/v1/metrics",
-    ]
-    # Filter out empty header flag
-    cmd = [c for c in cmd if c != "-H" and c != "Authorization:"]
     if auth_header:
         cmd = [
             "curl",
@@ -130,11 +154,33 @@ def check_metrics_endpoint(server_url, bearer_token):
         ]
     success, output = run_command(cmd, "Metrics Endpoint (/v1/metrics)", capture_json=False)
     if success:
-        # Check if output contains expected metrics
-        if "ferrumgate_http_requests_total" in output or "ferrumgate_store_health_up" in output:
-            print("  -> Found expected metrics: ferrumgate_http_requests_total, ferrumgate_store_health_up")
-        elif "process_cpu_seconds_total" in output or "ferrum_executions_total" in output:
-            print("  -> Note: Found metrics that may be aspirational (not in v1 scope)")
+        # Check for required metrics
+        has_write_queue_depth = "ferrumgate_write_queue_depth" in output
+        has_method_label = 'method="GET"' in output
+        has_http_requests = "ferrumgate_http_requests_total" in output
+        has_store_health = "ferrumgate_store_health_up" in output
+
+        if has_write_queue_depth:
+            print("  -> Found: ferrumgate_write_queue_depth")
+        else:
+            print("  -> MISSING: ferrumgate_write_queue_depth")
+
+        if has_method_label:
+            print("  -> Found: method=\"GET\" label")
+        else:
+            print("  -> MISSING: method=\"GET\" label")
+
+        if has_http_requests:
+            print("  -> Found: ferrumgate_http_requests_total")
+
+        if has_store_health:
+            print("  -> Found: ferrumgate_store_health_up")
+
+        # Require ferrumgate_write_queue_depth AND method="GET" label per pilot readiness spec
+        required_metrics_present = has_write_queue_depth and has_method_label
+        if not required_metrics_present:
+            print("  -> FAIL: Missing required metrics (write_queue_depth or method label)")
+            success = False
     return success, output
 
 

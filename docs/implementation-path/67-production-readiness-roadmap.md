@@ -71,7 +71,7 @@ Phase 3 PostgreSQL (Path 3) — both are outside the scope of this roadmap.
 
 | # | Item | Owner | Evidence Required | Status |
 |---|---|---|---|---|
-| P1.1 | **Readiness semantics: `/v1/readyz/deep` functional probe** | Engineering | Load balancers and Kubernetes should use `/v1/readyz/deep` as functional readiness probe; `/v1/healthz` and `/v1/readyz` are shallow and always return 200 | ✅ Done — documented in `PRODUCTION_NOTES.md` §Health and Readiness Endpoints; `/v1/readyz/deep` returns 200 when store healthy, 503 when unhealthy |
+| P1.1 | **Readiness semantics: `/v1/readyz/deep` functional probe** | Engineering | Load balancers and Kubernetes should use `/v1/readyz/deep` as functional readiness probe; `/v1/healthz` and `/v1/readyz` are shallow and always return 200 | ✅ Done — documented in `PRODUCTION_NOTES.md` §Health and Readiness Endpoints; `/v1/readyz/deep` returns 200 when store healthy and write queue depth <= 100, 503 when store unhealthy or write queue depth > 100 |
 | P1.2 | **Configurable rate limit** | Engineering | Rate limit configurable via CLI/env/config file (2 req/s, burst 50 default); operator confirms fit for target workload | ✅ Done — CLI: `--rate-limit-per-second` and `--rate-limit-burst`; env: `FERRUMD_RATE_LIMIT_PER_SECOND` and `FERRUMD_RATE_LIMIT_BURST`; config file: `rate_limit_per_second` and `rate_limit_burst` under `[server]` |
 | P1.3 | **Structured logging (JSON)** | Engineering | Logs are unstructured text; production debugging and log aggregation benefit from JSON structured output | ✅ Done — CLI: `--log-format`; env: `FERRUMD_LOG_FORMAT`; config file: `log_format` under `[server]`; default is "text" (human-readable); accepted values: "text", "compact", "json"; documented in `PRODUCTION_NOTES.md` |
 | P1.4 | **Full metrics/observability** | Engineering | `/v1/metrics` with method labels on request/governance counters, but no latency histograms or HTTP status labels | 🟡 Partial — `/v1/metrics` provides: request counters per endpoint with HTTP method labels (healthz, readyz, readyz/deep, metrics), store health gauge (`ferrumgate_store_health_up`), SQLite write queue depth gauge (`ferrumgate_write_queue_depth`), governance error counters per route with HTTP method labels (25 routes), governance success counters per route with HTTP method labels (25 routes); missing: latency histograms and HTTP status labels |
@@ -86,8 +86,9 @@ Phase 3 PostgreSQL (Path 3) — both are outside the scope of this roadmap.
   (`FERRUMD_RATE_LIMIT_PER_SECOND`, `FERRUMD_RATE_LIMIT_BURST`), or config file fields
   (`rate_limit_per_second`, `rate_limit_burst` under `[server]`). Defaults remain 2 req/s and burst 50.
   Validation rejects 0 and values >10000 for burst. CLI > env > config file > defaults precedence.
-- P1.1: `/v1/readyz/deep` is the functional readiness probe. Returns HTTP 200 when store is healthy,
-  HTTP 503 when store is unhealthy. Use for load balancers and Kubernetes readiness probes.
+- P1.1: `/v1/readyz/deep` is the functional readiness probe. Returns HTTP 200 when store is healthy
+  AND write queue depth <= 100; returns HTTP 503 when store is unhealthy OR write queue depth > 100.
+  Use for load balancers and Kubernetes readiness probes.
   `/v1/healthz` and `/v1/readyz` are shallow checks — always return 200, do NOT check store health.
 - P1.3: Configurable log format via CLI (`--log-format`), env (`FERRUMD_LOG_FORMAT`), or config file
   (`log_format` under `[server]`). Default is "text" (human-readable). Accepted values: "text",
