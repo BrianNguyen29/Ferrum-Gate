@@ -4499,6 +4499,7 @@ fn validate_resource_bindings_subset_of_scope(
 /// Infers the action_type and adapter_key from the tool_name.
 /// For FileWrite-related tools (containing "file_write", "write_file", "fs_", etc.),
 /// returns ActionType::FileWrite and adapter_key "fs".
+/// For sql_mutate, returns ActionType::SqlMutation and adapter_key "sqlite".
 /// Otherwise, defaults to ActionType::McpToolMutation and adapter_key "noop".
 fn infer_action_type_and_adapter(tool_name: &str) -> (ferrum_proto::ActionType, String) {
     let tool_lower = tool_name.to_lowercase();
@@ -4508,6 +4509,8 @@ fn infer_action_type_and_adapter(tool_name: &str) -> (ferrum_proto::ActionType, 
         || tool_lower.contains("file-mutation")
     {
         (ferrum_proto::ActionType::FileWrite, "fs".to_string())
+    } else if tool_lower.contains("sql_mutate") {
+        (ferrum_proto::ActionType::SqlMutation, "sqlite".to_string())
     } else {
         (
             ferrum_proto::ActionType::McpToolMutation,
@@ -4542,6 +4545,7 @@ fn build_prepare_request_for_proposal(
 
 /// Infers the RollbackTarget from resource_scope.
 /// For FilesystemPath selectors, returns RollbackTarget::FilePath with the path.
+/// For SqliteDatabase selectors with SqlMutation action, returns RollbackTarget::SqliteTxn.
 /// For other selectors, returns Generic fallback.
 fn infer_target_from_scope(
     scope: &[ferrum_proto::ResourceSelector],
@@ -4570,6 +4574,23 @@ fn infer_target_from_scope(
                     path: path.clone(),
                     before_hash: None,
                     after_hash: None,
+                };
+            }
+        }
+    }
+
+    // SqliteDatabase selector for SqlMutation action type
+    if matches!(action_type, ferrum_proto::ActionType::SqlMutation) {
+        for selector in scope {
+            if let ferrum_proto::ResourceSelector::SqliteDatabase {
+                db_path,
+                tables: _,
+                mode: _,
+            } = selector
+            {
+                return RollbackTarget::SqliteTxn {
+                    db_path: db_path.clone(),
+                    tx_id: format!("tx-{}", uuid::Uuid::new_v4()),
                 };
             }
         }
