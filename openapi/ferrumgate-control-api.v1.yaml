@@ -86,11 +86,12 @@ paths:
         - `ferrumgate_metrics_scrapes_total` - Metrics endpoint scrape counter
         - `ferrumgate_governance_errors_total` - Governance error counters by route and method
         - `ferrumgate_governance_success_total` - Governance success counters by route and method
+        - `ferrumgate_request_duration_seconds` - Latency histogram for public endpoints with bounded labels: route, method, status, le (bucket boundary). Emits _bucket, _sum, and _count lines per route/status combination.
 
-        **Note**: This endpoint is intentionally bounded. It does not expose
-        latency histograms, WAL/page gauges, or connection-pool
-        saturation signals. HTTP status labels are implemented for public endpoints
-        (healthz, readyz, readyz/deep, metrics) only.
+        **Note**: This endpoint is intentionally bounded. Latency histograms are
+        implemented for public endpoints only (healthz, readyz, readyz/deep, metrics).
+        Governance route latency instrumentation is out of scope. HTTP status labels
+        are implemented for public endpoints only (bounded change, per-handler instrumentation).
       security: []
       responses:
         '200':

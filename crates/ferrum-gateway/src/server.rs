@@ -32,7 +32,14 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 use tower::ServiceBuilder;
+
+/// Prometheus histogram bucket boundaries in seconds.
+/// Includes: 5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2.5s, 5s, 10s
+const HISTOGRAM_BOUNDARIES: &[f64] = &[
+    0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
+];
 use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
 use tower_http::trace::TraceLayer;
 
@@ -111,6 +118,26 @@ struct Metrics {
     governance_success_v1_provenance_lineage_execution_id: AtomicU64,
     governance_success_v1_provenance_ingest: AtomicU64,
     governance_success_v1_bridges_bridge_id_tools: AtomicU64,
+    // Latency histogram for /v1/healthz (always status 200)
+    healthz_latency_buckets: [AtomicU64; 11],
+    healthz_latency_sum: AtomicU64,
+    healthz_latency_count: AtomicU64,
+    // Latency histogram for /v1/readyz (always status 200)
+    readyz_latency_buckets: [AtomicU64; 11],
+    readyz_latency_sum: AtomicU64,
+    readyz_latency_count: AtomicU64,
+    // Latency histogram for /v1/readyz/deep (status 200)
+    readyz_deep_latency_buckets_200: [AtomicU64; 11],
+    readyz_deep_latency_sum_200: AtomicU64,
+    readyz_deep_latency_count_200: AtomicU64,
+    // Latency histogram for /v1/readyz/deep (status 503)
+    readyz_deep_latency_buckets_503: [AtomicU64; 11],
+    readyz_deep_latency_sum_503: AtomicU64,
+    readyz_deep_latency_count_503: AtomicU64,
+    // Latency histogram for /v1/metrics (always status 200)
+    metrics_latency_buckets: [AtomicU64; 11],
+    metrics_latency_sum: AtomicU64,
+    metrics_latency_count: AtomicU64,
 }
 
 impl Metrics {
@@ -174,6 +201,22 @@ impl Metrics {
             governance_success_v1_provenance_lineage_execution_id: AtomicU64::new(0),
             governance_success_v1_provenance_ingest: AtomicU64::new(0),
             governance_success_v1_bridges_bridge_id_tools: AtomicU64::new(0),
+            // Latency histogram fields
+            healthz_latency_buckets: [const { AtomicU64::new(0) }; 11],
+            healthz_latency_sum: AtomicU64::new(0),
+            healthz_latency_count: AtomicU64::new(0),
+            readyz_latency_buckets: [const { AtomicU64::new(0) }; 11],
+            readyz_latency_sum: AtomicU64::new(0),
+            readyz_latency_count: AtomicU64::new(0),
+            readyz_deep_latency_buckets_200: [const { AtomicU64::new(0) }; 11],
+            readyz_deep_latency_sum_200: AtomicU64::new(0),
+            readyz_deep_latency_count_200: AtomicU64::new(0),
+            readyz_deep_latency_buckets_503: [const { AtomicU64::new(0) }; 11],
+            readyz_deep_latency_sum_503: AtomicU64::new(0),
+            readyz_deep_latency_count_503: AtomicU64::new(0),
+            metrics_latency_buckets: [const { AtomicU64::new(0) }; 11],
+            metrics_latency_sum: AtomicU64::new(0),
+            metrics_latency_count: AtomicU64::new(0),
         }
     }
 
@@ -351,6 +394,53 @@ impl Metrics {
         self.increment_governance_error(route);
         err
     }
+
+    /// Records a latency sample in the appropriate histogram based on route and status.
+    /// `elapsed_ns` is the elapsed time in nanoseconds.
+    fn record_latency(&self, route: PublicRoute, status: u16, elapsed_ns: u64) {
+        let (buckets, sum, count) = match (route, status) {
+            (PublicRoute::Healthz, 200) => (
+                &self.healthz_latency_buckets,
+                &self.healthz_latency_sum,
+                &self.healthz_latency_count,
+            ),
+            (PublicRoute::Readyz, 200) => (
+                &self.readyz_latency_buckets,
+                &self.readyz_latency_sum,
+                &self.readyz_latency_count,
+            ),
+            (PublicRoute::ReadyzDeep, 200) => (
+                &self.readyz_deep_latency_buckets_200,
+                &self.readyz_deep_latency_sum_200,
+                &self.readyz_deep_latency_count_200,
+            ),
+            (PublicRoute::ReadyzDeep, 503) => (
+                &self.readyz_deep_latency_buckets_503,
+                &self.readyz_deep_latency_sum_503,
+                &self.readyz_deep_latency_count_503,
+            ),
+            (PublicRoute::Metrics, 200) => (
+                &self.metrics_latency_buckets,
+                &self.metrics_latency_sum,
+                &self.metrics_latency_count,
+            ),
+            // Ignore unknown combinations (shouldn't happen for public endpoints)
+            _ => return,
+        };
+
+        let elapsed_s = elapsed_ns as f64 / 1e9_f64;
+
+        // Update sum and count
+        sum.fetch_add(elapsed_ns, Ordering::Relaxed);
+        count.fetch_add(1, Ordering::Relaxed);
+
+        // Update buckets - increment all buckets where elapsed >= boundary
+        for (i, boundary) in HISTOGRAM_BOUNDARIES.iter().enumerate() {
+            if elapsed_s >= *boundary {
+                buckets[i].fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
 }
 
 /// Static route templates for governance error counters.
@@ -456,6 +546,15 @@ impl GovernanceRoute {
             GovernanceRoute::BridgesBridgeIdTools => "GET",
         }
     }
+}
+
+/// Public endpoint routes that have latency histograms.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PublicRoute {
+    Healthz,
+    Readyz,
+    ReadyzDeep,
+    Metrics,
 }
 
 /// Macro to increment governance error counter and return an ApiProblem error.
@@ -730,23 +829,33 @@ async fn bearer_auth_middleware(
 }
 
 async fn healthz(State(state): State<Arc<AppState>>) -> Json<HealthResponse> {
+    let start = Instant::now();
     state
         .metrics
         .healthz_requests
         .fetch_add(1, Ordering::Relaxed);
-    Json(HealthResponse {
+    let response = Json(HealthResponse {
         status: "ok".to_string(),
-    })
+    });
+    state
+        .metrics
+        .record_latency(PublicRoute::Healthz, 200, start.elapsed().as_nanos() as u64);
+    response
 }
 
 async fn readyz(State(state): State<Arc<AppState>>) -> Json<HealthResponse> {
+    let start = Instant::now();
     state
         .metrics
         .readyz_requests
         .fetch_add(1, Ordering::Relaxed);
-    Json(HealthResponse {
+    let response = Json(HealthResponse {
         status: "ready".to_string(),
-    })
+    });
+    state
+        .metrics
+        .record_latency(PublicRoute::Readyz, 200, start.elapsed().as_nanos() as u64);
+    response
 }
 
 /// Deep readiness probe that checks the store health and write queue backpressure.
@@ -757,6 +866,7 @@ async fn readyz(State(state): State<Arc<AppState>>) -> Json<HealthResponse> {
 /// indicate full dependency health, ledger scan status, adapter health, rollback health,
 /// connection pool saturation, or schema integrity.
 async fn readyz_deep(State(state): State<Arc<AppState>>) -> (StatusCode, Json<DeepHealthResponse>) {
+    let start = Instant::now();
     let threshold = state.server_config.write_queue_threshold;
 
     let store_status = match state.runtime.store.health_check().await {
@@ -807,25 +917,34 @@ async fn readyz_deep(State(state): State<Arc<AppState>>) -> (StatusCode, Json<De
         components: vec![store_status, queue_status],
     };
 
-    // Track request with status label
+    let elapsed_ns = start.elapsed().as_nanos() as u64;
+
+    // Track request with status label and latency
     if healthy {
         state
             .metrics
             .readyz_deep_requests_200
             .fetch_add(1, Ordering::Relaxed);
+        state
+            .metrics
+            .record_latency(PublicRoute::ReadyzDeep, 200, elapsed_ns);
         (StatusCode::OK, Json(response))
     } else {
         state
             .metrics
             .readyz_deep_requests_503
             .fetch_add(1, Ordering::Relaxed);
+        state
+            .metrics
+            .record_latency(PublicRoute::ReadyzDeep, 503, elapsed_ns);
         (StatusCode::SERVICE_UNAVAILABLE, Json(response))
     }
 }
 
 /// Metrics endpoint handler.
-/// Returns Prometheus-compatible text format with request counters and store health.
+/// Returns Prometheus-compatible text format with request counters, store health, and latency histograms.
 async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
+    let start = Instant::now();
     state
         .metrics
         .metrics_scrapes
@@ -1066,7 +1185,136 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
         .governance_success_v1_bridges_bridge_id_tools
         .load(Ordering::Relaxed);
 
-    let body = format!(
+    // Load latency histogram data for /v1/healthz
+    let healthz_latency_buckets: Vec<u64> = state
+        .metrics
+        .healthz_latency_buckets
+        .iter()
+        .map(|b| b.load(Ordering::Relaxed))
+        .collect();
+    let healthz_latency_sum = state.metrics.healthz_latency_sum.load(Ordering::Relaxed);
+    let healthz_latency_count = state.metrics.healthz_latency_count.load(Ordering::Relaxed);
+
+    // Load latency histogram data for /v1/readyz
+    let readyz_latency_buckets: Vec<u64> = state
+        .metrics
+        .readyz_latency_buckets
+        .iter()
+        .map(|b| b.load(Ordering::Relaxed))
+        .collect();
+    let readyz_latency_sum = state.metrics.readyz_latency_sum.load(Ordering::Relaxed);
+    let readyz_latency_count = state.metrics.readyz_latency_count.load(Ordering::Relaxed);
+
+    // Load latency histogram data for /v1/readyz/deep (status 200)
+    let readyz_deep_latency_buckets_200: Vec<u64> = state
+        .metrics
+        .readyz_deep_latency_buckets_200
+        .iter()
+        .map(|b| b.load(Ordering::Relaxed))
+        .collect();
+    let readyz_deep_latency_sum_200 = state
+        .metrics
+        .readyz_deep_latency_sum_200
+        .load(Ordering::Relaxed);
+    let readyz_deep_latency_count_200 = state
+        .metrics
+        .readyz_deep_latency_count_200
+        .load(Ordering::Relaxed);
+
+    // Load latency histogram data for /v1/readyz/deep (status 503)
+    let readyz_deep_latency_buckets_503: Vec<u64> = state
+        .metrics
+        .readyz_deep_latency_buckets_503
+        .iter()
+        .map(|b| b.load(Ordering::Relaxed))
+        .collect();
+    let readyz_deep_latency_sum_503 = state
+        .metrics
+        .readyz_deep_latency_sum_503
+        .load(Ordering::Relaxed);
+    let readyz_deep_latency_count_503 = state
+        .metrics
+        .readyz_deep_latency_count_503
+        .load(Ordering::Relaxed);
+
+    // Load latency histogram data for /v1/metrics
+    let metrics_latency_buckets: Vec<u64> = state
+        .metrics
+        .metrics_latency_buckets
+        .iter()
+        .map(|b| b.load(Ordering::Relaxed))
+        .collect();
+    let metrics_latency_sum = state.metrics.metrics_latency_sum.load(Ordering::Relaxed);
+    let metrics_latency_count = state.metrics.metrics_latency_count.load(Ordering::Relaxed);
+
+    // Helper macro to build histogram lines for a given route/status combination
+    macro_rules! histogram_lines {
+        ($route:expr, $method:expr, $status:expr, $buckets:expr, $sum:expr, $count:expr) => {{
+            let mut lines = String::new();
+            for (i, boundary) in HISTOGRAM_BOUNDARIES.iter().enumerate() {
+                lines.push_str(&format!(
+                    " ferrumgate_request_duration_seconds{{route=\"{}\",method=\"{}\",status=\"{}\",le=\"{}\"}} {}\n",
+                    $route, $method, $status, boundary, $buckets[i]
+                ));
+            }
+            lines.push_str(&format!(
+                " ferrumgate_request_duration_seconds{{route=\"{}\",method=\"{}\",status=\"{}\",le=\"+Inf\"}} {}\n",
+                $route, $method, $status, $count
+            ));
+            lines.push_str(&format!(
+                " ferrumgate_request_duration_seconds_sum{{route=\"{}\",method=\"{}\",status=\"{}\"}} {}\n",
+                $route, $method, $status, $sum as f64 / 1e9_f64
+            ));
+            lines.push_str(&format!(
+                " ferrumgate_request_duration_seconds_count{{route=\"{}\",method=\"{}\",status=\"{}\"}} {}\n",
+                $route, $method, $status, $count
+            ));
+            lines
+        }};
+    }
+
+    let healthz_histogram = histogram_lines!(
+        "/v1/healthz",
+        "GET",
+        "200",
+        healthz_latency_buckets,
+        healthz_latency_sum,
+        healthz_latency_count
+    );
+    let readyz_histogram = histogram_lines!(
+        "/v1/readyz",
+        "GET",
+        "200",
+        readyz_latency_buckets,
+        readyz_latency_sum,
+        readyz_latency_count
+    );
+    let readyz_deep_histogram_200 = histogram_lines!(
+        "/v1/readyz/deep",
+        "GET",
+        "200",
+        readyz_deep_latency_buckets_200,
+        readyz_deep_latency_sum_200,
+        readyz_deep_latency_count_200
+    );
+    let readyz_deep_histogram_503 = histogram_lines!(
+        "/v1/readyz/deep",
+        "GET",
+        "503",
+        readyz_deep_latency_buckets_503,
+        readyz_deep_latency_sum_503,
+        readyz_deep_latency_count_503
+    );
+    let metrics_histogram = histogram_lines!(
+        "/v1/metrics",
+        "GET",
+        "200",
+        metrics_latency_buckets,
+        metrics_latency_sum,
+        metrics_latency_count
+    );
+
+    let mut body = format!(
         "# HELP ferrumgate_http_requests_total HTTP requests total by route and status\n\
          # TYPE ferrumgate_http_requests_total counter\n\
          ferrumgate_http_requests_total{{route=\"/v1/healthz\",method=\"GET\",status=\"200\"}} {}\n\
@@ -1200,6 +1448,20 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
         gov_ok_provenance_ingest,
         gov_ok_bridges_bridge_id_tools,
     );
+
+    // Append histogram output to body
+    body.push_str("# HELP ferrumgate_request_duration_seconds HTTP request latency histogram by route, method, and status\n");
+    body.push_str("# TYPE ferrumgate_request_duration_seconds histogram\n");
+    body.push_str(&healthz_histogram);
+    body.push_str(&readyz_histogram);
+    body.push_str(&readyz_deep_histogram_200);
+    body.push_str(&readyz_deep_histogram_503);
+    body.push_str(&metrics_histogram);
+
+    // Record metrics handler's own latency
+    state
+        .metrics
+        .record_latency(PublicRoute::Metrics, 200, start.elapsed().as_nanos() as u64);
 
     (
         [(
@@ -6998,5 +7260,74 @@ mod tests {
         assert!(body_str.contains(
             "ferrumgate_governance_success_total{route=\"/v1/intents/compile\",method=\"POST\"} 0"
         ));
+    }
+
+    #[tokio::test]
+    async fn test_metrics_endpoint_latency_histogram_present() {
+        let runtime = test_runtime().await;
+        let router = build_router(runtime);
+
+        // Call healthz and readyz to generate some latency samples
+        let _ = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/healthz")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let _ = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/readyz")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Call metrics to get the histogram output
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+
+        // Verify histogram HELP and TYPE lines exist
+        assert!(body_str.contains("# HELP ferrumgate_request_duration_seconds HTTP request latency histogram by route, method, and status"));
+        assert!(body_str.contains("# TYPE ferrumgate_request_duration_seconds histogram"));
+
+        // Verify histogram bucket lines with le= label exist for /v1/healthz
+        assert!(body_str.contains("ferrumgate_request_duration_seconds{"));
+
+        // Verify histogram has bucket, sum, and count for at least one route
+        // Check for bucket with le= label
+        assert!(body_str.contains("le=\"0.005\""));
+        assert!(body_str.contains("le=\"+Inf\""));
+        // Check for sum and count
+        assert!(body_str.contains("_sum{"));
+        assert!(body_str.contains("_count{"));
+
+        // Verify at least one public endpoint route label is present
+        assert!(body_str.contains("route=\"/v1/healthz\""));
+        assert!(body_str.contains("route=\"/v1/readyz\""));
+
+        // Verify method and status labels are present
+        assert!(body_str.contains("method=\"GET\""));
+        assert!(body_str.contains("status=\"200\""));
     }
 }
