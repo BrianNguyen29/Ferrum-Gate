@@ -768,19 +768,21 @@ mod tests {
         assert!(!result.verified);
     }
 
-    #[tokio::test]
-    async fn test_verify_returns_verified_false_on_db_locked() {
-        // G-E1 SQLite hardening: verify() should fail closed with verified=false
-        // when the database is locked by another connection.
-        // Note: SQLite's Connection::open() succeeds even if DB is locked by another
-        // connection; the lock only manifests on query execution. This test verifies
-        // the behavior when queries cannot be executed due to lock.
+    // NOTE: The following test was renamed from test_verify_returns_verified_false_on_db_locked
+    // because it does NOT test actual DB lock contention. SQLite's Connection::open() succeeds
+    // even when the DB is locked; lock contention only manifests on query execution, which would
+    // require holding a write lock with busy_timeout=5000ms (impractical for a fast unit test).
+    // This test covers SqlRowCountRange check failure (empty table) which also returns
+    // verified=false — the same fail-closed outcome, but via a different code path.
 
+    #[tokio::test]
+    async fn test_verify_returns_verified_false_on_row_count_out_of_range() {
+        // G-E1 fail-closed: verify_check that fails (row count out of range) returns verified=false
         let temp_dir = tempdir().unwrap();
         let db_path = temp_dir.path().join("test.db");
         let db_path_str = db_path.display().to_string();
 
-        // Create the database
+        // Create the database with an empty table
         let conn = Connection::open(&db_path).unwrap();
         conn.execute_batch("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
             .unwrap();
@@ -788,13 +790,12 @@ mod tests {
 
         let adapter = SqliteAdapter::new("sqlite");
 
-        // First verify should succeed (no verify_checks, just connection test)
         let contract = create_test_contract(&db_path_str);
         let result = adapter.verify(&contract).await.unwrap();
         // Without verify_checks, connection success means verified=true
         assert!(result.verified);
 
-        // Now test with a verify_check that will fail - this should return verified=false
+        // verify_check that will fail due to row count out of range
         let mut contract_with_check = create_test_contract(&db_path_str);
         contract_with_check.verify_checks = vec![CheckSpec {
             check_type: CheckType::SqlRowCountRange,
@@ -811,7 +812,7 @@ mod tests {
         }];
 
         let result2 = adapter.verify(&contract_with_check).await.unwrap();
-        // Verification should fail because table is empty - returns verified=false
+        // Row count out of range -> verified=false (fail closed)
         assert!(!result2.verified);
     }
 
@@ -1429,6 +1430,335 @@ mod tests {
             assert_eq!(count, 0);
         }
     }
+
+    // -------------------------------------------------------------------------
+    // Gap tests: path/connection edge cases
+    // -------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_prepare_fails_when_db_path_is_a_directory() {
+        // G-E1: validate_db_exists should reject a directory path (is_file = false)
+        let temp_dir = tempdir().unwrap();
+        let dir_path = temp_dir.path().display().to_string();
+
+        let adapter = SqliteAdapter::new("sqlite");
+        let request = create_test_request(&dir_path);
+        let result = adapter.prepare(&request).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(format!("{}", err).contains("not found or not a file"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_fails_on_nonexistent_db() {
+        // execute() should fail with a connection error when DB path does not exist
+        let adapter = SqliteAdapter::new("sqlite");
+        let contract = create_test_contract("/nonexistent/path/to/db.sqlite");
+        let payload = serde_json::json!({ "sql": "INSERT INTO items (name) VALUES ('x')" });
+        let result = adapter.execute(&contract, &payload).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        // Should be a connection/infrastructure error, not a validation error
+        assert!(format!("{}", err).contains("failed to open database"));
+    }
+
+    #[tokio::test]
+    async fn test_rollback_dml_fails_with_empty_compensation_plan() {
+        // DML rollback requires a compensation_plan; empty plan is a validation error
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let db_path_str = db_path.display().to_string();
+
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch("CREATE TABLE items (id INTEGER PRIMARY KEY)")
+            .unwrap();
+        drop(conn);
+
+        let adapter = SqliteAdapter::new("sqlite");
+        let contract = create_test_contract(&db_path_str);
+        // Contract has empty compensation_plan (default) and sql_type defaults to DML
+        let result = adapter.rollback(&contract).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(format!("{}", err).contains("compensation_plan"));
+    }
+
+    #[tokio::test]
+    async fn test_rollback_dml_fails_on_missing_db_path() {
+        // DML rollback should fail with a connection error when DB path does not exist
+        let adapter = SqliteAdapter::new("sqlite");
+        let mut contract = create_test_contract("/nonexistent/path/to/db.sqlite");
+        contract.metadata.insert(
+            "sql_type".to_string(),
+            serde_json::Value::String("DML".to_string()),
+        );
+        contract.compensation_plan = vec![CompensationStep {
+            order: 1,
+            adapter_key: "sqlite".to_string(),
+            operation: "rollback".to_string(),
+            args: json_map_from_serde_map(
+                serde_json::json!({ "sql": "DELETE FROM items WHERE id = 1" })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+            idempotency_key: "dml-missing-db".to_string(),
+        }];
+
+        let result = adapter.rollback(&contract).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        // Should be a connection/infrastructure error from open_conn
+        assert!(format!("{}", err).contains("failed to open database"));
+    }
+
+    #[tokio::test]
+    async fn test_rollback_ddl_fails_on_missing_db_path() {
+        // DDL rollback should fail with a connection error when DB path does not exist
+        let adapter = SqliteAdapter::new("sqlite");
+        let mut contract = create_test_contract("/nonexistent/path/to/db.sqlite");
+        contract.metadata.insert(
+            "sql_type".to_string(),
+            serde_json::Value::String("DDL".to_string()),
+        );
+        contract.compensation_plan = vec![CompensationStep {
+            order: 1,
+            adapter_key: "sqlite".to_string(),
+            operation: "rollback".to_string(),
+            args: json_map_from_serde_map(
+                serde_json::json!({ "sql": "DROP TABLE items" })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+            idempotency_key: "ddl-missing-db".to_string(),
+        }];
+
+        let result = adapter.rollback(&contract).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(format!("{}", err).contains("failed to open database"));
+    }
+
+    #[tokio::test]
+    async fn test_rollback_ddl_without_schema_capture_skips_guard() {
+        // DDL rollback without schema_capture in metadata should silently skip
+        // the schema migration guard check and proceed to execute compensation_plan
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let db_path_str = db_path.display().to_string();
+
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch("CREATE TABLE items (id INTEGER PRIMARY KEY)")
+            .unwrap();
+        drop(conn);
+
+        let adapter = SqliteAdapter::new("sqlite");
+
+        // Build a DDL contract with NO schema_capture in metadata
+        let mut contract = create_test_contract(&db_path_str);
+        contract.metadata.insert(
+            "sql_type".to_string(),
+            serde_json::Value::String("DDL".to_string()),
+        );
+        // Note: schema_capture is intentionally absent
+        contract.compensation_plan = vec![CompensationStep {
+            order: 1,
+            adapter_key: "sqlite".to_string(),
+            operation: "rollback".to_string(),
+            args: json_map_from_serde_map(
+                serde_json::json!({ "sql": "INSERT INTO items (id) VALUES (999)" })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+            idempotency_key: "ddl-no-schema-capture".to_string(),
+        }];
+
+        // Rollback should succeed (no guard to trigger since schema_capture is absent)
+        let result = adapter.rollback(&contract).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().recovered);
+    }
+
+    // -------------------------------------------------------------------------
+    // Gap tests: verify check config edge cases
+    // -------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_verify_check_missing_table_returns_error() {
+        // SqlRowCountRange without 'table' in config should return a Validation error
+        // (programming error, not fail-closed verified=false)
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let db_path_str = db_path.display().to_string();
+
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch("CREATE TABLE items (id INTEGER PRIMARY KEY)")
+            .unwrap();
+        drop(conn);
+
+        let adapter = SqliteAdapter::new("sqlite");
+        let mut contract = create_test_contract(&db_path_str);
+        contract.verify_checks = vec![CheckSpec {
+            check_type: CheckType::SqlRowCountRange,
+            config: json_map_from_serde_map(
+                serde_json::json!({ "min_rows": 1, "max_rows": 10 })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        }];
+
+        let result = adapter.verify(&contract).await;
+        // Missing 'table' is a misconfigured check -> Err, not verified=false
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(format!("{}", err).contains("table"));
+    }
+
+    // -------------------------------------------------------------------------
+    // Gap tests: execute payload edge cases
+    // -------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_execute_rejects_object_with_missing_sql_key() {
+        // Payload as object but missing 'sql' field should fail validation
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let db_path_str = db_path.display().to_string();
+
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch("CREATE TABLE items (id INTEGER PRIMARY KEY)")
+            .unwrap();
+        drop(conn);
+
+        let adapter = SqliteAdapter::new("sqlite");
+        let contract = create_test_contract(&db_path_str);
+
+        // Object with no 'sql' key
+        let payload = serde_json::json!({ "other_field": "value" });
+        let result = adapter.execute(&contract, &payload).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(format!("{}", err).contains("sql"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_rejects_json_number_payload() {
+        // JSON number payload is invalid; only string or object are accepted
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let db_path_str = db_path.display().to_string();
+
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch("CREATE TABLE items (id INTEGER PRIMARY KEY)")
+            .unwrap();
+        drop(conn);
+
+        let adapter = SqliteAdapter::new("sqlite");
+        let contract = create_test_contract(&db_path_str);
+
+        let payload = serde_json::json!(42);
+        let result = adapter.execute(&contract, &payload).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(format!("{}", err).contains("string or object"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_rejects_json_array_payload() {
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let db_path_str = db_path.display().to_string();
+
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch("CREATE TABLE items (id INTEGER PRIMARY KEY)")
+            .unwrap();
+        drop(conn);
+
+        let adapter = SqliteAdapter::new("sqlite");
+        let contract = create_test_contract(&db_path_str);
+
+        let payload = serde_json::json!(["sql1", "sql2"]);
+        let result = adapter.execute(&contract, &payload).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_execute_rejects_json_null_payload() {
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let db_path_str = db_path.display().to_string();
+
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch("CREATE TABLE items (id INTEGER PRIMARY KEY)")
+            .unwrap();
+        drop(conn);
+
+        let adapter = SqliteAdapter::new("sqlite");
+        let contract = create_test_contract(&db_path_str);
+
+        let payload = serde_json::Value::Null;
+        let result = adapter.execute(&contract, &payload).await;
+        assert!(result.is_err());
+    }
+
+    // -------------------------------------------------------------------------
+    // Gap tests: misleading test renaming/note
+    // -------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_verify_returns_verified_false_on_query_error_not_config_error() {
+        // G-E1 fail-closed: query errors (DB locked, table not found, IO errors) during
+        // a SqlRowCountRange check return verified=false.
+        // NOTE: This is NOT a true DB-lock contention test. SQLite's Connection::open()
+        // succeeds even when the DB is locked; the lock only manifests on query execution.
+        // A genuine lock-contention test would require holding a write lock across another
+        // connection with busy_timeout=5000ms, which is impractical for a fast unit test.
+        // This test documents the actual fail-closed behavior for query errors.
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let db_path_str = db_path.display().to_string();
+
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch("CREATE TABLE items (id INTEGER PRIMARY KEY)")
+            .unwrap();
+        drop(conn);
+
+        let adapter = SqliteAdapter::new("sqlite");
+
+        // verify_check that queries a nonexistent table triggers query error -> verified=false
+        let mut contract = create_test_contract(&db_path_str);
+        contract.verify_checks = vec![CheckSpec {
+            check_type: CheckType::SqlRowCountRange,
+            config: json_map_from_serde_map(
+                serde_json::json!({
+                    "table": "nonexistent_table",
+                    "min_rows": 1,
+                    "max_rows": 10
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+            ),
+        }];
+
+        let result = adapter.verify(&contract).await.unwrap();
+        // Query error (table not found) should result in verified=false (fail closed)
+        assert!(!result.verified);
+    }
+
+    // -------------------------------------------------------------------------
+    // Schema migration guard edge case — documented but not tested
+    // -------------------------------------------------------------------------
+    // NOTE: capture_all_schemas captures ALL tables in the DB, so unrelated table
+    // drift (e.g., another process creating a table between execute and rollback)
+    // will trigger the schema migration guard even though the drift is unrelated
+    // to the DDL operation under rollback. This is a known limitation.
+    // A stable, intentional test for this would require simulating a second process
+    // or external schema change, which is out of scope for a fast unit test.
 
     #[tokio::test]
     async fn test_sql_schema_migration_guard() {
