@@ -523,7 +523,7 @@ The following appear in some documentation examples but are **not currently impl
 **Single-node constraints:**
 - No multi-node metrics (not implemented)
 - No PostgreSQL metrics (not implemented)
-- No latency histograms (bounded by v1 scope)
+- Bounded latency histograms for public endpoints only (`ferrumgate_request_duration_seconds` for `/v1/healthz`, `/v1/readyz`, `/v1/readyz/deep`, `/v1/metrics`); governance route latency remains future/deferred
 - No WAL size or page count gauges (requires external tooling)
 
 **Known limitations:**

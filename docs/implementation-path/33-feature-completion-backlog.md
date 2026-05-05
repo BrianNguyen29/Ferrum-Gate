@@ -41,8 +41,8 @@ These items are bounded gaps within the v1 single-node SQLite scope.
 
 | Aspect | Detail |
 |--------|--------|
-| **Current state** | 5 integration tests: `test_rate_limit_returns_429_when_exceeded`, `test_rate_limit_allows_requests_under_limit`, `test_rate_limit_per_ip_isolation`, `test_rate_limit_recovery_after_cooldown`, plus concurrent burst coverage |
-| **Gap** | No dedicated stress/load test suite for rate limiting behavior under sustained load |
+| **Current state** | 6 integration tests: `test_rate_limit_returns_429_when_exceeded`, `test_rate_limit_allows_requests_under_limit`, `test_rate_limit_per_ip_isolation`, `test_rate_limit_recovery_after_cooldown`, `test_sustained_concurrent_rate_limit_overload`, plus concurrent burst coverage |
+| **Gap** | Bounded sustained-concurrent-overload test added; broader production stress suite remains future/deferred |
 | **Risk** | LOW — core rate limiting (tower-governor, 2/sec per IP, burst 50) implemented |
 | **Production ready** | **No** — test depth improved but production stress suite not in v1 scope |
 | **Next action** | Sustained-load rate-limit tests if production use planned |
@@ -79,7 +79,7 @@ These items improve production posture but are not v1 RC blockers.
 | Aspect | Detail |
 |--------|--------|
 | **Current state** | `/v1/healthz` and `/v1/readyz` are shallow (process alive only); `/v1/readyz/deep` implemented with store probe; `ferrumctl server readiness [--deep [--functional]]` CLI commands expose all three probe types; `/v1/metrics` exposes bounded health/metrics counters and store up/down gauge |
-| **Gap** | Broader observability remains bounded: no latency histograms, WAL/page gauges, or pool saturation metrics; bounded governance error counters (`ferrumgate_governance_errors_total`) now implemented |
+| **Gap** | Broader observability remains bounded: public endpoint latency histograms (`ferrumgate_request_duration_seconds` for `/v1/healthz`, `/v1/readyz`, `/v1/readyz/deep`, `/v1/metrics`) now implemented; governance route latency, WAL/page gauges, and pool saturation metrics remain future/deferred; bounded governance error counters (`ferrumgate_governance_errors_total`) now implemented |
 | **Verification** | ✅ S2 improved — 2026-04-28: bounded tests added covering unhealthy store response (503/degraded/healthy=false/component error); CLI readiness probe added |
 | **Risk** | LOW — deep readiness exists and verified for failure mode |
 | **Production ready** | **Partial** — deep probe verified for store-unhealthy path; broader failure modes (adapter failure, corruption) remain post-v1 scope |
@@ -182,7 +182,7 @@ These require PostgreSQL, multi-node, or broader adapter surface — not in v1 s
 | ID | Category | Feature | Status | v1 RC Blocker |
 |----|----------|---------|--------|---------------|
 | M1 | Must | Output sanitization (bounded wiring) | **Bounded wiring complete** (7 endpoints); I11 VERIFIED | No |
-| M2 | Must | Rate-limit test depth | **5 tests** (concurrent burst, per-IP isolation, recovery) | No |
+| M2 | Must | Rate-limit test depth | **6 tests** (concurrent burst, per-IP isolation, recovery, sustained concurrent overload) | No |
 | M3 | Must | cancel_execution HTTP endpoint | **Implemented** with route/handler/tests | No |
 | S1 | Should | DLP stub | Docs-only stub; post-v1 | No |
 | S2 | Should | Deep health check coverage | Partial | No |

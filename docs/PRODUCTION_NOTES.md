@@ -125,10 +125,11 @@ The `write_queue` component provides bounded backpressure detection only; it doe
   `ferrumgate_governance_errors_total` per route, and `ferrumgate_governance_success_total` per route.
   It does not cause 503 on store failure.
 
-**Metrics** (`/v1/metrics`) are **baseline only** — request counters, store health gauge, SQLite write
-queue depth gauge, and governance error/success counters. Full production observability (latency
-histograms, HTTP method/status labels, latency percentiles) is out of scope for v1.
-See [`67-production-readiness-roadmap.md`](./docs/implementation-path/67-production-readiness-roadmap.md) P1.4.
+**Metrics** (`/v1/metrics`) include **bounded latency histograms** (`ferrumgate_request_duration_seconds`)
+for public endpoints (`/v1/healthz`, `/v1/readyz`, `/v1/readyz/deep`, `/v1/metrics`) with labels
+`route`, `method`, `status`, `le` (bucket boundary), emitting `_bucket`, `_sum`, `_count` lines.
+Governance route latency histograms, WAL/page gauges, and connection-pool saturation metrics remain
+future/deferred work. See [`67-production-readiness-roadmap.md`](./docs/implementation-path/67-production-readiness-roadmap.md) P1.4.
 
 ## Logging
 

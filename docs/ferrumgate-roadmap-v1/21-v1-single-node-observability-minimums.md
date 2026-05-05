@@ -90,8 +90,10 @@ unauthenticated like health/readiness endpoints and currently reports:
 - `ferrumgate_metrics_scrapes_total`
 - `ferrumgate_governance_errors_total{route="/v1/..."}` - bounded per-route governance error counters for all governance endpoints
 
-This is intentionally a minimal built-in surface. It does not yet provide
-latency histograms, WAL size/page-count gauges, or connection-pool saturation signals.
+This is intentionally a minimal built-in surface. It provides bounded latency histograms
+(`ferrumgate_request_duration_seconds`) for public endpoints only (`/v1/healthz`, `/v1/readyz`,
+`/v1/readyz/deep`, `/v1/metrics`) with labels `route`, `method`, `status`, `le`. WAL size/page-count
+gauges and connection-pool saturation signals are not yet available.
 
 ### 3.4 Derived Signals
 
@@ -112,7 +114,7 @@ The following cannot be observed in v1 without external tooling:
 
 | Blind spot | Description |
 |---|---|
-| No request latency histograms | `/v1/metrics` exposes counters only; latency must be measured client-side |
+| Bounded latency histograms for public endpoints | `/v1/metrics` exposes `ferrumgate_request_duration_seconds` histogram for `/v1/healthz`, `/v1/readyz`, `/v1/readyz/deep`, `/v1/metrics`; governance route latency remains future/deferred |
 | No broad error rate counters (bounded governance error counters now available) | `/v1/metrics` now exposes bounded `ferrumgate_governance_errors_total` for governance endpoints; WAL/page gauges still require external tooling |
 | No SQLite WAL size or page count | `/v1/metrics` exposes store up/down only; WAL/page details still require `sqlite3` CLI directly |
 | No connection pool saturation signal | sqlx pool exhaustion is not exposed as a metric |

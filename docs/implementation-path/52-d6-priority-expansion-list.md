@@ -51,7 +51,7 @@ These items improve production posture and operational confidence but are not bl
 | Priority | Item | D5 Domain | Evidence | Phase |
 |----------|------|-----------|----------|-------|
 | **3** | Backup automation / retention / encryption | Domain 6 (Backup/restore limits) | Bounded SQLite-only backup with opt-in retention pruning (`--retention-days N`); no scheduling or encryption in v1; S3 in `33-feature-completion-backlog.md` | Pilot (operator-owned) or Phase 3+ |
-| **4** | Observability / metrics | Domain 9 (Health check depth), Dimension 4 §4.4 (Operational monitoring baseline) | Bounded `/v1/metrics` endpoint implemented with health/metrics counters, store up/down gauge, and bounded governance error counters (`ferrumgate_governance_errors_total`); latency histograms and WAL/page/pool metrics remain future work | Pilot or Phase 3+ |
+| **4** | Observability / metrics | Domain 9 (Health check depth), Dimension 4 §4.4 (Operational monitoring baseline) | Bounded `/v1/metrics` endpoint implemented with health/metrics counters, store up/down gauge, bounded governance error counters (`ferrumgate_governance_errors_total`), and public endpoint latency histograms (`ferrumgate_request_duration_seconds` for `/v1/healthz`, `/v1/readyz`, `/v1/readyz/deep`, `/v1/metrics`); governance route latency, WAL/page gauges, and pool saturation metrics remain future/deferred work | Pilot or Phase 3+ |
 | **5** | Adapter hardening | Domain 4 (Adapter compensation non-uniformity), Domain 5 (Adapter surface boundedness) | P3–P6 in `33-feature-completion-backlog.md`; compensation evidence matrix exists in `56-adapter-compensation-evidence-matrix.md`, but guarantees remain non-uniform by adapter/action | Pilot or Phase 3+ |
 
 ### Deferred — Explicit Phase 3+
@@ -127,7 +127,7 @@ D6 does not:
 - PostgreSQL (priority 1) is explicitly **not implemented** per ADR-50: NO-GO verdict for full implementation.
 - Multi-node/HA (priority 2) is **not implemented** and not in v1 scope.
 - Backup automation/retention/encryption (priority 3): opt-in retention pruning (`--retention-days N`) is **implemented**; scheduling and encryption are **not implemented** in v1; operator-owned per `18-single-node-operations-runbook.md`.
-- Observability/metrics (priority 4): bounded `/v1/metrics` endpoint (health/metrics counters, store up/down gauge, bounded governance error counters) is implemented; latency histograms and WAL/page/pool metrics remain future work per `21-v1-single-node-observability-minimums.md`
+- Observability/metrics (priority 4): bounded `/v1/metrics` endpoint (health/metrics counters, store up/down gauge, bounded governance error counters, and public endpoint latency histograms (`ferrumgate_request_duration_seconds`)) is implemented; governance route latency, WAL/page gauges, and pool saturation metrics remain future/deferred work per `21-v1-single-node-observability-minimums.md`
 - Adapter hardening (priority 5) refers to work documented in `33-feature-completion-backlog.md` P3–P6.
 - Rate-limit/load test suite (priority 6) is documented in `33-feature-completion-backlog.md` M2 but deferred to Phase 3+.
 
