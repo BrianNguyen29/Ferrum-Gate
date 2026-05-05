@@ -7330,4 +7330,135 @@ mod tests {
         assert!(body_str.contains("method=\"GET\""));
         assert!(body_str.contains("status=\"200\""));
     }
+
+    /// Test guard: ensures every GovernanceRoute variant has both success and error
+    /// Prometheus metric lines in /v1/metrics output. This prevents silent observability
+    /// gaps when new governance routes are added.
+    ///
+    /// The macro uses an exhaustive match to ensure that adding a new GovernanceRoute
+    /// variant without updating this macro causes a compile error.
+    macro_rules! all_governance_routes {
+        () => {{
+            // Compile-time exhaustive list of all GovernanceRoute variants.
+            // If a new variant is added to GovernanceRoute but not listed here,
+            // the match below will produce a "non-exhaustive patterns" compile error.
+            const ROUTES: &[GovernanceRoute] = &[
+                GovernanceRoute::IntentsCompile,
+                GovernanceRoute::IntentsList,
+                GovernanceRoute::ProposalsEvaluate,
+                GovernanceRoute::CapabilitiesMint,
+                GovernanceRoute::CapabilitiesRevoke,
+                GovernanceRoute::ExecutionsAuthorize,
+                GovernanceRoute::ExecutionsPrepare,
+                GovernanceRoute::ExecutionsExecute,
+                GovernanceRoute::ExecutionsVerify,
+                GovernanceRoute::ExecutionsCompensate,
+                GovernanceRoute::ExecutionsCancel,
+                GovernanceRoute::ExecutionsEvaluateOutcome,
+                GovernanceRoute::ExecutionsExecutionId,
+                GovernanceRoute::Approvals,
+                GovernanceRoute::ApprovalsApprovalId,
+                GovernanceRoute::PolicyBundlesCreate,
+                GovernanceRoute::PolicyBundlesList,
+                GovernanceRoute::PolicyBundlesGet,
+                GovernanceRoute::PolicyBundlesUpdate,
+                GovernanceRoute::PolicyBundlesDelete,
+                GovernanceRoute::PolicyBundlesSetActive,
+                GovernanceRoute::ProvenanceQuery,
+                GovernanceRoute::ProvenanceLineage,
+                GovernanceRoute::ProvenanceLineageExecutionId,
+                GovernanceRoute::ProvenanceIngest,
+                GovernanceRoute::BridgesBridgeIdTools,
+            ];
+
+            // Exhaustiveness check: match against all variants.
+            // This will fail to compile if a new GovernanceRoute variant exists
+            // that is NOT handled in the match arms below.
+            match GovernanceRoute::IntentsCompile {
+                GovernanceRoute::IntentsCompile => (),
+                GovernanceRoute::IntentsList => (),
+                GovernanceRoute::ProposalsEvaluate => (),
+                GovernanceRoute::CapabilitiesMint => (),
+                GovernanceRoute::CapabilitiesRevoke => (),
+                GovernanceRoute::ExecutionsAuthorize => (),
+                GovernanceRoute::ExecutionsPrepare => (),
+                GovernanceRoute::ExecutionsExecute => (),
+                GovernanceRoute::ExecutionsVerify => (),
+                GovernanceRoute::ExecutionsCompensate => (),
+                GovernanceRoute::ExecutionsCancel => (),
+                GovernanceRoute::ExecutionsEvaluateOutcome => (),
+                GovernanceRoute::ExecutionsExecutionId => (),
+                GovernanceRoute::Approvals => (),
+                GovernanceRoute::ApprovalsApprovalId => (),
+                GovernanceRoute::PolicyBundlesCreate => (),
+                GovernanceRoute::PolicyBundlesList => (),
+                GovernanceRoute::PolicyBundlesGet => (),
+                GovernanceRoute::PolicyBundlesUpdate => (),
+                GovernanceRoute::PolicyBundlesDelete => (),
+                GovernanceRoute::PolicyBundlesSetActive => (),
+                GovernanceRoute::ProvenanceQuery => (),
+                GovernanceRoute::ProvenanceLineage => (),
+                GovernanceRoute::ProvenanceLineageExecutionId => (),
+                GovernanceRoute::ProvenanceIngest => (),
+                GovernanceRoute::BridgesBridgeIdTools => (),
+            };
+
+            ROUTES
+        }};
+    }
+
+    #[tokio::test]
+    async fn test_all_governance_routes_have_metrics_representation() {
+        let runtime = test_runtime().await;
+        let router = build_router(runtime);
+
+        // Call metrics to get the full output
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+
+        // Invoke the macro to get the route list (and trigger compile-time exhaustiveness check)
+        let routes = all_governance_routes!();
+
+        // Verify both success and error metrics exist for each route using path() and method()
+        for route in routes {
+            let path = route.path();
+            let method = route.method();
+            let success_metric = format!(
+                "ferrumgate_governance_success_total{{route=\"{}\",method=\"{}\"}}",
+                path, method
+            );
+            let error_metric = format!(
+                "ferrumgate_governance_errors_total{{route=\"{}\",method=\"{}\"}}",
+                path, method
+            );
+
+            assert!(
+                body_str.contains(&success_metric),
+                "Missing governance success metric for {:?} (path={}, method={})",
+                route,
+                path,
+                method
+            );
+            assert!(
+                body_str.contains(&error_metric),
+                "Missing governance error metric for {:?} (path={}, method={})",
+                route,
+                path,
+                method
+            );
+        }
+    }
 }
