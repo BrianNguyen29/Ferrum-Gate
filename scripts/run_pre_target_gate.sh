@@ -4,11 +4,22 @@
 # Composes local repo-side checks; does NOT require target host, SSH, or real secrets.
 # Single-node only; no PostgreSQL/multi-node/HA.
 # Does NOT mark G2/doc54 complete.
+#
+# Usage:
+#   bash scripts/run_pre_target_gate.sh          # fast checks only
+#   bash scripts/run_pre_target_gate.sh --full   # includes cargo test + clippy (slow)
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# --- Option parsing ---
+FULL_MODE=false
+if [[ "${1:-}" == "--full" ]]; then
+    FULL_MODE=true
+    echo "[INFO] Running in FULL mode (includes test/clippy — may take several minutes)"
+fi
 
 FAILED=0
 SKIPPED=0
@@ -45,6 +56,41 @@ echo "This gate runs local repo-side validation checks only."
 echo "It does NOT require a target host, SSH access, or real secrets."
 echo "It does NOT complete G2, does NOT authorize the pilot, and does NOT claim production-ready."
 echo ""
+
+# --- FAST COMPILE + FORMAT CHECKS (always run) ---
+
+run_check "Cargo format check" \
+    "cargo fmt --all -- --check"
+
+run_check "Cargo workspace compile check" \
+    "cargo check --workspace"
+
+# --- FERRUMCTL SMOKE (if binary available) ---
+
+echo ""
+echo "========================================"
+echo "CHECK: ferrumctl smoke (if available)"
+echo "========================================"
+FERRUMCTL=""
+for candidate in \
+    "$REPO_ROOT/target/release/ferrumctl" \
+    "$REPO_ROOT/target/debug/ferrumctl"; do
+    [[ -x "$candidate" ]] && FERRUMCTL="$candidate" && break
+done
+
+if [[ -n "$FERRUMCTL" ]]; then
+    echo "[INFO] ferrumctl found: $FERRUMCTL"
+    # Basic smoke: ferrumctl --version or --help should not fail
+    if "$FERRUMCTL" --version >/dev/null 2>&1 || "$FERRUMCTL" --help >/dev/null 2>&1; then
+        echo "[PASS] ferrumctl smoke (binary is functional)"
+    else
+        echo "[FAIL] ferrumctl smoke (--version/--help failed)"
+        FAILED=$((FAILED + 1))
+    fi
+else
+    echo "[SKIP] ferrumctl smoke (binary not built — build with: cargo build --release -p ferrumctl)"
+    SKIPPED=$((SKIPPED + 1))
+fi
 
 # --- 1. Config examples validation ---
 
@@ -138,6 +184,21 @@ $ALL_EXAMPLES_PRESENT && echo "[PASS] All required config examples present"
 
 run_check "Local bearer-auth smoke" \
     "bash '$SCRIPT_DIR/run_local_auth_smoke.sh'"
+
+# --- OPTIONAL FULL MODE CHECKS ---
+if [[ "$FULL_MODE" == true ]]; then
+    echo ""
+    echo "========================================"
+    echo "FULL MODE: Running cargo test + clippy"
+    echo "(This may take several minutes)"
+    echo "========================================"
+
+    run_check "Cargo workspace tests" \
+        "cargo test --workspace"
+
+    run_check "Cargo clippy (workspace)" \
+        "cargo clippy --workspace --all-targets -- -D warnings"
+fi
 
 # --- Summary ---
 

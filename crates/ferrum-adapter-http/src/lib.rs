@@ -18,9 +18,9 @@
 //!
 //! # Limitations
 //!
-//! - `rollback()` and `compensate()` are **not yet supported**.
-//!   They will return `AdapterError::Unsupported` with a clear message indicating this.
 //! - Only `HttpStatusExpected` checks are supported; other check types return unsupported error.
+//! - Rollback and compensate require a valid `http.replay_v1` compensation plan with idempotency key;
+//!   unsupported shapes return `AdapterError::Unsupported` with structured reason codes.
 
 use async_trait::async_trait;
 use chrono::Utc;

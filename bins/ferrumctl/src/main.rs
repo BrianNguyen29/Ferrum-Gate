@@ -116,10 +116,12 @@ fn get_env(key: &str) -> Option<String> {
 #[command(about = "FerrumGate control CLI")]
 struct Cli {
     /// Server URL (defaults to http://127.0.0.1:8080).
+    /// Environment: FERRUMCTL_SERVER_URL
     #[arg(long)]
     server_url: Option<String>,
 
     /// Bearer token for authentication.
+    /// Environment: FERRUMCTL_BEARER_TOKEN
     #[arg(long)]
     bearer_token: Option<String>,
 
