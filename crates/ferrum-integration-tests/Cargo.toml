@@ -16,6 +16,7 @@ ferrum-proto = { path = "../ferrum-proto" }
 ferrum-rollback = { path = "../ferrum-rollback" }
 ferrum-store = { path = "../ferrum-store" }
 ferrum-adapter-fs = { path = "../ferrum-adapter-fs" }
+ferrum-adapter-git = { path = "../ferrum-adapter-git" }
 ferrum-adapter-maildraft = { path = "../ferrum-adapter-maildraft" }
 ferrum-adapter-sqlite = { path = "../ferrum-adapter-sqlite" }
 ferrum-sync = { path = "../ferrum-sync" }

@@ -2824,6 +2824,11 @@ async fn execute_execution(
     {
         *after_hash = receipt.result_digest.clone();
     }
+    // Propagate adapter_metadata from execute receipt into contract metadata so that
+    // rollback/compensate can access critical fields (e.g., branch_name for GitBranchCreate).
+    for (key, value) in &receipt.adapter_metadata {
+        updated_contract.metadata.insert(key.clone(), value.clone());
+    }
     if let Err(e) = state
         .runtime
         .store
@@ -4501,6 +4506,13 @@ fn validate_resource_bindings_subset_of_scope(
 /// returns ActionType::FileWrite and adapter_key "fs".
 /// For sql_mutate, returns ActionType::SqlMutation and adapter_key "sqlite".
 /// For maildraft/draft-create/email_draft tools, returns ActionType::MailDraft and adapter_key "maildraft".
+/// For git_branch_create, returns ActionType::GitBranchCreate and adapter_key "git".
+/// For git_tag_create, returns ActionType::GitTagCreate and adapter_key "git".
+/// For git_branch_delete, returns ActionType::GitBranchDelete and adapter_key "git".
+/// For git_tag_delete, returns ActionType::GitTagDelete and adapter_key "git".
+/// For git_push, returns ActionType::GitPush and adapter_key "git".
+/// For git_pull, returns ActionType::GitPull and adapter_key "git".
+/// For git_fetch, returns ActionType::GitFetch and adapter_key "git".
 /// Otherwise, defaults to ActionType::McpToolMutation and adapter_key "noop".
 fn infer_action_type_and_adapter(tool_name: &str) -> (ferrum_proto::ActionType, String) {
     let tool_lower = tool_name.to_lowercase();
@@ -4517,6 +4529,20 @@ fn infer_action_type_and_adapter(tool_name: &str) -> (ferrum_proto::ActionType, 
         || tool_lower.contains("email_draft")
     {
         (ferrum_proto::ActionType::MailDraft, "maildraft".to_string())
+    } else if tool_lower.contains("git_branch_create") {
+        (ferrum_proto::ActionType::GitBranchCreate, "git".to_string())
+    } else if tool_lower.contains("git_tag_create") {
+        (ferrum_proto::ActionType::GitTagCreate, "git".to_string())
+    } else if tool_lower.contains("git_branch_delete") {
+        (ferrum_proto::ActionType::GitBranchDelete, "git".to_string())
+    } else if tool_lower.contains("git_tag_delete") {
+        (ferrum_proto::ActionType::GitTagDelete, "git".to_string())
+    } else if tool_lower.contains("git_push") {
+        (ferrum_proto::ActionType::GitPush, "git".to_string())
+    } else if tool_lower.contains("git_pull") {
+        (ferrum_proto::ActionType::GitPull, "git".to_string())
+    } else if tool_lower.contains("git_fetch") {
+        (ferrum_proto::ActionType::GitFetch, "git".to_string())
     } else {
         (
             ferrum_proto::ActionType::McpToolMutation,
@@ -4614,6 +4640,36 @@ fn infer_target_from_scope(
                 return RollbackTarget::EmailDraft {
                     draft_id: None, // draft_id is set at runtime by execute
                     recipients: recipient_allowlist.clone(),
+                };
+            }
+        }
+    }
+
+    // GitRepository selector for git action types (GitBranchCreate, GitTagCreate, etc.)
+    let is_git_action = matches!(
+        action_type,
+        ferrum_proto::ActionType::GitBranchCreate
+            | ferrum_proto::ActionType::GitTagCreate
+            | ferrum_proto::ActionType::GitBranchDelete
+            | ferrum_proto::ActionType::GitTagDelete
+            | ferrum_proto::ActionType::GitPush
+            | ferrum_proto::ActionType::GitPull
+            | ferrum_proto::ActionType::GitFetch
+            | ferrum_proto::ActionType::GitCommit
+    );
+
+    if is_git_action {
+        for selector in scope {
+            if let ferrum_proto::ResourceSelector::GitRepository {
+                repo_path,
+                allowed_refs: _,
+                mode: _,
+            } = selector
+            {
+                return RollbackTarget::GitRef {
+                    repo_path: repo_path.clone(),
+                    before_ref: None,
+                    after_ref: None,
                 };
             }
         }

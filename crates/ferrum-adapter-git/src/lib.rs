@@ -9,6 +9,10 @@ use thiserror::Error;
 
 pub const ADAPTER_KEY: &str = "git";
 
+// Plannable adapter for Git operations
+pub mod planner;
+pub use planner::PlannableGitAdapter;
+
 #[derive(Debug, Error)]
 pub enum GitAdapterError {
     #[error("unsupported action: {0}")]
@@ -462,105 +466,76 @@ impl RollbackAdapter for GitRollbackAdapter {
             serde_json::json!(captured_before_ref),
         );
 
-        // For GitBranchCreate, require branch_name in request.metadata (contract metadata)
-        // This ensures branch identity is available through the persisted contract path
-        // for execute/verify/rollback, not dependent on execute receipt metadata.
+        // For GitBranchCreate: branch_name may come from either request.metadata (direct adapter
+        // calls) or execute payload (gateway flow). Support both paths.
+        // During prepare, validate branch_name if provided (non-empty), otherwise defer to execute.
         if matches!(request.action_type, ActionType::GitBranchCreate) {
-            match request.metadata.get("branch_name").and_then(|v| v.as_str()) {
-                Some(branch_name) if !branch_name.is_empty() => {
-                    // Fail-closed: validate branch name using git-native rules during prepare.
-                    // This prevents execute from reaching git CLI failure due to invalid branch name.
-                    Self::validate_branch_name(branch_name).map_err(AdapterError::from)?;
+            let has_explicit_base_ref = request
+                .metadata
+                .get("base_ref")
+                .and_then(|v| v.as_str())
+                .is_some();
 
-                    // Fail-closed: check if branch already exists locally during prepare.
-                    // This rejects the operation early rather than deferring to execute.
-                    if Self::branch_exists(&repo_path, branch_name).map_err(AdapterError::from)? {
-                        return Err(AdapterError::Validation(format!(
-                            "branch '{}' already exists locally",
-                            branch_name
-                        )));
-                    }
-
-                    // Store in adapter_metadata so it gets copied to contract.metadata
-                    metadata.insert("branch_name".to_string(), serde_json::json!(branch_name));
-
-                    // If base_ref is provided, resolve it to SHA during prepare and persist.
-                    // This ensures the resolved SHA is available in contract metadata for
-                    // execute/verify, fail-closing if the ref is invalid or unresolvable.
-                    let has_explicit_base_ref = request
-                        .metadata
-                        .get("base_ref")
-                        .and_then(|v| v.as_str())
-                        .is_some();
-
-                    if let Some(base_ref) =
-                        request.metadata.get("base_ref").and_then(|v| v.as_str())
-                    {
-                        match Self::resolve_ref_to_commit_sha(&repo_path, base_ref) {
-                            Ok(resolved_sha) => {
-                                metadata
-                                    .insert("base_ref".to_string(), serde_json::json!(base_ref));
-                                metadata.insert(
-                                    "base_ref_sha".to_string(),
-                                    serde_json::json!(resolved_sha),
-                                );
-                            }
-                            Err(e) => {
-                                return Err(AdapterError::Validation(format!(
-                                    "invalid or unresolvable base_ref '{}': {}",
-                                    base_ref, e
-                                )));
-                            }
-                        }
-                    } else {
-                        // No explicit base_ref provided - on a normal branch (non-detached HEAD),
-                        // resolve implicit HEAD to SHA and persist it for later verification.
-                        // This ensures verify can check branch-tip matches expected SHA even when
-                        // the caller didn't explicitly specify a base_ref.
-                        match Self::resolve_ref_to_commit_sha(&repo_path, "HEAD") {
-                            Ok(resolved_sha) => {
-                                // Store implicit base_ref marker so verify knows this was
-                                // derived from HEAD rather than explicitly specified
-                                metadata.insert("base_ref".to_string(), serde_json::json!("HEAD"));
-                                metadata.insert(
-                                    "base_ref_sha".to_string(),
-                                    serde_json::json!(resolved_sha),
-                                );
-                                metadata.insert(
-                                    "implicit_base_ref".to_string(),
-                                    serde_json::json!(true),
-                                );
-                            }
-                            Err(e) => {
-                                return Err(AdapterError::Internal(format!(
-                                    "failed to resolve implicit HEAD for base_ref_sha: {}",
-                                    e
-                                )));
-                            }
-                        }
-                    }
-
-                    // Bounded repo-state guard: fail-closed if in detached HEAD state
-                    // with implicit HEAD base (no explicit base_ref provided).
-                    // Creating a branch in detached HEAD state is confusing/risky because
-                    // there's no stable symbolic ref to track what commit the branch was
-                    // created from, and rollback safety guarantees become ambiguous.
-                    if !has_explicit_base_ref
-                        && Self::is_detached_head(&repo_path).map_err(AdapterError::from)?
-                    {
-                        return Err(AdapterError::Validation(
-                            "cannot create branch in detached HEAD state without explicit base_ref; \
-                             provide explicit base_ref to specify the commit for branch creation"
-                                .to_string(),
-                        ));
-                    }
-                }
-                _ => {
+            // If branch_name is provided in metadata (direct adapter call), validate and store it.
+            // Empty branch_name is an error (must be non-empty if provided).
+            // If not provided at all (gateway flow), skip - execute will get it from payload.
+            if let Some(branch_name) = request.metadata.get("branch_name").and_then(|v| v.as_str())
+            {
+                if branch_name.is_empty() {
                     return Err(AdapterError::Validation(
                         "branch_name is required in request.metadata for GitBranchCreate"
                             .to_string(),
                     ));
                 }
+                // Fail-closed: validate branch name using git-native rules during prepare.
+                Self::validate_branch_name(branch_name).map_err(AdapterError::from)?;
+
+                // Fail-closed: check if branch already exists locally during prepare.
+                if Self::branch_exists(&repo_path, branch_name).map_err(AdapterError::from)? {
+                    return Err(AdapterError::Validation(format!(
+                        "branch '{}' already exists locally",
+                        branch_name
+                    )));
+                }
+
+                // Store in adapter_metadata so it gets copied to contract.metadata
+                metadata.insert("branch_name".to_string(), serde_json::json!(branch_name));
+            }
+
+            // Resolve base_ref to SHA and persist for verification.
+            // If base_ref is provided in metadata, use it; otherwise default to HEAD.
+            let base_ref = request
+                .metadata
+                .get("base_ref")
+                .and_then(|v| v.as_str())
+                .unwrap_or("HEAD");
+
+            match Self::resolve_ref_to_commit_sha(&repo_path, base_ref) {
+                Ok(resolved_sha) => {
+                    metadata.insert("base_ref".to_string(), serde_json::json!(base_ref));
+                    metadata.insert("base_ref_sha".to_string(), serde_json::json!(resolved_sha));
+                    if !has_explicit_base_ref {
+                        metadata.insert("implicit_base_ref".to_string(), serde_json::json!(true));
+                    }
+                }
+                Err(e) => {
+                    return Err(AdapterError::Validation(format!(
+                        "invalid or unresolvable base_ref '{}': {}",
+                        base_ref, e
+                    )));
+                }
+            }
+
+            // Bounded repo-state guard: fail-closed if in detached HEAD state with
+            // implicit HEAD base (no explicit base_ref provided).
+            if !has_explicit_base_ref
+                && Self::is_detached_head(&repo_path).map_err(AdapterError::from)?
+            {
+                return Err(AdapterError::Validation(
+                    "cannot create branch in detached HEAD state without explicit base_ref; \
+                     provide explicit base_ref to specify the commit for branch creation"
+                        .to_string(),
+                ));
             }
         }
 
