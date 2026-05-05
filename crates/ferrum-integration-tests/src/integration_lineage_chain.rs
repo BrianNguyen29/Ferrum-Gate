@@ -5,6 +5,9 @@
 
 use axum::Router;
 use axum::body::Body;
+use ferrum_adapter_fs::PlannableFsAdapter;
+use ferrum_adapter_maildraft::PlannableMailDraftAdapter;
+use ferrum_adapter_sqlite::{PlannableSqliteAdapter, SqliteAdapter};
 use ferrum_cap::{CapabilityService, InMemoryCapabilityService};
 use ferrum_gateway::GatewayRuntime;
 use ferrum_gateway::build_router;
@@ -953,7 +956,8 @@ async fn test_lineage_chain_full_provenance_events() {
 // FS adapter lineage integration tests — real adapter provenance chains
 // ---------------------------------------------------------------------------
 
-use ferrum_adapter_fs::{PlannableFsAdapter, register_fs_adapter};
+use ferrum_adapter_fs::register_fs_adapter;
+use ferrum_adapter_maildraft::register_maildraft_adapter;
 
 /// Helper to create a test intent with a FileWrite scope for FsAdapter.
 fn make_fs_test_intent(intent_id: ferrum_proto::IntentId, file_path: String) -> IntentEnvelope {
@@ -1628,7 +1632,6 @@ async fn test_lineage_chain_fs_adapter_full_committed() {
 // SQLite adapter lineage integration tests — real adapter provenance chains
 // ---------------------------------------------------------------------------
 
-use ferrum_adapter_sqlite::{PlannableSqliteAdapter, SqliteAdapter};
 use ferrum_store::RollbackRepo;
 
 /// Converts a serde_json::Map to a JsonMap (IndexMap), matching the pattern used in
@@ -2049,6 +2052,355 @@ async fn test_lineage_chain_sqlite_adapter_compensate() {
 }
 
 // ---------------------------------------------------------------------------
+// MailDraft adapter lineage integration tests — real adapter provenance chains
+// ---------------------------------------------------------------------------
+
+/// Helper to create a test intent with EmailDraft scope for MailDraftAdapter.
+fn make_maildraft_test_intent(intent_id: ferrum_proto::IntentId) -> IntentEnvelope {
+    let now = chrono::Utc::now();
+    IntentEnvelope {
+        intent_id,
+        principal_id: ferrum_proto::PrincipalId::new(),
+        session_id: None,
+        channel_id: None,
+        title: "maildraft-lineage-test-intent".to_string(),
+        goal: "maildraft lineage test goal".to_string(),
+        normalized_goal: "maildraft lineage test goal".to_string(),
+        allowed_outcomes: Vec::new(),
+        forbidden_outcomes: Vec::new(),
+        resource_scope: vec![ferrum_proto::ResourceSelector::EmailDraft {
+            recipient_allowlist: vec!["recipient@example.com".to_string()],
+            subject_prefix_allowlist: vec!["[Test]".to_string()],
+            mode: ferrum_proto::ResourceMode::Write,
+        }],
+        risk_tier: RiskTier::Medium,
+        approval_mode: ferrum_proto::ApprovalMode::None,
+        default_rollback_class: RollbackClass::R0NativeReversible,
+        time_budget: ferrum_proto::TimeBudget {
+            max_duration_ms: 30_000,
+            max_steps: 8,
+            max_retries_per_step: 1,
+        },
+        trust_context: ferrum_proto::TrustContextSummary {
+            input_labels: Vec::new(),
+            sensitivity_labels: Vec::new(),
+            taint_score: 0,
+            contains_external_metadata: false,
+            contains_tool_output: false,
+            contains_untrusted_text: false,
+        },
+        derived_from_event_ids: Vec::new(),
+        tags: Vec::new(),
+        metadata: ferrum_proto::JsonMap::new(),
+        status: ferrum_proto::IntentStatus::Active,
+        created_at: now,
+        expires_at: now + chrono::Duration::hours(1),
+    }
+}
+
+/// Full lineage chain test using MailDraftAdapter with compensate terminal state.
+///
+/// Flow: evaluate → mint → authorize → prepare (MailDraftAdapter via gateway) →
+///       execute → compensate
+///
+/// Verifies:
+/// - Lineage contains the minimum chain with SideEffectCompensated terminal event
+/// - Adapter side-effect deletion is covered by unit tests (test_maildraft_rollback_create_deletes_draft)
+///   and rollback semantics are verified in adapter-level tests
+///
+/// This proves MailDraftAdapter side effects are reflected in the provenance chain.
+#[tokio::test]
+async fn test_lineage_chain_maildraft_adapter_compensate() {
+    let pdp = Arc::new(StaticPdpEngine);
+    let cap: Arc<dyn CapabilityService> = Arc::new(InMemoryCapabilityService::default());
+
+    // Register MailDraftAdapter + PlannableMailDraftAdapter so prepare selects maildraft path
+    let mut registry = AdapterRegistry::default();
+    registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
+    register_maildraft_adapter(&mut registry);
+    let mut rollback_service = RollbackService::new(Arc::new(registry));
+    rollback_service.register_planner(Arc::new(PlannableMailDraftAdapter));
+    let rollback = Arc::new(rollback_service);
+
+    let store = Arc::new(
+        SqliteStore::connect("sqlite::memory:")
+            .await
+            .expect("connect to sqlite"),
+    );
+    store
+        .apply_embedded_migrations()
+        .await
+        .expect("apply migrations");
+
+    // Pre-insert intent to satisfy FK constraint
+    let intent_id = ferrum_proto::IntentId::new();
+    let intent = make_maildraft_test_intent(intent_id);
+    store
+        .intents()
+        .insert(&intent)
+        .await
+        .expect("intent insert should succeed");
+
+    let runtime = GatewayRuntime::new(
+        pdp,
+        cap,
+        rollback.clone(),
+        store.clone() as Arc<dyn StoreFacade>,
+        vec![],
+    );
+    let router = build_router(runtime);
+
+    // Step 1: Evaluate a proposal
+    let proposal = ActionProposal {
+        proposal_id: ProposalId::new(),
+        intent_id,
+        step_index: 0,
+        title: "maildraft-lineage-compensate proposal".to_string(),
+        tool_name: "maildraft_create".to_string(),
+        server_name: "test-server".to_string(),
+        raw_arguments: serde_json::json!({}),
+        expected_effect: "draft is created and compensated".to_string(),
+        estimated_risk: RiskTier::Medium,
+        requested_rollback_class: RollbackClass::R0NativeReversible,
+        taint_inputs: Vec::new(),
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/proposals/test/evaluate")
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_vec(&proposal).unwrap()))
+        .unwrap();
+
+    let response = tower::ServiceExt::oneshot(router.clone(), request)
+        .await
+        .expect("evaluate request should succeed");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let proposal_id = proposal.proposal_id;
+
+    // Step 2: Mint a capability
+    let cap_request = CapabilityMintRequest {
+        intent_id: proposal.intent_id,
+        proposal_id: proposal.proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "test-server".to_string(),
+            tool_name: "maildraft_create".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: Vec::new(),
+        argument_constraints: Vec::new(),
+        taint_budget: ferrum_proto::TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/capabilities/mint")
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_vec(&cap_request).unwrap()))
+        .unwrap();
+
+    let response = tower::ServiceExt::oneshot(router.clone(), request)
+        .await
+        .expect("mint request should succeed");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("read body");
+    let cap_response: ferrum_proto::CapabilityMintResponse =
+        serde_json::from_slice(&body).expect("valid json");
+    let capability_id = cap_response.lease.capability_id;
+
+    // Step 3: Authorize execution
+    let auth_request = AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/executions/authorize")
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_vec(&auth_request).unwrap()))
+        .unwrap();
+
+    let response = tower::ServiceExt::oneshot(router.clone(), request)
+        .await
+        .expect("authorize request should succeed");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("read body");
+    let auth_response: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).expect("valid json");
+    let execution_id = auth_response.execution.execution_id;
+
+    // Step 4: Prepare execution (MailDraftAdapter captures snapshot with default create operation)
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri(format!("/v1/executions/{}/prepare", execution_id))
+        .header("content-type", "application/json")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = tower::ServiceExt::oneshot(router.clone(), request)
+        .await
+        .expect("prepare request should succeed");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("read body");
+    let prepare_response: ferrum_proto::PrepareExecutionResponse =
+        serde_json::from_slice(&body).expect("valid json");
+    assert!(prepare_response.prepared);
+
+    // Step 5: Execute execution - create a draft via payload
+    let execute_request = ferrum_proto::ExecuteExecutionRequest {
+        payload: serde_json::json!({
+            "draft_id": "test-maildraft-draft",
+            "from": "sender@example.com",
+            "to": ["recipient@example.com"],
+            "subject": "Test Subject",
+            "body": "Test Body Content"
+        }),
+    };
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri(format!("/v1/executions/{}/execute", execution_id))
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_vec(&execute_request).unwrap()))
+        .unwrap();
+
+    let response = tower::ServiceExt::oneshot(router.clone(), request)
+        .await
+        .expect("execute request should succeed");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // Step 6: Compensate execution (MailDraftAdapter rollback deletes the created draft)
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri(format!("/v1/executions/{}/compensate", execution_id))
+        .header("content-type", "application/json")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = tower::ServiceExt::oneshot(router.clone(), request)
+        .await
+        .expect("compensate request should succeed");
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "compensate endpoint should return 200"
+    );
+
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("read body");
+    let compensate_response: ferrum_proto::CompensateExecutionResponse =
+        serde_json::from_slice(&body).expect("valid json");
+    assert!(
+        compensate_response.compensated,
+        "execution should be compensated"
+    );
+
+    // Step 7: Query lineage for this execution_id
+    let request = Request::builder()
+        .method(Method::GET)
+        .uri(format!("/v1/provenance/lineage/{}", execution_id))
+        .header("content-type", "application/json")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = tower::ServiceExt::oneshot(router.clone(), request)
+        .await
+        .expect("lineage request should succeed");
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "lineage endpoint should return 200"
+    );
+
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("read body");
+    #[derive(serde::Deserialize)]
+    struct LineageResponse {
+        #[allow(dead_code)]
+        execution_id: ferrum_proto::ExecutionId,
+        events: Vec<ferrum_proto::ProvenanceEvent>,
+    }
+    let lineage: LineageResponse = serde_json::from_slice(&body).expect("valid json");
+
+    // Verify we got events in the compensate chain
+    // (authorize + prepare + ToolCallPrepared + execute + terminal)
+    assert!(
+        lineage.events.len() >= 4,
+        "lineage should contain at least 4 events for compensate chain, got {}",
+        lineage.events.len()
+    );
+
+    // Verify required event kinds are present
+    let has_auth = lineage
+        .events
+        .iter()
+        .any(|e| matches!(e.kind, ProvenanceEventKind::ActionProposalSubmitted));
+    let has_prepare = lineage
+        .events
+        .iter()
+        .any(|e| matches!(e.kind, ProvenanceEventKind::SideEffectPrepared));
+    let has_tool_prepared = lineage
+        .events
+        .iter()
+        .any(|e| matches!(e.kind, ProvenanceEventKind::ToolCallPrepared));
+    let has_tool_executed = lineage
+        .events
+        .iter()
+        .any(|e| matches!(e.kind, ProvenanceEventKind::ToolCallExecuted));
+    let has_terminal = lineage
+        .events
+        .iter()
+        .any(|e| matches!(e.kind, ProvenanceEventKind::SideEffectCompensated));
+
+    assert!(has_auth, "authorize event must be present in lineage");
+    assert!(has_prepare, "prepare event must be present in lineage");
+    assert!(
+        has_tool_prepared,
+        "ToolCallPrepared event must be present in lineage"
+    );
+    assert!(
+        has_tool_executed,
+        "execute event must be present in lineage"
+    );
+    assert!(
+        has_terminal,
+        "SideEffectCompensated terminal event must be present in lineage"
+    );
+
+    // Verify all events are linked to the execution_id
+    for event in &lineage.events {
+        assert!(
+            event.execution_id.is_some(),
+            "all lineage events must have execution_id set, event_id={}",
+            event.event_id
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Adapter Lineage Coverage Status
 // ---------------------------------------------------------------------------
 //
@@ -2056,8 +2408,9 @@ async fn test_lineage_chain_sqlite_adapter_compensate() {
 // - FsAdapter lineage tests: PASSING (test_lineage_chain_fs_adapter_compensate,
 //   test_lineage_chain_fs_adapter_full_committed)
 // - SqliteAdapter lineage test: PASSING (test_lineage_chain_sqlite_adapter_compensate)
+// - MailDraftAdapter lineage test: PASSING (test_lineage_chain_maildraft_adapter_compensate)
 //
-// Deferred Coverage (git/maildraft/http - gateway inference + planner not yet implemented):
+// Deferred Coverage (git/http - planner/inference not yet implemented):
 //
 // Git Adapter Lineage:
 //   Blocker: No PlannableGitAdapter and no gateway inference for GitBranchCreate/etc.
@@ -2065,12 +2418,6 @@ async fn test_lineage_chain_sqlite_adapter_compensate() {
 //   and PlannableGitAdapter for GitBranchCreate, GitTagCreate, GitPush, etc.
 //   GitRollbackAdapter is implemented with register_git_adapter() function.
 //   Requires local temp git repo - feasible for local-only tests.
-//
-// Maildraft Adapter Lineage:
-//   Blocker: No PlannableMailDraftAdapter and no gateway inference for MailDraft.
-//   To enable: Gateway inference for mail-related tool names → "maildraft" adapter_key,
-//   and PlannableMailDraftAdapter for EmailDraftCreate/EmailSend/MailDraft operations.
-//   MailDraftAdapter is implemented; uses in-memory store - ideal for testing.
 //
 // HTTP Adapter Lineage:
 //   Blocker: No PlannableHttpAdapter, no gateway inference, and HTTP tests require
@@ -2081,8 +2428,8 @@ async fn test_lineage_chain_sqlite_adapter_compensate() {
 //   doc 65 (65-path-2-target-questionnaire.md) has no workload trigger.
 //
 // Verification:
-//   All 11 tests in this file pass: 3 minimum provenance + 2 FsAdapter +
-//   1 SQLite + 5 lineage query endpoint tests.
+//   All 12 tests in this file pass: 3 minimum provenance + 2 FsAdapter +
+//   1 SQLite + 1 MailDraft + 5 lineage query endpoint tests.
 
 // ---------------------------------------------------------------------------
 // Original test stubs (preserved from previous file)

@@ -4500,6 +4500,7 @@ fn validate_resource_bindings_subset_of_scope(
 /// For FileWrite-related tools (containing "file_write", "write_file", "fs_", etc.),
 /// returns ActionType::FileWrite and adapter_key "fs".
 /// For sql_mutate, returns ActionType::SqlMutation and adapter_key "sqlite".
+/// For maildraft/draft-create/email_draft tools, returns ActionType::MailDraft and adapter_key "maildraft".
 /// Otherwise, defaults to ActionType::McpToolMutation and adapter_key "noop".
 fn infer_action_type_and_adapter(tool_name: &str) -> (ferrum_proto::ActionType, String) {
     let tool_lower = tool_name.to_lowercase();
@@ -4511,6 +4512,11 @@ fn infer_action_type_and_adapter(tool_name: &str) -> (ferrum_proto::ActionType, 
         (ferrum_proto::ActionType::FileWrite, "fs".to_string())
     } else if tool_lower.contains("sql_mutate") {
         (ferrum_proto::ActionType::SqlMutation, "sqlite".to_string())
+    } else if tool_lower.contains("maildraft")
+        || tool_lower.contains("draft_create")
+        || tool_lower.contains("email_draft")
+    {
+        (ferrum_proto::ActionType::MailDraft, "maildraft".to_string())
     } else {
         (
             ferrum_proto::ActionType::McpToolMutation,
@@ -4591,6 +4597,23 @@ fn infer_target_from_scope(
                 return RollbackTarget::SqliteTxn {
                     db_path: db_path.clone(),
                     tx_id: format!("tx-{}", uuid::Uuid::new_v4()),
+                };
+            }
+        }
+    }
+
+    // EmailDraft selector for MailDraft action type
+    if matches!(action_type, ferrum_proto::ActionType::MailDraft) {
+        for selector in scope {
+            if let ferrum_proto::ResourceSelector::EmailDraft {
+                recipient_allowlist,
+                subject_prefix_allowlist: _,
+                mode: _,
+            } = selector
+            {
+                return RollbackTarget::EmailDraft {
+                    draft_id: None, // draft_id is set at runtime by execute
+                    recipients: recipient_allowlist.clone(),
                 };
             }
         }

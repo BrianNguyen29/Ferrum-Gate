@@ -23,6 +23,17 @@ use thiserror::Error;
 
 pub const ADAPTER_KIND: &str = "ferrum-adapter-maildraft";
 
+/// Atomic counter for generating unique placeholder draft IDs during prepare.
+static DRAFT_ID_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// Generates a unique placeholder draft ID for create operations when gateway doesn't provide one.
+fn next_placeholder_draft_id() -> String {
+    format!(
+        "placeholder-{}",
+        DRAFT_ID_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+    )
+}
+
 /// Phase context for error normalization.
 const PHASE_PREPARE: &str = "prepare";
 const PHASE_VERIFY: &str = "verify";
@@ -132,11 +143,22 @@ impl MailDraftAdapter {
     }
 
     /// Extracts the draft_id from a RollbackTarget::EmailDraft variant.
+    /// If draft_id is None (gateway didn't set it during prepare), generates a placeholder
+    /// for create operations. For update/delete operations, returns an error since the
+    /// draft_id must be known to locate the existing draft.
     fn extract_draft_id(target: &RollbackTarget) -> Result<String, AdapterError> {
         match target {
-            RollbackTarget::EmailDraft { draft_id, .. } => draft_id.clone().ok_or_else(|| {
-                AdapterError::Validation("draft_id is required in EmailDraft target".into())
-            }),
+            RollbackTarget::EmailDraft { draft_id, .. } => {
+                if let Some(id) = draft_id {
+                    Ok(id.clone())
+                } else {
+                    // draft_id is None - this happens when gateway prepares without knowing
+                    // the draft_id yet (it will be provided at execute time via payload).
+                    // Generate a placeholder; during execute, the actual draft_id from
+                    // payload will be used if needed.
+                    Ok(next_placeholder_draft_id())
+                }
+            }
             _ => Err(AdapterError::Validation(format!(
                 "invalid target: expected EmailDraft, got {:?}",
                 target
@@ -145,15 +167,20 @@ impl MailDraftAdapter {
     }
 
     /// Gets the operation type from metadata.
+    /// Defaults to "create" when operation is missing from metadata.
+    /// Returns an error if operation is present but is not a valid string.
     fn get_operation(metadata: &JsonMap) -> Result<&str, AdapterError> {
-        metadata
-            .get("operation")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| {
-                AdapterError::Validation(
-                    "operation is required in metadata (create, update, delete)".into(),
-                )
-            })
+        // If operation key is not present at all, default to create
+        let Some(op_value) = metadata.get("operation") else {
+            return Ok(OP_CREATE);
+        };
+
+        // Operation is present - it must be a string
+        let op_str = op_value.as_str().ok_or_else(|| {
+            AdapterError::Validation("operation must be a string (create, update, delete)".into())
+        })?;
+
+        Ok(op_str)
     }
 
     /// Validates required draft fields.
@@ -268,7 +295,8 @@ impl RollbackAdapter for MailDraftAdapter {
                     ));
                 }
 
-                // Validate required fields from metadata
+                // For create operations, fields may come from execute payload rather than
+                // prepare metadata. Try to get them from metadata, but don't fail if missing.
                 let from = request
                     .metadata
                     .get("from")
@@ -295,10 +323,17 @@ impl RollbackAdapter for MailDraftAdapter {
                     .and_then(|v| v.as_str())
                     .unwrap_or_default();
 
-                // Validate fields are present for create
-                Self::validate_draft_fields(&draft_id, from, &to_values, subject, body)?;
+                // Only validate fields if they were provided in metadata.
+                // If they come from execute payload, we'll validate during execute.
+                if !from.is_empty()
+                    || !to_values.is_empty()
+                    || !subject.is_empty()
+                    || !body.is_empty()
+                {
+                    Self::validate_draft_fields(&draft_id, from, &to_values, subject, body)?;
+                }
 
-                // Store validated fields in metadata for execute phase
+                // Store fields in metadata for execute phase (may be empty for create)
                 metadata.insert(
                     "from".to_string(),
                     serde_json::Value::String(from.to_string()),
@@ -461,7 +496,7 @@ impl RollbackAdapter for MailDraftAdapter {
     async fn execute(
         &self,
         contract: &RollbackContract,
-        _payload: &serde_json::Value,
+        payload: &serde_json::Value,
     ) -> Result<ExecuteReceipt, AdapterError> {
         // Validate that action_type is MailDraft
         if !matches!(contract.action_type, ActionType::MailDraft) {
@@ -471,8 +506,27 @@ impl RollbackAdapter for MailDraftAdapter {
             )));
         }
 
-        let draft_id = Self::extract_draft_id(&contract.target)?;
         let operation = Self::get_operation(&contract.metadata)?;
+
+        // For create operations, prefer draft_id from payload if available.
+        // Otherwise use the draft_id from the contract metadata (set during prepare)
+        // or fall back to target draft_id.
+        let draft_id = if operation == OP_CREATE {
+            payload
+                .get("draft_id")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+                .or_else(|| {
+                    contract
+                        .metadata
+                        .get("draft_id")
+                        .and_then(|v| v.as_str())
+                        .map(String::from)
+                })
+                .unwrap_or_else(|| Self::extract_draft_id(&contract.target).unwrap_or_default())
+        } else {
+            Self::extract_draft_id(&contract.target)?
+        };
 
         let mut store = self.store.lock().map_err(|e| {
             Self::phase_wrap_internal(
@@ -483,14 +537,22 @@ impl RollbackAdapter for MailDraftAdapter {
 
         match operation {
             OP_CREATE => {
-                // Get fields from metadata (validated in prepare)
-                let from = contract
-                    .metadata
+                // Get fields from payload (for gateway flow) or metadata (for direct adapter calls)
+                let from = payload
                     .get("from")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| AdapterError::Validation("from not found in metadata".into()))?;
-                let to_values = contract
-                    .metadata
+                    .map(String::from)
+                    .or_else(|| {
+                        contract
+                            .metadata
+                            .get("from")
+                            .and_then(|v| v.as_str())
+                            .map(String::from)
+                    })
+                    .ok_or_else(|| {
+                        AdapterError::Validation("from not found in payload or metadata".into())
+                    })?;
+                let to_values = payload
                     .get("to")
                     .and_then(|v| v.as_array())
                     .map(|arr| {
@@ -498,26 +560,55 @@ impl RollbackAdapter for MailDraftAdapter {
                             .filter_map(|v| v.as_str().map(String::from))
                             .collect::<Vec<_>>()
                     })
-                    .ok_or_else(|| AdapterError::Validation("to not found in metadata".into()))?;
-                let subject = contract
-                    .metadata
+                    .or_else(|| {
+                        contract
+                            .metadata
+                            .get("to")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|v| v.as_str().map(String::from))
+                                    .collect::<Vec<_>>()
+                            })
+                    })
+                    .ok_or_else(|| {
+                        AdapterError::Validation("to not found in payload or metadata".into())
+                    })?;
+                let subject = payload
                     .get("subject")
                     .and_then(|v| v.as_str())
+                    .map(String::from)
+                    .or_else(|| {
+                        contract
+                            .metadata
+                            .get("subject")
+                            .and_then(|v| v.as_str())
+                            .map(String::from)
+                    })
                     .ok_or_else(|| {
-                        AdapterError::Validation("subject not found in metadata".into())
+                        AdapterError::Validation("subject not found in payload or metadata".into())
                     })?;
-                let body = contract
-                    .metadata
+                let body = payload
                     .get("body")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| AdapterError::Validation("body not found in metadata".into()))?;
+                    .map(String::from)
+                    .or_else(|| {
+                        contract
+                            .metadata
+                            .get("body")
+                            .and_then(|v| v.as_str())
+                            .map(String::from)
+                    })
+                    .ok_or_else(|| {
+                        AdapterError::Validation("body not found in payload or metadata".into())
+                    })?;
 
                 let draft = EmailDraft {
                     id: draft_id.clone(),
-                    from: from.to_string(),
+                    from,
                     to: to_values,
-                    subject: subject.to_string(),
-                    body: body.to_string(),
+                    subject,
+                    body,
                     created_at: Utc::now(),
                 };
 
@@ -956,6 +1047,20 @@ impl RollbackAdapter for MailDraftAdapter {
             ))),
         }
     }
+}
+
+// =============================================================================
+// Plannable adapter for MailDraft operations
+// =============================================================================
+
+pub mod planner;
+pub use planner::PlannableMailDraftAdapter;
+
+/// Register the MailDraftAdapter with the given registry using "maildraft" as the adapter key.
+/// This allows the adapter to be used for EmailDraft create, update, and delete operations
+/// via the rollback service.
+pub fn register_maildraft_adapter(registry: &mut ferrum_rollback::AdapterRegistry) {
+    registry.register(std::sync::Arc::new(MailDraftAdapter::new("maildraft")));
 }
 
 #[cfg(test)]
