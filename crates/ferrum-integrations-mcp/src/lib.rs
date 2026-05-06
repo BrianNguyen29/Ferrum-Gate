@@ -1,37 +1,40 @@
 //! # ferrum-integrations-mcp
 //!
-//! FerrumGate MCP server integration crate (Phase A skeleton).
+//! FerrumGate MCP server integration crate (Phase A skeleton + Phase B JSON-RPC).
 //!
 //! ## Overview
 //!
 //! This crate provides:
 //! - Read-only MCP tool schema definitions for FerrumGate
 //! - Tool registry with metadata (name, description, input_schema, read_only marker)
-//! - No mutating tools in Phase A
+//! - JSON-RPC 2.0 request/response types and error codes
+//! - Handler stubs for initialize, ping, tools/list, tools/call
 //!
-//! ## Phase A Status
+//! ## Phase A Status (Complete)
 //!
-//! Phase A is a skeleton only. It implements:
+//! Phase A implemented:
 //! - Read-only tool schema draft (9 tools)
 //! - Tool registry proving no mutating tools are present
 //!
-//! Phase A does NOT implement:
-//! - MCP SDK or transport
-//! - JSON-RPC handlers
+//! ## Phase B Status (Complete)
+//!
+//! Phase B implemented:
+//! - JSON-RPC 2.0 types (JsonRpcRequest, JsonRpcResponse)
+//! - Error types and standard error codes
+//! - Handler stubs: initialize, ping, tools/list, tools/call
+//! - Dispatch function for method routing
+//!
+//! Phase B does NOT implement:
+//! - MCP SDK or transport (stdio/HTTP)
 //! - Authentication
 //! - Governance pipeline integration
+//! - Actual tool execution
 
 use serde::{Deserialize, Serialize};
 
-/// A tool's JSON Schema definition.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ToolSchema {
-    /// JSON Schema for input parameters.
-    pub input_schema: serde_json::Value,
-    /// JSON Schema for output (optional).
-    #[serde(default)]
-    pub output_schema: Option<serde_json::Value>,
-}
+// ---------------------------------------------------------------------------
+// Tool Registry (Phase A)
+// ---------------------------------------------------------------------------
 
 /// Tool metadata for MCP tool registry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -208,16 +211,383 @@ pub const READ_ONLY_TOOLS: &[&str] = &[
 ];
 
 /// Set of tool names that are mutating (require governance pipeline).
-/// Empty in Phase A - all tools are read-only.
+/// Empty in Phase B - all tools are read-only.
 pub const MUTATING_TOOLS: &[&str] = &[];
 
 // ---------------------------------------------------------------------------
-// Tests
+// JSON-RPC 2.0 Types (Phase B)
+// ---------------------------------------------------------------------------
+
+/// JSON-RPC 2.0 request structure.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JsonRpcRequest {
+    /// JSON-RPC version (must be "2.0").
+    pub jsonrpc: String,
+    /// Request method name.
+    pub method: String,
+    /// Request ID (can be string, number, or null).
+    #[serde(default)]
+    pub id: Option<JsonRpcId>,
+    /// Optional parameters (method-dependent).
+    #[serde(default)]
+    pub params: Option<serde_json::Value>,
+}
+
+/// JSON-RPC 2.0 response structure.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum JsonRpcResponse {
+    /// Successful response with result.
+    Success(JsonRpcSuccessResponse),
+    /// Error response.
+    Error(JsonRpcErrorResponse),
+}
+
+/// Successful JSON-RPC response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JsonRpcSuccessResponse {
+    /// JSON-RPC version.
+    pub jsonrpc: String,
+    /// Response result (method-dependent).
+    pub result: serde_json::Value,
+    /// Request ID.
+    pub id: Option<JsonRpcId>,
+}
+
+/// Error JSON-RPC response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JsonRpcErrorResponse {
+    /// JSON-RPC version.
+    pub jsonrpc: String,
+    /// Error object.
+    pub error: JsonRpcError,
+    /// Request ID.
+    pub id: Option<JsonRpcId>,
+}
+
+/// JSON-RPC error object.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JsonRpcError {
+    /// Error code.
+    pub code: i32,
+    /// Error message.
+    pub message: String,
+    /// Optional error data.
+    #[serde(default)]
+    pub data: Option<serde_json::Value>,
+}
+
+/// JSON-RPC request ID (string, number, or null in JSON).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum JsonRpcId {
+    String(String),
+    Number(i64),
+    Null,
+}
+
+/// Standard JSON-RPC 2.0 error codes.
+pub mod error_codes {
+    /// Invalid JSON was received.
+    pub const PARSE_ERROR: i32 = -32700;
+    /// Request is not valid JSON-RPC 2.0.
+    pub const INVALID_REQUEST: i32 = -32600;
+    /// Method does not exist or is not available.
+    pub const METHOD_NOT_FOUND: i32 = -32601;
+    /// Invalid method parameters.
+    pub const INVALID_PARAMS: i32 = -32602;
+    /// Internal JSON-RPC error.
+    pub const INTERNAL_ERROR: i32 = -32603;
+    /// Server error (reserved for implementation-defined errors).
+    pub const SERVER_ERROR: i32 = -32000;
+    /// Not implemented - used for Phase B tools/call.
+    pub const NOT_IMPLEMENTED: i32 = -32001;
+}
+
+impl JsonRpcError {
+    /// Create a method not found error.
+    pub fn method_not_found(method: &str) -> Self {
+        Self {
+            code: error_codes::METHOD_NOT_FOUND,
+            message: format!("Method '{}' not found or not available", method),
+            data: None,
+        }
+    }
+
+    /// Create a not implemented error.
+    pub fn not_implemented(method: &str) -> Self {
+        Self {
+            code: error_codes::NOT_IMPLEMENTED,
+            message: format!("Method '{}' is not implemented in this phase", method),
+            data: None,
+        }
+    }
+
+    /// Create an invalid request error.
+    pub fn invalid_request(msg: &str) -> Self {
+        Self {
+            code: error_codes::INVALID_REQUEST,
+            message: msg.to_string(),
+            data: None,
+        }
+    }
+
+    /// Create a parse error.
+    pub fn parse_error(msg: &str) -> Self {
+        Self {
+            code: error_codes::PARSE_ERROR,
+            message: msg.to_string(),
+            data: None,
+        }
+    }
+}
+
+impl JsonRpcResponse {
+    /// Create a success response.
+    pub fn success(result: serde_json::Value, id: Option<JsonRpcId>) -> Self {
+        Self::Success(JsonRpcSuccessResponse {
+            jsonrpc: "2.0".to_string(),
+            result,
+            id,
+        })
+    }
+
+    /// Create an error response.
+    pub fn error(error: JsonRpcError, id: Option<JsonRpcId>) -> Self {
+        Self::Error(JsonRpcErrorResponse {
+            jsonrpc: "2.0".to_string(),
+            error,
+            id,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MCP Protocol Types (Phase B)
+// ---------------------------------------------------------------------------
+
+/// Server capabilities advertised during initialize.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServerCapabilities {
+    /// Tools capability.
+    #[serde(default)]
+    pub tools: Option<ToolsCapability>,
+}
+
+/// Tools capability.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolsCapability {
+    /// List of tools is provided.
+    #[serde(default)]
+    pub list_changed: Option<bool>,
+}
+
+/// Initialize request parameters.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InitializeParams {
+    /// Protocol version requested by client.
+    #[serde(default)]
+    pub protocol_version: Option<String>,
+    /// Client capabilities.
+    #[serde(default)]
+    pub capabilities: ClientCapabilities,
+    /// Client info.
+    #[serde(default)]
+    pub client_info: Option<ClientInfo>,
+}
+
+impl Default for InitializeParams {
+    fn default() -> Self {
+        Self {
+            protocol_version: None,
+            capabilities: ClientCapabilities {},
+            client_info: None,
+        }
+    }
+}
+
+/// Client capabilities (unused in Phase B).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ClientCapabilities {}
+
+/// Client info (unused in Phase B).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClientInfo {
+    pub name: Option<String>,
+    pub version: Option<String>,
+}
+
+/// Server info response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServerInfo {
+    pub name: String,
+    pub version: String,
+}
+
+/// Initialize result.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InitializeResult {
+    /// Protocol version supported (2024-11-05).
+    pub protocol_version: String,
+    /// Server capabilities.
+    pub capabilities: ServerCapabilities,
+    /// Server info.
+    pub server_info: ServerInfo,
+}
+
+/// Tool result item for tools/list.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolInfo {
+    pub name: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+}
+
+/// tools/list result.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolsListResult {
+    pub tools: Vec<ToolInfo>,
+}
+
+/// tools/call result (not implemented in Phase B).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolsCallResult {
+    pub content: Vec<ToolContent>,
+    pub is_error: bool,
+}
+
+/// Tool content block.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolContent {
+    pub r#type: String,
+    pub text: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Handlers (Phase B)
+// ---------------------------------------------------------------------------
+
+/// Handle initialize request.
+/// Returns server capabilities and protocol version.
+pub fn handle_initialize(params: serde_json::Value, id: Option<JsonRpcId>) -> JsonRpcResponse {
+    // Parse params to validate (even though we don't use them in Phase B)
+    // Null is treated as empty params (default)
+    let _: InitializeParams = match params {
+        serde_json::Value::Null => InitializeParams::default(),
+        _ => match serde_json::from_value(params) {
+            Ok(p) => p,
+            Err(e) => {
+                return JsonRpcResponse::error(
+                    JsonRpcError::invalid_request(&format!("Invalid initialize params: {}", e)),
+                    id,
+                );
+            }
+        },
+    };
+
+    let result = InitializeResult {
+        protocol_version: "2024-11-05".to_string(),
+        capabilities: ServerCapabilities {
+            tools: Some(ToolsCapability { list_changed: None }),
+        },
+        server_info: ServerInfo {
+            name: "ferrum-integrations-mcp".to_string(),
+            version: "0.1.0".to_string(),
+        },
+    };
+
+    JsonRpcResponse::success(serde_json::to_value(result).unwrap(), id)
+}
+
+/// Handle ping request.
+/// Returns a simple success indicator.
+pub fn handle_ping(id: Option<JsonRpcId>) -> JsonRpcResponse {
+    JsonRpcResponse::success(serde_json::json!({ "success": true }), id)
+}
+
+/// Handle tools/list request.
+/// Returns the read-only tool registry.
+pub fn handle_tools_list(id: Option<JsonRpcId>) -> JsonRpcResponse {
+    let tools: Vec<ToolInfo> = tool_registry()
+        .iter()
+        .map(|t| ToolInfo {
+            name: t.name.to_string(),
+            description: t.description.to_string(),
+            input_schema: t.input_schema.clone(),
+        })
+        .collect();
+
+    let result = ToolsListResult { tools };
+
+    JsonRpcResponse::success(serde_json::to_value(result).unwrap(), id)
+}
+
+/// Handle tools/call request.
+/// Returns not implemented error for all tools in Phase B.
+pub fn handle_tools_call(params: serde_json::Value, id: Option<JsonRpcId>) -> JsonRpcResponse {
+    #[derive(Debug, Deserialize)]
+    #[allow(dead_code)]
+    struct CallParams {
+        name: String,
+        #[serde(default)]
+        arguments: Option<serde_json::Value>,
+    }
+
+    let _params: CallParams = match serde_json::from_value(params) {
+        Ok(p) => p,
+        Err(e) => {
+            return JsonRpcResponse::error(
+                JsonRpcError::invalid_request(&format!("Invalid tools/call params: {}", e)),
+                id,
+            );
+        }
+    };
+
+    // Phase B: tools/call is not implemented
+    JsonRpcResponse::error(JsonRpcError::not_implemented("tools/call"), id)
+}
+
+/// Dispatch a JSON-RPC request to the appropriate handler.
+/// Returns a JSON-RPC response.
+pub fn dispatch(request: JsonRpcRequest) -> JsonRpcResponse {
+    let id = request.id;
+    match request.method.as_str() {
+        "initialize" => {
+            let params = request.params.unwrap_or(serde_json::Value::Null);
+            handle_initialize(params, id)
+        }
+        "ping" => handle_ping(id),
+        "tools/list" => handle_tools_list(id),
+        "tools/call" => {
+            let params = request.params.unwrap_or(serde_json::Value::Null);
+            handle_tools_call(params, id)
+        }
+        _ => JsonRpcResponse::error(JsonRpcError::method_not_found(&request.method), id),
+    }
+}
+
+/// Parse a JSON-RPC request from a JSON string.
+/// Returns the parsed request or a parse error response.
+pub fn parse_request(json_str: &str) -> Result<JsonRpcRequest, JsonRpcResponse> {
+    serde_json::from_str(json_str).map_err(|e| {
+        JsonRpcResponse::error(
+            JsonRpcError::parse_error(&format!("Invalid JSON: {}", e)),
+            None,
+        )
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Tests (Phase A + Phase B)
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // -------------------------------------------------------------------------
+    // Phase A Tests (Tool Registry)
+    // -------------------------------------------------------------------------
 
     #[test]
     fn test_tool_registry_contains_nine_tools() {
@@ -244,8 +614,7 @@ mod tests {
     fn test_mutating_tools_set_is_empty() {
         assert!(
             MUTATING_TOOLS.is_empty(),
-            "MUTATING_TOOLS should be empty in Phase A, but found: {:?}",
-            MUTATING_TOOLS
+            "MUTATING_TOOLS should be empty in Phase B"
         );
     }
 
@@ -278,7 +647,6 @@ mod tests {
 
     #[test]
     fn test_no_mutating_tool_names_in_registry() {
-        // These are patterns that indicate mutating tools - none should be present
         let mutating_patterns = [
             "submit",
             "evaluate",
@@ -294,7 +662,7 @@ mod tests {
             "delete",
         ];
         for tool in tool_registry() {
-            for pattern in mutating_patterns {
+            for pattern in &mutating_patterns {
                 assert!(
                     !tool.name.contains(pattern),
                     "Tool '{}' should not contain mutating pattern '{}'",
@@ -326,6 +694,190 @@ mod tests {
                 "Expected tool '{}' should be in registry",
                 expected
             );
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Phase B Tests (JSON-RPC Handlers)
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_initialize_returns_protocol_version() {
+        let response = handle_initialize(serde_json::Value::Null, None);
+        match response {
+            JsonRpcResponse::Success(success) => {
+                let result: InitializeResult =
+                    serde_json::from_value(success.result).expect("should parse");
+                assert_eq!(result.protocol_version, "2024-11-05");
+                assert!(result.capabilities.tools.is_some());
+            }
+            JsonRpcResponse::Error(_) => panic!("Expected success response"),
+        }
+    }
+
+    #[test]
+    fn test_initialize_includes_tools_capability() {
+        let response = handle_initialize(serde_json::Value::Null, None);
+        match response {
+            JsonRpcResponse::Success(success) => {
+                let result: InitializeResult =
+                    serde_json::from_value(success.result).expect("should parse");
+                assert!(result.capabilities.tools.is_some());
+            }
+            JsonRpcResponse::Error(_) => panic!("Expected success response"),
+        }
+    }
+
+    #[test]
+    fn test_ping_returns_success() {
+        let response = handle_ping(None);
+        match response {
+            JsonRpcResponse::Success(success) => {
+                assert_eq!(success.result, serde_json::json!({ "success": true }));
+            }
+            JsonRpcResponse::Error(_) => panic!("Expected success response"),
+        }
+    }
+
+    #[test]
+    fn test_tools_list_returns_nine_tools() {
+        let response = handle_tools_list(None);
+        match response {
+            JsonRpcResponse::Success(success) => {
+                let result: ToolsListResult =
+                    serde_json::from_value(success.result).expect("should parse");
+                assert_eq!(result.tools.len(), 9, "tools/list should return 9 tools");
+            }
+            JsonRpcResponse::Error(_) => panic!("Expected success response"),
+        }
+    }
+
+    #[test]
+    fn test_tools_list_returns_correct_tool_names() {
+        let response = handle_tools_list(None);
+        match response {
+            JsonRpcResponse::Success(success) => {
+                let result: ToolsListResult =
+                    serde_json::from_value(success.result).expect("should parse");
+                let tool_names: Vec<_> = result.tools.iter().map(|t| t.name.as_str()).collect();
+                for expected in READ_ONLY_TOOLS {
+                    assert!(
+                        tool_names.contains(expected),
+                        "Expected tool '{}' in tools/list result",
+                        expected
+                    );
+                }
+            }
+            JsonRpcResponse::Error(_) => panic!("Expected success response"),
+        }
+    }
+
+    #[test]
+    fn test_tools_call_returns_not_implemented() {
+        let params = serde_json::json!({
+            "name": "ferrum_gate_health",
+            "arguments": {}
+        });
+        let response = handle_tools_call(params, None);
+        match response {
+            JsonRpcResponse::Error(err) => {
+                assert_eq!(err.error.code, error_codes::NOT_IMPLEMENTED);
+            }
+            JsonRpcResponse::Success(_) => panic!("Expected error response"),
+        }
+    }
+
+    #[test]
+    fn test_unknown_method_returns_method_not_found() {
+        let request = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            method: "unknown_method".to_string(),
+            id: Some(JsonRpcId::Number(1)),
+            params: None,
+        };
+        let response = dispatch(request);
+        match response {
+            JsonRpcResponse::Error(err) => {
+                assert_eq!(err.error.code, error_codes::METHOD_NOT_FOUND);
+                assert!(err.error.message.contains("unknown_method"));
+            }
+            JsonRpcResponse::Success(_) => panic!("Expected error response"),
+        }
+    }
+
+    #[test]
+    fn test_dispatch_routes_initialize() {
+        let request = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            method: "initialize".to_string(),
+            id: Some(JsonRpcId::String("1".to_string())),
+            params: Some(serde_json::json!({
+                "protocol_version": "2024-11-05",
+                "capabilities": {},
+                "client_info": {"name": "test", "version": "1.0"}
+            })),
+        };
+        let response = dispatch(request);
+        match response {
+            JsonRpcResponse::Success(_) => {}
+            JsonRpcResponse::Error(_) => panic!("Expected success for initialize"),
+        }
+    }
+
+    #[test]
+    fn test_dispatch_routes_tools_list() {
+        let request = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            method: "tools/list".to_string(),
+            id: Some(JsonRpcId::Null),
+            params: None,
+        };
+        let response = dispatch(request);
+        match response {
+            JsonRpcResponse::Success(success) => {
+                let result: ToolsListResult =
+                    serde_json::from_value(success.result).expect("should parse");
+                assert_eq!(result.tools.len(), 9);
+            }
+            JsonRpcResponse::Error(_) => panic!("Expected success for tools/list"),
+        }
+    }
+
+    #[test]
+    fn test_parse_valid_request() {
+        let json = r#"{"jsonrpc":"2.0","method":"ping","id":1}"#;
+        let request = parse_request(json).expect("Should parse valid request");
+        assert_eq!(request.method, "ping");
+        assert!(matches!(request.id, Some(JsonRpcId::Number(1))));
+    }
+
+    #[test]
+    fn test_parse_invalid_json_returns_error() {
+        let json = "not valid json";
+        let result = parse_request(json);
+        assert!(result.is_err());
+        match result {
+            Err(JsonRpcResponse::Error(err)) => {
+                assert_eq!(err.error.code, error_codes::PARSE_ERROR);
+            }
+            _ => panic!("Expected error response"),
+        }
+    }
+
+    #[test]
+    fn test_dispatch_preserves_request_id() {
+        let request = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            method: "ping".to_string(),
+            id: Some(JsonRpcId::String("test-123".to_string())),
+            params: None,
+        };
+        let response = dispatch(request);
+        match response {
+            JsonRpcResponse::Success(success) => {
+                assert!(matches!(success.id, Some(JsonRpcId::String(ref s)) if s == "test-123"));
+            }
+            JsonRpcResponse::Error(_) => panic!("Expected success"),
         }
     }
 }

@@ -39,6 +39,25 @@ Still not implemented:
 - No gateway/governance pipeline integration.
 - No mutating tools.
 
+As of the Phase B JSON-RPC skeleton pass:
+
+- JSON-RPC 2.0 request/response/error types exist in `crates/ferrum-integrations-mcp/src/lib.rs`.
+- Handler stubs exist for `initialize`, `ping`, `tools/list`, and `tools/call`.
+- `tools/list` returns the 9 read-only registry tools.
+- `tools/call` returns an explicit not-implemented error for all calls.
+- `dispatch()` routes known methods and returns method-not-found for unknown methods.
+- `parse_request()` parses a JSON-RPC request string.
+- `cargo test -p ferrum-integrations-mcp` passed with 19 tests during the Phase B pass.
+
+Still not implemented after Phase B:
+
+- No stdio transport loop.
+- No Streamable HTTP transport.
+- No MCP SDK dependency.
+- No gateway/governance pipeline integration.
+- No tool execution.
+- No mutating tools.
+
 ---
 
 ## 1. Purpose and Scope
@@ -301,23 +320,23 @@ Phase A does **not** implement these gates, but they **must** be implemented bef
 
 | # | Item | Owner | Status | Notes |
 |---|------|-------|--------|-------|
-| A.18 | Implement `Transport` trait stub in `src/transport/stdio.rs` | Engineering | ☐ TODO | Read JSON-RPC from stdin; write to stdout |
-| A.19 | Implement JSON-RPC 2.0 request parser | Engineering | ☐ TODO | Parse `JsonRpcRequest` from stdin lines |
-| A.20 | Implement JSON-RPC 2.0 response serializer | Engineering | ☐ TODO | Serialize `JsonRpcResponse` to stdout |
+| A.18 | Implement `Transport` trait stub in `src/transport/stdio.rs` | Engineering | ☐ TODO | Stdio loop remains deferred |
+| A.19 | Implement JSON-RPC 2.0 request parser | Engineering | ✅ DONE | `parse_request()` parses JSON-RPC request strings |
+| A.20 | Implement JSON-RPC 2.0 response serializer | Engineering | ◐ PARTIAL | `JsonRpcResponse` is serializable; no stdout writer yet |
 | A.21 | Implement batch request handling | Engineering | ☐ TODO | MCP allows batch requests |
-| A.22 | Implement error response format | Engineering | ☐ TODO | `-32600` (Invalid Request), `-32601` (Method not found), etc. |
+| A.22 | Implement error response format | Engineering | ✅ DONE | Standard JSON-RPC errors plus Phase B `NOT_IMPLEMENTED` |
 | A.23 | Create `src/transport/mod.rs` | Engineering | ☐ TODO | Export `StdioTransport` |
 
 ### 5.4 MCP Protocol Handlers (Stubs)
 
 | # | Item | Owner | Status | Notes |
 |---|------|-------|--------|-------|
-| A.24 | Implement `initialize` handler stub in `src/handlers/initialize.rs` | Engineering | ☐ TODO | Return server capabilities; protocol version `2024-11-05`; **no auth yet** |
-| A.25 | Implement `ping` handler stub in `src/handlers/ping.rs` | Engineering | ☐ TODO | Return `{success: true}` |
-| A.26 | Implement `tools/list` handler stub in `src/handlers/tools_list.rs` | Engineering | ☐ TODO | Return read-only tools only; use schema from §5.2 |
-| A.27 | Implement `tools/call` handler stub in `src/handlers/tools_call.rs` | Engineering | ☐ TODO | **Return error for all tools in Phase A** (read-only; no execution) |
+| A.24 | Implement `initialize` handler stub in `src/handlers/initialize.rs` | Engineering | ◐ PARTIAL | `handle_initialize()` exists in `src/lib.rs`; module split deferred |
+| A.25 | Implement `ping` handler stub in `src/handlers/ping.rs` | Engineering | ◐ PARTIAL | `handle_ping()` exists in `src/lib.rs`; module split deferred |
+| A.26 | Implement `tools/list` handler stub in `src/handlers/tools_list.rs` | Engineering | ◐ PARTIAL | `handle_tools_list()` returns read-only registry; module split deferred |
+| A.27 | Implement `tools/call` handler stub in `src/handlers/tools_call.rs` | Engineering | ◐ PARTIAL | `handle_tools_call()` returns not-implemented for all tools; module split deferred |
 | A.28 | Create `src/handlers/mod.rs` | Engineering | ☐ TODO | Export all handlers |
-| A.29 | Create `src/server.rs` dispatch loop | Engineering | ☐ TODO | Match method name → handler; return JSON-RPC response |
+| A.29 | Create `src/server.rs` dispatch loop | Engineering | ◐ PARTIAL | `dispatch()` exists in `src/lib.rs`; module split deferred |
 
 ### 5.5 Tool Registry
 
@@ -337,8 +356,8 @@ Phase A does **not** implement these gates, but they **must** be implemented bef
 | A.36 | Write test: `test_tool_registry_contains_only_read_only_tools` | Engineering | ✅ DONE | All registered tools have `read_only: true` |
 | A.37 | Write test: `test_mutating_tools_set_is_empty` | Engineering | ✅ DONE | `MUTATING_TOOLS` is empty |
 | A.38 | Write test: `test_all_read_only_tools_have_schemas` | Engineering | ✅ DONE | All read-only tools have non-null schemas |
-| A.39 | Write test: `test_stdio_transport_parses_valid_json_rpc` | Engineering | ☐ TODO | |
-| A.40 | Write test: `test_tools_list_returns_only_read_only_tools` | Engineering | ☐ TODO | |
+| A.39 | Write test: `test_stdio_transport_parses_valid_json_rpc` | Engineering | ◐ PARTIAL | `test_parse_valid_request` covers parser; stdio transport remains deferred |
+| A.40 | Write test: `test_tools_list_returns_only_read_only_tools` | Engineering | ✅ DONE | `tools/list` tests return 9 read-only tool names |
 
 ### 5.7 Documentation
 
@@ -347,7 +366,7 @@ Phase A does **not** implement these gates, but they **must** be implemented bef
 | A.41 | Create `crates/ferrum-integrations-mcp/README.md` | Engineering | ☐ TODO | Overview, building, running, testing |
 | A.42 | Add module-level doc comments to all `pub` items | Engineering | ☐ TODO | |
 | A.43 | Create `docs/mcp-server-read-only-tool-schema.md` | Engineering | ☐ TODO | All 9 tool schemas with examples |
-| A.44 | Update this document if any checkbox is checked | Engineering | ✅ DONE | Updated after Phase A skeleton pass |
+| A.44 | Update this document if any checkbox is checked | Engineering | ✅ DONE | Updated after Phase A and Phase B skeleton passes |
 
 ---
 
