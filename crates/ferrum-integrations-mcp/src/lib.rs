@@ -1,6 +1,6 @@
 //! # ferrum-integrations-mcp
 //!
-//! FerrumGate MCP server integration crate (Phase A skeleton + Phase B JSON-RPC).
+//! FerrumGate MCP server integration crate (Phase A-C + Phase D-0 read-only REST client).
 //!
 //! ## Overview
 //!
@@ -9,28 +9,39 @@
 //! - Tool registry with metadata (name, description, input_schema, read_only marker)
 //! - JSON-RPC 2.0 request/response types and error codes
 //! - Handler stubs for initialize, ping, tools/list, tools/call
+//! - Phase D-0: Read-only REST client for gateway integration
 //!
-//! ## Phase A Status (Complete)
+//! ## Phase A-C Status (Complete)
 //!
-//! Phase A implemented:
+//! Phase A-C implemented:
 //! - Read-only tool schema draft (9 tools)
 //! - Tool registry proving no mutating tools are present
+//! - JSON-RPC 2.0 types and handler stubs
+//! - Stdio transport skeleton
 //!
-//! ## Phase B Status (Complete)
+//! ## Phase D-0 Status (Implemented)
 //!
-//! Phase B implemented:
-//! - JSON-RPC 2.0 types (JsonRpcRequest, JsonRpcResponse)
-//! - Error types and standard error codes
-//! - Handler stubs: initialize, ping, tools/list, tools/call
-//! - Dispatch function for method routing
+//! Phase D-0 implements:
+//! - HTTP client for FerrumGate gateway REST API
+//! - REST endpoint mapper for all 9 read-only tools
+//! - Error classification (auth, unreachable, server error)
+//! - tools/call implementation for read-only tools
 //!
-//! Phase B does NOT implement:
-//! - MCP SDK or transport (stdio/HTTP)
-//! - Authentication
-//! - Governance pipeline integration
-//! - Actual tool execution
+//! Phase D-0 does NOT implement:
+//! - Auth middleware (bearer token validation)
+//! - Policy evaluation
+//! - Capability issuance
+//! - Provenance emission
+//! - Rollback preparation
+//! - Mutating tool execution
 
 use serde::{Deserialize, Serialize};
+
+mod http_client;
+mod rest_mapper;
+
+// Re-export HTTP client types for use by the binary.
+pub use http_client::{ClientConfig, FerrumGatewayClient, GatewayError};
 
 // ---------------------------------------------------------------------------
 // Tool Registry (Phase A)
@@ -302,6 +313,12 @@ pub mod error_codes {
     pub const SERVER_ERROR: i32 = -32000;
     /// Not implemented - used for Phase B tools/call.
     pub const NOT_IMPLEMENTED: i32 = -32001;
+    /// Authentication failed - returned when gateway returns 401/403.
+    pub const AUTH_FAILED: i32 = -32002;
+    /// Gateway unreachable - returned when connection fails.
+    pub const GATEWAY_UNREACHABLE: i32 = -32003;
+    /// Gateway server error - returned when gateway returns 4xx/5xx.
+    pub const GATEWAY_SERVER_ERROR: i32 = -32004;
 }
 
 impl JsonRpcError {
@@ -524,6 +541,7 @@ pub fn handle_tools_list(id: Option<JsonRpcId>) -> JsonRpcResponse {
 
 /// Handle tools/call request.
 /// Returns not implemented error for all tools in Phase B.
+/// Use `handle_tools_call_with_client` for actual REST integration.
 pub fn handle_tools_call(params: serde_json::Value, id: Option<JsonRpcId>) -> JsonRpcResponse {
     #[derive(Debug, Deserialize)]
     #[allow(dead_code)]
@@ -547,6 +565,48 @@ pub fn handle_tools_call(params: serde_json::Value, id: Option<JsonRpcId>) -> Js
     JsonRpcResponse::error(JsonRpcError::not_implemented("tools/call"), id)
 }
 
+/// Handle tools/call request with gateway client.
+/// Maps the tool call to the corresponding REST endpoint and returns the result.
+pub fn handle_tools_call_with_client(
+    params: serde_json::Value,
+    id: Option<JsonRpcId>,
+    client: &http_client::FerrumGatewayClient,
+) -> JsonRpcResponse {
+    #[derive(Debug, Deserialize)]
+    #[allow(dead_code)]
+    struct CallParams {
+        name: String,
+        #[serde(default)]
+        arguments: Option<serde_json::Value>,
+    }
+
+    let params: CallParams = match serde_json::from_value(params) {
+        Ok(p) => p,
+        Err(e) => {
+            return JsonRpcResponse::error(
+                JsonRpcError::invalid_request(&format!("Invalid tools/call params: {}", e)),
+                id,
+            );
+        }
+    };
+
+    // Call the REST mapper
+    match rest_mapper::map_tool_to_rest(&params.name, params.arguments.as_ref(), client) {
+        Ok(result) => {
+            let value = serde_json::to_value(result).unwrap();
+            JsonRpcResponse::success(value, id)
+        }
+        Err(e) => JsonRpcResponse::error(
+            JsonRpcError {
+                code: e.code,
+                message: e.message,
+                data: e.data,
+            },
+            id,
+        ),
+    }
+}
+
 /// Dispatch a JSON-RPC request to the appropriate handler.
 /// Returns a JSON-RPC response.
 pub fn dispatch(request: JsonRpcRequest) -> JsonRpcResponse {
@@ -561,6 +621,28 @@ pub fn dispatch(request: JsonRpcRequest) -> JsonRpcResponse {
         "tools/call" => {
             let params = request.params.unwrap_or(serde_json::Value::Null);
             handle_tools_call(params, id)
+        }
+        _ => JsonRpcResponse::error(JsonRpcError::method_not_found(&request.method), id),
+    }
+}
+
+/// Dispatch a JSON-RPC request to the appropriate handler with gateway client.
+/// This version supports actual REST calls for tools/call.
+pub fn dispatch_with_client(
+    request: JsonRpcRequest,
+    client: &http_client::FerrumGatewayClient,
+) -> JsonRpcResponse {
+    let id = request.id;
+    match request.method.as_str() {
+        "initialize" => {
+            let params = request.params.unwrap_or(serde_json::Value::Null);
+            handle_initialize(params, id)
+        }
+        "ping" => handle_ping(id),
+        "tools/list" => handle_tools_list(id),
+        "tools/call" => {
+            let params = request.params.unwrap_or(serde_json::Value::Null);
+            handle_tools_call_with_client(params, id, client)
         }
         _ => JsonRpcResponse::error(JsonRpcError::method_not_found(&request.method), id),
     }

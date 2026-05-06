@@ -50,7 +50,8 @@ Thư mục này là điểm vào duy nhất để agent khác tiếp tục tri�
 69. [69-local-dummy-target-values.md](69-local-dummy-target-values.md) — **LOCAL-TEST ONLY**: dummy values for rehearsal (NOT operator evidence)
 70. [70-security-hardening-local-only-plan.md](70-security-hardening-local-only-plan.md) — Security hardening proposals, local-only audit commands, token rotation procedure
 71. [71-mcp-server-feasibility-and-design.md](71-mcp-server-feasibility-and-design.md) — MCP server design and todo-list (post-v1 scope; v1.4 MCP Governance Beta)
-72. [72-mcp-server-phase-a-implementation-plan.md](72-mcp-server-phase-a-implementation-plan.md) — Phase A implementation plan/tracker: crate skeleton + read-only tool surface (partial skeleton implemented; no MCP server yet)
+72. [72-mcp-server-phase-a-implementation-plan.md](72-mcp-server-phase-a-implementation-plan.md) — Phase A–C implementation plan/tracker: crate skeleton + stdio transport (Phases A, B, C complete; D-0 ready to implement; D-1 deferred)
+73. [73-mcp-server-phase-d-implementation-plan.md](73-mcp-server-phase-d-implementation-plan.md) — Phase D-0 read-only REST client plan (9 tools mapped to gateway REST routes) + D-1 deferred governance pipeline
 
 ## Luật ưu tiên
 Khi mâu thuẫn, ưu tiên:

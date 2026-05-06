@@ -194,7 +194,8 @@ Phase 3 PostgreSQL (Path 3) — both are outside the scope of this roadmap.
 | This doc | [`PRODUCTION_NOTES.md`](../../PRODUCTION_NOTES.md) | SQLite configuration and stress test baseline |
 | This doc | [`70-security-hardening-local-only-plan.md`](./70-security-hardening-local-only-plan.md) | Security hardening proposals, local-only audit commands, token rotation procedure |
 | This doc | [`71-mcp-server-feasibility-and-design.md`](./71-mcp-server-feasibility-and-design.md) | MCP server design and todo-list (post-v1 scope; v1.4 MCP Governance Beta; U4 bridge exists, MCP server is next step) |
-| This doc | [`72-mcp-server-phase-a-implementation-plan.md`](./72-mcp-server-phase-a-implementation-plan.md) | Phase A implementation plan/tracker: crate skeleton + read-only tool surface (partial skeleton implemented; no MCP server yet) |
+| This doc | [`72-mcp-server-phase-a-implementation-plan.md`](./72-mcp-server-phase-a-implementation-plan.md) | Phase A–C implementation plan/tracker: Phases A, B, C complete; D-0 ready to implement; D-1 deferred |
+| This doc | [`73-mcp-server-phase-d-implementation-plan.md`](./73-mcp-server-phase-d-implementation-plan.md) | Phase D-0 read-only REST client plan + D-1 deferred governance pipeline |
 
 ---
 

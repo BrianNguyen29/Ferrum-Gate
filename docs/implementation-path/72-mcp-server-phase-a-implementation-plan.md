@@ -172,7 +172,7 @@ Phase A exposes **only read-only tools** that query FerrumGate state without mak
 | `ferrum_gate_get_execution` | Get execution status by ID | `GET /v1/executions/{execution_id}` | Low |
 | `ferrum_gate_query_lineage` | Query provenance events for an execution | `GET /v1/lineage` | Low |
 | `ferrum_gate_list_approvals` | List pending approvals | `GET /v1/approvals` | Low |
-| `ferrum_gate_list_policy_bundles` | List available policy bundles | `GET /v1/policies` | Low |
+| `ferrum_gate_list_policy_bundles` | List available policy bundles | `GET /v1/policy-bundles` | Low |
 | `ferrum_gate_list_bridges` | List registered runtime bridges | `GET /v1/bridges` | Low |
 | `ferrum_gate_list_bridge_tools` | List tools for a specific bridge | `GET /v1/bridges/{bridge_id}/tools` | Low |
 
