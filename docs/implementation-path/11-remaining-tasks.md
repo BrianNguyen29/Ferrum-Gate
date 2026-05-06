@@ -81,9 +81,10 @@ Current partial adapter progress already verified in local package-scoped checks
     - Timeout and cancellation handling
     - TLS trust and certificate pinning
 
-- [ ] ferrumctl expanded commands (beyond health/inspect)
+- [x] ferrumctl expanded commands (beyond health/inspect)
   - Src: `docs/implementation-path/08-next-issue-backlog.md` P2
   - Src: `docs/implementation-path/15-ferrumctl-more-useful-execution-plan.md`
+  - Status: DONE — see `docs/implementation-path/67-production-readiness-roadmap.md` P2.2; `ferrumctl` now covers health/readiness/metrics, inspection, approvals, lineage/provenance, intent listing, execution cancellation, policy bundles, backup/restore, and author bundle bump.
 
 - [ ] multi-node / HA / read-replica support
   - Src: `docs/ferrumgate-roadmap-v1/00-project-canon.md` line 56 "full distributed deployment"
