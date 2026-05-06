@@ -96,17 +96,30 @@ When an MCP client authenticates, the bearer token must be mapped to a FerrumGat
 ```rust
 struct ActorIdentity {
     actor_type: ActorType,   // ActorType::Agent for MCP clients
-    actor_id: String,        // Subject claim from bearer token or client-provided
+    actor_id: String,        // See sourcing rules below
     display_name: Option<String>,
     auth_method: AuthMethod,  // AuthMethod::Bearer for MCP
 }
 ```
 
+**actor_id sourcing rules** (in priority order):
+
+| Priority | Source | When Used |
+|----------|--------|-----------|
+| 1 | `FERRUMD_MCP_AGENT_ID` env var | If set, use this value directly |
+| 2 | MCP initialize `client_info.name` | From MCP initialize params |
+| 3 | Fallback `mcp-agent` | Default if nothing configured |
+
+**JWT vs simple bearer tokens**:
+- For **JWT bearer tokens**: `actor_id` MAY be extracted from the JWT `sub` claim if present
+- For **simple hex bearer tokens**: There is no JWT `sub` claim; use the sourcing rules above
+- **Do NOT assume JWT structure** unless the token is validated as a JWT
+
 | Field | Source | Notes |
 |-------|--------|-------|
 | `actor_type` | Fixed | `ActorType::Agent` for all MCP clients |
-| `actor_id` | Bearer token `sub` claim | Or MCP client-provided ID if no token |
-| `display_name` | Optional | MCP client can advertise a name |
+| `actor_id` | See sourcing rules above | Never log the raw token |
+| `display_name` | MCP initialize `client_info.name` | Optional; defaults to `actor_id` |
 | `auth_method` | Fixed | `AuthMethod::Bearer` for MCP stdio/HTTP |
 
 ### 1.4 Auth Middleware Implementation
@@ -173,7 +186,7 @@ pub const MUTATING_TOOLS: &[&str] = &[
 
 ### 3.1 Pipeline Flow
 
-Each mutating MCP tool call must go through the full governance pipeline:
+Each mutating MCP tool call must go through the full governance pipeline in this exact order:
 
 ```
 MCP tools/call request
@@ -190,44 +203,76 @@ MCP tools/call request
         │
         ▼
 ┌───────────────────┐
-│ 3. Policy Eval    │ ← Evaluate tool call against policy bundle
+│ 3. Compile Intent │ ← Map MCP call to ActionProposal (not yet submitted)
 └───────────────────┘
         │
         ▼
 ┌───────────────────┐
-│ 4. Intent/Action  │ ← Map MCP call to ActionProposal
+│ 4. Policy Eval    │ ← Evaluate ActionProposal against policy bundle
 └───────────────────┘
         │
         ▼
 ┌───────────────────┐
-│ 5. Capability     │ ← Mint single-use capability TTL≤300s
+│ 5. Capability Mint │ ← Mint single-use capability TTL≤300s
 └───────────────────┘
         │
         ▼
 ┌───────────────────┐
-│ 6. Rollback Prep  │ ← Prepare rollback contract
+│ 6. Authorize      │ ← Verify capability covers scope of call
 └───────────────────┘
         │
         ▼
 ┌───────────────────┐
-│ 7. Provenance     │ ← Emit ActionProposalSubmitted, ToolCallPrepared
+│ 7. Prepare Rollback│ ← Prepare rollback contract before execution
 └───────────────────┘
         │
         ▼
 ┌───────────────────┐
-│ 8. Tool Execution │ ← Call adapter or REST endpoint
+│ 8. Provenance     │ ← Emit ToolCallPrepared event
 └───────────────────┘
         │
         ▼
 ┌───────────────────┐
-│ 9. Output Sanitize│ ← Sanitize response before return
+│ 9. Execute        │ ← Call adapter or REST endpoint
+└───────────────────┘
+        │
+        ▼
+┌───────────────────┐
+│ 10. Verify         │ ← Verify side effect completed
+└───────────────────┘
+        │
+        ▼
+┌───────────────────┐
+│ 11. Sanitize       │ ← Sanitize response before return
 └───────────────────┘
         │
         ▼
 MCP CallToolResult response
 ```
 
-### 3.2 Intent/Action Proposal Mapping
+**Note**: Steps 1-6 do NOT make side effects. Step 8 (Execute) is the first side effect. Steps 9-11 verify and sanitize.
+
+### 3.2 Architecture Decision: REST Calls to ferrumd
+
+D-1 uses **REST calls to ferrumd** for governance steps (Option A per doc 71). This preserves the MCP-to-REST adapter pattern established in Phase D-0:
+
+| Governance Step | Implementation |
+|----------------|---------------|
+| Auth Middleware | Validate bearer token; no ferrumd call needed |
+| Tool Registry | Local check only |
+| Compile Intent | POST /v1/intents/compile |
+| Policy Eval | POST /v1/policy-evaluations (future) or POST /v1/intents/{id}/evaluate |
+| Capability Mint | POST /v1/capabilities |
+| Authorize | Local check (capability verified) |
+| Prepare Rollback | POST /v1/rollback/prepare |
+| Provenance | Internal emission via ferrum-ledger |
+| Execute | POST /v1/executions/{id}/execute |
+| Verify | GET /v1/executions/{id} |
+| Sanitize | Local (ferrum-firewall) |
+
+This approach keeps governance logic in ferrumd and keeps `ferrum-mcp-server` as a thin adapter.
+
+### 3.3 Intent/Action Proposal Mapping
 
 MCP tool calls must be mapped to FerrumGate `ActionProposal` before policy evaluation:
 
@@ -437,6 +482,21 @@ All errors use JSON-RPC error format:
 
 ## 7. D-1 Ordered Implementation Todo-List
 
+### Staged Implementation Order
+
+D-1 implementation is split into stages to allow safe progression while preserving design review gates:
+
+| Stage | Items | Status | Notes |
+|-------|-------|--------|-------|
+| **Stage 1** | D-1.1 (Auth) + D-1.2 (Tool Registry) | **APPROVED** | No execution; only auth validation and default-deny |
+| **Stage 2** | D-1.3–D-1.7 (Policy/Cap/Rollback/Provenance/Execute) | **GATED** | Requires corrected design review |
+| **Stage 3** | D-1.8–D-1.9 (Sanitize/RateLimit) | **GATED** | Requires Stage 2 complete |
+| **Stage 4** | D-1.10 (Integration/Load) | **GATED** | Requires all stages complete |
+
+**Stage 1 Rationale**: Auth middleware and tool registry default-deny are safe to implement. They do not enable any mutating tool execution — they only validate auth and reject unknown tools. Implementation can proceed after this design review.
+
+**Stage 2+ Rationale**: Policy evaluation, capability issuance, rollback preparation, and tool execution involve the full governance pipeline. These require the corrected pipeline order and design review before implementation.
+
 ### Phase D-1.1: Auth Middleware
 
 | # | Item | Status | Notes |
@@ -446,6 +506,7 @@ All errors use JSON-RPC error format:
 | D1.1.3 | Implement token validation | Future | Against configured token |
 | D1.1.4 | Implement ActorRef mapping | Future | For provenance |
 | D1.1.5 | Add auth tests | Future | Unit + integration |
+| D1.1.6 | Consolidate error_codes | Future | Implementation cleanup: move error codes to single `error_codes` module (currently split between `lib.rs` and `http_client.rs`) |
 
 ### Phase D-1.2: Mutating Tool Registry
 
@@ -533,20 +594,47 @@ All errors use JSON-RPC error format:
 
 ## 8. Acceptance Criteria
 
-### 8.1 D-1 Design Gate
+### 8.1 D-1 Design Gate (This Review)
 
-Before D-1 implementation begins, the following must be satisfied:
+Before Stage 1 implementation begins, the following must be satisfied:
 
 | Criterion | Verification |
 |-----------|--------------|
 | Design document reviewed | Approved by at least one reviewer |
-| Core invariants preserved | Explicit check that intent/capability/provenance/rollback invariants are not broken |
+| Core invariants preserved | Pipeline order respects intent-scoped, single-use, provenance-first, rollback-by-default |
 | Default-deny confirmed | Mutating tools fail closed until explicitly enabled |
-| Auth design finalized | Bearer token approach approved |
-| Error codes finalized | All error codes documented |
+| Pipeline order corrected | Auth → Registry → Compile → PolicyEval → CapMint → Authorize → PrepareRollback → Provenance → Execute → Verify → Sanitize |
+| REST architecture confirmed | D-1 uses REST calls to ferrumd for governance (not embedded) |
+| actor_id sourcing clarified | FERRUMD_MCP_AGENT_ID / MCP init / fallback; not assumed from JWT sub |
 | Non-claims confirmed | Explicit non-claims in document |
+| D-1.3+ remains gated | Stages 2-4 remain blocked until design review passes |
 
-### 8.2 D-1 Implementation Gate
+### 8.2 Stage 1 Acceptance Criteria (D-1.1 + D-1.2)
+
+Before Stage 1 is considered complete:
+
+| Criterion | Test Assertion |
+|-----------|---------------|
+| Missing bearer token returns -32002 | `assert_eq!(err.code, -32002)` |
+| Invalid bearer token returns -32002 | `assert_eq!(err.code, -32002)` |
+| Valid token with no auth returns -32002 | `assert_eq!(err.code, -32002)` |
+| Unknown tool returns -32601 | `assert_eq!(err.code, -32601)` |
+| Mutating tool returns -32001 | `assert_eq!(err.code, -32001)` |
+| Read-only tools still work | Response is NOT -32001 |
+| actor_id set from env or init | `assert_eq!(actor_id, expected)` |
+
+### 8.3 Stage 2 Acceptance Criteria (D-1.3 – D-1.7) — GATED
+
+Before Stage 2 begins, the following must be re-reviewed:
+
+| Criterion | Verification |
+|-----------|--------------|
+| Policy eval design finalized | How ActionProposal maps to policy bundle |
+| Capability mint design finalized | TTL≤300s enforced; single-use enforced |
+| Rollback design finalized | Compensation ordering resolved |
+| Execute design finalized | REST endpoints confirmed |
+
+### 8.4 D-1 Implementation Gate (All Stages)
 
 Before any mutating tool is enabled in production:
 
@@ -640,10 +728,14 @@ The following are explicitly **NOT** in scope for D-1:
 
 | Decision | Date | Rationale |
 |----------|------|-----------|
-| Bearer token over OAuth | TBD | Simple; matches existing ferrumd auth |
-| Pending/polling for long calls | TBD | Avoids blocking; allows async governance |
-| Default-deny mutating tools | TBD | Fail-closed; no accidental exposure |
-| TTL ≤ 300s for capabilities | TBD | Per AGENTS.md invariant |
+| Bearer token over OAuth | 2026-05-06 | Simple; matches existing ferrumd auth |
+| Pending/polling for long calls | 2026-05-06 | Avoids blocking; allows async governance |
+| Default-deny mutating tools | 2026-05-06 | Fail-closed; no accidental exposure |
+| TTL ≤ 300s for capabilities | 2026-05-06 | Per AGENTS.md invariant |
+| REST calls to ferrumd for governance | 2026-05-06 | Preserves MCP-to-REST Option A pattern |
+| actor_id from FERRUMD_MCP_AGENT_ID or MCP init | 2026-05-06 | Simple hex tokens have no JWT sub claim |
+| Staged implementation | 2026-05-06 | D-1.1/D-1.2 safe to proceed; D-1.3+ gated |
+| Error codes consolidated in lib.rs | 2026-05-06 | Implementation cleanup in D-1.1 |
 
 ---
 
