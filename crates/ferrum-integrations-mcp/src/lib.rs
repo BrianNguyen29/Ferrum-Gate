@@ -222,8 +222,96 @@ pub const READ_ONLY_TOOLS: &[&str] = &[
 ];
 
 /// Set of tool names that are mutating (require governance pipeline).
-/// Empty in Phase B - all tools are read-only.
-pub const MUTATING_TOOLS: &[&str] = &[];
+/// Per doc 74 D-1.2: these tools require intent → policy eval → capability mint → authorize flow.
+/// In Stage 1 (D-1.1+D-1.2), these return NOT_IMPLEMENTED (default-deny).
+pub const MUTATING_TOOLS: &[&str] = &[
+    "ferrum_gate_submit_intent",
+    "ferrum_gate_evaluate_intent",
+    "ferrum_gate_prepare_execution",
+    "ferrum_gate_execute_prepared",
+    "ferrum_gate_compensate",
+    "ferrum_gate_approve_intent",
+    "ferrum_gate_reject_intent",
+];
+
+// ---------------------------------------------------------------------------
+// Auth Context (Phase D-1.1)
+// ---------------------------------------------------------------------------
+
+/// Actor identity information for the MCP server agent.
+/// Source precedence per doc 74 D-1.1.6:
+/// 1. FERRUMD_MCP_AGENT_ID environment variable
+/// 2. MCP init client_info.name
+/// 3. Fallback to local actor
+#[derive(Debug, Clone)]
+pub struct ActorIdentity {
+    /// Unique actor identifier (UUID or similar).
+    pub actor_id: String,
+    /// Human-readable actor label.
+    pub actor_label: String,
+    /// Actor source (env var, client_info, or local).
+    pub source: ActorSource,
+}
+
+/// Source of the actor identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActorSource {
+    /// From FERRUMD_MCP_AGENT_ID environment variable.
+    EnvVar,
+    /// From MCP init client_info.name.
+    ClientInfo,
+    /// Default local actor fallback.
+    Local,
+}
+
+impl ActorIdentity {
+    /// Create actor identity from environment variable FERRUMD_MCP_AGENT_ID.
+    /// Format: "actor_id:actor_label" or just "actor_id" (label defaults to actor_id).
+    fn from_env_var() -> Option<Self> {
+        std::env::var("FERRUMD_MCP_AGENT_ID").ok().and_then(|val| {
+            let parts: Vec<&str> = val.split(':').collect();
+            if parts.is_empty() || parts[0].is_empty() {
+                return None;
+            }
+            let actor_id = parts[0].to_string();
+            let actor_label = parts
+                .get(1)
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| actor_id.clone());
+            Some(ActorIdentity {
+                actor_id,
+                actor_label,
+                source: ActorSource::EnvVar,
+            })
+        })
+    }
+
+    /// Create actor identity from MCP client info.
+    fn from_client_info(client_name: &str) -> Self {
+        ActorIdentity {
+            actor_id: client_name.to_string(),
+            actor_label: client_name.to_string(),
+            source: ActorSource::ClientInfo,
+        }
+    }
+
+    /// Get the fallback local actor identity.
+    fn local() -> Self {
+        ActorIdentity {
+            actor_id: "ferrum-mcp-local".to_string(),
+            actor_label: "Ferrum MCP Local".to_string(),
+            source: ActorSource::Local,
+        }
+    }
+
+    /// Resolve actor identity with precedence: env var > client_info > local.
+    /// Call this during MCP initialization with the client_info.name if available.
+    pub fn resolve(client_name: Option<&str>) -> Self {
+        Self::from_env_var()
+            .or_else(|| client_name.filter(|n| !n.is_empty()).map(Self::from_client_info))
+            .unwrap_or_else(Self::local)
+    }
+}
 
 // ---------------------------------------------------------------------------
 // JSON-RPC 2.0 Types (Phase B)
@@ -693,11 +781,62 @@ mod tests {
     }
 
     #[test]
-    fn test_mutating_tools_set_is_empty() {
-        assert!(
-            MUTATING_TOOLS.is_empty(),
-            "MUTATING_TOOLS should be empty in Phase B"
+    fn test_mutating_tools_set_contains_expected_tools() {
+        // Per doc 74 D-1.2, mutating tools are registered but return NOT_IMPLEMENTED
+        let expected_mutating = [
+            "ferrum_gate_submit_intent",
+            "ferrum_gate_evaluate_intent",
+            "ferrum_gate_prepare_execution",
+            "ferrum_gate_execute_prepared",
+            "ferrum_gate_compensate",
+            "ferrum_gate_approve_intent",
+            "ferrum_gate_reject_intent",
+        ];
+        let mutating_set: std::collections::HashSet<_> = MUTATING_TOOLS.iter().copied().collect();
+        for expected in expected_mutating {
+            assert!(
+                mutating_set.contains(expected),
+                "MUTATING_TOOLS should contain '{}'",
+                expected
+            );
+        }
+        assert_eq!(
+            MUTATING_TOOLS.len(),
+            7,
+            "Should have exactly 7 mutating tools"
         );
+    }
+
+    #[test]
+    fn test_mutating_tools_not_in_registry() {
+        // Mutating tools are NOT in the read-only tool registry
+        let registry_names: std::collections::HashSet<_> =
+            tool_registry().iter().map(|t| t.name).collect();
+        for tool_name in MUTATING_TOOLS {
+            assert!(
+                !registry_names.contains(tool_name),
+                "Mutating tool '{}' should NOT be in tool registry",
+                tool_name
+            );
+        }
+    }
+
+    #[test]
+    fn test_calling_mutating_tool_returns_not_implemented() {
+        // Per doc 74 D-1.2, mutating tools return NOT_IMPLEMENTED (default-deny)
+        let params = serde_json::json!({
+            "name": "ferrum_gate_submit_intent",
+            "arguments": {"intent": "test"}
+        });
+        let response = handle_tools_call(params, None);
+        match response {
+            JsonRpcResponse::Error(err) => {
+                assert_eq!(err.error.code, error_codes::NOT_IMPLEMENTED);
+            }
+            JsonRpcResponse::Success(_) => {
+                panic!("Expected NOT_IMPLEMENTED error for mutating tool")
+            }
+        }
     }
 
     #[test]
@@ -961,5 +1100,56 @@ mod tests {
             }
             JsonRpcResponse::Error(_) => panic!("Expected success"),
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Phase D-1 Tests (Auth Context)
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_actor_identity_from_env_var_with_label() {
+        unsafe { std::env::set_var("FERRUMD_MCP_AGENT_ID", "actor-123:Test Agent") };
+        let identity = ActorIdentity::from_env_var().unwrap();
+        assert_eq!(identity.actor_id, "actor-123");
+        assert_eq!(identity.actor_label, "Test Agent");
+        assert_eq!(identity.source, ActorSource::EnvVar);
+        unsafe { std::env::remove_var("FERRUMD_MCP_AGENT_ID") };
+    }
+
+    #[test]
+    fn test_actor_identity_from_env_var_without_label() {
+        unsafe { std::env::set_var("FERRUMD_MCP_AGENT_ID", "actor-456") };
+        let identity = ActorIdentity::from_env_var().unwrap();
+        assert_eq!(identity.actor_id, "actor-456");
+        assert_eq!(identity.actor_label, "actor-456");
+        assert_eq!(identity.source, ActorSource::EnvVar);
+        unsafe { std::env::remove_var("FERRUMD_MCP_AGENT_ID") };
+    }
+
+    #[test]
+    fn test_actor_identity_from_env_var_empty() {
+        unsafe { std::env::set_var("FERRUMD_MCP_AGENT_ID", "") };
+        assert!(ActorIdentity::from_env_var().is_none());
+        unsafe { std::env::remove_var("FERRUMD_MCP_AGENT_ID") };
+    }
+
+    #[test]
+    fn test_actor_identity_resolve_precedence() {
+        // Env var takes precedence
+        unsafe { std::env::set_var("FERRUMD_MCP_AGENT_ID", "env-actor:Env Label") };
+        let identity = ActorIdentity::resolve(Some("client-name"));
+        assert_eq!(identity.actor_id, "env-actor");
+        assert_eq!(identity.source, ActorSource::EnvVar);
+        unsafe { std::env::remove_var("FERRUMD_MCP_AGENT_ID") };
+
+        // Client info when no env var
+        let identity = ActorIdentity::resolve(Some("client-name"));
+        assert_eq!(identity.actor_id, "client-name");
+        assert_eq!(identity.source, ActorSource::ClientInfo);
+
+        // Local fallback when no env var and no client info
+        let identity = ActorIdentity::resolve(None);
+        assert_eq!(identity.actor_id, "ferrum-mcp-local");
+        assert_eq!(identity.source, ActorSource::Local);
     }
 }

@@ -20,16 +20,6 @@ use std::time::Duration;
 // Error Types
 // ---------------------------------------------------------------------------
 
-/// Custom error codes for MCP tool errors (Phase D-0).
-pub mod error_codes {
-    /// Authentication failed (401/403 from gateway).
-    pub const AUTH_FAILED: i32 = -32002;
-    /// Gateway unreachable (connection refused, timeout).
-    pub const GATEWAY_UNREACHABLE: i32 = -32003;
-    /// Gateway server error (4xx/5xx from gateway).
-    pub const SERVER_ERROR: i32 = -32004;
-}
-
 /// Gateway errors mapped from HTTP responses or network failures.
 /// These are converted to MCP JSON-RPC error responses.
 #[derive(Debug, Clone)]
@@ -71,9 +61,9 @@ impl GatewayError {
     /// Get the JSON-RPC error code for this error.
     pub fn code(&self) -> i32 {
         match self {
-            GatewayError::AuthError { .. } => error_codes::AUTH_FAILED,
-            GatewayError::Unreachable { .. } => error_codes::GATEWAY_UNREACHABLE,
-            GatewayError::ServerError { .. } => error_codes::SERVER_ERROR,
+            GatewayError::AuthError { .. } => crate::error_codes::AUTH_FAILED,
+            GatewayError::Unreachable { .. } => crate::error_codes::GATEWAY_UNREACHABLE,
+            GatewayError::ServerError { .. } => crate::error_codes::GATEWAY_SERVER_ERROR,
         }
     }
 
@@ -480,8 +470,8 @@ mod tests {
 
     #[test]
     fn test_error_code_constants() {
-        assert_eq!(error_codes::AUTH_FAILED, -32002);
-        assert_eq!(error_codes::GATEWAY_UNREACHABLE, -32003);
-        assert_eq!(error_codes::SERVER_ERROR, -32004);
+        assert_eq!(crate::error_codes::AUTH_FAILED, -32002);
+        assert_eq!(crate::error_codes::GATEWAY_UNREACHABLE, -32003);
+        assert_eq!(crate::error_codes::GATEWAY_SERVER_ERROR, -32004);
     }
 }

@@ -16,8 +16,9 @@
 //! | `ferrum_gate_list_bridges` | GET /v1/bridges | Yes |
 //! | `ferrum_gate_list_bridge_tools` | GET /v1/bridges/{id}/tools | Yes |
 
+use crate::MUTATING_TOOLS;
 use crate::ToolsCallResult;
-use crate::error_codes::{INVALID_PARAMS, METHOD_NOT_FOUND};
+use crate::error_codes::{INVALID_PARAMS, METHOD_NOT_FOUND, NOT_IMPLEMENTED};
 use crate::http_client::FerrumGatewayClient;
 use crate::http_client::GatewayError;
 
@@ -61,6 +62,19 @@ impl McpToolError {
         Self {
             code: METHOD_NOT_FOUND,
             message: format!("Unknown tool: '{}'", tool_name),
+            data: None,
+        }
+    }
+
+    /// Create a not implemented error for mutating tools (default-deny).
+    /// Per doc 74 D-1.2, mutating tools return NOT_IMPLEMENTED until governance pipeline is ready.
+    pub fn not_implemented(tool_name: &str) -> Self {
+        Self {
+            code: NOT_IMPLEMENTED,
+            message: format!(
+                "Tool '{}' is mutating and not implemented in Stage 1",
+                tool_name
+            ),
             data: None,
         }
     }
@@ -109,6 +123,9 @@ pub fn map_tool_to_rest(
         "ferrum_gate_list_policy_bundles" => call_list_policy_bundles(client),
         "ferrum_gate_list_bridges" => call_list_bridges(client),
         "ferrum_gate_list_bridge_tools" => call_list_bridge_tools(client, args),
+
+        // Mutating tools - return NOT_IMPLEMENTED (default-deny per doc 74 D-1.2)
+        _ if MUTATING_TOOLS.contains(&tool_name) => Err(McpToolError::not_implemented(tool_name)),
 
         // Unknown tool
         _ => Err(McpToolError::unknown_tool(tool_name)),
