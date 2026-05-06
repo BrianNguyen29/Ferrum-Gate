@@ -133,6 +133,24 @@
 
 ---
 
+## Security Audit Evidence (Optional — Not Required for G2)
+
+> **Optional**: These files are for operator-collected local security audit evidence. They do NOT
+> contribute to G2 gates and are NOT required for pilot signoff. They are documented here for
+> completeness and future reference.
+
+| File | Description | Status |
+|------|-------------|--------|
+| `08-security/token_rotation_procedure.txt` | Token rotation commands and verification output | ☐ Not collected |
+| `08-security/local_audit_advisories.txt` | `cargo deny check advisories` output (local, not CI) | ☐ Not collected |
+| `08-security/local_audit_licenses.txt` | `cargo deny check licenses` output (local, not CI) | ☐ Not collected |
+| `08-security/local_audit_summary.txt` | Summary of local audit results | ☐ Not collected |
+
+**Note**: Local audit commands are documented in `70-security-hardening-local-only-plan.md` §Group D.
+These are manual/local commands, NOT CI jobs. CI dependency scanning is deferred due to cost.
+
+---
+
 ## Completion Attestation
 
 > **Evidence Collection Attestation**: I confirm all evidence files above were collected from the live target environment during the target run dated: _______________________________

@@ -50,6 +50,7 @@ Phase 3 PostgreSQL (Path 3) — both are outside the scope of this roadmap.
 | # | Item | Owner | Evidence Required | Status |
 |---|---|---|---|---|
 | P0.1 | **CI must not swallow cargo check** | Engineering | CI pipeline runs `cargo check --workspace` without `\|\| true` | ✅ Done (CI hardened 2026-05-03) |
+| P0.1b | **CI dependency scanning deferred** | N/A | Security scanning (cargo-deny, cargo-audit) not in CI due to cost; local/manual alternatives documented in `70-security-hardening-local-only-plan.md` | ✅ Done (doc only) |
 | P0.2 | **Target-host execution evidence missing** | Operator | D1–D6 drill evidence on target host; `readyz/deep` returns HTTP 200 on target | ☐ Pending (operator-owned) |
 | P0.3 | **Restore drill not executed on target** | Operator | Restore drill log with `PRAGMA integrity_check` passing on target | ☐ Pending (operator-owned) |
 | P0.4 | **Backup automation not configured** | Operator | External scheduler (cron/systemd timer) configured; `ferrumctl backup verify` passes | ☐ Pending (operator-owned) |
@@ -191,6 +192,7 @@ Phase 3 PostgreSQL (Path 3) — both are outside the scope of this roadmap.
 | This doc | [`19-v1-single-node-support-contract.md`](../ferrumgate-roadmap-v1/19-v1-single-node-support-contract.md) | v1 support boundaries and constraints |
 | This doc | [`30-production-roadmap.md`](./30-production-roadmap.md) | Phase 1/2/3 production roadmap |
 | This doc | [`PRODUCTION_NOTES.md`](../../PRODUCTION_NOTES.md) | SQLite configuration and stress test baseline |
+| This doc | [`70-security-hardening-local-only-plan.md`](./70-security-hardening-local-only-plan.md) | Security hardening proposals, local-only audit commands, token rotation procedure |
 
 ---
 
