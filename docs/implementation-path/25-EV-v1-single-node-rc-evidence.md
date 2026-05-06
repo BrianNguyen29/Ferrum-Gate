@@ -47,23 +47,30 @@ ferrum-integration-tests:
   test_poisoned_context_trust_attributes_no_bypass            # PASS
 
 integration_lineage_chain:
-  test_lineage_endpoint_returns_empty_for_unknown_execution  # PASS
-  test_lineage_endpoint_rejects_invalid_uuid                # PASS
-  test_lineage_endpoint_returns_correct_content_type         # PASS
+  # Core provenance chain tests (3):
+  test_lineage_chain_minimum_provenance_events                # PASS
+  test_lineage_adversarial_partial_execution_no_terminal     # PASS
+  test_lineage_chain_full_provenance_events                   # PASS
+  # Real adapter lineage tests (5):
+  test_lineage_chain_fs_adapter_compensate                   # PASS
+  test_lineage_chain_fs_adapter_full_committed                # PASS
+  test_lineage_chain_sqlite_adapter_compensate               # PASS
+  test_lineage_chain_maildraft_adapter_compensate             # PASS
+  test_lineage_chain_git_adapter_compensate                   # PASS
+  # Lineage query endpoint tests (5):
   test_lineage_query_returns_404_for_nonexistent_event       # PASS
-  test_lineage_query_accepts_default_direction               # PASS
+  test_lineage_query_accepts_default_direction                # PASS
   test_lineage_query_rejects_invalid_event_id_format         # PASS
   test_lineage_query_accepts_all_directions                  # PASS
-  test_lineage_query_handles_max_hops_clamping               # PASS
-```
+  test_lineage_query_handles_max_hops_clamping                # PASS
 
 Source: `crates/ferrum-integration-tests/src/integration_gateway_flow.rs`,
-`tests/integration_lineage_chain.rs`.
+`crates/ferrum-integration-tests/src/integration_lineage_chain.rs`.
 
-**P6 Fresh test counts** (2026-04-28 `cargo test --workspace`):
+**P6 Fresh test counts** (2026-05-06 `cargo test --workspace`):
 - adapter-fs: 146 | adapter-git: 86 | adapter-http: 103 | adapter-sqlite: 16 | adapter-maildraft: 16
-- adapter-sqlite: 16 | ferrum-cap: 4 | ferrum-firewall: 21 | ferrum-gateway: 41
-- integration tests: 82 total = contracts(2) + fs-roundtrip(7) + gateway-flow(65) + lineage-chain(8)
+- ferrum-cap: 4 | ferrum-firewall: 21 | ferrum-gateway: 41
+- integration tests: 87 total = contracts(2) + fs-roundtrip(7) + gateway-flow(65) + lineage-chain(13)
 - ferrumctl: 35 | ferrumd: 6 | ferrum-store: 60 | ferrum-sync: 65 | invalid_transitions: 22
 - Observed total: ~797 workspace tests including integration tests and doc-tests
 
