@@ -171,6 +171,7 @@ Phase B is complete when:
 | This doc | `62-path-2-operator-runbook.md` | Exact operator command sequences |
 | This doc | `54-operator-signoff-packet.md` | Final operator signoff form |
 | This doc | `67-production-readiness-roadmap.md` | Consolidated roadmap with priorities, blockers, owners, evidence |
+| This doc | `69-local-dummy-target-values.md` | **Optional**: Local-only dummy values for rehearsal (NOT operator evidence) |
 
 > **For a concise operator quick-reference**, see [`68-path-2-operator-handoff-packet.md`](./68-path-2-operator-handoff-packet.md).
 

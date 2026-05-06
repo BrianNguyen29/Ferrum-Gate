@@ -232,6 +232,7 @@ After Phase B complete, operator decides:
 | [54-operator-signoff-packet.md](./54-operator-signoff-packet.md) | Pilot acceptance signoff |
 | [61-path-2-execution-plan.md](./61-path-2-execution-plan.md) | Execution checklist |
 | [66-path-2-operator-handoff.md](./66-path-2-operator-handoff.md) | Full handoff narrative |
+| [69-local-dummy-target-values.md](./69-local-dummy-target-values.md) | **Optional**: Local-only dummy values for rehearsal (NOT operator evidence) |
 
 ---
 
