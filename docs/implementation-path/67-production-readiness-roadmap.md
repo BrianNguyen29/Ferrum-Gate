@@ -193,6 +193,7 @@ Phase 3 PostgreSQL (Path 3) — both are outside the scope of this roadmap.
 | This doc | [`30-production-roadmap.md`](./30-production-roadmap.md) | Phase 1/2/3 production roadmap |
 | This doc | [`PRODUCTION_NOTES.md`](../../PRODUCTION_NOTES.md) | SQLite configuration and stress test baseline |
 | This doc | [`70-security-hardening-local-only-plan.md`](./70-security-hardening-local-only-plan.md) | Security hardening proposals, local-only audit commands, token rotation procedure |
+| This doc | [`71-mcp-server-feasibility-and-design.md`](./71-mcp-server-feasibility-and-design.md) | MCP server design and todo-list (post-v1 scope; v1.4 MCP Governance Beta; U4 bridge exists, MCP server is next step) |
 
 ---
 
