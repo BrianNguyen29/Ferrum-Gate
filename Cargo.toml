@@ -19,6 +19,7 @@ members = [
   "crates/ferrum-testkit",
   "crates/ferrum-integration-tests",
   "crates/ferrum-sync",
+  "crates/ferrum-integrations-mcp",
   "bins/ferrum-stress"
 ]
 resolver = "2"
