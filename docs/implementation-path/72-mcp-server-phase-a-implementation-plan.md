@@ -1,61 +1,67 @@
-# 72 — MCP Server Phase A Implementation Plan
+# 72 — MCP Server Phase A–C Implementation Plan
 
-> **Status**: Phase A skeleton partially implemented — crate + read-only tool registry only.
-> **Purpose**: Detailed Phase A implementation checklist and execution tracker for FerrumGate MCP server work.
-> **Scope**: Phase A = crate skeleton + read-only tool surface + stdio transport skeleton. No mutating tools.
-> **Constraint**: Do not claim MCP server readiness. The current crate is schema/registry-only; no MCP transport, handlers, or mutating tools exist.
+> **Status**: Phase A (skeleton), Phase B (JSON-RPC handlers), and Phase C (stdio transport + binary) implemented.
+> **Purpose**: Detailed implementation checklist and execution tracker for FerrumGate MCP server phases A, B, and C.
+> **Scope**: Phase A = crate skeleton + read-only tool surface. Phase B = JSON-RPC types + handler stubs. Phase C = stdio transport + binary skeleton. No mutating tools in Phases A–C.
+> **Constraint**: Do not claim MCP server readiness. Phases A–C produce a skeleton only; no gateway integration, no mutating tools, no auth.
 > **Handoff from**: [`71-mcp-server-feasibility-and-design.md`](71-mcp-server-feasibility-and-design.md)
 
 ---
 
 ## Explicit Non-Claims
 
-- **No MCP server implementation exists.** A Phase A Rust crate skeleton now exists, but it is not an MCP server.
-- **No production-ready claim.** Phase A is a skeleton only.
+- **No MCP server implementation exists.** Phases A and B produced a crate skeleton with JSON-RPC types and handler stubs, but no actual transport or server loop exists.
+- **No production-ready claim.** Phases A–C are skeletons only.
 - **No G2 complete claim.** G2.1–G2.8 remain pending.
-- **MCP server is post-v1 scope.** Phase A is pre-implementation planning for v1.4 MCP Governance Beta.
-- **No mutating tools in Phase A.** The read-only tool surface is intentionally limited.
+- **MCP server is post-v1 scope.** Phase A–C are pre-implementation planning for v1.4 MCP Governance Beta.
+- **No mutating tools in Phases A–C.** The read-only tool surface is intentionally limited; tool execution remains out of scope.
+- **No gateway integration in Phase C.** Phase C implements stdio transport and binary skeleton only; REST API calls to FerrumGate are not part of Phase C.
 
 ---
 
 ## 0. Current Implementation Snapshot
 
-As of the Phase A skeleton pass:
+### Phase A Status: Complete
+
+As of the Phase A skeleton pass (commit `ba60e24`):
 
 - `crates/ferrum-integrations-mcp` exists and is registered in the workspace.
 - The crate defines a read-only tool registry with 9 tools.
 - The crate uses only `serde` and `serde_json`.
 - `MUTATING_TOOLS` is intentionally empty.
 - Tests prove the registry contains read-only tools only and excludes mutating tool-name patterns.
-- `cargo check -p ferrum-integrations-mcp`, `cargo test -p ferrum-integrations-mcp`, and `cargo check --workspace` passed during the skeleton pass.
+- `cargo check -p ferrum-integrations-mcp`, `cargo test -p ferrum-integrations-mcp`, and `cargo check --workspace` passed.
 
-Still not implemented:
-
-- No MCP SDK dependency.
-- No stdio transport.
-- No JSON-RPC parser/serializer.
-- No `initialize`, `ping`, `tools/list`, or `tools/call` handlers.
-- No binary entry point.
-- No gateway/governance pipeline integration.
-- No mutating tools.
+### Phase B Status: Complete
 
 As of the Phase B JSON-RPC skeleton pass:
 
 - JSON-RPC 2.0 request/response/error types exist in `crates/ferrum-integrations-mcp/src/lib.rs`.
 - Handler stubs exist for `initialize`, `ping`, `tools/list`, and `tools/call`.
 - `tools/list` returns the 9 read-only registry tools.
-- `tools/call` returns an explicit not-implemented error for all calls.
+- `tools/call` returns an explicit NOT_IMPLEMENTED error (`-32001`) for all calls.
 - `dispatch()` routes known methods and returns method-not-found for unknown methods.
 - `parse_request()` parses a JSON-RPC request string.
-- `cargo test -p ferrum-integrations-mcp` passed with 19 tests during the Phase B pass.
+- `cargo test -p ferrum-integrations-mcp` passed with 19 tests.
 
-Still not implemented after Phase B:
+### Phase C Status: Complete
 
-- No stdio transport loop.
+As of the Phase C stdio transport + binary pass:
+
+- Binary entry point: `ferrum-mcp-server` at `crates/ferrum-integrations-mcp/src/bin/ferrum-mcp-server.rs`.
+- Stdio transport loop: reads JSON-RPC requests line-by-line from stdin, writes responses to stdout.
+- Reuses existing `parse_request()` and `dispatch()` from Phase B.
+- 8 unit tests covering process_line (ping, initialize, tools/list, tools/call, unknown method, invalid JSON, empty/whitespace lines).
+- Binary smoke tested: `echo '{"jsonrpc":"2.0","method":"ping","id":1}' | cargo run --bin ferrum-mcp-server` returns valid JSON.
+- `tools/list` returns 9 read-only tools.
+- `tools/call` returns NOT_IMPLEMENTED error as expected.
+
+Phase C will NOT add:
+
 - No Streamable HTTP transport.
 - No MCP SDK dependency.
 - No gateway/governance pipeline integration.
-- No tool execution.
+- No tool execution (tools/call remains NOT_IMPLEMENTED).
 - No mutating tools.
 
 ---
@@ -64,40 +70,39 @@ Still not implemented after Phase B:
 
 ### 1.1 Purpose
 
-Phase A is the **planning and pre-implementation phase** for FerrumGate MCP server. It produces:
+Phases A and B produced a **skeleton** for FerrumGate MCP server. Phase C will add the **stdio transport and binary skeleton**.
+
+Phase A produced:
 1. A `Cargo.toml` skeleton for `crates/ferrum-integrations-mcp`
-2. A binary stub for `ferrum-mcp-server`
-3. A JSON Schema draft for all MCP tool definitions (read-only first)
-4. An `initialize` handler stub
-5. A `tools/list` handler stub that returns read-only tools only
-6. A stdio transport skeleton
-7. Test stubs proving no mutating tools are registered
-8. This document as the implementation reference
+2. A JSON Schema draft for all MCP tool definitions (read-only first)
+
+Phase B produced:
+3. JSON-RPC 2.0 request/response types and error codes
+4. Handler stubs for `initialize`, `ping`, `tools/list`, `tools/call`
+5. `dispatch()` and `parse_request()` functions
+
+Phase C produced:
+6. A binary entry point for `ferrum-mcp-server`
+7. A stdio transport loop (read stdin, write stdout)
+8. Reuse of existing `dispatch()` and `parse_request()`
 
 ### 1.2 Scope Boundaries
 
-**In Scope for Phase A:**
-- Create `crates/ferrum-integrations-mcp` crate skeleton
-- Add `ferrum-mcp-server` binary stub
-- Implement stdio JSON-RPC transport skeleton
-- Implement `initialize` handler stub
-- Implement `tools/list` handler stub (read-only tools only)
-- Implement `ping` handler stub
-- Define JSON Schema for all read-only tools
-- Document all security gates that will apply to later phases
-- Write test stubs proving no mutating tools are registered
-- Pass `cargo check` on the new crate
+**In Scope for Phase C:**
+- Create `ferrum-mcp-server` binary target
+- Implement stdio line-based transport using existing `parse_request()` and `dispatch()`
+- Support `initialize`, `ping`, `tools/list`, `tools/call` via dispatch
+- Binary smoke test via stdin/stdout piping
+- Reuse existing JSON-RPC types and handlers from Phase B
 
-**Out of Scope for Phase A (Non-Goals):**
-- No `tools/call` implementation (mutating tools)
+**Out of Scope for Phase C (Non-Goals):**
 - No Streamable HTTP transport
+- No MCP SDK dependency
+- No gateway/governance pipeline integration
+- No tool execution (tools/call returns NOT_IMPLEMENTED)
+- No mutating tools
 - No OAuth or advanced auth schemes
-- No adapter-backed tools (fs, git, http, etc.)
-- No governance pipeline integration (Phase D)
 - No CI changes
-- No rollback integration
-- No provenance emission
-- No rate limiting implementation
 - No production-ready claim
 
 ### 1.3 Phase Sequencing
@@ -106,13 +111,13 @@ Phase A is the **planning and pre-implementation phase** for FerrumGate MCP serv
 Doc 71 (Feasibility & Design)
     │
     ▼
-Phase A ← THIS DOCUMENT (planning + skeleton)
+Phase A (skeleton) ✅ COMPLETE
     │
     ▼
-Phase B (JSON-RPC skeleton + handlers)
+Phase B (JSON-RPC handlers) ✅ COMPLETE
     │
     ▼
-Phase C (protocol handlers + read-only tool stubs)
+Phase C (stdio transport + binary) ✅ COMPLETE
     │
     ▼
 Phase D (governance pipeline integration)
@@ -370,9 +375,96 @@ Phase A does **not** implement these gates, but they **must** be implemented bef
 
 ---
 
+## 5.8 Phase C: Stdio Transport + Binary Skeleton
+
+### 5.8.1 Purpose
+
+Phase C adds the **binary entry point** and **stdio transport loop** to make the Phase B handler skeleton runnable. It reuses `parse_request()` and `dispatch()` from Phase B.
+
+### 5.8.2 Binary Target
+
+The binary target is `ferrum-mcp-server`:
+
+| Option | Location | Notes |
+|--------|---------|-------|
+| **A (Selected)** | `src/bin/ferrum-mcp-server.rs` as package `[[bin]]` | Simple; same crate; no extra Cargo.toml needed |
+| B | Separate `ferrum-mcp-server` crate under `bins/` | More complex; requires separate crate |
+
+### 5.8.3 Stdio Transport Behavior
+
+```
+┌─────────────────┐     stdin      ┌──────────────────────┐
+│  MCP Client     │ ──────────────►│  ferrum-mcp-server   │
+│  (AI Agent)     │◄────────────── │  (binary)            │
+└─────────────────┘     stdout     └──────────────────────┘
+                              │
+                              │ stderr (errors only, no secrets)
+                              ▼
+                         /dev/null
+```
+
+**Line-based protocol:**
+1. Read one line from stdin (trim whitespace/newline)
+2. Parse JSON-RPC request via `parse_request()`
+3. Dispatch via `dispatch()`
+4. Serialize response to JSON string
+5. Write one line to stdout (with newline)
+6. Repeat until EOF or signal
+
+**Error handling:**
+- Parse errors → write JSON-RPC parse error to stdout (not stderr, to keep protocol consistent)
+- Unknown methods → JSON-RPC method-not-found error via `dispatch()`
+- `tools/call` → NOT_IMPLEMENTED error via `dispatch()`
+- No panics in the main loop
+
+**Security constraints:**
+- Never log secrets to stderr or stdout
+- Never read environment variables for secrets (Phase D auth)
+- Never write to file system
+- Output only valid JSON-RPC on stdout
+- stderr is for debug/traces only, never secrets
+
+### 5.8.4 Phase C Todo-List
+
+| # | Item | Owner | Status | Notes |
+|---|------|-------|--------|-------|
+| C.1 | Create `src/bin/ferrum-mcp-server.rs` | Engineering | ✅ DONE | Main binary entry point created |
+| C.2 | Add `[[bin]]` target to `Cargo.toml` | Engineering | ✅ N/A | Cargo auto-detects `src/bin/`; no explicit `[[bin]]` needed |
+| C.3 | Implement stdin line reader | Engineering | ✅ DONE | Read lines from stdin until EOF |
+| C.4 | Implement stdout line writer | Engineering | ✅ DONE | Write responses as JSON lines |
+| C.5 | Wire `parse_request()` → `dispatch()` → response | Engineering | ✅ DONE | Reuses Phase B handlers |
+| C.6 | Handle SIGINT/SIGTERM gracefully | Engineering | ✅ PARTIAL | Clean exit on EOF; signal handlers deferred |
+| C.7 | Write binary smoke test | Engineering | ✅ DONE | 8 unit tests covering process_line |
+| C.8 | Verify `cargo test -p ferrum-integrations-mcp` passes | Engineering | ✅ DONE | 27 tests pass (19 lib + 8 binary) |
+| C.9 | Verify `cargo check --workspace` passes | Engineering | ✅ DONE | No new warnings |
+| C.10 | Update this document | Engineering | ✅ DONE | Marking Phase C items done |
+
+### 5.8.5 Non-Goals for Phase C
+
+- No Streamable HTTP transport
+- No MCP SDK dependency
+- No gateway calls (tools/call remains NOT_IMPLEMENTED)
+- No auth middleware or token handling
+- No environment secret reads
+- No file system writes
+- No CI changes
+
+### 5.8.6 Test Plan for Phase C
+
+| Test | Description | Type |
+|------|-------------|------|
+| `test_binary_smoke_initialize` | Pipe `{"jsonrpc":"2.0","method":"initialize","id":1}` → expect valid response | Integration |
+| `test_binary_smoke_ping` | Pipe `{"jsonrpc":"2.0","method":"ping","id":1}` → expect `{"success":true}` | Integration |
+| `test_binary_smoke_tools_list` | Pipe `{"jsonrpc":"2.0","method":"tools/list","id":1}` → expect 9 tools | Integration |
+| `test_binary_smoke_tools_call` | Pipe `{"jsonrpc":"2.0","method":"tools/call","params":{"name":"ferrum_gate_health"},"id":1}` → expect NOT_IMPLEMENTED | Integration |
+| `test_binary_smoke_unknown_method` | Pipe `{"jsonrpc":"2.0","method":"unknown","id":1}` → expect method-not-found | Integration |
+| `test_binary_stdin_closed` | Close stdin → expect clean exit | Integration |
+
+---
+
 ## 6. Acceptance Criteria
 
-### 6.1 Phase A Gate: Skeleton Compiles
+### 6.1 Phase A+B Gate: Skeleton Compiles
 
 | Criterion | Verification |
 |-----------|--------------|
@@ -380,7 +472,7 @@ Phase A does **not** implement these gates, but they **must** be implemented bef
 | `cargo check --workspace` passes | Engineering |
 | No new warnings in clippy for new crate | Engineering |
 
-### 6.2 Phase A Gate: Tool Schema Complete
+### 6.2 Phase A+B Gate: Tool Schema Complete
 
 | Criterion | Verification |
 |-----------|--------------|
@@ -388,7 +480,7 @@ Phase A does **not** implement these gates, but they **must** be implemented bef
 | All schemas are valid JSON | Engineering |
 | All schemas have `input_schema` and `output_schema` | Engineering |
 
-### 6.3 Phase A Gate: Handler Stubs Return Correct Shape
+### 6.3 Phase A+B Gate: Handler Stubs Return Correct Shape
 
 | Criterion | Verification |
 |-----------|--------------|
@@ -397,7 +489,7 @@ Phase A does **not** implement these gates, but they **must** be implemented bef
 | `tools/call` returns error for all tools | Engineering |
 | `ping` returns `{success: true}` | Engineering |
 
-### 6.4 Phase A Gate: Tests Prove Read-Only Constraint
+### 6.4 Phase A+B Gate: Tests Prove Read-Only Constraint
 
 | Criterion | Verification |
 |-----------|--------------|
@@ -405,7 +497,7 @@ Phase A does **not** implement these gates, but they **must** be implemented bef
 | `test_mutating_tools_set_is_empty` passes | Engineering |
 | `test_all_read_only_tools_have_schemas` passes | Engineering |
 
-### 6.5 Phase A Gate: No Side Effects
+### 6.5 Phase A+B Gate: No Side Effects
 
 | Criterion | Verification |
 |-----------|--------------|
@@ -414,6 +506,17 @@ Phase A does **not** implement these gates, but they **must** be implemented bef
 | No file system writes | Engineering |
 | No capability issuance | Engineering |
 | No provenance emission | Engineering |
+
+### 6.6 Phase C Gate: Binary and Stdio Transport
+
+| Criterion | Verification |
+|-----------|--------------|
+| `ferrum-mcp-server` binary compiles | Engineering |
+| `cargo test -p ferrum-integrations-mcp` passes including binary smoke tests | Engineering |
+| Binary accepts JSON-RPC via stdin and responds via stdout | Engineering |
+| Parse errors return valid JSON-RPC error on stdout | Engineering |
+| No secrets logged to stdout or stderr | Engineering |
+| Clean shutdown on SIGINT/SIGTERM | Engineering |
 
 ---
 
@@ -445,25 +548,22 @@ Phase A does **not** implement these gates, but they **must** be implemented bef
 
 ## 8. Future Handoff
 
-### 8.1 Handoff to Phase B
+### 8.1 Phase A+B Summary
 
-When Phase A is complete, Phase B should:
-
-1. **Add MCP SDK dependency** to `Cargo.toml` when the SDK is needed for full protocol compliance
-2. **Implement full JSON-RPC 2.0** error handling (batch, notification, etc.)
-3. **Add Streamable HTTP transport** option (stdio is primary for local agents)
-4. **Add protocol version negotiation** in `initialize` handler
-5. **Add client capabilities handling** in `initialize` handler
+Phase A and Phase B are **complete**. The crate now has:
+- Read-only tool registry with 9 tools
+- JSON-RPC 2.0 types and error codes
+- Handler stubs for `initialize`, `ping`, `tools/list`, `tools/call`
+- `dispatch()` and `parse_request()` functions
 
 ### 8.2 Handoff to Phase C
 
-When Phase B is complete, Phase C should:
+When Phase C implementation begins:
 
-1. **Implement real `tools/list`** by querying REST API instead of static registry
-2. **Implement real `tools/call`** by calling REST API with proper request/response mapping
-3. **Add MCP SDK types** for `CallToolResult`, `ListToolsResult`, etc.
-4. **Implement `resources/list`** handler (optional)
-5. **Implement `prompts/list`** handler (optional)
+1. **Create binary entry point** at `src/bin/ferrum-mcp-server.rs`
+2. **Implement stdio transport loop** using existing `parse_request()` and `dispatch()`
+3. **Add smoke tests** piping JSON-RPC via stdin/stdout
+4. **Do NOT add** MCP SDK, gateway calls, or mutating tools
 
 ### 8.3 Handoff to Phase D
 
@@ -496,33 +596,27 @@ When Phase C is complete, Phase D should:
 
 ## 10. Checklist Summary
 
-### Crate Setup (A.1–A.7)
-- [ ] A.1 Create directory structure
-- [ ] A.2 Create Cargo.toml
-- [ ] A.3 Add to workspace
-- [ ] A.4 Create lib.rs module structure
-- [ ] A.5 Create main binary entry point
-- [ ] A.6 Add dependencies
-- [ ] A.7 Verify cargo check passes
+### Phase A+B Summary (Complete)
 
-### Schema Draft (A.8–A.17)
-- [ ] A.8–A.17 Draft all 9 tool schemas
+| Phase | Status |
+|-------|--------|
+| Phase A (skeleton + tool registry) | ✅ Complete |
+| Phase B (JSON-RPC + handlers) | ✅ Complete |
+| Phase C (stdio + binary) | ✅ Complete |
 
-### Stdio Transport (A.18–A.23)
-- [ ] A.18–A.23 Implement stdio transport skeleton
+### Phase C Checklist (C.1–C.10)
 
-### Handler Stubs (A.24–A.29)
-- [ ] A.24–A.29 Implement handler stubs
-
-### Tool Registry (A.30–A.34)
-- [ ] A.30–A.34 Define tool registry
-
-### Test Stubs (A.35–A.40)
-- [ ] A.35–A.40 Write tests proving read-only constraint
-
-### Documentation (A.41–A.44)
-- [ ] A.41–A.44 Create docs
+- [x] C.1 Create `src/bin/ferrum-mcp-server.rs`
+- [x] C.2 Add `[[bin]]` target to `Cargo.toml` (N/A - auto-detected)
+- [x] C.3 Implement stdin line reader
+- [x] C.4 Implement stdout line writer
+- [x] C.5 Wire `parse_request()` → `dispatch()` → response
+- [x] C.6 Handle SIGINT/SIGTERM gracefully (partial - clean exit on EOF)
+- [x] C.7 Write binary smoke test
+- [x] C.8 Verify `cargo test -p ferrum-integrations-mcp` passes
+- [x] C.9 Verify `cargo check --workspace` passes
+- [x] C.10 Update this document
 
 ---
 
-*Document created: 2026-05-06. Pre-implementation planning only. Phase A skeleton only. No production-ready claim. MCP server is post-v1 scope (v1.4 MCP Governance Beta).*
+*Document created: 2026-05-06. Phase A (skeleton), Phase B (JSON-RPC handlers), and Phase C (stdio transport + binary) complete. No production-ready claim. MCP server is post-v1 scope (v1.4 MCP Governance Beta).*
