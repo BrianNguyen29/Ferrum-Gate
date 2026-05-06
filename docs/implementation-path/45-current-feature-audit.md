@@ -310,7 +310,7 @@ Kiểm toán được coi là hoàn thành khi:
 | ferrumd | 6 | Daemon config + unsupported DSN guardrails |
 | ferrum-stress | 0 | Stress binary compile coverage |
 | ferrum-testkit | 0 | Testkit compile coverage |
-| Integration tests | 82 | contracts(2) + fs-roundtrip(7) + gateway-flow(65) + lineage-chain(8) |
+| Integration tests | 87 | contracts(2) + fs-roundtrip(7) + gateway-flow(65) + lineage-chain(13) |
 | **Tổng** | **~797** | includes integration tests, invalid_transitions(22), and ferrum-sync doctest |
 
 ---

@@ -101,7 +101,7 @@ Full workspace check/clippy/test pass locally with 0 failures. Prefer command-le
 | ferrum-sync | 65 | ExternalEventSource + RuntimeBridge + McpBridge + preflight/decision/diff-classifier |
 | ferrumctl | 48 | list-intents/cancel-execution/pause-execution + policy bundle CRUD + author bundle bump + backup/restore |
 | ferrumd | 6 | Daemon config + unsupported DSN guardrails |
-| Integration tests | 82 | contracts(2) + fs-roundtrip(7) + gateway-flow(65) + lineage-chain(8) |
+| Integration tests | 87 | contracts(2) + fs-roundtrip(7) + gateway-flow(65) + lineage-chain(13) |
 | ferrum-rollback | 11 | ExecutionPlan + PlannableAdapter + auto-planning in RollbackService |
 
 ## Next step
