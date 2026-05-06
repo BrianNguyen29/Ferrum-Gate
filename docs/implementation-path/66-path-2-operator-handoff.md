@@ -164,12 +164,15 @@ Phase B is complete when:
 
 | From | To | Purpose |
 |------|----|---------|
+| This doc | `68-path-2-operator-handoff-packet.md` | **Concise operator quick-reference** |
 | This doc | `65-path-2-target-questionnaire.md` | Required operator inputs before Phase B |
 | This doc | `63-path-2-target-environment-spec.md` | Marker guidance for target fields |
 | This doc | `61-path-2-execution-plan.md` | Path 2 execution checklist |
 | This doc | `62-path-2-operator-runbook.md` | Exact operator command sequences |
 | This doc | `54-operator-signoff-packet.md` | Final operator signoff form |
 | This doc | `67-production-readiness-roadmap.md` | Consolidated roadmap with priorities, blockers, owners, evidence |
+
+> **For a concise operator quick-reference**, see [`68-path-2-operator-handoff-packet.md`](./68-path-2-operator-handoff-packet.md).
 
 ---
 
