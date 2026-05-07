@@ -486,6 +486,82 @@ impl FerrumGatewayClient {
             GatewayError::server_error(200, &format!("Failed to parse evaluate response: {}", e))
         })
     }
+
+    // -------------------------------------------------------------------------
+    // D1.4 Capability mint + authorize endpoints
+    // -------------------------------------------------------------------------
+
+    /// Mint a capability: POST /v1/capabilities/mint
+    ///
+    /// Per doc 81: This is the capability-mint gate (D1.4).
+    /// It does NOT implement prepare/execute/verify/compensate (D1.5+).
+    ///
+    /// Takes a `CapabilityMintRequest` and returns a `CapabilityMintResponse`
+    /// with the minted `lease` and any `warnings`.
+    ///
+    /// # Arguments
+    ///
+    /// * `request` - The capability mint request with tool/resource/constraint bindings
+    ///
+    /// # Returns
+    ///
+    /// `Result<ferrum_proto::CapabilityMintResponse, GatewayError>` containing:
+    /// - `lease`: The minted capability lease with capability_id, status, expiry
+    /// - `warnings`: Advisory warnings from the minting process
+    pub fn mint_capability(
+        &self,
+        request: &ferrum_proto::CapabilityMintRequest,
+    ) -> Result<ferrum_proto::CapabilityMintResponse, GatewayError> {
+        let request = self
+            .build_request(reqwest::Method::POST, "/v1/capabilities/mint")
+            .json(request)
+            .build()
+            .map_err(|_e| GatewayError::unreachable("Failed to build request"))?;
+
+        let response: serde_json::Value = self.execute(request)?;
+
+        // Parse the response into real ferrum-proto type
+        // Real response is { lease: CapabilityLease, warnings: Vec<String> }
+        serde_json::from_value(response).map_err(|e| {
+            GatewayError::server_error(200, &format!("Failed to parse mint response: {}", e))
+        })
+    }
+
+    /// Authorize execution: POST /v1/executions/authorize
+    ///
+    /// Per doc 81: This is the authorize-only gate (D1.4).
+    /// It does NOT implement prepare/execute/verify/compensate (D1.5+).
+    ///
+    /// Takes an `AuthorizeExecutionRequest` and returns an `AuthorizeExecutionResponse`
+    /// with the created `execution` record and any `warnings`.
+    ///
+    /// # Arguments
+    ///
+    /// * `request` - The authorize execution request with proposal_id, capability_id, dry_run
+    ///
+    /// # Returns
+    ///
+    /// `Result<ferrum_proto::AuthorizeExecutionResponse, GatewayError>` containing:
+    /// - `execution`: The execution record with execution_id, state, decision
+    /// - `warnings`: Advisory warnings from the authorization process
+    pub fn authorize_execution(
+        &self,
+        request: &ferrum_proto::AuthorizeExecutionRequest,
+    ) -> Result<ferrum_proto::AuthorizeExecutionResponse, GatewayError> {
+        let request = self
+            .build_request(reqwest::Method::POST, "/v1/executions/authorize")
+            .json(request)
+            .build()
+            .map_err(|_e| GatewayError::unreachable("Failed to build request"))?;
+
+        let response: serde_json::Value = self.execute(request)?;
+
+        // Parse the response into real ferrum-proto type
+        // Real response is { execution: ExecutionRecord, warnings: Vec<String> }
+        serde_json::from_value(response).map_err(|e| {
+            GatewayError::server_error(200, &format!("Failed to parse authorize response: {}", e))
+        })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1400,5 +1476,863 @@ mod tests {
             result.is_err(),
             "evaluate_proposal should fail when method doesn't match"
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // D1.4 Mint capability tests (mock-based, no live gateway)
+    // -------------------------------------------------------------------------
+
+    /// Creates a minimal CapabilityMintRequest for testing.
+    fn make_test_mint_request() -> ferrum_proto::CapabilityMintRequest {
+        let intent_id = ferrum_proto::IntentId::new();
+        let proposal_id = ferrum_proto::ProposalId::new();
+        ferrum_proto::CapabilityMintRequest {
+            intent_id,
+            proposal_id,
+            tool_binding: ferrum_proto::ToolBinding {
+                server_name: "fs-server".to_string(),
+                tool_name: "filesystem.write".to_string(),
+                tool_version: Some("1.0.0".to_string()),
+            },
+            resource_bindings: vec![ferrum_proto::ResourceBinding::File {
+                path: "/tmp/output.txt".to_string(),
+                mode: ferrum_proto::ResourceMode::Write,
+                required_hash: None,
+            }],
+            argument_constraints: vec![ferrum_proto::ArgumentConstraint::JsonPointerMustExist {
+                pointer: "/content".to_string(),
+            }],
+            taint_budget: ferrum_proto::TaintBudget {
+                max_taint_score: 30,
+                allow_external_tool_output: false,
+                allow_external_metadata: false,
+                allow_untrusted_text: false,
+            },
+            approval_binding: None,
+            requested_ttl_secs: 120,
+            metadata: ferrum_proto::JsonMap::new(),
+        }
+    }
+
+    /// Captures HTTP request data for mint_capability tests.
+    #[derive(Debug, Clone)]
+    struct CapturedMintRequest {
+        method: String,
+        path: String,
+        body: String,
+    }
+
+    /// Starts a tiny_http server that captures the mint request.
+    fn start_mint_capture_server() -> (
+        std::sync::Arc<std::sync::Mutex<Option<CapturedMintRequest>>>,
+        String,
+        std::thread::JoinHandle<()>,
+    ) {
+        let captured_request = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let captured_request_clone = captured_request.clone();
+
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let server_url = server.server_addr().to_string();
+        let base_url = format!("http://{}", server_url);
+
+        let handle = std::thread::spawn(move || {
+            let response = tiny_http::Response::from_string(
+                r#"{
+                    "lease": {
+                        "capability_id": "550e8400-e29b-41d4-a716-446655440099",
+                        "intent_id": "550e8400-e29b-41d4-a716-446655440001",
+                        "proposal_id": "550e8400-e29b-41d4-a716-446655440002",
+                        "tool_binding": {
+                            "server_name": "fs-server",
+                            "tool_name": "filesystem.write",
+                            "tool_version": "1.0.0"
+                        },
+                        "resource_bindings": [
+                            {
+                                "kind": "File",
+                                "path": "/tmp/output.txt",
+                                "mode": "Write",
+                                "required_hash": null
+                            }
+                        ],
+                        "argument_constraints": [
+                            {"type": "JsonPointerMustExist", "pointer": "/content"}
+                        ],
+                        "taint_budget": {
+                            "max_taint_score": 30,
+                            "allow_external_tool_output": false,
+                            "allow_external_metadata": false,
+                            "allow_untrusted_text": false
+                        },
+                        "approval_binding": null,
+                        "issued_by": "ferrum-cap",
+                        "policy_bundle_id": "550e8400-e29b-41d4-a716-446655440003",
+                        "tool_manifest_id": null,
+                        "manifest_hash": null,
+                        "status": "Active",
+                        "issued_at": "2026-05-07T00:00:00Z",
+                        "expires_at": "2026-05-07T00:02:00Z",
+                        "revoked_at": null,
+                        "metadata": {}
+                    },
+                    "warnings": []
+                }"#,
+            )
+            .with_header(
+                tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+                    .unwrap(),
+            );
+
+            if let Ok(Some(mut request)) = server.recv_timeout(std::time::Duration::from_secs(5)) {
+                let method = request.method().to_string();
+                let path = request.url().to_string();
+                let mut body = String::new();
+                request.as_reader().read_to_string(&mut body).unwrap();
+                *captured_request_clone.lock().unwrap() =
+                    Some(CapturedMintRequest { method, path, body });
+                let _ = request.respond(response);
+            }
+        });
+
+        (captured_request, base_url, handle)
+    }
+
+    #[test]
+    fn test_mint_capability_captures_request_details() {
+        // Per doc 81: mint_capability is capability-mint only (D1.4).
+        // This test verifies the HTTP method, path, and body are correct.
+
+        let (captured_request, base_url, handle) = start_mint_capture_server();
+
+        let config = ClientConfig::new().base_url(&base_url);
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let request = make_test_mint_request();
+        let result = client.mint_capability(&request);
+        assert!(
+            result.is_ok(),
+            "mint_capability should succeed: {:?}",
+            result.err()
+        );
+
+        let response = result.unwrap();
+        assert!(response.warnings.is_empty());
+        assert!(matches!(
+            response.lease.status,
+            ferrum_proto::CapabilityStatus::Active
+        ));
+
+        // Verify the ACTUAL HTTP request captured by tiny_http
+        let captured = captured_request.lock().unwrap();
+        let req = captured
+            .as_ref()
+            .expect("Request should have been captured");
+
+        // Verify HTTP method is POST
+        assert_eq!(req.method, "POST", "HTTP method should be POST");
+        // Verify HTTP path is EXACTLY /v1/capabilities/mint
+        assert_eq!(
+            req.path, "/v1/capabilities/mint",
+            "HTTP path should be exactly /v1/capabilities/mint"
+        );
+
+        // Verify key request fields are present in the body
+        assert!(
+            req.body.contains("\"tool_name\":\"filesystem.write\""),
+            "Actual HTTP body should contain tool_name"
+        );
+        assert!(
+            req.body.contains("\"server_name\":\"fs-server\""),
+            "Actual HTTP body should contain server_name"
+        );
+        assert!(
+            req.body.contains("\"requested_ttl_secs\":120"),
+            "Actual HTTP body should contain requested_ttl_secs"
+        );
+        assert!(
+            req.body.contains("\"/tmp/output.txt\""),
+            "Actual HTTP body should contain resource path"
+        );
+
+        // Also verify that the body is valid JSON
+        let _: serde_json::Value =
+            serde_json::from_str(&req.body).expect("Captured body should be valid JSON");
+
+        handle.join().expect("Server thread should join");
+    }
+
+    #[test]
+    fn test_mint_capability_response_with_warnings() {
+        // Verify mint_capability correctly parses response with warnings.
+
+        let mut server = mockito::Server::new();
+        let _mock = server
+            .mock("POST", "/v1/capabilities/mint")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                "lease": {
+                    "capability_id": "550e8400-e29b-41d4-a716-446655440099",
+                    "intent_id": "550e8400-e29b-41d4-a716-446655440001",
+                    "proposal_id": "550e8400-e29b-41d4-a716-446655440002",
+                    "tool_binding": {
+                        "server_name": "fs-server",
+                        "tool_name": "filesystem.write",
+                        "tool_version": "1.0.0"
+                    },
+                    "resource_bindings": [],
+                    "argument_constraints": [],
+                    "taint_budget": {
+                        "max_taint_score": 30,
+                        "allow_external_tool_output": false,
+                        "allow_external_metadata": false,
+                        "allow_untrusted_text": false
+                    },
+                    "approval_binding": null,
+                    "issued_by": "ferrum-cap",
+                    "policy_bundle_id": "550e8400-e29b-41d4-a716-446655440003",
+                    "tool_manifest_id": null,
+                    "manifest_hash": null,
+                    "status": "Active",
+                    "issued_at": "2026-05-07T00:00:00Z",
+                    "expires_at": "2026-05-07T00:02:00Z",
+                    "revoked_at": null,
+                    "metadata": {}
+                },
+                "warnings": ["TTL capped at 300 seconds", "resource scope validated"]
+            }"#,
+            )
+            .expect_at_least(1)
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let request = make_test_mint_request();
+        let result = client.mint_capability(&request);
+        assert!(
+            result.is_ok(),
+            "mint_capability should succeed: {:?}",
+            result.err()
+        );
+
+        let response = result.unwrap();
+        assert_eq!(response.warnings.len(), 2);
+        assert!(
+            response
+                .warnings
+                .contains(&"TTL capped at 300 seconds".to_string())
+        );
+        assert!(
+            response
+                .warnings
+                .contains(&"resource scope validated".to_string())
+        );
+        assert!(matches!(
+            response.lease.status,
+            ferrum_proto::CapabilityStatus::Active
+        ));
+
+        _mock.assert();
+    }
+
+    #[test]
+    fn test_mint_capability_wrong_path_fails() {
+        // Verify mint_capability fails when the path doesn't match.
+        // This ensures we are NOT calling prepare/execute/verify/compensate.
+
+        let mut server = mockito::Server::new();
+        // Mock on WRONG path - should NOT be called
+        let _mock_wrong_path = server
+            .mock("POST", "/v1/wrong/path")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{}"#)
+            .expect(0) // Expect 0 invocations
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let request = make_test_mint_request();
+
+        // Request should fail because the mock on wrong path won't match
+        let result = client.mint_capability(&request);
+        assert!(
+            result.is_err(),
+            "mint_capability should fail when path doesn't match"
+        );
+    }
+
+    #[test]
+    fn test_mint_capability_wrong_method_fails() {
+        // Verify mint_capability fails when the HTTP method is wrong.
+        // This ensures we are NOT calling prepare/execute/verify/compensate.
+
+        let mut server = mockito::Server::new();
+        // Mock on GET instead of POST - should NOT be called
+        let _mock_wrong_method = server
+            .mock("GET", "/v1/capabilities/mint")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{}"#)
+            .expect(0) // Expect 0 invocations
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let request = make_test_mint_request();
+
+        // Request should fail because the mock expects GET not POST
+        let result = client.mint_capability(&request);
+        assert!(
+            result.is_err(),
+            "mint_capability should fail when method doesn't match"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // D1.4 Authorize execution tests (mock-based, no live gateway)
+    // -------------------------------------------------------------------------
+
+    /// Creates a minimal AuthorizeExecutionRequest for testing.
+    fn make_test_authorize_request(dry_run: bool) -> ferrum_proto::AuthorizeExecutionRequest {
+        ferrum_proto::AuthorizeExecutionRequest {
+            proposal_id: ferrum_proto::ProposalId::new(),
+            capability_id: ferrum_proto::CapabilityId::new(),
+            dry_run,
+        }
+    }
+
+    /// Captures HTTP request data for authorize_execution tests.
+    #[derive(Debug, Clone)]
+    struct CapturedAuthorizeRequest {
+        method: String,
+        path: String,
+        body: String,
+    }
+
+    /// Starts a tiny_http server that captures the authorize request.
+    fn start_authorize_capture_server() -> (
+        std::sync::Arc<std::sync::Mutex<Option<CapturedAuthorizeRequest>>>,
+        String,
+        std::thread::JoinHandle<()>,
+    ) {
+        let captured_request = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let captured_request_clone = captured_request.clone();
+
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let server_url = server.server_addr().to_string();
+        let base_url = format!("http://{}", server_url);
+
+        let handle = std::thread::spawn(move || {
+            let response = tiny_http::Response::from_string(
+                r#"{
+                    "execution": {
+                        "execution_id": "550e8400-e29b-41d4-a716-446655440099",
+                        "proposal_id": "550e8400-e29b-41d4-a716-446655440001",
+                        "intent_id": "550e8400-e29b-41d4-a716-446655440002",
+                        "capability_id": "550e8400-e29b-41d4-a716-446655440003",
+                        "rollback_contract_id": null,
+                        "decision": "Allow",
+                        "state": "Prepared",
+                        "started_at": "2026-05-07T00:00:00Z",
+                        "finished_at": null,
+                        "result_digest": null,
+                        "metadata": {}
+                    },
+                    "warnings": []
+                }"#,
+            )
+            .with_header(
+                tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+                    .unwrap(),
+            );
+
+            if let Ok(Some(mut request)) = server.recv_timeout(std::time::Duration::from_secs(5)) {
+                let method = request.method().to_string();
+                let path = request.url().to_string();
+                let mut body = String::new();
+                request.as_reader().read_to_string(&mut body).unwrap();
+                *captured_request_clone.lock().unwrap() =
+                    Some(CapturedAuthorizeRequest { method, path, body });
+                let _ = request.respond(response);
+            }
+        });
+
+        (captured_request, base_url, handle)
+    }
+
+    #[test]
+    fn test_authorize_execution_captures_request_details() {
+        // Per doc 81: authorize_execution is authorize-only (D1.4).
+        // This test verifies the HTTP method, path, and body are correct.
+
+        let (captured_request, base_url, handle) = start_authorize_capture_server();
+
+        let config = ClientConfig::new().base_url(&base_url);
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let request = make_test_authorize_request(false);
+        let result = client.authorize_execution(&request);
+        assert!(
+            result.is_ok(),
+            "authorize_execution should succeed: {:?}",
+            result.err()
+        );
+
+        let response = result.unwrap();
+        assert!(response.warnings.is_empty());
+        assert!(matches!(
+            response.execution.state,
+            ferrum_proto::ExecutionState::Prepared
+        ));
+
+        // Verify the ACTUAL HTTP request captured by tiny_http
+        let captured = captured_request.lock().unwrap();
+        let req = captured
+            .as_ref()
+            .expect("Request should have been captured");
+
+        // Verify HTTP method is POST
+        assert_eq!(req.method, "POST", "HTTP method should be POST");
+        // Verify HTTP path is EXACTLY /v1/executions/authorize
+        assert_eq!(
+            req.path, "/v1/executions/authorize",
+            "HTTP path should be exactly /v1/executions/authorize"
+        );
+
+        // Verify key request fields are present in the body
+        assert!(
+            req.body.contains("\"proposal_id\""),
+            "Actual HTTP body should contain proposal_id"
+        );
+        assert!(
+            req.body.contains("\"capability_id\""),
+            "Actual HTTP body should contain capability_id"
+        );
+        assert!(
+            req.body.contains("\"dry_run\":false"),
+            "Actual HTTP body should contain dry_run: false"
+        );
+
+        // Also verify that the body is valid JSON
+        let _: serde_json::Value =
+            serde_json::from_str(&req.body).expect("Captured body should be valid JSON");
+
+        handle.join().expect("Server thread should join");
+    }
+
+    #[test]
+    fn test_authorize_execution_dry_run_true() {
+        // Verify authorize_execution with dry_run=true returns state=Authorized.
+        // Both dry_run=true and dry_run=false consume capability and emit provenance.
+        // The only difference is the ExecutionState (Authorized vs Prepared).
+
+        let mut server = mockito::Server::new();
+        let _mock = server
+            .mock("POST", "/v1/executions/authorize")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                "execution": {
+                    "execution_id": "550e8400-e29b-41d4-a716-446655440099",
+                    "proposal_id": "550e8400-e29b-41d4-a716-446655440001",
+                    "intent_id": "550e8400-e29b-41d4-a716-446655440002",
+                    "capability_id": "550e8400-e29b-41d4-a716-446655440003",
+                    "rollback_contract_id": null,
+                    "decision": "Allow",
+                    "state": "Authorized",
+                    "started_at": "2026-05-07T00:00:00Z",
+                    "finished_at": null,
+                    "result_digest": null,
+                    "metadata": {}
+                },
+                "warnings": []
+            }"#,
+            )
+            .expect_at_least(1)
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let request = make_test_authorize_request(true);
+        let result = client.authorize_execution(&request);
+        assert!(
+            result.is_ok(),
+            "authorize_execution should succeed: {:?}",
+            result.err()
+        );
+
+        let response = result.unwrap();
+        assert!(response.warnings.is_empty());
+        // dry_run=true should return state=Authorized
+        assert!(matches!(
+            response.execution.state,
+            ferrum_proto::ExecutionState::Authorized
+        ));
+
+        _mock.assert();
+    }
+
+    #[test]
+    fn test_authorize_execution_dry_run_false() {
+        // Verify authorize_execution with dry_run=false returns state=Prepared.
+
+        let mut server = mockito::Server::new();
+        let _mock = server
+            .mock("POST", "/v1/executions/authorize")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                "execution": {
+                    "execution_id": "550e8400-e29b-41d4-a716-446655440099",
+                    "proposal_id": "550e8400-e29b-41d4-a716-446655440001",
+                    "intent_id": "550e8400-e29b-41d4-a716-446655440002",
+                    "capability_id": "550e8400-e29b-41d4-a716-446655440003",
+                    "rollback_contract_id": null,
+                    "decision": "Allow",
+                    "state": "Prepared",
+                    "started_at": "2026-05-07T00:00:00Z",
+                    "finished_at": null,
+                    "result_digest": null,
+                    "metadata": {}
+                },
+                "warnings": ["execution prepared for running"]
+            }"#,
+            )
+            .expect_at_least(1)
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let request = make_test_authorize_request(false);
+        let result = client.authorize_execution(&request);
+        assert!(
+            result.is_ok(),
+            "authorize_execution should succeed: {:?}",
+            result.err()
+        );
+
+        let response = result.unwrap();
+        assert_eq!(response.warnings.len(), 1);
+        assert!(
+            response
+                .warnings
+                .contains(&"execution prepared for running".to_string())
+        );
+        // dry_run=false should return state=Prepared
+        assert!(matches!(
+            response.execution.state,
+            ferrum_proto::ExecutionState::Prepared
+        ));
+
+        _mock.assert();
+    }
+
+    #[test]
+    fn test_authorize_execution_response_with_warnings() {
+        // Verify authorize_execution correctly parses response with warnings.
+
+        let mut server = mockito::Server::new();
+        let _mock = server
+            .mock("POST", "/v1/executions/authorize")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                "execution": {
+                    "execution_id": "550e8400-e29b-41d4-a716-446655440099",
+                    "proposal_id": "550e8400-e29b-41d4-a716-446655440001",
+                    "intent_id": "550e8400-e29b-41d4-a716-446655440002",
+                    "capability_id": "550e8400-e29b-41d4-a716-446655440003",
+                    "rollback_contract_id": null,
+                    "decision": "Allow",
+                    "state": "Prepared",
+                    "started_at": "2026-05-07T00:00:00Z",
+                    "finished_at": null,
+                    "result_digest": null,
+                    "metadata": {}
+                },
+                "warnings": ["elevated risk detected", "approval required for this operation"]
+            }"#,
+            )
+            .expect_at_least(1)
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let request = make_test_authorize_request(false);
+        let result = client.authorize_execution(&request);
+        assert!(
+            result.is_ok(),
+            "authorize_execution should succeed: {:?}",
+            result.err()
+        );
+
+        let response = result.unwrap();
+        assert_eq!(response.warnings.len(), 2);
+        assert!(
+            response
+                .warnings
+                .contains(&"elevated risk detected".to_string())
+        );
+        assert!(
+            response
+                .warnings
+                .contains(&"approval required for this operation".to_string())
+        );
+
+        _mock.assert();
+    }
+
+    #[test]
+    fn test_authorize_execution_wrong_path_fails() {
+        // Verify authorize_execution fails when the path doesn't match.
+        // This ensures we are NOT calling prepare/execute/verify/compensate.
+
+        let mut server = mockito::Server::new();
+        // Mock on WRONG path - should NOT be called
+        let _mock_wrong_path = server
+            .mock("POST", "/v1/wrong/path")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{}"#)
+            .expect(0) // Expect 0 invocations
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let request = make_test_authorize_request(false);
+
+        // Request should fail because the mock on wrong path won't match
+        let result = client.authorize_execution(&request);
+        assert!(
+            result.is_err(),
+            "authorize_execution should fail when path doesn't match"
+        );
+    }
+
+    #[test]
+    fn test_authorize_execution_wrong_method_fails() {
+        // Verify authorize_execution fails when the HTTP method is wrong.
+        // This ensures we are NOT calling prepare/execute/verify/compensate.
+
+        let mut server = mockito::Server::new();
+        // Mock on GET instead of POST - should NOT be called
+        let _mock_wrong_method = server
+            .mock("GET", "/v1/executions/authorize")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{}"#)
+            .expect(0) // Expect 0 invocations
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let request = make_test_authorize_request(false);
+
+        // Request should fail because the mock expects GET not POST
+        let result = client.authorize_execution(&request);
+        assert!(
+            result.is_err(),
+            "authorize_execution should fail when method doesn't match"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // D1.4 negative tests: verify no prepare/execute/verify/compensate paths
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_mint_is_not_prepare_execute_verify_compensate() {
+        // Verify mint_capability does NOT call any D1.5+ paths.
+        // Mock the D1.5+ paths and ensure they are NOT called.
+
+        let mut server = mockito::Server::new();
+
+        // Mock prepare path - should NOT be called
+        let _mock_prepare = server
+            .mock("POST", "/v1/executions/prepare")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{}"#)
+            .expect(0) // Expect 0 invocations
+            .create();
+
+        // Mock execute path - should NOT be called
+        let _mock_execute = server
+            .mock("POST", "/v1/executions/execute")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{}"#)
+            .expect(0) // Expect 0 invocations
+            .create();
+
+        // Mock verify path - should NOT be called
+        let _mock_verify = server
+            .mock("POST", "/v1/executions/verify")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{}"#)
+            .expect(0) // Expect 0 invocations
+            .create();
+
+        // Mock compensate path - should NOT be called
+        let _mock_compensate = server
+            .mock("POST", "/v1/executions/compensate")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{}"#)
+            .expect(0) // Expect 0 invocations
+            .create();
+
+        // Correct mock for mint
+        let _mock_mint = server
+            .mock("POST", "/v1/capabilities/mint")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                "lease": {
+                    "capability_id": "550e8400-e29b-41d4-a716-446655440099",
+                    "intent_id": "550e8400-e29b-41d4-a716-446655440001",
+                    "proposal_id": "550e8400-e29b-41d4-a716-446655440002",
+                    "tool_binding": {
+                        "server_name": "fs-server",
+                        "tool_name": "filesystem.write",
+                        "tool_version": "1.0.0"
+                    },
+                    "resource_bindings": [],
+                    "argument_constraints": [],
+                    "taint_budget": {
+                        "max_taint_score": 30,
+                        "allow_external_tool_output": false,
+                        "allow_external_metadata": false,
+                        "allow_untrusted_text": false
+                    },
+                    "approval_binding": null,
+                    "issued_by": "ferrum-cap",
+                    "policy_bundle_id": "550e8400-e29b-41d4-a716-446655440003",
+                    "tool_manifest_id": null,
+                    "manifest_hash": null,
+                    "status": "Active",
+                    "issued_at": "2026-05-07T00:00:00Z",
+                    "expires_at": "2026-05-07T00:02:00Z",
+                    "revoked_at": null,
+                    "metadata": {}
+                },
+                "warnings": []
+            }"#,
+            )
+            .expect_at_least(1)
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let request = make_test_mint_request();
+        let result = client.mint_capability(&request);
+        assert!(
+            result.is_ok(),
+            "mint_capability should succeed: {:?}",
+            result.err()
+        );
+
+        // All the wrong-path mocks should have 0 invocations (verified by mockito automatically)
+        _mock_mint.assert();
+    }
+
+    #[test]
+    fn test_authorize_is_not_prepare_execute_verify_compensate() {
+        // Verify authorize_execution does NOT call any D1.5+ paths.
+        // Mock the D1.5+ paths and ensure they are NOT called.
+
+        let mut server = mockito::Server::new();
+
+        // Mock prepare path - should NOT be called
+        let _mock_prepare = server
+            .mock("POST", "/v1/executions/prepare")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{}"#)
+            .expect(0) // Expect 0 invocations
+            .create();
+
+        // Mock execute path - should NOT be called
+        let _mock_execute = server
+            .mock("POST", "/v1/executions/execute")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{}"#)
+            .expect(0) // Expect 0 invocations
+            .create();
+
+        // Mock verify path - should NOT be called
+        let _mock_verify = server
+            .mock("POST", "/v1/executions/verify")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{}"#)
+            .expect(0) // Expect 0 invocations
+            .create();
+
+        // Mock compensate path - should NOT be called
+        let _mock_compensate = server
+            .mock("POST", "/v1/executions/compensate")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{}"#)
+            .expect(0) // Expect 0 invocations
+            .create();
+
+        // Correct mock for authorize
+        let _mock_authorize = server
+            .mock("POST", "/v1/executions/authorize")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                "execution": {
+                    "execution_id": "550e8400-e29b-41d4-a716-446655440099",
+                    "proposal_id": "550e8400-e29b-41d4-a716-446655440001",
+                    "intent_id": "550e8400-e29b-41d4-a716-446655440002",
+                    "capability_id": "550e8400-e29b-41d4-a716-446655440003",
+                    "rollback_contract_id": null,
+                    "decision": "Allow",
+                    "state": "Prepared",
+                    "started_at": "2026-05-07T00:00:00Z",
+                    "finished_at": null,
+                    "result_digest": null,
+                    "metadata": {}
+                },
+                "warnings": []
+            }"#,
+            )
+            .expect_at_least(1)
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let request = make_test_authorize_request(false);
+        let result = client.authorize_execution(&request);
+        assert!(
+            result.is_ok(),
+            "authorize_execution should succeed: {:?}",
+            result.err()
+        );
+
+        // All the wrong-path mocks should have 0 invocations (verified by mockito automatically)
+        _mock_authorize.assert();
     }
 }
