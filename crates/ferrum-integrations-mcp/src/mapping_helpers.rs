@@ -328,8 +328,8 @@ pub fn infer_risk_tier(action_type: &str) -> RiskTier {
         // Destructive/irreversible — Critical risk
         "sql_mutate" | "db_mutate" | "fs_delete" | "git_force_push" => RiskTier::Critical,
 
-        // Unknown — Medium risk by default (fail-open for unmapped actions)
-        _ => RiskTier::Medium,
+        // Unknown — High risk by default (fail-closed for unmapped actions)
+        _ => RiskTier::High,
     }
 }
 
@@ -339,9 +339,9 @@ pub fn infer_risk_tier(action_type: &str) -> RiskTier {
 
 /// Derives `ApprovalMode` from `RiskTier`.
 ///
-/// Policy per doc 77:
+/// Policy per doc 77 (updated per D78-9):
 /// - Low → None
-/// - Medium → DraftOnly
+/// - Medium → Required (D78-9: DraftOnly changed to Required — MCP has no draft workflow)
 /// - High → Required
 /// - Critical → TwoPhaseCommit
 ///
@@ -349,7 +349,7 @@ pub fn infer_risk_tier(action_type: &str) -> RiskTier {
 pub fn derive_approval_mode(risk_tier: Option<RiskTier>) -> Option<ApprovalMode> {
     risk_tier.map(|tier| match tier {
         RiskTier::Low => ApprovalMode::None,
-        RiskTier::Medium => ApprovalMode::DraftOnly,
+        RiskTier::Medium => ApprovalMode::Required,
         RiskTier::High => ApprovalMode::Required,
         RiskTier::Critical => ApprovalMode::TwoPhaseCommit,
     })
@@ -424,6 +424,8 @@ pub fn parse_resource_scope(scope: &str) -> Result<Vec<ResourceSelector>, Mappin
             }])
         }
         ("git", "push") | ("git", "fetch") | ("git", "force_push") => {
+            // TODO(D78-8): git paths like "git:push:origin:refs/heads/main" need multi-segment
+            // parsing. Currently only takes first path segment (origin).
             let repo_path = parts.get(2).unwrap_or(&"origin");
             Ok(vec![ResourceSelector::GitRepository {
                 repo_path: repo_path.to_string(),
@@ -432,6 +434,8 @@ pub fn parse_resource_scope(scope: &str) -> Result<Vec<ResourceSelector>, Mappin
             }])
         }
         ("sql", "mutate") | ("sql", "query") => {
+            // TODO(D78-8): sql paths with table qualifiers like "sql:mutate:mydb.db:users"
+            // need multi-segment parsing. Currently only takes first path segment (mydb.db).
             let db_path = parts.get(2).unwrap_or(&":memory:");
             Ok(vec![ResourceSelector::SqliteDatabase {
                 db_path: db_path.to_string(),
@@ -490,6 +494,7 @@ fn parse_resource_mode(mode: &str) -> ResourceMode {
         "post" => ResourceMode::Write,
         "get" => ResourceMode::Read,
         "mutate" => ResourceMode::Write,
+        "send" => ResourceMode::Write,
         _ => ResourceMode::Read,
     }
 }
@@ -501,6 +506,10 @@ fn parse_resource_mode(mode: &str) -> ResourceMode {
 /// Resolves `server_name` from `action_type` pattern matching.
 ///
 /// Per doc 77 §2.6: Maps action type prefixes to adapter/server names.
+///
+/// NOTE(D78-4 vocabulary): Server vocabulary ("filesystem", "git", "http", "database",
+/// "email", "mcp") should be verified against actual gateway/server expectations before
+/// D1.3.3 wiring. This prefix-based mapping is a draft assumption.
 ///
 /// This helper is PURE — deterministic, no side effects.
 pub fn resolve_server_name(action_type: &str) -> Result<String, MappingError> {
@@ -588,9 +597,10 @@ mod tests {
     }
 
     #[test]
-    fn test_infer_risk_tier_unknown_defaults_medium() {
-        assert_eq!(infer_risk_tier("unknown_action"), RiskTier::Medium);
-        assert_eq!(infer_risk_tier(""), RiskTier::Medium);
+    fn test_infer_risk_tier_unknown_defaults_high() {
+        // D78-8: Unknown actions fail closed (High) instead of fail open (Medium)
+        assert_eq!(infer_risk_tier("unknown_action"), RiskTier::High);
+        assert_eq!(infer_risk_tier(""), RiskTier::High);
     }
 
     #[test]
@@ -635,9 +645,10 @@ mod tests {
 
     #[test]
     fn test_derive_approval_mode_medium() {
+        // D78-9: Medium risk requires approval (not DraftOnly) — MCP has no draft workflow
         assert_eq!(
             derive_approval_mode(Some(RiskTier::Medium)),
-            Some(ApprovalMode::DraftOnly)
+            Some(ApprovalMode::Required)
         );
     }
 
@@ -855,6 +866,7 @@ mod tests {
                 assert_eq!(recipient_allowlist.len(), 1);
                 assert_eq!(recipient_allowlist[0], "alice@example.com");
                 assert!(subject_prefix_allowlist.is_empty());
+                assert_eq!(mode, &ResourceMode::Write);
             }
             _ => panic!("Expected EmailDraft"),
         }
@@ -973,7 +985,7 @@ mod tests {
         let action = ToolCallAction::new(
             "intent-123".to_string(),
             "fs_write".to_string(),
-            "files:write:/tmp/test.txt".to_string(),
+            "fs:write:/tmp/test.txt".to_string(),
             "/tmp/test.txt".to_string(),
             serde_json::json!({}),
             "agent-001".to_string(),
@@ -1011,7 +1023,7 @@ mod tests {
         let action = ToolCallAction::new(
             "intent-456".to_string(),
             "fs_read".to_string(),
-            "files:read:/etc/passwd".to_string(),
+            "fs:read:/etc/passwd".to_string(),
             "/etc/passwd".to_string(),
             serde_json::json!({}),
             "agent-002".to_string(),

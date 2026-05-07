@@ -146,10 +146,10 @@ Required before D-1.3.2b:
 
 Required before D-1.3.2b:
 
-- [ ] D-1.3.2a helper signatures accepted.
-- [ ] Parser grammar accepted or change request created.
-- [ ] Unknown action behavior accepted or change request created.
-- [ ] Regression test preserving mutating default-deny remains in place.
+- [x] D-1.3.2a helper signatures accepted.
+- [x] Parser grammar accepted or change request created.
+- [x] Unknown action behavior accepted or change request created. **Accepted-with-note**: Unknown actions now fail closed (High) per D78-8.
+- [x] Regression test preserving mutating default-deny remains in place.
 
 ### GATE-3 — Gateway Flow Confirmation
 
@@ -198,10 +198,10 @@ Unless the reviewer chooses otherwise, use these conservative defaults:
 | --- | --- |
 | `http_post` risk | `RiskTier::High` |
 | `http_post` rollback | `RollbackClass::R3IrreversibleHighConsequence` |
-| unknown action type | fail closed with mapping error, not `Medium` |
+| unknown action type | **D78-8: fail closed → `RiskTier::High`** |
 | principal identity | generated draft ID allowed only with explicit non-auth claim |
 | raw inputs | unresolved unless an untrusted MCP-derived `IntentInputRef` policy is written |
-| approval mode | prefer `Required` over `DraftOnly` unless gateway semantics confirm `DraftOnly` |
+| approval mode | **D78-9: `Required` (not `DraftOnly`)** |
 | provenance timing | resolved for D1.3.2b: gateway emits at authorize; MCP direct emission remains forbidden |
 
 ---
@@ -229,6 +229,8 @@ Before D-1.3.2b code changes:
 | D78-5: principal derivation | Accepted for D1.3.2b only | generated draft ID vs stable actor mapping | generated draft ID only with explicit non-auth caveat; stable mapping required before D1.3.3 |
 | D78-6: raw input mapping | Explicitly deferred | direct parameter conversion vs untrusted draft ref vs blocked | remain blocked unless untrusted draft policy is written |
 | D78-7: provenance timing | Accepted/resolved | gateway-authorize-time vs MCP-side earlier emission | gateway emits at authorize; MCP direct emission forbidden |
+| D78-8: unknown action risk | Accepted | Medium (fail-open) vs High (fail-closed) | High — conservative default; multi-segment git/sql paths noted as TODO |
+| D78-9: Medium approval mode | Accepted | DraftOnly vs Required | Required — MCP has no draft workflow; gateway DraftOnly semantics not applicable |
 
 ---
 
