@@ -1,6 +1,6 @@
 //! # ferrum-integrations-mcp
 //!
-//! FerrumGate MCP server integration crate (Phase A-C + Phase D-0 REST client + D1.7 lifecycle dispatch).
+//! FerrumGate MCP server integration crate (Phase A-C + Phase D-0 REST client + D1.7 lifecycle dispatch + D1.8 output sanitization).
 //!
 //! ## Overview
 //!
@@ -9,8 +9,9 @@
 //! - Tool registry with metadata (name, description, input_schema, read_only marker)
 //! - JSON-RPC 2.0 request/response types and error codes
 //! - Handler stubs for initialize, ping, tools/list, tools/call
-//! - Phase D-0: REST client for gateway integration
+//! - Phase D-0: REST client for FerrumGate gateway integration
 //! - D1.7: Lifecycle tool dispatch for approved governance pipeline steps
+//! - D1.8: Output sanitization via TaintScoringFirewall at tools/call choke point
 //!
 //! ## Phase A-C Status (Complete)
 //!
@@ -45,7 +46,25 @@
 //! - Direct provenance emission (gateway-owned)
 //! - Direct state management (gateway-owned)
 //! - Atomic full-pipeline tool (separate step tools per oracle verdict)
+//!
+//! ## D1.8 Status (Implemented — Option A)
+//!
+//! D1.8 Option A implements output sanitization via TaintScoringFirewall at the single
+//! tools/call response choke point in `handle_tools_call_with_client`. All success
+//! responses pass through `TaintScoringFirewall::new().sanitize_output()` before
+//! `JsonRpcResponse::success`.
+//!
+//! D1.8 Option A implements:
+//! - Control character stripping from JSON strings (recursive)
+//! - Whitespace normalization
+//! - UUID/message/warning preservation (no over-redaction)
+//!
+//! D1.8 Option A does NOT implement:
+//! - Field-level redaction or DLP (deferred to future work per oracle verdict)
+//! - Provenance emission (gateway-owned)
+//! - Error response sanitization (errors bypass the sanitize choke point)
 
+use ferrum_firewall::SemanticFirewall;
 use serde::{Deserialize, Serialize};
 
 mod http_client;
@@ -953,7 +972,9 @@ pub fn handle_tools_call_with_client(
     match rest_mapper::map_tool_to_rest(&params.name, params.arguments.as_ref(), client) {
         Ok(result) => {
             let value = serde_json::to_value(result).unwrap();
-            JsonRpcResponse::success(value, id)
+            // D1.8 Option A: sanitize output at the single tools/call response choke point
+            let sanitized = ferrum_firewall::TaintScoringFirewall::new().sanitize_output(value);
+            JsonRpcResponse::success(sanitized, id)
         }
         Err(e) => JsonRpcResponse::error(
             JsonRpcError {
@@ -1453,5 +1474,230 @@ mod tests {
         let identity = ActorIdentity::resolve(None);
         assert_eq!(identity.actor_id, "ferrum-mcp-local");
         assert_eq!(identity.source, ActorSource::Local);
+    }
+
+    // -------------------------------------------------------------------------
+    // D1.8 Tests (Output Sanitization via TaintScoringFirewall)
+    // -------------------------------------------------------------------------
+
+    use ferrum_firewall::TaintScoringFirewall;
+
+    /// D1.8: Control characters stripped from JSON strings.
+    #[test]
+    fn test_sanitize_output_strips_control_chars() {
+        let fw = TaintScoringFirewall::new();
+        let input = serde_json::json!({
+            "content": [{
+                "type": "text",
+                "text": "hello\x00world\x1ftest"
+            }]
+        });
+        let sanitized = fw.sanitize_output(input);
+        let obj = sanitized.as_object().unwrap();
+        let content = obj.get("content").unwrap().as_array().unwrap();
+        let text = content[0]
+            .as_object()
+            .unwrap()
+            .get("text")
+            .unwrap()
+            .as_str()
+            .unwrap();
+        assert_eq!(text, "hello world test");
+    }
+
+    /// D1.8: UUIDs preserved in sanitized output.
+    #[test]
+    fn test_sanitize_output_preserves_uuids() {
+        let fw = TaintScoringFirewall::new();
+        let input = serde_json::json!({
+            "intent_id": "550e8400-e29b-41d4-a716-446655440000",
+            "proposal_id": "123e4567-e89b-12d3-a456-426614174000",
+            "message": "normal message with no control chars"
+        });
+        let sanitized = fw.sanitize_output(input);
+        let obj = sanitized.as_object().unwrap();
+        assert_eq!(
+            obj.get("intent_id").unwrap().as_str().unwrap(),
+            "550e8400-e29b-41d4-a716-446655440000"
+        );
+        assert_eq!(
+            obj.get("proposal_id").unwrap().as_str().unwrap(),
+            "123e4567-e89b-12d3-a456-426614174000"
+        );
+        assert_eq!(
+            obj.get("message").unwrap().as_str().unwrap(),
+            "normal message with no control chars"
+        );
+    }
+
+    /// D1.8: Messages and warnings preserved in sanitized output.
+    #[test]
+    fn test_sanitize_output_preserves_messages_and_warnings() {
+        let fw = TaintScoringFirewall::new();
+        let input = serde_json::json!({
+            "message": "Operation completed successfully",
+            "warnings": ["warning one", "warning two"],
+            "diagnostics": "All systems nominal"
+        });
+        let sanitized = fw.sanitize_output(input);
+        let obj = sanitized.as_object().unwrap();
+        assert_eq!(
+            obj.get("message").unwrap().as_str().unwrap(),
+            "Operation completed successfully"
+        );
+        let warnings = obj.get("warnings").unwrap().as_array().unwrap();
+        assert_eq!(warnings[0].as_str().unwrap(), "warning one");
+        assert_eq!(warnings[1].as_str().unwrap(), "warning two");
+        assert_eq!(
+            obj.get("diagnostics").unwrap().as_str().unwrap(),
+            "All systems nominal"
+        );
+    }
+
+    /// D1.8: Empty JSON object passes through without crash.
+    #[test]
+    fn test_sanitize_output_handles_empty_json() {
+        let fw = TaintScoringFirewall::new();
+        let input = serde_json::json!({});
+        let sanitized = fw.sanitize_output(input);
+        assert!(sanitized.is_object());
+        assert!(sanitized.as_object().unwrap().is_empty());
+    }
+
+    /// D1.8: Nested JSON structures are recursively sanitized.
+    #[test]
+    fn test_sanitize_output_nested_json() {
+        let fw = TaintScoringFirewall::new();
+        let input = serde_json::json!({
+            "outer": {
+                "inner": "text\x00here",
+                "array": ["item1\x00", "item2\x1f"]
+            },
+            "list": [{
+                "name": "item\x00with\x1fcontrol"
+            }]
+        });
+        let sanitized = fw.sanitize_output(input);
+        let obj = sanitized.as_object().unwrap();
+        let outer = obj.get("outer").unwrap().as_object().unwrap();
+        assert_eq!(outer.get("inner").unwrap().as_str().unwrap(), "text here");
+        let arr = outer.get("array").unwrap().as_array().unwrap();
+        assert_eq!(arr[0].as_str().unwrap(), "item1");
+        assert_eq!(arr[1].as_str().unwrap(), "item2");
+        let list = obj.get("list").unwrap().as_array().unwrap();
+        assert_eq!(
+            list[0]
+                .as_object()
+                .unwrap()
+                .get("name")
+                .unwrap()
+                .as_str()
+                .unwrap(),
+            "item with control"
+        );
+    }
+
+    /// D1.8: Numbers, booleans, and nulls are preserved (not modified).
+    #[test]
+    fn test_sanitize_output_preserves_non_strings() {
+        let fw = TaintScoringFirewall::new();
+        let input = serde_json::json!({
+            "number": 42,
+            "float": 3.14,
+            "bool": true,
+            "null": null,
+            "nested": {
+                "neg": -1,
+                "zero": 0
+            }
+        });
+        let sanitized = fw.sanitize_output(input);
+        let obj = sanitized.as_object().unwrap();
+        assert_eq!(obj.get("number").unwrap().as_i64().unwrap(), 42);
+        assert!((obj.get("float").unwrap().as_f64().unwrap() - 3.14).abs() < 0.001);
+        assert!(obj.get("bool").unwrap().as_bool().unwrap());
+        assert!(obj.get("null").unwrap().is_null());
+        let nested = obj.get("nested").unwrap().as_object().unwrap();
+        assert_eq!(nested.get("neg").unwrap().as_i64().unwrap(), -1);
+        assert_eq!(nested.get("zero").unwrap().as_i64().unwrap(), 0);
+    }
+
+    /// D1.8: ToolContent.text control chars stripped at nested level.
+    #[test]
+    fn test_sanitize_output_tool_content_text() {
+        let fw = TaintScoringFirewall::new();
+        let input = serde_json::json!({
+            "content": [{
+                "type": "text",
+                "text": "Response\x00with\x1finvisible\x02chars"
+            }]
+        });
+        let sanitized = fw.sanitize_output(input);
+        let obj = sanitized.as_object().unwrap();
+        let content = obj.get("content").unwrap().as_array().unwrap();
+        let text = content[0]
+            .as_object()
+            .unwrap()
+            .get("text")
+            .unwrap()
+            .as_str()
+            .unwrap();
+        assert_eq!(text, "Response with invisible chars");
+    }
+
+    /// D1.8: Error responses pass through without lifecycle semantic changes.
+    #[test]
+    fn test_sanitize_output_error_response_unchanged() {
+        let fw = TaintScoringFirewall::new();
+        // Error responses are not sanitized via sanitize_output (they bypass the success path)
+        // This test verifies that sanitize_output does not modify error-like structures
+        let input = serde_json::json!({
+            "code": -32003,
+            "message": "Gateway unreachable",
+            "data": null
+        });
+        let sanitized = fw.sanitize_output(input);
+        let obj = sanitized.as_object().unwrap();
+        assert_eq!(obj.get("code").unwrap().as_i64().unwrap(), -32003);
+        assert_eq!(
+            obj.get("message").unwrap().as_str().unwrap(),
+            "Gateway unreachable"
+        );
+        assert!(obj.get("data").unwrap().is_null());
+    }
+
+    /// D1.8: Array at root level is recursively sanitized.
+    #[test]
+    fn test_sanitize_output_array_at_root() {
+        let fw = TaintScoringFirewall::new();
+        let input = serde_json::json!([{
+            "type": "text",
+            "text": "item\x001"
+        }, {
+            "type": "text",
+            "text": "item\x002"
+        }]);
+        let sanitized = fw.sanitize_output(input);
+        let arr = sanitized.as_array().unwrap();
+        assert_eq!(
+            arr[0]
+                .as_object()
+                .unwrap()
+                .get("text")
+                .unwrap()
+                .as_str()
+                .unwrap(),
+            "item 1"
+        );
+        assert_eq!(
+            arr[1]
+                .as_object()
+                .unwrap()
+                .get("text")
+                .unwrap()
+                .as_str()
+                .unwrap(),
+            "item 2"
+        );
     }
 }
