@@ -64,27 +64,28 @@
 //! - Provenance emission (gateway-owned)
 //! - Error response sanitization (errors bypass the sanitize choke point)
 //!
-//! ## D1.9 Status (Phase 1 Implemented — Option B)
+//! ## D1.9 Status (Phase 1 + Phase 2 Implemented — Option B)
 //!
-//! D1.9 Phase 1 implements Option B field-key-aware redaction at the tools/call success
-//! boundary after D1.8 sanitization. The `redact_sensitive_fields()` function walks
-//! JSON recursively and replaces values of `raw_arguments` and `metadata` keys with
-//! the string "[REDACTED]". Arrays recurse; primitive values (numbers, booleans,
-//! nulls) pass through unchanged.
+//! D1.9 Phase 1 + Phase 2 implement Option B field-key-aware redaction at the
+//! tools/call success boundary after D1.8 sanitization. The `redact_sensitive_fields()`
+//! function walks JSON recursively with parent context tracking and replaces values of
+//! sensitive keys with the string "[REDACTED]". Arrays recurse; primitive values
+//! (numbers, booleans, nulls) pass through unchanged.
 //!
-//! Phase 1 sensitive keys (oracle-approved):
-//! - `raw_arguments` — raw tool arguments may contain sensitive parameters
-//! - `metadata` — whole-field redaction for JsonMap fields (no key enumeration)
+//! Phase 1 + Phase 2 sensitive keys (oracle-approved):
+//! - Phase 1: `raw_arguments`, `metadata`
+//! - Phase 2 global keys: `resource_bindings`, `argument_constraints`, `approval_binding`,
+//!   `target`, `resource_scope`, `trust_context`, `result_digest`
+//! - Phase 2 path-aware: `args` only when parent context is `compensation_plan` array element
 //!
-//! Phase 1 does NOT redact (no-over-redaction principle):
+//! Phase 1 + Phase 2 do NOT redact (no-over-redaction principle):
+//! - `tool_binding`, `tool_version` — explicitly preserved
 //! - UUID IDs, reason/message/warnings, enums, booleans
 //! - rollback_contract envelope structure
 //! - action_type, correlation_id
-//! - Future Phase 2 fields (resource_bindings, target, compensation_plan.args,
-//!   resource_scope, result_digest) — deferred unless doc-only as deferred
 //!
-//! D1.9 Phase 1 does NOT implement:
-//! - Regex/heuristic DLP scanning (Option A/C — deferred)
+//! D1.9 does NOT implement:
+//! - Regex/heuristic DLP scanning (Option A/C — deferred to Phase 3)
 //! - Context-aware redaction via FirewallContext (Option D — deferred)
 //! - Provenance emission (gateway-owned)
 //! - Production/G2 claim (not production-ready)
@@ -1015,41 +1016,111 @@ pub fn handle_tools_call_with_client(
 }
 
 // ---------------------------------------------------------------------------
-// D1.9: Field-Level Redaction (Phase 1 — Option B)
+// D1.9: Field-Level Redaction (Phase 1 + Phase 2 — Option B)
 // ---------------------------------------------------------------------------
 
-/// Phase 1 sensitive field keys for D1.9 Option B field-level redaction.
+/// Phase 1 + Phase 2 sensitive field keys for D1.9 Option B field-level redaction.
 /// These keys have their values replaced with "[REDACTED]" in JSON output.
-const PHASE_1_SENSITIVE_KEYS: &[&str] = &["raw_arguments", "metadata"];
+const SENSITIVE_KEYS: &[&str] = &[
+    // Phase 1 keys
+    "raw_arguments",
+    "metadata",
+    // Phase 2 global keys (oracle-approved)
+    "resource_bindings",
+    "argument_constraints",
+    "approval_binding",
+    "target",
+    "resource_scope",
+    "trust_context",
+    "result_digest",
+];
 
-/// Recursively redact sensitive fields in a JSON value.
+/// Keys whose values should NOT be redacted even if they match sensitive key names.
+/// This implements the no-over-redaction principle for operational metadata.
+const PRESERVED_KEYS: &[&str] = &["tool_binding", "tool_version"];
+
+/// Parent context for path-aware redaction.
+/// Tracks whether we are inside a `compensation_plan` array, because
+/// `args` should only be redacted in that specific context.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ParentContext {
+    /// Not inside any special parent.
+    None,
+    /// Inside the `compensation_plan` array (its elements).
+    InsideCompensationPlan,
+}
+
+/// Public wrapper: stable API for redact_sensitive_fields.
 ///
-/// - For objects: if a key matches a sensitive key, replace its value with "[REDACTED]";
-///   otherwise recurse into the value.
-/// - For arrays: recurse into each element.
-/// - For primitives (string, number, boolean, null): pass through unchanged.
+/// Phase 1 + Phase 2 field-key-aware redaction targeting:
+/// - Phase 1: `raw_arguments`, `metadata`
+/// - Phase 2: `resource_bindings`, `argument_constraints`, `approval_binding`,
+///   `target`, `resource_scope`, `trust_context`, `result_digest`
 ///
-/// This implements D1.9 Phase 1 Option B: field-key-aware redaction targeting
-/// `raw_arguments` and `metadata` only. No regex/heuristic DLP (Option A/C) is
-/// applied. No-over-redaction principle is observed: UUID IDs, reason/message/warnings,
-/// enums, booleans, rollback_contract envelope, action_type, and correlation_id are
-/// preserved (not targeted by Phase 1).
+/// Additionally, `args` is redacted only when the parent context is
+/// `compensation_plan` array element (path-aware redaction).
+///
+/// Preserved (no-over-redaction principle): `tool_binding`, `tool_version`,
+/// UUID IDs, reason/message/warnings, enums, booleans, rollback_contract
+/// envelope structure, action_type, correlation_id.
 pub fn redact_sensitive_fields(value: serde_json::Value) -> serde_json::Value {
+    redact_recursive(value, ParentContext::None)
+}
+
+/// Internal recursive redaction function carrying parent context.
+///
+/// - For objects: if a key matches a sensitive key (and not a preserved key),
+///   replace its value with "[REDACTED]"; if the key is `args` and parent context
+///   is `InsideCompensationPlan`, redact; otherwise recurse.
+/// - For arrays: recurse into each element with the current parent context.
+/// - For primitives: pass through unchanged.
+fn redact_recursive(value: serde_json::Value, parent: ParentContext) -> serde_json::Value {
     match value {
         serde_json::Value::Object(mut map) => {
             for (key, val) in map.iter_mut() {
-                if PHASE_1_SENSITIVE_KEYS.contains(&key.as_str()) {
+                // Compute context for children: if this key is compensation_plan AND
+                // its value is an array, then children are inside array elements (path-aware).
+                // Otherwise keep the current parent.
+                let child_context = if key == "compensation_plan" && val.is_array() {
+                    Some(ParentContext::InsideCompensationPlan)
+                } else {
+                    None
+                };
+
+                // Determine actual parent for this level (for path-aware checks)
+                let current_parent = child_context.as_ref().unwrap_or(&parent);
+
+                // Check if this key should be redacted
+                let is_sensitive = SENSITIVE_KEYS.contains(&key.as_str());
+                let is_preserved = PRESERVED_KEYS.contains(&key.as_str());
+                let is_compensation_args =
+                    key == "args" && *current_parent == ParentContext::InsideCompensationPlan;
+
+                if is_preserved {
+                    // Never redact preserved keys (tool_binding, tool_version)
+                    *val = redact_recursive(val.clone(), *current_parent);
+                } else if is_compensation_args {
+                    // Path-aware: args inside compensation_plan array element: redact
+                    *val = serde_json::Value::String("[REDACTED]".to_string());
+                } else if is_sensitive {
+                    // Global sensitive key: redact the value
                     *val = serde_json::Value::String("[REDACTED]".to_string());
                 } else {
-                    *val = redact_sensitive_fields(val.clone());
+                    // Recurse into the value
+                    *val = redact_recursive(val.clone(), *current_parent);
                 }
             }
             serde_json::Value::Object(map)
         }
         serde_json::Value::Array(arr) => {
-            serde_json::Value::Array(arr.into_iter().map(redact_sensitive_fields).collect())
+            // Arrays inherit parent context (elements are "inside" the parent object)
+            serde_json::Value::Array(
+                arr.into_iter()
+                    .map(|item| redact_recursive(item, parent))
+                    .collect(),
+            )
         }
-        // Primitives (string, number, boolean, null) pass through unchanged.
+        // Primitives pass through unchanged
         _ => value,
     }
 }
@@ -1949,16 +2020,16 @@ mod tests {
         assert_eq!(obj.get("metadata").unwrap().as_str().unwrap(), "[REDACTED]");
     }
 
-    /// D1.9 Phase 1: rollback_contract envelope structure preserved (no-over-redaction).
+    /// D1.9 Phase 2: rollback_contract envelope preserved, target/metadata/args redacted per policy.
     #[test]
     fn test_redact_preserves_rollback_contract() {
+        // compensation_plan is an ARRAY of objects in Phase 2 policy
         let input = serde_json::json!({
             "rollback_contract": {
                 "target": "/tmp/important.txt",
-                "compensation_plan": {
-                    "action": "delete",
-                    "args": ["arg1", "arg2"]
-                },
+                "compensation_plan": [
+                    { "action": "delete", "args": ["arg1", "arg2"] }
+                ],
                 "metadata": { "internal": "rollback data" }
             },
             "raw_arguments": { "secret": "data" }
@@ -1966,20 +2037,33 @@ mod tests {
         let redacted = redact_sensitive_fields(input);
         let obj = redacted.as_object().unwrap();
         let rc = obj.get("rollback_contract").unwrap().as_object().unwrap();
-        // rollback_contract structure preserved
+        // Phase 2: target is globally redacted
+        assert_eq!(rc.get("target").unwrap().as_str().unwrap(), "[REDACTED]");
+        // compensation_plan array envelope preserved (not redacted as a whole)
+        let cp_array = rc.get("compensation_plan").unwrap().as_array().unwrap();
+        // action inside compensation_plan array element preserved (not a sensitive key)
         assert_eq!(
-            rc.get("target").unwrap().as_str().unwrap(),
-            "/tmp/important.txt"
+            cp_array[0]
+                .as_object()
+                .unwrap()
+                .get("action")
+                .unwrap()
+                .as_str()
+                .unwrap(),
+            "delete"
         );
-        let cp = rc.get("compensation_plan").unwrap().as_object().unwrap();
-        assert_eq!(cp.get("action").unwrap().as_str().unwrap(), "delete");
-        let args = cp.get("args").unwrap().as_array().unwrap();
-        assert_eq!(args[0].as_str().unwrap(), "arg1");
-        assert_eq!(args[1].as_str().unwrap(), "arg2");
-        // Note: metadata INSIDE rollback_contract is NOT separately targeted in Phase 1
-        // because it's inside an object whose key is not "raw_arguments" or "metadata"
-        // The top-level "metadata" key would be redacted but "rollback_contract.metadata" is not
-        // a top-level key match.
+        // Phase 2 path-aware: args inside compensation_plan array element is redacted to "[REDACTED]"
+        assert_eq!(
+            cp_array[0]
+                .as_object()
+                .unwrap()
+                .get("args")
+                .unwrap()
+                .as_str()
+                .unwrap(),
+            "[REDACTED]"
+        );
+        // Phase 2: metadata is a global sensitive key, so it is redacted even inside rollback_contract
         assert_eq!(rc.get("metadata").unwrap().as_str().unwrap(), "[REDACTED]");
         // raw_arguments redacted at top level
         assert_eq!(
@@ -2137,5 +2221,427 @@ mod tests {
             obj.get("raw_arguments").unwrap().as_str().unwrap(),
             "[REDACTED]"
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // D1.9 Phase 2 Tests (Global Keys + Path-Aware compensation_plan[].args)
+    // -------------------------------------------------------------------------
+
+    /// D1.9 Phase 2: resource_bindings globally redacted.
+    #[test]
+    fn test_redact_phase2_resource_bindings() {
+        let input = serde_json::json!({
+            "capability_id": "deadbeef-e89b-12d3-a456-426614174000",
+            "resource_bindings": ["fs:read:/etc/shadow", "env:API_KEY"]
+        });
+        let redacted = redact_sensitive_fields(input);
+        let obj = redacted.as_object().unwrap();
+        assert_eq!(
+            obj.get("capability_id").unwrap().as_str().unwrap(),
+            "deadbeef-e89b-12d3-a456-426614174000"
+        );
+        assert_eq!(
+            obj.get("resource_bindings").unwrap().as_str().unwrap(),
+            "[REDACTED]"
+        );
+    }
+
+    /// D1.9 Phase 2: argument_constraints globally redacted.
+    #[test]
+    fn test_redact_phase2_argument_constraints() {
+        let input = serde_json::json!({
+            "approval_binding": "appr-123",
+            "argument_constraints": { "max_file_size": 1000, "allowed_paths": ["/tmp"] }
+        });
+        let redacted = redact_sensitive_fields(input);
+        let obj = redacted.as_object().unwrap();
+        assert_eq!(
+            obj.get("approval_binding").unwrap().as_str().unwrap(),
+            "[REDACTED]"
+        );
+        assert_eq!(
+            obj.get("argument_constraints").unwrap().as_str().unwrap(),
+            "[REDACTED]"
+        );
+    }
+
+    /// D1.9 Phase 2: approval_binding globally redacted.
+    #[test]
+    fn test_redact_phase2_approval_binding() {
+        let input = serde_json::json!({
+            "state": "PendingApproval",
+            "approval_binding": "appr-456-xyz"
+        });
+        let redacted = redact_sensitive_fields(input);
+        let obj = redacted.as_object().unwrap();
+        assert_eq!(
+            obj.get("state").unwrap().as_str().unwrap(),
+            "PendingApproval"
+        );
+        assert_eq!(
+            obj.get("approval_binding").unwrap().as_str().unwrap(),
+            "[REDACTED]"
+        );
+    }
+
+    /// D1.9 Phase 2: target globally redacted.
+    #[test]
+    fn test_redact_phase2_target() {
+        let input = serde_json::json!({
+            "intent_id": "550e8400-e29b-41d4-a716-446655440000",
+            "target": "/etc/passwd"
+        });
+        let redacted = redact_sensitive_fields(input);
+        let obj = redacted.as_object().unwrap();
+        assert_eq!(
+            obj.get("intent_id").unwrap().as_str().unwrap(),
+            "550e8400-e29b-41d4-a716-446655440000"
+        );
+        assert_eq!(obj.get("target").unwrap().as_str().unwrap(), "[REDACTED]");
+    }
+
+    /// D1.9 Phase 2: resource_scope globally redacted.
+    #[test]
+    fn test_redact_phase2_resource_scope() {
+        let input = serde_json::json!({
+            "scope": "fs:write:/tmp/test.txt",
+            "resource_scope": "fs:write:/var/log/**"
+        });
+        let redacted = redact_sensitive_fields(input);
+        let obj = redacted.as_object().unwrap();
+        // scope is not a sensitive key (only resource_scope is)
+        assert_eq!(
+            obj.get("scope").unwrap().as_str().unwrap(),
+            "fs:write:/tmp/test.txt"
+        );
+        assert_eq!(
+            obj.get("resource_scope").unwrap().as_str().unwrap(),
+            "[REDACTED]"
+        );
+    }
+
+    /// D1.9 Phase 2: trust_context globally redacted.
+    #[test]
+    fn test_redact_phase2_trust_context() {
+        let input = serde_json::json!({
+            "decision": "Allow",
+            "trust_context": { "level": "high", "verified": true }
+        });
+        let redacted = redact_sensitive_fields(input);
+        let obj = redacted.as_object().unwrap();
+        assert_eq!(obj.get("decision").unwrap().as_str().unwrap(), "Allow");
+        assert_eq!(
+            obj.get("trust_context").unwrap().as_str().unwrap(),
+            "[REDACTED]"
+        );
+    }
+
+    /// D1.9 Phase 2: result_digest globally redacted.
+    #[test]
+    fn test_redact_phase2_result_digest() {
+        let input = serde_json::json!({
+            "execution_id": "fee1dead-e89b-12d3-a456-426614174000",
+            "result_digest": "sha256:abc123def456..."
+        });
+        let redacted = redact_sensitive_fields(input);
+        let obj = redacted.as_object().unwrap();
+        assert_eq!(
+            obj.get("execution_id").unwrap().as_str().unwrap(),
+            "fee1dead-e89b-12d3-a456-426614174000"
+        );
+        assert_eq!(
+            obj.get("result_digest").unwrap().as_str().unwrap(),
+            "[REDACTED]"
+        );
+    }
+
+    /// D1.9 Phase 2: tool_binding preserved (no-over-redaction).
+    #[test]
+    fn test_redact_phase2_preserves_tool_binding() {
+        let input = serde_json::json!({
+            "tool_binding": "fs-adapter:fs_write",
+            "tool_version": "1.0.0",
+            "resource_bindings": ["fs:read:/etc/shadow"]
+        });
+        let redacted = redact_sensitive_fields(input);
+        let obj = redacted.as_object().unwrap();
+        // tool_binding and tool_version preserved
+        assert_eq!(
+            obj.get("tool_binding").unwrap().as_str().unwrap(),
+            "fs-adapter:fs_write"
+        );
+        assert_eq!(obj.get("tool_version").unwrap().as_str().unwrap(), "1.0.0");
+        // resource_bindings still redacted
+        assert_eq!(
+            obj.get("resource_bindings").unwrap().as_str().unwrap(),
+            "[REDACTED]"
+        );
+    }
+
+    /// D1.9 Phase 2: args inside compensation_plan array element is redacted.
+    #[test]
+    fn test_redact_phase2_compensation_plan_args() {
+        let input = serde_json::json!({
+            "rollback_contract": {
+                "target": "/tmp/important.txt",
+                "compensation_plan": [
+                    {
+                        "action": "delete",
+                        "args": ["arg1", "arg2"]
+                    },
+                    {
+                        "action": "restore",
+                        "args": ["backup-id-123"]
+                    }
+                ]
+            }
+        });
+        let redacted = redact_sensitive_fields(input);
+        let obj = redacted.as_object().unwrap();
+        let rc = obj.get("rollback_contract").unwrap().as_object().unwrap();
+        // target inside rollback_contract is now redacted (Phase 2 global)
+        assert_eq!(rc.get("target").unwrap().as_str().unwrap(), "[REDACTED]");
+        let cp = rc.get("compensation_plan").unwrap().as_array().unwrap();
+        // First element: action preserved, args redacted
+        let first = &cp[0];
+        let first_obj = first.as_object().unwrap();
+        assert_eq!(first_obj.get("action").unwrap().as_str().unwrap(), "delete");
+        assert_eq!(
+            first_obj.get("args").unwrap().as_str().unwrap(),
+            "[REDACTED]"
+        );
+        // Second element: action preserved, args redacted
+        let second = &cp[1];
+        let second_obj = second.as_object().unwrap();
+        assert_eq!(
+            second_obj.get("action").unwrap().as_str().unwrap(),
+            "restore"
+        );
+        assert_eq!(
+            second_obj.get("args").unwrap().as_str().unwrap(),
+            "[REDACTED]"
+        );
+    }
+
+    /// D1.9 Phase 2: args outside compensation_plan context is preserved.
+    #[test]
+    fn test_redact_phase2_args_outside_compensation_plan() {
+        let input = serde_json::json!({
+            "rollback_contract": {
+                "target": "/tmp/file.txt",
+                "args": ["global", "args"],
+                "compensation_plan": [
+                    {
+                        "action": "delete",
+                        "args": ["should", "be", "redacted"]
+                    }
+                ]
+            },
+            "other_args": ["preserve", "these"]
+        });
+        let redacted = redact_sensitive_fields(input);
+        let obj = redacted.as_object().unwrap();
+        let rc = obj.get("rollback_contract").unwrap().as_object().unwrap();
+        // args directly inside rollback_contract is NOT compensation_plan context, preserved
+        let rc_args = rc.get("args").unwrap().as_array().unwrap();
+        assert_eq!(rc_args[0].as_str().unwrap(), "global");
+        assert_eq!(rc_args[1].as_str().unwrap(), "args");
+        // other_args at top level is preserved
+        let other_args = obj.get("other_args").unwrap().as_array().unwrap();
+        assert_eq!(other_args[0].as_str().unwrap(), "preserve");
+        assert_eq!(other_args[1].as_str().unwrap(), "these");
+        // args INSIDE compensation_plan array element is redacted
+        let cp = rc.get("compensation_plan").unwrap().as_array().unwrap();
+        let cp_args = cp[0]
+            .as_object()
+            .unwrap()
+            .get("args")
+            .unwrap()
+            .as_str()
+            .unwrap();
+        assert_eq!(cp_args, "[REDACTED]");
+    }
+
+    /// D1.9 Phase 2: all Phase 2 global keys redacted at top level.
+    #[test]
+    fn test_redact_phase2_all_global_keys() {
+        let input = serde_json::json!({
+            "resource_bindings": ["binding1"],
+            "argument_constraints": { "key": "value" },
+            "approval_binding": "appr-789",
+            "target": "/tmp/file.txt",
+            "resource_scope": "fs:read:/home/**",
+            "trust_context": { "level": "high" },
+            "result_digest": "sha256:digest",
+            "raw_arguments": { "secret": "data" },
+            "metadata": { "internal": "info" }
+        });
+        let redacted = redact_sensitive_fields(input);
+        let obj = redacted.as_object().unwrap();
+        // All Phase 2 global keys redacted
+        assert_eq!(
+            obj.get("resource_bindings").unwrap().as_str().unwrap(),
+            "[REDACTED]"
+        );
+        assert_eq!(
+            obj.get("argument_constraints").unwrap().as_str().unwrap(),
+            "[REDACTED]"
+        );
+        assert_eq!(
+            obj.get("approval_binding").unwrap().as_str().unwrap(),
+            "[REDACTED]"
+        );
+        assert_eq!(obj.get("target").unwrap().as_str().unwrap(), "[REDACTED]");
+        assert_eq!(
+            obj.get("resource_scope").unwrap().as_str().unwrap(),
+            "[REDACTED]"
+        );
+        assert_eq!(
+            obj.get("trust_context").unwrap().as_str().unwrap(),
+            "[REDACTED]"
+        );
+        assert_eq!(
+            obj.get("result_digest").unwrap().as_str().unwrap(),
+            "[REDACTED]"
+        );
+        // Phase 1 keys still redacted
+        assert_eq!(
+            obj.get("raw_arguments").unwrap().as_str().unwrap(),
+            "[REDACTED]"
+        );
+        assert_eq!(obj.get("metadata").unwrap().as_str().unwrap(), "[REDACTED]");
+    }
+
+    /// D1.9 Phase 2: compensation_plan itself is NOT redacted (only its args elements).
+    #[test]
+    fn test_redact_phase2_compensation_plan_envelope_preserved() {
+        let input = serde_json::json!({
+            "rollback_contract": {
+                "compensation_plan": [
+                    { "action": "undo", "args": ["arg1"] }
+                ]
+            }
+        });
+        let redacted = redact_sensitive_fields(input);
+        let obj = redacted.as_object().unwrap();
+        let rc = obj.get("rollback_contract").unwrap().as_object().unwrap();
+        // compensation_plan key itself exists (not redacted)
+        assert!(rc.get("compensation_plan").unwrap().is_array());
+        // The array contains the redacted element
+        let cp = rc.get("compensation_plan").unwrap().as_array().unwrap();
+        let elem = cp[0].as_object().unwrap();
+        assert_eq!(elem.get("action").unwrap().as_str().unwrap(), "undo");
+        assert_eq!(elem.get("args").unwrap().as_str().unwrap(), "[REDACTED]");
+    }
+
+    /// D1.9 Phase 2: rollback_contract/compensation_plan structure preserved (sibling fields).
+    #[test]
+    fn test_redact_phase2_rollback_contract_siblings_preserved() {
+        let input = serde_json::json!({
+            "rollback_contract": {
+                "target": "/tmp/important.txt",
+                "compensation_plan": [
+                    {
+                        "action": "delete",
+                        "args": ["file1", "file2"]
+                    }
+                ],
+                "metadata": { "internal": "rollback data" }
+            }
+        });
+        let redacted = redact_sensitive_fields(input);
+        let obj = redacted.as_object().unwrap();
+        let rc = obj.get("rollback_contract").unwrap().as_object().unwrap();
+        // action inside compensation_plan preserved
+        let cp = rc.get("compensation_plan").unwrap().as_array().unwrap();
+        let elem = cp[0].as_object().unwrap();
+        assert_eq!(elem.get("action").unwrap().as_str().unwrap(), "delete");
+        // metadata inside rollback_contract is a sibling of compensation_plan, not the sensitive key
+        // Phase 2 does NOT target metadata globally when nested inside non-sensitive parent
+        // (metadata is only targeted at the top level or inside ActionProposal context)
+        // But wait - metadata IS a global sensitive key. Let me check the implementation...
+        // Actually metadata inside rollback_contract IS a JsonMap field, so it should be redacted
+        // because the key "metadata" is in SENSITIVE_KEYS.
+        assert_eq!(rc.get("metadata").unwrap().as_str().unwrap(), "[REDACTED]");
+    }
+
+    /// D1.9 Phase 2: nested compensation_plan with deep args path.
+    #[test]
+    fn test_redact_phase2_nested_compensation_plan_deep() {
+        let input = serde_json::json!({
+            "outer": {
+                "compensation_plan": [
+                    {
+                        "inner": {
+                            "args": ["nested", "args", "here"]
+                        }
+                    }
+                ]
+            }
+        });
+        let redacted = redact_sensitive_fields(input);
+        let outer = redacted.as_object().unwrap();
+        let inner_obj = outer.get("outer").unwrap().as_object().unwrap();
+        let cp = inner_obj
+            .get("compensation_plan")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        let elem = cp[0].as_object().unwrap();
+        let inner = elem.get("inner").unwrap().as_object().unwrap();
+        // args is inside compensation_plan array element, so it should be redacted
+        assert_eq!(inner.get("args").unwrap().as_str().unwrap(), "[REDACTED]");
+    }
+
+    /// D1.9 Phase 2: tool_binding/tool_version deep in structure preserved.
+    #[test]
+    fn test_redact_phase2_tool_binding_deep_preserved() {
+        let input = serde_json::json!({
+            "result": {
+                "capability": {
+                    "tool_binding": "git-adapter:push",
+                    "tool_version": "2.1.0",
+                    "resource_bindings": ["env:SECRET"]
+                }
+            }
+        });
+        let redacted = redact_sensitive_fields(input);
+        let result = redacted.as_object().unwrap();
+        let cap = result.get("result").unwrap().as_object().unwrap();
+        let cap_inner = cap.get("capability").unwrap().as_object().unwrap();
+        // tool_binding and tool_version preserved even when nested
+        assert_eq!(
+            cap_inner.get("tool_binding").unwrap().as_str().unwrap(),
+            "git-adapter:push"
+        );
+        assert_eq!(
+            cap_inner.get("tool_version").unwrap().as_str().unwrap(),
+            "2.1.0"
+        );
+        // resource_bindings still redacted
+        assert_eq!(
+            cap_inner
+                .get("resource_bindings")
+                .unwrap()
+                .as_str()
+                .unwrap(),
+            "[REDACTED]"
+        );
+    }
+
+    /// D1.9 Phase 2: Phase 1 keys still work after Phase 2 additions.
+    #[test]
+    fn test_redact_phase2_phase1_still_works() {
+        let input = serde_json::json!({
+            "raw_arguments": { "password": "secret123" },
+            "metadata": { "internal_notes": "sensitive" }
+        });
+        let redacted = redact_sensitive_fields(input);
+        let obj = redacted.as_object().unwrap();
+        assert_eq!(
+            obj.get("raw_arguments").unwrap().as_str().unwrap(),
+            "[REDACTED]"
+        );
+        assert_eq!(obj.get("metadata").unwrap().as_str().unwrap(), "[REDACTED]");
     }
 }

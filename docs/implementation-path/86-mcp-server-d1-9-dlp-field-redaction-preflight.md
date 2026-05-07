@@ -1,29 +1,30 @@
 # D1.9 MCP Server DLP / Field Redaction
 
-## Status: PHASE 1 APPROVED AND IMPLEMENTED (Option B)
+## Status: PHASE 1 + PHASE 2 APPROVED AND IMPLEMENTED (Option B)
 
 ## Oracle Verdict
 
 **APPROVED: Option B phased rollout.**
 
 - **Phase 1 minimum approved**: `raw_arguments` and `metadata` only.
+- **Phase 2 approved**: Added `resource_bindings`, `argument_constraints`, `approval_binding`, `target`, `resource_scope`, `trust_context`, `result_digest` as global sensitive keys; `args` redacted path-aware only when parent context is `compensation_plan` array element.
 - **Redaction mechanism**: Replace matched field values with string `"[REDACTED]"`.
 - **Recursive JSON walk**: Object keys checked, arrays recurse, numbers/bools/nulls pass through.
 - **Metadata strategy**: Whole-field redaction (no per-key enumeration).
-- **No regex/heuristic DLP**: Option A/C deferred to Phase 2.
+- **Path-aware redaction**: Only `compensation_plan[].args` triggers special path-aware handling; generic `args` elsewhere is preserved.
+- **No-over-redaction principle**: `tool_binding`, `tool_version` explicitly preserved; UUID IDs, reason/message/warnings, enums, booleans, rollback_contract envelope, action_type, correlation_id not targeted.
+- **No regex/heuristic DLP**: Option A/C deferred to Phase 3+.
 - **No FirewallContext change**: Option D deferred to future work.
-- **No production/G2 claim**: D1.9 Phase 1 is security hardening, not production-ready claim.
+- **No production/G2 claim**: D1.9 is security hardening, not production-ready claim.
 - **Provenance emission**: Gateway-owned, not implemented in MCP.
-
-Future Phase 2 fields (per oracle deferred list): `resource_bindings`, `target`, `compensation_plan.args`, `resource_scope`, `result_digest` — not implemented unless doc-only as deferred.
 
 ---
 
 ## 0. Preflight Scope
 
-Canonical D1.9 is **DLP / field-level redaction** — extending D1.8 output sanitization with context-aware, field-key-aware redaction of sensitive data in MCP responses. D1.9 is **not implemented**. This document is preflight analysis only.
+Canonical D1.9 is **DLP / field-level redaction** — extending D1.8 output sanitization with context-aware, field-key-aware redaction of sensitive data in MCP responses. D1.9 Phase 1 and Phase 2 are implemented; later regex/heuristic DLP and FirewallContext-aware redesign remain deferred.
 
-**Constraint**: Do not claim DLP implemented or production-ready/G2-complete. This is draft preflight documentation.
+**Constraint**: Do not claim production-ready/G2-complete. D1.9 is bounded MCP response hardening only.
 
 ---
 
@@ -277,26 +278,26 @@ Oracle verdict to be captured in writing upon approval.
 
 ## 6. Implementation Phases (Post-Oracle Approval)
 
-### Phase D1.9.1: Struct-Aware Redaction (Option B) — PHASE 1 IMPLEMENTED
+### Phase D1.9.1: Struct-Aware Redaction (Option B) — PHASE 1 + PHASE 2 IMPLEMENTED
 
 | # | Item | Status |
 |---|------|--------|
 | D1.9.1.1 | Enumerate sensitive field keys per struct | Future |
-| D1.9.1.2 | Implement field-key-aware redaction for `ActionProposal.raw_arguments` | **IMPLEMENTED** |
-| D1.9.1.3 | Implement field-key-aware redaction for `metadata` JsonMap | **IMPLEMENTED** |
-| D1.9.1.4 | Extend to `CapabilityLease.resource_bindings` | Future (Phase 2) |
-| D1.9.1.5 | Extend to `RollbackContract.target`/`compensation_plan.args` | Future (Phase 2) |
-| D1.9.1.6 | Extend to `IntentEnvelope.resource_scope`/`trust_context` | Future (Phase 2) |
-| D1.9.1.7 | Extend to `ExecutionRecord.metadata`/`result_digest` | Future (Phase 2) |
-| D1.9.1.8 | Add unit tests for field redaction | **IMPLEMENTED** |
+| D1.9.1.2 | Implement field-key-aware redaction for `ActionProposal.raw_arguments` | **IMPLEMENTED (Phase 1)** |
+| D1.9.1.3 | Implement field-key-aware redaction for `metadata` JsonMap | **IMPLEMENTED (Phase 1)** |
+| D1.9.1.4 | Extend to `CapabilityLease.resource_bindings` | **IMPLEMENTED (Phase 2)** |
+| D1.9.1.5 | Extend to `RollbackContract.target`/`compensation_plan.args` (path-aware) | **IMPLEMENTED (Phase 2)** |
+| D1.9.1.6 | Extend to `IntentEnvelope.resource_scope`/`trust_context` | **IMPLEMENTED (Phase 2)** |
+| D1.9.1.7 | Extend to `ExecutionRecord.metadata`/`result_digest` | **IMPLEMENTED (Phase 2)** |
+| D1.9.1.8 | Add unit tests for field redaction | **IMPLEMENTED (Phase 1 + Phase 2)** |
 
 ### Phase D1.9.2: Supplementary Pattern Matching (Option A + C)
 
 | # | Item | Status |
 |---|------|--------|
-| D1.9.2.1 | Implement regex/heuristic DLP scanning (Option C) | Future |
-| D1.9.2.2 | Implement field-key-blind replace for non-struct fields (Option A) | Future |
-| D1.9.2.3 | Integrate with Option B at choke point | Future |
+| D1.9.2.1 | Implement regex/heuristic DLP scanning (Option C) | Deferred (Phase 3) |
+| D1.9.2.2 | Implement field-key-blind replace for non-struct fields (Option A) | Deferred (Phase 3) |
+| D1.9.2.3 | Integrate with Option B at choke point | Deferred (Phase 3) |
 
 ### Phase D1.9.3: Integration and Validation
 
@@ -309,29 +310,36 @@ Oracle verdict to be captured in writing upon approval.
 
 ---
 
-## 7. Implementation Status (Post-Phase 1)
+## 7. Implementation Status (Post-Phase 2)
 
-### Phase 1 Implemented (D1.9.1.2, D1.9.1.3, D1.9.1.8)
+### Phase 1 + Phase 2 Implemented (D1.9.1.2, D1.9.1.3, D1.9.1.8 + Phase 2)
 - **`redact_sensitive_fields()` function** in `ferrum-integrations-mcp::lib.rs`
 - Calls after D1.8 `sanitize_output` at tools/call success boundary
-- Redacts `raw_arguments` and `metadata` keys with `"[REDACTED]"`
+- Refactored to use stable public wrapper plus inner recursive function carrying parent context
+- Phase 1 keys redacted: `raw_arguments`, `metadata`
+- Phase 2 global keys redacted: `resource_bindings`, `argument_constraints`, `approval_binding`, `target`, `resource_scope`, `trust_context`, `result_digest`
+- Path-aware redaction: `args` redacted only when parent context is `compensation_plan` array element
+- Preserved keys (no-over-redaction): `tool_binding`, `tool_version`
 - Recursive JSON walk: objects checked by key, arrays recurse, primitives pass through
-- Whole-field redaction for `metadata` (no per-key enumeration in Phase 1)
-- Unit tests covering: raw_arguments, metadata, nested, UUIDs, messages, enums, booleans, rollback_contract, arrays, primitives, deep nesting
+- Unit tests covering: all Phase 2 global keys, compensation_plan[].args path-aware, args outside compensation_plan, tool_binding/tool_version preserved, rollback_contract envelope preserved, Phase 1 keys still work
 
-### Phase 1 Does NOT Implement
-- **Regex/heuristic DLP scanning** (Option A/C — deferred to Phase 2)
-- **Additional sensitive keys** (resource_bindings, target, compensation_plan.args, resource_scope, result_digest — deferred to Phase 2)
+### Phase 2 Explicit Claims
+- D1.9 Phase 2 implements Option B field-key-aware redaction for all oracle-approved Phase 2 keys
+- `compensation_plan[].args` is the only path-aware redaction; generic `args` elsewhere is preserved
+- `tool_binding` and `tool_version` explicitly preserved even if they match sensitive key names
+- No-over-redaction principle observed: UUIDs, reason/message/warnings, enums, booleans, rollback_contract structure, action_type, correlation_id preserved
+- D1.8 `sanitize_output` still applies before redaction (D1.8 choke point preserved)
+
+### Phase 1 + Phase 2 Do NOT Implement
+- **Regex/heuristic DLP scanning** (Option A/C — deferred to Phase 3)
 - **`FirewallContext`-aware redaction** (Option D — deferred)
-- **`dlp_findings` stub** remains no-op (not used in Phase 1)
+- **`dlp_findings` stub** remains no-op (not used in D1.9)
 - **Provenance emission** (gateway-owned)
 - **Production/G2 claim** (security hardening only, not production-ready)
 
-### Phase 1 Explicit Claims
-- D1.9 Phase 1 implements Option B field-key-aware redaction for `raw_arguments` and `metadata`
-- No-over-redaction principle observed: UUIDs, reason/message/warnings, enums, booleans, rollback_contract structure, action_type, correlation_id preserved
-- D1.8 `sanitize_output` still applies before redaction
-- Tests verify redaction and preservation behavior
+### Deferred to Phase 3+
+- Regex/heuristic DLP scanning (Option A/C)
+- Any additional sensitive keys beyond Phase 1 + Phase 2 oracle-approved list
 
 ---
 
@@ -346,4 +354,4 @@ Oracle verdict to be captured in writing upon approval.
 
 ---
 
-*Document created: 2026-05-07. Updated: Phase 1 implemented per oracle verdict 2026-05-07. D1.9 Phase 1 is security hardening, not production-ready claim.*
+*Document created: 2026-05-07. Updated: Phase 1 implemented per oracle verdict 2026-05-07. Updated: Phase 2 implemented per oracle verdict 2026-05-07. D1.9 Phase 1+2 is security hardening, not production-ready claim.*
