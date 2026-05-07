@@ -578,6 +578,7 @@ The following are **NOT** in scope for this design:
 |------|-----|---------|
 | This doc | [`74-mcp-server-phase-d1-governance-design.md`](74-mcp-server-phase-d1-governance-design.md) | ToolCallAction definition in §3.3 |
 | This doc | [`75-mcp-server-phase-d1-stage2-governance-pipeline-plan.md`](75-mcp-server-phase-d1-stage2-governance-pipeline-plan.md) | D1.3.2 is blocked by B-MAP-1–B-MAP-7; sequential ID correction |
+| This doc | [`77-mcp-server-d1-3-2a-pure-mapping-helpers-plan.md`](77-mcp-server-d1-3-2a-pure-mapping-helpers-plan.md) | D1.3.2a pure helpers plan (blocked by D1.3.2 unblock) |
 | This doc | [`stage2_types.rs`](../../crates/ferrum-integrations-mcp/src/stage2_types.rs) | ToolCallAction and IntentCompileRequest types (D1.3.1) |
 | This doc | [`73-mcp-server-phase-d-implementation-plan.md`](73-mcp-server-phase-d-implementation-plan.md) | D-0 complete; D-1.3.2 blocked |
 | This doc | [`67-production-readiness-roadmap.md`](67-production-readiness-roadmap.md) | MCP server is post-v1 scope |
