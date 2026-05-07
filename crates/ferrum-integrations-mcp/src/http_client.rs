@@ -400,6 +400,46 @@ impl FerrumGatewayClient {
 
         self.execute(request)
     }
+
+    // -------------------------------------------------------------------------
+    // D1.3.3 Compile-only tool endpoints
+    // -------------------------------------------------------------------------
+
+    /// Compile intent: POST /v1/intents/compile
+    ///
+    /// Per doc 79 P4: This is the compile-only gate (D1.3.3).
+    /// It does NOT implement evaluate/mint/authorize/execute (D1.3.4+).
+    ///
+    /// Takes a `ferrum_proto::IntentCompileRequest` and returns the compiled
+    /// `IntentEnvelope` with any warnings.
+    ///
+    /// # Arguments
+    ///
+    /// * `request` - The intent compile request with full governance fields
+    ///
+    /// # Returns
+    ///
+    /// `Result<ferrum_proto::IntentCompileResponse, GatewayError>` containing:
+    /// - `envelope`: The compiled intent with governance metadata
+    /// - `warnings`: Any warnings from the compile process
+    pub fn compile_intent(
+        &self,
+        request: &ferrum_proto::IntentCompileRequest,
+    ) -> Result<ferrum_proto::IntentCompileResponse, GatewayError> {
+        let request = self
+            .build_request(reqwest::Method::POST, "/v1/intents/compile")
+            .json(request)
+            .build()
+            .map_err(|_e| GatewayError::unreachable("Failed to build request"))?;
+
+        let response: serde_json::Value = self.execute(request)?;
+
+        // Parse the response into real ferrum-proto type
+        // Real response is { envelope: IntentEnvelope, warnings: Vec<String> }
+        serde_json::from_value(response).map_err(|e| {
+            GatewayError::server_error(200, &format!("Failed to parse compile response: {}", e))
+        })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -473,5 +513,433 @@ mod tests {
         assert_eq!(crate::error_codes::AUTH_FAILED, -32002);
         assert_eq!(crate::error_codes::GATEWAY_UNREACHABLE, -32003);
         assert_eq!(crate::error_codes::GATEWAY_SERVER_ERROR, -32004);
+    }
+
+    // -------------------------------------------------------------------------
+    // D1.3.3 Compile-only tests (mock-based, no live gateway)
+    // -------------------------------------------------------------------------
+
+    /// Captured HTTP request data from tiny_http server.
+    #[derive(Debug, Clone)]
+    struct CapturedRequest {
+        method: String,
+        path: String,
+        body: String,
+    }
+
+    /// Starts a tiny_http server that captures the request method, path, and body.
+    /// Returns base URL (without path) and a shared container for captured request.
+    fn start_capture_server() -> (
+        std::sync::Arc<std::sync::Mutex<Option<CapturedRequest>>>,
+        String,
+        std::thread::JoinHandle<()>,
+    ) {
+        let captured_request = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let captured_request_clone = captured_request.clone();
+
+        // Bind to a random available port
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let server_url = server.server_addr().to_string();
+        // Return base URL only (compile_intent will append /v1/intents/compile)
+        let base_url = format!("http://{}", server_url);
+
+        let handle = std::thread::spawn(move || {
+            // Set a timeout so we don't block forever
+            let response = tiny_http::Response::from_string(
+                r#"{
+                    "envelope": {
+                        "intent_id": "550e8400-e29b-41d4-a716-446655440000",
+                        "principal_id": "550e8400-e29b-41d4-a716-446655440001",
+                        "session_id": null,
+                        "channel_id": null,
+                        "title": "test intent",
+                        "goal": "test goal",
+                        "normalized_goal": "test goal",
+                        "allowed_outcomes": [
+                            {
+                                "id": "read",
+                                "description": "read only",
+                                "effect_type": "ReadOnlyAnalysis",
+                                "required": true
+                            }
+                        ],
+                        "forbidden_outcomes": [],
+                        "resource_scope": [],
+                        "risk_tier": "Low",
+                        "approval_mode": "None",
+                        "default_rollback_class": "R0NativeReversible",
+                        "time_budget": { "max_duration_ms": 30000, "max_steps": 8, "max_retries_per_step": 1 },
+                        "trust_context": {
+                            "input_labels": [],
+                            "sensitivity_labels": [],
+                            "taint_score": 0,
+                            "contains_external_metadata": false,
+                            "contains_tool_output": false,
+                            "contains_untrusted_text": false
+                        },
+                        "derived_from_event_ids": [],
+                        "tags": [],
+                        "metadata": {},
+                        "status": "Active",
+                        "created_at": "2025-01-01T00:00:00Z",
+                        "expires_at": "2025-12-31T23:59:59Z"
+                    },
+                    "warnings": []
+                }"#,
+            )
+            .with_header(
+                tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap(),
+            );
+
+            // Use recv_timeout to avoid blocking forever
+            if let Ok(Some(mut request)) = server.recv_timeout(std::time::Duration::from_secs(5)) {
+                // Capture method and path
+                let method = request.method().to_string();
+                let path = request.url().to_string();
+                // Read the body
+                let mut body = String::new();
+                request.as_reader().read_to_string(&mut body).unwrap();
+                *captured_request_clone.lock().unwrap() =
+                    Some(CapturedRequest { method, path, body });
+                let _ = request.respond(response);
+            }
+        });
+
+        (captured_request, base_url, handle)
+    }
+
+    #[test]
+    fn test_compile_intent_captures_request_body() {
+        // Per doc 79 P4: compile_intent is compile-only (D1.3.3), NOT evaluate (D1.3.4+).
+        // This test uses a tiny_http server to actually capture the HTTP request
+        // and verify method, path, and body contain expected governance fields.
+
+        let (captured_request, base_url, handle) = start_capture_server();
+
+        let config = ClientConfig::new().base_url(&base_url);
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        // Create a minimal IntentCompileRequest with a known principal_id
+        let known_principal_id = ferrum_proto::PrincipalId(
+            uuid::Uuid::parse_str("550e8400-e29b-41d4-a716-446655440001").unwrap(),
+        );
+        let request = ferrum_proto::IntentCompileRequest {
+            principal_id: known_principal_id,
+            session_id: None,
+            channel_id: None,
+            title: "test compile".to_string(),
+            goal: "test goal".to_string(),
+            agent_plan_summary: None,
+            trusted_context: ferrum_proto::JsonMap::new(),
+            raw_inputs: vec![],
+            requested_resource_scope: vec![],
+            requested_risk_tier: Some(ferrum_proto::RiskTier::Low),
+            approval_mode: Some(ferrum_proto::ApprovalMode::None),
+            metadata: ferrum_proto::JsonMap::new(),
+        };
+
+        let result = client.compile_intent(&request);
+        assert!(
+            result.is_ok(),
+            "compile_intent should succeed: {:?}",
+            result.err()
+        );
+
+        let response = result.unwrap();
+        assert!(response.warnings.is_empty());
+        assert_eq!(response.envelope.title, "test intent");
+
+        // Verify the ACTUAL HTTP request captured by tiny_http
+        let captured = captured_request.lock().unwrap();
+        let req = captured
+            .as_ref()
+            .expect("Request should have been captured");
+
+        // Verify HTTP method is POST
+        assert_eq!(req.method, "POST", "HTTP method should be POST");
+        // Verify HTTP path is /v1/intents/compile
+        assert_eq!(
+            req.path, "/v1/intents/compile",
+            "HTTP path should be /v1/intents/compile"
+        );
+
+        // Verify governance fields are present in the ACTUAL request body
+        assert!(
+            req.body
+                .contains("\"principal_id\":\"550e8400-e29b-41d4-a716-446655440001\""),
+            "Actual HTTP body should contain principal_id"
+        );
+        assert!(
+            req.body.contains("\"title\":\"test compile\""),
+            "Actual HTTP body should contain title"
+        );
+        assert!(
+            req.body.contains("\"goal\":\"test goal\""),
+            "Actual HTTP body should contain goal"
+        );
+        assert!(
+            req.body.contains("\"requested_risk_tier\":\"Low\""),
+            "Actual HTTP body should contain requested_risk_tier"
+        );
+        assert!(
+            req.body.contains("\"approval_mode\":\"None\""),
+            "Actual HTTP body should contain approval_mode"
+        );
+
+        // Also verify that the body is valid JSON
+        let _: serde_json::Value =
+            serde_json::from_str(&req.body).expect("Captured body should be valid JSON");
+
+        handle.join().expect("Server thread should join");
+    }
+
+    #[test]
+    fn test_compile_intent_request_body_governance_fields() {
+        // Verify that compile_intent sends governance fields (High risk, Required approval)
+        // in the ACTUAL HTTP request (method, path, and body).
+
+        let (captured_request, base_url, handle) = start_capture_server();
+
+        let config = ClientConfig::new().base_url(&base_url);
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        // Create request with known governance fields
+        let known_principal_id = ferrum_proto::PrincipalId(
+            uuid::Uuid::parse_str("550e8400-e29b-41d4-a716-446655440002").unwrap(),
+        );
+        let request = ferrum_proto::IntentCompileRequest {
+            principal_id: known_principal_id,
+            session_id: None,
+            channel_id: None,
+            title: "fs_write: /tmp/test.txt".to_string(),
+            goal: "MCP tool call: fs_write on /tmp/test.txt".to_string(),
+            agent_plan_summary: None,
+            trusted_context: ferrum_proto::JsonMap::new(),
+            raw_inputs: vec![],
+            requested_resource_scope: vec![],
+            requested_risk_tier: Some(ferrum_proto::RiskTier::High),
+            approval_mode: Some(ferrum_proto::ApprovalMode::Required),
+            metadata: ferrum_proto::JsonMap::new(),
+        };
+
+        let result = client.compile_intent(&request);
+        assert!(
+            result.is_ok(),
+            "compile_intent should succeed: {:?}",
+            result.err()
+        );
+
+        // Verify the ACTUAL HTTP request was captured
+        let captured = captured_request.lock().unwrap();
+        let req = captured
+            .as_ref()
+            .expect("Request should have been captured");
+
+        // Verify HTTP method is POST
+        assert_eq!(req.method, "POST", "HTTP method should be POST");
+        // Verify HTTP path is /v1/intents/compile
+        assert_eq!(
+            req.path, "/v1/intents/compile",
+            "HTTP path should be /v1/intents/compile"
+        );
+
+        // Verify governance fields in the ACTUAL HTTP body sent by compile_intent
+        assert!(
+            req.body
+                .contains("\"principal_id\":\"550e8400-e29b-41d4-a716-446655440002\""),
+            "Actual HTTP body should contain principal_id"
+        );
+        assert!(
+            req.body.contains("\"title\":\"fs_write: /tmp/test.txt\""),
+            "Actual HTTP body should contain title"
+        );
+        assert!(
+            req.body
+                .contains("\"goal\":\"MCP tool call: fs_write on /tmp/test.txt\""),
+            "Actual HTTP body should contain goal"
+        );
+        assert!(
+            req.body.contains("\"requested_risk_tier\":\"High\""),
+            "Actual HTTP body should contain requested_risk_tier: High"
+        );
+        assert!(
+            req.body.contains("\"approval_mode\":\"Required\""),
+            "Actual HTTP body should contain approval_mode: Required"
+        );
+
+        handle.join().expect("Server thread should join");
+    }
+
+    #[test]
+    fn test_compile_intent_response_with_warnings() {
+        // Verify compile_intent correctly parses response with warnings.
+        // Uses mockito since tiny_http returns a static response.
+
+        let mut server = mockito::Server::new();
+        let mock = server
+            .mock("POST", "/v1/intents/compile")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{
+                "envelope": {
+                    "intent_id": "550e8400-e29b-41d4-a716-446655440000",
+                    "principal_id": "550e8400-e29b-41d4-a716-446655440001",
+                    "session_id": null,
+                    "channel_id": null,
+                    "title": "test",
+                    "goal": "test goal",
+                    "normalized_goal": "test goal",
+                    "allowed_outcomes": [
+                        {
+                            "id": "read",
+                            "description": "read only",
+                            "effect_type": "ReadOnlyAnalysis",
+                            "required": true
+                        }
+                    ],
+                    "forbidden_outcomes": [],
+                    "resource_scope": [],
+                    "risk_tier": "Low",
+                    "approval_mode": "None",
+                    "default_rollback_class": "R0NativeReversible",
+                    "time_budget": { "max_duration_ms": 30000, "max_steps": 8, "max_retries_per_step": 1 },
+                    "trust_context": {
+                        "input_labels": [],
+                        "sensitivity_labels": [],
+                        "taint_score": 0,
+                        "contains_external_metadata": false,
+                        "contains_tool_output": false,
+                        "contains_untrusted_text": false
+                    },
+                    "derived_from_event_ids": [],
+                    "tags": [],
+                    "metadata": {},
+                    "status": "Active",
+                    "created_at": "2025-01-01T00:00:00Z",
+                    "expires_at": "2025-12-31T23:59:59Z"
+                },
+                "warnings": ["risk tier elevated to High", "approval required"]
+            }"#)
+            .expect_at_least(1)
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let known_principal_id = ferrum_proto::PrincipalId(
+            uuid::Uuid::parse_str("550e8400-e29b-41d4-a716-446655440003").unwrap(),
+        );
+        let request = ferrum_proto::IntentCompileRequest {
+            principal_id: known_principal_id,
+            session_id: None,
+            channel_id: None,
+            title: "test".to_string(),
+            goal: "test goal".to_string(),
+            agent_plan_summary: None,
+            trusted_context: ferrum_proto::JsonMap::new(),
+            raw_inputs: vec![],
+            requested_resource_scope: vec![],
+            requested_risk_tier: Some(ferrum_proto::RiskTier::Low),
+            approval_mode: Some(ferrum_proto::ApprovalMode::None),
+            metadata: ferrum_proto::JsonMap::new(),
+        };
+
+        let result = client.compile_intent(&request);
+        assert!(
+            result.is_ok(),
+            "compile_intent should succeed: {:?}",
+            result.err()
+        );
+
+        let response = result.unwrap();
+        assert_eq!(response.warnings.len(), 2);
+        assert!(
+            response
+                .warnings
+                .contains(&"risk tier elevated to High".to_string())
+        );
+        assert!(response.warnings.contains(&"approval required".to_string()));
+
+        mock.assert();
+    }
+
+    #[test]
+    fn test_compile_intent_wrong_path_fails() {
+        // Verify compile_intent fails when the path doesn't match.
+
+        let mut server = mockito::Server::new();
+        // Mock on WRONG path - should NOT be called
+        let _mock_wrong_path = server
+            .mock("POST", "/v1/wrong/path")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{}"#)
+            .expect(0) // Expect 0 invocations
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let request = ferrum_proto::IntentCompileRequest {
+            principal_id: ferrum_proto::PrincipalId::new(),
+            session_id: None,
+            channel_id: None,
+            title: "test".to_string(),
+            goal: "test goal".to_string(),
+            agent_plan_summary: None,
+            trusted_context: ferrum_proto::JsonMap::new(),
+            raw_inputs: vec![],
+            requested_resource_scope: vec![],
+            requested_risk_tier: Some(ferrum_proto::RiskTier::Low),
+            approval_mode: Some(ferrum_proto::ApprovalMode::None),
+            metadata: ferrum_proto::JsonMap::new(),
+        };
+
+        // Request should fail because the mock on wrong path won't match
+        let result = client.compile_intent(&request);
+        assert!(
+            result.is_err(),
+            "compile_intent should fail when path doesn't match"
+        );
+    }
+
+    #[test]
+    fn test_compile_intent_wrong_method_fails() {
+        // Verify compile_intent fails when the HTTP method is wrong.
+
+        let mut server = mockito::Server::new();
+        // Mock on GET instead of POST - should NOT be called
+        let _mock_wrong_method = server
+            .mock("GET", "/v1/intents/compile")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{}"#)
+            .expect(0) // Expect 0 invocations
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let request = ferrum_proto::IntentCompileRequest {
+            principal_id: ferrum_proto::PrincipalId::new(),
+            session_id: None,
+            channel_id: None,
+            title: "test".to_string(),
+            goal: "test goal".to_string(),
+            agent_plan_summary: None,
+            trusted_context: ferrum_proto::JsonMap::new(),
+            raw_inputs: vec![],
+            requested_resource_scope: vec![],
+            requested_risk_tier: Some(ferrum_proto::RiskTier::Low),
+            approval_mode: Some(ferrum_proto::ApprovalMode::None),
+            metadata: ferrum_proto::JsonMap::new(),
+        };
+
+        // Request should fail because the mock expects GET not POST
+        let result = client.compile_intent(&request);
+        assert!(
+            result.is_err(),
+            "compile_intent should fail when method doesn't match"
+        );
     }
 }

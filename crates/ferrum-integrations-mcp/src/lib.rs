@@ -43,9 +43,11 @@ mod rest_mapper;
 mod stage2_types;
 
 // Re-export Stage 2 types for external use.
-pub use stage2_types::{
-    IntentCompileRequest, IntentCompileResponse, PipelineStatus, PipelineStep, ToolCallAction,
-};
+pub use stage2_types::{IntentCompileRequest, PipelineStatus, PipelineStep, ToolCallAction};
+
+// Re-export real ferrum-proto types per doc 79 P3.
+// IntentCompileResponse was a deprecated placeholder; use the real type from ferrum_proto.
+pub use ferrum_proto::IntentCompileResponse;
 
 // Re-export mapping helpers for external use (D1.3.2a).
 pub use mapping_helpers::{
