@@ -79,6 +79,8 @@ This plan resolves those gaps before implementation.
 
 ### 1.2 DTO Summary
 
+> **⚠️ UNVERIFIED DTOs**: All DTOs below are defined from explorer findings and doc 74 design. They have NOT been validated against a running gateway with real schemas. **Do not assume these are stable** — endpoint paths, field names, and nested structures may drift until blockers (B1–B4) are resolved and real gateway integration testing confirms actual shapes.
+
 | DTO | Direction | Description |
 |-----|----------|-------------|
 | `IntentCompileRequest` | MCP → Gateway | Compile MCP tool call into ActionProposal |
@@ -95,6 +97,15 @@ This plan resolves those gaps before implementation.
 | `VerifyExecutionResponse` | Gateway → MCP | Contains verification result |
 | `CompensateExecutionResponse` | Gateway → MCP | Contains compensation result |
 | `EvaluateOutcomeResponse` | Gateway → MCP | Contains outcome report |
+
+### 1.2.1 Naming Reconciliation: `ToolCallAction` (doc 74) vs `IntentCompileRequest` (doc 75)
+
+> **⚠️ Scope clarification**: Doc 74 §3.3 defines `ToolCallAction` as the **internal** MCP-to-governance mapping structure. Doc 75 §1.1 defines `IntentCompileRequest` as the **external** REST API DTO sent to `/v1/intents/compile`. These are **distinct but related**:
+>
+> - `ToolCallAction` (doc 74): Internal Rust struct — maps MCP tool call fields to governance pipeline concepts (`intent_id`, `action_type`, `scope`, `target`, `parameters`). Used *inside* the MCP server.
+> - `IntentCompileRequest` (doc 75): External REST API DTO — JSON payload sent to gateway's compile endpoint. The MCP server *serializes* a `ToolCallAction` into an `IntentCompileRequest` before calling the REST API.
+>
+> **D1.3.1 types-only scope**: Defining `IntentCompileRequest` struct is permitted. Converting `ToolCallAction` → `IntentCompileRequest` serialization is permitted. Calling `POST /v1/intents/compile` is **forbidden** in D1.3.1 types-only.
 
 ### 1.3 Gap: Approval Endpoints Do Not Exist
 
@@ -431,9 +442,35 @@ Expected gateway error format:
 
 ### Stage 2 Phases (D-1.3 – D-1.7)
 
+#### D1.3.1 Safe-Slice Boundary (Types-Only)
+
+> **⚠️ D1.3.1 is types-only**: This phase defines the `IntentCompileRequest` struct and serialization logic. It does **NOT** implement any side-effecting behavior.
+
+**Permitted in D1.3.1 types-only:**
+- Define `IntentCompileRequest` Rust struct with correct fields
+- Define `IntentCompileResponse` Rust struct for parsing gateway response
+- Implement `ToolCallAction` → `IntentCompileRequest` serialization (serde Serialize impl)
+- Add unit tests that serialize/deserialize mock data (no real HTTP calls)
+- Import `reqwest` or similar for type-level correctness (but do NOT call `.send()`)
+
+**Forbidden in D1.3.1 types-only:**
+- Calling `POST /v1/intents/compile` (no `.send()`, no real HTTP)
+- Calling any governance endpoint (compile, eval, mint, authorize, prepare, execute, verify)
+- Any pipeline logic (intent → proposal → capability → execution chain)
+- Any mutating behavior change to existing code
+- Any `#[instrument]` or logging that assumes pipeline state
+- Any capability minting, policy evaluation, rollback preparation
+
+**What D1.3.1 does NOT decide:**
+- Whether `ToolCallAction` fields map correctly to `IntentCompileRequest` (needs explorer confirmation)
+- Whether `proposal_id` returned is a UUID or string (needs real gateway)
+- Whether field names in the DTO match actual gateway schema (may drift per §1.2 warning)
+
+**Next gated step:** D1.3.2 (define `ActionProposal` mapping) requires D1.3.1 types review + B1–B4 resolved.
+
 | Phase | # | Item | Status | Dependencies | Notes |
 |-------|---|------|--------|--------------|-------|
-| **D-1.3: Policy Eval** | D1.3.1 | Define `IntentCompileRequest` struct | Future | — | Map MCP tool call to compile request |
+| **D-1.3: Policy Eval** | D1.3.1 | Define `IntentCompileRequest` struct | Future | — | Map MCP tool call to compile request (types-only; no HTTP calls) |
 | | D1.3.2 | Define `ActionProposal` mapping | Future | D1.3.1 | Map MCP call to ActionProposal |
 | | D1.3.3 | Implement compile call: POST /v1/intents/compile | Future | D1.3.2 | Returns proposal_id |
 | | D1.3.4 | Implement eval call: POST /v1/proposals/{id}/evaluate | Future | D1.3.3 | Returns policy decision |
