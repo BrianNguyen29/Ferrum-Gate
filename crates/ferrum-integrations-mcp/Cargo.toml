@@ -13,9 +13,9 @@ serde_json = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
 ferrum-proto = { path = "../ferrum-proto" }
 uuid = { version = "1", features = ["v4", "v5", "serde"] }
+chrono = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
 mockito = "1.6"
 tiny_http = "0.12"
-chrono = { workspace = true }

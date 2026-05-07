@@ -1,21 +1,22 @@
 //! # ferrum-integrations-mcp
 //!
-//! FerrumGate MCP server integration crate (Phase A-C + Phase D-0 read-only REST client).
+//! FerrumGate MCP server integration crate (Phase A-C + Phase D-0 REST client + D1.7 lifecycle dispatch).
 //!
 //! ## Overview
 //!
 //! This crate provides:
-//! - Read-only MCP tool schema definitions for FerrumGate
+//! - MCP tool schema definitions for FerrumGate (read-only + lifecycle tools)
 //! - Tool registry with metadata (name, description, input_schema, read_only marker)
 //! - JSON-RPC 2.0 request/response types and error codes
 //! - Handler stubs for initialize, ping, tools/list, tools/call
-//! - Phase D-0: Read-only REST client for gateway integration
+//! - Phase D-0: REST client for gateway integration
+//! - D1.7: Lifecycle tool dispatch for approved governance pipeline steps
 //!
 //! ## Phase A-C Status (Complete)
 //!
 //! Phase A-C implemented:
-//! - Read-only tool schema draft (9 tools)
-//! - Tool registry proving no mutating tools are present
+//! - Read-only tool schema (9 tools)
+//! - Tool registry with read_only markers
 //! - JSON-RPC 2.0 types and handler stubs
 //! - Stdio transport skeleton
 //!
@@ -27,13 +28,23 @@
 //! - Error classification (auth, unreachable, server error)
 //! - tools/call implementation for read-only tools
 //!
-//! Phase D-0 does NOT implement:
-//! - Auth middleware (bearer token validation)
-//! - Policy evaluation
-//! - Capability issuance
-//! - Provenance emission
-//! - Rollback preparation
-//! - Mutating tool execution
+//! ## D1.7 Status (Implemented)
+//!
+//! D1.7 implements lifecycle tool dispatch for approved governance pipeline steps:
+//! - compile/submit: POST /v1/intents/compile
+//! - evaluate: POST /v1/proposals/{id}/evaluate
+//! - mint_capability: POST /v1/capabilities/mint
+//! - authorize_execution: POST /v1/executions/authorize
+//! - prepare_execution: POST /v1/executions/{id}/prepare
+//! - execute_prepared: POST /v1/executions/{id}/execute
+//! - verify: POST /v1/executions/{id}/verify
+//! - compensate: POST /v1/executions/{id}/compensate
+//!
+//! D1.7 does NOT implement:
+//! - approve/reject: Backend endpoints absent (permanently blocked)
+//! - Direct provenance emission (gateway-owned)
+//! - Direct state management (gateway-owned)
+//! - Atomic full-pipeline tool (separate step tools per oracle verdict)
 
 use serde::{Deserialize, Serialize};
 
@@ -218,6 +229,240 @@ pub fn tool_registry() -> &'static [Tool] {
                 }),
                 read_only: true,
             },
+            // D1.7 Lifecycle tools (wired, not default-deny)
+            // compile/submit: POST /v1/intents/compile
+            Tool {
+                name: "ferrum_gate_submit_intent",
+                description: "Compile and submit an intent for governance evaluation (D1.7)",
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "principal_id": {
+                            "type": "string",
+                            "description": "Principal ID (UUID)"
+                        },
+                        "title": {
+                            "type": "string",
+                            "description": "Intent title"
+                        },
+                        "goal": {
+                            "type": "string",
+                            "description": "Goal description"
+                        },
+                        "action_type": {
+                            "type": "string",
+                            "description": "Action type (e.g., fs_write, git_push)"
+                        },
+                        "target": {
+                            "type": "string",
+                            "description": "Target resource or entity"
+                        },
+                        "scope": {
+                            "type": "string",
+                            "description": "Authorization scope (e.g., fs:write:/tmp/test.txt)"
+                        },
+                        "parameters": {
+                            "type": "object",
+                            "description": "Tool-specific parameters",
+                            "default": {}
+                        },
+                        "risk_tier": {
+                            "type": "string",
+                            "description": "Risk tier (Low, Medium, High, Critical)",
+                            "enum": ["Low", "Medium", "High", "Critical"]
+                        }
+                    },
+                    "required": ["principal_id", "title", "goal", "action_type", "target", "scope"]
+                }),
+                read_only: false,
+            },
+            // evaluate: POST /v1/proposals/{id}/evaluate
+            Tool {
+                name: "ferrum_gate_evaluate_intent",
+                description: "Evaluate an intent proposal against policy (D1.7)",
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "proposal_id": {
+                            "type": "string",
+                            "description": "Proposal ID (UUID)"
+                        },
+                        "intent_id": {
+                            "type": "string",
+                            "description": "Intent ID (UUID)"
+                        },
+                        "title": {
+                            "type": "string",
+                            "description": "Proposal title"
+                        },
+                        "tool_name": {
+                            "type": "string",
+                            "description": "Tool name to execute"
+                        },
+                        "server_name": {
+                            "type": "string",
+                            "description": "Server/adapter name"
+                        },
+                        "arguments": {
+                            "type": "object",
+                            "description": "Tool arguments",
+                            "default": {}
+                        },
+                        "expected_effect": {
+                            "type": "string",
+                            "description": "Expected effect description"
+                        },
+                        "estimated_risk": {
+                            "type": "string",
+                            "description": "Estimated risk tier",
+                            "enum": ["Low", "Medium", "High", "Critical"]
+                        },
+                        "rollback_class": {
+                            "type": "string",
+                            "description": "Rollback class",
+                            "enum": ["R0NativeReversible", "R1SnapshotRecoverable", "R2Compensatable", "R3IrreversibleHighConsequence"]
+                        }
+                    },
+                    "required": ["proposal_id", "intent_id", "title", "tool_name", "server_name", "arguments", "expected_effect", "estimated_risk"]
+                }),
+                read_only: false,
+            },
+            // mint_capability: POST /v1/capabilities/mint
+            Tool {
+                name: "ferrum_gate_mint_capability",
+                description: "Mint a capability token for an approved proposal (D1.7)",
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "intent_id": {
+                            "type": "string",
+                            "description": "Intent ID (UUID)"
+                        },
+                        "proposal_id": {
+                            "type": "string",
+                            "description": "Proposal ID (UUID)"
+                        },
+                        "tool_name": {
+                            "type": "string",
+                            "description": "Tool name"
+                        },
+                        "server_name": {
+                            "type": "string",
+                            "description": "Server/adapter name"
+                        },
+                        "resource_path": {
+                            "type": "string",
+                            "description": "Resource path (for file-based resources)"
+                        },
+                        "resource_mode": {
+                            "type": "string",
+                            "description": "Resource access mode",
+                            "enum": ["Read", "Write", "Execute"]
+                        },
+                        "ttl_secs": {
+                            "type": "integer",
+                            "description": "Requested TTL in seconds (max 300)",
+                            "default": 120
+                        }
+                    },
+                    "required": ["intent_id", "proposal_id", "tool_name", "server_name"]
+                }),
+                read_only: false,
+            },
+            // authorize_execution: POST /v1/executions/authorize
+            Tool {
+                name: "ferrum_gate_authorize_execution",
+                description: "Authorize execution with a capability token (D1.7)",
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "proposal_id": {
+                            "type": "string",
+                            "description": "Proposal ID (UUID)"
+                        },
+                        "capability_id": {
+                            "type": "string",
+                            "description": "Capability ID (UUID)"
+                        },
+                        "dry_run": {
+                            "type": "boolean",
+                            "description": "If true, authorize without preparing execution",
+                            "default": false
+                        }
+                    },
+                    "required": ["proposal_id", "capability_id"]
+                }),
+                read_only: false,
+            },
+            // prepare_execution: POST /v1/executions/{id}/prepare
+            Tool {
+                name: "ferrum_gate_prepare_execution",
+                description: "Prepare execution for a previously authorized execution (D1.7)",
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "execution_id": {
+                            "type": "string",
+                            "description": "Execution ID (UUID)"
+                        }
+                    },
+                    "required": ["execution_id"]
+                }),
+                read_only: false,
+            },
+            // execute_prepared: POST /v1/executions/{id}/execute
+            Tool {
+                name: "ferrum_gate_execute_prepared",
+                description: "Execute a prepared tool call (D1.7)",
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "execution_id": {
+                            "type": "string",
+                            "description": "Execution ID (UUID)"
+                        },
+                        "payload": {
+                            "type": "object",
+                            "description": "Adapter-specific payload (e.g., file content for fs-write)",
+                            "default": {}
+                        }
+                    },
+                    "required": ["execution_id"]
+                }),
+                read_only: false,
+            },
+            // verify: POST /v1/executions/{id}/verify
+            Tool {
+                name: "ferrum_gate_verify",
+                description: "Verify execution result (D1.7)",
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "execution_id": {
+                            "type": "string",
+                            "description": "Execution ID (UUID)"
+                        }
+                    },
+                    "required": ["execution_id"]
+                }),
+                read_only: false,
+            },
+            // compensate: POST /v1/executions/{id}/compensate
+            Tool {
+                name: "ferrum_gate_compensate",
+                description: "Compensate/rollback a executed tool call (D1.7)",
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "execution_id": {
+                            "type": "string",
+                            "description": "Execution ID (UUID)"
+                        }
+                    },
+                    "required": ["execution_id"]
+                }),
+                read_only: false,
+            },
         ]
     })
 }
@@ -238,18 +483,23 @@ pub const READ_ONLY_TOOLS: &[&str] = &[
     "ferrum_gate_list_bridge_tools",
 ];
 
-/// Set of tool names that are mutating (require governance pipeline).
-/// Per doc 74 D-1.2: these tools require intent → policy eval → capability mint → authorize flow.
-/// In Stage 1 (D-1.1+D-1.2), these return NOT_IMPLEMENTED (default-deny).
-pub const MUTATING_TOOLS: &[&str] = &[
+/// Set of tool names that are lifecycle tools (require governance pipeline).
+/// Per D1.7: These tools implement the governance pipeline steps:
+/// compile → evaluate → mint → authorize → prepare → execute → verify → compensate
+pub const LIFECYCLE_TOOLS: &[&str] = &[
     "ferrum_gate_submit_intent",
     "ferrum_gate_evaluate_intent",
+    "ferrum_gate_mint_capability",
+    "ferrum_gate_authorize_execution",
     "ferrum_gate_prepare_execution",
     "ferrum_gate_execute_prepared",
+    "ferrum_gate_verify",
     "ferrum_gate_compensate",
-    "ferrum_gate_approve_intent",
-    "ferrum_gate_reject_intent",
 ];
+
+/// Set of tool names that are permanently blocked (backend endpoints absent).
+/// Per oracle verdict: approve/reject remain NOT_IMPLEMENTED due to missing backend endpoints.
+pub const BLOCKED_TOOLS: &[&str] = &["ferrum_gate_approve_intent", "ferrum_gate_reject_intent"];
 
 // ---------------------------------------------------------------------------
 // Auth Context (Phase D-1.1)
@@ -781,93 +1031,129 @@ mod tests {
     // -------------------------------------------------------------------------
 
     #[test]
-    fn test_tool_registry_contains_nine_tools() {
+    fn test_tool_registry_contains_all_tools() {
+        // D1.7: Registry now has 17 tools (9 read-only + 8 lifecycle)
         let registry = tool_registry();
         assert_eq!(
             registry.len(),
-            9,
-            "Tool registry should contain exactly 9 tools"
+            17,
+            "Tool registry should contain exactly 17 tools (9 read-only + 8 lifecycle)"
         );
     }
 
     #[test]
-    fn test_tool_registry_contains_only_read_only_tools() {
+    fn test_read_only_tools_are_marked_correctly() {
+        // Verify read-only tools are marked correctly
         for tool in tool_registry() {
-            assert!(
-                tool.read_only,
-                "Tool '{}' should be marked as read_only=true",
-                tool.name
-            );
+            if READ_ONLY_TOOLS.contains(&tool.name) {
+                assert!(
+                    tool.read_only,
+                    "Read-only tool '{}' should be marked as read_only=true",
+                    tool.name
+                );
+            } else if LIFECYCLE_TOOLS.contains(&tool.name) {
+                assert!(
+                    !tool.read_only,
+                    "Lifecycle tool '{}' should be marked as read_only=false",
+                    tool.name
+                );
+            }
         }
     }
 
     #[test]
-    fn test_mutating_tools_set_contains_expected_tools() {
-        // Per doc 74 D-1.2, mutating tools are registered but return NOT_IMPLEMENTED
-        let expected_mutating = [
+    fn test_lifecycle_tools_set_contains_expected_tools() {
+        // Per D1.7, lifecycle tools are the 8 wired governance pipeline steps
+        let expected_lifecycle = [
             "ferrum_gate_submit_intent",
             "ferrum_gate_evaluate_intent",
+            "ferrum_gate_mint_capability",
+            "ferrum_gate_authorize_execution",
             "ferrum_gate_prepare_execution",
             "ferrum_gate_execute_prepared",
+            "ferrum_gate_verify",
             "ferrum_gate_compensate",
-            "ferrum_gate_approve_intent",
-            "ferrum_gate_reject_intent",
         ];
-        let mutating_set: std::collections::HashSet<_> = MUTATING_TOOLS.iter().copied().collect();
-        for expected in expected_mutating {
+        let lifecycle_set: std::collections::HashSet<_> = LIFECYCLE_TOOLS.iter().copied().collect();
+        for expected in expected_lifecycle {
             assert!(
-                mutating_set.contains(expected),
-                "MUTATING_TOOLS should contain '{}'",
+                lifecycle_set.contains(expected),
+                "LIFECYCLE_TOOLS should contain '{}'",
                 expected
             );
         }
         assert_eq!(
-            MUTATING_TOOLS.len(),
-            7,
-            "Should have exactly 7 mutating tools"
+            LIFECYCLE_TOOLS.len(),
+            8,
+            "Should have exactly 8 lifecycle tools"
         );
     }
 
     #[test]
-    fn test_mutating_tools_not_in_registry() {
-        // Mutating tools are NOT in the read-only tool registry
+    fn test_blocked_tools_set_contains_expected_tools() {
+        // Per oracle verdict, approve/reject are permanently blocked
+        let expected_blocked = ["ferrum_gate_approve_intent", "ferrum_gate_reject_intent"];
+        let blocked_set: std::collections::HashSet<_> = BLOCKED_TOOLS.iter().copied().collect();
+        for expected in expected_blocked {
+            assert!(
+                blocked_set.contains(expected),
+                "BLOCKED_TOOLS should contain '{}'",
+                expected
+            );
+        }
+        assert_eq!(
+            BLOCKED_TOOLS.len(),
+            2,
+            "Should have exactly 2 blocked tools"
+        );
+    }
+
+    #[test]
+    fn test_lifecycle_tools_are_in_registry() {
+        // Lifecycle tools ARE in the tool registry (they're wired, not blocked)
         let registry_names: std::collections::HashSet<_> =
             tool_registry().iter().map(|t| t.name).collect();
-        for tool_name in MUTATING_TOOLS {
+        for tool_name in LIFECYCLE_TOOLS {
             assert!(
-                !registry_names.contains(tool_name),
-                "Mutating tool '{}' should NOT be in tool registry",
+                registry_names.contains(tool_name),
+                "Lifecycle tool '{}' should be in tool registry",
                 tool_name
             );
         }
     }
 
     #[test]
-    fn test_calling_mutating_tool_returns_not_implemented() {
-        // Per doc 74 D-1.2, mutating tools return NOT_IMPLEMENTED (default-deny)
-        let params = serde_json::json!({
-            "name": "ferrum_gate_submit_intent",
-            "arguments": {"intent": "test"}
-        });
-        let response = handle_tools_call(params, None);
-        match response {
-            JsonRpcResponse::Error(err) => {
-                assert_eq!(err.error.code, error_codes::NOT_IMPLEMENTED);
-            }
-            JsonRpcResponse::Success(_) => {
-                panic!("Expected NOT_IMPLEMENTED error for mutating tool")
-            }
+    fn test_blocked_tools_not_in_registry() {
+        // Blocked tools are NOT in the tool registry (they return NOT_IMPLEMENTED)
+        let registry_names: std::collections::HashSet<_> =
+            tool_registry().iter().map(|t| t.name).collect();
+        for tool_name in BLOCKED_TOOLS {
+            assert!(
+                !registry_names.contains(tool_name),
+                "Blocked tool '{}' should NOT be in tool registry",
+                tool_name
+            );
         }
     }
 
     #[test]
-    fn test_read_only_tools_set_has_all_tools() {
+    fn test_read_only_tools_subset_of_registry() {
+        // D1.7: READ_ONLY_TOOLS is a subset of the full registry
         let registry_names: std::collections::HashSet<_> =
             tool_registry().iter().map(|t| t.name).collect();
         let read_only_set: std::collections::HashSet<_> = READ_ONLY_TOOLS.iter().copied().collect();
-        assert_eq!(
-            registry_names, read_only_set,
-            "READ_ONLY_TOOLS should match tool registry names"
+        // All read-only tools should be in the registry
+        for tool_name in READ_ONLY_TOOLS {
+            assert!(
+                registry_names.contains(tool_name),
+                "Read-only tool '{}' should be in registry",
+                tool_name
+            );
+        }
+        // Registry should contain all read-only tools plus lifecycle tools
+        assert!(
+            registry_names.len() >= READ_ONLY_TOOLS.len(),
+            "Registry should contain at least all read-only tools"
         );
     }
 
@@ -888,26 +1174,20 @@ mod tests {
     }
 
     #[test]
-    fn test_no_mutating_tool_names_in_registry() {
-        let mutating_patterns = [
-            "submit",
-            "evaluate",
-            "execute",
-            "compensate",
-            "rollback",
-            "fs_write",
-            "git_push",
-            "sql_mutate",
-            "http_post",
-            "create",
-            "update",
-            "delete",
+    fn test_no_unsafe_tool_names_in_registry() {
+        // D1.7: Lifecycle tools now include submit, evaluate, execute, compensate
+        // This test checks for truly unsafe patterns that should never appear
+        let unsafe_patterns = [
+            "rollback", // Not a lifecycle step name
+            "direct_",  // Would indicate bypassing gateway
+            "unsafe_",  // Unsafe prefix
+            "bypass_",  // Bypass prefix
         ];
         for tool in tool_registry() {
-            for pattern in &mutating_patterns {
+            for pattern in &unsafe_patterns {
                 assert!(
                     !tool.name.contains(pattern),
-                    "Tool '{}' should not contain mutating pattern '{}'",
+                    "Tool '{}' should not contain unsafe pattern '{}'",
                     tool.name,
                     pattern
                 );
@@ -982,13 +1262,14 @@ mod tests {
     }
 
     #[test]
-    fn test_tools_list_returns_nine_tools() {
+    fn test_tools_list_returns_all_tools() {
+        // D1.7: tools/list returns 17 tools (9 read-only + 8 lifecycle)
         let response = handle_tools_list(None);
         match response {
             JsonRpcResponse::Success(success) => {
                 let result: ToolsListResult =
                     serde_json::from_value(success.result).expect("should parse");
-                assert_eq!(result.tools.len(), 9, "tools/list should return 9 tools");
+                assert_eq!(result.tools.len(), 17, "tools/list should return 17 tools");
             }
             JsonRpcResponse::Error(_) => panic!("Expected success response"),
         }
@@ -1079,7 +1360,7 @@ mod tests {
             JsonRpcResponse::Success(success) => {
                 let result: ToolsListResult =
                     serde_json::from_value(success.result).expect("should parse");
-                assert_eq!(result.tools.len(), 9);
+                assert_eq!(result.tools.len(), 17); // 9 read-only + 8 lifecycle
             }
             JsonRpcResponse::Error(_) => panic!("Expected success for tools/list"),
         }

@@ -15,12 +15,37 @@
 //! | `ferrum_gate_list_policy_bundles` | GET /v1/policy-bundles | Yes |
 //! | `ferrum_gate_list_bridges` | GET /v1/bridges | Yes |
 //! | `ferrum_gate_list_bridge_tools` | GET /v1/bridges/{id}/tools | Yes |
+//!
+//! ## D1.7 Lifecycle Tools
+//!
+//! | MCP Tool | REST Endpoint | Notes |
+//! |----------|---------------|-------|
+//! | `ferrum_gate_submit_intent` | POST /v1/intents/compile | D1.7 wired |
+//! | `ferrum_gate_evaluate_intent` | POST /v1/proposals/{id}/evaluate | D1.7 wired |
+//! | `ferrum_gate_mint_capability` | POST /v1/capabilities/mint | D1.7 wired |
+//! | `ferrum_gate_authorize_execution` | POST /v1/executions/authorize | D1.7 wired |
+//! | `ferrum_gate_prepare_execution` | POST /v1/executions/{id}/prepare | D1.7 wired |
+//! | `ferrum_gate_execute_prepared` | POST /v1/executions/{id}/execute | D1.7 wired |
+//! | `ferrum_gate_verify` | POST /v1/executions/{id}/verify | D1.7 wired |
+//! | `ferrum_gate_compensate` | POST /v1/executions/{id}/compensate | D1.7 wired |
+//! | `ferrum_gate_approve_intent` | — | BLOCKED (no backend endpoint) |
+//! | `ferrum_gate_reject_intent` | — | BLOCKED (no backend endpoint) |
 
-use crate::MUTATING_TOOLS;
+use crate::BLOCKED_TOOLS;
 use crate::ToolsCallResult;
 use crate::error_codes::{INVALID_PARAMS, METHOD_NOT_FOUND, NOT_IMPLEMENTED};
 use crate::http_client::FerrumGatewayClient;
 use crate::http_client::GatewayError;
+
+// Helper to parse a UUID string into a strong_id type (IntentId, ProposalId, etc.)
+fn parse_uuid_into_id<T: Copy>(
+    s: &str,
+    constructor: impl Fn(uuid::Uuid) -> T,
+) -> Result<T, McpToolError> {
+    uuid::Uuid::parse_str(s)
+        .map(constructor)
+        .map_err(|_| McpToolError::invalid_args(&format!("Invalid UUID format: {}", s)))
+}
 
 // ---------------------------------------------------------------------------
 // MCP Tool Error
@@ -79,6 +104,19 @@ impl McpToolError {
         }
     }
 
+    /// Create a blocked error for tools with permanently absent backend endpoints.
+    /// Per oracle verdict: approve/reject remain blocked due to missing backend endpoints.
+    pub fn blocked(tool_name: &str) -> Self {
+        Self {
+            code: NOT_IMPLEMENTED,
+            message: format!(
+                "Tool '{}' is permanently blocked: backend endpoint absent",
+                tool_name
+            ),
+            data: None,
+        }
+    }
+
     /// Create an error for invalid arguments.
     #[allow(dead_code)]
     pub fn invalid_args(msg: &str) -> Self {
@@ -115,7 +153,7 @@ pub fn map_tool_to_rest(
         // Deep readiness probe - no auth required
         "ferrum_gate_readyz_deep" => call_readyz_deep(client),
 
-        // Protected endpoints below
+        // Protected read-only endpoints
         "ferrum_gate_list_intents" => call_list_intents(client, args),
         "ferrum_gate_get_execution" => call_get_execution(client, args),
         "ferrum_gate_query_lineage" => call_query_lineage(client, args),
@@ -124,8 +162,18 @@ pub fn map_tool_to_rest(
         "ferrum_gate_list_bridges" => call_list_bridges(client),
         "ferrum_gate_list_bridge_tools" => call_list_bridge_tools(client, args),
 
-        // Mutating tools - return NOT_IMPLEMENTED (default-deny per doc 74 D-1.2)
-        _ if MUTATING_TOOLS.contains(&tool_name) => Err(McpToolError::not_implemented(tool_name)),
+        // D1.7 Lifecycle tools (wired to gateway REST API)
+        "ferrum_gate_submit_intent" => call_submit_intent(client, args),
+        "ferrum_gate_evaluate_intent" => call_evaluate_intent(client, args),
+        "ferrum_gate_mint_capability" => call_mint_capability(client, args),
+        "ferrum_gate_authorize_execution" => call_authorize_execution(client, args),
+        "ferrum_gate_prepare_execution" => call_prepare_execution(client, args),
+        "ferrum_gate_execute_prepared" => call_execute_prepared(client, args),
+        "ferrum_gate_verify" => call_verify(client, args),
+        "ferrum_gate_compensate" => call_compensate(client, args),
+
+        // Permanently blocked tools (no backend endpoint)
+        _ if BLOCKED_TOOLS.contains(&tool_name) => Err(McpToolError::blocked(tool_name)),
 
         // Unknown tool
         _ => Err(McpToolError::unknown_tool(tool_name)),
@@ -294,6 +342,410 @@ fn call_list_bridge_tools(
                 r#type: "text".to_string(),
                 text: Some(
                     serde_json::to_string_pretty(&result).unwrap_or_else(|_| result.to_string()),
+                ),
+            }],
+            is_error: false,
+        }),
+        Err(e) => Err(McpToolError::from_gateway_error(&e)),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// D1.7 Lifecycle Tool Call Functions
+// ---------------------------------------------------------------------------
+
+fn call_submit_intent(
+    client: &FerrumGatewayClient,
+    args: &serde_json::Value,
+) -> Result<ToolsCallResult, McpToolError> {
+    let principal_id = args
+        .get("principal_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| McpToolError::missing_arg("principal_id"))?;
+    let title = args
+        .get("title")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| McpToolError::missing_arg("title"))?;
+    let goal = args
+        .get("goal")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| McpToolError::missing_arg("goal"))?;
+    let action_type = args
+        .get("action_type")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| McpToolError::missing_arg("action_type"))?;
+    let target = args
+        .get("target")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| McpToolError::missing_arg("target"))?;
+    let scope = args
+        .get("scope")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| McpToolError::missing_arg("scope"))?;
+    let parameters = args
+        .get("parameters")
+        .cloned()
+        .unwrap_or(serde_json::json!({}));
+    let risk_tier = args
+        .get("risk_tier")
+        .and_then(|v| v.as_str())
+        .map(|s| match s {
+            "Low" => ferrum_proto::RiskTier::Low,
+            "Medium" => ferrum_proto::RiskTier::Medium,
+            "High" => ferrum_proto::RiskTier::High,
+            "Critical" => ferrum_proto::RiskTier::Critical,
+            _ => ferrum_proto::RiskTier::High,
+        });
+
+    // Build IntentCompileRequest using mapping helpers
+    let action = crate::stage2_types::ToolCallAction::new(
+        uuid::Uuid::new_v4().to_string(),
+        action_type.to_string(),
+        scope.to_string(),
+        target.to_string(),
+        parameters,
+        principal_id.to_string(),
+    );
+    let draft = crate::mapping_helpers::tool_call_action_to_draft_intent_compile_request(
+        &action,
+        principal_id.to_string(),
+    );
+
+    let request = ferrum_proto::IntentCompileRequest {
+        principal_id: parse_uuid_into_id(principal_id, ferrum_proto::PrincipalId)?,
+        session_id: None,
+        channel_id: None,
+        title: title.to_string(),
+        goal: goal.to_string(),
+        agent_plan_summary: draft.agent_plan_summary,
+        trusted_context: draft.trusted_context.unwrap_or_default(),
+        raw_inputs: draft.raw_inputs.unwrap_or_default(),
+        requested_resource_scope: draft.requested_resource_scope.unwrap_or_default(),
+        requested_risk_tier: risk_tier.or(draft.requested_risk_tier),
+        approval_mode: draft.approval_mode,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    match client.compile_intent(&request) {
+        Ok(result) => Ok(ToolsCallResult {
+            content: vec![crate::ToolContent {
+                r#type: "text".to_string(),
+                text: Some(
+                    serde_json::to_string_pretty(&result)
+                        .unwrap_or_else(|_e| format!("{:?}", result)),
+                ),
+            }],
+            is_error: false,
+        }),
+        Err(e) => Err(McpToolError::from_gateway_error(&e)),
+    }
+}
+
+fn call_evaluate_intent(
+    client: &FerrumGatewayClient,
+    args: &serde_json::Value,
+) -> Result<ToolsCallResult, McpToolError> {
+    let proposal_id = args
+        .get("proposal_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| McpToolError::missing_arg("proposal_id"))?;
+    let intent_id = args
+        .get("intent_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| McpToolError::missing_arg("intent_id"))?;
+    let title = args
+        .get("title")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| McpToolError::missing_arg("title"))?;
+    let tool_name = args
+        .get("tool_name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| McpToolError::missing_arg("tool_name"))?;
+    let server_name = args
+        .get("server_name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| McpToolError::missing_arg("server_name"))?;
+    let arguments = args
+        .get("arguments")
+        .cloned()
+        .unwrap_or(serde_json::json!({}));
+    let expected_effect = args
+        .get("expected_effect")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| McpToolError::missing_arg("expected_effect"))?;
+    let estimated_risk = args
+        .get("estimated_risk")
+        .and_then(|v| v.as_str())
+        .map(|s| match s {
+            "Low" => ferrum_proto::RiskTier::Low,
+            "Medium" => ferrum_proto::RiskTier::Medium,
+            "High" => ferrum_proto::RiskTier::High,
+            "Critical" => ferrum_proto::RiskTier::Critical,
+            _ => ferrum_proto::RiskTier::High,
+        })
+        .unwrap_or(ferrum_proto::RiskTier::High);
+    let rollback_class = args
+        .get("rollback_class")
+        .and_then(|v| v.as_str())
+        .map(|s| match s {
+            "R0NativeReversible" => ferrum_proto::RollbackClass::R0NativeReversible,
+            "R1SnapshotRecoverable" => ferrum_proto::RollbackClass::R1SnapshotRecoverable,
+            "R2Compensatable" => ferrum_proto::RollbackClass::R2Compensatable,
+            _ => ferrum_proto::RollbackClass::R3IrreversibleHighConsequence,
+        })
+        .unwrap_or(ferrum_proto::RollbackClass::R3IrreversibleHighConsequence);
+
+    let proposal_id_proto = parse_uuid_into_id(proposal_id, ferrum_proto::ProposalId)?;
+    let intent_id_proto = parse_uuid_into_id(intent_id, ferrum_proto::IntentId)?;
+
+    let proposal = ferrum_proto::ActionProposal {
+        proposal_id: proposal_id_proto,
+        intent_id: intent_id_proto,
+        step_index: 0,
+        title: title.to_string(),
+        tool_name: tool_name.to_string(),
+        server_name: server_name.to_string(),
+        raw_arguments: arguments,
+        expected_effect: expected_effect.to_string(),
+        estimated_risk,
+        requested_rollback_class: rollback_class,
+        taint_inputs: vec![],
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+
+    match client.evaluate_proposal(&proposal_id_proto, &proposal) {
+        Ok(result) => Ok(ToolsCallResult {
+            content: vec![crate::ToolContent {
+                r#type: "text".to_string(),
+                text: Some(
+                    serde_json::to_string_pretty(&result)
+                        .unwrap_or_else(|_e| format!("{:?}", result)),
+                ),
+            }],
+            is_error: false,
+        }),
+        Err(e) => Err(McpToolError::from_gateway_error(&e)),
+    }
+}
+
+fn call_mint_capability(
+    client: &FerrumGatewayClient,
+    args: &serde_json::Value,
+) -> Result<ToolsCallResult, McpToolError> {
+    let intent_id = args
+        .get("intent_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| McpToolError::missing_arg("intent_id"))?;
+    let proposal_id = args
+        .get("proposal_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| McpToolError::missing_arg("proposal_id"))?;
+    let tool_name = args
+        .get("tool_name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| McpToolError::missing_arg("tool_name"))?;
+    let server_name = args
+        .get("server_name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| McpToolError::missing_arg("server_name"))?;
+    let resource_path = args.get("resource_path").and_then(|v| v.as_str());
+    let resource_mode = args
+        .get("resource_mode")
+        .and_then(|v| v.as_str())
+        .map(|s| match s {
+            "Read" => ferrum_proto::ResourceMode::Read,
+            "Write" => ferrum_proto::ResourceMode::Write,
+            _ => ferrum_proto::ResourceMode::Execute,
+        })
+        .unwrap_or(ferrum_proto::ResourceMode::Execute);
+    let ttl_secs = args.get("ttl_secs").and_then(|v| v.as_u64()).unwrap_or(120);
+
+    let mut resource_bindings = vec![];
+    if let Some(path) = resource_path {
+        resource_bindings.push(ferrum_proto::ResourceBinding::File {
+            path: path.to_string(),
+            mode: resource_mode,
+            required_hash: None,
+        });
+    }
+
+    let request = ferrum_proto::CapabilityMintRequest {
+        intent_id: parse_uuid_into_id(intent_id, ferrum_proto::IntentId)?,
+        proposal_id: parse_uuid_into_id(proposal_id, ferrum_proto::ProposalId)?,
+        tool_binding: ferrum_proto::ToolBinding {
+            server_name: server_name.to_string(),
+            tool_name: tool_name.to_string(),
+            tool_version: None,
+        },
+        resource_bindings,
+        argument_constraints: vec![],
+        taint_budget: ferrum_proto::TaintBudget {
+            max_taint_score: 30,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: ttl_secs.min(300), // Cap at 300s per invariants
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    match client.mint_capability(&request) {
+        Ok(result) => Ok(ToolsCallResult {
+            content: vec![crate::ToolContent {
+                r#type: "text".to_string(),
+                text: Some(
+                    serde_json::to_string_pretty(&result)
+                        .unwrap_or_else(|_e| format!("{:?}", result)),
+                ),
+            }],
+            is_error: false,
+        }),
+        Err(e) => Err(McpToolError::from_gateway_error(&e)),
+    }
+}
+
+fn call_authorize_execution(
+    client: &FerrumGatewayClient,
+    args: &serde_json::Value,
+) -> Result<ToolsCallResult, McpToolError> {
+    let proposal_id = args
+        .get("proposal_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| McpToolError::missing_arg("proposal_id"))?;
+    let capability_id = args
+        .get("capability_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| McpToolError::missing_arg("capability_id"))?;
+    let dry_run = args
+        .get("dry_run")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let request = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id: parse_uuid_into_id(proposal_id, ferrum_proto::ProposalId)?,
+        capability_id: parse_uuid_into_id(capability_id, ferrum_proto::CapabilityId)?,
+        dry_run,
+    };
+
+    match client.authorize_execution(&request) {
+        Ok(result) => Ok(ToolsCallResult {
+            content: vec![crate::ToolContent {
+                r#type: "text".to_string(),
+                text: Some(
+                    serde_json::to_string_pretty(&result)
+                        .unwrap_or_else(|_e| format!("{:?}", result)),
+                ),
+            }],
+            is_error: false,
+        }),
+        Err(e) => Err(McpToolError::from_gateway_error(&e)),
+    }
+}
+
+fn call_prepare_execution(
+    client: &FerrumGatewayClient,
+    args: &serde_json::Value,
+) -> Result<ToolsCallResult, McpToolError> {
+    let execution_id = args
+        .get("execution_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| McpToolError::missing_arg("execution_id"))?;
+
+    let execution_id_proto = parse_uuid_into_id(execution_id, ferrum_proto::ExecutionId)?;
+
+    match client.prepare_execution(&execution_id_proto) {
+        Ok(result) => Ok(ToolsCallResult {
+            content: vec![crate::ToolContent {
+                r#type: "text".to_string(),
+                text: Some(
+                    serde_json::to_string_pretty(&result)
+                        .unwrap_or_else(|_e| format!("{:?}", result)),
+                ),
+            }],
+            is_error: false,
+        }),
+        Err(e) => Err(McpToolError::from_gateway_error(&e)),
+    }
+}
+
+fn call_execute_prepared(
+    client: &FerrumGatewayClient,
+    args: &serde_json::Value,
+) -> Result<ToolsCallResult, McpToolError> {
+    let execution_id = args
+        .get("execution_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| McpToolError::missing_arg("execution_id"))?;
+    let payload = args
+        .get("payload")
+        .cloned()
+        .unwrap_or(serde_json::json!({}));
+
+    let execution_id_proto = parse_uuid_into_id(execution_id, ferrum_proto::ExecutionId)?;
+
+    let request = ferrum_proto::ExecuteExecutionRequest { payload };
+
+    match client.execute_execution(&execution_id_proto, &request) {
+        Ok(result) => Ok(ToolsCallResult {
+            content: vec![crate::ToolContent {
+                r#type: "text".to_string(),
+                text: Some(
+                    serde_json::to_string_pretty(&result)
+                        .unwrap_or_else(|_e| format!("{:?}", result)),
+                ),
+            }],
+            is_error: false,
+        }),
+        Err(e) => Err(McpToolError::from_gateway_error(&e)),
+    }
+}
+
+fn call_verify(
+    client: &FerrumGatewayClient,
+    args: &serde_json::Value,
+) -> Result<ToolsCallResult, McpToolError> {
+    let execution_id = args
+        .get("execution_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| McpToolError::missing_arg("execution_id"))?;
+
+    let execution_id_proto = parse_uuid_into_id(execution_id, ferrum_proto::ExecutionId)?;
+
+    match client.verify_execution(&execution_id_proto) {
+        Ok(result) => Ok(ToolsCallResult {
+            content: vec![crate::ToolContent {
+                r#type: "text".to_string(),
+                text: Some(
+                    serde_json::to_string_pretty(&result)
+                        .unwrap_or_else(|_e| format!("{:?}", result)),
+                ),
+            }],
+            is_error: false,
+        }),
+        Err(e) => Err(McpToolError::from_gateway_error(&e)),
+    }
+}
+
+fn call_compensate(
+    client: &FerrumGatewayClient,
+    args: &serde_json::Value,
+) -> Result<ToolsCallResult, McpToolError> {
+    let execution_id = args
+        .get("execution_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| McpToolError::missing_arg("execution_id"))?;
+
+    let execution_id_proto = parse_uuid_into_id(execution_id, ferrum_proto::ExecutionId)?;
+
+    match client.compensate_execution(&execution_id_proto) {
+        Ok(result) => Ok(ToolsCallResult {
+            content: vec![crate::ToolContent {
+                r#type: "text".to_string(),
+                text: Some(
+                    serde_json::to_string_pretty(&result)
+                        .unwrap_or_else(|_e| format!("{:?}", result)),
                 ),
             }],
             is_error: false,

@@ -62,6 +62,7 @@ Thư mục này là điểm vào duy nhất để agent khác tiếp tục tri�
 62. [81-mcp-server-d1-4-capability-authorize-preflight.md](81-mcp-server-d1-4-capability-authorize-preflight.md) — D-1.4 capability/authorize: I5-I7 approved, low-level mint/authorize HTTP client implemented; tool dispatch and D1.5+ remain blocked
 63. [82-mcp-server-d1-5-prepare-rollback-preflight.md](82-mcp-server-d1-5-prepare-rollback-preflight.md) — D-1.5 prepare/rollback: low-level HTTP client implemented; execute/verify/compensate and D1.6+ remain blocked
 64. [83-mcp-server-d1-6-execute-verify-compensate-preflight.md](83-mcp-server-d1-6-execute-verify-compensate-preflight.md) — D-1.6 execute/verify/compensate: low-level REST clients implemented and auto_commit verify risk resolved; tool dispatch and D1.7+ remain blocked
+65. [84-mcp-server-d1-7-tool-dispatch-preflight.md](84-mcp-server-d1-7-tool-dispatch-preflight.md) — D1.7 tool dispatch: 8 lifecycle tools wired (submit, evaluate, mint, authorize, prepare, execute, verify, compensate); approve/reject permanently blocked (backend absent)
 
 ## Luật ưu tiên
 Khi mâu thuẫn, ưu tiên:
