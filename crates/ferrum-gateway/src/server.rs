@@ -3109,13 +3109,23 @@ async fn verify_execution(
         );
     }
 
-    // Update execution state to AwaitingVerification or Committed based on verify result
+    // D1.6 auto_commit fix: Only set execution to Committed (and emit SideEffectCommitted)
+    // when verified=true AND contract.auto_commit=true. When auto_commit=false, the execution
+    // remains in Running/AwaitingVerification state to await explicit commit.
+    // This preserves the verified result in contract state while respecting rollback semantics.
     let mut updated_execution = execution;
-    updated_execution.state = if verified {
-        ferrum_proto::ExecutionState::Committed
+    if verified {
+        if updated_contract.auto_commit {
+            // auto_commit=true: normal path - execution becomes Committed
+            updated_execution.state = ferrum_proto::ExecutionState::Committed;
+        } else {
+            // auto_commit=false: verified but not committed - keep execution in current state
+            // Contract is Verified but execution stays Running/AwaitingVerification
+            // This allows explicit commit via separate flow when auto_commit=false
+        }
     } else {
-        ferrum_proto::ExecutionState::Failed
-    };
+        updated_execution.state = ferrum_proto::ExecutionState::Failed;
+    }
     if let Err(e) = state
         .runtime
         .store
@@ -3181,8 +3191,9 @@ async fn verify_execution(
         );
     }
 
-    // Emit SideEffectCommitted provenance event only when verification succeeded.
-    if verified {
+    // Emit SideEffectCommitted provenance event only when verification succeeded AND auto_commit=true.
+    // When auto_commit=false, SideEffectCommitted is suppressed to preserve rollback semantics.
+    if verified && updated_contract.auto_commit {
         let committed_event = ProvenanceEvent {
             event_id: EventId::new(),
             kind: ferrum_proto::ProvenanceEventKind::SideEffectCommitted,

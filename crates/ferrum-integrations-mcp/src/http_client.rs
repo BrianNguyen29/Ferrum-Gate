@@ -605,6 +605,136 @@ impl FerrumGatewayClient {
             GatewayError::server_error(200, &format!("Failed to parse prepare response: {}", e))
         })
     }
+
+    // -------------------------------------------------------------------------
+    // D1.6 Execute/Verify/Compensate endpoints
+    // -------------------------------------------------------------------------
+
+    /// Execute execution: POST /v1/executions/{execution_id}/execute
+    ///
+    /// Per doc 83: This is the execute-only gate (D1.6).
+    /// It does NOT implement verify/compensate (D1.6+) but does not wire tool dispatch.
+    ///
+    /// Takes an `execution_id` in the URL path and an `ExecuteExecutionRequest` in the request body.
+    /// The gateway validates the execution is in Authorized/Prepared/Proposed state,
+    /// then executes the tool call via the adapter.
+    ///
+    /// # Arguments
+    ///
+    /// * `execution_id` - The execution ID from authorize response
+    /// * `request` - The execute request with JSON payload for the adapter
+    ///
+    /// # Returns
+    ///
+    /// `Result<ferrum_proto::ExecuteExecutionResponse, GatewayError>` containing:
+    /// - `execution_id`: The execution ID
+    /// - `executed`: Whether execution succeeded
+    /// - `result_digest`: SHA-256 digest of the result (for verification)
+    /// - `rollback_contract`: The updated rollback contract (state → ExecutedAwaitingVerify)
+    /// - `warnings`: Advisory warnings from the execution
+    pub fn execute_execution(
+        &self,
+        execution_id: &ferrum_proto::ExecutionId,
+        request: &ferrum_proto::ExecuteExecutionRequest,
+    ) -> Result<ferrum_proto::ExecuteExecutionResponse, GatewayError> {
+        let path = format!("/v1/executions/{}/execute", execution_id);
+        let request = self
+            .build_request(reqwest::Method::POST, &path)
+            .json(request)
+            .build()
+            .map_err(|_e| GatewayError::unreachable("Failed to build request"))?;
+
+        let response: serde_json::Value = self.execute(request)?;
+
+        // Parse the response into real ferrum-proto type
+        // Real response is { execution_id, executed, result_digest, rollback_contract, warnings }
+        serde_json::from_value(response).map_err(|e| {
+            GatewayError::server_error(200, &format!("Failed to parse execute response: {}", e))
+        })
+    }
+
+    /// Verify execution: POST /v1/executions/{execution_id}/verify
+    ///
+    /// Per doc 83: This is the verify-only gate (D1.6).
+    /// It does NOT implement compensate (D1.6+) but does not wire tool dispatch.
+    ///
+    /// Takes an `execution_id` in the URL path with NO request body.
+    /// The gateway validates the execution/contract are in ExecutedAwaitingVerify/Running state,
+    /// then runs verification checks via the adapter.
+    ///
+    /// When verified=true and auto_commit=true: execution becomes Committed, SideEffectCommitted emitted.
+    /// When verified=true and auto_commit=false: execution stays Running, SideEffectCommitted suppressed.
+    /// When verified=false: execution becomes Failed, SideEffectCommitted suppressed.
+    /// SideEffectVerified is ALWAYS emitted regardless of result.
+    ///
+    /// # Arguments
+    ///
+    /// * `execution_id` - The execution ID from execute response
+    ///
+    /// # Returns
+    ///
+    /// `Result<ferrum_proto::VerifyExecutionResponse, GatewayError>` containing:
+    /// - `execution_id`: The execution ID
+    /// - `verified`: Whether verification succeeded
+    /// - `rollback_contract`: The updated rollback contract (state → Verified or Failed)
+    /// - `warnings`: Advisory warnings from verification
+    pub fn verify_execution(
+        &self,
+        execution_id: &ferrum_proto::ExecutionId,
+    ) -> Result<ferrum_proto::VerifyExecutionResponse, GatewayError> {
+        let path = format!("/v1/executions/{}/verify", execution_id);
+        let request = self
+            .build_request(reqwest::Method::POST, &path)
+            .build()
+            .map_err(|_e| GatewayError::unreachable("Failed to build request"))?;
+
+        let response: serde_json::Value = self.execute(request)?;
+
+        // Parse the response into real ferrum-proto type
+        // Real response is { execution_id, verified, rollback_contract, warnings }
+        serde_json::from_value(response).map_err(|e| {
+            GatewayError::server_error(200, &format!("Failed to parse verify response: {}", e))
+        })
+    }
+
+    /// Compensate execution: POST /v1/executions/{execution_id}/compensate
+    ///
+    /// Per doc 83: This is the compensate-only gate (D1.6).
+    /// It does NOT wire tool dispatch.
+    ///
+    /// Takes an `execution_id` in the URL path with NO request body.
+    /// The gateway validates the execution/contract are in ExecutedAwaitingVerify/Running state,
+    /// then runs compensation via the adapter to undo the executed side effect.
+    ///
+    /// # Arguments
+    ///
+    /// * `execution_id` - The execution ID from execute response
+    ///
+    /// # Returns
+    ///
+    /// `Result<ferrum_proto::CompensateExecutionResponse, GatewayError>` containing:
+    /// - `execution_id`: The execution ID
+    /// - `compensated`: Whether compensation succeeded
+    /// - `rollback_contract`: The updated rollback contract (state → Compensated)
+    /// - `warnings`: Advisory warnings from compensation
+    pub fn compensate_execution(
+        &self,
+        execution_id: &ferrum_proto::ExecutionId,
+    ) -> Result<ferrum_proto::CompensateExecutionResponse, GatewayError> {
+        let path = format!("/v1/executions/{}/compensate", execution_id);
+        let request = self
+            .build_request(reqwest::Method::POST, &path)
+            .build()
+            .map_err(|_e| GatewayError::unreachable("Failed to build request"))?;
+
+        let response: serde_json::Value = self.execute(request)?;
+
+        // Parse the response into real ferrum-proto type
+        // Real response is { execution_id, compensated, rollback_contract, warnings }
+        serde_json::from_value(response).map_err(|e| {
+            GatewayError::server_error(200, &format!("Failed to parse compensate response: {}", e))
+        })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2726,5 +2856,987 @@ mod tests {
 
         // All the wrong-path mocks should have 0 invocations (verified by mockito automatically)
         _mock_prepare.assert();
+    }
+
+    // -------------------------------------------------------------------------
+    // D1.6 Execute/Verify/Compensate tests (mock-based, no live gateway)
+    // -------------------------------------------------------------------------
+
+    /// Captures HTTP request data for D1.6 execute/verify/compensate tests.
+    #[derive(Debug, Clone)]
+    struct CapturedD1_6Request {
+        method: String,
+        path: String,
+        body: String,
+    }
+
+    // -------------------------------------------------------------------------
+    // execute_execution tests
+    // -------------------------------------------------------------------------
+
+    /// Starts a tiny_http server that captures the execute request.
+    fn start_execute_capture_server() -> (
+        std::sync::Arc<std::sync::Mutex<Option<CapturedD1_6Request>>>,
+        String,
+        std::thread::JoinHandle<()>,
+    ) {
+        let captured_request = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let captured_request_clone = captured_request.clone();
+
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let server_url = server.server_addr().to_string();
+        let base_url = format!("http://{}", server_url);
+
+        let handle = std::thread::spawn(move || {
+            let response = tiny_http::Response::from_string(
+                r#"{
+                    "execution_id": "550e8400-e29b-41d4-a716-446655440099",
+                    "executed": true,
+                    "result_digest": "sha256:abc123",
+                    "rollback_contract": {
+                        "contract_id": "550e8400-e29b-41d4-a716-446655440100",
+                        "intent_id": "550e8400-e29b-41d4-a716-446655440001",
+                        "proposal_id": "550e8400-e29b-41d4-a716-446655440002",
+                        "execution_id": "550e8400-e29b-41d4-a716-446655440099",
+                        "action_type": "FileWrite",
+                        "rollback_class": "R0NativeReversible",
+                        "adapter_key": "fs-adapter",
+                        "target": {
+                            "kind": "FilePath",
+                            "path": "/tmp/output.txt",
+                            "before_hash": null,
+                            "after_hash": "sha256:abc123"
+                        },
+                        "prepare_checks": [],
+                        "verify_checks": [],
+                        "compensation_plan": [],
+                        "auto_commit": false,
+                        "state": "ExecutedAwaitingVerify",
+                        "created_at": "2026-05-07T00:00:00Z",
+                        "expires_at": null,
+                        "metadata": {}
+                    },
+                    "warnings": []
+                }"#,
+            )
+            .with_header(
+                tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+                    .unwrap(),
+            );
+
+            if let Ok(Some(mut request)) = server.recv_timeout(std::time::Duration::from_secs(5)) {
+                let method = request.method().to_string();
+                let path = request.url().to_string();
+                let mut body = String::new();
+                request.as_reader().read_to_string(&mut body).unwrap();
+                *captured_request_clone.lock().unwrap() =
+                    Some(CapturedD1_6Request { method, path, body });
+                let _ = request.respond(response);
+            }
+        });
+
+        (captured_request, base_url, handle)
+    }
+
+    #[test]
+    fn test_execute_execution_captures_request_details() {
+        // Per doc 83: execute_execution is execute-only (D1.6), NOT verify/compensate.
+        // This test verifies the HTTP method, path, and JSON body are correct.
+
+        let (captured_request, base_url, handle) = start_execute_capture_server();
+
+        let config = ClientConfig::new().base_url(&base_url);
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let execution_id = ferrum_proto::ExecutionId::new();
+        let request = ferrum_proto::ExecuteExecutionRequest {
+            payload: serde_json::json!({"content": "hello world"}),
+        };
+
+        let result = client.execute_execution(&execution_id, &request);
+        assert!(
+            result.is_ok(),
+            "execute_execution should succeed: {:?}",
+            result.err()
+        );
+
+        let response = result.unwrap();
+        assert!(response.executed);
+        assert_eq!(response.result_digest, Some("sha256:abc123".to_string()));
+
+        // Verify the ACTUAL HTTP request captured by tiny_http
+        let captured = captured_request.lock().unwrap();
+        let req = captured
+            .as_ref()
+            .expect("Request should have been captured");
+
+        // Verify HTTP method is POST
+        assert_eq!(req.method, "POST", "HTTP method should be POST");
+        // Verify HTTP path is EXACTLY /v1/executions/{execution_id}/execute
+        let expected_path = format!("/v1/executions/{}/execute", execution_id);
+        assert_eq!(
+            req.path, expected_path,
+            "HTTP path should be exactly /v1/executions/{{id}}/execute"
+        );
+
+        // Verify request body contains the payload
+        assert!(
+            req.body.contains("\"content\":\"hello world\""),
+            "Actual HTTP body should contain payload content"
+        );
+
+        // Also verify that the body is valid JSON
+        let _: serde_json::Value =
+            serde_json::from_str(&req.body).expect("Captured body should be valid JSON");
+
+        handle.join().expect("Server thread should join");
+    }
+
+    #[test]
+    fn test_execute_execution_response_parsing() {
+        // Verify execute_execution correctly parses response with result_digest and rollback_contract.
+
+        let mut server = mockito::Server::new();
+        let _mock = server
+            .mock("POST", mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                "execution_id": "550e8400-e29b-41d4-a716-446655440099",
+                "executed": true,
+                "result_digest": "sha256:def456",
+                "rollback_contract": {
+                    "contract_id": "550e8400-e29b-41d4-a716-446655440100",
+                    "intent_id": "550e8400-e29b-41d4-a716-446655440001",
+                    "proposal_id": "550e8400-e29b-41d4-a716-446655440002",
+                    "execution_id": "550e8400-e29b-41d4-a716-446655440099",
+                    "action_type": "FileWrite",
+                    "rollback_class": "R0NativeReversible",
+                    "adapter_key": "fs-adapter",
+                    "target": {
+                        "kind": "FilePath",
+                        "path": "/tmp/output.txt",
+                        "before_hash": null,
+                        "after_hash": "sha256:def456"
+                    },
+                    "prepare_checks": [],
+                    "verify_checks": [],
+                    "compensation_plan": [],
+                    "auto_commit": true,
+                    "state": "ExecutedAwaitingVerify",
+                    "created_at": "2026-05-07T00:00:00Z",
+                    "expires_at": null,
+                    "metadata": {}
+                },
+                "warnings": []
+            }"#,
+            )
+            .expect_at_least(1)
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let execution_id = ferrum_proto::ExecutionId::new();
+        let request = ferrum_proto::ExecuteExecutionRequest {
+            payload: serde_json::json!({"content": "test"}),
+        };
+
+        let result = client.execute_execution(&execution_id, &request);
+        assert!(
+            result.is_ok(),
+            "execute_execution should succeed: {:?}",
+            result.err()
+        );
+
+        let response = result.unwrap();
+        assert!(response.executed);
+        assert_eq!(response.result_digest, Some("sha256:def456".to_string()));
+        assert!(response.rollback_contract.is_some());
+
+        let contract = response.rollback_contract.unwrap();
+        assert!(matches!(
+            contract.state,
+            ferrum_proto::RollbackState::ExecutedAwaitingVerify
+        ));
+        assert!(contract.auto_commit); // auto_commit=true in this mock
+
+        _mock.assert();
+    }
+
+    #[test]
+    fn test_execute_execution_wrong_path_fails() {
+        // Verify execute_execution fails when the path doesn't match.
+
+        let mut server = mockito::Server::new();
+        // Mock on WRONG path - should NOT be called
+        let _mock_wrong_path = server
+            .mock("POST", "/v1/wrong/path")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{}"#)
+            .expect(0) // Expect 0 invocations
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let execution_id = ferrum_proto::ExecutionId::new();
+        let request = ferrum_proto::ExecuteExecutionRequest {
+            payload: serde_json::json!({"content": "test"}),
+        };
+
+        let result = client.execute_execution(&execution_id, &request);
+        assert!(
+            result.is_err(),
+            "execute_execution should fail when path doesn't match"
+        );
+    }
+
+    #[test]
+    fn test_execute_execution_wrong_method_fails() {
+        // Verify execute_execution fails when the HTTP method is wrong.
+
+        let mut server = mockito::Server::new();
+        let execution_id = ferrum_proto::ExecutionId::new();
+        let path = format!("/v1/executions/{}/execute", execution_id);
+        // Mock on GET instead of POST - should NOT be called
+        let _mock_wrong_method = server
+            .mock("GET", path.as_str())
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{}"#)
+            .expect(0) // Expect 0 invocations
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let request = ferrum_proto::ExecuteExecutionRequest {
+            payload: serde_json::json!({"content": "test"}),
+        };
+
+        let result = client.execute_execution(&execution_id, &request);
+        assert!(
+            result.is_err(),
+            "execute_execution should fail when method doesn't match"
+        );
+    }
+
+    #[test]
+    fn test_execute_is_not_verify_or_compensate() {
+        // Verify execute_execution does NOT call verify or compensate paths.
+
+        let mut server = mockito::Server::new();
+        let execution_id = ferrum_proto::ExecutionId::new();
+        let execute_path = format!("/v1/executions/{}/execute", execution_id);
+
+        // Mock verify path - should NOT be called
+        let _mock_verify = server
+            .mock(
+                "POST",
+                format!("/v1/executions/{}/verify", execution_id).as_str(),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{}"#)
+            .expect(0) // Expect 0 invocations
+            .create();
+
+        // Mock compensate path - should NOT be called
+        let _mock_compensate = server
+            .mock(
+                "POST",
+                format!("/v1/executions/{}/compensate", execution_id).as_str(),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{}"#)
+            .expect(0) // Expect 0 invocations
+            .create();
+
+        // Correct mock for execute
+        let _mock_execute = server
+            .mock("POST", execute_path.as_str())
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                "execution_id": "550e8400-e29b-41d4-a716-446655440099",
+                "executed": true,
+                "result_digest": "sha256:abc123",
+                "rollback_contract": {
+                    "contract_id": "550e8400-e29b-41d4-a716-446655440100",
+                    "intent_id": "550e8400-e29b-41d4-a716-446655440001",
+                    "proposal_id": "550e8400-e29b-41d4-a716-446655440002",
+                    "execution_id": "550e8400-e29b-41d4-a716-446655440099",
+                    "action_type": "FileWrite",
+                    "rollback_class": "R0NativeReversible",
+                    "adapter_key": "fs-adapter",
+                    "target": {
+                        "kind": "FilePath",
+                        "path": "/tmp/output.txt",
+                        "before_hash": null,
+                        "after_hash": "sha256:abc123"
+                    },
+                    "prepare_checks": [],
+                    "verify_checks": [],
+                    "compensation_plan": [],
+                    "auto_commit": false,
+                    "state": "ExecutedAwaitingVerify",
+                    "created_at": "2026-05-07T00:00:00Z",
+                    "expires_at": null,
+                    "metadata": {}
+                },
+                "warnings": []
+            }"#,
+            )
+            .expect_at_least(1)
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let request = ferrum_proto::ExecuteExecutionRequest {
+            payload: serde_json::json!({"content": "test"}),
+        };
+
+        let result = client.execute_execution(&execution_id, &request);
+        assert!(
+            result.is_ok(),
+            "execute_execution should succeed: {:?}",
+            result.err()
+        );
+
+        _mock_execute.assert();
+    }
+
+    // -------------------------------------------------------------------------
+    // verify_execution tests
+    // -------------------------------------------------------------------------
+
+    /// Starts a tiny_http server that captures the verify request.
+    fn start_verify_capture_server() -> (
+        std::sync::Arc<std::sync::Mutex<Option<CapturedD1_6Request>>>,
+        String,
+        std::thread::JoinHandle<()>,
+    ) {
+        let captured_request = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let captured_request_clone = captured_request.clone();
+
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let server_url = server.server_addr().to_string();
+        let base_url = format!("http://{}", server_url);
+
+        let handle = std::thread::spawn(move || {
+            let response = tiny_http::Response::from_string(
+                r#"{
+                    "execution_id": "550e8400-e29b-41d4-a716-446655440099",
+                    "verified": true,
+                    "rollback_contract": {
+                        "contract_id": "550e8400-e29b-41d4-a716-446655440100",
+                        "intent_id": "550e8400-e29b-41d4-a716-446655440001",
+                        "proposal_id": "550e8400-e29b-41d4-a716-446655440002",
+                        "execution_id": "550e8400-e29b-41d4-a716-446655440099",
+                        "action_type": "FileWrite",
+                        "rollback_class": "R0NativeReversible",
+                        "adapter_key": "fs-adapter",
+                        "target": {
+                            "kind": "FilePath",
+                            "path": "/tmp/output.txt",
+                            "before_hash": null,
+                            "after_hash": "sha256:abc123"
+                        },
+                        "prepare_checks": [],
+                        "verify_checks": [],
+                        "compensation_plan": [],
+                        "auto_commit": true,
+                        "state": "Verified",
+                        "created_at": "2026-05-07T00:00:00Z",
+                        "expires_at": null,
+                        "metadata": {}
+                    },
+                    "warnings": []
+                }"#,
+            )
+            .with_header(
+                tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+                    .unwrap(),
+            );
+
+            if let Ok(Some(mut request)) = server.recv_timeout(std::time::Duration::from_secs(5)) {
+                let method = request.method().to_string();
+                let path = request.url().to_string();
+                let mut body = String::new();
+                request.as_reader().read_to_string(&mut body).unwrap();
+                *captured_request_clone.lock().unwrap() =
+                    Some(CapturedD1_6Request { method, path, body });
+                let _ = request.respond(response);
+            }
+        });
+
+        (captured_request, base_url, handle)
+    }
+
+    #[test]
+    fn test_verify_execution_captures_request_details() {
+        // Per doc 83: verify_execution is verify-only (D1.6).
+        // This test verifies the HTTP method, path, and NO body are correct.
+
+        let (captured_request, base_url, handle) = start_verify_capture_server();
+
+        let config = ClientConfig::new().base_url(&base_url);
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let execution_id = ferrum_proto::ExecutionId::new();
+        let result = client.verify_execution(&execution_id);
+        assert!(
+            result.is_ok(),
+            "verify_execution should succeed: {:?}",
+            result.err()
+        );
+
+        let response = result.unwrap();
+        assert!(response.verified);
+
+        // Verify the ACTUAL HTTP request captured by tiny_http
+        let captured = captured_request.lock().unwrap();
+        let req = captured
+            .as_ref()
+            .expect("Request should have been captured");
+
+        // Verify HTTP method is POST
+        assert_eq!(req.method, "POST", "HTTP method should be POST");
+        // Verify HTTP path is EXACTLY /v1/executions/{execution_id}/verify
+        let expected_path = format!("/v1/executions/{}/verify", execution_id);
+        assert_eq!(
+            req.path, expected_path,
+            "HTTP path should be exactly /v1/executions/{{id}}/verify"
+        );
+
+        // Verify NO body is sent (verify takes no request body)
+        assert!(
+            req.body.is_empty() || req.body == "{}",
+            "Verify should have no body, got: {}",
+            req.body
+        );
+
+        handle.join().expect("Server thread should join");
+    }
+
+    #[test]
+    fn test_verify_execution_response_parsing() {
+        // Verify verify_execution correctly parses response with verified flag and rollback_contract.
+
+        let mut server = mockito::Server::new();
+        let _mock = server
+            .mock("POST", mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                "execution_id": "550e8400-e29b-41d4-a716-446655440099",
+                "verified": true,
+                "rollback_contract": {
+                    "contract_id": "550e8400-e29b-41d4-a716-446655440100",
+                    "intent_id": "550e8400-e29b-41d4-a716-446655440001",
+                    "proposal_id": "550e8400-e29b-41d4-a716-446655440002",
+                    "execution_id": "550e8400-e29b-41d4-a716-446655440099",
+                    "action_type": "FileWrite",
+                    "rollback_class": "R0NativeReversible",
+                    "adapter_key": "fs-adapter",
+                    "target": {
+                        "kind": "FilePath",
+                        "path": "/tmp/output.txt",
+                        "before_hash": null,
+                        "after_hash": "sha256:abc123"
+                    },
+                    "prepare_checks": [],
+                    "verify_checks": [],
+                    "compensation_plan": [],
+                    "auto_commit": false,
+                    "state": "Verified",
+                    "created_at": "2026-05-07T00:00:00Z",
+                    "expires_at": null,
+                    "metadata": {}
+                },
+                "warnings": []
+            }"#,
+            )
+            .expect_at_least(1)
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let execution_id = ferrum_proto::ExecutionId::new();
+        let result = client.verify_execution(&execution_id);
+        assert!(
+            result.is_ok(),
+            "verify_execution should succeed: {:?}",
+            result.err()
+        );
+
+        let response = result.unwrap();
+        assert!(response.verified);
+        assert!(response.rollback_contract.is_some());
+
+        let contract = response.rollback_contract.unwrap();
+        assert!(matches!(
+            contract.state,
+            ferrum_proto::RollbackState::Verified
+        ));
+
+        _mock.assert();
+    }
+
+    #[test]
+    fn test_verify_execution_wrong_path_fails() {
+        // Verify verify_execution fails when the path doesn't match.
+
+        let mut server = mockito::Server::new();
+        // Mock on WRONG path - should NOT be called
+        let _mock_wrong_path = server
+            .mock("POST", "/v1/wrong/path")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{}"#)
+            .expect(0) // Expect 0 invocations
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        let result = client.verify_execution(&execution_id);
+        assert!(
+            result.is_err(),
+            "verify_execution should fail when path doesn't match"
+        );
+    }
+
+    #[test]
+    fn test_verify_execution_wrong_method_fails() {
+        // Verify verify_execution fails when the HTTP method is wrong.
+
+        let mut server = mockito::Server::new();
+        let execution_id = ferrum_proto::ExecutionId::new();
+        let path = format!("/v1/executions/{}/verify", execution_id);
+        // Mock on GET instead of POST - should NOT be called
+        let _mock_wrong_method = server
+            .mock("GET", path.as_str())
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{}"#)
+            .expect(0) // Expect 0 invocations
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let result = client.verify_execution(&execution_id);
+        assert!(
+            result.is_err(),
+            "verify_execution should fail when method doesn't match"
+        );
+    }
+
+    #[test]
+    fn test_verify_is_not_execute_or_compensate() {
+        // Verify verify_execution does NOT call execute or compensate paths.
+
+        let mut server = mockito::Server::new();
+        let execution_id = ferrum_proto::ExecutionId::new();
+        let verify_path = format!("/v1/executions/{}/verify", execution_id);
+
+        // Mock execute path - should NOT be called
+        let _mock_execute = server
+            .mock(
+                "POST",
+                format!("/v1/executions/{}/execute", execution_id).as_str(),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{}"#)
+            .expect(0) // Expect 0 invocations
+            .create();
+
+        // Mock compensate path - should NOT be called
+        let _mock_compensate = server
+            .mock(
+                "POST",
+                format!("/v1/executions/{}/compensate", execution_id).as_str(),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{}"#)
+            .expect(0) // Expect 0 invocations
+            .create();
+
+        // Correct mock for verify
+        let _mock_verify = server
+            .mock("POST", verify_path.as_str())
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                "execution_id": "550e8400-e29b-41d4-a716-446655440099",
+                "verified": true,
+                "rollback_contract": {
+                    "contract_id": "550e8400-e29b-41d4-a716-446655440100",
+                    "intent_id": "550e8400-e29b-41d4-a716-446655440001",
+                    "proposal_id": "550e8400-e29b-41d4-a716-446655440002",
+                    "execution_id": "550e8400-e29b-41d4-a716-446655440099",
+                    "action_type": "FileWrite",
+                    "rollback_class": "R0NativeReversible",
+                    "adapter_key": "fs-adapter",
+                    "target": {
+                        "kind": "FilePath",
+                        "path": "/tmp/output.txt",
+                        "before_hash": null,
+                        "after_hash": "sha256:abc123"
+                    },
+                    "prepare_checks": [],
+                    "verify_checks": [],
+                    "compensation_plan": [],
+                    "auto_commit": false,
+                    "state": "Verified",
+                    "created_at": "2026-05-07T00:00:00Z",
+                    "expires_at": null,
+                    "metadata": {}
+                },
+                "warnings": []
+            }"#,
+            )
+            .expect_at_least(1)
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let result = client.verify_execution(&execution_id);
+        assert!(
+            result.is_ok(),
+            "verify_execution should succeed: {:?}",
+            result.err()
+        );
+
+        _mock_verify.assert();
+    }
+
+    // -------------------------------------------------------------------------
+    // compensate_execution tests
+    // -------------------------------------------------------------------------
+
+    /// Starts a tiny_http server that captures the compensate request.
+    fn start_compensate_capture_server() -> (
+        std::sync::Arc<std::sync::Mutex<Option<CapturedD1_6Request>>>,
+        String,
+        std::thread::JoinHandle<()>,
+    ) {
+        let captured_request = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let captured_request_clone = captured_request.clone();
+
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let server_url = server.server_addr().to_string();
+        let base_url = format!("http://{}", server_url);
+
+        let handle = std::thread::spawn(move || {
+            let response = tiny_http::Response::from_string(
+                r#"{
+                    "execution_id": "550e8400-e29b-41d4-a716-446655440099",
+                    "compensated": true,
+                    "rollback_contract": {
+                        "contract_id": "550e8400-e29b-41d4-a716-446655440100",
+                        "intent_id": "550e8400-e29b-41d4-a716-446655440001",
+                        "proposal_id": "550e8400-e29b-41d4-a716-446655440002",
+                        "execution_id": "550e8400-e29b-41d4-a716-446655440099",
+                        "action_type": "FileWrite",
+                        "rollback_class": "R0NativeReversible",
+                        "adapter_key": "fs-adapter",
+                        "target": {
+                            "kind": "FilePath",
+                            "path": "/tmp/output.txt",
+                            "before_hash": null,
+                            "after_hash": "sha256:abc123"
+                        },
+                        "prepare_checks": [],
+                        "verify_checks": [],
+                        "compensation_plan": [],
+                        "auto_commit": false,
+                        "state": "Compensated",
+                        "created_at": "2026-05-07T00:00:00Z",
+                        "expires_at": null,
+                        "metadata": {}
+                    },
+                    "warnings": []
+                }"#,
+            )
+            .with_header(
+                tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+                    .unwrap(),
+            );
+
+            if let Ok(Some(mut request)) = server.recv_timeout(std::time::Duration::from_secs(5)) {
+                let method = request.method().to_string();
+                let path = request.url().to_string();
+                let mut body = String::new();
+                request.as_reader().read_to_string(&mut body).unwrap();
+                *captured_request_clone.lock().unwrap() =
+                    Some(CapturedD1_6Request { method, path, body });
+                let _ = request.respond(response);
+            }
+        });
+
+        (captured_request, base_url, handle)
+    }
+
+    #[test]
+    fn test_compensate_execution_captures_request_details() {
+        // Per doc 83: compensate_execution is compensate-only (D1.6).
+        // This test verifies the HTTP method, path, and NO body are correct.
+
+        let (captured_request, base_url, handle) = start_compensate_capture_server();
+
+        let config = ClientConfig::new().base_url(&base_url);
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let execution_id = ferrum_proto::ExecutionId::new();
+        let result = client.compensate_execution(&execution_id);
+        assert!(
+            result.is_ok(),
+            "compensate_execution should succeed: {:?}",
+            result.err()
+        );
+
+        let response = result.unwrap();
+        assert!(response.compensated);
+
+        // Verify the ACTUAL HTTP request captured by tiny_http
+        let captured = captured_request.lock().unwrap();
+        let req = captured
+            .as_ref()
+            .expect("Request should have been captured");
+
+        // Verify HTTP method is POST
+        assert_eq!(req.method, "POST", "HTTP method should be POST");
+        // Verify HTTP path is EXACTLY /v1/executions/{execution_id}/compensate
+        let expected_path = format!("/v1/executions/{}/compensate", execution_id);
+        assert_eq!(
+            req.path, expected_path,
+            "HTTP path should be exactly /v1/executions/{{id}}/compensate"
+        );
+
+        // Verify NO body is sent (compensate takes no request body)
+        assert!(
+            req.body.is_empty() || req.body == "{}",
+            "Compensate should have no body, got: {}",
+            req.body
+        );
+
+        handle.join().expect("Server thread should join");
+    }
+
+    #[test]
+    fn test_compensate_execution_response_parsing() {
+        // Verify compensate_execution correctly parses response with compensated flag.
+
+        let mut server = mockito::Server::new();
+        let _mock = server
+            .mock("POST", mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                "execution_id": "550e8400-e29b-41d4-a716-446655440099",
+                "compensated": true,
+                "rollback_contract": {
+                    "contract_id": "550e8400-e29b-41d4-a716-446655440100",
+                    "intent_id": "550e8400-e29b-41d4-a716-446655440001",
+                    "proposal_id": "550e8400-e29b-41d4-a716-446655440002",
+                    "execution_id": "550e8400-e29b-41d4-a716-446655440099",
+                    "action_type": "FileWrite",
+                    "rollback_class": "R0NativeReversible",
+                    "adapter_key": "fs-adapter",
+                    "target": {
+                        "kind": "FilePath",
+                        "path": "/tmp/output.txt",
+                        "before_hash": null,
+                        "after_hash": "sha256:abc123"
+                    },
+                    "prepare_checks": [],
+                    "verify_checks": [],
+                    "compensation_plan": [],
+                    "auto_commit": false,
+                    "state": "Compensated",
+                    "created_at": "2026-05-07T00:00:00Z",
+                    "expires_at": null,
+                    "metadata": {}
+                },
+                "warnings": []
+            }"#,
+            )
+            .expect_at_least(1)
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let execution_id = ferrum_proto::ExecutionId::new();
+        let result = client.compensate_execution(&execution_id);
+        assert!(
+            result.is_ok(),
+            "compensate_execution should succeed: {:?}",
+            result.err()
+        );
+
+        let response = result.unwrap();
+        assert!(response.compensated);
+        assert!(response.rollback_contract.is_some());
+
+        let contract = response.rollback_contract.unwrap();
+        assert!(matches!(
+            contract.state,
+            ferrum_proto::RollbackState::Compensated
+        ));
+
+        _mock.assert();
+    }
+
+    #[test]
+    fn test_compensate_execution_wrong_path_fails() {
+        // Verify compensate_execution fails when the path doesn't match.
+
+        let mut server = mockito::Server::new();
+        // Mock on WRONG path - should NOT be called
+        let _mock_wrong_path = server
+            .mock("POST", "/v1/wrong/path")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{}"#)
+            .expect(0) // Expect 0 invocations
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        let result = client.compensate_execution(&execution_id);
+        assert!(
+            result.is_err(),
+            "compensate_execution should fail when path doesn't match"
+        );
+    }
+
+    #[test]
+    fn test_compensate_execution_wrong_method_fails() {
+        // Verify compensate_execution fails when the HTTP method is wrong.
+
+        let mut server = mockito::Server::new();
+        let execution_id = ferrum_proto::ExecutionId::new();
+        let path = format!("/v1/executions/{}/compensate", execution_id);
+        // Mock on GET instead of POST - should NOT be called
+        let _mock_wrong_method = server
+            .mock("GET", path.as_str())
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{}"#)
+            .expect(0) // Expect 0 invocations
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let result = client.compensate_execution(&execution_id);
+        assert!(
+            result.is_err(),
+            "compensate_execution should fail when method doesn't match"
+        );
+    }
+
+    #[test]
+    fn test_compensate_is_not_execute_or_verify() {
+        // Verify compensate_execution does NOT call execute or verify paths.
+
+        let mut server = mockito::Server::new();
+        let execution_id = ferrum_proto::ExecutionId::new();
+        let compensate_path = format!("/v1/executions/{}/compensate", execution_id);
+
+        // Mock execute path - should NOT be called
+        let _mock_execute = server
+            .mock(
+                "POST",
+                format!("/v1/executions/{}/execute", execution_id).as_str(),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{}"#)
+            .expect(0) // Expect 0 invocations
+            .create();
+
+        // Mock verify path - should NOT be called
+        let _mock_verify = server
+            .mock(
+                "POST",
+                format!("/v1/executions/{}/verify", execution_id).as_str(),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{}"#)
+            .expect(0) // Expect 0 invocations
+            .create();
+
+        // Correct mock for compensate
+        let _mock_compensate = server
+            .mock("POST", compensate_path.as_str())
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                "execution_id": "550e8400-e29b-41d4-a716-446655440099",
+                "compensated": true,
+                "rollback_contract": {
+                    "contract_id": "550e8400-e29b-41d4-a716-446655440100",
+                    "intent_id": "550e8400-e29b-41d4-a716-446655440001",
+                    "proposal_id": "550e8400-e29b-41d4-a716-446655440002",
+                    "execution_id": "550e8400-e29b-41d4-a716-446655440099",
+                    "action_type": "FileWrite",
+                    "rollback_class": "R0NativeReversible",
+                    "adapter_key": "fs-adapter",
+                    "target": {
+                        "kind": "FilePath",
+                        "path": "/tmp/output.txt",
+                        "before_hash": null,
+                        "after_hash": "sha256:abc123"
+                    },
+                    "prepare_checks": [],
+                    "verify_checks": [],
+                    "compensation_plan": [],
+                    "auto_commit": false,
+                    "state": "Compensated",
+                    "created_at": "2026-05-07T00:00:00Z",
+                    "expires_at": null,
+                    "metadata": {}
+                },
+                "warnings": []
+            }"#,
+            )
+            .expect_at_least(1)
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let result = client.compensate_execution(&execution_id);
+        assert!(
+            result.is_ok(),
+            "compensate_execution should succeed: {:?}",
+            result.err()
+        );
+
+        _mock_compensate.assert();
     }
 }

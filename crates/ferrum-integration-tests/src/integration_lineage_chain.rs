@@ -1495,6 +1495,27 @@ async fn test_lineage_chain_fs_adapter_full_committed() {
         serde_json::from_slice(&body).expect("valid json");
     assert!(prepare_response.prepared);
 
+    // D1.6 auto_commit fix: Override auto_commit=true so verify emits SideEffectCommitted.
+    // Without this, the default auto_commit=false from PlannableFsAdapter would suppress SideEffectCommitted.
+    // This test expects a full committed chain with 6 events, so auto_commit=true is needed.
+    let contract_id = prepare_response
+        .rollback_contract
+        .as_ref()
+        .expect("rollback_contract should be present")
+        .contract_id;
+    let mut contract_to_update = store
+        .rollback_contracts()
+        .get(contract_id)
+        .await
+        .expect("store lookup should succeed")
+        .expect("rollback contract should exist");
+    contract_to_update.auto_commit = true;
+    store
+        .rollback_contracts()
+        .update(&contract_to_update)
+        .await
+        .expect("update auto_commit should succeed");
+
     // Step 5: Execute execution (transitions contract to ExecutedAwaitingVerify)
     let execute_request = ferrum_proto::ExecuteExecutionRequest {
         payload: serde_json::json!({ "content": "new committed content" }),

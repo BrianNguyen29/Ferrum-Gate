@@ -1713,6 +1713,22 @@ async fn test_inspect_after_verify_execution_flow() {
         .expect("rollback_contract should be present")
         .contract_id;
 
+    // D1.6 auto_commit fix: Override auto_commit=true so verify transitions execution to Committed.
+    // Without this, the default auto_commit=false from PlannableFsAdapter would keep execution in Running.
+    // This test specifically tests the commit flow (verified → Committed), so auto_commit=true is needed.
+    let mut contract_to_update = store
+        .rollback_contracts()
+        .get(contract_id)
+        .await
+        .expect("store lookup should succeed")
+        .expect("rollback contract should exist");
+    contract_to_update.auto_commit = true;
+    store
+        .rollback_contracts()
+        .update(&contract_to_update)
+        .await
+        .expect("update auto_commit should succeed");
+
     // Execute
     let execute_request = ferrum_proto::ExecuteExecutionRequest {
         payload: serde_json::json!({ "content": "new content for verify test" }),
@@ -8275,6 +8291,23 @@ async fn test_execute_and_verify_endpoint_flow_for_file_write() {
         "contract state should be Prepared after prepare"
     );
 
+    // D1.6 auto_commit fix: Override auto_commit=true so verify transitions execution to Committed.
+    // Without this, the default auto_commit=false from PlannableFsAdapter would keep execution in Running.
+    // This test specifically tests the commit flow (verified → Committed), so auto_commit=true is needed.
+    let contract_id = contract.contract_id;
+    let mut contract_to_update = store
+        .rollback_contracts()
+        .get(contract_id)
+        .await
+        .expect("store lookup should succeed")
+        .expect("rollback contract should exist");
+    contract_to_update.auto_commit = true;
+    store
+        .rollback_contracts()
+        .update(&contract_to_update)
+        .await
+        .expect("update auto_commit should succeed");
+
     // Step 2: Call execute endpoint with content payload
     let execute_request = ferrum_proto::ExecuteExecutionRequest {
         payload: serde_json::json!({ "content": "new content written by execute" }),
@@ -8806,6 +8839,346 @@ async fn test_execute_already_committed_returns_409() {
         "error message should mention state guard, got: {}",
         error.message
     );
+}
+
+// ---------------------------------------------------------------------------
+// D1.6 auto_commit=false integration tests
+// ---------------------------------------------------------------------------
+
+/// Verify that verify with auto_commit=false emits SideEffectVerified but NOT SideEffectCommitted,
+/// and execution stays Running (not Committed).
+///
+/// Per D1.6 oracle verdict: when verified=true && auto_commit=false:
+/// - SideEffectVerified is emitted
+/// - SideEffectCommitted is suppressed
+/// - execution state stays Running (not Committed)
+///
+/// This test uses the default auto_commit=false from PlannableFsAdapter.
+#[tokio::test]
+async fn test_verify_auto_commit_false_suppresses_committed() {
+    let pdp = Arc::new(StaticPdpEngine);
+    let cap: Arc<dyn CapabilityService> = Arc::new(InMemoryCapabilityService::default());
+
+    // Set up registry with FsAdapter and PlannableFsAdapter
+    let mut registry = AdapterRegistry::default();
+    registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
+    register_fs_adapter(&mut registry);
+    let mut rollback_service = RollbackService::new(Arc::new(registry));
+    rollback_service.register_planner(Arc::new(PlannableFsAdapter));
+    let rollback = Arc::new(rollback_service);
+
+    let store = Arc::new(
+        SqliteStore::connect("sqlite::memory:")
+            .await
+            .expect("connect to sqlite"),
+    );
+    store
+        .apply_embedded_migrations()
+        .await
+        .expect("apply migrations");
+
+    let runtime = GatewayRuntime::new(
+        pdp,
+        cap.clone(),
+        rollback.clone(),
+        store.clone() as Arc<dyn StoreFacade>,
+        vec![],
+    );
+    let router = build_router(runtime);
+
+    // Create a temp file
+    let temp_dir = std::env::temp_dir();
+    let test_file_path = temp_dir.join(format!(
+        "ferrum-auto-commit-false-{}.txt",
+        uuid::Uuid::new_v4()
+    ));
+    let original_content = "original content for auto_commit=false test";
+    std::fs::write(&test_file_path, original_content).expect("failed to write temp file");
+    let file_path_str = test_file_path.to_string_lossy().to_string();
+
+    // Create intent with FileWrite resource scope
+    let intent_id = ferrum_proto::IntentId::new();
+    let now = chrono::Utc::now();
+    let intent = ferrum_proto::IntentEnvelope {
+        intent_id,
+        principal_id: ferrum_proto::PrincipalId::new(),
+        session_id: None,
+        channel_id: None,
+        title: "auto-commit-false-test-intent".to_string(),
+        goal: "test auto_commit=false behavior".to_string(),
+        normalized_goal: "test auto_commit=false behavior".to_string(),
+        allowed_outcomes: Vec::new(),
+        forbidden_outcomes: Vec::new(),
+        resource_scope: vec![ferrum_proto::ResourceSelector::FilesystemPath {
+            path: file_path_str.clone(),
+            mode: ferrum_proto::ResourceMode::Write,
+            content_hash: None,
+        }],
+        risk_tier: ferrum_proto::RiskTier::Medium,
+        approval_mode: ferrum_proto::ApprovalMode::None,
+        default_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+        time_budget: ferrum_proto::TimeBudget {
+            max_duration_ms: 30_000,
+            max_steps: 8,
+            max_retries_per_step: 1,
+        },
+        trust_context: ferrum_proto::TrustContextSummary {
+            input_labels: Vec::new(),
+            sensitivity_labels: Vec::new(),
+            taint_score: 0,
+            contains_external_metadata: false,
+            contains_tool_output: false,
+            contains_untrusted_text: false,
+        },
+        derived_from_event_ids: Vec::new(),
+        tags: Vec::new(),
+        metadata: ferrum_proto::JsonMap::new(),
+        status: ferrum_proto::IntentStatus::Active,
+        created_at: now,
+        expires_at: now + chrono::Duration::hours(1),
+    };
+    store
+        .intents()
+        .insert(&intent)
+        .await
+        .expect("intent insert should succeed");
+
+    // Create proposal
+    let proposal_id = ferrum_proto::ProposalId::new();
+    let proposal = ferrum_proto::ActionProposal {
+        proposal_id,
+        intent_id,
+        step_index: 0,
+        title: "auto-commit-false proposal".to_string(),
+        tool_name: "file_write".to_string(),
+        server_name: "test-server".to_string(),
+        raw_arguments: serde_json::json!({}),
+        expected_effect: "file is written and verified".to_string(),
+        estimated_risk: ferrum_proto::RiskTier::Medium,
+        requested_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+        taint_inputs: Vec::new(),
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    store
+        .proposals()
+        .insert(&proposal)
+        .await
+        .expect("proposal insert should succeed");
+
+    // Mint capability
+    let cap_request = ferrum_proto::CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ferrum_proto::ToolBinding {
+            server_name: "test-server".to_string(),
+            tool_name: "file_write".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: Vec::new(),
+        argument_constraints: Vec::new(),
+        taint_budget: ferrum_proto::TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let request = axum::http::Request::builder()
+        .method(axum::http::Method::POST)
+        .uri("/v1/capabilities/mint")
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(
+            serde_json::to_vec(&cap_request).unwrap(),
+        ))
+        .unwrap();
+
+    let response = tower::ServiceExt::oneshot(router.clone(), request)
+        .await
+        .expect("mint request should succeed");
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("read mint response body");
+    let cap_response: ferrum_proto::CapabilityMintResponse =
+        serde_json::from_slice(&body).expect("valid json");
+    let capability_id = cap_response.lease.capability_id;
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    // Authorize execution
+    let auth_request = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+
+    let request = axum::http::Request::builder()
+        .method(axum::http::Method::POST)
+        .uri("/v1/executions/authorize")
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(
+            serde_json::to_vec(&auth_request).unwrap(),
+        ))
+        .unwrap();
+
+    let response = tower::ServiceExt::oneshot(router.clone(), request)
+        .await
+        .expect("authorize request should succeed");
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("read authorize response body");
+    let auth_response: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).expect("valid json");
+    let execution_id = auth_response.execution.execution_id;
+
+    // Prepare - contract will have auto_commit=false (default from PlannableFsAdapter)
+    let request = axum::http::Request::builder()
+        .method(axum::http::Method::POST)
+        .uri(format!("/v1/executions/{}/prepare", execution_id))
+        .header("content-type", "application/json")
+        .body(axum::body::Body::empty())
+        .unwrap();
+
+    let response = tower::ServiceExt::oneshot(router.clone(), request)
+        .await
+        .expect("prepare request should succeed");
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("read prepare response body");
+    let prepare_response: ferrum_proto::PrepareExecutionResponse =
+        serde_json::from_slice(&body).expect("valid json");
+    assert!(prepare_response.prepared);
+
+    // Verify auto_commit=false is set on the contract (default from PlannableFsAdapter)
+    let contract_id = prepare_response
+        .rollback_contract
+        .as_ref()
+        .expect("rollback_contract should be present")
+        .contract_id;
+    let contract = store
+        .rollback_contracts()
+        .get(contract_id)
+        .await
+        .expect("store lookup should succeed")
+        .expect("rollback contract should exist");
+    assert!(
+        !contract.auto_commit,
+        "auto_commit should be false by default from PlannableFsAdapter"
+    );
+
+    // Execute
+    let execute_request = ferrum_proto::ExecuteExecutionRequest {
+        payload: serde_json::json!({ "content": "new content for auto_commit=false test" }),
+    };
+    let request = axum::http::Request::builder()
+        .method(axum::http::Method::POST)
+        .uri(format!("/v1/executions/{}/execute", execution_id))
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(
+            serde_json::to_vec(&execute_request).unwrap(),
+        ))
+        .unwrap();
+
+    let response = tower::ServiceExt::oneshot(router.clone(), request)
+        .await
+        .expect("execute request should succeed");
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+    // Verify
+    let request = axum::http::Request::builder()
+        .method(axum::http::Method::POST)
+        .uri(format!("/v1/executions/{}/verify", execution_id))
+        .header("content-type", "application/json")
+        .body(axum::body::Body::empty())
+        .unwrap();
+
+    let response = tower::ServiceExt::oneshot(router.clone(), request)
+        .await
+        .expect("verify request should succeed");
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("read verify response body");
+    let verify_response: ferrum_proto::VerifyExecutionResponse =
+        serde_json::from_slice(&body).expect("valid json");
+    assert!(
+        verify_response.verified,
+        "verify should succeed for auto_commit=false path"
+    );
+
+    // Query lineage to verify provenance events
+    let request = axum::http::Request::builder()
+        .method(axum::http::Method::GET)
+        .uri(format!("/v1/provenance/lineage/{}", execution_id))
+        .header("content-type", "application/json")
+        .body(axum::body::Body::empty())
+        .unwrap();
+
+    let response = tower::ServiceExt::oneshot(router.clone(), request)
+        .await
+        .expect("lineage request should succeed");
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("read lineage body");
+    #[derive(serde::Deserialize)]
+    struct LineageResponse {
+        #[allow(dead_code)]
+        execution_id: ferrum_proto::ExecutionId,
+        events: Vec<ferrum_proto::ProvenanceEvent>,
+    }
+    let lineage: LineageResponse = serde_json::from_slice(&body).expect("valid json");
+
+    // Verify SideEffectVerified IS present
+    let has_verified = lineage.events.iter().any(|e| {
+        matches!(
+            e.kind,
+            ferrum_proto::ProvenanceEventKind::SideEffectVerified
+        )
+    });
+    assert!(
+        has_verified,
+        "SideEffectVerified should be emitted even with auto_commit=false"
+    );
+
+    // Verify SideEffectCommitted is NOT present
+    let has_committed = lineage.events.iter().any(|e| {
+        matches!(
+            e.kind,
+            ferrum_proto::ProvenanceEventKind::SideEffectCommitted
+        )
+    });
+    assert!(
+        !has_committed,
+        "SideEffectCommitted should be suppressed when auto_commit=false"
+    );
+
+    // Verify execution state is Running (not Committed)
+    let execution_record = store
+        .executions()
+        .get(execution_id)
+        .await
+        .expect("get execution should succeed")
+        .expect("execution not found");
+    assert_eq!(
+        execution_record.state,
+        ExecutionState::Running,
+        "execution state should be Running when auto_commit=false (not Committed)"
+    );
+
+    // Clean up
+    let _ = std::fs::remove_file(&test_file_path);
 }
 
 // ---------------------------------------------------------------------------
