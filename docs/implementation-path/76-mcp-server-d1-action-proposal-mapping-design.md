@@ -14,7 +14,7 @@
 - **No D1.3.2 ready claim.** ActionProposal mapping design is incomplete — blocked by B-MAP-1 through B-MAP-7.
 - **No field stability claim.** All mapping rules and inference logic are draft until gateway integration testing confirms actual field shapes.
 - **No execution_id lifecycle claim corrected.** Doc 75 §2.1 incorrectly shows `execution_id` returned from eval/prepare. This document corrects that (see §5).
-- **No ActionProposalSubmitted timing claim.** Provenance event emission timing is uncertain until B-MAP-7 is resolved.
+- **B-MAP-7 timing confirmed, but no MCP provenance-emission claim.** Gateway emits `ActionProposalSubmitted` during `authorize_execution`; MCP still must not emit provenance directly.
 - **No approval tool claim.** Approval/reject tools remain blocked per doc 75 §1.3 (B1).
 
 ---
@@ -87,7 +87,7 @@ D1.3.2 is blocked because:
 4. **B-MAP-4**: `server_name` (ActionProposal) requires resolving from `target` or `action_type` — resolution rules undefined.
 5. **B-MAP-5**: `expected_effect` and `estimated_risk` (ActionProposal) require inference from `action_type` and `parameters` — inference rules undefined.
 6. **B-MAP-6**: `requested_rollback_class` (RollbackClass: R0NativeReversible/R1SnapshotRecoverable/R2Compensatable/R3IrreversibleHighConsequence) requires inference from `action_type` and `target`.
-7. **B-MAP-7**: `ActionProposalSubmitted` provenance event timing is uncertain — may emit during `authorize` not `compile`.
+7. **B-MAP-7**: `ActionProposalSubmitted` provenance event timing is now confirmed — gateway emits during `authorize_execution`, not `compile_intent`; MCP must not emit provenance directly.
 
 ---
 
@@ -112,14 +112,14 @@ Source: Explorer findings. **UNVERIFIED** — field names, types, and required/o
 
 | Field | Type | MCP Source | Derivation Status |
 |-------|------|-----------|-------------------|
-| `principal_id` | String | None | **B-MAP-1**: Derive from `actor_id`? Use `actor_id` directly? |
+| `principal_id` | String | None | **B-MAP-1**: D1.3.2b may use generated draft ID only; D1.3.3+ requires stable `actor_id -> PrincipalId` mapping |
 | `session_id` | String | None | **B-MAP-1**: What is a session? How created? |
 | `channel_id` | String | None | **B-MAP-1**: What is a channel? How identified? |
 | `title` | String | None | **B-MAP-1**: Derive from `action_type` + `target`? |
 | `goal` | String | None | **B-MAP-1**: Derive from `parameters`? What format? |
 | `agent_plan_summary` | String | None | **B-MAP-1**: What is this? MCP has no plan concept. |
 | `trusted_context` | Object | None | **B-MAP-1**: What structure? When set? |
-| `raw_inputs` | Array | `parameters` | ✅ Direct mapping — parameters is JSON, needs conversion to array |
+| `raw_inputs` | Array | `parameters` | **B-MAP-1**: Not direct; `IntentInputRef` needs source/trust/sensitivity/event semantics that MCP parameters do not provide |
 | `requested_resource_scope` | ResourceSelector | `scope` | **B-MAP-2**: Parse `"files:write:/tmp"` into `ResourceSelector` (tagged enum) |
 | `requested_risk_tier` | RiskTier | None | **B-MAP-3**: Infer from `action_type` (enum: Low/Medium/High/Critical) |
 | `approval_mode` | ApprovalMode | None | **B-MAP-3**: Derive from `requested_risk_tier` (enum: None/Required/DraftOnly/TwoPhaseCommit) |
@@ -131,7 +131,7 @@ Source: Explorer findings. **UNVERIFIED** — field names and types may drift.
 
 | Field | Type | Source | Derivation Status |
 |-------|------|--------|-------------------|
-| `proposal_id` | String | Gateway-assigned | ✅ Gateway assigns on compile |
+| `proposal_id` | String | MCP/client-generated before evaluate | ✅ Compile does not return this; ActionProposal evaluation receives client-generated proposal ID |
 | `intent_id` | String | `ToolCallAction.intent_id` | ✅ Direct pass-through |
 | `step_index` | Integer | None | **B-MAP-1**: Default to `0`? Sequential per intent? |
 | `title` | String | `IntentCompileRequest.title` | ✅ Pass-through |
@@ -157,7 +157,6 @@ The D1.3.1 `IntentCompileResponse` struct (which only has `proposal_id`) is a **
 {
   "envelope": {
     "intent_id": "...",
-    "proposal_id": "...",  // Note: proposal_id is nested inside envelope
     "status": "...",
     "created_at": "..."
   },
@@ -169,11 +168,11 @@ The D1.3.1 `IntentCompileResponse` struct (which only has `proposal_id`) is a **
 
 | Field | D1.3.1 Placeholder | Actual Gateway |
 |-------|-------------------|---------------|
-| `proposal_id` | Top-level field | Nested inside `envelope` |
+| `proposal_id` | Top-level field | **Not present** in compile response; MCP/client generates proposal ID before evaluate |
 | `warnings` | Not present | `Vec<String>` at top level |
-| `envelope` | Not present | Wrapper object with intent metadata |
+| `envelope` | Not present | Wrapper object with intent metadata, including `intent_id` |
 
-**Impact on D1.3.2:** The `IntentCompileResponse` parsing logic must be updated to handle the nested `envelope` structure and extract `proposal_id` from within it.
+**Impact on D1.3.2:** The `IntentCompileResponse` parsing logic must be updated to handle `{ envelope, warnings }` and use `envelope.intent_id`. It must **not** extract or expect a `proposal_id` from compile output. If a later evaluate step needs a proposal ID, MCP/client must generate it before constructing `ActionProposal` and calling `/v1/proposals/{proposal_id}/evaluate`.
 
 ### 1.5 D1.3.1 Placeholder Types Must Be Replaced/Supplemented
 
@@ -195,7 +194,7 @@ The D1.3.1 `IntentCompileResponse` struct (which only has `proposal_id`) is a **
 
 | Field | Derivation Candidate | Classification | Status | Notes |
 |-------|---------------------|----------------|--------|-------|
-| `principal_id` | `actor_id` | **True blocker** | **Open** | No obvious default; gateway needs principal context |
+| `principal_id` | generated draft ID for D1.3.2b; stable `actor_id -> PrincipalId` mapping for D1.3.3+ | **Draft-only resolved** | **Resolved for D1.3.2b / blocked for D1.3.3** | Generated ID is not an auth claim; real HTTP calls require stable identity mapping |
 | `session_id` | Auto-generate UUID | **Trivial** | **Resolvable** | Auto-generate UUID v4 per intent compile call |
 | `channel_id` | `"default"` or `channel_id` from init | **Trivial** | **Resolvable** | Use constant `"default"` or from MCP init params |
 | `title` | `"action_type: target"` | **Trivial** | **Resolvable** | Simple string concatenation; truncation rule needed |
@@ -206,8 +205,13 @@ The D1.3.1 `IntentCompileResponse` struct (which only has `proposal_id`) is a **
 | `metadata` | `{}` | **Trivial** | **Resolvable** | Empty object `{}` is a valid default |
 
 **True blockers in B-MAP-1:**
-1. `principal_id`: No default; needs mapping from `actor_id` to gateway principal
-2. `goal`: No clear derivation; MCP has no goal/planning concept
+1. `goal`: No clear derivation; MCP has no goal/planning concept
+2. `raw_inputs`: `IntentInputRef` requires source/trust/sensitivity/event semantics that MCP parameters do not provide
+
+**Draft-only D1.3.2b decision:**
+- `principal_id` may use a generated `PrincipalId::new()` only for pure/draft mapping.
+- This generated ID is not an authentication identity, not stable actor mapping, and not acceptable for D1.3.3+ gateway HTTP/policy execution.
+- Before any real `POST /v1/intents/compile`, define stable `actor_id -> PrincipalId` mapping.
 
 **Likely resolvable (need confirmation):**
 - `session_id`, `channel_id`, `title`, `agent_plan_summary`, `trusted_context`, `approval_mode`, `metadata`
@@ -284,7 +288,8 @@ enum ApprovalMode {
 |-------------|----------|-----------|
 | `fs_read`, `git_fetch`, `http_get`, `db_query` | `Low` | Read-only, no state change |
 | `fs_write` (non-critical path like /tmp) | `Low` | Limited blast radius |
-| `http_post`, `git_push` (non-main branch) | `Medium` | Can affect external systems |
+| `git_push` (non-main branch) | `Medium` | Can affect remote repository but may be compensatable via revert |
+| `http_post` | `High` | Can affect external systems; fail conservative unless endpoint contract proves lower risk |
 | `fs_write` (critical path like /etc, /usr) | `High` | System-level changes |
 | `git_push` (main branch) | `High` | Production branch mutation |
 | `sql_mutate`, `db_mutate`, `fs_delete` | `High` | Destructive operations |
@@ -366,7 +371,7 @@ enum RollbackClass {
 | `fs_delete` | `R1SnapshotRecoverable` | May be recoverable from backup |
 | `git_push` | `R2Compensatable` | Revert commit via git revert |
 | `git_force_push` | `R3IrreversibleHighConsequence` | May overwrite remote history permanently |
-| `http_post` | `R2Compensatable` | Compensating HTTP request (DELETE or revert) |
+| `http_post` | `R3IrreversibleHighConsequence` | Generic POST compensation is not reliable unless an explicit compensating endpoint contract exists |
 | `sql_mutate` | `R3IrreversibleHighConsequence` | SQL mutations may be irreversible |
 | `db_mutate` | `R3IrreversibleHighConsequence` | Database mutations may be irreversible |
 
@@ -384,9 +389,10 @@ Doc 74 §3.3 defines two separate MCP tools:
 
 ### 3.2 Explorer Findings
 
-Explorer findings show:
-- `POST /v1/intents/compile`: Compiles intent → returns `proposal_id`
-- `POST /v1/proposals/{proposal_id}/evaluate`: Evaluates proposal → may return `execution_id`
+Explorer/oracle review of real code shows:
+- `POST /v1/intents/compile`: Compiles intent → returns `{ envelope, warnings }` with `envelope.intent_id`; does **not** return `proposal_id`
+- MCP/client generates `proposal_id` before constructing/evaluating an `ActionProposal`
+- `POST /v1/proposals/{proposal_id}/evaluate`: Evaluates proposal → does **not** create the execution record; `execution_id` is created during authorize
 
 ### 3.3 Semantic Ambiguity
 
@@ -408,7 +414,7 @@ Explorer findings show:
 Doc 75 §2.1 shows this sequential flow:
 
 ```
-POST /v1/intents/compile → returns proposal_id
+POST /v1/intents/compile → returns { envelope, warnings }
 POST /v1/proposals/{proposal_id}/evaluate → returns execution_id  ← INCORRECT
 POST /v1/capabilities/mint → returns capability_id
 ...
@@ -422,8 +428,11 @@ Explorer findings indicate `execution_id` is created during `authorize_execution
 
 ```
 POST /v1/intents/compile
-  → Gateway creates ActionProposal
-  → Returns { proposal_id: "uuid-1" }
+  → Gateway compiles intent
+  → Returns { envelope: { intent_id: "uuid-intent", ... }, warnings: [...] }
+
+MCP/client generates proposal_id
+  → Builds draft ActionProposal with proposal_id + envelope.intent_id
 
 POST /v1/proposals/{proposal_id}/evaluate
   → Gateway evaluates policy
@@ -464,27 +473,27 @@ If `execution_id` is NOT returned from eval, then:
 ActionProposalSubmitted → PolicyEvaluated → CapabilityMinted → ToolCallPrepared → ToolCallExecuted → SideEffectPrepared → SideEffectVerified → Terminal
 ```
 
-### 5.2 Explorer Findings on Event Emission
+### 5.2 Confirmed Findings on Event Emission
 
-Explorer did not return explicit provenance event emission. Based on REST endpoint analysis:
+Oracle review of real gateway code confirms `ActionProposalSubmitted` is emitted during `authorize_execution`, not during `compile_intent`.
 
-| REST Call | Expected Provenance Event | Timing Uncertainty |
-|-----------|--------------------------|-------------------|
-| POST /v1/intents/compile | `ActionProposalSubmitted` | **Uncertain** — may emit here or at authorize |
-| POST /v1/proposals/{id}/evaluate | `PolicyEvaluated` | Likely here |
-| POST /v1/capabilities/mint | `CapabilityMinted` | Likely here |
-| POST /v1/executions/authorize | `ActionProposalSubmitted`? | **Uncertain** — may emit here instead of compile |
-| POST /v1/executions/{id}/prepare | `ToolCallPrepared` | Likely here |
-| POST /v1/executions/{id}/execute | `ToolCallExecuted` | Likely here |
+| REST Call | Expected Provenance Event | Confirmed Timing |
+|-----------|--------------------------|------------------|
+| POST /v1/intents/compile | none for `ActionProposalSubmitted` | Compile returns `{ envelope, warnings }`; no MCP-side provenance emission |
+| POST /v1/proposals/{id}/evaluate | `PolicyEvaluated` | Later pipeline stage; outside D1.3.2b |
+| POST /v1/capabilities/mint | `CapabilityMinted` | Later pipeline stage; outside D1.3.2b |
+| POST /v1/executions/authorize | `ActionProposalSubmitted` | **Confirmed gateway-internal emission point** |
+| POST /v1/executions/{id}/prepare | `ToolCallPrepared` | Later pipeline stage; outside D1.3.2b |
+| POST /v1/executions/{id}/execute | `ToolCallExecuted` | Later pipeline stage; outside D1.3.2b |
 
-### 5.3 B-MAP-7: ActionProposalSubmitted Timing Mismatch
+### 5.3 B-MAP-7: ActionProposalSubmitted Timing Confirmed
 
-If `ActionProposalSubmitted` emits during `authorize` instead of `compile`:
-- The lineage chain starts later than expected
-- MCP server cannot rely on compile call triggering the first provenance event
-- Provenance logging must account for this uncertainty
+`ActionProposalSubmitted` emits during `authorize`, not `compile`:
+- MCP server cannot rely on compile call triggering the first provenance event.
+- MCP server should not emit provenance directly to compensate.
+- D1.3.2b remains pure/draft mapping and does not cross the provenance side-effect boundary.
 
-**Required**: Gateway team must confirm when `ActionProposalSubmitted` actually emits.
+**Decision**: B-MAP-7 is resolved for MCP D1.3.2b. Gateway owns the emission at authorize time.
 
 ---
 
@@ -500,7 +509,7 @@ If `ActionProposalSubmitted` emits during `authorize` instead of `compile`:
 | **B-MAP-4** | `server_name` resolution rules undefined | Cannot populate ActionProposal.server_name | Engineering |
 | **B-MAP-5** | `expected_effect` (string) and `estimated_risk` (RiskTier) inference undefined | Cannot populate ActionProposal effect/risk fields | Engineering |
 | **B-MAP-6** | `requested_rollback_class` (RollbackClass: R0NativeReversible/R1SnapshotRecoverable/R2Compensatable/R3IrreversibleHighConsequence) inference | Cannot determine rollback strategy | Engineering + Gateway team |
-| **B-MAP-7** | ActionProposalSubmitted event timing uncertain | Provenance chain start is ambiguous | Gateway team |
+| **B-MAP-7** | ActionProposalSubmitted event timing | **Resolved**: gateway emits during authorize; MCP does not emit directly | Gateway owns emission; MCP documents timing |
 
 ### 6.2 ⚠️ Open Questions (Should Resolve Before D1.3.2)
 
@@ -525,7 +534,7 @@ The following are **NOT** in scope for this design:
 | **Implementing ActionProposal mapping** | This is design only — D1.3.2 is blocked |
 | **Implementing submit/evaluate tool logic** | D1.3.3+ is blocked by B-MAP-1–B-MAP-7 |
 | **Implementing approval/reject tools** | Blocked by B1 in doc 75 — no approval endpoint exists |
-| **Implementing provenance emission** | Blocked by B-MAP-7 — timing uncertain |
+| **Implementing provenance emission** | Out of D1.3.2b scope — gateway-internal emission confirmed at authorize; MCP direct emission remains forbidden |
 | **Implementing rollback execution** | D1.5+ blocked by D1.3.2+ |
 | **Implementing rate limiting** | D1.9 blocked by Stage 2 complete |
 | **Implementing output sanitization** | D1.8 blocked by Stage 2 complete |
@@ -568,7 +577,7 @@ The following are **NOT** in scope for this design:
 |----------|------|-----------|
 | D1.3.2 blocked until B-MAP-1–B-MAP-7 resolved | 2026-05-07 | Cannot construct valid IntentCompileRequest or ActionProposal without derivation rules |
 | Doc 75 sequential ID flow needs correction | 2026-05-07 | execution_id created at authorize, not eval/prepare |
-| B-MAP-7 (provenance timing) requires gateway team input | 2026-05-07 | Cannot confirm ActionProposalSubmitted emission timing from explorer alone |
+| B-MAP-7 (provenance timing) resolved | 2026-05-07 | Oracle/code review confirmed `ActionProposalSubmitted` emits gateway-internally during authorize, not compile; MCP direct emission remains forbidden |
 | Scope parsing rules are proposed, not confirmed | 2026-05-07 | Q-MAP-1 must be resolved before B-MAP-2 can be marked done |
 
 ---

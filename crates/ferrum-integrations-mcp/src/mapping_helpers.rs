@@ -234,6 +234,9 @@ pub fn tool_call_action_to_draft_intent_compile_request(
     let _approval_mode = derive_approval_mode(Some(risk_tier.clone()));
 
     DraftIntentCompileRequestParts {
+        // TODO(D1.3.3): map `actor_id` to a stable `PrincipalId` before any real
+        // gateway HTTP/governance call. This generated ID is draft-only and is
+        // not an authentication or stable identity claim.
         principal_id: Ok(PrincipalId::new()),
         session_id: Some(SessionId::new().to_string()),
         channel_id: None,
