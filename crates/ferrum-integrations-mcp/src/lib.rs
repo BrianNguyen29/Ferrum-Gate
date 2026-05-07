@@ -39,6 +39,12 @@ use serde::{Deserialize, Serialize};
 
 mod http_client;
 mod rest_mapper;
+mod stage2_types;
+
+// Re-export Stage 2 types for external use.
+pub use stage2_types::{
+    IntentCompileRequest, IntentCompileResponse, PipelineStatus, PipelineStep, ToolCallAction,
+};
 
 // Re-export HTTP client types for use by the binary.
 pub use http_client::{ClientConfig, FerrumGatewayClient, GatewayError};
@@ -308,7 +314,11 @@ impl ActorIdentity {
     /// Call this during MCP initialization with the client_info.name if available.
     pub fn resolve(client_name: Option<&str>) -> Self {
         Self::from_env_var()
-            .or_else(|| client_name.filter(|n| !n.is_empty()).map(Self::from_client_info))
+            .or_else(|| {
+                client_name
+                    .filter(|n| !n.is_empty())
+                    .map(Self::from_client_info)
+            })
             .unwrap_or_else(Self::local)
     }
 }
