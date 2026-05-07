@@ -197,6 +197,7 @@ mod tests {
 
     #[test]
     fn test_process_line_tools_list() {
+        // D1.7: tools/list returns 17 tools (9 read-only + 8 lifecycle)
         let line = r#"{"jsonrpc":"2.0","method":"tools/list","id":1}"#;
         let response = process_line_with_dispatch(line, dispatch);
         assert!(response.is_some());
@@ -204,7 +205,7 @@ mod tests {
         match response {
             JsonRpcResponse::Success(success) => {
                 let tools = &success.result["tools"];
-                assert_eq!(tools.as_array().unwrap().len(), 9);
+                assert_eq!(tools.as_array().unwrap().len(), 17);
             }
             JsonRpcResponse::Error(_) => panic!("Expected success for tools/list"),
         }
