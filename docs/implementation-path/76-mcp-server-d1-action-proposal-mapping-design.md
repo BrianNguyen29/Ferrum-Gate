@@ -413,6 +413,8 @@ Explorer/oracle review of real code shows:
 
 Doc 75 §2.1 shows this sequential flow:
 
+> **Update**: Doc 75 has been reconciled with this corrected flow. This section remains the authoritative cross-reference for D1.3.2b/D1.3.3 review.
+
 ```
 POST /v1/intents/compile → returns { envelope, warnings }
 POST /v1/proposals/{proposal_id}/evaluate → returns execution_id  ← INCORRECT

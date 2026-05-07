@@ -119,7 +119,7 @@ Explorer findings show no approval resolve endpoint. These tools **must remain b
 
 ### 1.4 Gap: No Direct Provenance Emission Endpoint
 
-> **⚠️ Open Question**: Explorer found no direct provenance emission endpoint (`POST /v1/provenance/emit` or similar).
+> **Resolved for D1.3.2b / still forbidden for MCP direct emission**: Gateway emits `ActionProposalSubmitted` internally during `POST /v1/executions/authorize`, not during `POST /v1/intents/compile`. Explorer found no direct provenance emission endpoint (`POST /v1/provenance/emit` or similar), so MCP must not emit provenance directly.
 
 Doc 74 §3.6 assumes provenance emission via REST. If gateway uses internal-only emission, MCP server cannot emit provenance events directly. This must be resolved before Stage 2 proceeds.
 
@@ -127,7 +127,7 @@ Doc 74 §3.6 assumes provenance emission via REST. If gateway uses internal-only
 1. **Gateway-internal emission (preferred)**: Gateway emits `ActionProposalSubmitted`, `ToolCallPrepared`, `ToolCallExecuted` internally when corresponding REST calls are made. MCP server does NOT emit provenance — it only triggers the REST calls that cause internal emission.
 2. **Gap acknowledged**: If gateway does NOT emit these events internally, provenance gap must be documented and resolved before Stage 2.
 
-**Decision required**: Does gateway internally emit `ActionProposalSubmitted` when `POST /v1/intents/compile` is called? Does it emit `ToolCallPrepared` when `POST /v1/executions/{id}/prepare` is called?
+**Decision**: B-MAP-7 is resolved for D1.3.2b. Gateway owns `ActionProposalSubmitted` emission at authorize time. Remaining provenance events for prepare/execute/verify are later-stage checks and do not unblock D1.3.2b.
 
 ---
 
@@ -141,27 +141,29 @@ MCP tools/call: ferrum_gate_submit_intent
         ▼
 POST /v1/intents/compile
         │
-        ▼ returns { proposal_id: "uuid-1" }
+        ▼ returns { envelope: { intent_id: "uuid-intent", ... }, warnings: [] }
+        │
+        ▼ MCP/client generates proposal_id and builds draft ActionProposal
         │
         ▼
 POST /v1/proposals/{proposal_id}/evaluate
         │
-        ▼ returns { decision: "allow", execution_id: "uuid-2" }  [NOTE: eval may return execution_id directly]
+        ▼ returns { decision: "allow", reason: "...", matched_rule_ids: [...], warnings: [] }
         │
         ▼ [if allowed]
 POST /v1/capabilities/mint
         │
-        ▼ returns { capability_id: "uuid-3", ttl: 300 }
+        ▼ returns { lease: { capability_id: "uuid-cap", ... }, warnings: [] }
         │
         ▼
 POST /v1/executions/authorize
         │
-        ▼ returns { authorized: true }
+        ▼ returns { execution: { execution_id: "uuid-exec", ... }, warnings: [] }
         │
         ▼
 POST /v1/executions/{execution_id}/prepare
         │
-        ▼ returns { prepared: true, rollback_contract_id: "uuid-4" }
+        ▼ returns { execution_id: "uuid-exec", prepared: true, rollback_contract: {...}, warnings: [] }
         │
         ▼
 POST /v1/executions/{execution_id}/execute
@@ -183,9 +185,10 @@ POST /v1/executions/{execution_id}/verify
 
 | ID | Purpose | Persisted By | When Created |
 |----|---------|--------------|--------------|
-| `proposal_id` | References compiled intent | Gateway | POST /v1/intents/compile |
-| `execution_id` | References the execution | Gateway | Policy eval returns it OR prepare returns it |
-| `capability_id` | Single-use execution token | Gateway | POST /v1/capabilities/mint |
+| `intent_id` | References compiled intent envelope | Gateway | POST /v1/intents/compile returns it in `envelope.intent_id` |
+| `proposal_id` | References proposal evaluation | MCP/client | Generated before constructing/evaluating `ActionProposal` |
+| `execution_id` | References the execution | Gateway | Created during POST /v1/executions/authorize, not compile/evaluate/prepare |
+| `capability_id` | Single-use execution token | Gateway | POST /v1/capabilities/mint returns it inside `lease` |
 | `rollback_contract_id` | References rollback state | Gateway | POST /v1/executions/{id}/prepare |
 
 ### 2.3 Pending/Polling Behavior
@@ -218,17 +221,19 @@ For long-running executions, the MCP server uses a **pending/polling model**:
 
 ### 2.4 Open Question: evaluate vs submit Semantics
 
-Doc 74 had both `ferrum_gate_submit_intent` and `ferrum_gate_evaluate_intent` as separate tools. Explorer findings suggest:
+Doc 74 had both `ferrum_gate_submit_intent` and `ferrum_gate_evaluate_intent` as separate tools. Current gateway API review confirms:
 
-- `POST /v1/intents/compile` compiles intent → returns `proposal_id`
-- `POST /v1/proposals/{proposal_id}/evaluate` evaluates proposal → may return `execution_id` directly
+- `POST /v1/intents/compile` compiles intent → returns `{ envelope, warnings }` with `envelope.intent_id`; no `proposal_id` or `execution_id`.
+- MCP/client generates `proposal_id` before constructing/evaluating `ActionProposal`.
+- `POST /v1/proposals/{proposal_id}/evaluate` evaluates proposal → returns policy decision fields only; no `execution_id`.
+- `POST /v1/executions/authorize` creates the `execution_id`.
 
 **Clarification needed**:
 - Is `submit_intent` meant to compile AND submit (auto-evaluate)?
 - Is `evaluate_intent` meant to evaluate an already-submitted intent?
 - What is the relationship between intent submission and policy evaluation?
 
-**This ambiguity must be resolved before Stage 2 implementation.**
+**D1.3.2b decision**: sequential ID origins are resolved. Tool-level semantics (`submit_intent` compile-only vs compile+evaluate) remain a D1.3.3 side-effecting gate decision and must not be implemented in D1.3.2b.
 
 ---
 
@@ -238,12 +243,15 @@ Doc 74 had both `ferrum_gate_submit_intent` and `ferrum_gate_evaluate_intent` as
 
 ```
 1. MCP submits intent via POST /v1/intents/compile
-2. Gateway compiles → returns proposal_id
-3. MCP evaluates via POST /v1/proposals/{proposal_id}/evaluate
-4. Gateway evaluates → if allowed, returns execution_id
-5. MCP requests capability via POST /v1/capabilities/mint
-6. Gateway mint → returns capability_id, ttl_seconds, scope
-7. MCP includes capability_id in subsequent execution calls
+2. Gateway compiles → returns `{ envelope, warnings }` with `envelope.intent_id`
+3. MCP/client generates `proposal_id` and builds `ActionProposal`
+4. MCP evaluates via POST /v1/proposals/{proposal_id}/evaluate
+5. Gateway evaluates → returns policy decision fields only; no `execution_id`
+6. MCP requests capability via POST /v1/capabilities/mint
+7. Gateway mint → returns `lease.capability_id`, ttl, scope/bindings
+8. MCP calls POST /v1/executions/authorize
+9. Gateway authorize → creates `execution_id` and emits `ActionProposalSubmitted`
+10. MCP includes capability proof in subsequent execution calls
 ```
 
 ### 3.2 Capability Requirements
@@ -305,22 +313,23 @@ The REST call sequence implies the following events are emitted internally:
 
 | REST Call | Implied Provenance Event |
 |-----------|--------------------------|
-| POST /v1/intents/compile | ActionProposalSubmitted |
+| POST /v1/intents/compile | none for `ActionProposalSubmitted` |
 | POST /v1/proposals/{id}/evaluate | PolicyEvaluated |
 | POST /v1/capabilities/mint | CapabilityMinted |
+| POST /v1/executions/authorize | ActionProposalSubmitted |
 | POST /v1/executions/{id}/prepare | ToolCallPrepared |
 | POST /v1/executions/{id}/execute | ToolCallExecuted |
 | POST /v1/executions/{id}/verify | SideEffectPrepared, SideEffectVerified |
 | POST /v1/executions/{id}/compensate | SideEffectCompensated |
 
-### 5.2 Provenance Gap: Must Be Resolved Before Stage 2
+### 5.2 Provenance Gap Status
 
-> **🔴 Blocker**: If gateway does NOT emit provenance events internally, MCP server cannot fulfill the provenance-first lineage requirement.
+> **D1.3.2b status**: B-MAP-7 is resolved. Gateway emits `ActionProposalSubmitted` internally during authorize. MCP direct provenance emission remains forbidden.
 
-**Required resolution**:
-1. Verify with gateway team: Does calling `POST /v1/intents/compile` emit `ActionProposalSubmitted` internally?
-2. Verify: Does calling `POST /v1/executions/{id}/prepare` emit `ToolCallPrepared` internally?
-3. If NO to either: Provenance gap must be addressed before Stage 2 proceeds.
+**Later-stage checks**:
+1. Verify `ToolCallPrepared` emission when `POST /v1/executions/{id}/prepare` is implemented.
+2. Verify `ToolCallExecuted` / side-effect verification events when execute/verify are implemented.
+3. If gateway lacks any later event, document the gap before that later stage proceeds.
 
 ### 5.3 MCP Server Provenance Role (if gateway-internal)
 
@@ -463,8 +472,8 @@ Expected gateway error format:
 
 **What D1.3.1 does NOT decide:**
 - Whether `ToolCallAction` fields map correctly to `IntentCompileRequest` (needs explorer confirmation)
-- Whether `proposal_id` returned is a UUID or string (needs real gateway)
-- Whether field names in the DTO match actual gateway schema (may drift per §1.2 warning)
+- How MCP/client should generate `proposal_id` before evaluate (compile does not return it)
+- Whether field names in the placeholder DTO match actual gateway schema (may drift per §1.2 warning)
 
 **Next gated step:** D1.3.2 (define `ActionProposal` mapping) requires D1.3.1 types review + B1–B4 resolved.
 
@@ -472,7 +481,7 @@ Expected gateway error format:
 |-------|---|------|--------|--------------|-------|
 | **D-1.3: Policy Eval** | D1.3.1 | Define `IntentCompileRequest` struct | Future | — | Map MCP tool call to compile request (types-only; no HTTP calls) |
 | | D1.3.2 | Define `ActionProposal` mapping | Future | D1.3.1 | Map MCP call to ActionProposal |
-| | D1.3.3 | Implement compile call: POST /v1/intents/compile | Future | D1.3.2 | Returns proposal_id |
+| | D1.3.3 | Implement compile call: POST /v1/intents/compile | Future | D1.3.2 | Returns `{ envelope, warnings }`; proposal_id is MCP/client-generated before evaluate |
 | | D1.3.4 | Implement eval call: POST /v1/proposals/{id}/evaluate | Future | D1.3.3 | Returns policy decision |
 | | D1.3.5 | Add D-1.3 unit tests | Future | D1.3.4 | Test request/response mapping |
 | **D-1.4: Capability** | D1.4.1 | Define `CapabilityMintRequest/Response` structs | Future | — | |
@@ -482,7 +491,7 @@ Expected gateway error format:
 | **D-1.5: Rollback** | D1.5.1 | Define rollback-related DTOs | Future | — | |
 | | D1.5.2 | Implement prepare call: POST /v1/executions/{id}/prepare | Future | D1.4.2 | Returns execution_id, rollback_contract_id |
 | | D1.5.3 | Add D-1.5 unit tests | Future | D1.5.2 | |
-| **D-1.6: Provenance** | D1.6.1 | Verify gateway-internal emission | Future | B2 resolved | Confirm ActionProposalSubmitted emitted on compile |
+| **D-1.6: Provenance** | D1.6.1 | Verify gateway-internal emission | Future | B2 resolved | ActionProposalSubmitted confirmed at authorize; verify later-stage events as they are wired |
 | | D1.6.2 | Verify ToolCallPrepared emitted on prepare | Future | B2 resolved | Confirm gateway emits event |
 | | D1.6.3 | Add provenance logging/monitoring | Future | D1.6.1, D1.6.2 | If gateway does not emit, this becomes a blocker |
 | | D1.6.4 | Add D-1.6 tests | Future | D1.6.3 | |

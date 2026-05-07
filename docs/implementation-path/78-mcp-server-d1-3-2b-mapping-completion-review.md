@@ -157,8 +157,14 @@ Required before any REST wiring:
 
 - [x] `POST /v1/intents/compile` response handling uses `{ envelope, warnings }`.
 - [x] `proposal_id` is generated on the client/MCP side before evaluate if needed.
-- [ ] `execution_id` is not expected from compile or evaluate; it is created during authorize.
-- [ ] D-1.3.3 remains a separate side-effecting step with its own review gate.
+- [x] `execution_id` is not expected from compile or evaluate; it is created during authorize.
+- [x] D-1.3.3 remains a separate side-effecting step with its own review gate.
+
+**GATE-3 residual blockers before D1.3.3 REST wiring:**
+- Stable `actor_id -> PrincipalId` mapping must replace draft-only `PrincipalId::new()`.
+- `raw_inputs -> IntentInputRef` policy must be defined without fabricating trust/provenance labels.
+- `stage2_types.rs` placeholder `IntentCompileResponse { proposal_id }` must be replaced or deprecated.
+- D1.3.3 must open a separate side-effect review gate before the first gateway HTTP call.
 
 ### GATE-4 — No-Mutating-Execution Boundary
 
@@ -203,6 +209,8 @@ Unless the reviewer chooses otherwise, use these conservative defaults:
 | raw inputs | unresolved unless an untrusted MCP-derived `IntentInputRef` policy is written |
 | approval mode | **D78-9: `Required` (not `DraftOnly`)** |
 | provenance timing | resolved for D1.3.2b: gateway emits at authorize; MCP direct emission remains forbidden |
+| execution ID origin | `execution_id` is created during authorize, not compile/evaluate/prepare |
+| D1.3.3 boundary | first gateway HTTP call is a separate side-effecting gate |
 
 ---
 
@@ -231,11 +239,13 @@ Before D-1.3.2b code changes:
 | D78-7: provenance timing | Accepted/resolved | gateway-authorize-time vs MCP-side earlier emission | gateway emits at authorize; MCP direct emission forbidden |
 | D78-8: unknown action risk | Accepted | Medium (fail-open) vs High (fail-closed) | High — conservative default; multi-segment git/sql paths noted as TODO |
 | D78-9: Medium approval mode | Accepted | DraftOnly vs Required | Required — MCP has no draft workflow; gateway DraftOnly semantics not applicable |
+| D78-10: execution_id origin | Accepted/resolved | compile/evaluate vs authorize | `execution_id` is created during authorize; compile/evaluate must not expose it |
+| D78-11: D1.3.3 side-effect boundary | Accepted/process gate | include REST wiring in D1.3.2b vs separate gate | D1.3.3 remains separate and blocked until stable principal + raw input policy + DTO correction |
 
 ---
 
 ## 10. Bottom Line
 
-D-1.3.2a is complete. D-1.3.2b should **not** start as runtime wiring. The next safe work is documentation reconciliation and a review decision over the five contradictions above.
+D-1.3.2a is complete. D-1.3.2b GATE-1, GATE-2, and GATE-3 are signed off for pure/draft mapping corrections only. D1.3.3 remains blocked as the first side-effecting REST wiring gate.
 
 Only after this packet's gates are checked should implementation proceed, and even then the recommended next slice is still bounded to pure/draft mapping corrections — not REST calls and not mutating execution.
