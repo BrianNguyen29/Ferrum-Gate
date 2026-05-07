@@ -57,6 +57,7 @@ Thư mục này là điểm vào duy nhất để agent khác tiếp tục tri�
 76. [76-mcp-server-d1-action-proposal-mapping-design.md](76-mcp-server-d1-action-proposal-mapping-design.md) — D-1.3.2 ActionProposal mapping design: field mapping chain, missing-field derivation rules, B-MAP-1..B-MAP-7 blockers, sequential ID correction (implementation BLOCKED)
 77. [77-mcp-server-d1-3-2a-pure-mapping-helpers-plan.md](77-mcp-server-d1-3-2a-pure-mapping-helpers-plan.md) — D-1.3.2a pure mapping helpers plan: allowed/forbidden boundaries, helper function signatures, TODO marker policy, test plan (implemented and verified; D1.3.2b remains gated)
 78. [78-mcp-server-d1-3-2b-mapping-completion-review.md](78-mcp-server-d1-3-2b-mapping-completion-review.md) — D-1.3.2b mapping-completion review packet: reconcile doc/code drift, decide C-E6/C-RISK/C-RB/C-PRIN/C-RAW, keep REST/mutating execution blocked
+60. 79. [79-mcp-server-d1-3-3-preflight.md](79-mcp-server-d1-3-3-preflight.md) — D-1.3.3 preflight packet: P1-P4 blockers for side-effecting REST wiring gate (BLOCKED until P1-P4 approved)
 
 ## Luật ưu tiên
 Khi mâu thuẫn, ưu tiên:

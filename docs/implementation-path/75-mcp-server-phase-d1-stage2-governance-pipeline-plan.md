@@ -568,7 +568,8 @@ Before Stage 2 implementation begins, the following must be reviewed and approve
 | Stage 1 (D-1.1 + D-1.2) | ✅ Complete |
 | Stage 2 Plan (D-1.3 – D-1.7) | 📋 This document — GATED |
 | D-1.3.1 Types-Only | ✅ Complete |
-| D-1.3.2 ActionProposal Mapping | 🔴 BLOCKED by B-MAP-1..B-MAP-7 (see doc 76) |
+| D-1.3.2 ActionProposal Mapping | ✅ GATE-1–GATE-4 signed off (see doc 78); pure/draft corrections complete |
+| D-1.3.3 REST Wiring | 🔴 BLOCKED — see [doc 79](./79-mcp-server-d1-3-3-preflight.md) for P1-P4 preflight blockers |
 | Stage 3 (D-1.8 – D-1.9) | ⏳ Gated on Stage 2 |
 | Stage 4 (D-1.10) | ⏳ Gated on Stage 3 |
 

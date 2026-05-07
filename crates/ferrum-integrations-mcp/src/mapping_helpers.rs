@@ -234,24 +234,28 @@ pub fn tool_call_action_to_draft_intent_compile_request(
     let _approval_mode = derive_approval_mode(Some(risk_tier.clone()));
 
     DraftIntentCompileRequestParts {
-        // TODO(D1.3.3): map `actor_id` to a stable `PrincipalId` before any real
+        // TODO(D1.3.3 P1): map `actor_id` to a stable `PrincipalId` before any real
         // gateway HTTP/governance call. This generated ID is draft-only and is
         // not an authentication or stable identity claim.
         principal_id: Ok(PrincipalId::new()),
         session_id: Some(SessionId::new().to_string()),
         channel_id: None,
         title: format!("{}: {}", action.action_type, action.target),
-        goal: Err(MappingError::Todo {
-            field: "goal".to_string(),
-            bmap_issue: "B-MAP-1".to_string(),
-            note: "MCP has no goal concept — gateway requires plain text description".to_string(),
-        }),
+        // D1.3.3 P1 (preflight): Use draft goal derived from action type.
+        // P1 resolver will replace with stable principal + proper goal derivation.
+        goal: Ok(format!(
+            "MCP tool call: {} on {}",
+            action.action_type, action.target
+        )),
         agent_plan_summary: None,
-        trusted_context: None,
+        // D1.3.3 preflight: empty trusted_context (MCP has no trust context concept)
+        trusted_context: Some(ferrum_proto::JsonMap::new()),
+        // TODO(D1.3.3 P2): raw_inputs conversion requires untrusted IntentInputRef policy.
+        // Do not fabricate provenance/trust labels until P2 is resolved.
         raw_inputs: Err(MappingError::Todo {
             field: "raw_inputs".to_string(),
             bmap_issue: "B-MAP-1".to_string(),
-            note: "IntentInputRef conversion undefined — needs B-MAP-1 resolution".to_string(),
+            note: "IntentInputRef conversion undefined — needs D1.3.3 P2 resolution".to_string(),
         }),
         requested_resource_scope: parse_resource_scope(&action.scope).map_err(|e| {
             MappingError::Todo {
@@ -1002,12 +1006,13 @@ mod tests {
         assert!(parts.channel_id.is_none());
         // title should be derived
         assert_eq!(parts.title, "fs_write: /tmp/test.txt");
-        // goal should be Err(Todo)
-        assert!(parts.goal.is_err());
+        // goal should be Ok (draft goal per D1.3.3 P1)
+        assert!(parts.goal.is_ok());
+        assert!(parts.goal.unwrap().contains("fs_write"));
         // agent_plan_summary should be None
         assert!(parts.agent_plan_summary.is_none());
-        // trusted_context should be None
-        assert!(parts.trusted_context.is_none());
+        // trusted_context should be Some (empty map per D1.3.3 preflight)
+        assert!(parts.trusted_context.is_some());
         // raw_inputs should be Err(Todo)
         assert!(parts.raw_inputs.is_err());
         // requested_resource_scope should be Ok(Vec)

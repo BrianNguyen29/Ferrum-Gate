@@ -250,3 +250,9 @@ Before D-1.3.2b code changes:
 D-1.3.2a is complete. D-1.3.2b GATE-1 through GATE-4 are signed off for pure/draft mapping corrections only. D1.3.3 remains blocked as the first side-effecting REST wiring gate.
 
 Only after this packet's gates are checked should implementation proceed, and even then the recommended next slice is still bounded to pure/draft mapping corrections — not REST calls and not mutating execution.
+
+---
+
+## 11. Cross-References
+
+- Doc 79 (D-1.3.3 preflight): P1-P4 preflight blockers for side-effecting REST wiring gate
