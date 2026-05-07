@@ -3,6 +3,7 @@
 > **Status**: Design documentation only. D-1.3.2 implementation is blocked — requires this design packet review and explicit approval gate before any ActionProposal mapping implementation begins.
 > **D1.3.1 Status**: Types-only (`IntentCompileRequest` struct, 6 fields) — no HTTP calls, no pipeline logic. These placeholder types will be replaced/supplemented during D1.3.2 (see §1.4).
 > **D1.3.2 Blocker**: This document identifies 7 mapping blockers (B-MAP-1 through B-MAP-7) that must be resolved before ActionProposal mapping can proceed.
+> **D1.3.2a Update**: Pure mapping helpers are now implemented and verified. D-1.3.2b remains blocked by the reconciliation gates in doc 78.
 > **Purpose**: Define the complete field mapping chain from MCP tool call arguments through `ToolCallAction` to gateway `IntentCompileRequest` to internal `ActionProposal`, and identify missing-field derivation rules.
 > **Constraint**: Do not claim D1.3.2 is ready. Do not implement ActionProposal mapping. Do not call any governance endpoint. Preserve no production/G2/operator claims.
 

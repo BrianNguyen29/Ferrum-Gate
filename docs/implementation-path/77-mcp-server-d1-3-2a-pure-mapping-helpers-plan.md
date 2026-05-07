@@ -1,9 +1,9 @@
 # 77 — MCP Server D-1.3.2a Pure Mapping Helpers Plan
 
-> **Status**: Planning documentation only. D-1.3.2a is NOT implemented — this document defines the scope and creates an implementation todo-list for when D1.3.2 is unblocked.
-> **D1.3.2 Status**: Blocked by B-MAP-1 through B-MAP-7 (doc 76). This plan (D1.3.2a) is a sub-phase of D1.3.2.
+> **Status**: Implemented and verified. D-1.3.2a pure mapping helpers now exist in `crates/ferrum-integrations-mcp/src/mapping_helpers.rs`.
+> **D1.3.2 Status**: D-1.3.2a is complete, but D-1.3.2b remains blocked by doc/code drift and review gates documented in doc 78.
 > **Purpose**: Define pure (side-effect-free) mapping helper functions for D1.3.2, enabling type-safe transformations without any HTTP calls, state changes, or governance pipeline execution.
-> **Constraint**: Do not claim D1.3.2a is implemented. Do not make any REST/HTTP calls. Do not implement policy evaluation, capability minting, rollback preparation, or provenance emission. Preserve no production/G2/operator claims.
+> **Constraint**: Do not use D1.3.2a completion to claim D1.3.2b/D1.3.3 readiness. Do not make any REST/HTTP calls. Do not implement policy evaluation, capability minting, rollback preparation, or provenance emission. Preserve no production/G2/operator claims.
 
 ---
 
