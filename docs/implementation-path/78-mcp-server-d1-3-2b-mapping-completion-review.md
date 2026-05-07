@@ -170,10 +170,10 @@ Required before any REST wiring:
 
 Required before crossing from mapping to runtime pipeline:
 
-- [ ] D-1.3.2b remains pure or draft-only; no endpoint calls.
-- [ ] D-1.3.3 endpoint call is not included in D-1.3.2b.
-- [ ] No approval/reject execution is introduced.
-- [ ] No capability minting, rollback preparation, or provenance emission is introduced.
+- [x] D-1.3.2b remains pure or draft-only; no endpoint calls. **Verified**: mapping helpers have no HTTP/network calls.
+- [x] D-1.3.3 endpoint call is not included in D-1.3.2b. **Verified**: no compile endpoint wiring is present or allowed.
+- [x] No approval/reject execution is introduced. **Verified**: approval/reject tools remain `NOT_IMPLEMENTED`.
+- [x] No capability minting, rollback preparation, or provenance emission is introduced. **Verified**: no mint/prepare/provenance functions are in D1.3.2b scope.
 
 ---
 
@@ -241,11 +241,12 @@ Before D-1.3.2b code changes:
 | D78-9: Medium approval mode | Accepted | DraftOnly vs Required | Required — MCP has no draft workflow; gateway DraftOnly semantics not applicable |
 | D78-10: execution_id origin | Accepted/resolved | compile/evaluate vs authorize | `execution_id` is created during authorize; compile/evaluate must not expose it |
 | D78-11: D1.3.3 side-effect boundary | Accepted/process gate | include REST wiring in D1.3.2b vs separate gate | D1.3.3 remains separate and blocked until stable principal + raw input policy + DTO correction |
+| D78-12: GATE-4 no-mutating boundary | Accepted/resolved | allow runtime wiring in D1.3.2b vs pure/draft only | All four GATE-4 checks pass; D1.3.2b may only include pure/draft corrections; D1.3.3 remains a separate gate |
 
 ---
 
 ## 10. Bottom Line
 
-D-1.3.2a is complete. D-1.3.2b GATE-1, GATE-2, and GATE-3 are signed off for pure/draft mapping corrections only. D1.3.3 remains blocked as the first side-effecting REST wiring gate.
+D-1.3.2a is complete. D-1.3.2b GATE-1 through GATE-4 are signed off for pure/draft mapping corrections only. D1.3.3 remains blocked as the first side-effecting REST wiring gate.
 
 Only after this packet's gates are checked should implementation proceed, and even then the recommended next slice is still bounded to pure/draft mapping corrections — not REST calls and not mutating execution.
