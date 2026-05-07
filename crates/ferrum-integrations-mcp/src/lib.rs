@@ -38,12 +38,21 @@
 use serde::{Deserialize, Serialize};
 
 mod http_client;
+mod mapping_helpers;
 mod rest_mapper;
 mod stage2_types;
 
 // Re-export Stage 2 types for external use.
 pub use stage2_types::{
     IntentCompileRequest, IntentCompileResponse, PipelineStatus, PipelineStep, ToolCallAction,
+};
+
+// Re-export mapping helpers for external use (D1.3.2a).
+pub use mapping_helpers::{
+    DraftActionProposalParts, DraftIntentCompileRequestParts, MappingError, derive_approval_mode,
+    infer_expected_effect, infer_risk_tier, infer_rollback_class, parse_resource_scope,
+    resolve_server_name, tool_call_action_to_draft_action_proposal,
+    tool_call_action_to_draft_intent_compile_request,
 };
 
 // Re-export HTTP client types for use by the binary.
