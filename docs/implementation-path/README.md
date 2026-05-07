@@ -63,7 +63,8 @@ Thư mục này là điểm vào duy nhất để agent khác tiếp tục tri�
 63. [82-mcp-server-d1-5-prepare-rollback-preflight.md](82-mcp-server-d1-5-prepare-rollback-preflight.md) — D-1.5 prepare/rollback: low-level HTTP client implemented; execute/verify/compensate and D1.6+ remain blocked
 64. [83-mcp-server-d1-6-execute-verify-compensate-preflight.md](83-mcp-server-d1-6-execute-verify-compensate-preflight.md) — D-1.6 execute/verify/compensate: low-level REST clients implemented and auto_commit verify risk resolved; tool dispatch and D1.7+ remain blocked
 65. [84-mcp-server-d1-7-tool-dispatch-preflight.md](84-mcp-server-d1-7-tool-dispatch-preflight.md) — D1.7 tool dispatch: 8 lifecycle tools wired (submit, evaluate, mint, authorize, prepare, execute, verify, compensate); approve/reject permanently blocked (backend absent)
-66. [85-mcp-server-d1-8-output-sanitization-preflight.md](85-mcp-server-d1-8-output-sanitization-preflight.md) — D1.8 output sanitization preflight: firewall gap analysis, single-point choke point, sensitive fields, no-over-redaction, implementation options A+C (draft, preflight, oracle gate required)
+66. [85-mcp-server-d1-8-output-sanitization-preflight.md](85-mcp-server-d1-8-output-sanitization-preflight.md) — D1.8 output sanitization preflight: firewall gap analysis, single-point choke point, sensitive fields, no-over-redaction, implementation options A+C (oracle-approved 2026-05-07)
+67. [86-mcp-server-d1-9-dlp-field-redaction-preflight.md](86-mcp-server-d1-9-dlp-field-redaction-preflight.md) — D1.9 DLP/field redaction preflight: dlp_findings stub, sanitize_output control-char-only, FirewallContext gap, implementation options A–E, Explorer recommends Option B targeting raw_arguments/metadata first (draft, preflight, oracle gate required)
 
 ## Luật ưu tiên
 Khi mâu thuẫn, ưu tiên:

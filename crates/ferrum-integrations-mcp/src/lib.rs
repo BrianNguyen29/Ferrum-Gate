@@ -63,6 +63,31 @@
 //! - Field-level redaction or DLP (deferred to future work per oracle verdict)
 //! - Provenance emission (gateway-owned)
 //! - Error response sanitization (errors bypass the sanitize choke point)
+//!
+//! ## D1.9 Status (Phase 1 Implemented — Option B)
+//!
+//! D1.9 Phase 1 implements Option B field-key-aware redaction at the tools/call success
+//! boundary after D1.8 sanitization. The `redact_sensitive_fields()` function walks
+//! JSON recursively and replaces values of `raw_arguments` and `metadata` keys with
+//! the string "[REDACTED]". Arrays recurse; primitive values (numbers, booleans,
+//! nulls) pass through unchanged.
+//!
+//! Phase 1 sensitive keys (oracle-approved):
+//! - `raw_arguments` — raw tool arguments may contain sensitive parameters
+//! - `metadata` — whole-field redaction for JsonMap fields (no key enumeration)
+//!
+//! Phase 1 does NOT redact (no-over-redaction principle):
+//! - UUID IDs, reason/message/warnings, enums, booleans
+//! - rollback_contract envelope structure
+//! - action_type, correlation_id
+//! - Future Phase 2 fields (resource_bindings, target, compensation_plan.args,
+//!   resource_scope, result_digest) — deferred unless doc-only as deferred
+//!
+//! D1.9 Phase 1 does NOT implement:
+//! - Regex/heuristic DLP scanning (Option A/C — deferred)
+//! - Context-aware redaction via FirewallContext (Option D — deferred)
+//! - Provenance emission (gateway-owned)
+//! - Production/G2 claim (not production-ready)
 
 use ferrum_firewall::SemanticFirewall;
 use serde::{Deserialize, Serialize};
@@ -974,7 +999,9 @@ pub fn handle_tools_call_with_client(
             let value = serde_json::to_value(result).unwrap();
             // D1.8 Option A: sanitize output at the single tools/call response choke point
             let sanitized = ferrum_firewall::TaintScoringFirewall::new().sanitize_output(value);
-            JsonRpcResponse::success(sanitized, id)
+            // D1.9 Phase 1 Option B: redact sensitive fields after sanitization
+            let redacted = redact_sensitive_fields(sanitized);
+            JsonRpcResponse::success(redacted, id)
         }
         Err(e) => JsonRpcResponse::error(
             JsonRpcError {
@@ -984,6 +1011,46 @@ pub fn handle_tools_call_with_client(
             },
             id,
         ),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// D1.9: Field-Level Redaction (Phase 1 — Option B)
+// ---------------------------------------------------------------------------
+
+/// Phase 1 sensitive field keys for D1.9 Option B field-level redaction.
+/// These keys have their values replaced with "[REDACTED]" in JSON output.
+const PHASE_1_SENSITIVE_KEYS: &[&str] = &["raw_arguments", "metadata"];
+
+/// Recursively redact sensitive fields in a JSON value.
+///
+/// - For objects: if a key matches a sensitive key, replace its value with "[REDACTED]";
+///   otherwise recurse into the value.
+/// - For arrays: recurse into each element.
+/// - For primitives (string, number, boolean, null): pass through unchanged.
+///
+/// This implements D1.9 Phase 1 Option B: field-key-aware redaction targeting
+/// `raw_arguments` and `metadata` only. No regex/heuristic DLP (Option A/C) is
+/// applied. No-over-redaction principle is observed: UUID IDs, reason/message/warnings,
+/// enums, booleans, rollback_contract envelope, action_type, and correlation_id are
+/// preserved (not targeted by Phase 1).
+pub fn redact_sensitive_fields(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(mut map) => {
+            for (key, val) in map.iter_mut() {
+                if PHASE_1_SENSITIVE_KEYS.contains(&key.as_str()) {
+                    *val = serde_json::Value::String("[REDACTED]".to_string());
+                } else {
+                    *val = redact_sensitive_fields(val.clone());
+                }
+            }
+            serde_json::Value::Object(map)
+        }
+        serde_json::Value::Array(arr) => {
+            serde_json::Value::Array(arr.into_iter().map(redact_sensitive_fields).collect())
+        }
+        // Primitives (string, number, boolean, null) pass through unchanged.
+        _ => value,
     }
 }
 
@@ -1698,6 +1765,377 @@ mod tests {
                 .as_str()
                 .unwrap(),
             "item 2"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // D1.9 Tests (Phase 1 — Field-Level Redaction via redact_sensitive_fields)
+    // -------------------------------------------------------------------------
+
+    /// D1.9 Phase 1: raw_arguments field is redacted.
+    #[test]
+    fn test_redact_raw_arguments() {
+        let input = serde_json::json!({
+            "intent_id": "550e8400-e29b-41d4-a716-446655440000",
+            "raw_arguments": {
+                "secret_key": "ssh-rsa AAAA...",
+                "password": "supersecret"
+            }
+        });
+        let redacted = redact_sensitive_fields(input);
+        let obj = redacted.as_object().unwrap();
+        // intent_id should be preserved
+        assert_eq!(
+            obj.get("intent_id").unwrap().as_str().unwrap(),
+            "550e8400-e29b-41d4-a716-446655440000"
+        );
+        // raw_arguments should be replaced with "[REDACTED]"
+        assert_eq!(
+            obj.get("raw_arguments").unwrap().as_str().unwrap(),
+            "[REDACTED]"
+        );
+    }
+
+    /// D1.9 Phase 1: metadata field is redacted.
+    #[test]
+    fn test_redact_metadata() {
+        let input = serde_json::json!({
+            "proposal_id": "123e4567-e89b-12d3-a456-426614174000",
+            "metadata": {
+                "internal_notes": "sensitive info",
+                "audit_trail": ["step1", "step2"]
+            }
+        });
+        let redacted = redact_sensitive_fields(input);
+        let obj = redacted.as_object().unwrap();
+        // proposal_id should be preserved
+        assert_eq!(
+            obj.get("proposal_id").unwrap().as_str().unwrap(),
+            "123e4567-e89b-12d3-a456-426614174000"
+        );
+        // metadata should be replaced with "[REDACTED]"
+        assert_eq!(obj.get("metadata").unwrap().as_str().unwrap(), "[REDACTED]");
+    }
+
+    /// D1.9 Phase 1: nested metadata is redacted (whole-field redaction).
+    #[test]
+    fn test_redact_nested_metadata() {
+        let input = serde_json::json!({
+            "result": {
+                "metadata": {
+                    "nested": {
+                        "deep": "secret data"
+                    }
+                },
+                "status": "ok"
+            }
+        });
+        let redacted = redact_sensitive_fields(input);
+        let obj = redacted.as_object().unwrap();
+        let result = obj.get("result").unwrap().as_object().unwrap();
+        // status should be preserved
+        assert_eq!(result.get("status").unwrap().as_str().unwrap(), "ok");
+        // metadata should be redacted (whole-field, not key enumeration)
+        assert_eq!(
+            result.get("metadata").unwrap().as_str().unwrap(),
+            "[REDACTED]"
+        );
+    }
+
+    /// D1.9 Phase 1: both raw_arguments and metadata redacted when both present.
+    #[test]
+    fn test_redact_both_raw_arguments_and_metadata() {
+        let input = serde_json::json!({
+            "raw_arguments": { "key": "value" },
+            "metadata": { "internal": "data" },
+            "action_type": "fs_write"
+        });
+        let redacted = redact_sensitive_fields(input);
+        let obj = redacted.as_object().unwrap();
+        assert_eq!(
+            obj.get("raw_arguments").unwrap().as_str().unwrap(),
+            "[REDACTED]"
+        );
+        assert_eq!(obj.get("metadata").unwrap().as_str().unwrap(), "[REDACTED]");
+        // action_type should be preserved (no-over-redaction)
+        assert_eq!(
+            obj.get("action_type").unwrap().as_str().unwrap(),
+            "fs_write"
+        );
+    }
+
+    /// D1.9 Phase 1: UUID IDs are preserved (no-over-redaction).
+    #[test]
+    fn test_redact_preserves_uuids() {
+        let input = serde_json::json!({
+            "intent_id": "550e8400-e29b-41d4-a716-446655440000",
+            "proposal_id": "123e4567-e89b-12d3-a456-426614174000",
+            "capability_id": "deadbeef-e89b-12d3-a456-426614174000",
+            "execution_id": "fee1dead-e89b-12d3-a456-426614174000"
+        });
+        let redacted = redact_sensitive_fields(input);
+        let obj = redacted.as_object().unwrap();
+        assert_eq!(
+            obj.get("intent_id").unwrap().as_str().unwrap(),
+            "550e8400-e29b-41d4-a716-446655440000"
+        );
+        assert_eq!(
+            obj.get("proposal_id").unwrap().as_str().unwrap(),
+            "123e4567-e89b-12d3-a456-426614174000"
+        );
+        assert_eq!(
+            obj.get("capability_id").unwrap().as_str().unwrap(),
+            "deadbeef-e89b-12d3-a456-426614174000"
+        );
+        assert_eq!(
+            obj.get("execution_id").unwrap().as_str().unwrap(),
+            "fee1dead-e89b-12d3-a456-426614174000"
+        );
+    }
+
+    /// D1.9 Phase 1: reason/message/warnings preserved (no-over-redaction).
+    #[test]
+    fn test_redact_preserves_reason_and_messages() {
+        let input = serde_json::json!({
+            "reason": "Policy evaluation passed",
+            "message": "Execution completed successfully",
+            "warnings": ["warning one", "warning two"],
+            "diagnostics": "All systems nominal",
+            "raw_arguments": { "secret": "data" }
+        });
+        let redacted = redact_sensitive_fields(input);
+        let obj = redacted.as_object().unwrap();
+        assert_eq!(
+            obj.get("reason").unwrap().as_str().unwrap(),
+            "Policy evaluation passed"
+        );
+        assert_eq!(
+            obj.get("message").unwrap().as_str().unwrap(),
+            "Execution completed successfully"
+        );
+        let warnings = obj.get("warnings").unwrap().as_array().unwrap();
+        assert_eq!(warnings[0].as_str().unwrap(), "warning one");
+        assert_eq!(warnings[1].as_str().unwrap(), "warning two");
+        assert_eq!(
+            obj.get("diagnostics").unwrap().as_str().unwrap(),
+            "All systems nominal"
+        );
+        // raw_arguments still redacted
+        assert_eq!(
+            obj.get("raw_arguments").unwrap().as_str().unwrap(),
+            "[REDACTED]"
+        );
+    }
+
+    /// D1.9 Phase 1: enums and booleans preserved (no-over-redaction).
+    #[test]
+    fn test_redact_preserves_enums_and_booleans() {
+        let input = serde_json::json!({
+            "state": "Pending",
+            "status": "Approved",
+            "decision": "Allow",
+            "is_active": true,
+            "is_final": false,
+            "metadata": { "internal": "data" }
+        });
+        let redacted = redact_sensitive_fields(input);
+        let obj = redacted.as_object().unwrap();
+        assert_eq!(obj.get("state").unwrap().as_str().unwrap(), "Pending");
+        assert_eq!(obj.get("status").unwrap().as_str().unwrap(), "Approved");
+        assert_eq!(obj.get("decision").unwrap().as_str().unwrap(), "Allow");
+        assert_eq!(obj.get("is_active").unwrap().as_bool().unwrap(), true);
+        assert_eq!(obj.get("is_final").unwrap().as_bool().unwrap(), false);
+        // metadata still redacted
+        assert_eq!(obj.get("metadata").unwrap().as_str().unwrap(), "[REDACTED]");
+    }
+
+    /// D1.9 Phase 1: rollback_contract envelope structure preserved (no-over-redaction).
+    #[test]
+    fn test_redact_preserves_rollback_contract() {
+        let input = serde_json::json!({
+            "rollback_contract": {
+                "target": "/tmp/important.txt",
+                "compensation_plan": {
+                    "action": "delete",
+                    "args": ["arg1", "arg2"]
+                },
+                "metadata": { "internal": "rollback data" }
+            },
+            "raw_arguments": { "secret": "data" }
+        });
+        let redacted = redact_sensitive_fields(input);
+        let obj = redacted.as_object().unwrap();
+        let rc = obj.get("rollback_contract").unwrap().as_object().unwrap();
+        // rollback_contract structure preserved
+        assert_eq!(
+            rc.get("target").unwrap().as_str().unwrap(),
+            "/tmp/important.txt"
+        );
+        let cp = rc.get("compensation_plan").unwrap().as_object().unwrap();
+        assert_eq!(cp.get("action").unwrap().as_str().unwrap(), "delete");
+        let args = cp.get("args").unwrap().as_array().unwrap();
+        assert_eq!(args[0].as_str().unwrap(), "arg1");
+        assert_eq!(args[1].as_str().unwrap(), "arg2");
+        // Note: metadata INSIDE rollback_contract is NOT separately targeted in Phase 1
+        // because it's inside an object whose key is not "raw_arguments" or "metadata"
+        // The top-level "metadata" key would be redacted but "rollback_contract.metadata" is not
+        // a top-level key match.
+        assert_eq!(rc.get("metadata").unwrap().as_str().unwrap(), "[REDACTED]");
+        // raw_arguments redacted at top level
+        assert_eq!(
+            obj.get("raw_arguments").unwrap().as_str().unwrap(),
+            "[REDACTED]"
+        );
+    }
+
+    /// D1.9 Phase 1: correlation_id preserved (no-over-redaction).
+    #[test]
+    fn test_redact_preserves_correlation_id() {
+        let input = serde_json::json!({
+            "correlation_id": "corr-12345-abcde",
+            "raw_arguments": { "secret": "data" }
+        });
+        let redacted = redact_sensitive_fields(input);
+        let obj = redacted.as_object().unwrap();
+        assert_eq!(
+            obj.get("correlation_id").unwrap().as_str().unwrap(),
+            "corr-12345-abcde"
+        );
+        assert_eq!(
+            obj.get("raw_arguments").unwrap().as_str().unwrap(),
+            "[REDACTED]"
+        );
+    }
+
+    /// D1.9 Phase 1: empty JSON object passes through without crash.
+    #[test]
+    fn test_redact_handles_empty_json() {
+        let input = serde_json::json!({});
+        let redacted = redact_sensitive_fields(input);
+        assert!(redacted.is_object());
+        assert!(redacted.as_object().unwrap().is_empty());
+    }
+
+    /// D1.9 Phase 1: empty array passes through without crash.
+    #[test]
+    fn test_redact_handles_empty_array() {
+        let input = serde_json::json!([]);
+        let redacted = redact_sensitive_fields(input);
+        assert!(redacted.is_array());
+        assert!(redacted.as_array().unwrap().is_empty());
+    }
+
+    /// D1.9 Phase 1: arrays recurse and redact nested sensitive fields.
+    #[test]
+    fn test_redact_arrays_recurse() {
+        let input = serde_json::json!([{
+            "id": "123",
+            "raw_arguments": { "secret": "data" }
+        }, {
+            "id": "456",
+            "metadata": { "internal": "info" }
+        }]);
+        let redacted = redact_sensitive_fields(input);
+        let arr = redacted.as_array().unwrap();
+        // First item: id preserved, raw_arguments redacted
+        let first = arr[0].as_object().unwrap();
+        assert_eq!(first.get("id").unwrap().as_str().unwrap(), "123");
+        assert_eq!(
+            first.get("raw_arguments").unwrap().as_str().unwrap(),
+            "[REDACTED]"
+        );
+        // Second item: id preserved, metadata redacted
+        let second = arr[1].as_object().unwrap();
+        assert_eq!(second.get("id").unwrap().as_str().unwrap(), "456");
+        assert_eq!(
+            second.get("metadata").unwrap().as_str().unwrap(),
+            "[REDACTED]"
+        );
+    }
+
+    /// D1.9 Phase 1: numbers, booleans, nulls pass through unchanged.
+    #[test]
+    fn test_redact_preserves_primitives() {
+        let input = serde_json::json!({
+            "number": 42,
+            "float": 3.14,
+            "bool_true": true,
+            "bool_false": false,
+            "null_val": null,
+            "raw_arguments": { "secret": "data" }
+        });
+        let redacted = redact_sensitive_fields(input);
+        let obj = redacted.as_object().unwrap();
+        assert_eq!(obj.get("number").unwrap().as_i64().unwrap(), 42);
+        assert!((obj.get("float").unwrap().as_f64().unwrap() - 3.14).abs() < 0.001);
+        assert_eq!(obj.get("bool_true").unwrap().as_bool().unwrap(), true);
+        assert_eq!(obj.get("bool_false").unwrap().as_bool().unwrap(), false);
+        assert!(obj.get("null_val").unwrap().is_null());
+        // raw_arguments still redacted
+        assert_eq!(
+            obj.get("raw_arguments").unwrap().as_str().unwrap(),
+            "[REDACTED]"
+        );
+    }
+
+    /// D1.9 Phase 1: deeply nested objects have sensitive fields redacted.
+    #[test]
+    fn test_redact_deeply_nested() {
+        let input = serde_json::json!({
+            "level1": {
+                "level2": {
+                    "level3": {
+                        "raw_arguments": { "deep_secret": "value" },
+                        "message": "preserve this"
+                    }
+                }
+            }
+        });
+        let redacted = redact_sensitive_fields(input);
+        let l1 = redacted.as_object().unwrap();
+        let l2 = l1.get("level1").unwrap().as_object().unwrap();
+        let l3 = l2.get("level2").unwrap().as_object().unwrap();
+        let l4 = l3.get("level3").unwrap().as_object().unwrap();
+        // message preserved
+        assert_eq!(
+            l4.get("message").unwrap().as_str().unwrap(),
+            "preserve this"
+        );
+        // raw_arguments redacted at depth 4
+        assert_eq!(
+            l4.get("raw_arguments").unwrap().as_str().unwrap(),
+            "[REDACTED]"
+        );
+    }
+
+    /// D1.9 Phase 1: no sensitive keys means no changes.
+    #[test]
+    fn test_redact_no_sensitive_keys_unchanged() {
+        let input = serde_json::json!({
+            "intent_id": "550e8400-e29b-41d4-a716-446655440000",
+            "action_type": "fs_write",
+            "reason": "Policy allowed",
+            "state": "Completed"
+        });
+        let redacted = redact_sensitive_fields(input.clone());
+        assert_eq!(redacted, input);
+    }
+
+    /// D1.9 Phase 1: matched_rule_ids preserved (no-over-redaction).
+    #[test]
+    fn test_redact_preserves_matched_rule_ids() {
+        let input = serde_json::json!({
+            "matched_rule_ids": ["POL-001", "POL-002"],
+            "raw_arguments": { "secret": "data" }
+        });
+        let redacted = redact_sensitive_fields(input);
+        let obj = redacted.as_object().unwrap();
+        let rule_ids = obj.get("matched_rule_ids").unwrap().as_array().unwrap();
+        assert_eq!(rule_ids[0].as_str().unwrap(), "POL-001");
+        assert_eq!(rule_ids[1].as_str().unwrap(), "POL-002");
+        assert_eq!(
+            obj.get("raw_arguments").unwrap().as_str().unwrap(),
+            "[REDACTED]"
         );
     }
 }
