@@ -54,6 +54,7 @@ Thư mục này là điểm vào duy nhất để agent khác tiếp tục tri�
 73. [73-mcp-server-phase-d-implementation-plan.md](73-mcp-server-phase-d-implementation-plan.md) — Phase D-0 read-only REST client plan (9 tools mapped to gateway REST routes) + D-1 deferred governance pipeline
 74. [74-mcp-server-phase-d1-governance-design.md](74-mcp-server-phase-d1-governance-design.md) — Phase D-1 governance pipeline design: auth, policy eval, capability, rollback, provenance (design complete; implementation deferred)
 75. [75-mcp-server-phase-d1-stage2-governance-pipeline-plan.md](75-mcp-server-phase-d1-stage2-governance-pipeline-plan.md) — Phase D-1 Stage 2 plan: endpoint/DTO map, sequential ID flow, provenance strategy, blockers (implementation GATED pending design review)
+76. [76-mcp-server-d1-action-proposal-mapping-design.md](76-mcp-server-d1-action-proposal-mapping-design.md) — D-1.3.2 ActionProposal mapping design: field mapping chain, missing-field derivation rules, B-MAP-1..B-MAP-7 blockers, sequential ID correction (implementation BLOCKED)
 
 ## Luật ưu tiên
 Khi mâu thuẫn, ưu tiên:

@@ -536,6 +536,7 @@ Before Stage 2 implementation begins, the following must be reviewed and approve
 | This doc | [`67-production-readiness-roadmap.md`](67-production-readiness-roadmap.md) | MCP server is post-v1 scope |
 | This doc | [`README.md`](README.md) | Reading order entry |
 | This doc | [`artifacts/2026-05-06/73-d0-live-smoke-evidence.md`](artifacts/2026-05-06/73-d0-live-smoke-evidence.md) | D-0 local smoke evidence |
+| This doc | [`76-mcp-server-d1-action-proposal-mapping-design.md`](76-mcp-server-d1-action-proposal-mapping-design.md) | D-1.3.2 blocked by B-MAP-1..B-MAP-7; sequential ID correction |
 
 ---
 
@@ -547,6 +548,7 @@ Before Stage 2 implementation begins, the following must be reviewed and approve
 | Approval tools remain blocked | 2026-05-06 | No backend endpoint exists; implementor must not bypass this blocker |
 | Doc 74 endpoint paths corrected | 2026-05-06 | Explorer findings reveal actual paths differ from doc 74 design |
 | Sequential ID flow requires explicit design | 2026-05-06 | proposal_id → execution_id → capability_id → rollback_contract_id sequence needs clarity |
+| Doc 76 created for ActionProposal mapping design | 2026-05-07 | D1.3.2 blocked by 7 mapping gaps (B-MAP-1..B-MAP-7); execution_id created at authorize, not eval/prepare |
 
 ---
 
@@ -556,6 +558,8 @@ Before Stage 2 implementation begins, the following must be reviewed and approve
 |------|--------|
 | Stage 1 (D-1.1 + D-1.2) | ✅ Complete |
 | Stage 2 Plan (D-1.3 – D-1.7) | 📋 This document — GATED |
+| D-1.3.1 Types-Only | ✅ Complete |
+| D-1.3.2 ActionProposal Mapping | 🔴 BLOCKED by B-MAP-1..B-MAP-7 (see doc 76) |
 | Stage 3 (D-1.8 – D-1.9) | ⏳ Gated on Stage 2 |
 | Stage 4 (D-1.10) | ⏳ Gated on Stage 3 |
 
