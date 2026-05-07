@@ -562,6 +562,49 @@ impl FerrumGatewayClient {
             GatewayError::server_error(200, &format!("Failed to parse authorize response: {}", e))
         })
     }
+
+    // -------------------------------------------------------------------------
+    // D1.5 Prepare-only tool endpoint
+    // -------------------------------------------------------------------------
+
+    /// Prepare execution: POST /v1/executions/{execution_id}/prepare
+    ///
+    /// Per doc 82: This is the prepare-only gate (D1.5).
+    /// It does NOT implement execute/verify/compensate/rollback (D1.6+).
+    ///
+    /// Takes an `execution_id` in the URL path with NO request body.
+    /// The gateway validates the execution is in Authorized or Prepared state,
+    /// then creates a rollback contract for the execution.
+    ///
+    /// # Arguments
+    ///
+    /// * `execution_id` - The execution ID from authorize response
+    ///
+    /// # Returns
+    ///
+    /// `Result<ferrum_proto::PrepareExecutionResponse, GatewayError>` containing:
+    /// - `execution_id`: The execution ID
+    /// - `prepared`: Whether preparation succeeded
+    /// - `rollback_contract`: The created rollback contract (if successful)
+    /// - `warnings`: Advisory warnings from the preparation process
+    pub fn prepare_execution(
+        &self,
+        execution_id: &ferrum_proto::ExecutionId,
+    ) -> Result<ferrum_proto::PrepareExecutionResponse, GatewayError> {
+        let path = format!("/v1/executions/{}/prepare", execution_id);
+        let request = self
+            .build_request(reqwest::Method::POST, &path)
+            .build()
+            .map_err(|_e| GatewayError::unreachable("Failed to build request"))?;
+
+        let response: serde_json::Value = self.execute(request)?;
+
+        // Parse the response into real ferrum-proto type
+        // Real response is { execution_id, prepared, rollback_contract, warnings }
+        serde_json::from_value(response).map_err(|e| {
+            GatewayError::server_error(200, &format!("Failed to parse prepare response: {}", e))
+        })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2334,5 +2377,354 @@ mod tests {
 
         // All the wrong-path mocks should have 0 invocations (verified by mockito automatically)
         _mock_authorize.assert();
+    }
+
+    // -------------------------------------------------------------------------
+    // D1.5 Prepare execution tests (mock-based, no live gateway)
+    // -------------------------------------------------------------------------
+
+    /// Captures HTTP request data for prepare_execution tests.
+    #[derive(Debug, Clone)]
+    struct CapturedPrepareRequest {
+        method: String,
+        path: String,
+        body: String,
+    }
+
+    /// Starts a tiny_http server that captures the prepare request.
+    fn start_prepare_capture_server() -> (
+        std::sync::Arc<std::sync::Mutex<Option<CapturedPrepareRequest>>>,
+        String,
+        std::thread::JoinHandle<()>,
+    ) {
+        let captured_request = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let captured_request_clone = captured_request.clone();
+
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let server_url = server.server_addr().to_string();
+        let base_url = format!("http://{}", server_url);
+
+        let handle = std::thread::spawn(move || {
+            let response = tiny_http::Response::from_string(
+                r#"{
+                    "execution_id": "550e8400-e29b-41d4-a716-446655440099",
+                    "prepared": true,
+                    "rollback_contract": {
+                        "contract_id": "550e8400-e29b-41d4-a716-446655440100",
+                        "intent_id": "550e8400-e29b-41d4-a716-446655440001",
+                        "proposal_id": "550e8400-e29b-41d4-a716-446655440002",
+                        "execution_id": "550e8400-e29b-41d4-a716-446655440099",
+                        "action_type": "FileWrite",
+                        "rollback_class": "R0NativeReversible",
+                        "adapter_key": "fs-adapter",
+                        "target": {
+                            "kind": "FilePath",
+                            "path": "/tmp/output.txt",
+                            "before_hash": null,
+                            "after_hash": null
+                        },
+                        "prepare_checks": [],
+                        "verify_checks": [],
+                        "compensation_plan": [],
+                        "auto_commit": false,
+                        "state": "Prepared",
+                        "created_at": "2026-05-07T00:00:00Z",
+                        "expires_at": null,
+                        "metadata": {}
+                    },
+                    "warnings": []
+                }"#,
+            )
+            .with_header(
+                tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+                    .unwrap(),
+            );
+
+            if let Ok(Some(mut request)) = server.recv_timeout(std::time::Duration::from_secs(5)) {
+                let method = request.method().to_string();
+                let path = request.url().to_string();
+                let mut body = String::new();
+                request.as_reader().read_to_string(&mut body).unwrap();
+                *captured_request_clone.lock().unwrap() =
+                    Some(CapturedPrepareRequest { method, path, body });
+                let _ = request.respond(response);
+            }
+        });
+
+        (captured_request, base_url, handle)
+    }
+
+    #[test]
+    fn test_prepare_execution_captures_request_details() {
+        // Per doc 82: prepare_execution is prepare-only (D1.5).
+        // This test verifies the HTTP method, path, and NO body are correct.
+
+        let (captured_request, base_url, handle) = start_prepare_capture_server();
+
+        let config = ClientConfig::new().base_url(&base_url);
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let execution_id = ferrum_proto::ExecutionId::new();
+        let result = client.prepare_execution(&execution_id);
+        assert!(
+            result.is_ok(),
+            "prepare_execution should succeed: {:?}",
+            result.err()
+        );
+
+        let response = result.unwrap();
+        assert!(response.prepared);
+        assert!(response.warnings.is_empty());
+        assert!(response.rollback_contract.is_some());
+
+        // Verify the ACTUAL HTTP request captured by tiny_http
+        let captured = captured_request.lock().unwrap();
+        let req = captured
+            .as_ref()
+            .expect("Request should have been captured");
+
+        // Verify HTTP method is POST
+        assert_eq!(req.method, "POST", "HTTP method should be POST");
+        // Verify HTTP path is EXACTLY /v1/executions/{execution_id}/prepare
+        let expected_path = format!("/v1/executions/{}/prepare", execution_id);
+        assert_eq!(
+            req.path, expected_path,
+            "HTTP path should be exactly /v1/executions/{{id}}/prepare"
+        );
+
+        // Verify NO body is sent (prepare takes no request body)
+        assert!(
+            req.body.is_empty() || req.body == "{}",
+            "Prepare should have no body, got: {}",
+            req.body
+        );
+
+        handle.join().expect("Server thread should join");
+    }
+
+    #[test]
+    fn test_prepare_execution_response_with_rollback_contract() {
+        // Verify prepare_execution correctly parses response with rollback_contract and warnings.
+
+        let mut server = mockito::Server::new();
+        let _mock = server
+            .mock("POST", mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                "execution_id": "550e8400-e29b-41d4-a716-446655440099",
+                "prepared": true,
+                "rollback_contract": {
+                    "contract_id": "550e8400-e29b-41d4-a716-446655440100",
+                    "intent_id": "550e8400-e29b-41d4-a716-446655440001",
+                    "proposal_id": "550e8400-e29b-41d4-a716-446655440002",
+                    "execution_id": "550e8400-e29b-41d4-a716-446655440099",
+                    "action_type": "FileWrite",
+                    "rollback_class": "R0NativeReversible",
+                    "adapter_key": "fs-adapter",
+                    "target": {
+                        "kind": "FilePath",
+                        "path": "/tmp/output.txt",
+                        "before_hash": null,
+                        "after_hash": null
+                    },
+                    "prepare_checks": [],
+                    "verify_checks": [],
+                    "compensation_plan": [],
+                    "auto_commit": false,
+                    "state": "Prepared",
+                    "created_at": "2026-05-07T00:00:00Z",
+                    "expires_at": null,
+                    "metadata": {}
+                },
+                "warnings": ["file already exists, backup created"]
+            }"#,
+            )
+            .expect_at_least(1)
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let execution_id = ferrum_proto::ExecutionId::new();
+        let result = client.prepare_execution(&execution_id);
+        assert!(
+            result.is_ok(),
+            "prepare_execution should succeed: {:?}",
+            result.err()
+        );
+
+        let response = result.unwrap();
+        assert!(response.prepared);
+        assert_eq!(response.warnings.len(), 1);
+        assert!(
+            response
+                .warnings
+                .contains(&"file already exists, backup created".to_string())
+        );
+        assert!(response.rollback_contract.is_some());
+
+        let contract = response.rollback_contract.unwrap();
+        assert!(matches!(
+            contract.state,
+            ferrum_proto::RollbackState::Prepared
+        ));
+
+        _mock.assert();
+    }
+
+    #[test]
+    fn test_prepare_execution_wrong_path_fails() {
+        // Verify prepare_execution fails when the path doesn't match.
+        // This ensures we are NOT calling execute/verify/compensate/rollback.
+
+        let mut server = mockito::Server::new();
+        // Mock on WRONG path - should NOT be called
+        let _mock_wrong_path = server
+            .mock("POST", "/v1/wrong/path")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{}"#)
+            .expect(0) // Expect 0 invocations
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let execution_id = ferrum_proto::ExecutionId::new();
+
+        // Request should fail because the mock on wrong path won't match
+        let result = client.prepare_execution(&execution_id);
+        assert!(
+            result.is_err(),
+            "prepare_execution should fail when path doesn't match"
+        );
+    }
+
+    #[test]
+    fn test_prepare_execution_wrong_method_fails() {
+        // Verify prepare_execution fails when the HTTP method is wrong.
+        // This ensures we are NOT calling execute/verify/compensate/rollback.
+
+        let mut server = mockito::Server::new();
+        // Use actual execution ID in path for correct matching
+        let execution_id = ferrum_proto::ExecutionId::new();
+        let path = format!("/v1/executions/{}/prepare", execution_id);
+        // Mock on GET instead of POST - should NOT be called
+        let _mock_wrong_method = server
+            .mock("GET", path.as_str())
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{}"#)
+            .expect(0) // Expect 0 invocations
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        // Request should fail because the mock expects GET not POST
+        let result = client.prepare_execution(&execution_id);
+        assert!(
+            result.is_err(),
+            "prepare_execution should fail when method doesn't match"
+        );
+    }
+
+    #[test]
+    fn test_prepare_is_not_execute_verify_compensate_rollback() {
+        // Verify prepare_execution does NOT call any D1.6+ paths.
+        // Mock the D1.6+ paths and ensure they are NOT called.
+
+        let mut server = mockito::Server::new();
+        let execution_id = ferrum_proto::ExecutionId::new();
+        let prepare_path = format!("/v1/executions/{}/prepare", execution_id);
+
+        // Mock execute path - should NOT be called
+        let _mock_execute = server
+            .mock(
+                "POST",
+                format!("/v1/executions/{}/execute", execution_id).as_str(),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{}"#)
+            .expect(0) // Expect 0 invocations
+            .create();
+
+        // Mock verify path - should NOT be called
+        let _mock_verify = server
+            .mock(
+                "POST",
+                format!("/v1/executions/{}/verify", execution_id).as_str(),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{}"#)
+            .expect(0) // Expect 0 invocations
+            .create();
+
+        // Mock compensate path - should NOT be called
+        let _mock_compensate = server
+            .mock(
+                "POST",
+                format!("/v1/executions/{}/compensate", execution_id).as_str(),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{}"#)
+            .expect(0) // Expect 0 invocations
+            .create();
+
+        // Correct mock for prepare
+        let _mock_prepare = server
+            .mock("POST", prepare_path.as_str())
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                "execution_id": "550e8400-e29b-41d4-a716-446655440099",
+                "prepared": true,
+                "rollback_contract": {
+                    "contract_id": "550e8400-e29b-41d4-a716-446655440100",
+                    "intent_id": "550e8400-e29b-41d4-a716-446655440001",
+                    "proposal_id": "550e8400-e29b-41d4-a716-446655440002",
+                    "execution_id": "550e8400-e29b-41d4-a716-446655440099",
+                    "action_type": "FileWrite",
+                    "rollback_class": "R0NativeReversible",
+                    "adapter_key": "fs-adapter",
+                    "target": {
+                        "kind": "FilePath",
+                        "path": "/tmp/output.txt",
+                        "before_hash": null,
+                        "after_hash": null
+                    },
+                    "prepare_checks": [],
+                    "verify_checks": [],
+                    "compensation_plan": [],
+                    "auto_commit": false,
+                    "state": "Prepared",
+                    "created_at": "2026-05-07T00:00:00Z",
+                    "expires_at": null,
+                    "metadata": {}
+                },
+                "warnings": []
+            }"#,
+            )
+            .expect_at_least(1)
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let result = client.prepare_execution(&execution_id);
+        assert!(
+            result.is_ok(),
+            "prepare_execution should succeed: {:?}",
+            result.err()
+        );
+
+        // All the wrong-path mocks should have 0 invocations (verified by mockito automatically)
+        _mock_prepare.assert();
     }
 }

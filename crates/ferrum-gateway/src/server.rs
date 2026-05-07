@@ -2463,6 +2463,31 @@ async fn prepare_execution(
         }
     };
 
+    // D1.5 mandatory: Reject prepare for non-preparable execution states.
+    // Only Authorized or Prepared executions can transition to Prepared.
+    // All other states (Proposed, Running, Committed, Compensated, etc.) return 409 Conflict.
+    match execution.state {
+        ExecutionState::Authorized | ExecutionState::Prepared => {
+            // Valid state - proceed with prepare
+        }
+        _ => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsPrepare,
+                ApiProblem::new(
+                    StatusCode::CONFLICT,
+                    ApiErrorCode::Conflict,
+                    format!(
+                        "execution in state '{:?}' cannot be prepared; only '{:?}' or '{:?}' are preparable",
+                        execution.state,
+                        ExecutionState::Authorized,
+                        ExecutionState::Prepared
+                    ),
+                )
+            );
+        }
+    }
+
     // Look up the proposal to retrieve the real rollback_class.
     // The proposal is the most reliable existing linked record for this execution.
     let proposal = match state
