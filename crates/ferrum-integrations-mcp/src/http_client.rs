@@ -440,6 +440,52 @@ impl FerrumGatewayClient {
             GatewayError::server_error(200, &format!("Failed to parse compile response: {}", e))
         })
     }
+
+    // -------------------------------------------------------------------------
+    // D1.3.4 Evaluate-only tool endpoint
+    // -------------------------------------------------------------------------
+
+    /// Evaluate proposal: POST /v1/proposals/{proposal_id}/evaluate
+    ///
+    /// Per doc 80: This is the evaluate-only gate (D1.3.4).
+    /// It does NOT implement mint/authorize/prepare/execute (D1.4+).
+    ///
+    /// Takes a `proposal_id` in the URL path and an `ActionProposal` in the request body.
+    /// The proposal is evaluated by the gateway's policy engine and returns an
+    /// `EvaluateProposalResponse` with the decision.
+    ///
+    /// # Arguments
+    ///
+    /// * `proposal_id` - The proposal ID (must match `ActionProposal.proposal_id`)
+    /// * `proposal` - The action proposal to evaluate
+    ///
+    /// # Returns
+    ///
+    /// `Result<ferrum_proto::EvaluateProposalResponse, GatewayError>` containing:
+    /// - `decision`: One of Allow, Deny, Quarantine, RequireApproval, AllowDraftOnly
+    /// - `reason`: Human-readable reason for the decision
+    /// - `matched_rule_ids`: Policy rules that matched during evaluation
+    /// - `warnings`: Advisory warnings from the policy engine
+    pub fn evaluate_proposal(
+        &self,
+        proposal_id: &ferrum_proto::ProposalId,
+        proposal: &ferrum_proto::ActionProposal,
+    ) -> Result<ferrum_proto::EvaluateProposalResponse, GatewayError> {
+        let path = format!("/v1/proposals/{}/evaluate", proposal_id);
+        let request = self
+            .build_request(reqwest::Method::POST, &path)
+            .json(proposal)
+            .build()
+            .map_err(|_e| GatewayError::unreachable("Failed to build request"))?;
+
+        let response: serde_json::Value = self.execute(request)?;
+
+        // Parse the response into real ferrum-proto type
+        // Real response is { decision, reason, matched_rule_ids, warnings }
+        serde_json::from_value(response).map_err(|e| {
+            GatewayError::server_error(200, &format!("Failed to parse evaluate response: {}", e))
+        })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -940,6 +986,419 @@ mod tests {
         assert!(
             result.is_err(),
             "compile_intent should fail when method doesn't match"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // D1.3.4 Evaluate-only tests (mock-based, no live gateway)
+    // -------------------------------------------------------------------------
+
+    /// Creates a minimal ActionProposal for testing.
+    fn make_test_action_proposal() -> ferrum_proto::ActionProposal {
+        let proposal_id = ferrum_proto::ProposalId::new();
+        let intent_id = ferrum_proto::IntentId::new();
+        ferrum_proto::ActionProposal {
+            proposal_id,
+            intent_id,
+            step_index: 1,
+            title: "Test Proposal".to_string(),
+            tool_name: "filesystem.read".to_string(),
+            server_name: "fs-server".to_string(),
+            raw_arguments: serde_json::json!({"path": "/tmp/test.txt"}),
+            expected_effect: "read file content".to_string(),
+            estimated_risk: ferrum_proto::RiskTier::Low,
+            requested_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+            taint_inputs: vec![],
+            metadata: ferrum_proto::JsonMap::new(),
+            created_at: chrono::Utc::now(),
+        }
+    }
+
+    /// Captures HTTP request data for evaluate_proposal tests.
+    #[derive(Debug, Clone)]
+    struct CapturedEvaluateRequest {
+        method: String,
+        path: String,
+        body: String,
+    }
+
+    /// Starts a tiny_http server that captures the evaluate request.
+    fn start_evaluate_capture_server() -> (
+        std::sync::Arc<std::sync::Mutex<Option<CapturedEvaluateRequest>>>,
+        String,
+        std::thread::JoinHandle<()>,
+    ) {
+        let captured_request = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let captured_request_clone = captured_request.clone();
+
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let server_url = server.server_addr().to_string();
+        let base_url = format!("http://{}", server_url);
+
+        let handle = std::thread::spawn(move || {
+            let response = tiny_http::Response::from_string(
+                r#"{
+                    "decision": "Allow",
+                    "reason": "policy_evaluation",
+                    "matched_rule_ids": ["rule_001", "rule_002"],
+                    "warnings": []
+                }"#,
+            )
+            .with_header(
+                tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+                    .unwrap(),
+            );
+
+            if let Ok(Some(mut request)) = server.recv_timeout(std::time::Duration::from_secs(5)) {
+                let method = request.method().to_string();
+                let path = request.url().to_string();
+                let mut body = String::new();
+                request.as_reader().read_to_string(&mut body).unwrap();
+                *captured_request_clone.lock().unwrap() =
+                    Some(CapturedEvaluateRequest { method, path, body });
+                let _ = request.respond(response);
+            }
+        });
+
+        (captured_request, base_url, handle)
+    }
+
+    #[test]
+    fn test_evaluate_proposal_captures_request_details() {
+        // Per doc 80: evaluate_proposal is evaluate-only (D1.3.4).
+        // This test verifies the HTTP method, path, and body are correct.
+
+        let (captured_request, base_url, handle) = start_evaluate_capture_server();
+
+        let config = ClientConfig::new().base_url(&base_url);
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let proposal = make_test_action_proposal();
+        let proposal_id = proposal.proposal_id;
+        let expected_path = format!("/v1/proposals/{}/evaluate", proposal_id);
+
+        let result = client.evaluate_proposal(&proposal_id, &proposal);
+        assert!(
+            result.is_ok(),
+            "evaluate_proposal should succeed: {:?}",
+            result.err()
+        );
+
+        let response = result.unwrap();
+        assert!(matches!(response.decision, ferrum_proto::Decision::Allow));
+        assert!(response.matched_rule_ids.len() == 2);
+
+        // Verify the ACTUAL HTTP request captured by tiny_http
+        let captured = captured_request.lock().unwrap();
+        let req = captured
+            .as_ref()
+            .expect("Request should have been captured");
+
+        // Verify HTTP method is POST
+        assert_eq!(req.method, "POST", "HTTP method should be POST");
+        // Verify HTTP path is EXACTLY /v1/proposals/{proposal_id}/evaluate
+        assert_eq!(
+            req.path, expected_path,
+            "HTTP path should be exactly /v1/proposals/{{id}}/evaluate"
+        );
+
+        // Verify ALL key ActionProposal governance fields are present in the body
+        assert!(
+            req.body.contains("\"proposal_id\""),
+            "Actual HTTP body should contain proposal_id"
+        );
+        assert!(
+            req.body.contains("\"intent_id\""),
+            "Actual HTTP body should contain intent_id"
+        );
+        assert!(
+            req.body.contains("\"tool_name\":\"filesystem.read\""),
+            "Actual HTTP body should contain tool_name"
+        );
+        assert!(
+            req.body.contains("\"server_name\":\"fs-server\""),
+            "Actual HTTP body should contain server_name"
+        );
+        assert!(
+            req.body.contains("\"title\":\"Test Proposal\""),
+            "Actual HTTP body should contain title"
+        );
+        assert!(
+            req.body.contains("\"estimated_risk\":\"Low\""),
+            "Actual HTTP body should contain estimated_risk"
+        );
+        assert!(
+            req.body
+                .contains("\"requested_rollback_class\":\"R0NativeReversible\""),
+            "Actual HTTP body should contain requested_rollback_class"
+        );
+
+        // Also verify that the body is valid JSON
+        let _: serde_json::Value =
+            serde_json::from_str(&req.body).expect("Captured body should be valid JSON");
+
+        handle.join().expect("Server thread should join");
+    }
+
+    #[test]
+    fn test_evaluate_proposal_decision_allow() {
+        let mut server = mockito::Server::new();
+        let _mock = server
+            .mock("POST", mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                "decision": "Allow",
+                "reason": "policy_evaluation",
+                "matched_rule_ids": ["rule_001"],
+                "warnings": []
+            }"#,
+            )
+            .expect_at_least(1)
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let mut proposal = make_test_action_proposal();
+        proposal.proposal_id = ferrum_proto::ProposalId::new();
+
+        let result = client.evaluate_proposal(&proposal.proposal_id, &proposal);
+        assert!(
+            result.is_ok(),
+            "evaluate_proposal should succeed: {:?}",
+            result.err()
+        );
+
+        let response = result.unwrap();
+        assert!(matches!(response.decision, ferrum_proto::Decision::Allow));
+        assert_eq!(response.reason, "policy_evaluation");
+        assert_eq!(response.matched_rule_ids, vec!["rule_001"]);
+
+        _mock.assert();
+    }
+
+    #[test]
+    fn test_evaluate_proposal_decision_deny() {
+        let mut server = mockito::Server::new();
+        let _mock = server
+            .mock("POST", mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                "decision": "Deny",
+                "reason": "risk_too_high",
+                "matched_rule_ids": ["rule_deny_high_risk"],
+                "warnings": ["elevated risk detected"]
+            }"#,
+            )
+            .expect_at_least(1)
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let proposal = make_test_action_proposal();
+
+        let result = client.evaluate_proposal(&ferrum_proto::ProposalId::new(), &proposal);
+        assert!(
+            result.is_ok(),
+            "evaluate_proposal should succeed: {:?}",
+            result.err()
+        );
+
+        let response = result.unwrap();
+        assert!(matches!(response.decision, ferrum_proto::Decision::Deny));
+        assert_eq!(response.reason, "risk_too_high");
+        assert!(
+            response
+                .warnings
+                .contains(&"elevated risk detected".to_string())
+        );
+
+        _mock.assert();
+    }
+
+    #[test]
+    fn test_evaluate_proposal_decision_quarantine() {
+        let mut server = mockito::Server::new();
+        let _mock = server
+            .mock("POST", mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                "decision": "Quarantine",
+                "reason": "suspicious_pattern_detected",
+                "matched_rule_ids": ["rule_quarantine_001"],
+                "warnings": ["manual review required"]
+            }"#,
+            )
+            .expect_at_least(1)
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let proposal = make_test_action_proposal();
+
+        let result = client.evaluate_proposal(&ferrum_proto::ProposalId::new(), &proposal);
+        assert!(
+            result.is_ok(),
+            "evaluate_proposal should succeed: {:?}",
+            result.err()
+        );
+
+        let response = result.unwrap();
+        assert!(matches!(
+            response.decision,
+            ferrum_proto::Decision::Quarantine
+        ));
+        assert_eq!(response.reason, "suspicious_pattern_detected");
+        assert!(
+            response
+                .warnings
+                .contains(&"manual review required".to_string())
+        );
+
+        _mock.assert();
+    }
+
+    #[test]
+    fn test_evaluate_proposal_decision_require_approval() {
+        let mut server = mockito::Server::new();
+        let _mock = server
+            .mock("POST", mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                "decision": "RequireApproval",
+                "reason": "approval_required_for_high_risk",
+                "matched_rule_ids": ["rule_approval_001", "rule_approval_002"],
+                "warnings": ["high risk operation"]
+            }"#,
+            )
+            .expect_at_least(1)
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let proposal = make_test_action_proposal();
+
+        let result = client.evaluate_proposal(&ferrum_proto::ProposalId::new(), &proposal);
+        assert!(
+            result.is_ok(),
+            "evaluate_proposal should succeed: {:?}",
+            result.err()
+        );
+
+        let response = result.unwrap();
+        assert!(matches!(
+            response.decision,
+            ferrum_proto::Decision::RequireApproval
+        ));
+        assert_eq!(response.reason, "approval_required_for_high_risk");
+        assert_eq!(response.matched_rule_ids.len(), 2);
+
+        _mock.assert();
+    }
+
+    #[test]
+    fn test_evaluate_proposal_decision_allow_draft_only() {
+        let mut server = mockito::Server::new();
+        let _mock = server
+            .mock("POST", mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                "decision": "AllowDraftOnly",
+                "reason": "draft_mode_only_permitted",
+                "matched_rule_ids": ["rule_draft_001"],
+                "warnings": ["only draft execution allowed"]
+            }"#,
+            )
+            .expect_at_least(1)
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let proposal = make_test_action_proposal();
+
+        let result = client.evaluate_proposal(&ferrum_proto::ProposalId::new(), &proposal);
+        assert!(
+            result.is_ok(),
+            "evaluate_proposal should succeed: {:?}",
+            result.err()
+        );
+
+        let response = result.unwrap();
+        assert!(matches!(
+            response.decision,
+            ferrum_proto::Decision::AllowDraftOnly
+        ));
+        assert_eq!(response.reason, "draft_mode_only_permitted");
+        assert!(
+            response
+                .warnings
+                .contains(&"only draft execution allowed".to_string())
+        );
+
+        _mock.assert();
+    }
+
+    #[test]
+    fn test_evaluate_proposal_wrong_path_fails() {
+        let mut server = mockito::Server::new();
+        // Mock on WRONG path - should NOT be called
+        let _mock_wrong_path = server
+            .mock("POST", "/v1/wrong/path")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{}"#)
+            .expect(0) // Expect 0 invocations
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let proposal = make_test_action_proposal();
+
+        // Request should fail because the mock on wrong path won't match
+        let result = client.evaluate_proposal(&ferrum_proto::ProposalId::new(), &proposal);
+        assert!(
+            result.is_err(),
+            "evaluate_proposal should fail when path doesn't match"
+        );
+    }
+
+    #[test]
+    fn test_evaluate_proposal_wrong_method_fails() {
+        let mut server = mockito::Server::new();
+        // Mock on GET instead of POST - should NOT be called
+        let _mock_wrong_method = server
+            .mock("GET", "/v1/proposals/test-proposal-id/evaluate")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{}"#)
+            .expect(0) // Expect 0 invocations
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let proposal = make_test_action_proposal();
+
+        // Request should fail because the mock expects GET not POST
+        let result = client.evaluate_proposal(&ferrum_proto::ProposalId::new(), &proposal);
+        assert!(
+            result.is_err(),
+            "evaluate_proposal should fail when method doesn't match"
         );
     }
 }

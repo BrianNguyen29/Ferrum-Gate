@@ -18,3 +18,4 @@ uuid = { version = "1", features = ["v4", "v5", "serde"] }
 tokio = { workspace = true, features = ["full"] }
 mockito = "1.6"
 tiny_http = "0.12"
+chrono = { workspace = true }

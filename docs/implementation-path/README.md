@@ -58,6 +58,7 @@ Thư mục này là điểm vào duy nhất để agent khác tiếp tục tri�
 77. [77-mcp-server-d1-3-2a-pure-mapping-helpers-plan.md](77-mcp-server-d1-3-2a-pure-mapping-helpers-plan.md) — D-1.3.2a pure mapping helpers plan: allowed/forbidden boundaries, helper function signatures, TODO marker policy, test plan (implemented and verified; D1.3.2b remains gated)
 78. [78-mcp-server-d1-3-2b-mapping-completion-review.md](78-mcp-server-d1-3-2b-mapping-completion-review.md) — D-1.3.2b mapping-completion review packet: reconcile doc/code drift, decide C-E6/C-RISK/C-RB/C-PRIN/C-RAW, keep REST/mutating execution blocked
 60. 79. [79-mcp-server-d1-3-3-preflight.md](79-mcp-server-d1-3-3-preflight.md) — D-1.3.3 preflight packet: P1-P4 blockers for side-effecting REST wiring gate (BLOCKED until P1-P4 approved)
+61. [80-mcp-server-d1-3-4-evaluate-preflight.md](80-mcp-server-d1-3-4-evaluate-preflight.md) — D-1.3.4 evaluate-only gate: E1-E2 approved, low-level HTTP client implemented (tool dispatch and D1.4+ remain blocked)
 
 ## Luật ưu tiên
 Khi mâu thuẫn, ưu tiên:
