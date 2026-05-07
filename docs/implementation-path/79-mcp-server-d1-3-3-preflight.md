@@ -13,19 +13,27 @@ This packet provides the preflight checklist. Until P1-P4 are approved, D-1.3.3 
 
 ---
 
-## 1. D1.3.3 Scope (Side-Effecting Gate)
+## 1. D1.3.3 Scope (Compile-Only Gate)
 
-### 1.1 What D1.3.3 Includes
+### 1.1 What D1.3.3 Includes (Compile-Only)
 
 D1.3.3 is the first slice that may include:
 - Real `reqwest` HTTP client calls to gateway endpoints
 - `ferrum_gateway_client::FerrumGatewayClient` instantiation and usage
 - `POST /v1/intents/compile` with real (non-deprecated) DTOs
-- `POST /v1/proposals/{proposal_id}/evaluate` call with client-generated proposal_id
-- `Option<ProposalId>` threading through the MCP tool flow
+- Stable principal ID mapping (UUID v5 deterministic from actor_id)
+- Untrusted raw_inputs IntentInputRef for MCP-derived parameters
 - Any state changes (even in-memory)
 
-### 1.2 What D1.3.3 Forbidden Items Remain
+### 1.2 What D1.3.3 Excludes (Evaluate in D1.3.4+)
+
+D1.3.3 is **compile-only**. The following are excluded and belong to D1.3.4+:
+- `POST /v1/proposals/{proposal_id}/evaluate` — D1.3.4 scope
+- `Option<ProposalId>` threading through MCP tool flow — D1.3.4 scope
+- Capability minting — D1.3.4 scope
+- Any governance pipeline stages beyond compile
+
+### 1.3 What D1.3.3 Forbidden Items Remain
 
 | Item | Status | Reason |
 | --- | --- | --- |
@@ -63,16 +71,30 @@ D1.3.3 is the first slice that may include:
 
 **Issue**: `raw_inputs: Err(Todo{...})` is a blocker. The `IntentInputRef` type includes fields for source identity, trust labels, and provenance — none of which MCP tool parameters can honestly provide.
 
+**Real IntentInputRef Fields** (per ferrum-proto):
+- `source_id: String` — identifier of the input source
+- `source_type: String` — type/category of the source
+- `trust_labels: Vec<TrustLabel>` — trust level enum
+- `sensitivity_labels: Vec<SensitivityLabel>` — sensitivity classification
+- `summary: String` — human-readable summary
+- `event_id: Option<EventId>` — linked event ID
+
 **Current State**:
 - `raw_inputs: Err(MappingError::Todo{...})` in `DraftIntentCompileRequestParts`
 - No policy for how to handle untrusted MCP-derived inputs
 
 **Decision Required**:
-1. Create minimal `IntentInputRef` with `source: "mcp"` and `trust_level: Untrusted`?
+1. Create minimal `IntentInputRef` with `source_type: "mcp"`, `trust_labels: [Untrusted]`, and empty sensitivity_labels?
 2. Or require explicit gateway policy before any raw_inputs conversion?
 3. Or remain blocked until a formal untrusted-input policy is written?
 
-**Recommendation**: Implement minimal MCP-derived `IntentInputRef` with explicit `source: "mcp"` and `trust_level: Untrusted` labels for D1.3.3. Do not fabricate trust/provenance. Document the limitation clearly.
+**Recommendation**: Implement MCP-derived `IntentInputRef` with:
+- `source_id`: actor_id from ToolCallAction
+- `source_type`: "mcp"
+- `trust_labels`: vec![TrustLabel::Untrusted]
+- `sensitivity_labels`: vec![]
+- `summary`: format!("MCP tool: {} on {}", action_type, target)
+- `event_id`: None
 
 **Dependencies**: None (can be resolved independently)
 
@@ -85,20 +107,20 @@ D1.3.3 is the first slice that may include:
 **Current State**:
 - `IntentCompileResponse { proposal_id }` marked `#[deprecated]`
 - Real response: `ferrum_proto::IntentCompileResponse { envelope, warnings }`
-- `generate_proposal_id()` helper exists for client-side proposal ID generation
+- `generate_proposal_id()` helper exists but returns `String` not `ProposalId`
 
 **Decision Required**:
 1. Remove deprecated `IntentCompileResponse` from `stage2_types` and re-export from `ferrum_proto`?
 2. Or keep deprecated struct for backward compatibility with tests?
 3. Or create new `DraftCompileResponse` type?
 
-**Recommendation**: Remove deprecated `IntentCompileResponse` from `stage2_types`. Re-export `ferrum_proto::IntentCompileResponse` in `lib.rs`. Tests should use the real type.
+**Recommendation**: Remove deprecated `IntentCompileResponse` from `stage2_types`. Re-export `ferrum_proto::IntentCompileResponse` in `lib.rs`. Update `generate_proposal_id()` to return `ProposalId` not `String`.
 
 **Dependencies**: D78-2 (already resolved — compile response has no proposal_id)
 
 ---
 
-### P4 — Side-Effect Gate Confirmation
+### P4 — Side-Effect Gate Confirmation (Compile-Only)
 
 **Issue**: D1.3.3 crosses the pure→side-effecting boundary. Need explicit signoff before any HTTP calls are made.
 
@@ -108,14 +130,14 @@ D1.3.3 is the first slice that may include:
 - No mutating tool execution enabled
 
 **Decision Required**:
-1. Confirm that `reqwest` blocking client may be used for D1.3.3?
+1. Confirm that `reqwest` blocking client may be used for D1.3.3 compile only?
 2. Confirm that error handling may return `GatewayError` variants to MCP callers?
 3. Confirm that no capability/rollback/provenance is introduced in this slice?
 
 **Recommendation**: Confirm P4 by signing off that:
-- HTTP client calls are permitted for intent compile/evaluate
+- HTTP client calls are permitted for intent compile only (NOT evaluate)
 - Error responses follow existing `GatewayError` classification
-- No governance pipeline stages beyond compile/evaluate are introduced
+- No governance pipeline stages beyond compile are introduced
 
 **Dependencies**: P1, P2, P3 must be resolved first
 
@@ -125,17 +147,16 @@ D1.3.3 is the first slice that may include:
 
 If P1-P4 are approved, D1.3.3 implementation may proceed with:
 
-### Allowed:
+### Allowed (Compile-Only):
 - Replace `PrincipalId::new()` with UUID v5 derivation from `actor_id`
-- Implement minimal `IntentInputRef` with `source: "mcp"`, `trust_level: Untrusted`
+- Implement MCP-derived `IntentInputRef` with source_type="mcp", trust_labels=[Untrusted]
 - Remove deprecated `IntentCompileResponse`, re-export real type from `ferrum_proto`
-- Add `Option<ProposalId>` field to tool call flow
+- Update `generate_proposal_id()` to return `ProposalId` not `String`
 - Implement `POST /v1/intents/compile` using `FerrumGatewayClient`
-- Implement `POST /v1/proposals/{proposal_id}/evaluate` using client-generated proposal_id
-- Add tests for real compile/evaluate flow (mocked responses)
+- Add tests for real compile flow (mocked responses)
 
 ### Forbidden:
-- Calling any endpoint beyond compile/evaluate
+- Calling any endpoint beyond compile (evaluate is D1.3.4 scope)
 - Capability minting, rollback preparation, provenance emission
 - Enabling mutating tool execution beyond `NOT_IMPLEMENTED`
 - Claiming D1.3.4 or later readiness
@@ -146,10 +167,10 @@ If P1-P4 are approved, D1.3.3 implementation may proceed with:
 
 | Decision | Status | Alternatives | Current Recommendation |
 | --- | --- | --- | --- |
-| P1: stable principal mapping | **Pending** | UUID v5 vs generated vs blocked | UUID v5 derived from actor_id (stable for routing, not auth) |
-| P2: raw_inputs policy | **Pending** | minimal untrusted ref vs blocked | MCP-derived IntentInputRef with source="mcp", trust_level=Untrusted |
-| P3: IntentCompileResponse DTO | **Pending** | remove/deprecate vs re-export | Remove deprecated struct; re-export from ferrum_proto |
-| P4: side-effect gate | **Pending** | confirm vs remain pure | Confirm HTTP client usage for compile/evaluate only |
+| P1: stable principal mapping | **Approved** | UUID v5 vs generated vs blocked | UUID v5 derived from actor_id (stable for routing, not auth) |
+| P2: raw_inputs policy | **Approved with fixes** | minimal untrusted ref vs blocked | MCP-derived IntentInputRef with source_type="mcp", trust_labels=[Untrusted], empty sensitivity_labels, summary per action |
+| P3: IntentCompileResponse DTO | **Approved with fixes** | remove/deprecate vs re-export | Remove deprecated struct; re-export from ferrum_proto; generate_proposal_id returns ProposalId |
+| P4: side-effect gate | **Approved (compile-only)** | confirm vs remain pure | Confirm HTTP client usage for compile only (NOT evaluate) |
 
 ---
 
@@ -163,6 +184,6 @@ If P1-P4 are approved, D1.3.3 implementation may proceed with:
 
 ## 6. Bottom Line
 
-D-1.3.3 is **BLOCKED** until P1-P4 are approved. This packet does not implement D-1.3.3 — it only records what must be resolved before implementation may begin.
+P1-P4 are **approved** (with doc fixes applied). D1.3.3 implementation may now proceed for compile-only scope.
 
-After P1-P4 approval, implementation may proceed but remains bounded to compile/evaluate REST wiring. Governance pipeline stages beyond evaluate (capability mint, rollback prep, provenance emission) remain in later slices.
+This packet does not implement D-1.3.3 itself — the actual REST wiring code must still be written. Governance pipeline stages beyond compile (evaluate, capability mint, rollback prep, provenance emission) remain in later slices (D1.3.4+).

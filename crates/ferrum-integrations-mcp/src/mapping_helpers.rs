@@ -29,7 +29,7 @@
 
 use ferrum_proto::{
     ApprovalMode, IntentInputRef, PrincipalId, ResourceMode, ResourceSelector, RiskTier,
-    RollbackClass, SessionId,
+    RollbackClass, SessionId, TrustLabel,
 };
 use std::fmt;
 
@@ -212,6 +212,60 @@ pub use crate::stage2_types::ToolCallAction;
 // Helper: ToolCallAction -> DraftIntentCompileRequestParts
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Helper: Stable Principal ID Derivation (UUID v5)
+// ---------------------------------------------------------------------------
+
+/// Namespace UUID for MCP actor to principal derivation.
+/// Per doc 79 P1: UUID v5 provides deterministic, stable principal IDs.
+const FERRUM_MCP_PRINCIPAL_NAMESPACE: uuid::Uuid = uuid::Uuid::NAMESPACE_OID;
+
+/// Derives a stable `PrincipalId` from an `actor_id` using UUID v5.
+///
+/// Per doc 79 P1: Uses namespace-based UUID v5 derivation for deterministic
+/// but not-authenticated principal identification. The same actor_id always
+/// produces the same PrincipalId across sessions.
+///
+/// This helper is PURE — deterministic, no side effects, no I/O.
+#[allow(dead_code)]
+pub fn derive_stable_principal_id(actor_id: &str) -> PrincipalId {
+    let derived_uuid = uuid::Uuid::new_v5(&FERRUM_MCP_PRINCIPAL_NAMESPACE, actor_id.as_bytes());
+    PrincipalId(derived_uuid)
+}
+
+// ---------------------------------------------------------------------------
+// Helper: Raw Inputs -> IntentInputRef (Untrusted MCP-Derived)
+// ---------------------------------------------------------------------------
+
+/// Creates an untrusted `IntentInputRef` from MCP tool call parameters.
+///
+/// Per doc 79 P2: MCP-derived inputs are marked Untrusted because MCP
+/// tool parameters cannot provide trustworthy provenance or trust labels.
+///
+/// Real IntentInputRef fields:
+/// - `source_id`: actor_id from ToolCallAction
+/// - `source_type`: "mcp"
+/// - `trust_labels`: [TrustLabel::Untrusted]
+/// - `sensitivity_labels`: []
+/// - `summary`: description of the input
+/// - `event_id`: None
+///
+/// This helper is PURE — deterministic, no side effects, no I/O.
+fn make_untrusted_intent_input_ref(
+    actor_id: &str,
+    action_type: &str,
+    target: &str,
+) -> IntentInputRef {
+    IntentInputRef {
+        source_id: actor_id.to_string(),
+        source_type: "mcp".to_string(),
+        trust_labels: vec![TrustLabel::Untrusted],
+        sensitivity_labels: vec![],
+        summary: format!("MCP tool: {} on {}", action_type, target),
+        event_id: None,
+    }
+}
+
 /// Converts a `ToolCallAction` into `DraftIntentCompileRequestParts`.
 ///
 /// This helper is PURE — no side effects, deterministic, no I/O.
@@ -234,29 +288,25 @@ pub fn tool_call_action_to_draft_intent_compile_request(
     let _approval_mode = derive_approval_mode(Some(risk_tier.clone()));
 
     DraftIntentCompileRequestParts {
-        // TODO(D1.3.3 P1): map `actor_id` to a stable `PrincipalId` before any real
-        // gateway HTTP/governance call. This generated ID is draft-only and is
-        // not an authentication or stable identity claim.
-        principal_id: Ok(PrincipalId::new()),
+        // P1 (per doc 79): stable principal ID derived from actor_id using UUID v5.
+        // This is deterministic but NOT an authentication claim.
+        principal_id: Ok(derive_stable_principal_id(&action.actor_id)),
         session_id: Some(SessionId::new().to_string()),
         channel_id: None,
         title: format!("{}: {}", action.action_type, action.target),
-        // D1.3.3 P1 (preflight): Use draft goal derived from action type.
-        // P1 resolver will replace with stable principal + proper goal derivation.
         goal: Ok(format!(
             "MCP tool call: {} on {}",
             action.action_type, action.target
         )),
         agent_plan_summary: None,
-        // D1.3.3 preflight: empty trusted_context (MCP has no trust context concept)
         trusted_context: Some(ferrum_proto::JsonMap::new()),
-        // TODO(D1.3.3 P2): raw_inputs conversion requires untrusted IntentInputRef policy.
-        // Do not fabricate provenance/trust labels until P2 is resolved.
-        raw_inputs: Err(MappingError::Todo {
-            field: "raw_inputs".to_string(),
-            bmap_issue: "B-MAP-1".to_string(),
-            note: "IntentInputRef conversion undefined — needs D1.3.3 P2 resolution".to_string(),
-        }),
+        // P2 (per doc 79): untrusted IntentInputRef for MCP-derived inputs.
+        // MCP tool parameters cannot provide trustworthy provenance.
+        raw_inputs: Ok(vec![make_untrusted_intent_input_ref(
+            &action.actor_id,
+            &action.action_type,
+            &action.target,
+        )]),
         requested_resource_scope: parse_resource_scope(&action.scope).map_err(|e| {
             MappingError::Todo {
                 field: "requested_resource_scope".to_string(),
@@ -1013,8 +1063,12 @@ mod tests {
         assert!(parts.agent_plan_summary.is_none());
         // trusted_context should be Some (empty map per D1.3.3 preflight)
         assert!(parts.trusted_context.is_some());
-        // raw_inputs should be Err(Todo)
-        assert!(parts.raw_inputs.is_err());
+        // raw_inputs should be Ok with untrusted IntentInputRef (P2)
+        assert!(parts.raw_inputs.is_ok());
+        let raw_inputs = parts.raw_inputs.unwrap();
+        assert_eq!(raw_inputs.len(), 1);
+        assert_eq!(raw_inputs[0].source_type, "mcp");
+        assert_eq!(raw_inputs[0].trust_labels, vec![TrustLabel::Untrusted]);
         // requested_resource_scope should be Ok(Vec)
         assert!(parts.requested_resource_scope.is_ok());
         // requested_risk_tier should be Some(High)
