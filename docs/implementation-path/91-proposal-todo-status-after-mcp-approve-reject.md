@@ -237,6 +237,7 @@ This section captures three bounded next-step hardening proposals. Each has expl
 | This doc | [artifacts/2026-05-08-mcp-live-local-smoke-d1-11.md](./artifacts/2026-05-08-mcp-live-local-smoke-d1-11.md) | Smoke artifact (pre-approve/reject, 13/0) |
 | This doc | [artifacts/2026-05-08-mcp-approve-reject-smoke-15-15.md](./artifacts/2026-05-08-mcp-approve-reject-smoke-15-15.md) | Smoke artifact (post-approve/reject, 15/0) |
 | This doc | [artifacts/2026-05-08-path2-phase-a-pre-target-gate.md](./artifacts/2026-05-08-path2-phase-a-pre-target-gate.md) | Path 2 Phase A pre-target gate evidence |
+| This doc | [artifacts/2026-05-08-local-path2-target-profile.md](./artifacts/2026-05-08-local-path2-target-profile.md) | Local Path 2 target profile evidence |
 
 ---
 

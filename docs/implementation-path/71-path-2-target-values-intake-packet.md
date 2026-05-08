@@ -163,3 +163,5 @@ For a complete actionable next-steps plan, see [`92-path-2-target-intake-next-ac
 **This packet (doc71) is the input source. The action plan (doc92) is the execution guide.**
 
 **Phase A evidence**: Pre-target gate completed 2026-05-08. See [artifact](./artifacts/2026-05-08-path2-phase-a-pre-target-gate.md).
+
+**Alternative — No real target values yet?**: If real target values are not yet available, use the [local target profile](./93-local-path2-target-profile-plan.md) to validate tooling locally. See [doc93](./93-local-path2-target-profile-plan.md) and [artifact](./artifacts/2026-05-08-local-path2-target-profile.md). This remains LOCAL-ONLY and does NOT replace real target values from doc71.
