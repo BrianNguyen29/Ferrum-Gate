@@ -78,7 +78,7 @@ Thư mục này là điểm vào duy nhất để agent khác tiếp tục tri�
 72. [92-path-2-target-intake-next-actions.md](92-path-2-target-intake-next-actions.md) — **Recommended next action**: Path 2 target intake actionable plan; phases A-F with owners, blockers, stop conditions
 71a. [artifacts/2026-05-08-mcp-approve-reject-smoke-15-15.md](artifacts/2026-05-08-mcp-approve-reject-smoke-15-15.md) — **LOCAL ONLY**: post-approve/reject MCP smoke 15/15 (NOT target evidence; G2 remains pending)
 71b. [artifacts/2026-05-08-path2-phase-a-pre-target-gate.md](artifacts/2026-05-08-path2-phase-a-pre-target-gate.md) — **LOCAL ONLY**: Path 2 Phase A pre-target gate pass (NOT target evidence; G2 remains pending)
-71c. [93-local-path2-target-profile-plan.md](93-local-path2-target-profile-plan.md) — **LOCAL ONLY**: local-only Path 2 target profile alternative when real target values unavailable; script + documentation + artifact
+71c. [93-local-path2-target-profile-plan.md](93-local-path2-target-profile-plan.md) — **LOCAL ONLY / CI evidence**: local Path 2 target profile alternative when real target values unavailable; script + documentation + [CI workflow](../../.github/workflows/local-profile-evidence.yml) (NOT G2/production/target evidence)
 71d. [artifacts/2026-05-08-local-path2-target-profile.md](artifacts/2026-05-08-local-path2-target-profile.md) — **LOCAL ONLY**: local target profile run result (NOT target evidence; G2 remains pending)
 
 ## Luật ưu tiên

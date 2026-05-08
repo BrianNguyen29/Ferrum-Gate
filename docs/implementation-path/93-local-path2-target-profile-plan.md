@@ -99,10 +99,33 @@ bash scripts/run_local_path2_target_profile.sh --help        # Show help
 - **No Docker/Compose**: Uses local binaries only
 - **In-memory SQLite**: File-backed SQLite does not work in /tmp in this environment (SQLite error 14); profile structure is still fully created
 - **No real secrets**: Only locally-generated tokens in temp dirs
-- **No CI wiring**: Manual execution only
 - **No canonical docs modified**: Docs 54, 58, 59, 63, 65 NOT touched
 - **Ephemeral token**: Generated token is temp and NOT stored in artifacts
 - **Cleanup**: Temp dir cleaned up on exit unless `--keep-output` is specified
+
+### CI Workflow
+
+A GitHub Actions workflow is available for CI-hosted RC evidence:
+
+**File**: `.github/workflows/local-profile-evidence.yml`
+**Trigger**: `workflow_dispatch` (manual), or on push/PR to relevant files
+
+The workflow:
+1. Builds ferrumd and ferrumctl in release mode
+2. Runs `run_pre_target_gate.sh` locally
+3. Runs `run_local_path2_target_profile.sh --keep-output`
+4. Uploads the evidence artifact (retained 30 days)
+5. Writes a job summary with explicit non-claims
+
+**CI Evidence Claim**: CI-hosted RC evidence only. NOT G2 evidence. NOT production-ready. NOT target evidence. NOT operator signoff.
+
+**Usage**:
+```bash
+# Manual trigger
+gh workflow run local-profile-evidence.yml
+
+# Or via web UI: Actions tab > Local Profile Evidence > Run workflow
+```
 
 ### Output
 

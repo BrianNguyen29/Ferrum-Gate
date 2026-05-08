@@ -15,7 +15,7 @@
 #   - Does NOT use real secrets - only locally-generated tokens in temp dirs
 #   - All outputs labeled "LOCAL-ONLY - NOT TARGET EVIDENCE"
 #   - Generated token is ephemeral and NOT committed or stored in artifacts
-#   - Script is NOT wired into CI
+#   - Script can run locally or via CI-hosted RC evidence workflow, but remains NOT target/G2 evidence
 #
 # Usage:
 #   bash scripts/run_local_path2_target_profile.sh              # Run with defaults

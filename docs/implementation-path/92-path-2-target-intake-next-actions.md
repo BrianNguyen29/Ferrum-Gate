@@ -101,10 +101,11 @@ If real target values (host, credentials, paths) are not yet available from doc7
 | **Script** | `bash scripts/run_local_path2_target_profile.sh --keep-output` |
 | **Documentation** | [`doc93`](./93-local-path2-target-profile-plan.md) |
 | **Artifact** | [`artifacts/2026-05-08-local-path2-target-profile.md`](./artifacts/2026-05-08-local-path2-target-profile.md) |
+| **CI Workflow** | [`.github/workflows/local-profile-evidence.yml`](../../.github/workflows/local-profile-evidence.yml) — CI-hosted RC evidence (manual or on relevant file changes) |
 | **What it validates** | Profile structure, config/env, ferrumd start, probes, auth checks, backup/restore, auth smoke |
 | **What it does NOT produce** | Real target values, G2 evidence, operator signoff, production-ready |
 
-**This remains LOCAL-ONLY.** It does NOT constitute target evidence, G2 completion, or pilot authorization. Real target values from doc71 are still required for Phase B on a real target.
+**This remains LOCAL-ONLY (or CI-hosted RC evidence).** It does NOT constitute target evidence, G2 completion, or pilot authorization. Real target values from doc71 are still required for Phase B on a real target.
 
 **When real target values become available**, proceed with standard Phase B using doc71.
 
