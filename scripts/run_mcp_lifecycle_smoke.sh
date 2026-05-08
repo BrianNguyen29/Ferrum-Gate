@@ -356,7 +356,7 @@ fi
 #   - result = pass
 #   - -32003/-32004 (gateway unreachable/server error) = warn/pass for lifecycle
 #   - -32002 (auth failed) = warn/pass for read-only auth-sensitive tests
-#   - -32001/-32601/-32602/no response = fail
+#   - -32001/-32601/-32602/-32700/no response = fail
 # D1.11 validates bounded dispatch reachability; does NOT claim G2/production.
 
 echo ""
@@ -393,17 +393,7 @@ print('')
 # D1.11.1: submit_intent - lifecycle dispatch test
 echo ""
 echo "[TEST] D1.11.1: ferrum_gate_submit_intent (lifecycle dispatch)..."
-SUBMIT_RESPONSE=$(mcp_call "tools/call" '{
-    "name": "ferrum_gate_submit_intent",
-    "arguments": {
-        "principal_id": "550e8400-e29b-41d4-a716-446655440000",
-        "title": "smoke test intent",
-        "goal": "validate lifecycle dispatch",
-        "action_type": "Read",
-        "target": "/tmp/smoke-test.txt",
-        "scope": "fs:read:/tmp/smoke-test.txt"
-    }
-}' 9)
+SUBMIT_RESPONSE=$(mcp_call "tools/call" '{"name":"ferrum_gate_submit_intent","arguments":{"principal_id":"550e8400-e29b-41d4-a716-446655440000","title":"smoke test intent","goal":"validate lifecycle dispatch","action_type":"Read","target":"/tmp/smoke-test.txt","scope":"fs:read:/tmp/smoke-test.txt"}}' 9)
 
 # Extract intent_id for downstream use; fallback to generated UUID
 INTENT_ID=$(extract_intent_id "$SUBMIT_RESPONSE")
@@ -418,14 +408,14 @@ if echo "$SUBMIT_RESPONSE" | grep -q '"error"'; then
     if [[ "$ERROR_CODE" == "-32003" ]] || [[ "$ERROR_CODE" == "-32004" ]]; then
         echo "[PASS] D1.11.1 submit_intent: dispatch reached gateway, got $ERROR_CODE (soft-pass)"
         PASSED=$((PASSED + 1))
-    elif [[ "$ERROR_CODE" == "-32001" ]] || [[ "$ERROR_CODE" == "-32601" ]] || [[ "$ERROR_CODE" == "-32602" ]]; then
+    elif [[ "$ERROR_CODE" == "-32001" ]] || [[ "$ERROR_CODE" == "-32601" ]] || [[ "$ERROR_CODE" == "-32602" ]] || [[ "$ERROR_CODE" == "-32700" ]]; then
         echo "[FAIL] D1.11.1 submit_intent returns fatal error $ERROR_CODE"
         echo "       Response: $SUBMIT_RESPONSE"
         FAILED=$((FAILED + 1))
     else
-        echo "[WARN] D1.11.1 submit_intent returns error $ERROR_CODE (treating as soft-pass for lifecycle)"
+        echo "[FAIL] D1.11.1 submit_intent returns unexpected error $ERROR_CODE"
         echo "       Response: $SUBMIT_RESPONSE"
-        PASSED=$((PASSED + 1))
+        FAILED=$((FAILED + 1))
     fi
 else
     if echo "$SUBMIT_RESPONSE" | grep -q '"result"'; then
@@ -443,33 +433,21 @@ echo ""
 echo "[TEST] D1.11.2: ferrum_gate_evaluate_intent (lifecycle dispatch)..."
 # Use fallback proposal_id since we may not have extracted it from submit_intent response
 PROPOSAL_ID=$(python3 -c "import uuid; print(uuid.uuid4())" 2>/dev/null || echo "00000000-0000-0000-0000-000000000000")
-EVALUATE_RESPONSE=$(mcp_call "tools/call" "{
-    \"name\": \"ferrum_gate_evaluate_intent\",
-    \"arguments\": {
-        \"proposal_id\": \"$PROPOSAL_ID\",
-        \"intent_id\": \"$INTENT_ID\",
-        \"title\": \"smoke proposal\",
-        \"tool_name\": \"fs.read\",
-        \"server_name\": \"fs-server\",
-        \"arguments\": {},
-        \"expected_effect\": \"read file\",
-        \"estimated_risk\": \"Low\"
-    }
-}" 10)
+EVALUATE_RESPONSE=$(mcp_call "tools/call" "{\"name\":\"ferrum_gate_evaluate_intent\",\"arguments\":{\"proposal_id\":\"$PROPOSAL_ID\",\"intent_id\":\"$INTENT_ID\",\"title\":\"smoke proposal\",\"tool_name\":\"fs.read\",\"server_name\":\"fs-server\",\"arguments\":{},\"expected_effect\":\"read file\",\"estimated_risk\":\"Low\"}}" 10)
 
 if echo "$EVALUATE_RESPONSE" | grep -q '"error"'; then
     ERROR_CODE=$(echo "$EVALUATE_RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('error',{}).get('code','?'))" 2>/dev/null || echo "?")
     if [[ "$ERROR_CODE" == "-32003" ]] || [[ "$ERROR_CODE" == "-32004" ]]; then
         echo "[PASS] D1.11.2 evaluate_intent: dispatch reached gateway, got $ERROR_CODE (soft-pass)"
         PASSED=$((PASSED + 1))
-    elif [[ "$ERROR_CODE" == "-32001" ]] || [[ "$ERROR_CODE" == "-32601" ]] || [[ "$ERROR_CODE" == "-32602" ]]; then
+    elif [[ "$ERROR_CODE" == "-32001" ]] || [[ "$ERROR_CODE" == "-32601" ]] || [[ "$ERROR_CODE" == "-32602" ]] || [[ "$ERROR_CODE" == "-32700" ]]; then
         echo "[FAIL] D1.11.2 evaluate_intent returns fatal error $ERROR_CODE"
         echo "       Response: $EVALUATE_RESPONSE"
         FAILED=$((FAILED + 1))
     else
-        echo "[WARN] D1.11.2 evaluate_intent returns error $ERROR_CODE (treating as soft-pass for lifecycle)"
+        echo "[FAIL] D1.11.2 evaluate_intent returns unexpected error $ERROR_CODE"
         echo "       Response: $EVALUATE_RESPONSE"
-        PASSED=$((PASSED + 1))
+        FAILED=$((FAILED + 1))
     fi
 else
     if echo "$EVALUATE_RESPONSE" | grep -q '"result"'; then
@@ -485,29 +463,21 @@ fi
 # D1.11.3: mint_capability - lifecycle dispatch test
 echo ""
 echo "[TEST] D1.11.3: ferrum_gate_mint_capability (lifecycle dispatch)..."
-MINT_RESPONSE=$(mcp_call "tools/call" "{
-    \"name\": \"ferrum_gate_mint_capability\",
-    \"arguments\": {
-        \"intent_id\": \"$INTENT_ID\",
-        \"proposal_id\": \"$PROPOSAL_ID\",
-        \"tool_name\": \"fs.read\",
-        \"server_name\": \"fs-server\"
-    }
-}" 11)
+MINT_RESPONSE=$(mcp_call "tools/call" "{\"name\":\"ferrum_gate_mint_capability\",\"arguments\":{\"intent_id\":\"$INTENT_ID\",\"proposal_id\":\"$PROPOSAL_ID\",\"tool_name\":\"fs.read\",\"server_name\":\"fs-server\"}}" 11)
 
 if echo "$MINT_RESPONSE" | grep -q '"error"'; then
     ERROR_CODE=$(echo "$MINT_RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('error',{}).get('code','?'))" 2>/dev/null || echo "?")
     if [[ "$ERROR_CODE" == "-32003" ]] || [[ "$ERROR_CODE" == "-32004" ]]; then
         echo "[PASS] D1.11.3 mint_capability: dispatch reached gateway, got $ERROR_CODE (soft-pass)"
         PASSED=$((PASSED + 1))
-    elif [[ "$ERROR_CODE" == "-32001" ]] || [[ "$ERROR_CODE" == "-32601" ]] || [[ "$ERROR_CODE" == "-32602" ]]; then
+    elif [[ "$ERROR_CODE" == "-32001" ]] || [[ "$ERROR_CODE" == "-32601" ]] || [[ "$ERROR_CODE" == "-32602" ]] || [[ "$ERROR_CODE" == "-32700" ]]; then
         echo "[FAIL] D1.11.3 mint_capability returns fatal error $ERROR_CODE"
         echo "       Response: $MINT_RESPONSE"
         FAILED=$((FAILED + 1))
     else
-        echo "[WARN] D1.11.3 mint_capability returns error $ERROR_CODE (treating as soft-pass for lifecycle)"
+        echo "[FAIL] D1.11.3 mint_capability returns unexpected error $ERROR_CODE"
         echo "       Response: $MINT_RESPONSE"
-        PASSED=$((PASSED + 1))
+        FAILED=$((FAILED + 1))
     fi
 else
     if echo "$MINT_RESPONSE" | grep -q '"result"'; then
@@ -531,14 +501,14 @@ if echo "$LIST_RESPONSE" | grep -q '"error"'; then
     if [[ "$ERROR_CODE" == "-32002" ]] || [[ "$ERROR_CODE" == "-32003" ]] || [[ "$ERROR_CODE" == "-32004" ]]; then
         echo "[PASS] D1.11.4 list_intents: dispatch reached gateway, got $ERROR_CODE (soft-pass)"
         PASSED=$((PASSED + 1))
-    elif [[ "$ERROR_CODE" == "-32001" ]] || [[ "$ERROR_CODE" == "-32601" ]] || [[ "$ERROR_CODE" == "-32602" ]]; then
+    elif [[ "$ERROR_CODE" == "-32001" ]] || [[ "$ERROR_CODE" == "-32601" ]] || [[ "$ERROR_CODE" == "-32602" ]] || [[ "$ERROR_CODE" == "-32700" ]]; then
         echo "[FAIL] D1.11.4 list_intents returns fatal error $ERROR_CODE"
         echo "       Response: $LIST_RESPONSE"
         FAILED=$((FAILED + 1))
     else
-        echo "[WARN] D1.11.4 list_intents returns error $ERROR_CODE (treating as soft-pass)"
+        echo "[FAIL] D1.11.4 list_intents returns unexpected error $ERROR_CODE"
         echo "       Response: $LIST_RESPONSE"
-        PASSED=$((PASSED + 1))
+        FAILED=$((FAILED + 1))
     fi
 else
     if echo "$LIST_RESPONSE" | grep -q '"result"'; then

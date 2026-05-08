@@ -1,6 +1,6 @@
 # D1.11 MCP Live-Local Smoke
 
-## Status: IMPLEMENTED
+## Status: IMPLEMENTED + LOCAL SMOKE EXECUTED
 
 ## Overview
 
@@ -46,6 +46,7 @@ D1.11 uses precise error-code-based soft-pass semantics:
 | -32001 | Not implemented | **Fail** | **Fail** |
 | -32601 | Method not found | **Fail** | **Fail** |
 | -32602 | Invalid params | **Fail** | **Fail** |
+| -32700 | Invalid JSON / parse error | **Fail** | **Fail** |
 | No response | Timeout/other | **Fail** | **Fail** |
 
 **Rationale**: -32003/-32004 indicate the dispatch reached the gateway but encountered a condition (e.g., service unavailable, server error). This proves the MCP→gateway dispatch path is wired, even if the backend service is not fully operational in the dev environment. -32002 gets soft-pass for read-only tests because auth configuration may vary in local dev mode.
@@ -78,6 +79,8 @@ D1.11.1 (`submit_intent`) attempts to extract `intent_id` from the response. If 
 | Soft-pass semantics | `run_mcp_lifecycle_smoke.sh` | Implemented |
 | Summary text update | `run_mcp_lifecycle_smoke.sh` | Implemented |
 | Header comment update | `run_mcp_lifecycle_smoke.sh` | Implemented |
+| Script syntax validation | `bash -n scripts/run_mcp_lifecycle_smoke.sh` | Passed |
+| Live-local smoke execution | [`artifacts/2026-05-08-mcp-live-local-smoke-d1-11.md`](artifacts/2026-05-08-mcp-live-local-smoke-d1-11.md) | Passed: 13, Failed: 0 |
 
 ---
 
@@ -98,8 +101,8 @@ D1.11 smoke does **not** establish:
 
 | Gate | Owner | Status |
 |------|-------|--------|
-| D1.11 script syntax validation | Fixer | Pending |
-| Live smoke execution (if feasible) | Explorer | Optional |
+| D1.11 script syntax validation | Engineering | Passed |
+| Live-local smoke execution | Engineering | Passed locally; artifact recorded |
 | G2 readiness evidence | Operator | Future |
 | Production-ready claim | Operator | Future |
 
@@ -112,4 +115,5 @@ D1.11 smoke does **not** establish:
 | This doc | [`run_mcp_lifecycle_smoke.sh`](run_mcp_lifecycle_smoke.sh) | D1.11 script implementation |
 | This doc | [`88-mcp-server-d1-10-full-pipeline-validation.md`](88-mcp-server-d1-10-full-pipeline-validation.md) | D1.10 mock-based validation (D1.11 extends) |
 | This doc | [`84-mcp-server-d1-7-tool-dispatch-preflight.md`](84-mcp-server-d1-7-tool-dispatch-preflight.md) | D1.7 tool dispatch design |
+| This doc | [`artifacts/2026-05-08-mcp-live-local-smoke-d1-11.md`](artifacts/2026-05-08-mcp-live-local-smoke-d1-11.md) | Local-only D1.11 smoke execution evidence |
 | Script | MCP stdio transport | D1.11 validates dispatch via stdio |
