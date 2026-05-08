@@ -52,6 +52,7 @@ Thư mục này là điểm vào duy nhất để agent khác tiếp tục tri�
 70. [70-security-hardening-local-only-plan.md](70-security-hardening-local-only-plan.md) — Security hardening proposals, local-only audit commands, token rotation procedure
 70a. [artifacts/2026-05-08-local-baseline.md](artifacts/2026-05-08-local-baseline.md) — **LOCAL ONLY**: full repo-side baseline after hygiene/doctest fixes (NOT target evidence; G2 remains pending)
 70a.1. [artifacts/2026-05-08-dummy-values-and-mcp-validation.md](artifacts/2026-05-08-dummy-values-and-mcp-validation.md) — **LOCAL-TEST/DUMMY ONLY**: fresh dummy Path 2 rehearsal + MCP smoke validation (NOT target evidence; G2 remains pending)
+70a.2. [artifacts/2026-05-08-sqlite3-enabled-dummy-rehearsal.md](artifacts/2026-05-08-sqlite3-enabled-dummy-rehearsal.md) — **LOCAL-TEST/DUMMY ONLY**: sqlite3-enabled dummy rehearsal with restore data comparison pass (NOT target evidence; G2 remains pending)
 70b. [71-path-2-target-values-intake-packet.md](71-path-2-target-values-intake-packet.md) — **INTAKE ONLY**: concise operator target-values checklist before filling docs 63/65 (NOT evidence; NOT signoff)
 71. [71-mcp-server-feasibility-and-design.md](71-mcp-server-feasibility-and-design.md) — MCP server design and todo-list (post-v1 scope; v1.4 MCP Governance Beta)
 72. [72-mcp-server-phase-a-implementation-plan.md](72-mcp-server-phase-a-implementation-plan.md) — Phase A–C implementation plan/tracker: crate skeleton + stdio transport (Phases A, B, C complete; D-0 ready to implement; D-1 deferred)
@@ -72,6 +73,7 @@ Thư mục này là điểm vào duy nhất để agent khác tiếp tục tri�
 68. [87-mcp-server-d1-9-3-dlp-integration-validation.md](87-mcp-server-d1-9-3-dlp-integration-validation.md) — D1.9.3 integration validation: mockito-based E2E tests through handle_tools_call_with_client choke point, Phase 1+2 key redaction, path-aware compensation_plan[].args, no-over-redaction, large nested response guard
 68a. [88-mcp-server-d1-10-full-pipeline-validation.md](88-mcp-server-d1-10-full-pipeline-validation.md) — D1.10 full-pipeline validation: mockito-based sequential 8-step lifecycle test through handle_tools_call_with_client, ID chaining, D1.8/D1.9 redaction inheritance, no-over-redaction
 69. [89-mcp-server-d1-11-live-local-smoke.md](89-mcp-server-d1-11-live-local-smoke.md) — D1.11 live-local smoke: bounded lifecycle dispatch checks (submit/evaluate/mint/list) in run_mcp_lifecycle_smoke.sh, soft-pass semantics for gateway errors, non-claims
+70. [90-mcp-approve-reject-enable-plan.md](90-mcp-approve-reject-enable-plan.md) — MCP approve/reject enablement plan: backend resolve endpoint first, then MCP wiring/tests/smoke (planning only; not implemented)
 
 ## Luật ưu tiên
 Khi mâu thuẫn, ưu tiên:
