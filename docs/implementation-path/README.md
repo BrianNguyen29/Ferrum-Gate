@@ -89,6 +89,7 @@ Thư mục này là điểm vào duy nhất để agent khác tiếp tục tri�
 85. [97-phase3ab-operator-review-packet.md](97-phase3ab-operator-review-packet.md) — **GCP ONLY / NON-PROD**: Phase 3A/3B/3C/3D unsigned operator review packet; prepared for BrianNguyen; blank signature fields; NOT signed; references Phase 3D G2 readiness; NOT production-ready, NOT G2 complete, NOT pilot authorized, NOT operator signoff
 86. [98-phase3d-g2-readiness-checklist.md](98-phase3d-g2-readiness-checklist.md) — **GCP ONLY / NON-PROD**: Phase 3D G2 readiness checklist mapping G2.1-G2.8; conservative conclusion G2 NOT complete; ready for operator review only; UNSIGNED; NOT production-ready, NOT G2 complete, NOT pilot authorized, NOT operator signoff
 86a. [artifacts/2026-05-08-gcp-phase3d-g2-readiness.md](artifacts/2026-05-08-gcp-phase3d-g2-readiness.md) — **GCP ONLY / NON-PROD**: Phase 3D evidence artifact; restore drill, metrics snapshot, TLS/auth, Phase 3C smoke, light workload smoke; G2 gate readiness summary; NOT production-ready, NOT G2 complete, NOT pilot authorized, NOT operator signoff
+87. [99-briannguyen-direct-signing-worksheet.md](99-briannguyen-direct-signing-worksheet.md) — **OPERATOR USE**: BrianNguyen fillable signing worksheet for Phase 3A/3B/3C/3D evidence review and G2 readiness; blank/fillable; copy-forward mapping to canonical docs 54/59/63/65; UNSIGNED; NOT a substitute for signing canonical docs; NOT production-ready, NOT G2 complete, NOT pilot authorized, NOT operator signoff
 
 ## Luật ưu tiên
 Khi mâu thuẫn, ưu tiên:
