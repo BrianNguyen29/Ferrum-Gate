@@ -50,6 +50,8 @@ Thư mục này là điểm vào duy nhất để agent khác tiếp tục tri�
 69. [69-local-dummy-target-values.md](69-local-dummy-target-values.md) — **LOCAL-TEST ONLY**: dummy values for rehearsal (NOT operator evidence)
 69a. [path2-dummy-rehearsal-bundle/](path2-dummy-rehearsal-bundle/) — **LOCAL-TEST ONLY**: dummy rehearsal bundle template + `scripts/run_dummy_path2_rehearsal.sh` orchestration (NOT operator evidence; does NOT modify canonical docs 54/58/59/63/65)
 70. [70-security-hardening-local-only-plan.md](70-security-hardening-local-only-plan.md) — Security hardening proposals, local-only audit commands, token rotation procedure
+70a. [artifacts/2026-05-08-local-baseline.md](artifacts/2026-05-08-local-baseline.md) — **LOCAL ONLY**: full repo-side baseline after hygiene/doctest fixes (NOT target evidence; G2 remains pending)
+70b. [71-path-2-target-values-intake-packet.md](71-path-2-target-values-intake-packet.md) — **INTAKE ONLY**: concise operator target-values checklist before filling docs 63/65 (NOT evidence; NOT signoff)
 71. [71-mcp-server-feasibility-and-design.md](71-mcp-server-feasibility-and-design.md) — MCP server design and todo-list (post-v1 scope; v1.4 MCP Governance Beta)
 72. [72-mcp-server-phase-a-implementation-plan.md](72-mcp-server-phase-a-implementation-plan.md) — Phase A–C implementation plan/tracker: crate skeleton + stdio transport (Phases A, B, C complete; D-0 ready to implement; D-1 deferred)
 73. [73-mcp-server-phase-d-implementation-plan.md](73-mcp-server-phase-d-implementation-plan.md) — Phase D-0 read-only REST client plan (9 tools mapped to gateway REST routes) + D-1 deferred governance pipeline

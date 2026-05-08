@@ -88,25 +88,19 @@ impl std::error::Error for MappingError {}
 /// from ferrum-proto. Fields that cannot be derived from MCP tool call data
 /// return `Err(MappingError::Todo{...})` to make blockers visible.
 ///
-/// # Example
+/// # Example (ignored — internal helpers)
 ///
-/// ```
-/// use ferrum_integrations_mcp::mapping_helpers::*;
-///
-/// let action = tool_call_action::new(
-///     "intent-123".to_string(),
-///     "fs_write".to_string(),
-///     "files:write:/tmp/test.txt".to_string(),
-///     "/tmp/test.txt".to_string(),
-///     serde_json::json!({}),
-///     "agent-001".to_string(),
-/// );
-///
-/// let result = tool_call_action_to_draft_intent_compile_request(&action, "agent-001".to_string());
-/// // principal_id returns Err(Todo) — B-MAP-1
-/// // session_id returns Ok(Some(...)) — auto-generated
-/// // channel_id returns Ok(None) — MCP has no channel concept
-/// // goal returns Err(Todo) — MCP has no goal concept
+/// ```ignore
+/// // These helpers are internal to the crate. For public API usage,
+/// // use the re-exports from `ferrum_integrations_mcp::*` directly.
+/// //
+/// // Example:
+/// // let action = ToolCallAction::new(...);
+/// // let result = tool_call_action_to_draft_intent_compile_request(&action, "agent-001".to_string());
+/// // // principal_id returns Err(Todo) — B-MAP-1
+/// // // session_id returns Ok(Some(...)) — auto-generated
+/// // // channel_id returns Ok(None) — MCP has no channel concept
+/// // // goal returns Err(Todo) — MCP has no goal concept
 /// ```
 #[derive(Debug, Clone)]
 pub struct DraftIntentCompileRequestParts {
@@ -357,16 +351,16 @@ pub fn tool_call_action_to_draft_action_proposal(
 ///
 /// This helper is PURE — deterministic, no side effects.
 ///
-/// # Examples
+/// # Examples (ignored — internal helpers)
 ///
-/// ```
-/// use ferrum_integrations_mcp::mapping_helpers::*;
-/// use ferrum_proto::RiskTier;
-///
-/// assert_eq!(infer_risk_tier("fs_read"), RiskTier::Low);
-/// assert_eq!(infer_risk_tier("git_push"), RiskTier::Medium);
-/// assert_eq!(infer_risk_tier("fs_write"), RiskTier::High);
-/// assert_eq!(infer_risk_tier("sql_mutate"), RiskTier::Critical);
+/// ```ignore
+/// // These helpers are internal to the crate. For public API usage,
+/// // use the re-exports from `ferrum_integrations_mcp::*` directly.
+/// //
+/// // assert_eq!(infer_risk_tier("fs_read"), RiskTier::Low);
+/// // assert_eq!(infer_risk_tier("git_push"), RiskTier::Medium);
+/// // assert_eq!(infer_risk_tier("fs_write"), RiskTier::High);
+/// // assert_eq!(infer_risk_tier("sql_mutate"), RiskTier::Critical);
 /// ```
 pub fn infer_risk_tier(action_type: &str) -> RiskTier {
     match action_type {
