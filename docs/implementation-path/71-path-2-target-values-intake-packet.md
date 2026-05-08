@@ -154,10 +154,12 @@ For a complete actionable next-steps plan, see [`92-path-2-target-intake-next-ac
 
 **Quick sequence**:
 
-1. Engineering confirms doc66 Phase A is complete
-2. Engineering runs pre-target gate locally (`bash scripts/run_pre_target_gate.sh`)
+1. Engineering confirmed doc66 Phase A is complete (see Phase A evidence below)
+2. Engineering ran the pre-target gate locally (`bash scripts/run_pre_target_gate.sh`) and recorded a local-only pass
 3. Operator begins collecting Critical fields from this packet (doc71)
 4. Operator completes the Pre-Deployment Intake Checklist above
-5. Once all Critical fields are collected, proceed to target execution per doc66 Phase B
+5. Once all Critical fields are collected, proceed to target execution readiness per doc66 Phase B/doc92
 
 **This packet (doc71) is the input source. The action plan (doc92) is the execution guide.**
+
+**Phase A evidence**: Pre-target gate completed 2026-05-08. See [artifact](./artifacts/2026-05-08-path2-phase-a-pre-target-gate.md).

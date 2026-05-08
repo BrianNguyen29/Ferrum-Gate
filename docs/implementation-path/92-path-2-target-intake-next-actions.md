@@ -40,12 +40,13 @@ This document provides an actionable next-steps plan for the Path 2 target-value
 |------|--------|
 | **Owner** | Engineering |
 | **Priority** | P1 |
-| **Status** | ☐ Pending |
+| **Status** | ✅ Complete |
 | **Inputs needed** | doc71 (current version) |
 | **Target docs/files** | doc71, doc65, doc63 |
 | **Completion criteria** | All Critical and High fields in doc71 are present and legible |
 | **Verification** | Engineering review of doc71 completeness |
 | **Blockers** | None |
+| **Evidence** | Artifact: [`2026-05-08-path2-phase-a-pre-target-gate.md`](./artifacts/2026-05-08-path2-phase-a-pre-target-gate.md) |
 
 ### A.2 Confirm doc66 Phase A is Complete
 
@@ -53,12 +54,13 @@ This document provides an actionable next-steps plan for the Path 2 target-value
 |------|--------|
 | **Owner** | Engineering |
 | **Priority** | P1 |
-| **Status** | ☐ Pending |
+| **Status** | ✅ Complete |
 | **Inputs needed** | doc66 |
 | **Target docs/files** | doc66 |
 | **Completion criteria** | Phase A completion criteria in doc66 §A.3 are satisfied |
 | **Verification** | All artifacts listed in doc66 §A.1 are present; no real secrets in docs |
 | **Blockers** | None |
+| **Evidence** | Artifact: [`2026-05-08-path2-phase-a-pre-target-gate.md`](./artifacts/2026-05-08-path2-phase-a-pre-target-gate.md) |
 
 ### A.3 Confirm Pre-Target Gate Passes
 
@@ -66,12 +68,13 @@ This document provides an actionable next-steps plan for the Path 2 target-value
 |------|--------|
 | **Owner** | Engineering |
 | **Priority** | P2 |
-| **Status** | ☐ Pending |
+| **Status** | ✅ Complete |
 | **Inputs needed** | `scripts/run_pre_target_gate.sh` |
 | **Target docs/files** | configs/examples/*.toml, configs/examples/*.service, configs/examples/*.conf |
 | **Completion criteria** | `bash scripts/run_pre_target_gate.sh` passes locally |
-| **Verification** | Script exit code 0 |
+| **Verification** | Script exit code 0; "ALL LOCAL CHECKS PASSED" |
 | **Blockers** | None (local validation only) |
+| **Evidence** | Artifact: [`2026-05-08-path2-phase-a-pre-target-gate.md`](./artifacts/2026-05-08-path2-phase-a-pre-target-gate.md) |
 
 ### A.4 Verify Local Dummy Rehearsal Still Passes (Optional)
 
@@ -387,15 +390,15 @@ These documents must NOT be populated with dummy or real target values by engine
 
 ## 10. Summary: Recommended Next Action
 
-After MCP approve/reject enablement is complete (doc91), the recommended next action is:
+With Phase A complete (A.1 ✅ doc71 complete, A.2 ✅ doc66 Phase A complete, A.3 ✅ pre-target gate passed — evidence in [`2026-05-08-path2-phase-a-pre-target-gate.md`](./artifacts/2026-05-08-path2-phase-a-pre-target-gate.md)), the recommended next action is:
 
-1. **Immediate**: Confirm doc66 Phase A is complete ✅ (already done)
-2. **Immediate**: Run pre-target gate locally ✅ (engineering can run)
-3. **Operator**: Begin Phase B — collect Critical fields from doc71
-4. **Operator**: Complete doc71 Pre-Deployment Intake Checklist
-5. **Engineering**: Prepare doc92-linked "how to use this packet next" section in doc71
-6. **Engineering**: Add doc92 link to doc66 Phase B section
-7. **Operator**: Once all Critical fields collected, proceed to Phase D and begin target execution
+1. **Operator**: Begin Phase B — collect Critical fields from doc71 (operator identity, target host access, service configuration, auth/storage)
+2. **Operator**: Complete doc71 Pre-Deployment Intake Checklist
+3. **Operator**: Once all Critical fields are collected, proceed to Phase D readiness checks before target execution
+
+Engineering bridge work is complete: doc71 links this action plan, doc66 links this action plan at Phase B, and the local pre-target gate artifact is recorded.
+
+**Phase A is complete. Next action is operator-owned Phase B Critical field collection from doc71.**
 
 **Path 2 is the recommended next step.** Hardening tracks (MCP error sanitization, DLP semantic scanning, HTTP retry/backoff) remain deferred per doc91 §8.
 
