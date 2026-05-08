@@ -48,6 +48,7 @@ Thư mục này là điểm vào duy nhất để agent khác tiếp tục tri�
 67. [67-production-readiness-roadmap.md](67-production-readiness-roadmap.md)
 68. [68-path-2-operator-handoff-packet.md](68-path-2-operator-handoff-packet.md) — **concise operator quick-reference**
 69. [69-local-dummy-target-values.md](69-local-dummy-target-values.md) — **LOCAL-TEST ONLY**: dummy values for rehearsal (NOT operator evidence)
+69a. [path2-dummy-rehearsal-bundle/](path2-dummy-rehearsal-bundle/) — **LOCAL-TEST ONLY**: dummy rehearsal bundle template + `scripts/run_dummy_path2_rehearsal.sh` orchestration (NOT operator evidence; does NOT modify canonical docs 54/58/59/63/65)
 70. [70-security-hardening-local-only-plan.md](70-security-hardening-local-only-plan.md) — Security hardening proposals, local-only audit commands, token rotation procedure
 71. [71-mcp-server-feasibility-and-design.md](71-mcp-server-feasibility-and-design.md) — MCP server design and todo-list (post-v1 scope; v1.4 MCP Governance Beta)
 72. [72-mcp-server-phase-a-implementation-plan.md](72-mcp-server-phase-a-implementation-plan.md) — Phase A–C implementation plan/tracker: crate skeleton + stdio transport (Phases A, B, C complete; D-0 ready to implement; D-1 deferred)
