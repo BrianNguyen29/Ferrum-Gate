@@ -67,6 +67,7 @@ Thư mục này là điểm vào duy nhất để agent khác tiếp tục tri�
 67. [86-mcp-server-d1-9-dlp-field-redaction-preflight.md](86-mcp-server-d1-9-dlp-field-redaction-preflight.md) — D1.9 DLP/field redaction preflight: dlp_findings stub, sanitize_output control-char-only, FirewallContext gap, implementation options A–E, Explorer recommends Option B targeting raw_arguments/metadata first (Phase 1 + Phase 2 implemented)
 68. [87-mcp-server-d1-9-3-dlp-integration-validation.md](87-mcp-server-d1-9-3-dlp-integration-validation.md) — D1.9.3 integration validation: mockito-based E2E tests through handle_tools_call_with_client choke point, Phase 1+2 key redaction, path-aware compensation_plan[].args, no-over-redaction, large nested response guard
 68a. [88-mcp-server-d1-10-full-pipeline-validation.md](88-mcp-server-d1-10-full-pipeline-validation.md) — D1.10 full-pipeline validation: mockito-based sequential 8-step lifecycle test through handle_tools_call_with_client, ID chaining, D1.8/D1.9 redaction inheritance, no-over-redaction
+69. [89-mcp-server-d1-11-live-local-smoke.md](89-mcp-server-d1-11-live-local-smoke.md) — D1.11 live-local smoke: bounded lifecycle dispatch checks (submit/evaluate/mint/list) in run_mcp_lifecycle_smoke.sh, soft-pass semantics for gateway errors, non-claims
 
 ## Luật ưu tiên
 Khi mâu thuẫn, ưu tiên:
