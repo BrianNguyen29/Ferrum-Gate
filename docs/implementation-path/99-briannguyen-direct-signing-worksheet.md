@@ -25,8 +25,8 @@
 
 | Trường / Field | Vietnamese Label | Giá trị cần điền / Value to Fill |
 |----------------|-----------------|-----------------------------------|
-| Operator name | Tên operator | _______________________________ |
-| Operator role/title | Chức danh | _______________________________ |
+| Operator name | Tên operator | BrianNguyen |
+| Operator role/title | Chức danh | Owner/Operator |
 | Operator email | Email | _______________________________ |
 | Supervisor/countersigner name (if required) | Người ký đối.counter | _______________________________ |
 | Date of worksheet completion | Ngày hoàn thành | _______________ |
@@ -43,14 +43,14 @@
 
 | Check | Vietnamese Label | Xác nhận / Confirm |
 |-------|-----------------|---------------------|
-| VM `ferrumgate-nonprod` đang chạy | VM đang chạy | [ ] Đã xác nhận / Confirmed |
-| `ferrumgate.service` active | Service active | [ ] Đã xác nhận / Confirmed |
-| `ferrumgate-backup.timer` enabled | Backup timer enabled | [ ] Đã xác nhận / Confirmed |
-| `/v1/healthz` trả về 200 (với token) | Health probe OK | [ ] Đã xác nhận / Confirmed |
-| `/v1/readyz` trả về 200 (với token) | Readyz probe OK | [ ] Đã xác nhận / Confirmed |
-| Manual backup tạo file hợp lệ | Backup hoạt động | [ ] Đã xác nhận / Confirmed |
+| VM `ferrumgate-nonprod` đang chạy | VM đang chạy | [x] Evidence observed: RUNNING, IP `34.158.51.8` |
+| `ferrumgate.service` active | Service active | [x] Evidence observed: `active` |
+| `ferrumgate-backup.timer` enabled | Backup timer enabled | [x] Evidence observed: `enabled` |
+| `/v1/healthz` trả về 200 (với token) | Health probe OK | [x] Evidence observed: HTTP 200 |
+| `/v1/readyz` trả về 200 (với token) | Readyz probe OK | [x] Evidence observed: HTTP 200 |
+| Manual backup tạo file hợp lệ | Backup hoạt động | [x] Evidence observed: `ferrumgate_20260508_154446.db` |
 
-**Ghi chú / Notes**: _______________________________
+**Ghi chú / Notes**: Prefilled from Phase 3A/3C/3D non-prod evidence; operator must review before canonical signoff.
 
 ### 2.2 — Phase 3B TLS/nip.io/Caddy
 
@@ -58,13 +58,13 @@
 
 | Check | Vietnamese Label | Xác nhận / Confirm |
 |-------|-----------------|---------------------|
-| Caddy active | Caddy đang chạy | [ ] Đã xác nhận / Confirmed |
-| TLS certificate được provision qua Let's Encrypt | TLS OK | [ ] Đã xác nhận / Confirmed |
-| `https://34-158-51-8.nip.io/v1/healthz` trả về 200 | HTTPS Health OK | [ ] Đã xác nhận / Confirmed |
-| `GET /v1/approvals` không có token → 401 | Auth 401 OK | [ ] Đã xác nhận / Confirmed |
-| `GET /v1/approvals` với VM-local token → 200 | Auth 200 OK | [ ] Đã xác nhận / Confirmed |
+| Caddy active | Caddy đang chạy | [x] Evidence observed: `active` |
+| TLS certificate được provision qua Let's Encrypt | TLS OK | [x] Evidence observed: Caddy HTTPS via `34-158-51-8.nip.io` |
+| `https://34-158-51-8.nip.io/v1/healthz` trả về 200 | HTTPS Health OK | [x] Evidence observed: HTTP 200 |
+| `GET /v1/approvals` không có token → 401 | Auth 401 OK | [x] Evidence observed: HTTP 401 |
+| `GET /v1/approvals` với VM-local token → 200 | Auth 200 OK | [x] Evidence observed: HTTP 200 |
 
-**Ghi chú / Notes**: _______________________________
+**Ghi chú / Notes**: Prefilled from Phase 3B/3C/3D non-prod evidence. `nip.io` remains temporary and not a production domain.
 
 ### 2.3 — Phase 3C Live Rehearsal (Fail-Closed Script)
 
@@ -72,14 +72,14 @@
 
 | Check | Vietnamese Label | Xác nhận / Confirm |
 |-------|-----------------|---------------------|
-| Script `phase3c_live_rehearsal.sh` chạy và PASS | Script passed | [ ] Đã xác nhận / Confirmed |
-| `caddy.service` active | Caddy active | [ ] Đã xác nhận / Confirmed |
-| `ferrumgate.service` active | Ferrumgate active | [ ] Đã xác nhận / Confirmed |
-| `ferrumgate-backup.timer` enabled | Backup timer enabled | [ ] Đã xác nhận / Confirmed |
-| Firewall rules đúng (22, 19080 allowlist; 80, 443 public) | Firewall OK | [ ] Đã xác nhận / Confirmed |
-| Auth probe: no token → 401, with token → 200 | Auth probes OK | [ ] Đã xác nhận / Confirmed |
+| Script `phase3c_live_rehearsal.sh` chạy và PASS | Script passed | [x] Evidence observed: `PASSED: All checks succeeded` |
+| `caddy.service` active | Caddy active | [x] Evidence observed: `active` |
+| `ferrumgate.service` active | Ferrumgate active | [x] Evidence observed: `active` |
+| `ferrumgate-backup.timer` enabled | Backup timer enabled | [x] Evidence observed: `enabled` |
+| Firewall rules đúng (22, 19080 allowlist; 80, 443 public) | Firewall OK | [x] Evidence observed: 22/19080 allowlisted, 80/443 public |
+| Auth probe: no token → 401, with token → 200 | Auth probes OK | [x] Evidence observed: 401/200 |
 
-**Ghi chú / Notes**: _______________________________
+**Ghi chú / Notes**: Prefilled from Phase 3C full/read-only rehearsals. Operator must decide whether public 80/443 exposure is acceptable for continued non-prod demo.
 
 ### 2.4 — Phase 3D G2 Readiness Evidence
 
@@ -90,27 +90,27 @@
 | Trường / Field | Giá trị cần điền / Value |
 |----------------|---------------------------|
 | Latest backup file | `ferrumgate_20260508_154446.db` (đã xác nhận / confirmed) |
-| Restore copy created | _______________________________ |
-| `PRAGMA integrity_check` result | _______________________________ |
-| Table count | _______________________________ |
-| Restore copy removed | [ ] Có / Yes  [ ] Không / No |
+| Restore copy created | `ferrumgate_restore_drill_20260508_165658.db` |
+| `PRAGMA integrity_check` result | `ok` |
+| Table count | `14` |
+| Restore copy removed | [x] Có / Yes  [ ] Không / No |
 
 #### Metrics Snapshot
 
 | Metric | Giá trị / Value |
 |--------|-----------------|
-| `ferrumgate_store_health_up` | _______________________________ |
-| `ferrumgate_write_queue_depth` | _______________________________ |
-| `readyz/deep` 503 count | _______________________________ |
+| `ferrumgate_store_health_up` | `1` |
+| `ferrumgate_write_queue_depth` | `0` |
+| `readyz/deep` 503 count | `0` |
 
 #### G2 Gate Readiness (từ doc 98 / from doc 98)
 
 | Gate | Trạng thái doc 98 / Status in doc 98 | Operator xác nhận / Operator confirms |
 |------|--------------------------------------|--------------------------------------|
 | G2.1 Target workload model | `operator-required` | [ ] Đã xem xét / Reviewed |
-| G2.2 Bearer auth + TLS + firewall | `ready` | [ ] Đã xác nhận / Confirmed |
+| G2.2 Bearer auth + TLS + firewall | `ready` | [x] Evidence ready; operator review still required |
 | G2.3 Backup schedule evidence | `partial` | [ ] Đã xem xét / Reviewed |
-| G2.4 Restore drill | `ready` | [ ] Đã xác nhận / Confirmed |
+| G2.4 Restore drill | `ready` | [x] Evidence ready; operator review still required |
 | G2.5 RPO/RTO acceptance | `operator-required` | [ ] Đã xem xét / Reviewed |
 | G2.6 Production evaluation framework | `partial` | [ ] Đã xem xét / Reviewed |
 | G2.7 Accepted-risk review | `partial` | [ ] Đã xem xét / Reviewed |
@@ -126,29 +126,29 @@
 
 | Trường / Field | Vietnamese Label | Giá trị cần điền / Value to Fill |
 |----------------|-----------------|-----------------------------------|
-| Target host / IP | Host/IP mục tiêu | _______________________________ |
-| SSH host | SSH host | _______________________________ |
-| SSH user | SSH user | _______________________________ |
-| SSH key path | Đường dẫn SSH key | _______________________________ |
-| FQDN / domain cho TLS | Domain TLS | _______________________________ |
-| Network zone (DMZ/internal) | Zone mạng | _______________________________ |
+| Target host / IP | Host/IP mục tiêu | `34.158.51.8` (GCP non-prod) |
+| SSH host | SSH host | `ferrumgate-nonprod` |
+| SSH user | SSH user | `ubuntu` |
+| SSH key path | Đường dẫn SSH key | `/home/uong_guyen/.ssh/google_compute_engine` |
+| FQDN / domain cho TLS | Domain TLS | `34-158-51-8.nip.io` (temporary non-prod) |
+| Network zone (DMZ/internal) | Zone mạng | GCP custom VPC `ferrumgate-nonprod-vpc`, zone `asia-southeast1-a` |
 
 ### 3.2 — TLS / Domain
 
 | Trường / Field | Vietnamese Label | Giá trị cần điền / Value to Fill |
 |----------------|-----------------|-----------------------------------|
-| Public domain cho ferrumgate | Domain công khai | _______________________________ |
-| TLS certificate type (letsencrypt/certbot/existing CA) | Loại TLS cert | _______________________________ |
-| DNS A record trỏ đến target host | DNS A record | [ ] Đã xác nhận / Confirmed |
+| Public domain cho ferrumgate | Domain công khai | `34-158-51-8.nip.io` (temporary; replace with real domain before production) |
+| TLS certificate type (letsencrypt/certbot/existing CA) | Loại TLS cert | Let's Encrypt via Caddy automatic HTTPS |
+| DNS A record trỏ đến target host | DNS A record | [x] Confirmed for `34-158-51-8.nip.io` → `34.158.51.8` |
 
 ### 3.3 — Storage and Backup / Lưu trữ và Backup
 
 | Trường / Field | Vietnamese Label | Giá trị cần điền / Value to Fill |
 |----------------|-----------------|-----------------------------------|
-| SQLite store path | Đường dẫn SQLite store | _______________________________ |
-| Backup output directory | Thư mục backup | _______________________________ |
-| Backup retention policy (days) | Retention (ngày) | _______________________________ |
-| Backup schedule | Lịch backup | _______________________________ |
+| SQLite store path | Đường dẫn SQLite store | `/var/lib/ferrumgate/data/ferrumgate.db` |
+| Backup output directory | Thư mục backup | `/var/lib/ferrumgate/backups` |
+| Backup retention policy (days) | Retention (ngày) | 7 days + offsite copy required before final production pilot |
+| Backup schedule | Lịch backup | 15-minute systemd timer configured on non-prod VM: `OnUnitActiveSec=15min`; timer `enabled` and `active` |
 
 ### 3.4 — Workload Model (G2.1)
 
@@ -156,11 +156,11 @@
 
 | Trường / Field | Vietnamese Label | Giá trị cần điền / Value to Fill |
 |----------------|-----------------|-----------------------------------|
-| Expected sustained write rate (max 300 writes/s cho Phase 1) | Write rate dự kiến | _____ writes/s |
-| Expected peak write rate | Peak write rate | _____ writes/s |
-| Expected daily write volume | Daily write volume | _____ writes/day |
-| SQLite single-node capacity assessment | Đánh giá SQLite | [ ] Fits ≤300 writes/s  [ ] Exceeds 300 writes/s |
-| Single-node topology confirmed | Single-node confirmed | [ ] Yes  [ ] No |
+| Expected sustained write rate (max 300 writes/s cho Phase 1) | Write rate dự kiến | ≤300 writes/s |
+| Expected peak write rate | Peak write rate | ≤300 writes/s |
+| Expected daily write volume | Daily write volume | ≤1M writes/day |
+| SQLite single-node capacity assessment | Đánh giá SQLite | [x] Fits ≤300 writes/s  [ ] Exceeds 300 writes/s — operator selected ≤300 writes/s |
+| Single-node topology confirmed | Single-node confirmed | [x] Yes  [ ] No — conditional single-node pilot only |
 
 **Signoff phrase / Câu xác nhận**: "Operator has modeled production workload against SQLite single-node constraints and confirmed fit."
 
@@ -170,10 +170,10 @@
 
 | Trường / Field | Vietnamese Label | Giá trị cần điền / Value to Fill |
 |----------------|-----------------|-----------------------------------|
-| RPO accepted (time since last backup = max data loss) | RPO chấp nhận được | _____ |
-| RTO accepted (restore time + restart + verification) | RTO chấp nhận được | _____ |
-| RPO acceptable for target workload SLA | RPO phù hợp SLA | [ ] Yes  [ ] No |
-| RTO acceptable for target workload SLA | RTO phù hợp SLA | [ ] Yes  [ ] No |
+| RPO accepted (time since last backup = max data loss) | RPO chấp nhận được | 15 minutes |
+| RTO accepted (restore time + restart + verification) | RTO chấp nhận được | 15 minutes |
+| RPO acceptable for target workload SLA | RPO phù hợp SLA | [x] Yes  [ ] No — operator selected RPO 15m |
+| RTO acceptable for target workload SLA | RTO phù hợp SLA | [x] Yes  [ ] No — operator selected RTO 15m |
 
 **Signoff phrase / Câu xác nhận**: "Operator confirms RPO/RTO fit for the target workload."
 
@@ -188,8 +188,8 @@
 **Status**: `operator-required`
 
 Checklist:
-- [ ] Sustained write rate modeled (≤300 writes/s for Phase 1 SQLite)
-- [ ] Single-node topology confirmed acceptable
+- [x] Sustained write rate modeled (≤300 writes/s for Phase 1 SQLite)
+- [x] Single-node topology confirmed acceptable
 - [ ] Workload model attached (if applicable)
 
 **Signoff phrase**: "Operator has modeled production workload against SQLite single-node constraints and confirmed fit."
@@ -215,9 +215,9 @@ Operator signature: _______________________________ Date: _______________
 **Status**: `partial`
 
 Checklist:
-- [ ] Production backup schedule defined (frequency, retention, offsite)
-- [ ] Backup schedule evidence attached
-- [ ] Backup timer/timer schedule confirmed for target environment
+- [x] Production backup schedule target defined: 15m cadence, 7 days + offsite copy required
+- [x] Backup schedule evidence attached: timer updated to `OnUnitActiveSec=15min`; `enabled` + `active`
+- [x] Backup timer/timer schedule confirmed for target non-prod environment; offsite copy still required before final production pilot
 
 **Signoff phrase**: "Operator has implemented backup schedule external to FerrumGate."
 
@@ -242,9 +242,9 @@ Operator signature: _______________________________ Date: _______________
 **Status**: `operator-required`
 
 Checklist:
-- [ ] RPO formally accepted for target workload
-- [ ] RTO formally accepted for target workload
-- [ ] RPO/RTO acceptance documented
+- [x] RPO formally accepted for target workload: 15 minutes
+- [x] RTO formally accepted for target workload: 15 minutes
+- [x] RPO/RTO acceptance documented in this worksheet
 
 **Signoff phrase**: "Operator confirms RPO/RTO fit for the target workload."
 
@@ -271,11 +271,11 @@ Operator signature: _______________________________ Date: _______________
 **Status**: `partial`
 
 Checklist:
-- [ ] Weak Spot 1 — Rollback class handling: reviewed and accepted
-- [ ] Weak Spot 2 — Draft-only revalidation: reviewed and accepted
-- [ ] Weak Spot 3 — Scope-bounds enforcement: reviewed and accepted
-- [ ] Weak Spot 4 — Provenance completeness: reviewed and accepted
-- [ ] Additional accepted risks from `19-v1-single-node-support-contract.md` §4: reviewed
+- [x] Weak Spot 1 — Rollback class handling: reviewed and accepted as-is for conditional pilot
+- [x] Weak Spot 2 — Draft-only revalidation: reviewed and accepted as-is for conditional pilot
+- [x] Weak Spot 3 — Scope-bounds enforcement: reviewed and accepted as-is for conditional pilot
+- [x] Weak Spot 4 — Provenance completeness: reviewed and accepted as-is for conditional pilot
+- [x] Additional accepted risks from `19-v1-single-node-support-contract.md` §4: reviewed and accepted as-is
 
 **Signoff phrase**: "All weak spots reviewed and accepted risks acknowledged."
 
@@ -289,7 +289,7 @@ Checklist:
 - [ ] Compensate behavior matrix completed
 - [ ] Noop-backed adapters identified
 - [ ] Manual verification procedure defined for noop-backed compensate
-- [ ] Compensate noop risk accepted
+- [x] Compensate noop risk accepted as-is for conditional pilot
 
 **Signoff phrase**: "Operator accepts compensate noop risk with manual verification procedure."
 
