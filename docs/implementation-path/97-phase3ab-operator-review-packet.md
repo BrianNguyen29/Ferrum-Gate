@@ -152,6 +152,47 @@ This Phase 3C rehearsal does **not** constitute:
 
 ---
 
+## Phase 3D Summary (G2 Readiness)
+
+**Artifact**: [2026-05-08-gcp-phase3d-g2-readiness.md](./artifacts/2026-05-08-gcp-phase3d-g2-readiness.md)
+
+**G2 Readiness Checklist**: [98-phase3d-g2-readiness-checklist.md](./98-phase3d-g2-readiness-checklist.md)
+
+### Phase 3D Evidence Collected
+
+| Evidence Type | Result |
+|---------------|--------|
+| Restore drill | INTEGRITY=ok; TABLE_COUNT=14; RESTORE_COPY_REMOVED=yes |
+| Metrics snapshot | store_health_up=1; write_queue_depth=0; no 503 errors |
+| TLS/auth probes | NO_TOKEN=401; WITH_TOKEN=200 |
+| Phase 3C smoke | PASSED (all checks) |
+| Light workload smoke | 5/5 healthz, 5/5 readyz, 5/5 readyz/deep, 5/5 metrics |
+
+### G2 Gate Readiness Summary
+
+| Gate | Status |
+|------|--------|
+| G2.1 Target workload model | operator-required |
+| G2.2 Bearer auth + TLS + firewall | ready |
+| G2.3 Backup schedule evidence | partial |
+| G2.4 Restore drill | ready |
+| G2.5 RPO/RTO acceptance | operator-required |
+| G2.6 Production evaluation framework | partial |
+| G2.7 Accepted-risk review | partial |
+| G2.8 Compensate noop risk | partial |
+
+**Conservative conclusion**: G2 is NOT complete. Phase 3D evidence suggests the GCP non-prod target is ready for operator review only. All G2 gates remain open pending operator signoff.
+
+### Phase 3D Non-Claims
+
+This Phase 3D evidence collection does **not** constitute:
+- Production-ready status
+- G2 gate completion
+- Pilot authorization
+- Operator signoff
+
+---
+
 ## Token Security
 
 - Full bearer token stored at `/etc/ferrumgate/ferrumgate_initial_token` (root-only, mode 600)
@@ -173,13 +214,13 @@ Canonical G2/operator signoff requires completing and signing:
 | `63-path-2-target-environment-spec.md` | Target environment specification | Operator-defined |
 | `65-path-2-target-questionnaire.md` | Target questionnaire | Operator-defined |
 
-**None of the Phase 3A/3B/3C evidence substitutes for the canonical operator review process.**
+**None of the Phase 3A/3B/3C/3D evidence substitutes for the canonical operator review process.**
 
 ---
 
 ## Operator Review Checklist
 
-Use this checklist to evaluate Phase 3A/3B/3C evidence:
+Use this checklist to evaluate Phase 3A/3B/3C/3D evidence:
 
 - [ ] Phase 3A VM creation was successful and service is stable
 - [ ] Phase 3B TLS configuration works and HTTPS endpoints respond correctly
@@ -187,6 +228,10 @@ Use this checklist to evaluate Phase 3A/3B/3C evidence:
 - [ ] Backup timer is enabled and manual backup produces valid SQLite backup
 - [ ] Firewall rules are reviewed and acceptable for non-prod rehearsal
 - [ ] Token security protocol is understood and followed
+- [ ] Phase 3C live rehearsal script passed all checks (fail-closed behavior confirmed)
+- [ ] Phase 3D restore drill passed (INTEGRITY=ok, 14 tables)
+- [ ] Phase 3D metrics snapshot shows healthy store (up=1, queue=0, no 503 errors)
+- [ ] G2 gate readiness summary reviewed (doc 98)
 - [ ] Non-prod nature is acknowledged (NOT production, NOT G2, NOT pilot)
 - [ ] Canonical docs 54/58/59/63/65 are still required for production pilot signoff
 
@@ -196,15 +241,15 @@ Use this checklist to evaluate Phase 3A/3B/3C evidence:
 
 > **This document is UNSIGNED. It is prepared for operator review.**
 
-To sign, the operator must complete the appropriate sections of `54-operator-signoff-packet.md`. This document (97) is a Phase 3A/3B/3C evidence summary only and does not constitute signoff.
+To sign, the operator must complete the appropriate sections of `54-operator-signoff-packet.md`. This document (97) is a Phase 3A/3B/3C/3D evidence summary only and does not constitute signoff.
 
-### Phase 3A/3B/3C Evidence Review
+### Phase 3A/3B/3C/3D Evidence Review
 
 Operator name: _______________________________
 
 Date reviewed: _______________
 
-Evidence accepted for Phase 3A/3B/3C non-prod rehearsal: [ ] Yes  [ ] No
+Evidence accepted for Phase 3A/3B/3C/3D non-prod rehearsal: [ ] Yes  [ ] No
 
 Notes: _______________________________
 
@@ -217,3 +262,5 @@ Operator signature: _______________________________ Date: _______________
 | Date | Change |
 |---|---|
 | 2026-05-08 | Initial Phase 3A/3B operator review packet. UNSIGNED. Prepared for BrianNguyen review. |
+| 2026-05-08 | Added Phase 3C summary. |
+| 2026-05-08 | Added Phase 3D summary referencing G2 readiness checklist (doc 98) and evidence artifact. Updated review checklist. |
