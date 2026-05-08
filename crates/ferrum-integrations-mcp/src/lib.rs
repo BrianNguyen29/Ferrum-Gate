@@ -3076,4 +3076,756 @@ mod tests {
 
         _mock.assert();
     }
+
+    // -------------------------------------------------------------------------
+    // D1.10 Tests (Full Pipeline Local Validation via handle_tools_call_with_client)
+    // -------------------------------------------------------------------------
+
+    /// D1.10: Full 8-step sequential lifecycle through handle_tools_call_with_client.
+    /// Validates all 8 MCP lifecycle tools are wired correctly with ID chaining.
+    #[test]
+    fn test_d1_10_full_lifecycle_sequential() {
+        let mut server = mockito::Server::new();
+
+        // Fixed UUIDs for predictable ID chaining
+        let intent_id = "550e8400-e29b-41d4-a716-446655440001";
+        let proposal_id = "550e8400-e29b-41d4-a716-446655440002";
+        let capability_id = "550e8400-e29b-41d4-a716-446655440003";
+        let execution_id = "550e8400-e29b-41d4-a716-446655440004";
+
+        // Step 1: compile - POST /v1/intents/compile
+        let _mock_compile = server
+            .mock("POST", "/v1/intents/compile")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(format!(
+                r#"{{
+                    "envelope": {{
+                        "intent_id": "{}",
+                        "principal_id": "550e8400-e29b-41d4-a716-446655440000",
+                        "session_id": null,
+                        "channel_id": null,
+                        "title": "test intent",
+                        "goal": "test goal",
+                        "normalized_goal": "test goal",
+                        "allowed_outcomes": [{{"id": "read", "description": "read only", "effect_type": "ReadOnlyAnalysis", "required": true}}],
+                        "forbidden_outcomes": [],
+                        "resource_scope": [],
+                        "risk_tier": "Low",
+                        "approval_mode": "None",
+                        "default_rollback_class": "R0NativeReversible",
+                        "time_budget": {{"max_duration_ms": 30000, "max_steps": 8, "max_retries_per_step": 1}},
+                        "trust_context": {{"input_labels": [], "sensitivity_labels": [], "taint_score": 0, "contains_external_metadata": false, "contains_tool_output": false, "contains_untrusted_text": false}},
+                        "derived_from_event_ids": [],
+                        "tags": [],
+                        "metadata": {{"internal": "value"}},
+                        "status": "Active",
+                        "created_at": "2025-01-01T00:00:00Z",
+                        "expires_at": "2025-12-31T23:59:59Z"
+                    }},
+                    "warnings": []
+                }}"#,
+                intent_id
+            ))
+            .expect(1)
+            .create();
+
+        // Step 2: evaluate - POST /v1/proposals/{id}/evaluate
+        let _mock_evaluate = server
+            .mock("POST", &*format!("/v1/proposals/{}/evaluate", proposal_id))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(format!(
+                r#"{{
+                    "decision": "Allow",
+                    "reason": "policy_passed",
+                    "matched_rule_ids": ["rule_001"],
+                    "warnings": []
+                }}"#,
+            ))
+            .expect(1)
+            .create();
+
+        // Step 3: mint - POST /v1/capabilities/mint
+        let _mock_mint = server
+            .mock("POST", "/v1/capabilities/mint")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(format!(
+                r#"{{
+                    "lease": {{
+                        "capability_id": "{}",
+                        "intent_id": "{}",
+                        "proposal_id": "{}",
+                        "tool_binding": {{"server_name": "fs-server", "tool_name": "fs.read", "tool_version": null}},
+                        "resource_bindings": [],
+                        "argument_constraints": [],
+                        "taint_budget": {{"max_taint_score": 30, "allow_external_tool_output": false, "allow_external_metadata": false, "allow_untrusted_text": false}},
+                        "approval_binding": null,
+                        "issued_by": "ferrum-cap",
+                        "policy_bundle_id": "550e8400-e29b-41d4-a716-446655440099",
+                        "tool_manifest_id": null,
+                        "manifest_hash": null,
+                        "status": "Active",
+                        "issued_at": "2025-01-01T00:00:00Z",
+                        "expires_at": "2025-12-31T23:59:59Z",
+                        "revoked_at": null,
+                        "metadata": {{}}
+                    }},
+                    "warnings": []
+                }}"#,
+                capability_id, intent_id, proposal_id
+            ))
+            .expect(1)
+            .create();
+
+        // Step 4: authorize - POST /v1/executions/authorize
+        let _mock_authorize = server
+            .mock("POST", "/v1/executions/authorize")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(format!(
+                r#"{{
+                    "execution": {{
+                        "execution_id": "{}",
+                        "proposal_id": "{}",
+                        "intent_id": "{}",
+                        "capability_id": "{}",
+                        "rollback_contract_id": null,
+                        "decision": "Allow",
+                        "state": "Authorized",
+                        "started_at": "2025-01-01T00:00:00Z",
+                        "finished_at": null,
+                        "result_digest": null,
+                        "metadata": {{}}
+                    }},
+                    "warnings": []
+                }}"#,
+                execution_id, proposal_id, intent_id, capability_id
+            ))
+            .expect(1)
+            .create();
+
+        // Step 5: prepare - POST /v1/executions/{id}/prepare
+        let _mock_prepare = server
+            .mock("POST", &*format!("/v1/executions/{}/prepare", execution_id))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(format!(
+                r#"{{
+                    "execution_id": "{}",
+                    "prepared": true,
+                    "rollback_contract": {{
+                        "contract_id": "550e8400-e29b-41d4-a716-446655440010",
+                        "intent_id": "{}",
+                        "proposal_id": "{}",
+                        "execution_id": "{}",
+                        "action_type": "FileWrite",
+                        "rollback_class": "R0NativeReversible",
+                        "adapter_key": "fs",
+                        "target": {{"kind": "FilePath", "path": "/tmp/test.txt", "before_hash": null, "after_hash": null}},
+                        "prepare_checks": [],
+                        "verify_checks": [],
+                        "compensation_plan": [{{"order": 1, "adapter_key": "fs", "operation": "delete", "args": {{"path": "/tmp/test.txt"}}, "idempotency_key": "key1"}}],
+                        "auto_commit": false,
+                        "state": "Prepared",
+                        "created_at": "2025-01-01T00:00:00Z",
+                        "expires_at": null,
+                        "metadata": {{}}
+                    }},
+                    "warnings": []
+                }}"#,
+                execution_id, intent_id, proposal_id, execution_id
+            ))
+            .expect(1)
+            .create();
+
+        // Step 6: execute - POST /v1/executions/{id}/execute
+        let _mock_execute = server
+            .mock("POST", &*format!("/v1/executions/{}/execute", execution_id))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(format!(
+                r#"{{
+                    "execution_id": "{}",
+                    "executed": true,
+                    "result_digest": "abc123def456",
+                    "rollback_contract": null,
+                    "warnings": []
+                }}"#,
+                execution_id
+            ))
+            .expect(1)
+            .create();
+
+        // Step 7: verify - POST /v1/executions/{id}/verify
+        let _mock_verify = server
+            .mock("POST", &*format!("/v1/executions/{}/verify", execution_id))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(format!(
+                r#"{{
+                    "execution_id": "{}",
+                    "verified": true,
+                    "rollback_contract": null,
+                    "warnings": []
+                }}"#,
+                execution_id
+            ))
+            .expect(1)
+            .create();
+
+        // Step 8: compensate - POST /v1/executions/{id}/compensate
+        let _mock_compensate = server
+            .mock("POST", &*format!("/v1/executions/{}/compensate", execution_id))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(format!(
+                r#"{{
+                    "execution_id": "{}",
+                    "compensated": true,
+                    "rollback_contract": null,
+                    "warnings": []
+                }}"#,
+                execution_id
+            ))
+            .expect(1)
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        // Step 1: submit_intent
+        let params = serde_json::json!({
+            "name": "ferrum_gate_submit_intent",
+            "arguments": {
+                "principal_id": "550e8400-e29b-41d4-a716-446655440000",
+                "title": "test intent",
+                "goal": "test goal",
+                "action_type": "Read",
+                "target": "/tmp/test.txt",
+                "scope": "fs:read:/tmp/**"
+            }
+        });
+        let response = handle_tools_call_with_client(params, Some(JsonRpcId::Number(1)), &client);
+        let resp_obj = match &response {
+            JsonRpcResponse::Success(resp) => resp.result.clone(),
+            JsonRpcResponse::Error(resp) => panic!("Step 1 (submit_intent) failed: {}", resp.error.message),
+        };
+        let resp_text = resp_obj.get("content").unwrap().as_array().unwrap()[0].get("text").unwrap().as_str().unwrap();
+        assert!(resp_text.contains(intent_id), "Step 1 should return intent_id: {}", resp_text);
+
+        // Step 2: evaluate_intent
+        let params = serde_json::json!({
+            "name": "ferrum_gate_evaluate_intent",
+            "arguments": {
+                "proposal_id": proposal_id,
+                "intent_id": intent_id,
+                "title": "test proposal",
+                "tool_name": "fs.read",
+                "server_name": "fs-server",
+                "arguments": {},
+                "expected_effect": "read file",
+                "estimated_risk": "Low"
+            }
+        });
+        let response = handle_tools_call_with_client(params, Some(JsonRpcId::Number(2)), &client);
+        match &response {
+            JsonRpcResponse::Success(_) => {},
+            JsonRpcResponse::Error(resp) => panic!("Step 2 (evaluate_intent) failed: {}", resp.error.message),
+        }
+
+        // Step 3: mint_capability
+        let params = serde_json::json!({
+            "name": "ferrum_gate_mint_capability",
+            "arguments": {
+                "intent_id": intent_id,
+                "proposal_id": proposal_id,
+                "tool_name": "fs.read",
+                "server_name": "fs-server"
+            }
+        });
+        let response = handle_tools_call_with_client(params, Some(JsonRpcId::Number(3)), &client);
+        let resp_obj = match &response {
+            JsonRpcResponse::Success(resp) => resp.result.clone(),
+            JsonRpcResponse::Error(resp) => panic!("Step 3 (mint_capability) failed: {}", resp.error.message),
+        };
+        let resp_text = resp_obj.get("content").unwrap().as_array().unwrap()[0].get("text").unwrap().as_str().unwrap();
+        assert!(resp_text.contains(capability_id), "Step 3 should return capability_id: {}", resp_text);
+
+        // Step 4: authorize_execution
+        let params = serde_json::json!({
+            "name": "ferrum_gate_authorize_execution",
+            "arguments": {
+                "proposal_id": proposal_id,
+                "capability_id": capability_id
+            }
+        });
+        let response = handle_tools_call_with_client(params, Some(JsonRpcId::Number(4)), &client);
+        let resp_obj = match &response {
+            JsonRpcResponse::Success(resp) => resp.result.clone(),
+            JsonRpcResponse::Error(resp) => panic!("Step 4 (authorize_execution) failed: {}", resp.error.message),
+        };
+        let resp_text = resp_obj.get("content").unwrap().as_array().unwrap()[0].get("text").unwrap().as_str().unwrap();
+        assert!(resp_text.contains(execution_id), "Step 4 should return execution_id: {}", resp_text);
+
+        // Step 5: prepare_execution
+        let params = serde_json::json!({
+            "name": "ferrum_gate_prepare_execution",
+            "arguments": {
+                "execution_id": execution_id
+            }
+        });
+        let response = handle_tools_call_with_client(params, Some(JsonRpcId::Number(5)), &client);
+        match &response {
+            JsonRpcResponse::Success(_) => {},
+            JsonRpcResponse::Error(resp) => panic!("Step 5 (prepare_execution) failed: {}", resp.error.message),
+        };
+
+        // Step 6: execute_prepared
+        let params = serde_json::json!({
+            "name": "ferrum_gate_execute_prepared",
+            "arguments": {
+                "execution_id": execution_id,
+                "payload": {}
+            }
+        });
+        let response = handle_tools_call_with_client(params, Some(JsonRpcId::Number(6)), &client);
+        match &response {
+            JsonRpcResponse::Success(_) => {},
+            JsonRpcResponse::Error(resp) => panic!("Step 6 (execute_prepared) failed: {}", resp.error.message),
+        };
+
+        // Step 7: verify
+        let params = serde_json::json!({
+            "name": "ferrum_gate_verify",
+            "arguments": {
+                "execution_id": execution_id
+            }
+        });
+        let response = handle_tools_call_with_client(params, Some(JsonRpcId::Number(7)), &client);
+        match &response {
+            JsonRpcResponse::Success(_) => {},
+            JsonRpcResponse::Error(resp) => panic!("Step 7 (verify) failed: {}", resp.error.message),
+        };
+
+        // Step 8: compensate
+        let params = serde_json::json!({
+            "name": "ferrum_gate_compensate",
+            "arguments": {
+                "execution_id": execution_id
+            }
+        });
+        let response = handle_tools_call_with_client(params, Some(JsonRpcId::Number(8)), &client);
+        match &response {
+            JsonRpcResponse::Success(_) => {},
+            JsonRpcResponse::Error(resp) => panic!("Step 8 (compensate) failed: {}", resp.error.message),
+        };
+
+        // Verify all mocks were called
+        _mock_compile.assert();
+        _mock_evaluate.assert();
+        _mock_mint.assert();
+        _mock_authorize.assert();
+        _mock_prepare.assert();
+        _mock_execute.assert();
+        _mock_verify.assert();
+        _mock_compensate.assert();
+    }
+
+    /// D1.10: D1.9 Phase 1 metadata redaction in lifecycle response.
+    #[test]
+    fn test_d1_10_lifecycle_metadata_redaction() {
+        let mut server = mockito::Server::new();
+        let intent_id = "550e8400-e29b-41d4-a716-446655440001";
+
+        let _mock = server
+            .mock("POST", "/v1/intents/compile")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(format!(
+                r#"{{
+                    "envelope": {{
+                        "intent_id": "{}",
+                        "principal_id": "550e8400-e29b-41d4-a716-446655440000",
+                        "session_id": null,
+                        "channel_id": null,
+                        "title": "test",
+                        "goal": "test goal",
+                        "normalized_goal": "test goal",
+                        "allowed_outcomes": [],
+                        "forbidden_outcomes": [],
+                        "resource_scope": [],
+                        "risk_tier": "Low",
+                        "approval_mode": "None",
+                        "default_rollback_class": "R0NativeReversible",
+                        "time_budget": {{"max_duration_ms": 30000, "max_steps": 8, "max_retries_per_step": 1}},
+                        "trust_context": {{"input_labels": [], "sensitivity_labels": [], "taint_score": 0, "contains_external_metadata": false, "contains_tool_output": false, "contains_untrusted_text": false}},
+                        "derived_from_event_ids": [],
+                        "tags": [],
+                        "metadata": {{"internal_secret": "secret_value"}},
+                        "status": "Active",
+                        "created_at": "2025-01-01T00:00:00Z",
+                        "expires_at": "2025-12-31T23:59:59Z"
+                    }},
+                    "warnings": []
+                }}"#,
+                intent_id
+            ))
+            .expect(1)
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let params = serde_json::json!({
+            "name": "ferrum_gate_submit_intent",
+            "arguments": {
+                "principal_id": "550e8400-e29b-41d4-a716-446655440000",
+                "title": "test",
+                "goal": "test goal",
+                "action_type": "Read",
+                "target": "/tmp/test.txt",
+                "scope": "fs:read:/tmp/**"
+            }
+        });
+        let response = handle_tools_call_with_client(params, Some(JsonRpcId::Number(1)), &client);
+
+        let resp_obj = match &response {
+            JsonRpcResponse::Success(resp) => resp.result.clone(),
+            JsonRpcResponse::Error(resp) => panic!("Expected success, got error: {}", resp.error.message),
+        };
+
+        let resp_text = resp_obj.get("content").unwrap().as_array().unwrap()[0].get("text").unwrap().as_str().unwrap();
+
+        // metadata should be redacted (D1.9 Phase 1)
+        assert!(
+            resp_text.contains(r#""metadata":"[REDACTED]""#) || resp_text.contains("\"metadata\":\"[REDACTED]\""),
+            "metadata should be redacted in lifecycle response: {}",
+            resp_text
+        );
+
+        // intent_id should be preserved (no-over-redaction)
+        assert!(
+            resp_text.contains(intent_id),
+            "intent_id should be preserved: {}",
+            resp_text
+        );
+
+        _mock.assert();
+    }
+
+    /// D1.10: D1.9 Phase 2 trust_context redaction in lifecycle response.
+    #[test]
+    fn test_d1_10_lifecycle_trust_context_redaction() {
+        let mut server = mockito::Server::new();
+        let intent_id = "550e8400-e29b-41d4-a716-446655440001";
+
+        let _mock = server
+            .mock("POST", "/v1/intents/compile")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(format!(
+                r#"{{
+                    "envelope": {{
+                        "intent_id": "{}",
+                        "principal_id": "550e8400-e29b-41d4-a716-446655440000",
+                        "session_id": null,
+                        "channel_id": null,
+                        "title": "test",
+                        "goal": "test goal",
+                        "normalized_goal": "test goal",
+                        "allowed_outcomes": [],
+                        "forbidden_outcomes": [],
+                        "resource_scope": [],
+                        "risk_tier": "Low",
+                        "approval_mode": "None",
+                        "default_rollback_class": "R0NativeReversible",
+                        "time_budget": {{"max_duration_ms": 30000, "max_steps": 8, "max_retries_per_step": 1}},
+                        "trust_context": {{"input_labels": ["Trusted"], "sensitivity_labels": ["Secret"], "taint_score": 100, "contains_external_metadata": true, "contains_tool_output": true, "contains_untrusted_text": true}},
+                        "derived_from_event_ids": [],
+                        "tags": [],
+                        "metadata": {{}},
+                        "status": "Active",
+                        "created_at": "2025-01-01T00:00:00Z",
+                        "expires_at": "2025-12-31T23:59:59Z"
+                    }},
+                    "warnings": []
+                }}"#,
+                intent_id
+            ))
+            .expect(1)
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let params = serde_json::json!({
+            "name": "ferrum_gate_submit_intent",
+            "arguments": {
+                "principal_id": "550e8400-e29b-41d4-a716-446655440000",
+                "title": "test",
+                "goal": "test goal",
+                "action_type": "Read",
+                "target": "/tmp/test.txt",
+                "scope": "fs:read:/tmp/**"
+            }
+        });
+        let response = handle_tools_call_with_client(params, Some(JsonRpcId::Number(1)), &client);
+
+        let resp_obj = match &response {
+            JsonRpcResponse::Success(resp) => resp.result.clone(),
+            JsonRpcResponse::Error(resp) => panic!("Expected success, got error: {}", resp.error.message),
+        };
+
+        let resp_text = resp_obj.get("content").unwrap().as_array().unwrap()[0].get("text").unwrap().as_str().unwrap();
+
+        // trust_context should be redacted (D1.9 Phase 2)
+        assert!(
+            resp_text.contains(r#""trust_context":"[REDACTED]""#) || resp_text.contains("\"trust_context\":\"[REDACTED]\""),
+            "trust_context should be redacted in lifecycle response: {}",
+            resp_text
+        );
+
+        // intent_id should be preserved
+        assert!(
+            resp_text.contains(intent_id),
+            "intent_id should be preserved: {}",
+            resp_text
+        );
+
+        _mock.assert();
+    }
+
+    /// D1.10: D1.9 Phase 2 result_digest redaction in execute response.
+    #[test]
+    fn test_d1_10_lifecycle_result_digest_redaction() {
+        let mut server = mockito::Server::new();
+        let execution_id = "550e8400-e29b-41d4-a716-446655440004";
+
+        let _mock = server
+            .mock("POST", &*format!("/v1/executions/{}/execute", execution_id))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(format!(
+                r#"{{
+                    "execution_id": "{}",
+                    "executed": true,
+                    "result_digest": "sha256:abc123secretdigest",
+                    "rollback_contract": null,
+                    "warnings": []
+                }}"#,
+                execution_id
+            ))
+            .expect(1)
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let params = serde_json::json!({
+            "name": "ferrum_gate_execute_prepared",
+            "arguments": {
+                "execution_id": execution_id,
+                "payload": {}
+            }
+        });
+        let response = handle_tools_call_with_client(params, Some(JsonRpcId::Number(1)), &client);
+
+        let resp_obj = match &response {
+            JsonRpcResponse::Success(resp) => resp.result.clone(),
+            JsonRpcResponse::Error(resp) => panic!("Expected success, got error: {}", resp.error.message),
+        };
+
+        let resp_text = resp_obj.get("content").unwrap().as_array().unwrap()[0].get("text").unwrap().as_str().unwrap();
+
+        // result_digest should be redacted (D1.9 Phase 2)
+        assert!(
+            resp_text.contains(r#""result_digest":"[REDACTED]""#) || resp_text.contains("\"result_digest\":\"[REDACTED]\""),
+            "result_digest should be redacted in lifecycle response: {}",
+            resp_text
+        );
+
+        // execution_id should be preserved
+        assert!(
+            resp_text.contains(execution_id),
+            "execution_id should be preserved: {}",
+            resp_text
+        );
+
+        _mock.assert();
+    }
+
+    /// D1.10: D1.9 Phase 2 path-aware compensation_plan[].args redaction.
+    #[test]
+    fn test_d1_10_lifecycle_compensation_plan_args_redaction() {
+        let mut server = mockito::Server::new();
+        let execution_id = "550e8400-e29b-41d4-a716-446655440004";
+
+        let _mock = server
+            .mock("POST", &*format!("/v1/executions/{}/prepare", execution_id))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(format!(
+                r#"{{
+                    "execution_id": "{}",
+                    "prepared": true,
+                    "rollback_contract": {{
+                        "contract_id": "550e8400-e29b-41d4-a716-446655440010",
+                        "intent_id": "550e8400-e29b-41d4-a716-446655440001",
+                        "proposal_id": "550e8400-e29b-41d4-a716-446655440002",
+                        "execution_id": "{}",
+                        "action_type": "FileWrite",
+                        "rollback_class": "R0NativeReversible",
+                        "adapter_key": "fs",
+                        "target": {{"kind": "FilePath", "path": "/tmp/test.txt", "before_hash": null, "after_hash": null}},
+                        "prepare_checks": [],
+                        "verify_checks": [],
+                        "compensation_plan": [
+                            {{"order": 1, "adapter_key": "fs", "operation": "delete", "args": {{"path": "/tmp/test.txt", "secret_param": "secret_value"}}, "idempotency_key": "key1"}},
+                            {{"order": 2, "adapter_key": "fs", "operation": "write", "args": {{"content": "original content", "backup_id": "backup123"}}, "idempotency_key": "key2"}}
+                        ],
+                        "auto_commit": false,
+                        "state": "Prepared",
+                        "created_at": "2025-01-01T00:00:00Z",
+                        "expires_at": null,
+                        "metadata": {{}}
+                    }},
+                    "warnings": []
+                }}"#,
+                execution_id, execution_id
+            ))
+            .expect(1)
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let params = serde_json::json!({
+            "name": "ferrum_gate_prepare_execution",
+            "arguments": {
+                "execution_id": execution_id
+            }
+        });
+        let response = handle_tools_call_with_client(params, Some(JsonRpcId::Number(1)), &client);
+
+        let resp_obj = match &response {
+            JsonRpcResponse::Success(resp) => resp.result.clone(),
+            JsonRpcResponse::Error(resp) => panic!("Expected success, got error: {}", resp.error.message),
+        };
+
+        let resp_text = resp_obj.get("content").unwrap().as_array().unwrap()[0].get("text").unwrap().as_str().unwrap();
+
+        // compensation_plan[].args should be redacted (D1.9 Phase 2 path-aware)
+        assert!(
+            resp_text.contains(r#""args":"[REDACTED]""#) || resp_text.contains("\"args\":\"[REDACTED]\""),
+            "compensation_plan[].args should be redacted in lifecycle response: {}",
+            resp_text
+        );
+
+        // execution_id should be preserved
+        assert!(
+            resp_text.contains(execution_id),
+            "execution_id should be preserved: {}",
+            resp_text
+        );
+
+        // tool_binding should be preserved (no-over-redaction)
+        // Note: adapter_key is different from tool_binding - we verify adapter_key is kept
+        assert!(
+            resp_text.contains("adapter_key"),
+            "adapter_key should be preserved: {}",
+            resp_text
+        );
+
+        _mock.assert();
+    }
+
+    /// D1.10: D1.9 no-over-redaction - IDs, tool_binding preserved.
+    #[test]
+    fn test_d1_10_lifecycle_no_over_redaction() {
+        let mut server = mockito::Server::new();
+        let intent_id = "550e8400-e29b-41d4-a716-446655440001";
+        let proposal_id = "550e8400-e29b-41d4-a716-446655440002";
+        let capability_id = "550e8400-e29b-41d4-a716-446655440003";
+
+        let _mock = server
+            .mock("POST", "/v1/capabilities/mint")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(format!(
+                r#"{{
+                    "lease": {{
+                        "capability_id": "{}",
+                        "intent_id": "{}",
+                        "proposal_id": "{}",
+                        "tool_binding": {{"server_name": "fs-server", "tool_name": "fs.read", "tool_version": null}},
+                        "resource_bindings": [],
+                        "argument_constraints": [],
+                        "taint_budget": {{"max_taint_score": 30, "allow_external_tool_output": false, "allow_external_metadata": false, "allow_untrusted_text": false}},
+                        "approval_binding": null,
+                        "issued_by": "ferrum-cap",
+                        "policy_bundle_id": "550e8400-e29b-41d4-a716-446655440099",
+                        "tool_manifest_id": null,
+                        "manifest_hash": null,
+                        "status": "Active",
+                        "issued_at": "2025-01-01T00:00:00Z",
+                        "expires_at": "2025-12-31T23:59:59Z",
+                        "revoked_at": null,
+                        "metadata": {{}}
+                    }},
+                    "warnings": []
+                }}"#,
+                capability_id, intent_id, proposal_id
+            ))
+            .expect(1)
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let params = serde_json::json!({
+            "name": "ferrum_gate_mint_capability",
+            "arguments": {
+                "intent_id": intent_id,
+                "proposal_id": proposal_id,
+                "tool_name": "fs.read",
+                "server_name": "fs-server"
+            }
+        });
+        let response = handle_tools_call_with_client(params, Some(JsonRpcId::Number(1)), &client);
+
+        let resp_obj = match &response {
+            JsonRpcResponse::Success(resp) => resp.result.clone(),
+            JsonRpcResponse::Error(resp) => panic!("Expected success, got error: {}", resp.error.message),
+        };
+
+        let resp_text = resp_obj.get("content").unwrap().as_array().unwrap()[0].get("text").unwrap().as_str().unwrap();
+
+        // All IDs should be preserved (no-over-redaction)
+        assert!(
+            resp_text.contains(intent_id),
+            "intent_id should be preserved: {}",
+            resp_text
+        );
+        assert!(
+            resp_text.contains(proposal_id),
+            "proposal_id should be preserved: {}",
+            resp_text
+        );
+        assert!(
+            resp_text.contains(capability_id),
+            "capability_id should be preserved: {}",
+            resp_text
+        );
+
+        // tool_binding fields should be preserved
+        assert!(
+            resp_text.contains("fs.read") || resp_text.contains("fs-server"),
+            "tool_binding fields should be preserved: {}",
+            resp_text
+        );
+
+        _mock.assert();
+    }
 }

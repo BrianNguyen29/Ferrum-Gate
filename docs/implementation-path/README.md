@@ -66,6 +66,7 @@ Thư mục này là điểm vào duy nhất để agent khác tiếp tục tri�
 66. [85-mcp-server-d1-8-output-sanitization-preflight.md](85-mcp-server-d1-8-output-sanitization-preflight.md) — D1.8 output sanitization preflight: firewall gap analysis, single-point choke point, sensitive fields, no-over-redaction, implementation options A+C (oracle-approved 2026-05-07)
 67. [86-mcp-server-d1-9-dlp-field-redaction-preflight.md](86-mcp-server-d1-9-dlp-field-redaction-preflight.md) — D1.9 DLP/field redaction preflight: dlp_findings stub, sanitize_output control-char-only, FirewallContext gap, implementation options A–E, Explorer recommends Option B targeting raw_arguments/metadata first (Phase 1 + Phase 2 implemented)
 68. [87-mcp-server-d1-9-3-dlp-integration-validation.md](87-mcp-server-d1-9-3-dlp-integration-validation.md) — D1.9.3 integration validation: mockito-based E2E tests through handle_tools_call_with_client choke point, Phase 1+2 key redaction, path-aware compensation_plan[].args, no-over-redaction, large nested response guard
+68a. [88-mcp-server-d1-10-full-pipeline-validation.md](88-mcp-server-d1-10-full-pipeline-validation.md) — D1.10 full-pipeline validation: mockito-based sequential 8-step lifecycle test through handle_tools_call_with_client, ID chaining, D1.8/D1.9 redaction inheritance, no-over-redaction
 
 ## Luật ưu tiên
 Khi mâu thuẫn, ưu tiên:
