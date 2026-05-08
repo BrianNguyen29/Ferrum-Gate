@@ -193,8 +193,7 @@ Do **not** claim production/G2 readiness from this work.
 
 ## Explicit Non-Claims
 
-- This plan does not implement approve/reject.
-- This plan does not complete G2.
-- This plan does not provide target evidence.
-- This plan does not authorize production pilot use.
-- This plan does not change operator signoff status.
+- Local approve/reject implementation does not complete G2.
+- Local approve/reject implementation does not provide target evidence.
+- Local approve/reject implementation does not authorize production pilot use.
+- Local approve/reject implementation does not change operator signoff status.

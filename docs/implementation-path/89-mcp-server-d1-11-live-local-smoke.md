@@ -28,7 +28,7 @@ D1.11 does **not** claim production-ready, G2-complete, or live target validatio
 | Production-ready | Bounded smoke only |
 | G2-complete | No G2 signoff claimed |
 | Live target evidence | Local dev ferrumd only |
-| Full lifecycle completion | Bounded dispatch checks; approve/reject blocked |
+| Full lifecycle completion | Bounded dispatch checks; approve/reject implemented locally but G2 not completed |
 | Gateway functionality beyond dispatch | Soft-pass on gateway errors; not full integration test |
 
 ---
@@ -80,7 +80,7 @@ D1.11.1 (`submit_intent`) attempts to extract `intent_id` from the response. If 
 | Summary text update | `run_mcp_lifecycle_smoke.sh` | Implemented |
 | Header comment update | `run_mcp_lifecycle_smoke.sh` | Implemented |
 | Script syntax validation | `bash -n scripts/run_mcp_lifecycle_smoke.sh` | Passed |
-| Live-local smoke execution | [`artifacts/2026-05-08-mcp-live-local-smoke-d1-11.md`](artifacts/2026-05-08-mcp-live-local-smoke-d1-11.md) | Passed: 13, Failed: 0 |
+| Live-local smoke execution | [`artifacts/2026-05-08-mcp-live-local-smoke-d1-11.md`](artifacts/2026-05-08-mcp-live-local-smoke-d1-11.md) | Passed: 15, Failed: 0 |
 
 ---
 
@@ -90,7 +90,7 @@ D1.11 smoke does **not** establish:
 
 - **Production-ready**: Bounded local smoke only
 - **G2-complete**: No G2 signoff claimed
-- **Full lifecycle completion**: Only dispatch checks; approve/reject permanently blocked
+- **Full lifecycle completion**: Only dispatch checks; approve/reject implemented locally but G2 not completed
 - **Real backend functionality**: Soft-pass on gateway errors; dispatch reachability only
 - **Multi-node/PostgreSQL**: Not in scope
 - **Performance benchmarks**: Not measured
