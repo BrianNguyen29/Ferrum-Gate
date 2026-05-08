@@ -82,6 +82,8 @@ Thư mục này là điểm vào duy nhất để agent khác tiếp tục tri�
 71d. [artifacts/2026-05-08-local-path2-target-profile.md](artifacts/2026-05-08-local-path2-target-profile.md) — **LOCAL ONLY**: local target profile run result (NOT target evidence; G2 remains pending)
 82. [94-gcp-compute-phase3a-nonprod-target-plan.md](94-gcp-compute-phase3a-nonprod-target-plan.md) — **GCP ONLY / NON-PROD**: Phase 3A operator-owned GCP Compute non-prod target plan; scripts under `scripts/gcp/`; NOT production-ready, NOT G2 complete, NOT pilot authorized, NOT operator signoff
 82a. [artifacts/2026-05-08-gcp-phase3a-nonprod-target.md](artifacts/2026-05-08-gcp-phase3a-nonprod-target.md) — **GCP ONLY / NON-PROD**: Phase 3A GCP Compute run result; VM/service/probes/auth/backup verified; NOT production-ready, NOT G2 complete, NOT pilot authorized, NOT operator signoff
+83. [95-gcp-compute-phase3b-domain-tls-plan.md](95-gcp-compute-phase3b-domain-tls-plan.md) — **GCP ONLY / NON-PROD**: Phase 3B operator-owned GCP TLS/nip.io/Caddy plan; scripts `phase3b_configure_tls_caddy.sh`, `phase3b_destroy_tls_caddy.sh`; NOT production-ready, NOT G2 complete, NOT pilot authorized, NOT operator signoff; nip.io temporary only
+83a. [artifacts/2026-05-08-gcp-phase3b-domain-tls.md](artifacts/2026-05-08-gcp-phase3b-domain-tls.md) — **GCP ONLY / NON-PROD**: Phase 3B TLS run result; Caddy HTTPS via temporary `34-158-51-8.nip.io`; NOT production-ready, NOT G2 complete, NOT pilot authorized, NOT operator signoff
 
 ## Luật ưu tiên
 Khi mâu thuẫn, ưu tiên:
