@@ -80,7 +80,8 @@ D1.11.1 (`submit_intent`) attempts to extract `intent_id` from the response. If 
 | Summary text update | `run_mcp_lifecycle_smoke.sh` | Implemented |
 | Header comment update | `run_mcp_lifecycle_smoke.sh` | Implemented |
 | Script syntax validation | `bash -n scripts/run_mcp_lifecycle_smoke.sh` | Passed |
-| Live-local smoke execution | [`artifacts/2026-05-08-mcp-live-local-smoke-d1-11.md`](artifacts/2026-05-08-mcp-live-local-smoke-d1-11.md) | Passed: 15, Failed: 0 |
+| Live-local smoke execution (pre-approve/reject baseline) | [`artifacts/2026-05-08-mcp-live-local-smoke-d1-11.md`](artifacts/2026-05-08-mcp-live-local-smoke-d1-11.md) | Passed: 13, Failed: 0 |
+| Live-local smoke execution (post-approve/reject) | [`artifacts/2026-05-08-mcp-approve-reject-smoke-15-15.md`](artifacts/2026-05-08-mcp-approve-reject-smoke-15-15.md) | Passed: 15, Failed: 0 |
 
 ---
 
@@ -115,5 +116,6 @@ D1.11 smoke does **not** establish:
 | This doc | [`run_mcp_lifecycle_smoke.sh`](run_mcp_lifecycle_smoke.sh) | D1.11 script implementation |
 | This doc | [`88-mcp-server-d1-10-full-pipeline-validation.md`](88-mcp-server-d1-10-full-pipeline-validation.md) | D1.10 mock-based validation (D1.11 extends) |
 | This doc | [`84-mcp-server-d1-7-tool-dispatch-preflight.md`](84-mcp-server-d1-7-tool-dispatch-preflight.md) | D1.7 tool dispatch design |
-| This doc | [`artifacts/2026-05-08-mcp-live-local-smoke-d1-11.md`](artifacts/2026-05-08-mcp-live-local-smoke-d1-11.md) | Local-only D1.11 smoke execution evidence |
+| This doc | [`artifacts/2026-05-08-mcp-live-local-smoke-d1-11.md`](artifacts/2026-05-08-mcp-live-local-smoke-d1-11.md) | Local-only D1.11 smoke execution evidence (pre-approve/reject, 13/0) |
+| This doc | [`artifacts/2026-05-08-mcp-approve-reject-smoke-15-15.md`](artifacts/2026-05-08-mcp-approve-reject-smoke-15-15.md) | Post-approve/reject smoke evidence (15/0) |
 | Script | MCP stdio transport | D1.11 validates dispatch via stdio |

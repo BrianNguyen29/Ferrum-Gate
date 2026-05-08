@@ -1,7 +1,7 @@
 # 91 — Proposal Todo/Status After MCP Approve/Reject Enablement
 
 > **Status**: Created/updated 2026-05-08 after local MCP approve/reject implementation
-> **Purpose**: Comprehensive todo/status record for all feasible proposals; fix stale approve/reject blocked/planning-only text
+> **Purpose**: Comprehensive todo/status record for all feasible proposals; fix stale approve/reject blocked/planning-only text; detailed next-hardening tracks
 > **Scope**: Single-node SQLite v1; RC-ready/conditional; no G2/target/pilot/signoff claims
 > **Evidence base**: commit e57bb8f, smoke 15/15, local MCP approve/reject implemented and verified
 
@@ -171,7 +171,58 @@
 
 ---
 
-## 8. Linked Documents
+## 8. Next Hardening Tracks — Detailed Todo-List
+
+This section captures three bounded next-step hardening proposals. Each has explicit owners, trigger criteria, non-goals, and verification plans. No implementation begins without separate approval.
+
+### 8.1 MCP Error Sanitization Review/Preflight
+
+> **Status**: Deferred — bounded design first, no immediate code
+> **Reference**: doc85 (output sanitization), doc89 (soft-pass semantics)
+
+| Aspect | Detail |
+|--------|--------|
+| **Current state** | Soft-pass semantics on -32003/-32004 for lifecycle dispatch; approve/reject dispatch returns structured errors; error code mapping is ad-hoc |
+| **Proposed scope** | Document current error code taxonomy; identify gaps in error sanitization (information leakage in error messages, inconsistent error codes across tools); produce bounded design note |
+| **Non-goals** | No immediate code implementation; no DLP/semantic scanning; no changes to error handling behavior |
+| **Owner** | Engineering (design); Oracle (review) |
+| **Trigger** | Operator or user request for MCP error sanitization hardening; or explicit engineering allocation |
+| **Verification** | Design document exists and reviewed; no code changes yet |
+| **Next step** | Create design note if approved; otherwise remains deferred |
+
+### 8.2 MCP DLP Semantic Scanning Preflight
+
+> **Status**: Deferred — full scanning post-v1 unless trigger exists
+> **Reference**: doc86 (DLP preflight), doc87 (D1.9.3 integration validation)
+
+| Aspect | Detail |
+|--------|--------|
+| **Current state** | Phase 1 + Phase 2 implemented: `dlp_findings` stub, `sanitize_output` control-char-only, Option B oracle-approved targeting raw_arguments/metadata first |
+| **Proposed scope** | Evaluate whether DLP semantic scanning (content-aware inspection beyond control-char redaction) is needed for v1 scope; if yes, define bounded design; if no, document explicit non-goal |
+| **Non-goals** | No immediate implementation of full DLP scanning; no changes to stub behavior |
+| **Owner** | Engineering (analysis); Oracle (review) |
+| **Trigger** | Operator or user explicitly requests DLP scanning as v1 requirement; otherwise post-v1 |
+| **Verification** | Decision documented (implement or explicit deferral with rationale) |
+| **Next step** | Ask the operator/user whether DLP semantic scanning is a v1 requirement; if not, keep it deferred with rationale |
+
+### 8.3 HTTP Retry/Backoff Design Trigger Criteria
+
+> **Status**: Deferred — workload/operator trigger required
+> **Reference**: doc33 §P5, doc67 P2.1
+
+| Aspect | Detail |
+|--------|--------|
+| **Current state** | Bounded http.replay_v1 (POST/PUT/PATCH) implemented with exact URL/digest binding; 103 tests passing; broader retry/backoff not implemented |
+| **Proposed scope** | Define explicit trigger criteria for HTTP retry/backoff implementation: what workload condition, operator request, or error pattern would justify implementing full retry with rollback semantics |
+| **Non-goals** | No immediate implementation; no production-grade retry until trigger criteria met |
+| **Owner** | Engineering (design); Operator (trigger confirmation) |
+| **Trigger** | Explicit operator or user request citing specific workload need; or engineering capacity allocation |
+| **Verification** | Trigger criteria documented and accepted; implementation begins only after trigger confirmed |
+| **Next step** | Document trigger criteria if/when operator raises HTTP retry as v1 requirement |
+
+---
+
+## 9. Linked Documents
 
 | This Doc | Links To | Purpose |
 |----------|----------|---------|
@@ -182,7 +233,8 @@
 | This doc | [doc71](./71-path-2-target-values-intake-packet.md) | Path 2 intake |
 | This doc | [doc31](./31-release-paths-todo.md) | Release paths |
 | This doc | [doc33](./33-feature-completion-backlog.md) | Feature backlog |
-| This doc | [artifacts/2026-05-08-mcp-live-local-smoke-d1-11.md](./artifacts/2026-05-08-mcp-live-local-smoke-d1-11.md) | Smoke artifact (pre-approve/reject) |
+| This doc | [artifacts/2026-05-08-mcp-live-local-smoke-d1-11.md](./artifacts/2026-05-08-mcp-live-local-smoke-d1-11.md) | Smoke artifact (pre-approve/reject, 13/0) |
+| This doc | [artifacts/2026-05-08-mcp-approve-reject-smoke-15-15.md](./artifacts/2026-05-08-mcp-approve-reject-smoke-15-15.md) | Smoke artifact (post-approve/reject, 15/0) |
 
 ---
 

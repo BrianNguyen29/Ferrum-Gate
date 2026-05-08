@@ -197,3 +197,17 @@ Do **not** claim production/G2 readiness from this work.
 - Local approve/reject implementation does not provide target evidence.
 - Local approve/reject implementation does not authorize production pilot use.
 - Local approve/reject implementation does not change operator signoff status.
+
+---
+
+## Post-Implementation Evidence
+
+The local implementation is complete and verified:
+
+| Evidence | Reference |
+|----------|-----------|
+| Post-approve/reject smoke 15/15 | [`artifacts/2026-05-08-mcp-approve-reject-smoke-15-15.md`](./artifacts/2026-05-08-mcp-approve-reject-smoke-15-15.md) |
+| Proposal todo/status | [doc91](./91-proposal-todo-status-after-mcp-approve-reject.md) |
+| Pre-approve/reject baseline (13/0) | [`artifacts/2026-05-08-mcp-live-local-smoke-d1-11.md`](./artifacts/2026-05-08-mcp-live-local-smoke-d1-11.md) |
+
+All artifacts are local-only; no G2/target/pilot/signoff claims.
