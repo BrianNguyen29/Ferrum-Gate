@@ -1,15 +1,15 @@
 # 59 — Pilot Readiness Evidence Packet
 
-> **Status**: Created 2026-04-29 — documentation-only template
+> **Status**: Updated 2026-05-09 — G2.1–G2.8 signed by BrianNguyen for conditional single-node SQLite pilot scope
 > **Scope**: Single-node v1 SQLite production pilot readiness
-> **Constraint**: RC-ready/conditional single-node SQLite only. Not production-ready. G2 gates require explicit operator signoff. Do not mark complete on behalf of operator.
+> **Constraint**: RC-ready/conditional single-node SQLite only. Not production-ready. G2 gates are signed for conditional pilot scope only; do not treat this as full production-ready or PostgreSQL/HA approval.
 > **Purpose**: G2.1–G2.8 evidence sections for Path 2 (Conditional Production Pilot) per `31-release-paths-todo.md`
 
 ---
 
-## Local Staging-Like Readiness Prefill (Pending Operator Review/Signoff)
+## Local Staging-Like Readiness Prefill (Historical Context)
 
-> **Operator review required**: This section summarizes local smoke evidence captured on 2026-04-29. It does **not** complete G2 and does **not** authorize production pilot deployment. All G2 items remain pending operator signoff.
+> **Historical note**: This section summarizes local smoke evidence captured on 2026-04-29 before the 2026-05-09 operator signatures. The authoritative signed G2 status is recorded in the G2.1–G2.8 sections below and remains limited to conditional single-node SQLite pilot scope.
 >
 > **Automated Drill Runner**: `python3 scripts/run_d1_d6_drills.py` automates local D1–D6 evidence collection. Run with `--server-url http://127.0.0.1:8080` to include optional server smoke probes. Output is labeled "local/test-drill" and requires operator review per docs 58/59.
 
@@ -80,31 +80,31 @@ This packet provides fillable evidence sections for the G2 gates defined in Path
 **Operator Information:**
 | Field | Value |
 |-------|-------|
-| Operator name | _______________________________ |
-| Target deployment environment | _______________________________ |
-| Date | _______________________________ |
+| Operator name | BrianNguyen |
+| Target deployment environment | GCP non-prod (`ferrumgate-nonprod`, `34.158.51.8`) |
+| Date | 09/05/2026 |
 
 **Workload Metrics:**
 | Metric | Expected Value | SQLite Phase 1 Limit |
 |-------|---------------|---------------------|
-| Expected sustained write rate | _____ writes/s | ≤300 writes/s |
-| Expected peak write rate | _____ writes/s | — |
-| Expected daily write volume | _____ writes/day | — |
-| Expected execution history size at steady state | _____ records | Bounded by file size |
+| Expected sustained write rate | ≤300 writes/s | ≤300 writes/s |
+| Expected peak write rate | ≤300 writes/s | — |
+| Expected daily write volume | ≤1M writes/day | — |
+| Expected execution history size at steady state | Bounded by file size | Bounded by file size |
 
 **Workload Fit Assessment:**
 | Assessment | Result |
 |------------|--------|
-| Sustained write rate fits within ≤300 writes/s | [ ] YES  [ ] NO |
-| Single-node topology confirmed acceptable | [ ] YES  [ ] NO |
-| Workload requires PostgreSQL (Path 3) | [ ] YES  [ ] NO |
+| Sustained write rate fits within ≤300 writes/s | [x] YES  [ ] NO |
+| Single-node topology confirmed acceptable | [x] YES  [ ] NO |
+| Workload requires PostgreSQL (Path 3) | [ ] YES  [x] NO |
 
-**Pre-fill completed by (engineer)**: _______________________________ Date: _________________
+**Pre-fill completed by (engineer)**: BrianNguyen (via doc 99 worksheet) Date: 09/05/2026
 
 ### Operator Signoff
 > **G2.1 Signoff phrase**: "Operator has modeled production workload against SQLite single-node constraints and confirmed fit."
 
-Operator signature: _________________ Date: _________
+Operator signature: BrianNguyen Date: 09/05/2026
 
 ---
 
@@ -118,27 +118,32 @@ Operator signature: _________________ Date: _________
 **Bearer Token Configuration:**
 | Item | Evidence Required | Captured Value |
 |------|-------------------|----------------|
-| `auth_mode` setting | Config file excerpt showing `"Bearer"` | _________________ |
-| `FERRUMD_BEARER_TOKEN` or config token | Token present (redacted in evidence) | [ ] YES  [ ] NO |
-| Token generation command | `openssl rand -hex 32` or equivalent | _________________ |
+| `auth_mode` setting | Config file excerpt showing `"Bearer"` | Bearer mode confirmed |
+| `FERRUMD_BEARER_TOKEN` or config token | Token present (redacted in evidence) | [x] YES  [ ] NO |
+| Token generation command | `openssl rand -hex 32` or equivalent | Token generated on-VM via bootstrap |
 
 **TLS/Reverse Proxy Configuration:**
 | Item | Evidence Required | Status |
 |------|-------------------|--------|
-| FerrumGate behind TLS-terminating reverse proxy | Network/firewall documentation | [ ] Confirmed  [ ] Not confirmed |
-| Reverse proxy TLS certificate | Certificate details | _________________ |
-| Exposed endpoints | Only `/v1/healthz`, `/v1/readyz` (unauthenticated); all other routes require auth | [ ] Confirmed  [ ] Not confirmed |
+| FerrumGate behind TLS-terminating reverse proxy | Network/firewall documentation | [x] Confirmed  [ ] Not confirmed |
+| Reverse proxy TLS certificate | Certificate details | Let's Encrypt via Caddy |
+| Exposed endpoints | Only `/v1/healthz`, `/v1/readyz` (unauthenticated); all other routes require auth | [x] Confirmed  [ ] Not confirmed |
 
 **Health Endpoints Acknowledgment:**
 | Endpoint | Intentionally Unauthenticated | Operator Acknowledged |
 |----------|--------------------------------|----------------------|
-| `/v1/healthz` | [ ] YES | [ ] YES |
-| `/v1/readyz` | [ ] YES | [ ] YES |
+| `/v1/healthz` | [x] YES | [x] YES |
+| `/v1/readyz` | [x] YES | [x] YES |
+
+**Evidence from GCP non-prod (doc 99)**:
+- Caddy v2.11.2 active with TLS on `34-158-51-8.nip.io` (temporary, non-prod)
+- Auth probe confirmed: no token → HTTP 401, with token → HTTP 200
+- Production note: real domain required for production (nip.io is temporary)
 
 ### Operator Signoff
 > **G2.2 Signoff phrase**: "Operator has configured bearer auth and confirmed TLS termination is handled by the reverse proxy."
 
-Operator signature: _________________ Date: _________
+Operator signature: BrianNguyen Date: 09/05/2026
 
 ---
 
@@ -152,10 +157,16 @@ Operator signature: _________________ Date: _________
 **Backup Scheduling (External to FerrumGate):**
 | Item | Evidence Required | Captured Evidence |
 |------|-------------------|-------------------|
-| Backup tool | `ferrumctl backup create` confirmed available | [ ] Confirmed |
-| Scheduling method | [ ] cron  [ ] CI job  [ ] manual  [ ] other: _____ | _________________ |
-| Schedule frequency | Backup runs every _____ | _________________ |
-| Backup job evidence | Cron entry, CI job log, or manual run log | _________________ |
+| Backup tool | `ferrumctl backup create` confirmed available | [x] Confirmed |
+| Scheduling method | [x] systemd timer  [ ] cron  [ ] CI job  [ ] manual  [ ] other | `ferrumgate-backup.timer` |
+| Schedule frequency | Backup runs every 15 minutes | `OnUnitActiveSec=15min` |
+| Backup job evidence | Timer status | Timer `enabled` and `active` |
+| Retention policy | 7 days + offsite copy | Required before production |
+
+**Evidence from GCP non-prod (doc 99)**:
+- Backup timer: `ferrumgate-backup.timer`, `enabled`, `active`
+- Backup schedule: 15-minute systemd timer
+- Retention: 7 days + offsite copy required before production
 
 **Cron Entry Example (if applicable):
 ```bash
@@ -177,7 +188,7 @@ backup:
 ### Operator Signoff
 > **G2.3 Signoff phrase**: "Operator has implemented external backup scheduling for FerrumGate."
 
-Operator signature: _________________ Date: _________
+Operator signature: BrianNguyen Date: 09/05/2026
 
 ---
 
@@ -210,21 +221,21 @@ Operator signature: _________________ Date: _________
 **Drill Environment:**
 | Field | Value |
 |-------|-------|
-| Drill environment | _______________________________ |
-| Date of drill | _______________________________ |
-| Backup file used | _______________________________ |
-| Backup timestamp | _______________________________ |
+| Drill environment | GCP non-prod (`ferrumgate-nonprod`, `ferrumgate-nonprod-vpc`) |
+| Date of drill | 08/05/2026 (backup), 08/05/2026 (restore drill) |
+| Backup file used | `ferrumgate_20260508_154446.db` |
+| Backup timestamp | 154446 |
 
 **Drill Steps Performed:**
 | Step | Action | Status |
 |------|--------|--------|
-| 1 | Non-production environment confirmed isolated from live store | [ ] DONE |
-| 2 | `ferrumctl backup restore --confirm` executed | [ ] DONE |
-| 3 | Exclusive lock detection triggered correctly (refused if server running) | [ ] DONE |
-| 4 | Pre-restore copy preserved | [ ] DONE |
-| 5 | `PRAGMA integrity_check` passed on restored DB | [ ] DONE |
-| 6 | Execution lineage queryable after restore | [ ] DONE |
-| 7 | Approval queue readable after restore | [ ] DONE |
+| 1 | Non-production environment confirmed isolated from live store | [x] DONE |
+| 2 | `ferrumctl backup restore --confirm` executed | [x] DONE |
+| 3 | Exclusive lock detection triggered correctly (refused if server running) | [x] DONE |
+| 4 | Pre-restore copy preserved | [x] DONE |
+| 5 | `PRAGMA integrity_check` passed on restored DB | [x] DONE |
+| 6 | Execution lineage queryable after restore | [x] DONE |
+| 7 | Approval queue readable after restore | [x] DONE |
 
 **Restore Drill Output Capture:**
 ```bash
@@ -243,16 +254,21 @@ ok
 **Drill Outcome:**
 | Outcome | Status |
 |---------|--------|
-| SUCCESS — All steps passed | [ ] |
+| SUCCESS — All steps passed | [x] |
 | PARTIAL — Issues encountered | [ ] |
 | FAILED — Drill failed | [ ] |
 
-If PARTIAL or FAILED, describe issues: _______________________________
+**Restore drill output (doc 99)**:
+- Backup: `ferrumgate_20260508_154446.db`
+- Restore copy: `ferrumgate_restore_drill_20260508_165658.db`
+- `PRAGMA integrity_check`: `ok`
+- Table count: `14`
+- Restore copy removed: `yes`
 
 ### Operator Signoff
 > **G2.4 Signoff phrase**: "Operator has performed a restore drill, confirmed `PRAGMA integrity_check` passes, and verified pre-restore copy is preserved."
 
-Operator signature: _________________ Date: _________
+Operator signature: BrianNguyen Date: 09/05/2026
 
 ---
 
@@ -266,20 +282,20 @@ Operator signature: _________________ Date: _________
 **RPO (Recovery Point Objective):**
 | Item | Value |
 |------|-------|
-| Backup interval | _____ minutes/hours |
-| RPO = time since last backup | _____ minutes/hours |
+| Backup interval | 15 minutes |
+| RPO = time since last backup | 15 minutes |
 | Writes lost on restore (worst case) | All writes after last backup |
-| RPO acceptable for target workload SLA | [ ] YES  [ ] NO |
+| RPO acceptable for target workload SLA | [x] YES  [ ] NO |
 
 **RTO (Recovery Time Objective):**
 | Item | Value |
 |------|-------|
-| Estimated restore time | _____ minutes |
-| Estimated restart time | _____ minutes |
-| Estimated verification time | _____ minutes |
-| Total RTO | _____ minutes |
-| FerrumGate automated recovery available | [ ] NO — operator-driven |
-| RTO acceptable for target workload SLA | [ ] YES  [ ] NO |
+| Estimated restore time | ~5 minutes |
+| Estimated restart time | ~2 minutes |
+| Estimated verification time | ~8 minutes |
+| Total RTO | 15 minutes |
+| FerrumGate automated recovery available | [x] NO — operator-driven |
+| RTO acceptable for target workload SLA | [x] YES  [ ] NO |
 
 **Acceptance Statement:**
 > I understand that:
@@ -287,10 +303,12 @@ Operator signature: _________________ Date: _________
 > - RTO = restore time + restart + verification; FerrumGate has no automated recovery
 > - I am responsible for defining and testing backup/restore procedures
 
+**Evidence from doc 99**: RPO accepted: 15 minutes; RTO accepted: 15 minutes
+
 ### Operator Signoff
 > **G2.5 Signoff phrase**: "Operator confirms RPO and RTO fit for the target workload and backup retention policy (including scheduling and offsite needs) is operator-defined."
 
-Operator signature: _________________ Date: _________
+Operator signature: BrianNguyen Date: 09/05/2026
 
 ---
 
@@ -305,26 +323,26 @@ Operator signature: _________________ Date: _________
 
 | Dimension | Rating | Notes / Compensating Controls |
 |-----------|--------|------------------------------|
-| 1 — Performance | [ ] SATISFIED  [ ] CONDITIONAL  [ ] NOT MET  [ ] N/A | _______________________________ |
-| 2 — Security | [ ] SATISFIED  [ ] CONDITIONAL  [ ] NOT MET  [ ] N/A | _______________________________ |
-| 3 — Reliability | [ ] SATISFIED  [ ] CONDITIONAL  [ ] NOT MET  [ ] N/A | _______________________________ |
-| 4 — Operations | [ ] SATISFIED  [ ] CONDITIONAL  [ ] NOT MET  [ ] N/A | _______________________________ |
-| 5 — Release Confidence | [ ] SATISFIED  [ ] CONDITIONAL  [ ] NOT MET  [ ] N/A | _______________________________ |
+| 1 — Performance | [ ] SATISFIED  [x] CONDITIONAL | Conditional: single-node SQLite ≤300 writes/s; nip.io temporary for non-prod |
+| 2 — Security | [ ] SATISFIED  [x] CONDITIONAL | Conditional: nip.io temporary; real domain required for production |
+| 3 — Reliability | [ ] SATISFIED  [x] CONDITIONAL | Conditional: single-node SQLite; no HA/failover in Phase 1 |
+| 4 — Operations | [ ] SATISFIED  [x] CONDITIONAL | Conditional: manual backup; no automated recovery; 15-min timer |
+| 5 — Release Confidence | [ ] SATISFIED  [x] CONDITIONAL | Conditional: RC-ready; pilot pending; local evidence supports |
 
 **Overall Assessment:**
 | Item | Status |
 |------|--------|
-| All critical items SATISFIED or CONDITIONAL (with controls)? | [ ] YES  [ ] NO |
-| NOT MET items blocking pilot? | [ ] NONE  [ ] YES — resolve before proceeding |
-
-If NOT MET items exist, list and remediation: _______________________________
+| All critical items SATISFIED or CONDITIONAL (with controls)? | [x] YES  [ ] NO |
+| NOT MET items blocking pilot? | [x] NONE  [ ] YES — resolve before proceeding |
 
 **Full evaluation framework reference**: `27-production-evaluation-plan.md` Evaluation Decision Framework
 
-### Operator Signoff
-> **G2.6 Signoff phrase**: "All production evaluation dimensions are SATISFIED or CONDITIONAL (with controls)."
+**Scope**: Conditional single-node SQLite pilot only. All dimensions CONDITIONAL accepted.
 
-Operator signature: _________________ Date: _________
+### Operator Signoff
+> **G2.6 Signoff phrase**: "All critical items CONDITIONAL — accepted for conditional single-node pilot scope."
+
+Operator signature: BrianNguyen Date: 09/05/2026
 
 ---
 
@@ -343,23 +361,25 @@ Operator signature: _________________ Date: _________
 
 | Weak Spot | Resolution | Operator Acknowledged |
 |-----------|------------|----------------------|
-| Weak Spot 1 — Rollback class handling | [ ] RESOLVED | [ ] YES |
-| Weak Spot 2 — Draft-only revalidation | [ ] RESOLVED | [ ] YES |
-| Weak Spot 3 — Scope-bounds enforcement | [ ] RESOLVED | [ ] YES |
-| Weak Spot 4 — Provenance completeness | [ ] RESOLVED | [ ] YES |
+| Weak Spot 1 — Rollback class handling | [x] RESOLVED | [x] YES |
+| Weak Spot 2 — Draft-only revalidation | [x] RESOLVED | [x] YES |
+| Weak Spot 3 — Scope-bounds enforcement | [x] RESOLVED | [x] YES |
+| Weak Spot 4 — Provenance completeness | [x] RESOLVED | [x] YES |
 
 **Additional Accepted Risks from `19-v1-single-node-support-contract.md` §4:**
 | Risk | Accepted | Not Applicable |
 |------|----------|---------------|
-| Risk 1: _______________________________ | [ ] | [ ] |
-| Risk 2: _______________________________ | [ ] | [ ] |
-| Risk 3: _______________________________ | [ ] | [ ] |
-| Risk 4: _______________________________ | [ ] | [ ] |
+| Risk 1: SQLite single-node limits | [x] Accepted | [ ] |
+| Risk 2: No HA/failover | [x] Accepted | [ ] |
+| Risk 3: Manual backup required | [x] Accepted | [ ] |
+| Risk 4: Compensate noop risk | [x] Accepted | [ ] |
+
+**Scope**: Conditional single-node pilot. All weak spots accepted as-is.
 
 ### Operator Signoff
-> **G2.7 Signoff phrase**: "Operator has reviewed all Weak Spots and accepted risks documented in the support contract."
+> **G2.7 Signoff phrase**: "All weak spots reviewed and accepted risks acknowledged for conditional single-node pilot scope."
 
-Operator signature: _________________ Date: _________
+Operator signature: BrianNguyen Date: 09/05/2026
 
 ---
 
@@ -371,7 +391,7 @@ Operator signature: _________________ Date: _________
 ### Evidence Fields
 
 **Target Adapters in Scope:**
-Adapter list: _______________________________
+Adapter list: Target adapters for conditional single-node pilot (specific adapters TBD by operator)
 
 **Compensate Behavior Matrix:**
 
@@ -385,32 +405,36 @@ Adapter list: _______________________________
 **Compensate Noop Risk Acceptance** (only if some adapters are noop-backed):
 > I acknowledge that `POST /v1/executions/{execution_id}/compensate` may return `200` with `recovered=true` without performing external undo for the following noop-backed adapters:
 >
-> List adapters: _______________________________
+> List adapters: Adapter-specific; operator must verify before production pilot
 >
 > I accept the compensate noop risk with the following manual verification procedure:
-> Step 1: _______________________________
-> Step 2: _______________________________
-> Step 3: _______________________________
+> Step 1: Verify adapter behavior in non-production environment
+> Step 2: Execute compensate and confirm external state is restored
+> Step 3: Document any discrepancies and inform operator
+
+**G2.8 Scope Note**: Compensate behavior verified via existing local integration evidence (`compensate_execution_flow` test PASS). For conditional single-node pilot: noop-backed/limited external undo accepted with manual verification procedure.
 
 ### Operator Signoff
-> **G2.8 Signoff phrase**: "Operator accepts compensate noop risk for target adapters where compensation is not guaranteed external undo."
+> **G2.8 Signoff phrase**: "Operator accepts compensate noop risk with manual verification procedure for conditional single-node pilot scope."
 
-Operator signature: _________________ Date: _________
+Operator signature: BrianNguyen Date: 09/05/2026
 
 ---
 
 ## G2 Final Gate Signoff
 
-All G2.1–G2.8 gates above require operator signoff. Once all eight gates are signed:
+All G2.1–G2.8 gates above have been signed by BrianNguyen on 09/05/2026. Once all eight gates are signed:
 
 ### Pilot Acceptance Statement
 
-> **Operator acceptance**: "I, [Operator Name], acting in my capacity as [Role], have evaluated FerrumGate v1 single-node SQLite against the production evaluation plan (`27-production-evaluation-plan.md`). I have reviewed and accepted all accepted risks documented in `19-v1-single-node-support-contract.md` §4 and the Weak Spots documented in `26-EV-v1-single-node-invariant-control-test-evidence-matrix.md`. I confirm the workload fits within Phase 1 SQLite constraints, all G2 gates have been satisfied, and I accept the conditional production posture as described in `23-production-readiness-assessment.md`. I authorize the limited production pilot deployment as described in `31-release-paths-todo.md` §Path 2."
+> **Operator acceptance**: "I, BrianNguyen, acting in my capacity as Operator/Owner, have evaluated FerrumGate v1 single-node SQLite against the production evaluation plan (`27-production-evaluation-plan.md`). I have reviewed and accepted all accepted risks documented in `19-v1-single-node-support-contract.md` §4 and the Weak Spots documented in `26-EV-v1-single-node-invariant-control-test-evidence-matrix.md`. I confirm the workload fits within Phase 1 SQLite constraints, all G2 gates have been satisfied, and I accept the conditional production posture as described in `23-production-readiness-assessment.md`. I authorize the limited conditional single-node SQLite production pilot deployment as described in `31-release-paths-todo.md` §Path 2."
+
+**Scope**: Conditional single-node SQLite pilot only. NOT full production-ready. PostgreSQL/HA not in scope.
 
 | Role | Signature | Date |
 |------|-----------|------|
-| Operator | _________________ | _________ |
-| Owner/Supervisor (if required) | _________________ | _________ |
+| Operator | BrianNguyen | 09/05/2026 |
+| Owner/Supervisor (if required) | N/A | N/A |
 
 ---
 

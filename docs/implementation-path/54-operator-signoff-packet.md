@@ -3,17 +3,18 @@
 > **Status**: Documentation-only. No production deployment performed.
 > **Purpose**: Standalone fillable operator signoff form for FerrumGate v1 single-node SQLite production pilot.
 > **Scope**: Single-node SQLite only. No PostgreSQL/multi-node. No production-ready claim.
-> **RC status**: v0.1.0-rc.1 published as GitHub prerelease (Path 1 complete; Path 2 pilot pending operator signoff)
+> **RC status**: v0.1.0-rc.1 published as GitHub prerelease (Path 1 complete; Path 2 signed by BrianNguyen on 09/05/2026 for conditional single-node SQLite pilot scope)
 
 ---
 
 ## Prepared-Signoff Note (Operator Action Required)
 
-> **Unsigned status**: This document remains unsigned. The local staging-like prefills in docs 58 and 59 are evidence aids only. The operator must review all evidence, execute any pending target-environment drills, and provide their own signatures where indicated.
+> **Updated status**: BrianNguyen signed this document on 09/05/2026. Values copied from signed doc 99 worksheet. All G2 gates signed for conditional single-node SQLite pilot scope only.
 >
-> **Current state**: Pending operator review/signoff.
-> **Next action**: User/operator reviews docs 58/59 and signs the Pilot Acceptance Statement only if all G2 gates are truly satisfied.
-> **Boundary**: No G2 complete status, no production-ready claim, and no production pilot authorization is made by this note.
+> **Current state**: Signed by BrianNguyen for conditional single-node pilot.
+> **Scope**: Conditional single-node SQLite pilot only. NOT full production-ready. PostgreSQL/HA not in scope.
+> **Next action**: None required for Phase 1 conditional pilot. Canonical docs 63/65 may be updated with target values as needed.
+> **Boundary**: This signoff authorizes limited conditional single-node SQLite pilot only. No full production-ready claim.
 
 ---
 
@@ -46,11 +47,13 @@ Attach the following evidence to each section before signing:
 
 Before the production pilot begins, the operator must sign the following statement:
 
-> **Operator acceptance**: "I, [Operator Name], acting in my capacity as [Role], have evaluated FerrumGate v1 single-node SQLite against the production evaluation plan (`27-production-evaluation-plan.md`). I have reviewed and accepted all accepted risks documented in `19-v1-single-node-support-contract.md` §4 and the Weak Spots documented in `26-EV-v1-single-node-invariant-control-test-evidence-matrix.md`. I confirm the workload fits within Phase 1 SQLite constraints, all G2 gates have been satisfied, and I accept the conditional production posture as described in `23-production-readiness-assessment.md`. I authorize the limited production pilot deployment as described in `31-release-paths-todo.md` §Path 2."
+> **Operator acceptance**: "I, BrianNguyen, acting in my capacity as Operator/Owner, have evaluated FerrumGate v1 single-node SQLite against the production evaluation plan (`27-production-evaluation-plan.md`). I have reviewed and accepted all accepted risks documented in `19-v1-single-node-support-contract.md` §4 and the Weak Spots documented in `26-EV-v1-single-node-invariant-control-test-evidence-matrix.md`. I confirm the workload fits within Phase 1 SQLite constraints, all G2 gates have been satisfied, and I accept the conditional production posture as described in `23-production-readiness-assessment.md`. I authorize the limited conditional single-node SQLite production pilot deployment as described in `31-release-paths-todo.md` §Path 2."
 >
-> Operator signature: _________________ Date: _________
+> **Scope**: Conditional single-node SQLite pilot only. NOT full production-ready. PostgreSQL/HA not in scope.
 >
-> Owner/Supervisor countersignature (if required): _________________ Date: _________
+> Operator signature: BrianNguyen Date: 09/05/2026
+>
+> Owner/Supervisor countersignature (if required): N/A
 
 ---
 
@@ -64,7 +67,13 @@ Before the production pilot begins, the operator must sign the following stateme
 
 **Signoff phrase required**: "Operator has modeled production workload against SQLite single-node constraints and confirmed fit."
 
-Operator signature: _________________ Date: _________
+**Evidence from doc 99**:
+- Sustained write rate: ≤300 writes/s
+- Peak write rate: ≤300 writes/s
+- Daily write volume: ≤1M writes/day
+- SQLite single-node fit: CONFIRMED
+
+Operator signature: BrianNguyen Date: 09/05/2026
 
 ---
 
@@ -78,7 +87,12 @@ Operator signature: _________________ Date: _________
 
 **Signoff phrase required**: "Operator has configured bearer auth and confirmed TLS termination is handled by the reverse proxy."
 
-Operator signature: _________________ Date: _________
+**Evidence from doc 99**:
+- GCP non-prod: Caddy v2.11.2 active, TLS via Let's Encrypt on `34-158-51-8.nip.io` (temporary, non-prod only)
+- Auth probe: no token → HTTP 401, with token → HTTP 200 (confirmed)
+- Production note: nip.io temporary; real domain required for production
+
+Operator signature: BrianNguyen Date: 09/05/2026
 
 ---
 
@@ -94,7 +108,14 @@ Operator signature: _________________ Date: _________
 
 **Signoff phrase required**: "Operator has performed a restore drill, confirmed RPO/RTO fit for the target workload, and backup retention policy (including scheduling and offsite needs) is operator-defined."
 
-Operator signature: _________________ Date: _________
+**Evidence from doc 99**:
+- Backup schedule: 15-minute systemd timer (`OnUnitActiveSec=15min`), timer enabled and active
+- Retention policy: 7 days + offsite copy required before production
+- Restore drill: `PRAGMA integrity_check=ok`, 14 tables, copy removed
+- RPO accepted: 15 minutes
+- RTO accepted: 15 minutes
+
+Operator signature: BrianNguyen Date: 09/05/2026
 
 ---
 
@@ -108,7 +129,9 @@ Operator signature: _________________ Date: _________
 
 **Signoff phrase required**: "Operator acknowledges PostgreSQL/multi-node is deferred and not part of the current production pilot scope."
 
-Operator signature: _________________ Date: _________
+**Scope note**: Conditional single-node SQLite pilot only. PostgreSQL/HA not in scope for Phase 1.
+
+Operator signature: BrianNguyen Date: 09/05/2026
 
 ---
 
@@ -127,7 +150,7 @@ Before the first production pilot deployment, the following must be all confirme
 | 7 | Accepted-risks documented (Weak Spots 1–4) | `19-v1-single-node-support-contract.md` §4 reviewed |
 | 8 | Compensate noop risk formally accepted | Operator acknowledges compensate may be noop-backed for target adapters |
 
-**This is not a production-ready claim.** FerrumGate v1 is RC-ready with known accepted risks. Production pilot deployment is conditional on all eight prerequisites above being satisfied.
+**This is not a full production-ready claim.** FerrumGate v1 is RC-ready/conditional for single-node SQLite only. Production pilot deployment is conditional on all eight prerequisites above being satisfied and is explicitly scoped to single-node SQLite. PostgreSQL/HA/multi-node are not in scope for Phase 1.
 
 ---
 

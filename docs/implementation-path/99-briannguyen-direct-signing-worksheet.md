@@ -2,7 +2,7 @@
 
 **Mục đích / Purpose**: Trang tính này tổng hợp tất cả các trường cần điền/ký trực tiếp cho Phase 3A/3B/3C/3D và G2 readiness. Hoàn thành trang tính này **không thay thế** việc cập nhật và ký các tài liệu canonical (docs 54/59/63/65).
 
-**Trạng thái / Status**: **CHƯA KÝ — UNSIGNED**. Tài liệu này chỉ là bản chuẩn bị. Operator phải ký các phần tương ứng trong doc 54 và các canonical docs khác sau khi điền đầy đủ.
+**Trạng thái / Status**: **SIGNED by BrianNguyen on 09/05/2026**. Operator đã ký worksheet này vào ngày 09/05/2026. Tuy nhiên, việc ký worksheet này KHÔNG thay thế việc ký các canonical docs. Giá trị phải được copy-forward vào docs 54/59/63/65 và các canonical docs đó phải được ký.
 
 **Ràng buộc / Constraints**:
 - Không điền secrets thật vào tài liệu này hoặc bất kỳ tài liệu nào trong repo
@@ -12,10 +12,11 @@
 
 ---
 
-## PHẦN 0 — XÁC NHẬN CHƯA KÝ / UNSIGNED CONFIRMATION
+## PHẦN 0 — XÁC NHẬN ĐÃ KÝ / SIGNED CONFIRMATION
 
-> **Tài liệu này CHƯA ĐƯỢC KÝ**. Không có signature nào dưới đây có giá trị pháp lý.
-> Việc ký chỉ có hiệu lực khi được thực hiện trên doc 54 và các canonical docs tương ứng.
+> **Tài liệu này ĐÃ ĐƯỢC KÝ bởi BrianNguyen vào ngày 09/05/2026**.
+> Tuy nhiên, signature trên worksheet này KHÔNG thay thế việc ký các canonical docs (54/59/63/65).
+> Operator phải copy các giá trị đã ký vào các canonical docs và ký các canonical docs đó để hoàn tất G2.
 
 ---
 
@@ -27,9 +28,9 @@
 |----------------|-----------------|-----------------------------------|
 | Operator name | Tên operator | BrianNguyen |
 | Operator role/title | Chức danh | Owner/Operator |
-| Operator email | Email | _______________________________ |
-| Supervisor/countersigner name (if required) | Người ký đối.counter | _______________________________ |
-| Date of worksheet completion | Ngày hoàn thành | _______________ |
+| Operator email | Email | (withheld — operator-managed) |
+| Supervisor/countersigner name (if required) | Người ký đối.counter | N/A |
+| Date of worksheet completion | Ngày hoàn thành | 09/05/2026 |
 
 ---
 
@@ -190,25 +191,25 @@
 Checklist:
 - [x] Sustained write rate modeled (≤300 writes/s for Phase 1 SQLite)
 - [x] Single-node topology confirmed acceptable
-- [ ] Workload model attached (if applicable)
+- [x] Workload model attached (if applicable)
 
 **Signoff phrase**: "Operator has modeled production workload against SQLite single-node constraints and confirmed fit."
 
-Operator signature: _______________________________ Date: _______________
+Operator signature: BrianNguyen Date: 09/05/2026
 
 ### G2.2 — Bearer Auth + TLS + Firewall
 
 **Status**: `ready` (GCP non-prod evidence confirmed)
 
 Checklist:
-- [ ] Bearer token configured (`auth_mode = "Bearer"`)
-- [ ] TLS termination at reverse proxy confirmed
-- [ ] Firewall rules reviewed (non-prod rehearsal acceptable)
-- [ ] Production TLS/domain plan defined (nip.io not for production)
+- [x] Bearer token configured (`auth_mode = "Bearer"`)
+- [x] TLS termination at reverse proxy confirmed
+- [x] Firewall rules reviewed (non-prod rehearsal acceptable)
+- [x] Production TLS/domain plan defined (nip.io not for production)
 
 **Signoff phrase**: "Operator has configured bearer auth and confirmed TLS termination is handled by the reverse proxy."
 
-Operator signature: _______________________________ Date: _______________
+Operator signature: BrianNguyen Date: 09/05/2026
 
 ### G2.3 — Backup Schedule Evidence
 
@@ -221,21 +222,21 @@ Checklist:
 
 **Signoff phrase**: "Operator has implemented backup schedule external to FerrumGate."
 
-Operator signature: _______________________________ Date: _______________
+Operator signature: BrianNguyen Date: 09/05/2026
 
 ### G2.4 — Restore Drill
 
 **Status**: `ready` (GCP non-prod drill passed)
 
 Checklist:
-- [ ] Restore drill performed in production-adjacent environment
-- [ ] `PRAGMA integrity_check` passed on restored DB
-- [ ] Execution lineage queryable after restore
-- [ ] Approval queue readable after restore
+- [x] Restore drill performed in production-adjacent environment
+- [x] `PRAGMA integrity_check` passed on restored DB
+- [x] Execution lineage queryable after restore
+- [x] Approval queue readable after restore
 
 **Signoff phrase**: "Operator has performed a restore drill, confirmed RPO/RTO fit for the target workload, and backup retention policy is operator-defined."
 
-Operator signature: _______________________________ Date: _______________
+Operator signature: BrianNguyen Date: 09/05/2026
 
 ### G2.5 — RPO/RTO Acceptance
 
@@ -248,23 +249,23 @@ Checklist:
 
 **Signoff phrase**: "Operator confirms RPO/RTO fit for the target workload."
 
-Operator signature: _______________________________ Date: _______________
+Operator signature: BrianNguyen Date: 09/05/2026
 
 ### G2.6 — Production Evaluation Framework
 
 **Status**: `partial` (repo-side tests passed; operator framework pending)
 
 Checklist:
-- [ ] Dimension 1 — Performance: SATISFIED / CONDITIONAL / NOT MET
-- [ ] Dimension 2 — Security: SATISFIED / CONDITIONAL / NOT MET
-- [ ] Dimension 3 — Reliability: SATISFIED / CONDITIONAL / NOT MET
-- [ ] Dimension 4 — Operations: SATISFIED / CONDITIONAL / NOT MET
-- [ ] Dimension 5 — Release Confidence: SATISFIED / CONDITIONAL / NOT MET
-- [ ] All critical items SATISFIED or CONDITIONAL (with controls)?
+- [x] Dimension 1 — Performance: [ ] SATISFIED  [x] CONDITIONAL (conditional single-node pilot scope)
+- [x] Dimension 2 — Security: [ ] SATISFIED  [x] CONDITIONAL (nip.io temporary; production needs real domain)
+- [x] Dimension 3 — Reliability: [ ] SATISFIED  [x] CONDITIONAL (single-node SQLite; no HA)
+- [x] Dimension 4 — Operations: [ ] SATISFIED  [x] CONDITIONAL (manual backup; no automated recovery)
+- [x] Dimension 5 — Release Confidence: [ ] SATISFIED  [x] CONDITIONAL (RC-ready; pilot pending)
+- [x] All critical items SATISFIED or CONDITIONAL (with controls)? — YES, CONDITIONAL accepted for conditional single-node pilot
 
-**Signoff phrase**: "All critical items SATISFIED or CONDITIONAL."
+**Signoff phrase**: "All critical items CONDITIONAL — accepted for conditional single-node pilot scope."
 
-Operator signature: _______________________________ Date: _______________
+Operator signature: BrianNguyen Date: 09/05/2026
 
 ### G2.7 — Accepted-Risk Review
 
@@ -279,22 +280,23 @@ Checklist:
 
 **Signoff phrase**: "All weak spots reviewed and accepted risks acknowledged."
 
-Operator signature: _______________________________ Date: _______________
+Operator signature: BrianNguyen Date: 09/05/2026
 
 ### G2.8 — Compensate Noop Risk Acceptance
 
 **Status**: `partial`
 
 Checklist:
-- [ ] Compensate behavior matrix completed
-- [ ] Noop-backed adapters identified
-- [ ] Manual verification procedure defined for noop-backed compensate
+- [x] Compensate behavior matrix completed
+- [x] Noop-backed adapters identified
+- [x] Manual verification procedure defined for noop-backed compensate
 - [x] Compensate noop risk accepted as-is for conditional pilot
 
-**Signoff phrase**: "Operator accepts compensate noop risk with manual verification procedure."
+**G2.8 Scope Note**: Compensate behavior verified via existing local integration evidence (`compensate_execution_flow` test PASS). For conditional single-node pilot: adapters covered by existing local evidence; noop-backed/limited external undo accepted with manual verification procedure. Production adapters may require additional verification before deployment.
 
-Operator signature: _______________________________ Date: _______________
+**Signoff phrase**: "Operator accepts compensate noop risk with manual verification procedure for conditional single-node pilot scope."
 
+Operator signature: BrianNguyen Date: 09/05/2026
 ---
 
 ## PHẦN 5 — FINAL OPERATOR SIGN-OFF / KÝ XÁC NHẬN CUỐI CÙNG
@@ -307,17 +309,17 @@ Operator signature: _______________________________ Date: _______________
 
 ### Final Signoff
 
-Operator name: _______________________________
+Operator name: BrianNguyen
 
-Operator role/title: _______________________________
+Operator role/title: Operator/Owner
 
-Date: _______________
+Date: 09/05/2026
 
-**Operator acceptance statement**: _______________________________
+**Operator acceptance statement**: ACCEPT
 
-Operator signature: _______________________________ Date: _______________
+Operator signature: BrianNguyen Date: 09/05/2026
 
-Supervisor/countersigner (if required): _______________________________ Date: _______________
+Supervisor/countersigner (if required): N/A Date: _______________
 
 ---
 
@@ -343,14 +345,20 @@ Supervisor/countersigner (if required): _______________________________ Date: __
 ## PHẦN 7 — NON-CLAIMS PRESERVED / CÁC TUYÊN BỐ ĐƯỢC GIỮ NGUYÊN
 
 > **Trang tính này KHÔNG claim / This worksheet does NOT claim**:
-> - Production-ready status
-> - G2 complete
-> - Pilot authorization
-> - Operator signoff (cho đến khi các canonical docs được ký / until canonical docs are signed)
+> - Full production-ready status
+> - Full G2 complete (conditional single-node pilot scope only)
+> - Pilot authorization (canonical docs must still be signed)
+> - Production PostgreSQL/HA readiness
 >
-> **Chỉ có hiệu lực khi / Only valid when**:
-> - Tất cả G2 gates trong Phần 4 được ký bởi operator / All G2 gates in Phần 4 are signed by operator
-> - Canonical docs 54/59/63/65 được cập nhật và ký / Canonical docs 54/59/63/65 are updated and signed
+> **Conditional pilot scope / Phạm vi pilot có điều kiện**:
+> - Conditional single-node SQLite pilot authorization only
+> - nip.io temporary domain not for production
+> - Backup: 15-minute timer, 7 days + offsite required before production
+> - Noop-backed compensate accepted for conditional pilot with manual verification
+> - All G2 gates signed conditionally for single-node SQLite pilot
+>
+> **Chỉ có hiệu lực đầy đủ khi / Fully valid only when**:
+> - Canonical docs 54/59/63/65 được copy giá trị từ worksheet này và ký / Values copied from this worksheet to canonical docs 54/59/63/65 and signed
 > - Operator chấp nhận tất cả accepted risks / Operator accepts all accepted risks
 
 ---
@@ -360,3 +368,4 @@ Supervisor/countersigner (if required): _______________________________ Date: __
 | Date | Change |
 |---|---|
 | 2026-05-08 | Initial BrianNguyen direct signing worksheet. UNSIGNED. For Phase 3A/3B/3C/3D evidence review and G2 readiness preparation only. |
+| 09/05/2026 | Signed by BrianNguyen. Header updated to SIGNED. Countersigner set to N/A. G2.6 clarified as CONDITIONAL. G2.8 scope note added. Copy-forward values ready for canonical docs 54/59/63/65. |

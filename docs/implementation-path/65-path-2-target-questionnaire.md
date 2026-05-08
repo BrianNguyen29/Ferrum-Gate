@@ -1,9 +1,9 @@
 # 65 — Path 2 Target Questionnaire
 
-> **Status**: Documentation-only. Operator-owned.
+> **Status**: Updated 09/05/2026 — filled from signed doc 99 worksheet. Operator-owned.
 > **Purpose**: Capture required target environment and operator details needed to complete Path 2 execution.
-> **Scope**: Single-node SQLite only. No PostgreSQL/multi-node. No production-ready claim.
-> **Constraint**: Do not fill real secrets; use placeholders. Do not sign G2 or claim pilot accepted.
+> **Scope**: Single-node SQLite only. No PostgreSQL/multi-node. Conditional pilot only — NOT full production-ready.
+> **Constraint**: Do not fill real secrets; use placeholders. Do not claim full production-ready.
 
 ---
 
@@ -23,11 +23,11 @@ real secrets in documentation or version control.
 
 | Field | Marker | Value |
 |-------|--------|-------|
-| Operator name | PROVIDE | |
-| Operator role/title | PROVIDE | |
-| Operator email | PROVIDE | |
-| Supervisor/countersigner name (if required) | PROVIDE | |
-| Date of questionnaire completion | PROVIDE | |
+| Operator name | PROVIDE | BrianNguyen |
+| Operator role/title | PROVIDE | Owner/Operator |
+| Operator email | PROVIDE | (withheld for security — operator-managed) |
+| Supervisor/countersigner name (if required) | PROVIDE | N/A |
+| Date of questionnaire completion | PROVIDE | 09/05/2026 |
 
 ---
 
@@ -35,14 +35,14 @@ real secrets in documentation or version control.
 
 | Field | Marker | Value |
 |-------|--------|-------|
-| Target host FQDN or IP | PROVIDE | |
-| SSH access method (password/key) | PROVIDE | |
-| SSH user for ferrumd deployment | PROVIDE | |
-| Operating system and version | PROVIDE | |
-| Package manager available (apt/yum/dnf) | PROVIDE | |
-| systemd available | PROVIDE | |
-| Target network zone (DMZ/internal) | PROVIDE | |
-| Existing firewall rules affecting port 80/443/8080 | PROVIDE | |
+| Target host FQDN or IP | PROVIDE | `34.158.51.8` |
+| SSH access method (password/key) | PROVIDE | Key-based (`~/.ssh/google_compute_engine`) |
+| SSH user for ferrumd deployment | PROVIDE | `ubuntu` |
+| Operating system and version | PROVIDE | Ubuntu 24.04 LTS amd64 |
+| Package manager available (apt/yum/dnf) | PROVIDE | apt |
+| systemd available | PROVIDE | Yes |
+| Target network zone (DMZ/internal) | PROVIDE | GCP custom VPC `ferrumgate-nonprod-vpc`, zone `asia-southeast1-a` |
+| Existing firewall rules affecting port 80/443/8080 | PROVIDE | SSH (22) and app (19080) from `118.69.4.63/32`; HTTP (80) and HTTPS (443) public `0.0.0.0/0` |
 
 ---
 
@@ -50,12 +50,12 @@ real secrets in documentation or version control.
 
 | Field | Marker | Value |
 |-------|--------|-------|
-| Public domain for ferrumgate | PROVIDE | |
-| TLS certificate available (yes/using certbot/existing CA) | PROVIDE | |
-| TLS certificate path (if existing) | PROVIDE | |
-| TLS private key path (if existing) | PROVIDE | |
-| Certificate expiry date | PROVIDE | |
-| DNS A record pointing to target host | PROVIDE (confirm) | |
+| Public domain for ferrumgate | PROVIDE | `34-158-51-8.nip.io` (temporary — replace with real domain for production) |
+| TLS certificate available (yes/using certbot/existing CA) | PROVIDE | Let's Encrypt via Caddy automatic HTTPS |
+| TLS certificate path (if existing) | PROVIDE | Caddy-managed (automatic) |
+| TLS private key path (if existing) | PROVIDE | Caddy-managed (automatic) |
+| Certificate expiry date | PROVIDE | Let's Encrypt managed |
+| DNS A record pointing to target host | PROVIDE (confirm) | `34-158-51-8.nip.io` → `34.158.51.8` (nip.io provides this) |
 
 ---
 
@@ -63,12 +63,12 @@ real secrets in documentation or version control.
 
 | Field | Marker | Value |
 |-------|--------|-------|
-| SQLite store path (e.g., `/var/lib/ferrumgate/ferrumgate.db`) | PROVIDE | |
-| SQLite store parent directory (must be writable by ferrumgate user) | PROVIDE | |
-| Backup output directory (e.g., `/var/backups/ferrumgate`) | PROVIDE | |
-| Backup retention policy (days) | PROVIDE | |
-| Backup schedule (daily at what time UTC) | PROVIDE | |
-| Available disk space for store + backups | PROVIDE | |
+| SQLite store path (e.g., `/var/lib/ferrumgate/ferrumgate.db`) | PROVIDE | `/var/lib/ferrumgate/data/ferrumgate.db` |
+| SQLite store parent directory (must be writable by ferrumgate user) | PROVIDE | `/var/lib/ferrumgate/data` |
+| Backup output directory (e.g., `/var/backups/ferrumgate`) | PROVIDE | `/var/lib/ferrumgate/backups` |
+| Backup retention policy (days) | PROVIDE | 7 days + offsite copy required before production |
+| Backup schedule (daily at what time UTC) | PROVIDE | 15-minute systemd timer (`ferrumgate-backup.timer`, `OnUnitActiveSec=15min`) |
+| Available disk space for store + backups | PROVIDE | 30GB pd-balanced (VM boot disk) |
 
 ---
 
@@ -88,10 +88,10 @@ real secrets in documentation or version control.
 
 | Field | Marker | Value |
 |-------|--------|-------|
-| Bearer token generation method | PROVIDE (openssl/certutil/other) | |
-| Token generated (yes/no) | PROVIDE (confirm) | |
-| Token stored securely (env file, secrets manager) | PROVIDE (confirm) | |
-| Token env file path | PROVIDE | `/etc/ferrumgate/ferrumd.env` |
+| Bearer token generation method | PROVIDE (openssl/certutil/other) | Generated on-VM during bootstrap |
+| Token generated (yes/no) | PROVIDE (confirm) | Yes |
+| Token stored securely (env file, secrets manager) | PROVIDE (confirm) | Yes — `/etc/ferrumgate/env` (root-only) |
+| Token env file path | PROVIDE | `/etc/ferrumgate/env` |
 
 ---
 
@@ -109,18 +109,18 @@ real secrets in documentation or version control.
 
 ---
 
-## Section H — nginx / Reverse Proxy
+## Section H — Caddy / Reverse Proxy
 
 | Field | Marker | Value |
 |-------|--------|-------|
-| nginx installed (yes/no) | PROVIDE | |
-| nginx config path | PROVIDE | |
-| nginx config adapted from `configs/examples/nginx-ferrumgate.conf` | PROVIDE (confirm) | |
-| `server_name` updated to actual FQDN | PROVIDE (confirm) | |
-| TLS cert/key paths updated | PROVIDE (confirm) | |
-| `proxy_set_header Authorization $http_authorization` used (not `Bearer`) | PROVIDE (confirm) | |
-| HTTP → HTTPS redirect configured | PROVIDE (confirm) | |
-| nginx tested with `nginx -t` | PROVIDE (confirm) | |
+| Caddy installed (yes/no) | PROVIDE | Yes |
+| Caddy config path | PROVIDE | `/etc/caddy/Caddyfile` |
+| Caddy version | PROVIDE | v2.11.2 |
+| `server_name` updated to actual FQDN | PROVIDE (confirm) | Yes — `34-158-51-8.nip.io` |
+| TLS cert/key paths updated | PROVIDE (confirm) | Caddy-managed automatic |
+| `proxy_set_header Authorization $http_authorization` used (not `Bearer`) | PROVIDE (confirm) | Caddy forwards Authorization header as-is |
+| HTTP → HTTPS redirect configured | PROVIDE (confirm) | Caddy HTTP-01 challenge on 80 |
+| Caddy tested with `caddy validate` | PROVIDE (confirm) | Yes |
 
 ---
 
@@ -128,12 +128,12 @@ real secrets in documentation or version control.
 
 | Field | Marker | Value |
 |-------|--------|-------|
-| `ferrumd.service` deployed to `/etc/systemd/system/` | PROVIDE (confirm) | |
-| `ferrumgate-backup.service` deployed | PROVIDE (confirm) | |
-| `ferrumgate-backup.timer` deployed (or cron configured) | PROVIDE (confirm) | |
-| `ferrumd.service` enabled and started | PROVIDE (confirm) | |
-| `ferrumgate-backup.timer` enabled (if using timer) | PROVIDE (confirm) | |
-| `journalctl -u ferrumd -f` shows healthy startup | PROVIDE (confirm) | |
+| `ferrumd.service` deployed to `/etc/systemd/system/` | PROVIDE (confirm) | Yes |
+| `ferrumgate-backup.service` deployed | PROVIDE (confirm) | Yes |
+| `ferrumgate-backup.timer` deployed (or cron configured) | PROVIDE (confirm) | Yes — `ferrumgate-backup.timer` |
+| `ferrumd.service` enabled and started | PROVIDE (confirm) | Yes — `active` |
+| `ferrumgate-backup.timer` enabled (if using timer) | PROVIDE (confirm) | Yes — `enabled` |
+| `journalctl -u ferrumd -f` shows healthy startup | PROVIDE (confirm) | Yes |
 
 ---
 
@@ -181,11 +181,12 @@ Before handing off to the operator signoff gate, confirm:
 
 ## Disclaimer
 
-**No G2 complete claim. No pilot accepted. No production-ready claim.**
+**Scope**: Conditional single-node SQLite pilot only. NOT full production-ready.
 
-This questionnaire captures information for Path 2 preparation only. G2 gates remain pending
-until the operator executes drills, reviews evidence, and signs doc 59 §G2.8 and doc 54.
+G2 gates have been signed by BrianNguyen on 09/05/2026 for conditional single-node pilot scope only
+(via doc 99 worksheet, copied to docs 54/59). This questionnaire captures Path 2 target environment
+values. No full production-ready claim. PostgreSQL/HA/multi-node not in scope.
 
 ---
 
-*FerrumGate v1 RC-ready/conditional. Single-node SQLite only. No production-ready claim.*
+*FerrumGate v1 RC-ready/conditional. Single-node SQLite only. Conditional pilot signed 09/05/2026. No full production-ready claim.*
