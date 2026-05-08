@@ -735,6 +735,44 @@ impl FerrumGatewayClient {
             GatewayError::server_error(200, &format!("Failed to parse compensate response: {}", e))
         })
     }
+
+    // -------------------------------------------------------------------------
+    // D1.9 Approval resolve endpoint
+    // -------------------------------------------------------------------------
+
+    /// Resolve approval: POST /v1/approvals/{approval_id}/resolve
+    ///
+    /// Takes an approval_id in the URL path and an ApprovalResolveRequest in the request body.
+    /// The gateway resolves the pending approval by granting or denying it.
+    ///
+    /// # Arguments
+    ///
+    /// * `approval_id` - The approval ID to resolve
+    /// * `request` - The approval resolve request with actor and approve flag
+    ///
+    /// # Returns
+    ///
+    /// `Result<ferrum_proto::ApprovalRequest, GatewayError>` containing the updated approval
+    pub fn resolve_approval(
+        &self,
+        approval_id: &ferrum_proto::ApprovalId,
+        request: &ferrum_proto::ApprovalResolveRequest,
+    ) -> Result<ferrum_proto::ApprovalRequest, GatewayError> {
+        let path = format!("/v1/approvals/{}/resolve", approval_id);
+        let request = self
+            .build_request(reqwest::Method::POST, &path)
+            .json(request)
+            .build()
+            .map_err(|_e| GatewayError::unreachable("Failed to build request"))?;
+
+        let response: serde_json::Value = self.execute(request)?;
+
+        // Parse the response into real ferrum-proto type
+        // Real response is ApprovalRequest
+        serde_json::from_value(response).map_err(|e| {
+            GatewayError::server_error(200, &format!("Failed to parse resolve response: {}", e))
+        })
+    }
 }
 
 // ---------------------------------------------------------------------------

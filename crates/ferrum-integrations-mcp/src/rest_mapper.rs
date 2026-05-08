@@ -28,8 +28,13 @@
 //! | `ferrum_gate_execute_prepared` | POST /v1/executions/{id}/execute | D1.7 wired |
 //! | `ferrum_gate_verify` | POST /v1/executions/{id}/verify | D1.7 wired |
 //! | `ferrum_gate_compensate` | POST /v1/executions/{id}/compensate | D1.7 wired |
-//! | `ferrum_gate_approve_intent` | — | BLOCKED (no backend endpoint) |
-//! | `ferrum_gate_reject_intent` | — | BLOCKED (no backend endpoint) |
+//!
+//! ## D1.9 Approval Tools
+//!
+//! | MCP Tool | REST Endpoint | Notes |
+//! |----------|---------------|-------|
+//! | `ferrum_gate_approve_intent` | POST /v1/approvals/{id}/resolve | D1.9 wired |
+//! | `ferrum_gate_reject_intent` | POST /v1/approvals/{id}/resolve | D1.9 wired |
 
 use crate::BLOCKED_TOOLS;
 use crate::ToolsCallResult;
@@ -172,6 +177,10 @@ pub fn map_tool_to_rest(
         "ferrum_gate_execute_prepared" => call_execute_prepared(client, args),
         "ferrum_gate_verify" => call_verify(client, args),
         "ferrum_gate_compensate" => call_compensate(client, args),
+
+        // D1.9 Approval tools (wired to gateway REST API)
+        "ferrum_gate_approve_intent" => call_approve_intent(client, args),
+        "ferrum_gate_reject_intent" => call_reject_intent(client, args),
 
         // Permanently blocked tools (no backend endpoint)
         _ if BLOCKED_TOOLS.contains(&tool_name) => Err(McpToolError::blocked(tool_name)),
@@ -741,6 +750,108 @@ fn call_compensate(
     let execution_id_proto = parse_uuid_into_id(execution_id, ferrum_proto::ExecutionId)?;
 
     match client.compensate_execution(&execution_id_proto) {
+        Ok(result) => Ok(ToolsCallResult {
+            content: vec![crate::ToolContent {
+                r#type: "text".to_string(),
+                text: Some(
+                    serde_json::to_string_pretty(&result)
+                        .unwrap_or_else(|_e| format!("{:?}", result)),
+                ),
+            }],
+            is_error: false,
+        }),
+        Err(e) => Err(McpToolError::from_gateway_error(&e)),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// D1.9 Approval Tool Call Functions
+// ---------------------------------------------------------------------------
+
+fn call_approve_intent(
+    client: &FerrumGatewayClient,
+    args: &serde_json::Value,
+) -> Result<ToolsCallResult, McpToolError> {
+    let approval_id = args
+        .get("approval_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| McpToolError::missing_arg("approval_id"))?;
+
+    let actor_id = args
+        .get("actor_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("mcp-agent");
+    let actor_label = args
+        .get("actor_label")
+        .and_then(|v| v.as_str())
+        .unwrap_or("MCP Agent");
+    let reason = args
+        .get("reason")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
+    let approval_id_proto = parse_uuid_into_id(approval_id, ferrum_proto::ApprovalId)?;
+
+    let request = ferrum_proto::ApprovalResolveRequest {
+        actor: ferrum_proto::ActorRef {
+            actor_type: ferrum_proto::ActorType::Agent,
+            actor_id: actor_id.to_string(),
+            display_name: Some(actor_label.to_string()),
+        },
+        approve: true,
+        reason,
+    };
+
+    match client.resolve_approval(&approval_id_proto, &request) {
+        Ok(result) => Ok(ToolsCallResult {
+            content: vec![crate::ToolContent {
+                r#type: "text".to_string(),
+                text: Some(
+                    serde_json::to_string_pretty(&result)
+                        .unwrap_or_else(|_e| format!("{:?}", result)),
+                ),
+            }],
+            is_error: false,
+        }),
+        Err(e) => Err(McpToolError::from_gateway_error(&e)),
+    }
+}
+
+fn call_reject_intent(
+    client: &FerrumGatewayClient,
+    args: &serde_json::Value,
+) -> Result<ToolsCallResult, McpToolError> {
+    let approval_id = args
+        .get("approval_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| McpToolError::missing_arg("approval_id"))?;
+
+    let actor_id = args
+        .get("actor_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("mcp-agent");
+    let actor_label = args
+        .get("actor_label")
+        .and_then(|v| v.as_str())
+        .unwrap_or("MCP Agent");
+    let reason = args
+        .get("reason")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
+    let approval_id_proto = parse_uuid_into_id(approval_id, ferrum_proto::ApprovalId)?;
+
+    let request = ferrum_proto::ApprovalResolveRequest {
+        actor: ferrum_proto::ActorRef {
+            actor_type: ferrum_proto::ActorType::Agent,
+            actor_id: actor_id.to_string(),
+            display_name: Some(actor_label.to_string()),
+        },
+        approve: false,
+        reason,
+    };
+
+    match client.resolve_approval(&approval_id_proto, &request) {
         Ok(result) => Ok(ToolsCallResult {
             content: vec![crate::ToolContent {
                 r#type: "text".to_string(),

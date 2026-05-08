@@ -364,6 +364,46 @@ paths:
       security:
         - BearerAuth: []
 
+  /v1/approvals/{approval_id}/resolve:
+    post:
+      summary: Resolve approval
+      description: |
+        Resolves a pending approval by granting or denying it.
+        Only pending approvals can be resolved; terminal approvals return 409 Conflict.
+        Expired approvals return 403 Forbidden.
+      operationId: resolveApproval
+      parameters:
+        - $ref: '#/components/parameters/ApprovalId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApprovalResolveRequest'
+      responses:
+        '200':
+          description: Updated approval object
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApprovalRequest'
+        '404':
+          $ref: '#/components/responses/ApiError'
+        '409':
+          description: Approval is in terminal state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: Approval has expired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      security:
+        - BearerAuth: []
+
   /v1/provenance/query:
     post:
       summary: Query provenance events

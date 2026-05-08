@@ -1,6 +1,6 @@
 # 90 — MCP Approve/Reject Enablement Plan
 
-> **Status**: Planning only — not implemented.
+> **Status**: Implemented locally — gateway resolve endpoint and MCP approve/reject wiring enabled.
 > **Purpose**: Define the safe path to enable MCP approve/reject after adding gateway backend mutation endpoints.
 > **Scope**: Local implementation plan. No G2, production, or operator signoff claim.
 
@@ -8,7 +8,7 @@
 
 ## Current State
 
-MCP is locally operational for the implemented scope, but approve/reject remains intentionally blocked.
+MCP is locally operational for the implemented scope, and approve/reject has been enabled through the gateway approval resolve endpoint.
 
 Current approval HTTP surface:
 
@@ -16,15 +16,15 @@ Current approval HTTP surface:
 | --- | --- | --- |
 | `/v1/approvals` | GET | implemented |
 | `/v1/approvals/{approval_id}` | GET | implemented |
-| `/v1/approvals/{approval_id}/resolve` | POST | missing |
+| `/v1/approvals/{approval_id}/resolve` | POST | implemented |
 
 Current MCP behavior:
 
 | MCP tool | Status |
 | --- | --- |
 | `ferrum_gate_list_approvals` | implemented read-only |
-| `ferrum_gate_approve_intent` | blocked via `BLOCKED_TOOLS`, returns `-32001` |
-| `ferrum_gate_reject_intent` | blocked via `BLOCKED_TOOLS`, returns `-32001` |
+| `ferrum_gate_approve_intent` | implemented; dispatches to gateway resolve endpoint |
+| `ferrum_gate_reject_intent` | implemented; dispatches to gateway resolve endpoint |
 
 Direct MCP provenance emission remains forbidden. Gateway must own provenance emission.
 
@@ -67,7 +67,7 @@ Existing event kinds are available:
 - `ApprovalGranted`
 - `ApprovalDenied`
 
-These need gateway emission wiring at the correct points.
+Gateway-owned emission is required; MCP must not emit provenance directly.
 
 ---
 

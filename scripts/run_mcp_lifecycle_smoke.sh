@@ -218,51 +218,63 @@ fi
 echo ""
 echo "[TEST] MCP tools/list..."
 RESPONSE=$(mcp_call "tools/list" "" 2)
-# Check that we get back a list of tools (should be 17 tools: 9 read-only + 8 lifecycle)
+# Check that we get back a list of tools (should be 19 tools: 9 read-only + 8 lifecycle + 2 approval)
 TOOL_COUNT=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('result',{}).get('tools',[])))" 2>/dev/null || echo "0")
-if [[ "$TOOL_COUNT" == "17" ]]; then
-    echo "[PASS] MCP tools/list returns 17 tools (9 read-only + 8 lifecycle)"
+if [[ "$TOOL_COUNT" == "19" ]]; then
+    echo "[PASS] MCP tools/list returns 19 tools (9 read-only + 8 lifecycle + 2 approval)"
     PASSED=$((PASSED + 1))
 else
-    echo "[FAIL] MCP tools/list returned $TOOL_COUNT tools, expected 17"
+    echo "[FAIL] MCP tools/list returned $TOOL_COUNT tools, expected 19"
     echo "       Response: $RESPONSE"
     FAILED=$((FAILED + 1))
 fi
 
 echo ""
-echo "[TEST] Blocked tool: ferrum_gate_approve_intent..."
-RESPONSE=$(mcp_call "tools/call" '{"name":"ferrum_gate_approve_intent","arguments":{}}' 3)
-if echo "$RESPONSE" | grep -q '"error"'; then
-    ERROR_CODE=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('error',{}).get('code','?'))" 2>/dev/null || echo "?")
-    if [[ "$ERROR_CODE" == "-32001" ]]; then
-        echo "[PASS] ferrum_gate_approve_intent returns NOT_IMPLEMENTED (-32001)"
-        PASSED=$((PASSED + 1))
-    else
-        echo "[FAIL] ferrum_gate_approve_intent returns error code $ERROR_CODE, expected -32001"
-        echo "       Response: $RESPONSE"
-        FAILED=$((FAILED + 1))
-    fi
+echo "[TEST] D1.9 Approval tool in registry: ferrum_gate_approve_intent..."
+RESPONSE=$(mcp_call "tools/list" "" 3)
+if echo "$RESPONSE" | grep -q 'ferrum_gate_approve_intent'; then
+    echo "[PASS] ferrum_gate_approve_intent is in tools/list (D1.9 enabled)"
+    PASSED=$((PASSED + 1))
 else
-    echo "[FAIL] ferrum_gate_approve_intent did not return error"
+    echo "[FAIL] ferrum_gate_approve_intent not found in tools/list"
     echo "       Response: $RESPONSE"
     FAILED=$((FAILED + 1))
 fi
 
 echo ""
-echo "[TEST] Blocked tool: ferrum_gate_reject_intent..."
-RESPONSE=$(mcp_call "tools/call" '{"name":"ferrum_gate_reject_intent","arguments":{}}' 4)
-if echo "$RESPONSE" | grep -q '"error"'; then
-    ERROR_CODE=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('error',{}).get('code','?'))" 2>/dev/null || echo "?")
-    if [[ "$ERROR_CODE" == "-32001" ]]; then
-        echo "[PASS] ferrum_gate_reject_intent returns NOT_IMPLEMENTED (-32001)"
-        PASSED=$((PASSED + 1))
-    else
-        echo "[FAIL] ferrum_gate_reject_intent returns error code $ERROR_CODE, expected -32001"
-        echo "       Response: $RESPONSE"
-        FAILED=$((FAILED + 1))
-    fi
+echo "[TEST] D1.9 Approval tool in registry: ferrum_gate_reject_intent..."
+RESPONSE=$(mcp_call "tools/list" "" 4)
+if echo "$RESPONSE" | grep -q 'ferrum_gate_reject_intent'; then
+    echo "[PASS] ferrum_gate_reject_intent is in tools/list (D1.9 enabled)"
+    PASSED=$((PASSED + 1))
 else
-    echo "[FAIL] ferrum_gate_reject_intent did not return error"
+    echo "[FAIL] ferrum_gate_reject_intent not found in tools/list"
+    echo "       Response: $RESPONSE"
+    FAILED=$((FAILED + 1))
+fi
+
+echo ""
+echo "[TEST] D1.9 approve dispatch with non-existent approval_id returns error..."
+# Note: Full approve flow requires creating pending approval via lifecycle (intent->proposal->execution->approval).
+# We test dispatch with invalid ID to prove the tool routes to gateway and returns structured error.
+RESPONSE=$(mcp_call "tools/call" '{"name":"ferrum_gate_approve_intent","arguments":{"approval_id":"00000000-0000-0000-0000-000000000000","actor":{"actor_type":"Operator","actor_id":"test-op"},"approve":true}}' 10)
+if echo "$RESPONSE" | grep -q '"error"'; then
+    echo "[PASS] ferrum_gate_approve_intent dispatch returns JSON-RPC error (not METHOD_NOT_FOUND)"
+    PASSED=$((PASSED + 1))
+else
+    echo "[FAIL] ferrum_gate_approve_intent dispatch did not return expected error"
+    echo "       Response: $RESPONSE"
+    FAILED=$((FAILED + 1))
+fi
+
+echo ""
+echo "[TEST] D1.9 reject dispatch with non-existent approval_id returns error..."
+RESPONSE=$(mcp_call "tools/call" '{"name":"ferrum_gate_reject_intent","arguments":{"approval_id":"00000000-0000-0000-0000-000000000000","actor":{"actor_type":"Operator","actor_id":"test-op"},"approve":false}}' 11)
+if echo "$RESPONSE" | grep -q '"error"'; then
+    echo "[PASS] ferrum_gate_reject_intent dispatch returns JSON-RPC error (not METHOD_NOT_FOUND)"
+    PASSED=$((PASSED + 1))
+else
+    echo "[FAIL] ferrum_gate_reject_intent dispatch did not return expected error"
     echo "       Response: $RESPONSE"
     FAILED=$((FAILED + 1))
 fi

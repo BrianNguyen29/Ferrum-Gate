@@ -13,16 +13,17 @@ use ferrum_graph::LineageGraph;
 use ferrum_pdp::StaticPdpEngine;
 use ferrum_proto::{
     ActorRef, ActorType, ApiError, ApiErrorCode, ApprovalBinding, ApprovalId, ApprovalListEnvelope,
-    ApprovalMode, AuthorizeExecutionRequest, AuthorizeExecutionResponse, CapabilityId,
-    CapabilityLease, CapabilityMintRequest, CapabilityMintResponse, CapabilityStatus,
-    ComponentStatus, Decision, DeepHealthResponse, EvaluateOutcomeResponse,
-    EvaluateProposalResponse, EventId, ExecutionDetailResponse, ExecutionId, ExecutionRecord,
-    ExecutionState, HashChainRef, HealthResponse, IntentCompileRequest, IntentCompileResponse,
-    IntentEnvelope, IntentStatus, LineageDirection, LineageQueryRequest, LineageQueryResponse,
-    Matcher, ObjectRef, ObjectType, OutcomeClause, OutcomeReport, PolicyBundle, PolicyRule,
-    ProposalId, ProvenanceEvent, ProvenanceIngestRequest, ProvenanceIngestResponse,
-    ProvenanceQueryRequest, ProvenanceQueryResponse, ResourceSelector, RiskTier, RollbackClass,
-    RollbackTarget, TimeBudget, TrustContextSummary, TrustLabel as ProtoTrustLabel,
+    ApprovalMode, ApprovalResolveRequest, ApprovalState, AuthorizeExecutionRequest,
+    AuthorizeExecutionResponse, CapabilityId, CapabilityLease, CapabilityMintRequest,
+    CapabilityMintResponse, CapabilityStatus, ComponentStatus, Decision, DeepHealthResponse,
+    EvaluateOutcomeResponse, EvaluateProposalResponse, EventId, ExecutionDetailResponse,
+    ExecutionId, ExecutionRecord, ExecutionState, HashChainRef, HealthResponse,
+    IntentCompileRequest, IntentCompileResponse, IntentEnvelope, IntentStatus, LineageDirection,
+    LineageQueryRequest, LineageQueryResponse, Matcher, ObjectRef, ObjectType, OutcomeClause,
+    OutcomeReport, PolicyBundle, PolicyRule, ProposalId, ProvenanceEvent, ProvenanceEventKind,
+    ProvenanceIngestRequest, ProvenanceIngestResponse, ProvenanceQueryRequest,
+    ProvenanceQueryResponse, ResourceSelector, RiskTier, RollbackClass, RollbackTarget, TimeBudget,
+    TrustContextSummary, TrustLabel as ProtoTrustLabel,
 };
 use ferrum_rollback::RollbackService;
 use ferrum_store::StoreFacade;
@@ -80,6 +81,7 @@ struct Metrics {
     governance_errors_v1_executions_execution_id: AtomicU64,
     governance_errors_v1_approvals: AtomicU64,
     governance_errors_v1_approvals_approval_id: AtomicU64,
+    governance_errors_v1_approvals_resolve: AtomicU64,
     governance_errors_v1_policy_bundles_create: AtomicU64,
     governance_errors_v1_policy_bundles_list: AtomicU64,
     governance_errors_v1_policy_bundles_get: AtomicU64,
@@ -107,6 +109,7 @@ struct Metrics {
     governance_success_v1_executions_execution_id: AtomicU64,
     governance_success_v1_approvals: AtomicU64,
     governance_success_v1_approvals_approval_id: AtomicU64,
+    governance_success_v1_approvals_resolve: AtomicU64,
     governance_success_v1_policy_bundles_create: AtomicU64,
     governance_success_v1_policy_bundles_list: AtomicU64,
     governance_success_v1_policy_bundles_get: AtomicU64,
@@ -164,6 +167,7 @@ impl Metrics {
             governance_errors_v1_executions_execution_id: AtomicU64::new(0),
             governance_errors_v1_approvals: AtomicU64::new(0),
             governance_errors_v1_approvals_approval_id: AtomicU64::new(0),
+            governance_errors_v1_approvals_resolve: AtomicU64::new(0),
             governance_errors_v1_policy_bundles_create: AtomicU64::new(0),
             governance_errors_v1_policy_bundles_list: AtomicU64::new(0),
             governance_errors_v1_policy_bundles_get: AtomicU64::new(0),
@@ -190,6 +194,7 @@ impl Metrics {
             governance_success_v1_executions_execution_id: AtomicU64::new(0),
             governance_success_v1_approvals: AtomicU64::new(0),
             governance_success_v1_approvals_approval_id: AtomicU64::new(0),
+            governance_success_v1_approvals_resolve: AtomicU64::new(0),
             governance_success_v1_policy_bundles_create: AtomicU64::new(0),
             governance_success_v1_policy_bundles_list: AtomicU64::new(0),
             governance_success_v1_policy_bundles_get: AtomicU64::new(0),
@@ -267,6 +272,9 @@ impl Metrics {
                 .fetch_add(1, Ordering::Relaxed),
             GovernanceRoute::ApprovalsApprovalId => self
                 .governance_errors_v1_approvals_approval_id
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::ApprovalsResolve => self
+                .governance_errors_v1_approvals_resolve
                 .fetch_add(1, Ordering::Relaxed),
             GovernanceRoute::PolicyBundlesCreate => self
                 .governance_errors_v1_policy_bundles_create
@@ -351,6 +359,9 @@ impl Metrics {
                 .fetch_add(1, Ordering::Relaxed),
             GovernanceRoute::ApprovalsApprovalId => self
                 .governance_success_v1_approvals_approval_id
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::ApprovalsResolve => self
+                .governance_success_v1_approvals_resolve
                 .fetch_add(1, Ordering::Relaxed),
             GovernanceRoute::PolicyBundlesCreate => self
                 .governance_success_v1_policy_bundles_create
@@ -464,6 +475,7 @@ enum GovernanceRoute {
     ExecutionsExecutionId,
     Approvals,
     ApprovalsApprovalId,
+    ApprovalsResolve,
     PolicyBundlesCreate,
     PolicyBundlesList,
     PolicyBundlesGet,
@@ -498,6 +510,7 @@ impl GovernanceRoute {
             GovernanceRoute::ExecutionsExecutionId => "/v1/executions/{execution_id}",
             GovernanceRoute::Approvals => "/v1/approvals",
             GovernanceRoute::ApprovalsApprovalId => "/v1/approvals/{approval_id}",
+            GovernanceRoute::ApprovalsResolve => "/v1/approvals/{approval_id}/resolve",
             GovernanceRoute::PolicyBundlesCreate => "/v1/policy-bundles",
             GovernanceRoute::PolicyBundlesList => "/v1/policy-bundles",
             GovernanceRoute::PolicyBundlesGet => "/v1/policy-bundles/{bundle_id}",
@@ -533,6 +546,7 @@ impl GovernanceRoute {
             GovernanceRoute::ExecutionsExecutionId => "GET",
             GovernanceRoute::Approvals => "GET",
             GovernanceRoute::ApprovalsApprovalId => "GET",
+            GovernanceRoute::ApprovalsResolve => "POST",
             GovernanceRoute::PolicyBundlesCreate => "POST",
             GovernanceRoute::PolicyBundlesList => "GET",
             GovernanceRoute::PolicyBundlesGet => "GET",
@@ -714,6 +728,10 @@ fn build_router_core(runtime: GatewayRuntime, server_config: Option<ServerConfig
         // Approvals endpoints
         .route("/v1/approvals", get(list_approvals))
         .route("/v1/approvals/{approval_id}", get(get_approval))
+        .route(
+            "/v1/approvals/{approval_id}/resolve",
+            post(resolve_approval),
+        )
         // Policy/evaluation endpoints
         .route("/v1/intents/compile", post(compile_intent))
         .route("/v1/intents", get(list_intents))
@@ -1030,6 +1048,10 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
         .metrics
         .governance_errors_v1_approvals_approval_id
         .load(Ordering::Relaxed);
+    let gov_err_approvals_resolve = state
+        .metrics
+        .governance_errors_v1_approvals_resolve
+        .load(Ordering::Relaxed);
     let gov_err_policy_bundles_create = state
         .metrics
         .governance_errors_v1_policy_bundles_create
@@ -1135,6 +1157,10 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
     let gov_ok_approvals_approval_id = state
         .metrics
         .governance_success_v1_approvals_approval_id
+        .load(Ordering::Relaxed);
+    let gov_ok_approvals_resolve = state
+        .metrics
+        .governance_success_v1_approvals_resolve
         .load(Ordering::Relaxed);
     let gov_ok_policy_bundles_create = state
         .metrics
@@ -1348,6 +1374,8 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
          ferrumgate_governance_errors_total{{route=\"/v1/executions/{{execution_id}}\",method=\"GET\"}} {}\n\
          ferrumgate_governance_errors_total{{route=\"/v1/approvals\",method=\"GET\"}} {}\n\
          ferrumgate_governance_errors_total{{route=\"/v1/approvals/{{approval_id}}\",method=\"GET\"}} {}\n\
+         ferrumgate_governance_errors_total{{route=\"/v1/approvals/{{approval_id}}/resolve\",method=\"POST\"}} {}\n\
+\
          ferrumgate_governance_errors_total{{route=\"/v1/policy-bundles\",method=\"POST\"}} {}\n\
          ferrumgate_governance_errors_total{{route=\"/v1/policy-bundles\",method=\"GET\"}} {}\n\
          ferrumgate_governance_errors_total{{route=\"/v1/policy-bundles/{{bundle_id}}\",method=\"GET\"}} {}\n\
@@ -1376,6 +1404,7 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
          ferrumgate_governance_success_total{{route=\"/v1/executions/{{execution_id}}\",method=\"GET\"}} {}\n\
          ferrumgate_governance_success_total{{route=\"/v1/approvals\",method=\"GET\"}} {}\n\
          ferrumgate_governance_success_total{{route=\"/v1/approvals/{{approval_id}}\",method=\"GET\"}} {}\n\
+         ferrumgate_governance_success_total{{route=\"/v1/approvals/{{approval_id}}/resolve\",method=\"POST\"}} {}\n\
          ferrumgate_governance_success_total{{route=\"/v1/policy-bundles\",method=\"POST\"}} {}\n\
          ferrumgate_governance_success_total{{route=\"/v1/policy-bundles\",method=\"GET\"}} {}\n\
          ferrumgate_governance_success_total{{route=\"/v1/policy-bundles/{{bundle_id}}\",method=\"GET\"}} {}\n\
@@ -1410,6 +1439,7 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
         gov_err_executions_execution_id,
         gov_err_approvals,
         gov_err_approvals_approval_id,
+        gov_err_approvals_resolve,
         gov_err_policy_bundles_create,
         gov_err_policy_bundles_list,
         gov_err_policy_bundles_get,
@@ -1436,6 +1466,7 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
         gov_ok_executions_execution_id,
         gov_ok_approvals,
         gov_ok_approvals_approval_id,
+        gov_ok_approvals_resolve,
         gov_ok_policy_bundles_create,
         gov_ok_policy_bundles_list,
         gov_ok_policy_bundles_get,
@@ -4204,6 +4235,188 @@ async fn get_approval(
         state,
         GovernanceRoute::ApprovalsApprovalId,
         Ok(Json(approval))
+    )
+}
+
+async fn resolve_approval(
+    State(state): State<Arc<AppState>>,
+    Path(approval_id): Path<String>,
+    Json(request): Json<ApprovalResolveRequest>,
+) -> Result<Json<ferrum_proto::ApprovalRequest>, ApiProblem> {
+    let approval_id = parse_approval_id(&approval_id).map_err(|e| {
+        state
+            .metrics
+            .record_governance_error(GovernanceRoute::ApprovalsResolve, e)
+    })?;
+
+    // Fetch the approval from the store
+    let approval = state
+        .runtime
+        .store
+        .approvals()
+        .get(approval_id)
+        .await
+        .map_err(|e| {
+            state.metrics.record_governance_error(
+                GovernanceRoute::ApprovalsResolve,
+                ApiProblem::internal(anyhow::Error::from(e)),
+            )
+        })?
+        .ok_or_else(|| {
+            state.metrics.record_governance_error(
+                GovernanceRoute::ApprovalsResolve,
+                ApiProblem::new(
+                    StatusCode::NOT_FOUND,
+                    ApiErrorCode::NotFound,
+                    "approval not found",
+                ),
+            )
+        })?;
+
+    // Check if approval is already terminal
+    if !matches!(approval.state, ApprovalState::Pending) {
+        return governance_err!(
+            state,
+            GovernanceRoute::ApprovalsResolve,
+            ApiProblem::new(
+                StatusCode::CONFLICT,
+                ApiErrorCode::Conflict,
+                format!(
+                    "approval is in terminal state {:?}, cannot resolve",
+                    approval.state
+                ),
+            )
+        );
+    }
+
+    // Check if approval has expired
+    if approval.expires_at < Utc::now() {
+        return governance_err!(
+            state,
+            GovernanceRoute::ApprovalsResolve,
+            ApiProblem::new(
+                StatusCode::FORBIDDEN,
+                ApiErrorCode::PolicyDenied,
+                "approval has expired, cannot resolve"
+            )
+        );
+    }
+
+    // Map approve to target state
+    let target_state = if request.approve {
+        ApprovalState::Granted
+    } else {
+        ApprovalState::Denied
+    };
+
+    // Call store to resolve the approval (validates transition)
+    state
+        .runtime
+        .store
+        .approvals()
+        .resolve(approval_id, target_state.clone())
+        .await
+        .map_err(|e| {
+            state.metrics.record_governance_error(
+                GovernanceRoute::ApprovalsResolve,
+                ApiProblem::internal(anyhow::Error::from(e)),
+            )
+        })?;
+
+    // Fetch the updated approval
+    let updated_approval = state
+        .runtime
+        .store
+        .approvals()
+        .get(approval_id)
+        .await
+        .map_err(|e| {
+            state.metrics.record_governance_error(
+                GovernanceRoute::ApprovalsResolve,
+                ApiProblem::internal(anyhow::Error::from(e)),
+            )
+        })?
+        .ok_or_else(|| {
+            state.metrics.record_governance_error(
+                GovernanceRoute::ApprovalsResolve,
+                ApiProblem::new(
+                    StatusCode::NOT_FOUND,
+                    ApiErrorCode::NotFound,
+                    "approval not found after resolve",
+                ),
+            )
+        })?;
+
+    // Emit gateway-owned provenance event
+    let event_kind = if request.approve {
+        ProvenanceEventKind::ApprovalGranted
+    } else {
+        ProvenanceEventKind::ApprovalDenied
+    };
+    let event_kind_for_summary = event_kind.clone();
+
+    let mut metadata = ferrum_proto::JsonMap::new();
+    metadata.insert(
+        "actor_id".to_string(),
+        serde_json::json!(request.actor.actor_id),
+    );
+    if let Some(reason) = &request.reason {
+        metadata.insert("reason".to_string(), serde_json::json!(reason));
+    }
+
+    let provenance_event = ProvenanceEvent {
+        event_id: EventId::new(),
+        kind: event_kind,
+        occurred_at: Utc::now(),
+        actor: ActorRef {
+            actor_type: ActorType::Gateway,
+            actor_id: "ferrum-gateway".to_string(),
+            display_name: Some("FerrumGate Gateway".to_string()),
+        },
+        object: ObjectRef {
+            object_type: ObjectType::Approval,
+            object_id: approval_id.to_string(),
+            summary: Some(format!(
+                "Approval {:?} for proposal",
+                event_kind_for_summary
+            )),
+        },
+        intent_id: Some(approval.intent_id),
+        proposal_id: Some(approval.proposal_id),
+        execution_id: approval.execution_id,
+        capability_id: None,
+        rollback_contract_id: None,
+        policy_bundle_id: None,
+        trust_labels: Vec::new(),
+        sensitivity_labels: Vec::new(),
+        parent_edges: Vec::new(),
+        hash_chain: HashChainRef {
+            content_hash: None,
+            manifest_hash: None,
+            policy_bundle_hash: None,
+            previous_ledger_hash: None,
+        },
+        metadata,
+        source_runtime_id: None,
+    };
+
+    state
+        .runtime
+        .store
+        .provenance()
+        .append_event(&provenance_event)
+        .await
+        .map_err(|e| {
+            state.metrics.record_governance_error(
+                GovernanceRoute::ApprovalsResolve,
+                ApiProblem::internal(anyhow::Error::from(e)),
+            )
+        })?;
+
+    governance_ok!(
+        state,
+        GovernanceRoute::ApprovalsResolve,
+        Ok(Json(updated_approval))
     )
 }
 
@@ -7494,6 +7707,7 @@ mod tests {
                 GovernanceRoute::ExecutionsExecutionId,
                 GovernanceRoute::Approvals,
                 GovernanceRoute::ApprovalsApprovalId,
+                GovernanceRoute::ApprovalsResolve,
                 GovernanceRoute::PolicyBundlesCreate,
                 GovernanceRoute::PolicyBundlesList,
                 GovernanceRoute::PolicyBundlesGet,
@@ -7526,6 +7740,7 @@ mod tests {
                 GovernanceRoute::ExecutionsExecutionId => (),
                 GovernanceRoute::Approvals => (),
                 GovernanceRoute::ApprovalsApprovalId => (),
+                GovernanceRoute::ApprovalsResolve => (),
                 GovernanceRoute::PolicyBundlesCreate => (),
                 GovernanceRoute::PolicyBundlesList => (),
                 GovernanceRoute::PolicyBundlesGet => (),
@@ -7542,6 +7757,42 @@ mod tests {
             ROUTES
         }};
     }
+
+    #[tokio::test]
+    async fn test_resolve_approval_not_found() {
+        let runtime = test_runtime().await;
+        let router = build_router(runtime.clone());
+
+        // Use a valid UUID format that doesn't exist in the DB
+        let resolve_request = ferrum_proto::ApprovalResolveRequest {
+            actor: ferrum_proto::ActorRef {
+                actor_type: ferrum_proto::ActorType::Operator,
+                actor_id: "test-operator".to_string(),
+                display_name: Some("Test Operator".to_string()),
+            },
+            approve: true,
+            reason: None,
+        };
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/approvals/00000000-0000-0000-0000-000000000000/resolve")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&resolve_request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    // Note: Tests for pending→granted, pending→denied, terminal→409, expired→403, and
+    // provenance event emission require foreign key constraints (approval references intent/proposal).
+    // These scenarios are covered by integration tests in integration_gateway_flow.rs
+    // (test_i6_pending_approval_denied, test_i6_approval_with_valid_binding_succeeds, etc.).
 
     #[tokio::test]
     async fn test_all_governance_routes_have_metrics_representation() {

@@ -11447,3 +11447,643 @@ async fn test_repeat_compensate_on_compensated_contract_returns_409_conflict() {
         error.message
     );
 }
+
+// ---------------------------------------------------------------------------
+// D1.9 Approval Resolve Integration Tests
+// ---------------------------------------------------------------------------
+
+/// Test that resolving a pending approval as granted returns 200 OK.
+#[tokio::test]
+async fn test_resolve_approval_granted_success() {
+    let pdp = Arc::new(StaticPdpEngine);
+    let cap: Arc<dyn CapabilityService> = Arc::new(InMemoryCapabilityService::default());
+
+    let mut registry = AdapterRegistry::default();
+    registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
+    let rollback = Arc::new(RollbackService::new(Arc::new(registry)));
+
+    let store = Arc::new(
+        SqliteStore::connect("sqlite::memory:")
+            .await
+            .expect("connect to sqlite"),
+    );
+    store
+        .apply_embedded_migrations()
+        .await
+        .expect("apply migrations");
+
+    // Setup: intent + proposal + approval (FK constraints)
+    let intent_id = ferrum_proto::IntentId::new();
+    let intent = make_test_intent(intent_id);
+    store
+        .intents()
+        .insert(&intent)
+        .await
+        .expect("intent insert");
+
+    let proposal_id = ferrum_proto::ProposalId::new();
+    let proposal = make_test_proposal(intent_id, proposal_id);
+    store
+        .proposals()
+        .insert(&proposal)
+        .await
+        .expect("proposal insert");
+
+    let approval = make_test_approval(intent_id, proposal_id, chrono::Utc::now());
+    store
+        .approvals()
+        .insert(&approval)
+        .await
+        .expect("approval insert");
+
+    let runtime = GatewayRuntime::new(
+        pdp,
+        cap.clone(),
+        rollback,
+        store.clone() as Arc<dyn StoreFacade>,
+        vec![],
+    );
+    let router = build_router(runtime);
+
+    let resolve_request = ferrum_proto::ApprovalResolveRequest {
+        actor: ferrum_proto::ActorRef {
+            actor_type: ferrum_proto::ActorType::Operator,
+            actor_id: "test-operator".to_string(),
+            display_name: Some("Test Operator".to_string()),
+        },
+        approve: true,
+        reason: Some("looks good".to_string()),
+    };
+
+    let response = router
+        .oneshot(
+            axum::http::Request::builder()
+                .method(axum::http::Method::POST)
+                .uri(format!("/v1/approvals/{}/resolve", approval.approval_id))
+                .header("Content-Type", "application/json")
+                .body(axum::body::Body::from(
+                    serde_json::to_vec(&resolve_request).unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .expect("resolve request should succeed");
+
+    assert_eq!(
+        response.status(),
+        axum::http::StatusCode::OK,
+        "resolve pending approval as granted should return 200 OK, got: {:?}",
+        response.status()
+    );
+
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("read body");
+    let result: ferrum_proto::ApprovalRequest =
+        serde_json::from_slice(&body).expect("valid ApprovalRequest JSON");
+    assert!(
+        matches!(result.state, ferrum_proto::ApprovalState::Granted),
+        "approval state should be Granted, got: {:?}",
+        result.state
+    );
+}
+
+/// Test that resolving a pending approval as denied returns 200 OK.
+#[tokio::test]
+async fn test_resolve_approval_denied_success() {
+    let pdp = Arc::new(StaticPdpEngine);
+    let cap: Arc<dyn CapabilityService> = Arc::new(InMemoryCapabilityService::default());
+
+    let mut registry = AdapterRegistry::default();
+    registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
+    let rollback = Arc::new(RollbackService::new(Arc::new(registry)));
+
+    let store = Arc::new(
+        SqliteStore::connect("sqlite::memory:")
+            .await
+            .expect("connect to sqlite"),
+    );
+    store
+        .apply_embedded_migrations()
+        .await
+        .expect("apply migrations");
+
+    // Setup: intent + proposal + approval (FK constraints)
+    let intent_id = ferrum_proto::IntentId::new();
+    let intent = make_test_intent(intent_id);
+    store
+        .intents()
+        .insert(&intent)
+        .await
+        .expect("intent insert");
+
+    let proposal_id = ferrum_proto::ProposalId::new();
+    let proposal = make_test_proposal(intent_id, proposal_id);
+    store
+        .proposals()
+        .insert(&proposal)
+        .await
+        .expect("proposal insert");
+
+    let approval = make_test_approval(intent_id, proposal_id, chrono::Utc::now());
+    store
+        .approvals()
+        .insert(&approval)
+        .await
+        .expect("approval insert");
+
+    let runtime = GatewayRuntime::new(
+        pdp,
+        cap.clone(),
+        rollback,
+        store.clone() as Arc<dyn StoreFacade>,
+        vec![],
+    );
+    let router = build_router(runtime);
+
+    let resolve_request = ferrum_proto::ApprovalResolveRequest {
+        actor: ferrum_proto::ActorRef {
+            actor_type: ferrum_proto::ActorType::Operator,
+            actor_id: "test-operator".to_string(),
+            display_name: Some("Test Operator".to_string()),
+        },
+        approve: false,
+        reason: Some("not approved".to_string()),
+    };
+
+    let response = router
+        .oneshot(
+            axum::http::Request::builder()
+                .method(axum::http::Method::POST)
+                .uri(format!("/v1/approvals/{}/resolve", approval.approval_id))
+                .header("Content-Type", "application/json")
+                .body(axum::body::Body::from(
+                    serde_json::to_vec(&resolve_request).unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .expect("resolve request should succeed");
+
+    assert_eq!(
+        response.status(),
+        axum::http::StatusCode::OK,
+        "resolve pending approval as denied should return 200 OK, got: {:?}",
+        response.status()
+    );
+
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("read body");
+    let result: ferrum_proto::ApprovalRequest =
+        serde_json::from_slice(&body).expect("valid ApprovalRequest JSON");
+    assert!(
+        matches!(result.state, ferrum_proto::ApprovalState::Denied),
+        "approval state should be Denied, got: {:?}",
+        result.state
+    );
+}
+
+/// Test that resolving an already-granted approval returns 409 Conflict.
+#[tokio::test]
+async fn test_resolve_approval_conflict_already_granted() {
+    let pdp = Arc::new(StaticPdpEngine);
+    let cap: Arc<dyn CapabilityService> = Arc::new(InMemoryCapabilityService::default());
+
+    let mut registry = AdapterRegistry::default();
+    registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
+    let rollback = Arc::new(RollbackService::new(Arc::new(registry)));
+
+    let store = Arc::new(
+        SqliteStore::connect("sqlite::memory:")
+            .await
+            .expect("connect to sqlite"),
+    );
+    store
+        .apply_embedded_migrations()
+        .await
+        .expect("apply migrations");
+
+    // Setup: intent + proposal + already-granted approval
+    let intent_id = ferrum_proto::IntentId::new();
+    let intent = make_test_intent(intent_id);
+    store
+        .intents()
+        .insert(&intent)
+        .await
+        .expect("intent insert");
+
+    let proposal_id = ferrum_proto::ProposalId::new();
+    let proposal = make_test_proposal(intent_id, proposal_id);
+    store
+        .proposals()
+        .insert(&proposal)
+        .await
+        .expect("proposal insert");
+
+    let approval_id = ferrum_proto::ApprovalId::new();
+    let granted_approval = ferrum_proto::ApprovalRequest {
+        approval_id,
+        intent_id,
+        proposal_id,
+        execution_id: None,
+        requested_by: ferrum_proto::ActorRef {
+            actor_type: ferrum_proto::ActorType::Operator,
+            actor_id: "test-actor".to_string(),
+            display_name: Some("Test Operator".to_string()),
+        },
+        reason: "already granted".to_string(),
+        action_digest: "test-digest".to_string(),
+        expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+        state: ferrum_proto::ApprovalState::Granted,
+        created_at: chrono::Utc::now(),
+    };
+    store
+        .approvals()
+        .insert(&granted_approval)
+        .await
+        .expect("approval insert");
+
+    let runtime = GatewayRuntime::new(
+        pdp,
+        cap.clone(),
+        rollback,
+        store.clone() as Arc<dyn StoreFacade>,
+        vec![],
+    );
+    let router = build_router(runtime);
+
+    let resolve_request = ferrum_proto::ApprovalResolveRequest {
+        actor: ferrum_proto::ActorRef {
+            actor_type: ferrum_proto::ActorType::Operator,
+            actor_id: "test-operator".to_string(),
+            display_name: Some("Test Operator".to_string()),
+        },
+        approve: true,
+        reason: None,
+    };
+
+    let response = router
+        .oneshot(
+            axum::http::Request::builder()
+                .method(axum::http::Method::POST)
+                .uri(format!("/v1/approvals/{}/resolve", approval_id))
+                .header("Content-Type", "application/json")
+                .body(axum::body::Body::from(
+                    serde_json::to_vec(&resolve_request).unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .expect("resolve request should complete");
+
+    assert_eq!(
+        response.status(),
+        axum::http::StatusCode::CONFLICT,
+        "resolve already-granted approval should return 409 Conflict, got: {:?}",
+        response.status()
+    );
+}
+
+/// Test that resolving an already-denied approval returns 409 Conflict.
+#[tokio::test]
+async fn test_resolve_approval_conflict_already_denied() {
+    let pdp = Arc::new(StaticPdpEngine);
+    let cap: Arc<dyn CapabilityService> = Arc::new(InMemoryCapabilityService::default());
+
+    let mut registry = AdapterRegistry::default();
+    registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
+    let rollback = Arc::new(RollbackService::new(Arc::new(registry)));
+
+    let store = Arc::new(
+        SqliteStore::connect("sqlite::memory:")
+            .await
+            .expect("connect to sqlite"),
+    );
+    store
+        .apply_embedded_migrations()
+        .await
+        .expect("apply migrations");
+
+    // Setup: intent + proposal + already-denied approval
+    let intent_id = ferrum_proto::IntentId::new();
+    let intent = make_test_intent(intent_id);
+    store
+        .intents()
+        .insert(&intent)
+        .await
+        .expect("intent insert");
+
+    let proposal_id = ferrum_proto::ProposalId::new();
+    let proposal = make_test_proposal(intent_id, proposal_id);
+    store
+        .proposals()
+        .insert(&proposal)
+        .await
+        .expect("proposal insert");
+
+    let approval_id = ferrum_proto::ApprovalId::new();
+    let denied_approval = ferrum_proto::ApprovalRequest {
+        approval_id,
+        intent_id,
+        proposal_id,
+        execution_id: None,
+        requested_by: ferrum_proto::ActorRef {
+            actor_type: ferrum_proto::ActorType::Operator,
+            actor_id: "test-actor".to_string(),
+            display_name: Some("Test Operator".to_string()),
+        },
+        reason: "already denied".to_string(),
+        action_digest: "test-digest".to_string(),
+        expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+        state: ferrum_proto::ApprovalState::Denied,
+        created_at: chrono::Utc::now(),
+    };
+    store
+        .approvals()
+        .insert(&denied_approval)
+        .await
+        .expect("approval insert");
+
+    let runtime = GatewayRuntime::new(
+        pdp,
+        cap.clone(),
+        rollback,
+        store.clone() as Arc<dyn StoreFacade>,
+        vec![],
+    );
+    let router = build_router(runtime);
+
+    let resolve_request = ferrum_proto::ApprovalResolveRequest {
+        actor: ferrum_proto::ActorRef {
+            actor_type: ferrum_proto::ActorType::Operator,
+            actor_id: "test-operator".to_string(),
+            display_name: Some("Test Operator".to_string()),
+        },
+        approve: true,
+        reason: None,
+    };
+
+    let response = router
+        .oneshot(
+            axum::http::Request::builder()
+                .method(axum::http::Method::POST)
+                .uri(format!("/v1/approvals/{}/resolve", approval_id))
+                .header("Content-Type", "application/json")
+                .body(axum::body::Body::from(
+                    serde_json::to_vec(&resolve_request).unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .expect("resolve request should complete");
+
+    assert_eq!(
+        response.status(),
+        axum::http::StatusCode::CONFLICT,
+        "resolve already-denied approval should return 409 Conflict, got: {:?}",
+        response.status()
+    );
+}
+
+/// Test that resolving an expired approval returns 403 Forbidden.
+#[tokio::test]
+async fn test_resolve_approval_forbidden_expired() {
+    let pdp = Arc::new(StaticPdpEngine);
+    let cap: Arc<dyn CapabilityService> = Arc::new(InMemoryCapabilityService::default());
+
+    let mut registry = AdapterRegistry::default();
+    registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
+    let rollback = Arc::new(RollbackService::new(Arc::new(registry)));
+
+    let store = Arc::new(
+        SqliteStore::connect("sqlite::memory:")
+            .await
+            .expect("connect to sqlite"),
+    );
+    store
+        .apply_embedded_migrations()
+        .await
+        .expect("apply migrations");
+
+    // Setup: intent + proposal + expired pending approval
+    let intent_id = ferrum_proto::IntentId::new();
+    let intent = make_test_intent(intent_id);
+    store
+        .intents()
+        .insert(&intent)
+        .await
+        .expect("intent insert");
+
+    let proposal_id = ferrum_proto::ProposalId::new();
+    let proposal = make_test_proposal(intent_id, proposal_id);
+    store
+        .proposals()
+        .insert(&proposal)
+        .await
+        .expect("proposal insert");
+
+    // Create approval that expired in the past
+    let approval_id = ferrum_proto::ApprovalId::new();
+    let expired_approval = ferrum_proto::ApprovalRequest {
+        approval_id,
+        intent_id,
+        proposal_id,
+        execution_id: None,
+        requested_by: ferrum_proto::ActorRef {
+            actor_type: ferrum_proto::ActorType::Operator,
+            actor_id: "test-actor".to_string(),
+            display_name: Some("Test Operator".to_string()),
+        },
+        reason: "expired approval".to_string(),
+        action_digest: "test-digest".to_string(),
+        expires_at: chrono::Utc::now() - chrono::Duration::hours(1), // Already expired
+        state: ferrum_proto::ApprovalState::Pending,                 // Still Pending but expired
+        created_at: chrono::Utc::now() - chrono::Duration::hours(2),
+    };
+    store
+        .approvals()
+        .insert(&expired_approval)
+        .await
+        .expect("approval insert");
+
+    let runtime = GatewayRuntime::new(
+        pdp,
+        cap.clone(),
+        rollback,
+        store.clone() as Arc<dyn StoreFacade>,
+        vec![],
+    );
+    let router = build_router(runtime);
+
+    let resolve_request = ferrum_proto::ApprovalResolveRequest {
+        actor: ferrum_proto::ActorRef {
+            actor_type: ferrum_proto::ActorType::Operator,
+            actor_id: "test-operator".to_string(),
+            display_name: Some("Test Operator".to_string()),
+        },
+        approve: true,
+        reason: None,
+    };
+
+    let response = router
+        .oneshot(
+            axum::http::Request::builder()
+                .method(axum::http::Method::POST)
+                .uri(format!("/v1/approvals/{}/resolve", approval_id))
+                .header("Content-Type", "application/json")
+                .body(axum::body::Body::from(
+                    serde_json::to_vec(&resolve_request).unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .expect("resolve request should complete");
+
+    assert_eq!(
+        response.status(),
+        axum::http::StatusCode::FORBIDDEN,
+        "resolve expired approval should return 403 Forbidden, got: {:?}",
+        response.status()
+    );
+}
+
+/// Test that resolving a pending approval emits a provenance event via the REST API.
+#[tokio::test]
+async fn test_resolve_approval_provenance_event_emitted() {
+    let pdp = Arc::new(StaticPdpEngine);
+    let cap: Arc<dyn CapabilityService> = Arc::new(InMemoryCapabilityService::default());
+
+    let mut registry = AdapterRegistry::default();
+    registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
+    let rollback = Arc::new(RollbackService::new(Arc::new(registry)));
+
+    let store = Arc::new(
+        SqliteStore::connect("sqlite::memory:")
+            .await
+            .expect("connect to sqlite"),
+    );
+    store
+        .apply_embedded_migrations()
+        .await
+        .expect("apply migrations");
+
+    // Setup: intent + proposal + approval (FK constraints)
+    let intent_id = ferrum_proto::IntentId::new();
+    let intent = make_test_intent(intent_id);
+    store
+        .intents()
+        .insert(&intent)
+        .await
+        .expect("intent insert");
+
+    let proposal_id = ferrum_proto::ProposalId::new();
+    let proposal = make_test_proposal(intent_id, proposal_id);
+    store
+        .proposals()
+        .insert(&proposal)
+        .await
+        .expect("proposal insert");
+
+    let approval = make_test_approval(intent_id, proposal_id, chrono::Utc::now());
+    let approval_id = approval.approval_id;
+    store
+        .approvals()
+        .insert(&approval)
+        .await
+        .expect("approval insert");
+
+    let runtime = GatewayRuntime::new(
+        pdp,
+        cap.clone(),
+        rollback,
+        store.clone() as Arc<dyn StoreFacade>,
+        vec![],
+    );
+    let router = build_router(runtime.clone());
+
+    let resolve_request = ferrum_proto::ApprovalResolveRequest {
+        actor: ferrum_proto::ActorRef {
+            actor_type: ferrum_proto::ActorType::Operator,
+            actor_id: "test-operator".to_string(),
+            display_name: Some("Test Operator".to_string()),
+        },
+        approve: true,
+        reason: Some("approved for testing".to_string()),
+    };
+
+    let response = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method(axum::http::Method::POST)
+                .uri(format!("/v1/approvals/{}/resolve", approval_id))
+                .header("Content-Type", "application/json")
+                .body(axum::body::Body::from(
+                    serde_json::to_vec(&resolve_request).unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .expect("resolve request should succeed");
+
+    assert_eq!(
+        response.status(),
+        axum::http::StatusCode::OK,
+        "resolve should return 200 OK, got: {:?}",
+        response.status()
+    );
+
+    // Query provenance via the REST API to verify event was emitted
+    let query_request = ferrum_proto::ProvenanceQueryRequest {
+        intent_id: Some(intent_id),
+        execution_id: None,
+        capability_id: None,
+        event_kind: Some(ferrum_proto::ProvenanceEventKind::ApprovalGranted),
+        since: None,
+        until: None,
+        edge_types: Vec::new(),
+    };
+
+    let query_response = router
+        .oneshot(
+            axum::http::Request::builder()
+                .method(axum::http::Method::POST)
+                .uri("/v1/provenance/query")
+                .header("Content-Type", "application/json")
+                .body(axum::body::Body::from(
+                    serde_json::to_vec(&query_request).unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .expect("provenance query should succeed");
+
+    assert_eq!(
+        query_response.status(),
+        axum::http::StatusCode::OK,
+        "provenance query should return 200 OK, got: {:?}",
+        query_response.status()
+    );
+
+    let body = axum::body::to_bytes(query_response.into_body(), 1024 * 1024)
+        .await
+        .expect("read body");
+    let provenance_result: ferrum_proto::ProvenanceQueryResponse =
+        serde_json::from_slice(&body).expect("valid ProvenanceQueryResponse JSON");
+
+    assert!(
+        !provenance_result.events.is_empty(),
+        "Expected at least one ApprovalGranted provenance event after resolve, got empty"
+    );
+
+    let event = &provenance_result.events[0];
+    assert!(
+        matches!(
+            event.kind,
+            ferrum_proto::ProvenanceEventKind::ApprovalGranted
+        ),
+        "Expected ApprovalGranted provenance event, got: {:?}",
+        event.kind
+    );
+}

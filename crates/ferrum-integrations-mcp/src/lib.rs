@@ -507,6 +507,63 @@ pub fn tool_registry() -> &'static [Tool] {
                 }),
                 read_only: false,
             },
+            // D1.9 Approval tools: POST /v1/approvals/{id}/resolve
+            // approve_intent: grants a pending approval
+            Tool {
+                name: "ferrum_gate_approve_intent",
+                description: "Approve a pending intent/approval (D1.9)",
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "approval_id": {
+                            "type": "string",
+                            "description": "Approval ID (UUID)"
+                        },
+                        "actor_id": {
+                            "type": "string",
+                            "description": "Actor ID performing the approval"
+                        },
+                        "actor_label": {
+                            "type": "string",
+                            "description": "Human-readable actor label"
+                        },
+                        "reason": {
+                            "type": "string",
+                            "description": "Reason for approval"
+                        }
+                    },
+                    "required": ["approval_id"]
+                }),
+                read_only: false,
+            },
+            // reject_intent: denies a pending approval
+            Tool {
+                name: "ferrum_gate_reject_intent",
+                description: "Reject a pending intent/approval (D1.9)",
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "approval_id": {
+                            "type": "string",
+                            "description": "Approval ID (UUID)"
+                        },
+                        "actor_id": {
+                            "type": "string",
+                            "description": "Actor ID performing the rejection"
+                        },
+                        "actor_label": {
+                            "type": "string",
+                            "description": "Human-readable actor label"
+                        },
+                        "reason": {
+                            "type": "string",
+                            "description": "Reason for rejection"
+                        }
+                    },
+                    "required": ["approval_id"]
+                }),
+                read_only: false,
+            },
         ]
     })
 }
@@ -542,8 +599,8 @@ pub const LIFECYCLE_TOOLS: &[&str] = &[
 ];
 
 /// Set of tool names that are permanently blocked (backend endpoints absent).
-/// Per oracle verdict: approve/reject remain NOT_IMPLEMENTED due to missing backend endpoints.
-pub const BLOCKED_TOOLS: &[&str] = &["ferrum_gate_approve_intent", "ferrum_gate_reject_intent"];
+/// This is empty since all tools now have backend endpoints.
+pub const BLOCKED_TOOLS: &[&str] = &[];
 
 // ---------------------------------------------------------------------------
 // Auth Context (Phase D-1.1)
@@ -1213,12 +1270,12 @@ mod tests {
 
     #[test]
     fn test_tool_registry_contains_all_tools() {
-        // D1.7: Registry now has 17 tools (9 read-only + 8 lifecycle)
+        // D1.7: Registry now has 19 tools (9 read-only + 8 lifecycle + 2 approval)
         let registry = tool_registry();
         assert_eq!(
             registry.len(),
-            17,
-            "Tool registry should contain exactly 17 tools (9 read-only + 8 lifecycle)"
+            19,
+            "Tool registry should contain exactly 19 tools (9 read-only + 8 lifecycle + 2 approval)"
         );
     }
 
@@ -1271,21 +1328,12 @@ mod tests {
     }
 
     #[test]
-    fn test_blocked_tools_set_contains_expected_tools() {
-        // Per oracle verdict, approve/reject are permanently blocked
-        let expected_blocked = ["ferrum_gate_approve_intent", "ferrum_gate_reject_intent"];
-        let blocked_set: std::collections::HashSet<_> = BLOCKED_TOOLS.iter().copied().collect();
-        for expected in expected_blocked {
-            assert!(
-                blocked_set.contains(expected),
-                "BLOCKED_TOOLS should contain '{}'",
-                expected
-            );
-        }
-        assert_eq!(
-            BLOCKED_TOOLS.len(),
-            2,
-            "Should have exactly 2 blocked tools"
+    fn test_blocked_tools_set_is_empty() {
+        // All tools now have backend endpoints; BLOCKED_TOOLS is empty
+        assert!(
+            BLOCKED_TOOLS.is_empty(),
+            "BLOCKED_TOOLS should be empty, got {:?}",
+            BLOCKED_TOOLS
         );
     }
 
@@ -1449,7 +1497,7 @@ mod tests {
             JsonRpcResponse::Success(success) => {
                 let result: ToolsListResult =
                     serde_json::from_value(success.result).expect("should parse");
-                assert_eq!(result.tools.len(), 17, "tools/list should return 17 tools");
+                assert_eq!(result.tools.len(), 19, "tools/list should return 19 tools");
             }
             JsonRpcResponse::Error(_) => panic!("Expected success response"),
         }
@@ -1540,7 +1588,7 @@ mod tests {
             JsonRpcResponse::Success(success) => {
                 let result: ToolsListResult =
                     serde_json::from_value(success.result).expect("should parse");
-                assert_eq!(result.tools.len(), 17); // 9 read-only + 8 lifecycle
+                assert_eq!(result.tools.len(), 19); // 9 read-only + 8 lifecycle + 2 approval
             }
             JsonRpcResponse::Error(_) => panic!("Expected success for tools/list"),
         }
