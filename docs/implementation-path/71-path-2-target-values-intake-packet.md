@@ -145,3 +145,19 @@ Complete all **Critical** and **High** fields before target deployment begins. V
 - Dummy/local values must not be copied into docs 54, 59, 63, or 65 as real values.
 
 FerrumGate v1 remains **RC-ready / conditional single-node SQLite** until target evidence and operator signoff exist.
+
+---
+
+## How to Use This Packet Next
+
+For a complete actionable next-steps plan, see [`92-path-2-target-intake-next-actions.md`](./92-path-2-target-intake-next-actions.md).
+
+**Quick sequence**:
+
+1. Engineering confirms doc66 Phase A is complete
+2. Engineering runs pre-target gate locally (`bash scripts/run_pre_target_gate.sh`)
+3. Operator begins collecting Critical fields from this packet (doc71)
+4. Operator completes the Pre-Deployment Intake Checklist above
+5. Once all Critical fields are collected, proceed to target execution per doc66 Phase B
+
+**This packet (doc71) is the input source. The action plan (doc92) is the execution guide.**

@@ -75,6 +75,7 @@ Thư mục này là điểm vào duy nhất để agent khác tiếp tục tri�
 69. [89-mcp-server-d1-11-live-local-smoke.md](89-mcp-server-d1-11-live-local-smoke.md) — D1.11 live-local smoke: bounded lifecycle dispatch checks (submit/evaluate/mint/list) in run_mcp_lifecycle_smoke.sh, soft-pass semantics for gateway errors, non-claims
 70. [90-mcp-approve-reject-enable-plan.md](90-mcp-approve-reject-enable-plan.md) — MCP approve/reject enablement: implemented locally; smoke 15/15; G2/target evidence/pilot/signoff not claimed
 71. [91-proposal-todo-status-after-mcp-approve-reject.md](91-proposal-todo-status-after-mcp-approve-reject.md) — Proposal todo/status after approve/reject enablement: completed/deferred/blocked record
+72. [92-path-2-target-intake-next-actions.md](92-path-2-target-intake-next-actions.md) — **Recommended next action**: Path 2 target intake actionable plan; phases A-F with owners, blockers, stop conditions
 71a. [artifacts/2026-05-08-mcp-approve-reject-smoke-15-15.md](artifacts/2026-05-08-mcp-approve-reject-smoke-15-15.md) — **LOCAL ONLY**: post-approve/reject MCP smoke 15/15 (NOT target evidence; G2 remains pending)
 
 ## Luật ưu tiên

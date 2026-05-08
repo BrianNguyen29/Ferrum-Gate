@@ -230,7 +230,8 @@ This section captures three bounded next-step hardening proposals. Each has expl
 | This doc | [doc89](./89-mcp-server-d1-11-live-local-smoke.md) | D1.11 smoke evidence |
 | This doc | [doc90](./90-mcp-approve-reject-enable-plan.md) | Approve/reject plan |
 | This doc | [doc70](./70-security-hardening-local-only-plan.md) | Security hardening |
-| This doc | [doc71](./71-path-2-target-values-intake-packet.md) | Path 2 intake |
+| This doc | [doc71](./71-path-2-target-values-intake-packet.md) | Path 2 intake checklist |
+| This doc | [doc92](./92-path-2-target-intake-next-actions.md) | **Recommended next action**: Path 2 intake execution plan |
 | This doc | [doc31](./31-release-paths-todo.md) | Release paths |
 | This doc | [doc33](./33-feature-completion-backlog.md) | Feature backlog |
 | This doc | [artifacts/2026-05-08-mcp-live-local-smoke-d1-11.md](./artifacts/2026-05-08-mcp-live-local-smoke-d1-11.md) | Smoke artifact (pre-approve/reject, 13/0) |

@@ -86,6 +86,8 @@ This phase is complete when:
 
 ## Phase B — Target Execution & Signoff (Blocked)
 
+> **Next step**: For a complete actionable next-steps plan for Phase B, see [`92-path-2-target-intake-next-actions.md`](./92-path-2-target-intake-next-actions.md).
+
 ### B.1 Blockers
 
 Execution on the target host is blocked until:
