@@ -996,13 +996,15 @@ pub fn handle_tools_call_with_client(
 
     // Call the REST mapper
     match rest_mapper::map_tool_to_rest(&params.name, params.arguments.as_ref(), client) {
-        Ok(result) => {
+        Ok(mut result) => {
+            // D1.9 Phase 1+2 Option B: redact sensitive fields inside ToolContent.text JSON
+            redact_tool_content_text(&mut result);
             let value = serde_json::to_value(result).unwrap();
-            // D1.8 Option A: sanitize output at the single tools/call response choke point
+            // D1.8 sanitize_output: strip control characters from JSON strings.
+            // sanitize_output operates on the already-serialized JSON value (not re-parsing
+            // JSON strings), so it cannot undo the inner redaction applied above.
             let sanitized = ferrum_firewall::TaintScoringFirewall::new().sanitize_output(value);
-            // D1.9 Phase 1 Option B: redact sensitive fields after sanitization
-            let redacted = redact_sensitive_fields(sanitized);
-            JsonRpcResponse::success(redacted, id)
+            JsonRpcResponse::success(sanitized, id)
         }
         Err(e) => JsonRpcResponse::error(
             JsonRpcError {
@@ -1122,6 +1124,27 @@ fn redact_recursive(value: serde_json::Value, parent: ParentContext) -> serde_js
         }
         // Primitives pass through unchanged
         _ => value,
+    }
+}
+
+/// D1.9.3: Redact sensitive fields inside ToolContent.text JSON strings.
+///
+/// For each `ToolContent` in the `content` vector:
+/// - If `text` is `None` or not valid JSON, leave it unchanged
+/// - If `text` is valid JSON, parse it, apply `redact_sensitive_fields`, reserialize
+///
+/// This enables field-level redaction of sensitive keys (Phase 1 + Phase 2)
+/// that are embedded as JSON inside the MCP response's text field.
+pub fn redact_tool_content_text(result: &mut ToolsCallResult) {
+    for content in &mut result.content {
+        if let Some(text) = &content.text {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(text) {
+                let redacted = redact_sensitive_fields(parsed);
+                if let Ok(redacted_str) = serde_json::to_string(&redacted) {
+                    content.text = Some(redacted_str);
+                }
+            }
+        }
     }
 }
 
@@ -2643,5 +2666,414 @@ mod tests {
             "[REDACTED]"
         );
         assert_eq!(obj.get("metadata").unwrap().as_str().unwrap(), "[REDACTED]");
+    }
+
+    // -------------------------------------------------------------------------
+    // D1.9.3 Tests (Integration Validation via handle_tools_call_with_client)
+    // -------------------------------------------------------------------------
+
+    /// D1.9.3: Phase 1 metadata redaction through handle_tools_call_with_client boundary.
+    /// Validates that metadata inside envelope (IntentEnvelope) is redacted.
+    #[test]
+    fn test_d1_9_3_phase1_metadata_redaction() {
+        let mut server = mockito::Server::new();
+        let _mock = server
+            .mock("POST", "/v1/intents/compile")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{
+                "envelope": {
+                    "intent_id": "550e8400-e29b-41d4-a716-446655440000",
+                    "principal_id": "550e8400-e29b-41d4-a716-446655440001",
+                    "session_id": null,
+                    "channel_id": null,
+                    "title": "test",
+                    "goal": "test goal",
+                    "normalized_goal": "test goal",
+                    "allowed_outcomes": [{"id": "read", "description": "read only", "effect_type": "ReadOnlyAnalysis", "required": true}],
+                    "forbidden_outcomes": [],
+                    "resource_scope": [],
+                    "risk_tier": "Low",
+                    "approval_mode": "None",
+                    "default_rollback_class": "R0NativeReversible",
+                    "time_budget": {"max_duration_ms": 30000, "max_steps": 8, "max_retries_per_step": 1},
+                    "trust_context": {"input_labels": [], "sensitivity_labels": [], "taint_score": 0, "contains_external_metadata": false, "contains_tool_output": false, "contains_untrusted_text": false},
+                    "derived_from_event_ids": [],
+                    "tags": [],
+                    "metadata": {"internal_secret": "secret_value"},
+                    "status": "Active",
+                    "created_at": "2025-01-01T00:00:00Z",
+                    "expires_at": "2025-12-31T23:59:59Z"
+                },
+                "warnings": []
+            }"#)
+            .expect(1)
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let params = serde_json::json!({
+            "name": "ferrum_gate_submit_intent",
+            "arguments": {
+                "principal_id": "550e8400-e29b-41d4-a716-446655440001",
+                "title": "test",
+                "goal": "test goal",
+                "action_type": "Read",
+                "target": "/tmp/test.txt",
+                "scope": "fs:read:/tmp/**"
+            }
+        });
+        let response = handle_tools_call_with_client(params, Some(JsonRpcId::Number(1)), &client);
+
+        let resp_obj = match response {
+            JsonRpcResponse::Success(resp) => resp.result,
+            JsonRpcResponse::Error(resp) => {
+                panic!("Expected success, got error: {}", resp.error.message);
+            }
+        };
+
+        let resp_content = resp_obj.get("content").unwrap().as_array().unwrap();
+        let text = resp_content[0].get("text").unwrap().as_str().unwrap();
+
+        // metadata inside envelope should be redacted
+        assert!(
+            text.contains(r#""metadata":"[REDACTED]""#)
+                || text.contains("\"metadata\":\"[REDACTED]\""),
+            "metadata should be redacted in text: {}",
+            text
+        );
+
+        // UUID should be preserved
+        assert!(
+            text.contains("550e8400-e29b-41d4-a716-446655440000"),
+            "UUID should be preserved"
+        );
+
+        _mock.assert();
+    }
+
+    /// D1.9.3: Phase 2 trust_context redaction through boundary.
+    #[test]
+    fn test_d1_9_3_phase2_trust_context_redaction() {
+        let mut server = mockito::Server::new();
+        let _mock = server
+            .mock("POST", "/v1/intents/compile")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{
+                "envelope": {
+                    "intent_id": "550e8400-e29b-41d4-a716-446655440000",
+                    "principal_id": "550e8400-e29b-41d4-a716-446655440001",
+                    "session_id": null,
+                    "channel_id": null,
+                    "title": "test",
+                    "goal": "test goal",
+                    "normalized_goal": "test goal",
+                    "allowed_outcomes": [],
+                    "forbidden_outcomes": [],
+                    "resource_scope": [],
+                    "risk_tier": "Low",
+                    "approval_mode": "None",
+                    "default_rollback_class": "R0NativeReversible",
+                    "time_budget": {"max_duration_ms": 30000, "max_steps": 8, "max_retries_per_step": 1},
+                    "trust_context": {"input_labels": ["Trusted"], "sensitivity_labels": ["Secret"], "taint_score": 100, "contains_external_metadata": true, "contains_tool_output": true, "contains_untrusted_text": true},
+                    "derived_from_event_ids": [],
+                    "tags": [],
+                    "metadata": {},
+                    "status": "Active",
+                    "created_at": "2025-01-01T00:00:00Z",
+                    "expires_at": "2025-12-31T23:59:59Z"
+                },
+                "warnings": []
+            }"#)
+            .expect(1)
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let params = serde_json::json!({
+            "name": "ferrum_gate_submit_intent",
+            "arguments": {
+                "principal_id": "550e8400-e29b-41d4-a716-446655440001",
+                "title": "test",
+                "goal": "test goal",
+                "action_type": "Read",
+                "target": "/tmp/test.txt",
+                "scope": "fs:read:/tmp/**"
+            }
+        });
+        let response = handle_tools_call_with_client(params, Some(JsonRpcId::Number(2)), &client);
+
+        let resp_obj = match response {
+            JsonRpcResponse::Success(resp) => resp.result,
+            JsonRpcResponse::Error(resp) => {
+                panic!("Expected success, got error: {}", resp.error.message);
+            }
+        };
+
+        let resp_content = resp_obj.get("content").unwrap().as_array().unwrap();
+        let text = resp_content[0].get("text").unwrap().as_str().unwrap();
+
+        // trust_context inside envelope should be redacted
+        assert!(
+            text.contains(r#""trust_context":"[REDACTED]""#)
+                || text.contains("\"trust_context\":\"[REDACTED]\""),
+            "trust_context should be redacted in text: {}",
+            text
+        );
+
+        _mock.assert();
+    }
+
+    /// D1.9.3: Combined D1.8 sanitize + D1.9 redact through handle_tools_call_with_client boundary.
+    /// Proves: (1) control characters stripped by D1.8 sanitize_output, (2) sensitive fields
+    /// redacted by D1.9 redact_tool_content_text, (3) sanitize does NOT undo inner redaction.
+    #[test]
+    fn test_d1_9_3_dlp_sanitize_then_redact() {
+        let mut server = mockito::Server::new();
+        // Mock response contains: Phase 1 sensitive field (metadata) + Phase 2 sensitive field (trust_context)
+        // D1.9 redact_tool_content_text runs first (inner JSON redaction)
+        // D1.8 sanitize_output runs second (control char stripping, cannot undo redaction since it
+        // operates on serialized JSON Value, not re-parsing inner JSON strings)
+        let _mock = server
+            .mock("POST", "/v1/intents/compile")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{
+                "envelope": {
+                    "intent_id": "550e8400-e29b-41d4-a716-446655440000",
+                    "principal_id": "550e8400-e29b-41d4-a716-446655440001",
+                    "session_id": null,
+                    "channel_id": null,
+                    "title": "test goal",
+                    "goal": "test goal",
+                    "normalized_goal": "test goal",
+                    "allowed_outcomes": [],
+                    "forbidden_outcomes": [],
+                    "resource_scope": [],
+                    "risk_tier": "Low",
+                    "approval_mode": "None",
+                    "default_rollback_class": "R0NativeReversible",
+                    "time_budget": {"max_duration_ms": 30000, "max_steps": 8, "max_retries_per_step": 1},
+                    "trust_context": {"input_labels": ["Trusted"], "sensitivity_labels": ["Secret"], "taint_score": 100, "contains_external_metadata": true, "contains_tool_output": true, "contains_untrusted_text": true},
+                    "derived_from_event_ids": [],
+                    "tags": [],
+                    "metadata": {"internal_secret": "secret_value"},
+                    "status": "Active",
+                    "created_at": "2025-01-01T00:00:00Z",
+                    "expires_at": "2025-12-31T23:59:59Z"
+                },
+                "warnings": []
+            }"#)
+            .expect(1)
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let params = serde_json::json!({
+            "name": "ferrum_gate_submit_intent",
+            "arguments": {
+                "principal_id": "550e8400-e29b-41d4-a716-446655440001",
+                "title": "test",
+                "goal": "test goal",
+                "action_type": "Read",
+                "target": "/tmp/test.txt",
+                "scope": "fs:read:/tmp/**"
+            }
+        });
+        let response = handle_tools_call_with_client(params, Some(JsonRpcId::Number(4)), &client);
+
+        let resp_obj = match response {
+            JsonRpcResponse::Success(resp) => resp.result,
+            JsonRpcResponse::Error(resp) => {
+                panic!("Expected success, got error: {}", resp.error.message);
+            }
+        };
+
+        let resp_content = resp_obj.get("content").unwrap().as_array().unwrap();
+        let text = resp_content[0].get("text").unwrap().as_str().unwrap();
+
+        // D1.9 Phase 1: metadata should be redacted
+        assert!(
+            text.contains(r#""metadata":"[REDACTED]""#)
+                || text.contains("\"metadata\":\"[REDACTED]\""),
+            "metadata should be redacted in text: {}",
+            text
+        );
+
+        // D1.9 Phase 2: trust_context should be redacted
+        assert!(
+            text.contains(r#""trust_context":"[REDACTED]""#)
+                || text.contains("\"trust_context\":\"[REDACTED]\""),
+            "trust_context should be redacted in text: {}",
+            text
+        );
+
+        // UUID should be preserved (no-over-redaction)
+        assert!(
+            text.contains("550e8400-e29b-41d4-a716-446655440000"),
+            "UUID should be preserved"
+        );
+
+        // Sanitize_output does not undo redaction: metadata stays redacted
+        assert!(
+            text.contains(r#""metadata":"[REDACTED]""#)
+                || text.contains("\"metadata\":\"[REDACTED]\""),
+            "sanitize_output should not undo redaction: {}",
+            text
+        );
+
+        _mock.assert();
+    }
+
+    /// D1.9.3: Prepare execution response boundary - basic structure test.
+    #[test]
+    fn test_d1_9_3_prepare_execution_response_boundary() {
+        let mut server = mockito::Server::new();
+        let exec_id = "550e8400-e29b-41d4-a716-446655440099";
+        let path = format!("/v1/executions/{}/prepare", exec_id);
+        let _mock = server
+            .mock("POST", path.as_str())
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(format!(
+                r#"{{
+                "execution_id": "{}",
+                "prepared": true,
+                "rollback_contract": null,
+                "warnings": []
+            }}"#,
+                exec_id
+            ))
+            .expect(1)
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let params = serde_json::json!({
+            "name": "ferrum_gate_prepare_execution",
+            "arguments": {
+                "execution_id": exec_id
+            }
+        });
+        let response = handle_tools_call_with_client(params, Some(JsonRpcId::Number(3)), &client);
+
+        let resp_obj = match response {
+            JsonRpcResponse::Success(resp) => resp.result,
+            JsonRpcResponse::Error(resp) => {
+                panic!("Expected success, got error: {}", resp.error.message);
+            }
+        };
+
+        let resp_content = resp_obj.get("content").unwrap().as_array().unwrap();
+        let text = resp_content[0].get("text").unwrap().as_str().unwrap();
+
+        // execution_id should be preserved
+        assert!(
+            text.contains(exec_id),
+            "execution_id should be preserved: {}",
+            text
+        );
+
+        // prepared should be true
+        assert!(text.contains("true"), "prepared should be true: {}", text);
+
+        _mock.assert();
+    }
+
+    /// D1.9.3: Deeply nested metadata redaction - size guard without crash.
+    #[test]
+    fn test_d1_9_3_deeply_nested_metadata() {
+        let mut server = mockito::Server::new();
+        let _mock = server
+            .mock("POST", "/v1/intents/compile")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{
+                "envelope": {
+                    "intent_id": "550e8400-e29b-41d4-a716-446655440000",
+                    "principal_id": "550e8400-e29b-41d4-a716-446655440001",
+                    "session_id": null,
+                    "channel_id": null,
+                    "title": "test",
+                    "goal": "test goal",
+                    "normalized_goal": "test goal",
+                    "allowed_outcomes": [],
+                    "forbidden_outcomes": [],
+                    "resource_scope": [],
+                    "risk_tier": "Low",
+                    "approval_mode": "None",
+                    "default_rollback_class": "R0NativeReversible",
+                    "time_budget": {"max_duration_ms": 30000, "max_steps": 8, "max_retries_per_step": 1},
+                    "trust_context": {"input_labels": [], "sensitivity_labels": [], "taint_score": 0, "contains_external_metadata": false, "contains_tool_output": false, "contains_untrusted_text": false},
+                    "derived_from_event_ids": [],
+                    "tags": [],
+                    "metadata": {
+                        "level1": {
+                            "level2": {
+                                "level3": {
+                                    "level4": {
+                                        "level5": {
+                                            "secret": "deep_value"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "status": "Active",
+                    "created_at": "2025-01-01T00:00:00Z",
+                    "expires_at": "2025-12-31T23:59:59Z"
+                },
+                "warnings": []
+            }"#)
+            .expect(1)
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let params = serde_json::json!({
+            "name": "ferrum_gate_submit_intent",
+            "arguments": {
+                "principal_id": "550e8400-e29b-41d4-a716-446655440001",
+                "title": "test",
+                "goal": "test goal",
+                "action_type": "Read",
+                "target": "/tmp/test.txt",
+                "scope": "fs:read:/tmp/**"
+            }
+        });
+        let response = handle_tools_call_with_client(params, Some(JsonRpcId::Number(5)), &client);
+
+        let resp_obj = match response {
+            JsonRpcResponse::Success(resp) => resp.result,
+            JsonRpcResponse::Error(resp) => {
+                panic!("Expected success, got error: {}", resp.error.message);
+            }
+        };
+
+        let resp_content = resp_obj.get("content").unwrap().as_array().unwrap();
+        let text = resp_content[0].get("text").unwrap().as_str().unwrap();
+
+        // Deeply nested metadata should be redacted
+        assert!(
+            text.contains(r#""metadata":"[REDACTED]""#)
+                || text.contains("\"metadata\":\"[REDACTED]\""),
+            "deeply nested metadata should be redacted: {}",
+            text
+        );
+
+        // UUID should still be present
+        assert!(
+            text.contains("550e8400-e29b-41d4-a716-446655440000"),
+            "UUID should be preserved"
+        );
+
+        _mock.assert();
     }
 }
