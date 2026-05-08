@@ -1206,7 +1206,7 @@ mod tests {
         //   rg 'reqwest|ureq|hyper' crates/ferrum-integrations-mcp/src/mapping_helpers.rs
         // Expected: no matches
         //
-        // This test always passes and serves as a reminder of the constraint.
-        assert!(true, "D1.3.2a helpers are pure — no HTTP calls");
+        // NOTE: D1.3.2a helpers are pure — no HTTP calls.
+        // Verified via: rg 'reqwest|ureq|hyper' crates/ferrum-integrations-mcp/src/mapping_helpers.rs
     }
 }

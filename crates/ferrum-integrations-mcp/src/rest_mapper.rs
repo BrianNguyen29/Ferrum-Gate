@@ -93,6 +93,7 @@ impl McpToolError {
 
     /// Create a not implemented error for mutating tools (default-deny).
     /// Per doc 74 D-1.2, mutating tools return NOT_IMPLEMENTED until governance pipeline is ready.
+    #[allow(dead_code)] // Reserved for future use when mutating tools are implemented
     pub fn not_implemented(tool_name: &str) -> Self {
         Self {
             code: NOT_IMPLEMENTED,

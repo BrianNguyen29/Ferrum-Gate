@@ -89,7 +89,6 @@
 //! - Context-aware redaction via FirewallContext (Option D — deferred)
 //! - Provenance emission (gateway-owned)
 //! - Production/G2 claim (not production-ready)
-
 use ferrum_firewall::SemanticFirewall;
 use serde::{Deserialize, Serialize};
 
@@ -1323,7 +1322,6 @@ mod tests {
         // D1.7: READ_ONLY_TOOLS is a subset of the full registry
         let registry_names: std::collections::HashSet<_> =
             tool_registry().iter().map(|t| t.name).collect();
-        let read_only_set: std::collections::HashSet<_> = READ_ONLY_TOOLS.iter().copied().collect();
         // All read-only tools should be in the registry
         for tool_name in READ_ONLY_TOOLS {
             assert!(
@@ -1760,6 +1758,7 @@ mod tests {
 
     /// D1.8: Numbers, booleans, and nulls are preserved (not modified).
     #[test]
+    #[allow(clippy::approx_constant)] // 3.14 is test data, not PI approximation
     fn test_sanitize_output_preserves_non_strings() {
         let fw = TaintScoringFirewall::new();
         let input = serde_json::json!({
@@ -2037,8 +2036,8 @@ mod tests {
         assert_eq!(obj.get("state").unwrap().as_str().unwrap(), "Pending");
         assert_eq!(obj.get("status").unwrap().as_str().unwrap(), "Approved");
         assert_eq!(obj.get("decision").unwrap().as_str().unwrap(), "Allow");
-        assert_eq!(obj.get("is_active").unwrap().as_bool().unwrap(), true);
-        assert_eq!(obj.get("is_final").unwrap().as_bool().unwrap(), false);
+        assert!(obj.get("is_active").unwrap().as_bool().unwrap());
+        assert!(!obj.get("is_final").unwrap().as_bool().unwrap());
         // metadata still redacted
         assert_eq!(obj.get("metadata").unwrap().as_str().unwrap(), "[REDACTED]");
     }
@@ -2162,6 +2161,7 @@ mod tests {
 
     /// D1.9 Phase 1: numbers, booleans, nulls pass through unchanged.
     #[test]
+    #[allow(clippy::approx_constant)] // 3.14 is test data, not PI approximation
     fn test_redact_preserves_primitives() {
         let input = serde_json::json!({
             "number": 42,
@@ -2175,8 +2175,8 @@ mod tests {
         let obj = redacted.as_object().unwrap();
         assert_eq!(obj.get("number").unwrap().as_i64().unwrap(), 42);
         assert!((obj.get("float").unwrap().as_f64().unwrap() - 3.14).abs() < 0.001);
-        assert_eq!(obj.get("bool_true").unwrap().as_bool().unwrap(), true);
-        assert_eq!(obj.get("bool_false").unwrap().as_bool().unwrap(), false);
+        assert!(obj.get("bool_true").unwrap().as_bool().unwrap());
+        assert!(!obj.get("bool_false").unwrap().as_bool().unwrap());
         assert!(obj.get("null_val").unwrap().is_null());
         // raw_arguments still redacted
         assert_eq!(
@@ -3135,14 +3135,14 @@ mod tests {
             .mock("POST", &*format!("/v1/proposals/{}/evaluate", proposal_id))
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(format!(
-                r#"{{
+            .with_body(
+                r#"{
                     "decision": "Allow",
                     "reason": "policy_passed",
                     "matched_rule_ids": ["rule_001"],
                     "warnings": []
-                }}"#,
-            ))
+                }"#,
+            )
             .expect(1)
             .create();
 
@@ -3277,7 +3277,10 @@ mod tests {
 
         // Step 8: compensate - POST /v1/executions/{id}/compensate
         let _mock_compensate = server
-            .mock("POST", &*format!("/v1/executions/{}/compensate", execution_id))
+            .mock(
+                "POST",
+                &*format!("/v1/executions/{}/compensate", execution_id),
+            )
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(format!(
@@ -3310,10 +3313,20 @@ mod tests {
         let response = handle_tools_call_with_client(params, Some(JsonRpcId::Number(1)), &client);
         let resp_obj = match &response {
             JsonRpcResponse::Success(resp) => resp.result.clone(),
-            JsonRpcResponse::Error(resp) => panic!("Step 1 (submit_intent) failed: {}", resp.error.message),
+            JsonRpcResponse::Error(resp) => {
+                panic!("Step 1 (submit_intent) failed: {}", resp.error.message)
+            }
         };
-        let resp_text = resp_obj.get("content").unwrap().as_array().unwrap()[0].get("text").unwrap().as_str().unwrap();
-        assert!(resp_text.contains(intent_id), "Step 1 should return intent_id: {}", resp_text);
+        let resp_text = resp_obj.get("content").unwrap().as_array().unwrap()[0]
+            .get("text")
+            .unwrap()
+            .as_str()
+            .unwrap();
+        assert!(
+            resp_text.contains(intent_id),
+            "Step 1 should return intent_id: {}",
+            resp_text
+        );
 
         // Step 2: evaluate_intent
         let params = serde_json::json!({
@@ -3331,8 +3344,10 @@ mod tests {
         });
         let response = handle_tools_call_with_client(params, Some(JsonRpcId::Number(2)), &client);
         match &response {
-            JsonRpcResponse::Success(_) => {},
-            JsonRpcResponse::Error(resp) => panic!("Step 2 (evaluate_intent) failed: {}", resp.error.message),
+            JsonRpcResponse::Success(_) => {}
+            JsonRpcResponse::Error(resp) => {
+                panic!("Step 2 (evaluate_intent) failed: {}", resp.error.message)
+            }
         }
 
         // Step 3: mint_capability
@@ -3348,10 +3363,20 @@ mod tests {
         let response = handle_tools_call_with_client(params, Some(JsonRpcId::Number(3)), &client);
         let resp_obj = match &response {
             JsonRpcResponse::Success(resp) => resp.result.clone(),
-            JsonRpcResponse::Error(resp) => panic!("Step 3 (mint_capability) failed: {}", resp.error.message),
+            JsonRpcResponse::Error(resp) => {
+                panic!("Step 3 (mint_capability) failed: {}", resp.error.message)
+            }
         };
-        let resp_text = resp_obj.get("content").unwrap().as_array().unwrap()[0].get("text").unwrap().as_str().unwrap();
-        assert!(resp_text.contains(capability_id), "Step 3 should return capability_id: {}", resp_text);
+        let resp_text = resp_obj.get("content").unwrap().as_array().unwrap()[0]
+            .get("text")
+            .unwrap()
+            .as_str()
+            .unwrap();
+        assert!(
+            resp_text.contains(capability_id),
+            "Step 3 should return capability_id: {}",
+            resp_text
+        );
 
         // Step 4: authorize_execution
         let params = serde_json::json!({
@@ -3364,10 +3389,21 @@ mod tests {
         let response = handle_tools_call_with_client(params, Some(JsonRpcId::Number(4)), &client);
         let resp_obj = match &response {
             JsonRpcResponse::Success(resp) => resp.result.clone(),
-            JsonRpcResponse::Error(resp) => panic!("Step 4 (authorize_execution) failed: {}", resp.error.message),
+            JsonRpcResponse::Error(resp) => panic!(
+                "Step 4 (authorize_execution) failed: {}",
+                resp.error.message
+            ),
         };
-        let resp_text = resp_obj.get("content").unwrap().as_array().unwrap()[0].get("text").unwrap().as_str().unwrap();
-        assert!(resp_text.contains(execution_id), "Step 4 should return execution_id: {}", resp_text);
+        let resp_text = resp_obj.get("content").unwrap().as_array().unwrap()[0]
+            .get("text")
+            .unwrap()
+            .as_str()
+            .unwrap();
+        assert!(
+            resp_text.contains(execution_id),
+            "Step 4 should return execution_id: {}",
+            resp_text
+        );
 
         // Step 5: prepare_execution
         let params = serde_json::json!({
@@ -3378,8 +3414,10 @@ mod tests {
         });
         let response = handle_tools_call_with_client(params, Some(JsonRpcId::Number(5)), &client);
         match &response {
-            JsonRpcResponse::Success(_) => {},
-            JsonRpcResponse::Error(resp) => panic!("Step 5 (prepare_execution) failed: {}", resp.error.message),
+            JsonRpcResponse::Success(_) => {}
+            JsonRpcResponse::Error(resp) => {
+                panic!("Step 5 (prepare_execution) failed: {}", resp.error.message)
+            }
         };
 
         // Step 6: execute_prepared
@@ -3392,8 +3430,10 @@ mod tests {
         });
         let response = handle_tools_call_with_client(params, Some(JsonRpcId::Number(6)), &client);
         match &response {
-            JsonRpcResponse::Success(_) => {},
-            JsonRpcResponse::Error(resp) => panic!("Step 6 (execute_prepared) failed: {}", resp.error.message),
+            JsonRpcResponse::Success(_) => {}
+            JsonRpcResponse::Error(resp) => {
+                panic!("Step 6 (execute_prepared) failed: {}", resp.error.message)
+            }
         };
 
         // Step 7: verify
@@ -3405,8 +3445,10 @@ mod tests {
         });
         let response = handle_tools_call_with_client(params, Some(JsonRpcId::Number(7)), &client);
         match &response {
-            JsonRpcResponse::Success(_) => {},
-            JsonRpcResponse::Error(resp) => panic!("Step 7 (verify) failed: {}", resp.error.message),
+            JsonRpcResponse::Success(_) => {}
+            JsonRpcResponse::Error(resp) => {
+                panic!("Step 7 (verify) failed: {}", resp.error.message)
+            }
         };
 
         // Step 8: compensate
@@ -3418,8 +3460,10 @@ mod tests {
         });
         let response = handle_tools_call_with_client(params, Some(JsonRpcId::Number(8)), &client);
         match &response {
-            JsonRpcResponse::Success(_) => {},
-            JsonRpcResponse::Error(resp) => panic!("Step 8 (compensate) failed: {}", resp.error.message),
+            JsonRpcResponse::Success(_) => {}
+            JsonRpcResponse::Error(resp) => {
+                panic!("Step 8 (compensate) failed: {}", resp.error.message)
+            }
         };
 
         // Verify all mocks were called
@@ -3493,14 +3537,21 @@ mod tests {
 
         let resp_obj = match &response {
             JsonRpcResponse::Success(resp) => resp.result.clone(),
-            JsonRpcResponse::Error(resp) => panic!("Expected success, got error: {}", resp.error.message),
+            JsonRpcResponse::Error(resp) => {
+                panic!("Expected success, got error: {}", resp.error.message)
+            }
         };
 
-        let resp_text = resp_obj.get("content").unwrap().as_array().unwrap()[0].get("text").unwrap().as_str().unwrap();
+        let resp_text = resp_obj.get("content").unwrap().as_array().unwrap()[0]
+            .get("text")
+            .unwrap()
+            .as_str()
+            .unwrap();
 
         // metadata should be redacted (D1.9 Phase 1)
         assert!(
-            resp_text.contains(r#""metadata":"[REDACTED]""#) || resp_text.contains("\"metadata\":\"[REDACTED]\""),
+            resp_text.contains(r#""metadata":"[REDACTED]""#)
+                || resp_text.contains("\"metadata\":\"[REDACTED]\""),
             "metadata should be redacted in lifecycle response: {}",
             resp_text
         );
@@ -3575,14 +3626,21 @@ mod tests {
 
         let resp_obj = match &response {
             JsonRpcResponse::Success(resp) => resp.result.clone(),
-            JsonRpcResponse::Error(resp) => panic!("Expected success, got error: {}", resp.error.message),
+            JsonRpcResponse::Error(resp) => {
+                panic!("Expected success, got error: {}", resp.error.message)
+            }
         };
 
-        let resp_text = resp_obj.get("content").unwrap().as_array().unwrap()[0].get("text").unwrap().as_str().unwrap();
+        let resp_text = resp_obj.get("content").unwrap().as_array().unwrap()[0]
+            .get("text")
+            .unwrap()
+            .as_str()
+            .unwrap();
 
         // trust_context should be redacted (D1.9 Phase 2)
         assert!(
-            resp_text.contains(r#""trust_context":"[REDACTED]""#) || resp_text.contains("\"trust_context\":\"[REDACTED]\""),
+            resp_text.contains(r#""trust_context":"[REDACTED]""#)
+                || resp_text.contains("\"trust_context\":\"[REDACTED]\""),
             "trust_context should be redacted in lifecycle response: {}",
             resp_text
         );
@@ -3634,14 +3692,21 @@ mod tests {
 
         let resp_obj = match &response {
             JsonRpcResponse::Success(resp) => resp.result.clone(),
-            JsonRpcResponse::Error(resp) => panic!("Expected success, got error: {}", resp.error.message),
+            JsonRpcResponse::Error(resp) => {
+                panic!("Expected success, got error: {}", resp.error.message)
+            }
         };
 
-        let resp_text = resp_obj.get("content").unwrap().as_array().unwrap()[0].get("text").unwrap().as_str().unwrap();
+        let resp_text = resp_obj.get("content").unwrap().as_array().unwrap()[0]
+            .get("text")
+            .unwrap()
+            .as_str()
+            .unwrap();
 
         // result_digest should be redacted (D1.9 Phase 2)
         assert!(
-            resp_text.contains(r#""result_digest":"[REDACTED]""#) || resp_text.contains("\"result_digest\":\"[REDACTED]\""),
+            resp_text.contains(r#""result_digest":"[REDACTED]""#)
+                || resp_text.contains("\"result_digest\":\"[REDACTED]\""),
             "result_digest should be redacted in lifecycle response: {}",
             resp_text
         );
@@ -3711,14 +3776,21 @@ mod tests {
 
         let resp_obj = match &response {
             JsonRpcResponse::Success(resp) => resp.result.clone(),
-            JsonRpcResponse::Error(resp) => panic!("Expected success, got error: {}", resp.error.message),
+            JsonRpcResponse::Error(resp) => {
+                panic!("Expected success, got error: {}", resp.error.message)
+            }
         };
 
-        let resp_text = resp_obj.get("content").unwrap().as_array().unwrap()[0].get("text").unwrap().as_str().unwrap();
+        let resp_text = resp_obj.get("content").unwrap().as_array().unwrap()[0]
+            .get("text")
+            .unwrap()
+            .as_str()
+            .unwrap();
 
         // compensation_plan[].args should be redacted (D1.9 Phase 2 path-aware)
         assert!(
-            resp_text.contains(r#""args":"[REDACTED]""#) || resp_text.contains("\"args\":\"[REDACTED]\""),
+            resp_text.contains(r#""args":"[REDACTED]""#)
+                || resp_text.contains("\"args\":\"[REDACTED]\""),
             "compensation_plan[].args should be redacted in lifecycle response: {}",
             resp_text
         );
@@ -3797,10 +3869,16 @@ mod tests {
 
         let resp_obj = match &response {
             JsonRpcResponse::Success(resp) => resp.result.clone(),
-            JsonRpcResponse::Error(resp) => panic!("Expected success, got error: {}", resp.error.message),
+            JsonRpcResponse::Error(resp) => {
+                panic!("Expected success, got error: {}", resp.error.message)
+            }
         };
 
-        let resp_text = resp_obj.get("content").unwrap().as_array().unwrap()[0].get("text").unwrap().as_str().unwrap();
+        let resp_text = resp_obj.get("content").unwrap().as_array().unwrap()[0]
+            .get("text")
+            .unwrap()
+            .as_str()
+            .unwrap();
 
         // All IDs should be preserved (no-over-redaction)
         assert!(
