@@ -2,9 +2,9 @@
 
 **Date**: 2026-05-09
 
-**Scope**: Phase 3J DuckDNS free-domain TLS configuration attempt — ACME certificate issuance blocked by DNS/CAA validation instability; rolled back to nip.io
+**Scope**: Phase 3J DuckDNS free-domain TLS configuration — initial attempt blocked by ACME DNS/CAA instability; **retry succeeded**; DuckDNS HTTPS/TLS now working; Prometheus retargeted; nip.io historical (rollback no longer needed)
 
-**Status**: **NON-PROD evidence only**. DuckDNS DNS A record working. DuckDNS HTTPS/TLS **BLOCKED**. nip.io rollback successful.
+**Status**: **NON-PROD evidence only**. DuckDNS DNS A record working. DuckDNS HTTPS/TLS **SUCCESS** (after retry). nip.io superseded as primary (retained as fallback option).
 
 ---
 
@@ -15,15 +15,13 @@ This Phase 3J follow-up does **not** claim:
 - production-ready status
 - full production posture
 - production alerting capability
-- real domain deployment (nip.io temporary domain still in use)
+- real owned domain (DuckDNS is free, no-ownership-verification DNS)
 - full G2 completion beyond Phase 3F conditional single-node SQLite pilot scope
 - full production pilot authorization
 - Phase 3J operator signoff
 - PostgreSQL runtime, HA, or multi-node deployment
-- DuckDNS TLS success (TLS FAILED — ACME blocked)
-- real owned domain (DuckDNS is free, no-ownership-verification DNS)
 
-Phase 3J documents a **failed TLS attempt** via DuckDNS free domain. Rollback to nip.io successful.
+Phase 3J documents a **successful DuckDNS TLS deployment** via free DuckDNS domain after initial ACME DNS/CAA failure. nip.io is retained as fallback but no longer the active primary endpoint.
 
 ---
 
@@ -31,9 +29,10 @@ Phase 3J documents a **failed TLS attempt** via DuckDNS free domain. Rollback to
 
 Phase 3J captures:
 
-1. **DuckDNS DNS Resolution**: DNS A record now correctly resolves to VM static IP (34.158.51.8)
-2. **DuckDNS TLS Attempt**: Ran `phase3g_configure_real_domain.sh` with `--real-domain ferrumgate.duckdns.org`; Caddy served challenges but ACME certificate issuance blocked by DNS/CAA instability
-3. **Rollback to nip.io**: Caddy reverted to `34-158-51-8.nip.io`; all health checks pass
+1. **DuckDNS DNS Resolution**: DNS A record correctly resolves to VM static IP (34.158.51.8)
+2. **DuckDNS TLS Initial Failure**: First attempt ran `phase3g_configure_real_domain.sh` with `--real-domain ferrumgate.duckdns.org`; Caddy served challenges but ACME certificate issuance blocked by DuckDNS/CAA DNS instability (CAA lookup timeout, SERVFAIL); rolled back to nip.io
+3. **DuckDNS TLS Retry Success**: Re-ran the script; ACME succeeded; certificate obtained; DuckDNS HTTPS now working
+4. **Prometheus Retargeting**: Prometheus updated from `https://34-158-51-8.nip.io:443/v1/metrics` to `https://ferrumgate.duckdns.org:443/v1/metrics`; target health=up
 
 ---
 
@@ -71,23 +70,11 @@ Server: Caddy
 bash scripts/gcp/phase3g_configure_real_domain.sh --confirm --real-domain ferrumgate.duckdns.org
 ```
 
-### Actions Taken
+### Initial Attempt: TLS FAILED
 
-1. Updated Caddyfile for `ferrumgate.duckdns.org`
-2. Validated Caddyfile (`caddy validate`)
-3. Reloaded Caddy service (`caddy reload`)
+First run of the script served ACME challenges but certificate issuance was blocked by DuckDNS/CAA DNS instability:
 
-### Result: TLS FAILED
-
-HTTPS checks to `https://ferrumgate.duckdns.org/v1/healthz/readyz/deep/metrics` failed:
-
-```
-curl error 35: tlsv1 alert internal error
-```
-
-### Caddy Logs — ACME Failure Evidence
-
-Caddy logs showed Let's Encrypt ACME validation failures:
+**Caddy Logs — ACME Failure Evidence (First Attempt)**
 
 ```
 # Primary attempt — tls-alpn-01 and http-01 challenges served, secondary validation failed:
@@ -100,40 +87,78 @@ Caddy logs showed Let's Encrypt ACME validation failures:
 "no valid AAAA records"
 ```
 
-**Root Cause**: DuckDNS free DNS service has unstable DNS resolution for CAA lookups and A record propagation. Let's Encrypt secondary DNS validation (CAA check) timed out, blocking certificate issuance.
+**Root Cause (Initial Attempt)**: DuckDNS free DNS service had unstable DNS resolution for CAA lookups and A record propagation at time of first attempt. Let's Encrypt secondary DNS validation (CAA check) timed out, blocking certificate issuance.
+
+**Rollback**: Caddy reverted to `34-158-51-8.nip.io`; all health checks passed.
 
 ---
 
-## Rollback to nip.io
+### Retry: TLS SUCCESS
 
-### Actions Taken
+Re-ran `phase3g_configure_real_domain.sh --confirm --real-domain ferrumgate.duckdns.org`.
 
-1. Reverted Caddyfile to `34-158-51-8.nip.io` (simple Caddyfile)
-2. Validated Caddyfile (`caddy validate`)
-3. Reloaded Caddy service (`caddy reload`)
-
-### Validation
+**Caddy Logs — ACME Success Evidence (Retry)**
 
 ```
-caddy validate: PASSED
-caddy service: active
+# ACME success on retry:
+"authorization finalized for ferrumgate.duckdns.org"
+"validations succeeded finalizing order"
+"successfully downloaded certificate chains"
+"certificate obtained successfully"
+"releasing lock"
+```
+
+**Caddy Live Config**
+
+```
+ferrumgate.duckdns.org {
+  # Caddyfile now active with DuckDNS domain
+  caddy.service active
+  ferrumgate.service active
+}
 ```
 
 ---
 
-## Post-Rollback nip.io Health Checks
+## DuckDNS HTTPS Health Checks
 
 | Endpoint | Status | Response |
 |----------|--------|----------|
-| `https://34-158-51-8.nip.io/v1/healthz` | 200 | `{"status":"ok"}` |
-| `https://34-158-51-8.nip.io/v1/readyz` | 200 | `{"status":"ready"}` |
-| `https://34-158-51-8.nip.io/v1/metrics` | 200 | `ferrumgate_store_health_up 1`<br>`ferrumgate_write_queue_depth 0` |
+| `https://ferrumgate.duckdns.org/v1/healthz` | HTTP/2 200 | `{"status":"ok"}` |
+| `https://ferrumgate.duckdns.org/v1/readyz` | 200 | `{"status":"ready"}` |
+| `https://ferrumgate.duckdns.org/v1/readyz/deep` | 200 | `{"status":"ok","healthy":true,... store ok, write_queue depth=0}` |
+| `https://ferrumgate.duckdns.org/v1/metrics` | 200 | `ferrumgate_store_health_up 1`<br>`ferrumgate_write_queue_depth 0` |
 
-**Result**: All health checks PASSED. nip.io TLS working.
+**Result**: All DuckDNS HTTPS checks PASSED. DuckDNS TLS working.
 
 ---
 
-## Target Environment (Post-Rollback)
+## Prometheus Retargeting
+
+### Before
+
+```
+scrapeUrl=https://34-158-51-8.nip.io:443/v1/metrics
+```
+
+### After
+
+```
+scrapeUrl=https://ferrumgate.duckdns.org:443/v1/metrics
+```
+
+### Validation
+
+- `promtool check config`: PASSED
+- Prometheus reload: done
+- Prometheus target: `job=ferrumgate` `scrapeUrl=https://ferrumgate.duckdns.org:443/v1/metrics` `health=up` `lastError=` (empty)
+- Prometheus query `up{job="ferrumgate"}`: returns `1` for `instance=ferrumgate.duckdns.org:443`
+
+**Result**: Prometheus DuckDNS scrape target UP.
+
+---
+
+## Target Environment (Post-Retry)
 
 | Field | Value |
 |-------|-------|
@@ -142,12 +167,13 @@ caddy service: active
 | Zone | `asia-southeast1-a` |
 | VM | `ferrumgate-nonprod` |
 | Static IP | `34.158.51.8` |
-| TLS Domain | `34-158-51-8.nip.io` (temporary — **real domain BLOCKED**) |
-| HTTPS URL | `https://34-158-51-8.nip.io` |
+| TLS Domain | `ferrumgate.duckdns.org` (DuckDNS free DNS — **TLS SUCCESS**) |
+| HTTPS URL | `https://ferrumgate.duckdns.org` |
 | Database | SQLite single-node |
 | Auth Mode | Bearer token |
 | Monitoring | Local-only (Prometheus + AlertManager on-VM) |
 | Alert Contact | **None** (local-only mode) |
+| nip.io | Superseded as primary (retained as fallback option) |
 
 ---
 
@@ -156,8 +182,10 @@ caddy service: active
 | Claim | Status | Evidence |
 |-------|--------|----------|
 | DuckDNS DNS A record resolves to VM | **YES** | `getent ahostsv4 ferrumgate.duckdns.org` -> `34.158.51.8` |
-| DuckDNS HTTPS/TLS working | **NO / BLOCKED** | curl error 35; ACME CAA lookup timeout |
-| nip.io rollback successful | **YES** | All `/v1/healthz`, `/v1/readyz`, `/v1/metrics` returned 200 |
+| DuckDNS HTTPS/TLS working | **YES** (after retry) | All `/v1/healthz`, `/v1/readyz`, `/v1/readyz/deep`, `/v1/metrics` returned 200 |
+| Prometheus DuckDNS scrape target UP | **YES** | `up{job="ferrumgate"}` returns `1` for `instance=ferrumgate.duckdns.org:443` |
+| Initial ACME failure (historical) | **YES** | CAA lookup timeout, SERVFAIL on first attempt |
+| nip.io rollback (historical) | **YES** | First attempt rolled back; now superseded by DuckDNS success |
 | Real owned domain | **NO** | DuckDNS is free DNS; no ownership verification |
 | Production-ready | **NO** | Nonprod only; single-node SQLite |
 | Production alerting | **NO** | Local-only mode; no alert contact |
@@ -169,7 +197,6 @@ caddy service: active
 
 Phase 3J does NOT:
 
-- Claim DuckDNS TLS success (TLS failed — ACME blocked)
 - Claim real owned domain (DuckDNS is free, no-ownership-verification DNS)
 - Claim production-ready or full production posture
 - Include production alerting capability (local-only mode)
@@ -179,11 +206,11 @@ Phase 3J does NOT:
 
 ---
 
-## Remaining Blockers (Unchanged)
+## Remaining Blockers
 
 | Item | Status | Blocker |
 |------|--------|---------|
-| Real domain TLS | **BLOCKED** | DuckDNS free DNS too unstable for ACME CAA validation; real owned domain required |
+| Real owned domain TLS | **BLOCKED** | DuckDNS is free DNS with no ownership verification; real owned domain still required for production |
 | Production alerting | **BLOCKED** | No alert contact; local-only mode |
 | Production-ready claim | **BLOCKED** | Nonprod only; single-node SQLite |
 
@@ -201,4 +228,4 @@ Phase 3J does NOT:
 
 ---
 
-**Non-claims**: NOT production-ready, NOT full production posture, NOT production alerting, NOT real domain deployment. DuckDNS TLS BLOCKED. nip.io rollback successful. Real owned domain required for TLS. Phase 3J nonprod evidence only.
+**Non-claims**: NOT production-ready, NOT full production posture, NOT production alerting, NOT real owned domain. DuckDNS TLS SUCCESS (after initial ACME failure). nip.io superseded as primary. Phase 3J nonprod evidence only.
