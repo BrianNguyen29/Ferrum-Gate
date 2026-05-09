@@ -3,6 +3,12 @@ name = "ferrum-store"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+# PostgreSQL P2 skeleton — NOT runtime supported; enables compile-time infrastructure only
+# The postgres feature is compile-time only and does NOT enable runtime PostgreSQL support.
+postgres = ["sqlx/postgres"]
+
 [dependencies]
 anyhow = { workspace = true }
 thiserror = { workspace = true }

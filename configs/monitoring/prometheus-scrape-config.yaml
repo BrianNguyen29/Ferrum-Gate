@@ -1,0 +1,109 @@
+# Prometheus Scrape Configuration for FerrumGate
+#
+# This is a TEMPLATE for Prometheus scrape configuration.
+# For production use, replace placeholder values with actual domain and endpoints.
+#
+# USAGE:
+#   - Include this file in your prometheus.yml under scrape_configs
+#   - Or use as a separate service discovery file
+#
+# NOTES:
+#   - Default uses nip.io temporary domain; replace with real domain for production
+#   - Adjust scrape_interval for your monitoring needs
+#   - For production, use proper TLS CA verification
+
+# Prometheus global configuration
+global:
+  # How frequently to scrape targets
+  scrape_interval: 15s
+  # How frequently to evaluate rules
+  evaluation_interval: 15s
+  # Attach these labels to any time series or alerts when communicating with
+  # external systems (federation, remote storage, Alertmanager).
+  external_labels:
+    monitor: 'ferrumgate-nonprod'
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            # Default localhost; replace with actual AlertManager endpoint
+            # Example: - alertmanager:9093
+            - localhost:9093
+
+# Load rules once and periodically evaluate them
+rule_files:
+  # Alert rules file - replace with actual path
+  # - "/etc/prometheus/rules/ferrumgate-alerts.yml"
+
+# Scrape configuration
+scrape_configs:
+  # FerrumGate service scrape job
+  - job_name: 'ferrumgate'
+
+    # How frequently to scrape (override global interval)
+    scrape_interval: 15s
+
+    # Timeout for scrape requests
+    scrape_timeout: 10s
+
+    # Path to metrics endpoint
+    metrics_path: /v1/metrics
+
+    # Scheme (http or https)
+    # For nip.io temporary: scheme: https
+    # For real domain with proper TLS: scheme: https
+    scheme: https
+
+    # TLS configuration
+    tls_config:
+      # For nip.io (temporary): skip verification due to self-signed cert
+      # For production with real CA: set insecure_skip_verify: false
+      insecure_skip_verify: true
+
+      # For production with real domain, use proper CA cert:
+      # ca_file: /etc/prometheus/certs/ca.crt
+      # Or use cert files directly:
+      # cert_file: /etc/prometheus/certs/client.crt
+      # key_file: /etc/prometheus/certs/client.key
+
+    # Static targets configuration
+    static_configs:
+      - targets:
+          # PLACEHOLDER: Default nip.io domain
+          # Replace with real domain for production deployment
+          # Example: api.example.com
+          - '34-158-51-8.nip.io:443'
+
+        labels:
+          # Service identifier
+          service: ferrumgate
+          # Environment label
+          environment: nonprod
+          # Optional: instance identifier
+          # instance: ferrumgate-nonprod
+
+    # Relabel configuration (optional)
+    # Use to modify labels before scraping or after scrape
+    relabel_configs:
+      # Example: Add a version label based on a metric
+      # - source_labels: [__address__]
+      #   target_label: instance
+
+# Advanced: Service discovery for GCP environments
+# Uncomment and configure for dynamic discovery
+# scrape_configs:
+#   - job_name: 'ferrumgate-gcp'
+#     gcp_sd_configs:
+#       - project: fairy-b13f4
+#         zone: asia-southeast1-a
+#         filter: '(resource.type="gce_instance" AND resource.labels.name="ferrumgate-nonprod")'
+#     relabel_configs:
+#       - action: replace
+#         source_labels: [__meta_gce_network_interface_ipv4]
+#         target_label: __address__
+#         replacement: '\${1}:443'
+#       - action: replace
+#         source_labels: [__meta_gce_instance_name]
+#         target_label: instance

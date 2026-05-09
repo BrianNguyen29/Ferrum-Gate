@@ -1,7 +1,7 @@
 # ADR-50 — PostgreSQL StoreFacade: Phased Implementation Plan
 
-> **Status**: Deferred — Not implemented; Phase 1 SQLite only
-> **Date**: 2026-04-27
+> **Status**: P2 Infrastructure Preparation — In Progress (Skeleton only)
+> **Date**: 2026-04-27 (P2 status updated 2026-05-09)
 > **Deciders**: Oracle NO-GO verdict for full implementation
 > **Estimated Effort**: ~2000-3000 LOC + migrations + container tests
 
@@ -80,17 +80,22 @@ store_dsn "mysql://...": MySQL is not implemented.
 **Prerequisites**: v1 stable release, production evaluation complete
 
 **Goals**:
-- [ ] Enable `sqlx::postgres` feature flag
-- [ ] Create `PostgresStore` skeleton with placeholder repo implementations
+- [x] Enable `sqlx::postgres` feature flag (non-default, compile-time only)
+- [x] Create `PostgresStore` skeleton with placeholder repo implementations
 - [ ] Define migration strategy (SQLite → PostgreSQL compatibility layer?)
-- [ ] Add container test infrastructure (Docker Compose for postgres)
+- [x] Add container test infrastructure (Docker Compose for postgres)
 
 **Estimated Effort**: ~500 LOC infrastructure, ~200 LOC for skeleton stores
 
 **Deliverables**:
-- `crates/ferrum-store/src/postgres/mod.rs` — module skeleton
-- `crates/ferrum-store/src/postgres/intents.rs` — placeholder
-- `docker-compose.yml` for local postgres testing
+- `crates/ferrum-store/src/postgres/mod.rs` — module skeleton ✅
+- `crates/ferrum-store/src/postgres/*.rs` — skeleton repos (9 total) ✅
+- `docker-compose.yml` or `P2_INFRA.md` for local postgres testing ✅
+
+**P2 Status (2026-05-09)**: Skeleton infrastructure complete. All 9 repos return
+`StoreError::Other("PostgreSQL P2 skeleton only; runtime support not implemented")`.
+Runtime PostgreSQL support NOT implemented. The `postgres` feature is non-default
+and does not enable any runtime functionality.
 
 ---
 
@@ -184,7 +189,7 @@ store_dsn = "sqlite::memory:"
 | Phase | Status | Notes |
 |-------|--------|-------|
 | P1 Guardrails | ✅ **This artifact** | DSN validation + docs |
-| P2 Infrastructure | Deferred | Skeleton + container tests |
+| P2 Infrastructure | 🏗️ **In Progress** | Skeleton + container tests (P2 infra done) |
 | P3 Repo impl | Deferred | Full postgres store |
 | P4 Migrations | Deferred | Schema + data migration |
 | P5 Production | Deferred | HA/clustering |

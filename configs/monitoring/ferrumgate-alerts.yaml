@@ -1,0 +1,250 @@
+# FerrumGate Alert Rules for Prometheus
+#
+# This is a TEMPLATE with PLACEHOLDER thresholds.
+# Adjust thresholds based on your workload and monitoring requirements.
+#
+# USAGE:
+#   1. Copy to Prometheus rules directory (e.g., /etc/prometheus/rules/)
+#   2. Update prometheus.yml to include this file in rule_files
+#   3. Reload Prometheus: curl -X POST http://localhost:9090/-/reload
+#
+# NOTES:
+#   - These are example rules based on FerrumGate metrics
+#   - Adjust thresholds for your environment
+#   - For production, add more specific alert conditions
+
+groups:
+  # FerrumGate service alerts
+  - name: ferrumgate
+    # How frequently to evaluate rules
+    interval: 30s
+
+    rules:
+      # Service availability
+      - alert: FerrumGateDown
+        expr: up{job="ferrumgate"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: ferrumgate
+          team: platform
+        annotations:
+          summary: "FerrumGate instance is down"
+          description: "FerrumGate has been unreachable for more than 1 minute."
+          runbook_url: "https://docs.example.com/runbooks/ferrumgate-down"
+
+      # Service health
+      - alert: FerrumGateStoreUnhealthy
+        expr: ferrumgate_store_health_up != 1
+        for: 1m
+        labels:
+          severity: critical
+          service: ferrumgate
+          team: platform
+        annotations:
+          summary: "FerrumGate store is unhealthy"
+          description: "FerrumGate SQLite store health check is failing. Database may be corrupted or inaccessible."
+          runbook_url: "https://docs.example.com/runbooks/ferrumgate-store-unhealthy"
+
+      # Write queue depth
+      - alert: FerrumGateWriteQueueHigh
+        expr: ferrumgate_write_queue_depth > 100
+        for: 5m
+        labels:
+          severity: warning
+          service: ferrumgate
+          team: platform
+        annotations:
+          summary: "FerrumGate write queue is high"
+          description: "Write queue depth is {{ $value }}, expected < 100. System may be experiencing write contention."
+          runbook_url: "https://docs.example.com/runbooks/ferrumgate-queue-high"
+
+      # Write queue full (blocked)
+      - alert: FerrumGateWriteQueueFull
+        expr: ferrumgate_write_queue_depth > 1000
+        for: 2m
+        labels:
+          severity: critical
+          service: ferrumgate
+          team: platform
+        annotations:
+          summary: "FerrumGate write queue is full"
+          description: "Write queue depth is {{ $value }}. System is blocking writes. Immediate action required."
+          runbook_url: "https://docs.example.com/runbooks/ferrumgate-queue-full"
+
+      # Backup status
+      - alert: FerrumGateNoRecentBackup
+        expr: |
+          (time() - ferrumgate_backup_last_success_timestamp) > 3600
+        for: 5m
+        labels:
+          severity: warning
+          service: ferrumgate
+          team: platform
+        annotations:
+          summary: "FerrumGate has no recent backup"
+          description: "No successful backup in the last hour. Last backup was {{ $value | humanizeDuration }} ago."
+          runbook_url: "https://docs.example.com/runbooks/ferrumgate-no-recent-backup"
+
+      # High error rate (5xx responses)
+      - alert: FerrumGateHighErrorRate
+        expr: |
+          rate(ferrumgate_http_requests_total{status=~"5.."}[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          service: ferrumgate
+          team: platform
+        annotations:
+          summary: "FerrumGate high error rate"
+          description: "Error rate is {{ $value | printf \"%.3f\" }} errors/sec (threshold: 0.05)."
+          runbook_url: "https://docs.example.com/runbooks/ferrumgate-high-error-rate"
+
+      # High latency
+      - alert: FerrumGateHighLatency
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(ferrumgate_http_request_duration_seconds_bucket[5m])) by (le, handler)
+          ) > 5
+        for: 5m
+        labels:
+          severity: warning
+          service: ferrumgate
+          team: platform
+        annotations:
+          summary: "FerrumGate high latency"
+          description: "99th percentile latency is {{ $value | printf \"%.2f\" }}s for handler {{ $labels.handler }}."
+          runbook_url: "https://docs.example.com/runbooks/ferrumgate-high-latency"
+
+      # Authentication failures
+      - alert: FerrumGateHighAuthFailureRate
+        expr: |
+          rate(ferrumgate_auth_failures_total[5m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+          service: ferrumgate
+          team: platform
+        annotations:
+          summary: "FerrumGate high authentication failure rate"
+          description: "Authentication failure rate is {{ $value | printf \"%.2f\" }} failures/sec. Possible brute force attack."
+          runbook_url: "https://docs.example.com/runbooks/ferrumgate-auth-failures"
+
+      # Capability minting failures
+      - alert: FerrumGateCapabilityMintFailures
+        expr: |
+          rate(ferrumgate_capability_mint_failures_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          service: ferrumgate
+          team: platform
+        annotations:
+          summary: "FerrumGate capability minting failures"
+          description: "Capability minting failure rate is {{ $value | printf \"%.3f\" }} failures/sec."
+          runbook_url: "https://docs.example.com/runbooks/ferrumgate-cap-mint-failures"
+
+      # Policy evaluation failures
+      - alert: FerrumGatePolicyEvalFailures
+        expr: |
+          rate(ferrumgate_policy_evaluation_failures_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          service: ferrumgate
+          team: platform
+        annotations:
+          summary: "FerrumGate policy evaluation failures"
+          description: "Policy evaluation failure rate is {{ $value | printf \"%.3f\" }} failures/sec."
+          runbook_url: "https://docs.example.com/runbooks/ferrumgate-policy-eval-failures"
+
+      # Execution failures
+      - alert: FerrumGateExecutionFailures
+        expr: |
+          rate(ferrumgate_execution_failures_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          service: ferrumgate
+          team: platform
+        annotations:
+          summary: "FerrumGate execution failures"
+          description: "Execution failure rate is {{ $value | printf \"%.3f\" }} failures/sec."
+          runbook_url: "https://docs.example.com/runbooks/ferrumgate-execution-failures"
+
+      # Rollback failures
+      - alert: FerrumGateRollbackFailures
+        expr: |
+          rate(ferrumgate_rollback_failures_total[5m]) > 0.01
+        for: 5m
+        labels:
+          severity: critical
+          service: ferrumgate
+          team: platform
+        annotations:
+          summary: "FerrumGate rollback failures"
+          description: "Rollback failure rate is {{ $value | printf \"%.4f\" }} failures/sec. Compensations may not complete."
+          runbook_url: "https://docs.example.com/runbooks/ferrumgate-rollback-failures"
+
+      # Provenance chain gaps
+      - alert: FerrumGateProvenanceGaps
+        expr: |
+          rate(ferrumgate_provenance_gaps_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: ferrumgate
+          team: platform
+        annotations:
+          summary: "FerrumGate provenance chain gaps detected"
+          description: "Provenance gap rate is {{ $value | printf \"%.3f\" }} gaps/sec. Lineage may be incomplete."
+          runbook_url: "https://docs.example.com/runbooks/ferrumgate-provenance-gaps"
+
+  # Instance-level alerts
+  - name: ferrumgate_instance
+    interval: 30s
+
+    rules:
+      # High CPU usage
+      - alert: FerrumGateHighCPU
+        expr: |
+          100 * (1 - avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) by (instance))
+          > 80
+        for: 10m
+        labels:
+          severity: warning
+          service: ferrumgate
+          team: platform
+        annotations:
+          summary: "FerrumGate instance high CPU usage"
+          description: "CPU usage is {{ $value | printf \"%.1f\" }}% on instance {{ $labels.instance }}."
+
+      # High memory usage
+      - alert: FerrumGateHighMemory
+        expr: |
+          100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)
+          > 85
+        for: 10m
+        labels:
+          severity: warning
+          service: ferrumgate
+          team: platform
+        annotations:
+          summary: "FerrumGate instance high memory usage"
+          description: "Memory usage is {{ $value | printf \"%.1f\" }}% on instance {{ $labels.instance }}."
+
+      # Disk space low
+      - alert: FerrumGateDiskSpaceLow
+        expr: |
+          (node_filesystem_avail_bytes{mountpoint="/var/lib/ferrumgate"} /
+           node_filesystem_size_bytes{mountpoint="/var/lib/ferrumgate"})
+          < 0.1
+        for: 5m
+        labels:
+          severity: critical
+          service: ferrumgate
+          team: platform
+        annotations:
+          summary: "FerrumGate instance low disk space"
+          description: "Disk space available is {{ $value | humanizePercentage }} on instance {{ $labels.instance }}."
+          runbook_url: "https://docs.example.com/runbooks/ferrumgate-disk-space-low"
