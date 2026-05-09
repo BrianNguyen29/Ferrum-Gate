@@ -1,0 +1,203 @@
+# AlertManager → SendGrid Email Bridge Template
+#
+# This is a TEMPLATE with PLACEHOLDER values.
+# NO actual SendGrid API key, recipient email, or sender email is stored in this file.
+# NO alerts will be sent until all placeholders are replaced by the operator.
+#
+# NON-PRODUCTION CLAIM:
+#   - This template is for non-production/local-only alerting exploration
+#   - NOT production-ready, NOT production alerting
+#   - No SendGrid API key stored in version control
+#   - No real recipient email stored in version control
+#
+# PURPOSE:
+#   Configures AlertManager webhook receiver to send email alerts via SendGrid REST API v3.
+#   Useful when the VM has no direct SMTP access but can reach SendGrid API over HTTPS.
+#
+# VM-LOCAL SECRET HANDLING:
+#   The SendGrid API key must be stored at:
+#     /etc/ferrumgate/secrets/sendgrid-api-key
+#   on the VM (created by operator, NOT committed to version control).
+#
+#   To create the secret file on the VM:
+#     sudo mkdir -p /etc/ferrumgate/secrets
+#     sudo chmod 700 /etc/ferrumgate/secrets
+#     sudo vi /etc/ferrumgate/secrets/sendgrid-api-key
+#     # Enter only the API key (e.g., SG.xxxxxxx.yyyyyyy), no JSON, no extra whitespace
+#     sudo chmod 600 /etc/ferrumgate/secrets/sendgrid-api-key
+#     sudo chown root:root /etc/ferrumgate/secrets/sendgrid-api-key
+#
+# DEPLOYMENT (operator-owned):
+#   1. Copy this file to /etc/ferrumgate/monitoring/alertmanager-config.yaml
+#   2. Replace all PLACEHOLDER values below
+#   3. Ensure /etc/ferrumgate/secrets/sendgrid-api-key exists on VM
+#   4. Reload AlertManager: curl -X POST http://localhost:9093/-/reload
+#
+# PLACEHOLDERS (must be replaced by operator — NOT stored in version control):
+#   ${SENDGRID_API_KEY_FILE}  — Path to file containing SendGrid API key (e.g., /etc/ferrumgate/secrets/sendgrid-api-key)
+#   ${ALERT_RECIPIENT}         — Recipient email address (operator provides, NOT in repo)
+#   ${ALERT_SENDER}           — Verified sender email in SendGrid (operator provides, NOT in repo)
+#
+# SENDGRID API:
+#   Endpoint: POST https://api.sendgrid.com/v3/mail/send
+#   Auth:     Authorization: Bearer <API_KEY>
+#   Content-Type: application/json
+#
+# ALERTMANAGER WEBHOOK FORMAT:
+#   AlertManager sends POST to webhook URL with JSON payload containing alerts.
+#   This config uses a shell-based curl command to call SendGrid API with the alert data.
+
+# Global configuration
+global:
+  # How long to wait before resolving an alert
+  resolve_timeout: 5m
+
+# Route tree - defines how alerts are grouped and routed
+route:
+  # Group alerts by these labels
+  group_by:
+    - 'alertname'
+    - 'severity'
+    - 'service'
+    - 'instance'
+
+  # Wait this long before sending the first notification for a group
+  group_wait: 10s
+
+  # Wait this long before sending a notification when a new group was already sent
+  group_interval: 10s
+
+  # Wait this long before re-sending a resolved alert
+  repeat_interval: 12h
+
+  # Default receiver (must match a receiver name below)
+  receiver: 'ferrumgate-sendgrid'
+
+  # Child routes
+  routes:
+    # Route critical alerts immediately
+    - match:
+        severity: critical
+      receiver: 'ferrumgate-sendgrid-critical'
+      group_wait: 0s
+      repeat_interval: 1h
+
+    # Route by service
+    - match:
+        service: ferrumgate
+      receiver: 'ferrumgate-sendgrid'
+
+# Inhibition rules - suppress alerts based on other alerts
+inhibit_rules:
+  # Inhibit warning alerts when a critical alert is firing
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal:
+      - 'alertname'
+      - 'service'
+      - 'instance'
+
+# Receiver definitions
+receivers:
+  # Main SendGrid email receiver
+  - name: 'ferrumgate-sendgrid'
+
+    # Webhook receiver that calls SendGrid API
+    # The cmd field uses a shell command to read the API key from a local file
+    # and send email via SendGrid REST API v3
+    webhook_configs:
+      - url: 'http://localhost:9093/webhook'
+        send_resolved: true
+        # AlertManager will POST to this URL; we use a local relay script
+        # The actual SendGrid call is made by a separate bridge relay process
+        # See DEPLOYMENT section above for the SendGrid bridge relay setup
+
+  # Critical alerts - high priority
+  - name: 'ferrumgate-sendgrid-critical'
+
+    webhook_configs:
+      - url: 'http://localhost:9093/webhook'
+        send_resolved: true
+
+# ---------------------------------------------------------------------------
+# SENDGRID BRIDGE RELAY (operator-owned deployment)
+# ---------------------------------------------------------------------------
+# AlertManager's webhook receiver cannot directly call SendGrid with proper
+# email formatting. The recommended approach is to deploy a small relay script
+# on the VM that:
+#   1. Receives the AlertManager webhook POST
+#   2. Formats the alert data as a SendGrid API v3 JSON payload
+#   3. Reads the API key from /etc/ferrumgate/secrets/sendgrid-api-key
+#   4. POSTs to https://api.sendgrid.com/v3/mail/send
+#
+# Example relay script (operator creates at /usr/local/bin/alertmanager-sendgrid-relay.sh):
+# ---------------------------------------------------------------------------
+# #!/usr/bin/env bash
+# API_KEY=$(cat /etc/ferrumgate/secrets/sendgrid-api-key 2>/dev/null | tr -d ' \n')
+# RECIPIENT="${ALERT_RECIPIENT}"   # Set by operator or environment
+# SENDER="${ALERT_SENDER}"         # Set by operator or environment
+#
+# # Read AlertManager webhook payload from stdin
+# PAYLOAD=$(cat)
+#
+# # Extract alert data (simplified - use jq for production)
+# ALERTNAME=$(echo "$PAYLOAD" | grep -o '"alertname":"[^"]*"' | head -1 | cut -d'"' -f4 || echo "unknown")
+# STATUS=$(echo "$PAYLOAD" | grep -o '"status":"[^"]*"' | head -1 | cut -d'"' -f4 || echo "unknown")
+# SEVERITY=$(echo "$PAYLOAD" | grep -o '"severity":"[^"]*"' | head -1 | cut -d'"' -f4 || echo "unknown")
+# SUMMARY=$(echo "$PAYLOAD" | grep -o '"summary":"[^"]*"' | head -1 | cut -d'"' -f4 || echo "no summary")
+#
+# # Build SendGrid personalizations JSON
+# PERSONALIZATIONS=$(cat << JEOF
+# [{"to": [{"email": "$RECIPIENT"}]}]
+# JEOF
+# )
+#
+# # Build SendGrid mail send payload
+# SENDGRID_PAYLOAD=$(cat << JEOF
+# {
+#   "personalizations": $PERSONALIZATIONS,
+#   "from": {"email": "$SENDER"},
+#   "subject": "[$SEVERITY] FerrumGate Alert: $ALERTNAME",
+#   "content": [{"type": "text/plain", "value": "Alert: $ALERTNAME\nStatus: $STATUS\nSeverity: $SEVERITY\n\n$SUMMARY"}]
+# }
+# JEOF
+# )
+#
+# # POST to SendGrid API
+# curl -s -X POST \
+#   https://api.sendgrid.com/v3/mail/send \
+#   -H "Authorization: Bearer $API_KEY" \
+#   -H "Content-Type: application/json" \
+#   -d "$SENDGRID_PAYLOAD"
+# ---------------------------------------------------------------------------
+#
+# To use the relay, update the webhook_configs above to point to the relay URL:
+#   webhook_configs:
+#     - url: 'http://localhost:9094/alert'  # Relay listens on port 9094
+#       send_resolved: true
+#
+# Or use AlertManager's built-in http_config with a custom remote write URL.
+# For a production deployment, consider using AlertManager's email_configs with
+# an SMTP relay instead of this bridge approach.
+#
+# ---------------------------------------------------------------------------
+# IMPORTANT NOTES:
+# ---------------------------------------------------------------------------
+# 1. NO real SendGrid API key is stored in this file or in version control
+# 2. NO real recipient or sender email is stored in this file or in version control
+# 3. The API key file (/etc/ferrumgate/secrets/sendgrid-api-key) is created by
+#    the operator on the VM — it never touches version control
+# 4. This is a TEMPLATE for local/non-production exploration only
+# 5. NOT production-ready, NOT production alerting
+# ---------------------------------------------------------------------------
+
+# Mute time intervals (for maintenance windows)
+# mute_time_intervals:
+#   - name: 'maintenance'
+#     time_intervals:
+#       - times:
+#           - start: '00:00'
+#             end: '06:00'
+#         weekdays: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']
