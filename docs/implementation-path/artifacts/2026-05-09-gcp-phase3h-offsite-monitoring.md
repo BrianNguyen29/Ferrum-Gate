@@ -210,6 +210,97 @@ After fix:
 
 ---
 
+## GCS Offsite Restore Drill
+
+Executed GCS offsite restore drill on VM to validate backup integrity:
+
+```
+Source: gs://ferrumgate-nonprod-backups-fairy-b13f4-20260509/ferrumgate/
+RESTORE_OBJECT=ferrumgate_20260508_154446.db
+INTEGRITY=ok
+TABLE_COUNT=14
+SIZE_BYTES=241664
+```
+
+**Result**: PASSED — offsite backup integrity verified.
+
+---
+
+## Service Evidence
+
+### Systemd Services
+
+| Service | Status |
+|---------|--------|
+| `ferrumgate.service` | active |
+| `caddy.service` | active |
+| `prometheus` | active |
+| `prometheus-alertmanager` | active |
+| `ferrumgate-offsite-backup.timer` | enabled, active |
+| `ferrumgate-offsite-backup.service` | Result=success, ExecMainStatus=0 |
+
+---
+
+## HTTPS Endpoint Evidence
+
+| Endpoint | Status |
+|----------|--------|
+| `/v1/healthz` | 200 |
+| `/v1/readyz` | 200 |
+| `/v1/readyz/deep` | 200 |
+| `/v1/metrics` | 200 |
+
+### Metrics from /v1/metrics
+
+| Metric | Value |
+|--------|-------|
+| `ferrumgate_store_health_up` | 1 |
+| `ferrumgate_write_queue_depth` | 0 |
+
+---
+
+## Prometheus Evidence
+
+| Query | Result |
+|-------|--------|
+| `PROMETHEUS_UP{job="ferrumgate"}` | 1 |
+| `up{job="ferrumgate"}` | 1 (instance `34-158-51-8.nip.io:443`) |
+
+---
+
+## Phase 3H Operational Deltas Discovered
+
+During Phase 3H execution, the following operational issues were encountered and resolved:
+
+### 1. VM OAuth Scope Issue (service-account-key mode required)
+
+**Problem**: The VM's default attached service account was not usable for GCS access because OAuth scopes assigned to the VM did not include GCS scopes. `gsutil` returned `403 Provided scope(s) are not authorized`.
+
+**Resolution**: Created a dedicated backup service account with service account key JSON uploaded to VM. Used `service-account-key` auth mode instead of default `vm-service-account` mode.
+
+**Script implication**: `phase3g_configure_offsite_backup.sh` now documents this constraint in its prerequisite section.
+
+### 2. gsutil PATH Issue in systemd
+
+**Problem**: `gsutil` was not in PATH when executed from systemd service context.
+
+**Resolution**: Updated systemd service to use full path `/snap/bin/gsutil` instead of bare `gsutil`.
+
+**Script implication**: `phase3g_configure_offsite_backup.sh` documents that systemd units must use `/snap/bin/gsutil` for the snap-installed gsutil.
+
+### 3. Monitoring Prometheus Wiring
+
+**Problem**: Monitoring configs deployed to `/etc/ferrumgate/monitoring/` needed explicit wiring into `/etc/prometheus/prometheus.yml` and `/etc/prometheus/alertmanager.yml`.
+
+**Resolution**:
+- Added `/etc/prometheus/ferrumgate-alerts.yaml` to `rule_files` in prometheus.yml
+- Added scrape job for `ferrumgate` target at `34-158-51-8.nip.io:443`
+- Wired AlertManager to use `/etc/ferrumgate/monitoring/alertmanager-config.yaml`
+
+**Script implication**: `phase3g_configure_monitoring.sh` now includes explicit wiring steps for Prometheus and AlertManager configuration files.
+
+---
+
 ## Final Phase 3E Evidence Rerun
 
 After all Phase 3H deployments and fixes, re-ran Phase 3E evidence script to verify no regressions:
@@ -290,6 +381,8 @@ Phase 3H does NOT:
 
 - Phase 3G plan: [101-phase3g-ops-hardening-plan.md](../101-phase3g-ops-hardening-plan.md)
 - Phase 3G scaffold review: [2026-05-09-gcp-phase3g-scaffold-review.md](./2026-05-09-gcp-phase3g-scaffold-review.md)
+- Phase 3H offsite monitoring: [2026-05-09-gcp-phase3h-offsite-monitoring.md](./2026-05-09-gcp-phase3h-offsite-monitoring.md) (this artifact)
+- Phase 3I no-domain follow-up: [2026-05-09-gcp-phase3i-no-domain-followup.md](./2026-05-09-gcp-phase3i-no-domain-followup.md)
 - Phase 3F authorization: [100-phase3f-conditional-sqlite-pilot-authorization.md](../100-phase3f-conditional-sqlite-pilot-authorization.md)
 - Phase 3E evidence: [2026-05-09-gcp-phase3e-sqlite-pilot-evidence.md](./2026-05-09-gcp-phase3e-sqlite-pilot-evidence.md)
 - Phase 3A artifact: [2026-05-08-gcp-phase3a-nonprod-target.md](./2026-05-08-gcp-phase3a-nonprod-target.md)

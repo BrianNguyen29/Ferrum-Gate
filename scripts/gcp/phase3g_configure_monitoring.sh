@@ -15,6 +15,15 @@
 #   - VM ferrumgate-nonprod running with ferrumgate service
 #   - Metrics endpoint available at /v1/metrics
 #
+# Operational notes (learned from Phase 3H):
+#   - Monitoring configs are deployed to /etc/ferrumgate/monitoring/
+#   - Prometheus must be explicitly wired to use these configs:
+#     - Add a rule_files entry in /etc/prometheus/prometheus.yml for /etc/prometheus/ferrumgate-alerts.yaml
+#     - Add scrape job for ferrumgate target to /etc/prometheus/prometheus.yml
+#   - AlertManager must be explicitly wired:
+#     - Update /etc/prometheus/alertmanager.yml to use /etc/ferrumgate/monitoring/alertmanager-config.yaml
+#   - After wiring, restart prometheus and alertmanager services
+#
 # Local-only mode (--local-only):
 #   - Deploys configs for local Prometheus/AlertManager on the VM
 #   - Uses localhost receivers only

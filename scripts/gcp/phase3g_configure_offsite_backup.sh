@@ -14,7 +14,14 @@
 #   - VM ferrumgate-nonprod running with ferrumgate service
 #   - GCS bucket pre-created by operator (this script does NOT create bucket)
 #   - For vm-service-account mode: VM must have a attached service account with GCS bucket write
+#     AND the VM must have OAuth scopes that include GCS (e.g., https://www.googleapis.com/auth/devstorage.read_write)
+#     NOTE: If VM attached SA returns "403 Provided scope(s) are not authorized", use service-account-key mode instead
 #   - For service-account-key mode: Service account with GCS bucket write permissions (this script does NOT create SA)
+#
+# Operational notes (learned from Phase 3H):
+#   - gsutil installed via snap is at /snap/bin/gsutil, NOT in default PATH for systemd services
+#   - Systemd units MUST use full path /snap/bin/gsutil
+#   - If VM attached SA has insufficient OAuth scopes, switch to service-account-key mode
 #
 # Usage:
 #   bash scripts/gcp/phase3g_configure_offsite_backup.sh --confirm --gcs-bucket BUCKET [options]

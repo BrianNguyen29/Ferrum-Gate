@@ -199,11 +199,13 @@ Phase 3G actual deployment is **blocked** on the following operator-provided inp
 
 ### Summary Matrix
 
-| Phase 3G Component | Deployment Blocked | Blocker |
-|-------------------|------------------|---------|
-| Real-domain TLS | **YES** | No real domain provided |
-| Offsite backup to GCS | **YES** | No GCS bucket or service account |
-| Monitoring/alerting | **YES** | No alert contact provided |
+| Phase 3G Component | Deployment Blocked | Blocker | Status |
+|-------------------|------------------|---------|--------|
+| Real-domain TLS | **YES** | No real domain provided | **BLOCKED — unchanged** |
+| Offsite backup to GCS | ~~**YES**~~ | ~~No GCS bucket or service account~~ | **EXECUTED in Phase 3H** |
+| Monitoring/alerting | ~~**YES**~~ | ~~No alert contact provided~~ | **EXECUTED (local-only mode) in Phase 3H** |
+
+> **Note**: Phase 3H executed offsite backup (GCS bucket `gs://ferrumgate-nonprod-backups-fairy-b13f4-20260509/ferrumgate/`) and local monitoring (Prometheus + AlertManager on-VM). Offsite backup and local monitoring are no longer blocked. Real-domain TLS remains blocked. See [Phase 3H artifact](./2026-05-09-gcp-phase3h-offsite-monitoring.md) and [Phase 3I artifact](./2026-05-09-gcp-phase3i-no-domain-followup.md) for execution evidence.
 
 ---
 
@@ -253,25 +255,30 @@ To complete Phase 3G deployment, the operator must provide the following:
 
 ### For Offsite Backup to GCS
 
-- [ ] Create GCS bucket (e.g., `gs://my-backup-bucket/ferrumgate/`)
-- [ ] Create service account with `roles/storage.objectAdmin` on bucket
-- [ ] Download service account key JSON
-- [ ] Run deployment script:
-  ```bash
-  bash scripts/gcp/phase3g_configure_offsite_backup.sh --confirm \
-    --gcs-bucket gs://OPERATOR_PROVIDED_BUCKET/ferrumgate/ \
-    --service-account OPERATOR_PROVIDED_SERVICE_ACCOUNT
-  ```
+> **UPDATE (Phase 3H)**: Offsite backup has been executed. See [Phase 3H artifact](./2026-05-09-gcp-phase3h-offsite-monitoring.md) for evidence. The following summarizes what was done:
+> - GCS bucket: `gs://ferrumgate-nonprod-backups-fairy-b13f4-20260509/ferrumgate/`
+> - Auth mode: service-account-key (VM attached SA had insufficient OAuth scopes for GCS)
+> - Backup timer: `ferrumgate-offsite-backup.timer` enabled + active
+> - Offsite restore drill: **PASSED** — `ferrumgate_20260508_154446.db` restored with INTEGRITY=ok, TABLE_COUNT=14, SIZE_BYTES=241664
+
+Legacy operator actions (superseded by Phase 3H execution):
+- [x] ~~Create GCS bucket~~ — Done in Phase 3H
+- [x] ~~Create service account with GCS permissions~~ — Done in Phase 3H
+- [x] ~~Run deployment script~~ — Done in Phase 3H
 
 ### For Monitoring/Alerting
 
-- [ ] Determine alert contact (email or other receiver)
-- [ ] Verify Prometheus/AlertManager endpoints available
-- [ ] Run deployment script:
-  ```bash
-  bash scripts/gcp/phase3g_configure_monitoring.sh --confirm \
-    --alert-contact OPERATOR_PROVIDED_ALERT_CONTACT
-  ```
+> **UPDATE (Phase 3H)**: Local monitoring has been deployed. See [Phase 3H artifact](./2026-05-09-gcp-phase3h-offsite-monitoring.md) for evidence. The following summarizes what was done:
+> - Mode: local-only (localhost webhook receiver, no real alert contact)
+> - Components: Prometheus + AlertManager installed on-VM
+> - Configs deployed to `/etc/ferrumgate/monitoring/`
+> - Prometheus wired to `/etc/prometheus/prometheus.yml`
+> - AlertManager wired to `/etc/prometheus/alertmanager.yml`
+
+Legacy operator actions (superseded by Phase 3H execution):
+- [x] ~~Determine alert contact~~ — Local-only mode, no contact required
+- [x] ~~Verify Prometheus/AlertManager endpoints~~ — Deployed locally on-VM
+- [x] ~~Run deployment script~~ — Done in Phase 3H (local-only mode)
 
 ### For All Phase 3G Components
 
