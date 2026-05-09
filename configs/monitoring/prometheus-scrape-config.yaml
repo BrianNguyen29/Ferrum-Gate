@@ -7,10 +7,13 @@
 #   - Include this file in your prometheus.yml under scrape_configs
 #   - Or use as a separate service discovery file
 #
-# NOTES:
-#   - Default uses nip.io temporary domain; replace with real domain for production
-#   - Adjust scrape_interval for your monitoring needs
-#   - For production, use proper TLS CA verification
+# LOCAL_ONLY NOTE:
+#   - This config uses nip.io temporary domain for non-production local testing
+#   - For production, replace with real domain and proper TLS verification
+#
+# NON-PRODUCTION CLAIM:
+#   - This template is for non-production/local-only monitoring
+#   - NOT production-ready, NOT production alerting
 
 # Prometheus global configuration
 global:

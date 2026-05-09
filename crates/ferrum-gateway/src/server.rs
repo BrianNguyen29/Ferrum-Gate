@@ -1279,20 +1279,20 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
             let mut lines = String::new();
             for (i, boundary) in HISTOGRAM_BOUNDARIES.iter().enumerate() {
                 lines.push_str(&format!(
-                    " ferrumgate_request_duration_seconds{{route=\"{}\",method=\"{}\",status=\"{}\",le=\"{}\"}} {}\n",
+                    "ferrumgate_request_duration_seconds{{route=\"{}\",method=\"{}\",status=\"{}\",le=\"{}\"}} {}\n",
                     $route, $method, $status, boundary, $buckets[i]
                 ));
             }
             lines.push_str(&format!(
-                " ferrumgate_request_duration_seconds{{route=\"{}\",method=\"{}\",status=\"{}\",le=\"+Inf\"}} {}\n",
+                "ferrumgate_request_duration_seconds{{route=\"{}\",method=\"{}\",status=\"{}\",le=\"+Inf\"}} {}\n",
                 $route, $method, $status, $count
             ));
             lines.push_str(&format!(
-                " ferrumgate_request_duration_seconds_sum{{route=\"{}\",method=\"{}\",status=\"{}\"}} {}\n",
+                "ferrumgate_request_duration_seconds_sum{{route=\"{}\",method=\"{}\",status=\"{}\"}} {}\n",
                 $route, $method, $status, $sum as f64 / 1e9_f64
             ));
             lines.push_str(&format!(
-                " ferrumgate_request_duration_seconds_count{{route=\"{}\",method=\"{}\",status=\"{}\"}} {}\n",
+                "ferrumgate_request_duration_seconds_count{{route=\"{}\",method=\"{}\",status=\"{}\"}} {}\n",
                 $route, $method, $status, $count
             ));
             lines

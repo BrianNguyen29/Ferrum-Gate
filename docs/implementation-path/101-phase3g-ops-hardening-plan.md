@@ -58,39 +58,74 @@ Replaces nip.io temporary domain with a real domain. Requires:
 
 **Script**: `scripts/gcp/phase3g_configure_offsite_backup.sh`
 
-Configures automatic offsite backup from VM to GCS bucket. Requires:
-- GCS bucket name (must be created by operator first)
-- GCP service account with bucket write permissions
-- Backup retention setting
+Configures automatic offsite backup from VM to GCS bucket. Supports two auth modes:
+- **vm-service-account mode (default, keyless)**: Uses VM's attached service account
+  - Requires VM to have a service account attached with GCS bucket write permissions
+  - No service account key JSON required
+- **service-account-key mode**: Uses service account key JSON file
+  - Requires operator to provide and upload the key file
+  - Requires service account email
 
-**Blocked until**: GCS bucket created, service account configured
+**Inputs**:
+- GCS bucket name (must be created by operator first)
+- Auth mode: vm-service-account (default) or service-account-key
+- For service-account-key mode: service account email
+
+**Blocked until (vm-service-account mode)**: GCS bucket created, VM has attached service account with GCS write permissions
+**Blocked until (service-account-key mode)**: GCS bucket created, service account key provided
 
 ### 3. Monitoring and Alerting
 
 **Script**: `scripts/gcp/phase3g_configure_monitoring.sh`
 
-Deploys monitoring config to VM for Prometheus scraping + alerting. Requires:
-- Alert contact (email placeholder only — no actual email configured)
-- Prometheus endpoint (if external Prometheus used)
-- AlertManager endpoint (if AlertManager used)
+Deploys monitoring config to VM for Prometheus scraping + alerting. Supports two modes:
+- **Local-only mode (default, RECOMMENDED for non-production)**: No real alert contact required
+  - Uses localhost receivers only
+  - Non-production claim boundary clearly stated
+  - No alert contact flag needed
+- **External mode**: Requires real alert contact for external Prometheus/AlertManager
+  - Alert contact placeholder required (no email literal stored)
 
-**Blocked until**: Alert contact provided, Prometheus/AlertManager endpoints available
+**Inputs**:
+- Mode: local-only (default) or external
+- Alert contact (required only for external mode)
+- Prometheus/AlertManager URLs (defaults to localhost)
+
+**Blocked until (local-only mode)**: None — can deploy without real alert contact
+**Blocked until (external mode)**: Alert contact provided, Prometheus/AlertManager endpoints available
 
 **Config templates**: `configs/monitoring/`
+
+**Non-production claim boundary (local-only mode)**: NOT production-ready, NOT production alerting, local stack only
 
 ---
 
 ## Inputs Summary
 
+### Offsite Backup Inputs
+
+| Input | Status | Description |
+|-------|--------|-------------|
+| GCS bucket name | **REQUIRED** | Pre-created bucket for offsite backup |
+| Auth mode | **OPTIONAL** | vm-service-account (default/keyless) or service-account-key |
+| Service account (key mode) | **REQUIRED (key mode only)** | Service account email for key mode |
+| VM attached SA (VM mode) | **REQUIRED (VM mode)** | VM must have attached SA with GCS write |
+
+### Monitoring Inputs
+
+| Input | Status | Description |
+|-------|--------|-------------|
+| Mode | **OPTIONAL** | local-only (default) or external |
+| Alert contact | **REQUIRED (external mode only)** | Placeholder (not literal) |
+| Prometheus URL | **OPTIONAL** | Default: http://localhost:9090 |
+| AlertManager URL | **OPTIONAL** | Default: http://localhost:9093 |
+
+### Real-Domain TLS Inputs (Separate Script)
+
 | Input | Status | Description |
 |-------|--------|-------------|
 | Real domain | **REQUIRED** | Domain name (e.g., `api.example.com`) |
 | DNS A record | **REQUIRED** | Confirmed pointing to VM static IP |
-| GCS bucket name | **REQUIRED** | Pre-created bucket for offsite backup |
-| GCS service account | **REQUIRED** | Service account with bucket write |
-| Alert contact | **REQUIRED** | Email placeholder (not literal) |
-| Prometheus endpoint | **OPTIONAL** | External Prometheus URL |
-| AlertManager endpoint | **OPTIONAL** | AlertManager URL |
 
 ---
 
@@ -125,20 +160,37 @@ bash scripts/gcp/phase3g_configure_real_domain.sh --confirm \
 ### Offsite Backup (phase3g_configure_offsite_backup.sh)
 
 ```bash
-# BLOCKED until GCS bucket created
+# vm-service-account mode (KEYLESS - default, RECOMMENDED):
+# BLOCKED until GCS bucket created and VM has attached SA with GCS write
+bash scripts/gcp/phase3g_configure_offsite_backup.sh --confirm \
+  --project-id fairy-b13f4 \
+  --region asia-southeast1 \
+  --zone asia-southeast1-a \
+  --vm-name ferrumgate-nonprod \
+  --gcs-bucket gs://ferrumgate-nonprod-backups-fairy-b13f4-20260509/ferrumgate/
+
+# service-account-key mode (requires operator-provided key):
 bash scripts/gcp/phase3g_configure_offsite_backup.sh --confirm \
   --project-id fairy-b13f4 \
   --region asia-southeast1 \
   --zone asia-southeast1-a \
   --vm-name ferrumgate-nonprod \
   --gcs-bucket gs://my-backup-bucket/ferrumgate/ \
+  --auth-mode service-account-key \
   --service-account OPERATOR_PROVIDED_SERVICE_ACCOUNT
 ```
 
 ### Monitoring (phase3g_configure_monitoring.sh)
 
 ```bash
-# BLOCKED until alert contact provided
+# LOCAL-ONLY mode (RECOMMENDED for non-production, NO real alert contact):
+# NOT blocked - can deploy without real alert contact
+bash scripts/gcp/phase3g_configure_monitoring.sh --confirm --local-only \
+  --project-id fairy-b13f4 \
+  --zone asia-southeast1-a \
+  --vm-name ferrumgate-nonprod
+
+# EXTERNAL mode (BLOCKED until alert contact provided):
 bash scripts/gcp/phase3g_configure_monitoring.sh --confirm \
   --project-id fairy-b13f4 \
   --zone asia-southeast1-a \

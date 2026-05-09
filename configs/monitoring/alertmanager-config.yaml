@@ -4,13 +4,23 @@
 # NO actual alerts will be sent until real receivers are configured.
 # NO email literal is stored in this configuration.
 #
+# LOCAL_ONLY NOTE:
+#   - Default webhook receiver points to localhost for local stack testing
+#   - No real alert contact configured
+#   - For production, replace with actual receiver configuration
+#
+# NON-PRODUCTION CLAIM:
+#   - This template is for non-production/local-only monitoring
+#   - NOT production-ready, NOT production alerting
+#   - No email literals stored - all contacts are placeholders
+#
 # USAGE:
 #   1. Copy this file to your AlertManager config directory
 #   2. Replace PLACEHOLDER values with actual receiver configurations
 #   3. Validate: amtool check-config /path/to/alertmanager.yml
 #   4. Reload: curl -X POST http://localhost:9093/-/reload
 #
-# PLACEHOLDERS (must be replaced):
+# PLACEHOLDERS (must be replaced for production):
 #   - ${ALERT_CONTACT}: Your alert contact email (or use other receiver type)
 #   - ${ALERTMANAGER_URL}: Your AlertManager URL for routing
 #
