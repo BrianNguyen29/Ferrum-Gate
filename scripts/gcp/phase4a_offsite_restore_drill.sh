@@ -154,7 +154,8 @@ echo "  GCS listing:"
 echo "$GCS_LIST" | head -10
 
 # Find most recent backup object
-MOST_RECENT=$(echo "$GCS_LIST" | grep '^gs://' | head -1 || echo "")
+# gsutil ls -l output: SIZE  DATE  gs://bucket/path (URL not at line start)
+MOST_RECENT=$(echo "$GCS_LIST" | grep -oE 'gs://[^[:space:]]+' | head -1 || echo "")
 if [[ -z "$MOST_RECENT" ]]; then
     echo "ERROR: No backup objects found in GCS bucket." >&2
     exit 1
@@ -187,8 +188,14 @@ COPY_RESULT=$(gcloud compute ssh ubuntu@"$GCP_VM_NAME" \
 
 echo "  Copy result: $COPY_RESULT"
 
-if [[ "$COPY_RESULT" != "COPY_SUCCESS" ]]; then
+# gsutil cp outputs multi-line logs; check for COPY_SUCCESS within output
+if ! echo "$COPY_RESULT" | grep -q 'COPY_SUCCESS'; then
     echo "ERROR: Failed to copy backup from GCS." >&2
+    # Cleanup temp file on copy failure
+    gcloud compute ssh ubuntu@"$GCP_VM_NAME" \
+        --zone="$GCP_ZONE" --project="$GCP_PROJECT_ID" \
+        --quiet -- \
+        "rm -f '${TEMP_FILE}'" 2>/dev/null || true
     exit 1
 fi
 

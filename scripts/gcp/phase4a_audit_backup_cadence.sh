@@ -169,14 +169,15 @@ echo "  Recent backup objects (up to 5):"
 echo "$GCS_OUTPUT"
 
 # --- Compute age of most recent backup ---
-if echo "$GCS_OUTPUT" | grep -q '^gs://'; then
-    MOST_RECENT=$(echo "$GCS_OUTPUT" | grep '^gs://' | head -1)
-    # Extract timestamp from object name (format: gs://bucket/ferrumgate_YYYYMMDD_HHMMSS.db)
-    TS=$(echo "$MOST_RECENT" | grep -oE '[0-9]{8}_[0-9]{6}' | head -1 || echo "")
-    if [[ -n "$TS" ]]; then
-        BACKUP_DATE="${TS:0:8}"
-        BACKUP_TIME="${TS:9:6}"
-        BACKUP_EPOCH=$(date -d "${BACKUP_DATE} ${BACKUP_TIME}" +%s 2>/dev/null || echo "0")
+# gsutil ls -l output: SIZE  DATE  gs://bucket/path (URL not at line start)
+# Parse the line containing gs:// to extract GCS mtime (field 2) and URL (field 3)
+OBJECT_LINE=$(echo "$GCS_OUTPUT" | grep -m1 -E 'gs://[^[:space:]]+' || echo "")
+if [[ -n "$OBJECT_LINE" ]]; then
+    # Extract ISO timestamp (field 2) and URL (field 3) from the listing line
+    GCS_TIMESTAMP=$(echo "$OBJECT_LINE" | awk '{print $2}' | sed 's/Z$//')
+    MOST_RECENT=$(echo "$OBJECT_LINE" | awk '{print $3}')
+    if [[ -n "$GCS_TIMESTAMP" && -n "$MOST_RECENT" ]]; then
+        BACKUP_EPOCH=$(date -d "$GCS_TIMESTAMP" +%s 2>/dev/null || echo "0")
         NOW_EPOCH=$(date +%s)
         AGE_SEC=$((NOW_EPOCH - BACKUP_EPOCH))
         AGE_HUMAN=""
@@ -188,7 +189,7 @@ if echo "$GCS_OUTPUT" | grep -q '^gs://'; then
 
         echo ""
         echo "  Most recent backup: $MOST_RECENT"
-        echo "  Backup timestamp  : ${BACKUP_DATE} ${BACKUP_TIME}"
+        echo "  GCS mtime         : ${GCS_TIMESTAMP}Z"
         echo "  Age              : $AGE_HUMAN"
         echo "  RPO threshold    : ${RPO_THRESHOLD_SEC}s ($(echo "scale=1; $RPO_THRESHOLD_SEC/3600" | bc 2>/dev/null || echo "${RPO_THRESHOLD_SEC}s")h)"
 
@@ -199,7 +200,7 @@ if echo "$GCS_OUTPUT" | grep -q '^gs://'; then
             echo "                    Backup is older than RPO threshold. Verify backup schedule is running."
         fi
     else
-        echo "  Could not parse timestamp from backup object name."
+        echo "  Could not parse timestamp from GCS listing."
     fi
 else
     echo "  No GCS backup objects found or access denied."
@@ -210,7 +211,7 @@ echo "=== Phase 4A Backup Cadence Audit Complete ==="
 echo ""
 echo "Evidence summary:"
 echo "  - Timer found: $(echo "$TIMER_OUTPUT" | grep -q 'ferrumgate-offsite-backup' && echo 'YES' || echo 'NO')"
-echo "  - GCS objects: $(echo "$GCS_OUTPUT" | grep -c '^gs://' 2>/dev/null || echo '0')"
+echo "  - GCS objects: $(echo "$GCS_OUTPUT" | grep -cE 'gs://[^[:space:]]+' 2>/dev/null || echo '0')"
 echo "  - Script: read-only (no state modified)"
 echo ""
 echo "Non-claims: NOT production-ready, NOT production alerting, NOT full G2."

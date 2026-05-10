@@ -160,6 +160,20 @@ AlertManager webhook receiver template that forwards alerts to SendGrid email AP
 
 ---
 
+## Live Execution Notes
+
+### Helper Script Bugs Found and Fixed During Live Execution
+
+Three bugs were discovered and fixed during live execution (documented in `artifacts/2026-05-10-phase4a-live-hardening-evidence.md`):
+
+1. **URL parsing bug** (`phase4a_audit_backup_cadence.sh`): `gsutil ls -l` output format is `SIZE DATE gs://URL` (URL not at line start). Fixed to `grep` for the line containing `gs://` first, then extract fields from that line.
+
+2. **Age computation bug** (`phase4a_audit_backup_cadence.sh`): RPO age initially used filename timestamp. Fixed to use GCS mtime from `gsutil ls -l` field 2.
+
+3. **Multi-line COPY_SUCCESS bug** (`phase4a_offsite_restore_drill.sh`): `gsutil cp` outputs multi-line logs. Fixed to check for `COPY_SUCCESS` anywhere in output using `grep -q` instead of relying on final-line position. Also added cleanup on copy failure.
+
+---
+
 ## Script Usage Patterns
 
 ### Backup Cadence Audit (read-only)
