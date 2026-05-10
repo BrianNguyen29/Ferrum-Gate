@@ -4,24 +4,20 @@
 
 use async_trait::async_trait;
 use ferrum_proto::{CapabilityId, CapabilityLease, CapabilityStatus, IntentId};
+use sqlx::PgPool;
 
 use super::skeleton_error;
 use crate::{CapabilityRepo, Result};
 
 #[derive(Debug, Clone)]
 pub struct PostgresCapabilityRepo {
-    _private: (),
+    #[allow(dead_code)]
+    pool: PgPool,
 }
 
 impl PostgresCapabilityRepo {
-    pub fn new() -> Self {
-        Self { _private: () }
-    }
-}
-
-impl Default for PostgresCapabilityRepo {
-    fn default() -> Self {
-        Self::new()
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
     }
 }
 

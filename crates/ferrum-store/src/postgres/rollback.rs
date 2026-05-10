@@ -4,24 +4,20 @@
 
 use async_trait::async_trait;
 use ferrum_proto::{ExecutionId, RollbackContract, RollbackContractId, RollbackState};
+use sqlx::PgPool;
 
 use super::skeleton_error;
 use crate::{Result, RollbackRepo};
 
 #[derive(Debug, Clone)]
 pub struct PostgresRollbackRepo {
-    _private: (),
+    #[allow(dead_code)]
+    pool: PgPool,
 }
 
 impl PostgresRollbackRepo {
-    pub fn new() -> Self {
-        Self { _private: () }
-    }
-}
-
-impl Default for PostgresRollbackRepo {
-    fn default() -> Self {
-        Self::new()
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
     }
 }
 

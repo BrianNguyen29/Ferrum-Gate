@@ -1,13 +1,13 @@
-//! PostgreSQL P2 infrastructure skeleton.
+//! PostgreSQL P3 runtime infrastructure — IntentRepo implemented.
 //!
-//! **This module is a compile-time infrastructure placeholder only.**
-//! Runtime PostgreSQL support is NOT implemented. All operations return an error
-//! indicating this is a skeleton.
+//! **PostgreSQL runtime support is partial (P3).**
+//! Only `PostgresIntentRepo` has a real implementation.
+//! All other repos remain skeletons that return an error.
 //!
-//! # P2 Status
+//! # P3 Status
 //!
-//! - [x] Module skeleton with placeholder repo implementations
-//! - [ ] Real repository implementations (P3)
+//! - [x] PostgresIntentRepo with real sqlx queries
+//! - [ ] Remaining 8 repos (P3+ deferred)
 //! - [ ] Migration infrastructure (P4)
 //! - [ ] Production readiness (P5)
 //!
@@ -16,6 +16,7 @@
 mod approvals;
 mod capabilities;
 mod executions;
+mod helpers;
 mod intents;
 mod ledger;
 mod policy_bundles;
@@ -39,83 +40,115 @@ use crate::repos::{
     ProposalRepo, ProvenanceRepo, RollbackRepo, StoreFacade,
 };
 use async_trait::async_trait;
+use sqlx::PgPool;
 use std::sync::Arc;
 
-/// PostgreSQL P2 skeleton store.
+/// PostgreSQL P3 store.
 ///
-/// **This is NOT functional runtime code.**
-/// All operations return `StoreError::Other("PostgreSQL P2 skeleton only;
-/// runtime support not implemented")`.
+/// **Partial runtime support.** `PostgresIntentRepo` is functional;
+/// all other repos return `StoreError::Other("PostgreSQL P2 skeleton only; ...")`.
 ///
-/// Use `SqliteStore` for actual runtime storage.
+/// Use `SqliteStore` for full runtime storage.
 #[derive(Debug, Clone)]
 pub struct PostgresStore {
-    _private: (),
+    pool: PgPool,
 }
 
 impl PostgresStore {
-    /// Creates a new PostgresStore skeleton.
+    /// Connect to PostgreSQL using the provided database URL.
     ///
-    /// **NOTE**: This does NOT connect to PostgreSQL. It returns a skeleton
-    /// that errors on all operations.
-    pub fn new() -> Self {
-        Self { _private: () }
+    /// Uses a connection pool with `max_connections = 5`.
+    pub async fn connect(database_url: &str) -> Result<Self> {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(5)
+            .connect(database_url)
+            .await?;
+        Ok(Self { pool })
     }
 
-    /// Returns a placeholder for when real PostgreSQL connection is implemented.
-    ///
-    /// # Errors
-    ///
-    /// Always returns `StoreError::Other("PostgreSQL P2 skeleton only;
-    /// runtime support not implemented")`.
-    pub async fn connect(_database_url: &str) -> Result<Self> {
-        Err(crate::StoreError::Other(
-            "PostgreSQL P2 skeleton only; runtime support not implemented".to_string(),
-        ))
+    /// Returns a clone of the underlying connection pool.
+    pub fn pool(&self) -> &PgPool {
+        &self.pool
     }
 
-    // Placeholder accessors — return skeleton repos that error on all operations
+    /// Apply minimal schema migrations required for the intent repo.
+    pub async fn apply_intent_migration(&self) -> Result<()> {
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS intents (
+                intent_id TEXT PRIMARY KEY,
+                principal_id TEXT NOT NULL,
+                normalized_goal TEXT NOT NULL,
+                status TEXT NOT NULL,
+                risk_tier TEXT NOT NULL,
+                approval_mode TEXT NOT NULL,
+                default_rollback_class TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                raw_json TEXT NOT NULL
+            )",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS executions (
+                execution_id TEXT PRIMARY KEY,
+                intent_id TEXT NOT NULL,
+                proposal_id TEXT NOT NULL,
+                capability_id TEXT NOT NULL,
+                rollback_contract_id TEXT,
+                decision TEXT NOT NULL,
+                state TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                finished_at TEXT,
+                result_digest TEXT,
+                raw_json TEXT NOT NULL
+            )",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_executions_intent_id ON executions(intent_id)")
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
 
     pub fn intents(&self) -> PostgresIntentRepo {
-        PostgresIntentRepo::new()
+        PostgresIntentRepo::new(self.pool.clone())
     }
 
     pub fn proposals(&self) -> PostgresProposalRepo {
-        PostgresProposalRepo::new()
+        PostgresProposalRepo::new(self.pool.clone())
     }
 
     pub fn capabilities(&self) -> PostgresCapabilityRepo {
-        PostgresCapabilityRepo::new()
+        PostgresCapabilityRepo::new(self.pool.clone())
     }
 
     pub fn executions(&self) -> PostgresExecutionRepo {
-        PostgresExecutionRepo::new()
+        PostgresExecutionRepo::new(self.pool.clone())
     }
 
     pub fn rollback_contracts(&self) -> PostgresRollbackRepo {
-        PostgresRollbackRepo::new()
+        PostgresRollbackRepo::new(self.pool.clone())
     }
 
     pub fn approvals(&self) -> PostgresApprovalRepo {
-        PostgresApprovalRepo::new()
+        PostgresApprovalRepo::new(self.pool.clone())
     }
 
     pub fn provenance(&self) -> PostgresProvenanceRepo {
-        PostgresProvenanceRepo::new()
+        PostgresProvenanceRepo::new(self.pool.clone())
     }
 
     pub fn ledger(&self) -> PostgresLedgerRepo {
-        PostgresLedgerRepo::new()
+        PostgresLedgerRepo::new(self.pool.clone())
     }
 
     pub fn policy_bundles(&self) -> PostgresPolicyBundleRepo {
-        PostgresPolicyBundleRepo::new()
-    }
-}
-
-impl Default for PostgresStore {
-    fn default() -> Self {
-        Self::new()
+        PostgresPolicyBundleRepo::new(self.pool.clone())
     }
 }
 
@@ -158,9 +191,11 @@ impl StoreFacade for PostgresStore {
     }
 
     async fn health_check(&self) -> crate::Result<()> {
-        Err(crate::StoreError::Other(
-            "PostgreSQL P2 skeleton only; runtime support not implemented".to_string(),
-        ))
+        sqlx::query("SELECT 1")
+            .execute(&self.pool)
+            .await
+            .map_err(|e| crate::StoreError::Other(e.to_string()))?;
+        Ok(())
     }
 
     fn write_queue_depth(&self) -> usize {
@@ -181,50 +216,26 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn postgres_store_health_check_returns_error() {
-        let store = PostgresStore::new();
-        let err = store.health_check().await.unwrap_err();
-        assert!(
-            matches!(err, crate::StoreError::Other(ref s) if s.contains("P2 skeleton")),
-            "expected P2 skeleton error, got: {}",
-            err
-        );
-    }
-
-    #[tokio::test]
-    async fn postgres_store_connect_returns_error() {
+    async fn postgres_store_connect_errors_when_unreachable() {
         let err = PostgresStore::connect("postgres://localhost:5432/test")
             .await
             .unwrap_err();
         assert!(
-            matches!(err, crate::StoreError::Other(ref s) if s.contains("P2 skeleton")),
-            "expected P2 skeleton error, got: {}",
+            matches!(err, crate::StoreError::Database(_)),
+            "expected database error for unreachable host, got: {}",
             err
         );
     }
 
-    #[tokio::test]
-    async fn postgres_store_facade_returns_all_repos() {
-        let store = PostgresStore::new();
-        let facade: Arc<dyn StoreFacade> = Arc::new(store);
+    #[test]
+    fn postgres_intent_repo_implements_intent_repo() {
+        fn _check<T: IntentRepo>() {}
+        _check::<PostgresIntentRepo>();
+    }
 
-        // Verify each accessor returns a valid repo (no panic)
-        let _ = facade.capabilities();
-        let _ = facade.executions();
-        let _ = facade.rollback_contracts();
-        let _ = facade.approvals();
-        let _ = facade.provenance();
-        let _ = facade.ledger();
-        let _ = facade.intents();
-        let _ = facade.proposals();
-        let _ = facade.policy_bundles();
-
-        // All repos error on use
-        let err = facade.health_check().await.unwrap_err();
-        assert!(
-            matches!(err, crate::StoreError::Other(ref s) if s.contains("P2 skeleton")),
-            "expected P2 skeleton error, got: {}",
-            err
-        );
+    #[test]
+    fn postgres_store_implements_store_facade() {
+        fn _check<T: StoreFacade>() {}
+        _check::<PostgresStore>();
     }
 }

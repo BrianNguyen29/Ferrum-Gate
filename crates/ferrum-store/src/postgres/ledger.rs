@@ -4,24 +4,20 @@
 
 use async_trait::async_trait;
 use ferrum_proto::EventId;
+use sqlx::PgPool;
 
 use super::skeleton_error;
 use crate::{LedgerEntry, LedgerRepo, Result};
 
 #[derive(Debug, Clone)]
 pub struct PostgresLedgerRepo {
-    _private: (),
+    #[allow(dead_code)]
+    pool: PgPool,
 }
 
 impl PostgresLedgerRepo {
-    pub fn new() -> Self {
-        Self { _private: () }
-    }
-}
-
-impl Default for PostgresLedgerRepo {
-    fn default() -> Self {
-        Self::new()
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
     }
 }
 

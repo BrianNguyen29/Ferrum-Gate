@@ -4,24 +4,20 @@
 
 use async_trait::async_trait;
 use ferrum_proto::{CapabilityId, ExecutionId, ExecutionRecord, ExecutionState, IntentId};
+use sqlx::PgPool;
 
 use super::skeleton_error;
 use crate::{ExecutionRepo, Result};
 
 #[derive(Debug, Clone)]
 pub struct PostgresExecutionRepo {
-    _private: (),
+    #[allow(dead_code)]
+    pool: PgPool,
 }
 
 impl PostgresExecutionRepo {
-    pub fn new() -> Self {
-        Self { _private: () }
-    }
-}
-
-impl Default for PostgresExecutionRepo {
-    fn default() -> Self {
-        Self::new()
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
     }
 }
 

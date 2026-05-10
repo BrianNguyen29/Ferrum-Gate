@@ -4,24 +4,20 @@
 
 use async_trait::async_trait;
 use ferrum_proto::{ApprovalId, ApprovalRequest, ApprovalState, ProposalId, Timestamp};
+use sqlx::PgPool;
 
 use super::skeleton_error;
 use crate::{ApprovalRepo, Result};
 
 #[derive(Debug, Clone)]
 pub struct PostgresApprovalRepo {
-    _private: (),
+    #[allow(dead_code)]
+    pool: PgPool,
 }
 
 impl PostgresApprovalRepo {
-    pub fn new() -> Self {
-        Self { _private: () }
-    }
-}
-
-impl Default for PostgresApprovalRepo {
-    fn default() -> Self {
-        Self::new()
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
     }
 }
 

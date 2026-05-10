@@ -4,24 +4,20 @@
 
 use async_trait::async_trait;
 use ferrum_proto::{EventId, ProvenanceEdge, ProvenanceEvent, ProvenanceQueryRequest};
+use sqlx::PgPool;
 
 use super::skeleton_error;
 use crate::{ProvenanceRepo, Result};
 
 #[derive(Debug, Clone)]
 pub struct PostgresProvenanceRepo {
-    _private: (),
+    #[allow(dead_code)]
+    pool: PgPool,
 }
 
 impl PostgresProvenanceRepo {
-    pub fn new() -> Self {
-        Self { _private: () }
-    }
-}
-
-impl Default for PostgresProvenanceRepo {
-    fn default() -> Self {
-        Self::new()
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
     }
 }
 

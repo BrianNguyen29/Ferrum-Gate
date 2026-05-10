@@ -4,24 +4,20 @@
 
 use async_trait::async_trait;
 use ferrum_proto::{ActionProposal, IntentId, ProposalId};
+use sqlx::PgPool;
 
 use super::skeleton_error;
 use crate::{ProposalRepo, Result};
 
 #[derive(Debug, Clone)]
 pub struct PostgresProposalRepo {
-    _private: (),
+    #[allow(dead_code)]
+    pool: PgPool,
 }
 
 impl PostgresProposalRepo {
-    pub fn new() -> Self {
-        Self { _private: () }
-    }
-}
-
-impl Default for PostgresProposalRepo {
-    fn default() -> Self {
-        Self::new()
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
     }
 }
 
