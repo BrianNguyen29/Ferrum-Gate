@@ -468,17 +468,25 @@ mod tests {
         let bundles = store.policy_bundles().list().await.unwrap();
         assert_eq!(bundles.len(), 1);
 
-        // Set active (updates SQL column but not raw_json)
+        // Set active (should keep raw_json consistent)
         store
             .policy_bundles()
             .set_active("test-bundle", true)
             .await
             .unwrap();
         let active_bundles = store.policy_bundles().list_active().await.unwrap();
-        // The SQL query correctly filters by active=1
         assert_eq!(active_bundles.len(), 1);
-        // Note: raw_json still has active=false from original insert
-        // This is a known limitation - raw_json is the source of truth for bundle data
+        // raw_json should now reflect active=true
+        let retrieved = store
+            .policy_bundles()
+            .get("test-bundle")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            retrieved.active,
+            "raw_json should reflect active=true after set_active"
+        );
 
         // Delete
         store.policy_bundles().delete("test-bundle").await.unwrap();

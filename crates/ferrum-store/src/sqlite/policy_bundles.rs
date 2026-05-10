@@ -115,11 +115,10 @@ impl PolicyBundleRepo for SqlitePolicyBundleRepo {
     }
 
     async fn set_active(&self, bundle_id: &str, active: bool) -> Result<()> {
-        sqlx::query("UPDATE policy_bundles SET active = ?2 WHERE bundle_id = ?1")
-            .bind(bundle_id)
-            .bind(active as i32)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
+        let Some(mut bundle) = self.get(bundle_id).await? else {
+            return Ok(());
+        };
+        bundle.active = active;
+        self.update(&bundle).await
     }
 }

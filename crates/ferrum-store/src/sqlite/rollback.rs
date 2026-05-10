@@ -115,13 +115,11 @@ impl RollbackRepo for SqliteRollbackRepo {
             };
             return queue.send(op).await;
         }
-        // Direct SQL UPDATE - avoids read-modify-write overhead
-        sqlx::query("UPDATE rollback_contracts SET state = ?2 WHERE contract_id = ?1")
-            .bind(contract_id.to_string())
-            .bind(enum_text(&state)?)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
+        let Some(mut contract) = self.get(contract_id).await? else {
+            return Ok(());
+        };
+        contract.state = state;
+        self.update(&contract).await
     }
 
     async fn list_by_execution(&self, execution_id: ExecutionId) -> Result<Vec<RollbackContract>> {
@@ -452,5 +450,43 @@ mod tests {
                 .and_then(|v| v.as_str()),
             Some("/tmp/ferrum-fs-snapshots/exec-123/path-hash")
         );
+    }
+
+    #[tokio::test]
+    async fn test_update_state_keeps_raw_json_consistent() {
+        use crate::sqlite::SqliteStore;
+
+        let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+
+        let intent_id = ferrum_proto::IntentId::new();
+        let proposal_id = ProposalId::new();
+        let execution_id = ExecutionId::new();
+        let capability_id = ferrum_proto::CapabilityId::new();
+
+        insert_parent_records_via_sql(
+            store.pool(),
+            &intent_id.to_string(),
+            &proposal_id.to_string(),
+            &execution_id.to_string(),
+            &capability_id.to_string(),
+        )
+        .await
+        .unwrap();
+
+        let repo = store.rollback_contracts();
+
+        let contract = create_test_contract(intent_id, proposal_id, execution_id);
+        let contract_id = contract.contract_id;
+        repo.insert(&contract).await.unwrap();
+
+        // Update state via field-only update
+        repo.update_state(contract_id, RollbackState::ExecutedAwaitingVerify)
+            .await
+            .unwrap();
+
+        // get() deserializes from raw_json; if raw_json is stale, state will be wrong
+        let retrieved = repo.get(contract_id).await.unwrap().unwrap();
+        assert_eq!(retrieved.state, RollbackState::ExecutedAwaitingVerify);
     }
 }

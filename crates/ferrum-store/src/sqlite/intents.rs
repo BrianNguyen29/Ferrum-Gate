@@ -110,13 +110,11 @@ impl IntentRepo for SqliteIntentRepo {
             };
             return queue.send(op).await;
         }
-        // Direct SQL UPDATE - avoids read-modify-write overhead
-        sqlx::query("UPDATE intents SET status = ?2 WHERE intent_id = ?1")
-            .bind(intent_id.to_string())
-            .bind(enum_text(&status)?)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
+        let Some(mut intent) = self.get(intent_id).await? else {
+            return Ok(());
+        };
+        intent.status = status;
+        self.update(&intent).await
     }
 
     async fn list_by_status(&self, status: IntentStatus) -> Result<Vec<IntentEnvelope>> {
@@ -320,5 +318,73 @@ impl IntentRepo for SqliteIntentRepo {
         };
 
         Ok((items, next_cursor))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ferrum_proto::{IntentEnvelope, IntentStatus, PrincipalId};
+
+    fn create_test_intent() -> IntentEnvelope {
+        IntentEnvelope {
+            intent_id: ferrum_proto::IntentId::new(),
+            principal_id: PrincipalId::new(),
+            session_id: None,
+            channel_id: None,
+            title: "test".to_string(),
+            goal: "test goal".to_string(),
+            normalized_goal: "test goal".to_string(),
+            allowed_outcomes: vec![],
+            forbidden_outcomes: vec![],
+            resource_scope: vec![],
+            risk_tier: ferrum_proto::RiskTier::Low,
+            approval_mode: ferrum_proto::ApprovalMode::None,
+            default_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+            time_budget: ferrum_proto::TimeBudget {
+                max_duration_ms: 30000,
+                max_steps: 8,
+                max_retries_per_step: 1,
+            },
+            trust_context: ferrum_proto::TrustContextSummary {
+                input_labels: vec![],
+                sensitivity_labels: vec![],
+                taint_score: 0,
+                contains_external_metadata: false,
+                contains_tool_output: false,
+                contains_untrusted_text: false,
+            },
+            derived_from_event_ids: vec![],
+            tags: vec![],
+            metadata: ferrum_proto::JsonMap::new(),
+            status: ferrum_proto::IntentStatus::Active,
+            created_at: chrono::Utc::now(),
+            expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_update_status_keeps_raw_json_consistent() {
+        use crate::sqlite::SqliteStore;
+
+        let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+
+        let repo = store.intents();
+        let intent = create_test_intent();
+        let intent_id = intent.intent_id;
+        repo.insert(&intent).await.unwrap();
+
+        // Update status via field-only update
+        repo.update_status(intent_id, IntentStatus::Closed)
+            .await
+            .unwrap();
+
+        // get() deserializes from raw_json; if raw_json is stale, status will be wrong
+        let retrieved = repo.get(intent_id).await.unwrap().unwrap();
+        assert!(
+            matches!(retrieved.status, IntentStatus::Closed),
+            "raw_json should reflect status=Closed after update_status"
+        );
     }
 }
