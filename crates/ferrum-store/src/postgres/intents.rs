@@ -76,9 +76,17 @@ impl IntentRepo for PostgresIntentRepo {
     }
 
     async fn update_status(&self, intent_id: IntentId, status: IntentStatus) -> Result<()> {
-        sqlx::query("UPDATE intents SET status = $2 WHERE intent_id = $1")
+        let mut intent = match self.get(intent_id).await? {
+            Some(i) => i,
+            None => return Ok(()),
+        };
+        let status_text = enum_text(&status)?;
+        intent.status = status;
+        let raw_json = to_json(&intent)?;
+        sqlx::query("UPDATE intents SET status = $2, raw_json = $3 WHERE intent_id = $1")
             .bind(intent_id.to_string())
-            .bind(enum_text(&status)?)
+            .bind(status_text)
+            .bind(raw_json)
             .execute(&self.pool)
             .await?;
         Ok(())
@@ -127,7 +135,7 @@ impl IntentRepo for PostgresIntentRepo {
                 .map_err(|_| StoreError::Other("invalid cursor encoding".to_string()))?;
             let decoded_str = String::from_utf8(decoded)
                 .map_err(|_| StoreError::Other("invalid cursor string".to_string()))?;
-            let parts: Vec<&str> = decoded_str.splitn(2, ':').collect();
+            let parts: Vec<&str> = decoded_str.splitn(2, '#').collect();
             if parts.len() == 2 {
                 let cursor_created_at = parts[0];
                 let cursor_intent_id = parts[1];
@@ -175,8 +183,10 @@ impl IntentRepo for PostgresIntentRepo {
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
         let next_cursor = if has_more {
-            items.last().map(|intent| {
-                let cursor_data = format!("{}:{}", intent.created_at, intent.intent_id);
+            rows.get(limit as usize - 1).map(|row| {
+                let created_at: String = row.get("created_at");
+                let intent_id: String = row.get("intent_id");
+                let cursor_data = format!("{}#{}", created_at, intent_id);
                 URL_SAFE_NO_PAD.encode(cursor_data.as_bytes())
             })
         } else {
@@ -220,7 +230,7 @@ impl IntentRepo for PostgresIntentRepo {
                 .map_err(|_| StoreError::Other("invalid cursor encoding".to_string()))?;
             let decoded_str = String::from_utf8(decoded)
                 .map_err(|_| StoreError::Other("invalid cursor string".to_string()))?;
-            let parts: Vec<&str> = decoded_str.splitn(2, ':').collect();
+            let parts: Vec<&str> = decoded_str.splitn(2, '#').collect();
             if parts.len() == 2 {
                 let cursor_created_at = parts[0];
                 let cursor_intent_id = parts[1];
@@ -286,8 +296,10 @@ impl IntentRepo for PostgresIntentRepo {
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
         let next_cursor = if has_more {
-            items.last().map(|(intent, _)| {
-                let cursor_data = format!("{}:{}", intent.created_at, intent.intent_id);
+            rows.get(limit as usize - 1).map(|row| {
+                let created_at: String = row.get("created_at");
+                let intent_id: String = row.get("intent_id");
+                let cursor_data = format!("{}#{}", created_at, intent_id);
                 URL_SAFE_NO_PAD.encode(cursor_data.as_bytes())
             })
         } else {
