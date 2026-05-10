@@ -200,15 +200,17 @@ impl ServerConfig {
 
 /// Validates the store DSN.
 ///
-/// PostgreSQL and MySQL are explicitly not implemented.
+/// PostgreSQL is accepted only when the `postgres` feature is enabled.
+/// MySQL is explicitly not implemented.
 /// See ADR-50 for the phased implementation plan.
 fn validate_store_dsn(dsn: &str) -> Result<(), String> {
     let dsn_lower = dsn.to_lowercase();
 
     // Check for postgres:// or postgresql://
+    #[cfg(not(feature = "postgres"))]
     if dsn_lower.starts_with("postgres://") || dsn_lower.starts_with("postgresql://") {
         return Err(
-            "PostgreSQL is not implemented. See ADR-50 for the phased implementation plan. \
+            "PostgreSQL support is not enabled. Build with --features postgres to enable it. \
              Use sqlite:// or sqlite::memory: for local development."
                 .to_string(),
         );
@@ -224,6 +226,7 @@ fn validate_store_dsn(dsn: &str) -> Result<(), String> {
     }
 
     // Accept sqlite://, sqlite::memory:, or other SQLite variants
+    // Accept postgres:// and postgresql:// only when the postgres feature is enabled
     Ok(())
 }
 

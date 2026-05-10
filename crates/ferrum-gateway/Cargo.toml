@@ -4,6 +4,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = []
+# PostgreSQL runtime support — feature-gated and local/bounded, NOT production-ready/HA
+postgres = ["ferrum-store/postgres"]
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true

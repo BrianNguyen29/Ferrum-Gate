@@ -6,6 +6,8 @@ use ferrum_cap::InMemoryCapabilityService;
 use ferrum_gateway::{AuthMode, GatewayRuntime, ServerConfig, run_http_server};
 use ferrum_pdp::StaticPdpEngine;
 use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
+#[cfg(feature = "postgres")]
+use ferrum_store::postgres::PostgresStore;
 use ferrum_store::{SqliteStore, SqliteWalTuning, StoreFacade};
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -298,21 +300,44 @@ async fn main() -> Result<()> {
     rollback_service.register_planner(Arc::new(PlannableFsAdapter));
     let rollback = Arc::new(rollback_service);
 
-    let wal_tuning = SqliteWalTuning {
-        synchronous: config.store_synchronous.clone(),
-        wal_autocheckpoint: config.store_wal_autocheckpoint,
-    };
-    let store = Arc::new(
-        SqliteStore::connect_with_tuning(&config.store_dsn, wal_tuning)
+    let store: Arc<dyn StoreFacade> = if config.store_dsn.to_lowercase().starts_with("postgres://")
+        || config.store_dsn.to_lowercase().starts_with("postgresql://")
+    {
+        #[cfg(feature = "postgres")]
+        {
+            let pg_store = PostgresStore::connect(&config.store_dsn)
+                .await
+                .context("failed to connect to postgres")?;
+            pg_store
+                .apply_intent_migration()
+                .await
+                .context("failed to apply postgres migrations")?;
+            Arc::new(pg_store) as Arc<dyn StoreFacade>
+        }
+        #[cfg(not(feature = "postgres"))]
+        {
+            // Unreachable in practice because validate_store_dsn rejects postgres DSNs
+            // when the feature is not enabled.
+            return Err(anyhow::anyhow!(
+                "PostgreSQL support is not enabled. Build with --features postgres to enable it."
+            ));
+        }
+    } else {
+        let wal_tuning = SqliteWalTuning {
+            synchronous: config.store_synchronous.clone(),
+            wal_autocheckpoint: config.store_wal_autocheckpoint,
+        };
+        let sqlite_store = SqliteStore::connect_with_tuning(&config.store_dsn, wal_tuning)
             .await
-            .context("failed to connect to sqlite")?,
-    );
-    store
-        .apply_embedded_migrations()
-        .await
-        .context("failed to apply migrations")?;
+            .context("failed to connect to sqlite")?;
+        sqlite_store
+            .apply_embedded_migrations()
+            .await
+            .context("failed to apply migrations")?;
+        Arc::new(sqlite_store) as Arc<dyn StoreFacade>
+    };
 
-    let runtime = GatewayRuntime::new(pdp, cap, rollback, store as Arc<dyn StoreFacade>, vec![]);
+    let runtime = GatewayRuntime::new(pdp, cap, rollback, store, vec![]);
     run_http_server(config, runtime).await
 }
 
@@ -479,7 +504,8 @@ auth_mode = "bearer"
     }
 
     #[test]
-    fn test_resolve_config_rejects_postgres_dsn() {
+    #[cfg(not(feature = "postgres"))]
+    fn test_resolve_config_rejects_postgres_dsn_without_feature() {
         let _guard = env_lock().lock().unwrap();
         clear_test_env();
 
@@ -509,8 +535,10 @@ auth_mode = "disabled"
 
         let error = resolve_config(&args).err().expect("expected config error");
         assert!(
-            error.to_string().contains("PostgreSQL is not implemented"),
-            "expected PostgreSQL not implemented error, got: {}",
+            error
+                .to_string()
+                .contains("PostgreSQL support is not enabled"),
+            "expected PostgreSQL not enabled error, got: {}",
             error
         );
 
@@ -518,7 +546,8 @@ auth_mode = "disabled"
     }
 
     #[test]
-    fn test_resolve_config_rejects_postgresql_dsn() {
+    #[cfg(not(feature = "postgres"))]
+    fn test_resolve_config_rejects_postgresql_dsn_without_feature() {
         let _guard = env_lock().lock().unwrap();
         clear_test_env();
 
@@ -548,10 +577,84 @@ auth_mode = "disabled"
 
         let error = resolve_config(&args).err().expect("expected config error");
         assert!(
-            error.to_string().contains("PostgreSQL is not implemented"),
-            "expected PostgreSQL not implemented error, got: {}",
+            error
+                .to_string()
+                .contains("PostgreSQL support is not enabled"),
+            "expected PostgreSQL not enabled error, got: {}",
             error
         );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    #[cfg(feature = "postgres")]
+    fn test_resolve_config_accepts_postgres_dsn_with_feature() {
+        let _guard = env_lock().lock().unwrap();
+        clear_test_env();
+
+        let path = write_temp_config(
+            r#"[server]
+bind_addr = "127.0.0.1:8080"
+store_dsn = "postgres://user:pass@localhost:5432/db"
+auth_mode = "disabled"
+"#,
+        );
+
+        let args = Args {
+            config: Some(path.clone()),
+            bind_addr: None,
+            store_dsn: None,
+            auth_mode: None,
+            bearer_token: None,
+            allow_insecure_nonlocal_bind: false,
+            log_filter: None,
+            store_synchronous: None,
+            store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
+            write_queue_threshold: None,
+        };
+
+        let config = resolve_config(&args).expect("expected config to be accepted");
+        assert_eq!(config.store_dsn, "postgres://user:pass@localhost:5432/db");
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    #[cfg(feature = "postgres")]
+    fn test_resolve_config_accepts_postgresql_dsn_with_feature() {
+        let _guard = env_lock().lock().unwrap();
+        clear_test_env();
+
+        let path = write_temp_config(
+            r#"[server]
+bind_addr = "127.0.0.1:8080"
+store_dsn = "postgresql://user:pass@localhost:5432/db"
+auth_mode = "disabled"
+"#,
+        );
+
+        let args = Args {
+            config: Some(path.clone()),
+            bind_addr: None,
+            store_dsn: None,
+            auth_mode: None,
+            bearer_token: None,
+            allow_insecure_nonlocal_bind: false,
+            log_filter: None,
+            store_synchronous: None,
+            store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
+            write_queue_threshold: None,
+        };
+
+        let config = resolve_config(&args).expect("expected config to be accepted");
+        assert_eq!(config.store_dsn, "postgresql://user:pass@localhost:5432/db");
 
         let _ = fs::remove_file(path);
     }

@@ -5,8 +5,8 @@ edition = "2024"
 
 [features]
 default = []
-# PostgreSQL P2 skeleton — NOT runtime supported; enables compile-time infrastructure only
-# The postgres feature is compile-time only and does NOT enable runtime PostgreSQL support.
+# PostgreSQL P4.1 runtime DSN switching support — NOT production-ready/HA.
+# Enables bounded local/runtime PostgresStore support when downstream binaries opt in.
 postgres = ["sqlx/postgres"]
 
 [dependencies]
