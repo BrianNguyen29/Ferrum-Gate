@@ -342,7 +342,7 @@ Before E1–E2 can be approved, Oracle must confirm:
 | --- | --- | --- | --- |
 | E1: proposal_id generation | **Approved** | UUID v4 vs v5 | Accept UUID v4 (`ProposalId::new()`) for D1.3.4; UUID v5 deferred |
 | E2: Decision parsing (all 5 variants) | **Approved** | per-variant handling TBD | Allow→success; Deny→forbidden; Quarantine→quarantine error; RequireApproval→approval error; AllowDraftOnly→draft_only error; all 5 variants implemented in MCP client tests |
-| Scope: evaluate-only | **Approved** | confirm vs expand | Confirm evaluate-only; D1.4+ for mint/authorize; low-level HTTP client implemented, tool dispatch TBD |
+| Scope: evaluate-only | **Approved** | confirm vs expand | Confirm evaluate-only; D1.4+ for mint/authorize; low-level HTTP client and MCP tool implemented for evaluate scope |
 
 ---
 
@@ -360,8 +360,8 @@ Before E1–E2 can be approved, Oracle must confirm:
 
 ## 12. Bottom Line
 
-E1–E2 are **APPROVED**. D1.3.4 low-level HTTP client (`evaluate_proposal`) is implemented with tests for all 5 Decision variants. Tool dispatch (D1.7) is not approved. D1.4+ (mint/authorize) is not implemented.
+E1–E2 are **APPROVED**. D1.3.4 low-level HTTP client (`evaluate_proposal`) and MCP tool (`ferrum_gate_evaluate_intent`) are implemented with tests for all 5 Decision variants. D1.4+ (mint/authorize) is implemented in later completed MCP D-1 slices, but this packet remains evaluate-scope only.
 
-This packet does not implement D-1.3.4 itself — the actual evaluate REST call and decision handling must still be written. Governance pipeline stages beyond evaluate (capability mint, authorization, prepare, execute, rollback) remain in later slices (D1.4+).
+This packet records the D-1.3.4 evaluate gate as implemented and tested. It does not authorize any production-ready claim and does not expand this packet's scope beyond evaluate; capability mint, authorization, prepare, execute, verify, and rollback remain governed by their own later D-1 slice records.
 
 (End of file - total 439 lines)
