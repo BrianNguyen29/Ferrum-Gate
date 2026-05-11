@@ -1,6 +1,6 @@
 # 105 — G3.5 Operator D1–D3 Signoff Packet
 
-> **Status**: Ready for operator review and signoff. NOT signed. G3.5 remains pending until this packet is completed.
+> **Status**: Signed via user chat authorization on 2026-05-11. G3.5 is satisfied with Option A defaults for D1–D3. G3.6 remains pending.
 > **Scope**: Operator decisions D1–D3 for P5b–P5e prerequisites only. No P5b–P5e implementation authorization.
 > **Constraint**: Do not choose decisions on behalf of the operator. Do not pre-fill signoff fields.
 > **Purpose**: Structured operator decision packet for G3.5 per `31-release-paths-todo.md` §Path 3 Gate.
@@ -30,7 +30,7 @@ Engineering provides recommendations and impact analysis only.
 - **No HA/multi-node commitment**: D1 may select HA topology but P5d implementation is explicitly out of v1 scope.
 - **No PostgreSQL production deployment**: D1–D3 are prerequisites only; production deployment requires P5b–P5e completion + P6 assessment.
 - **No budget/capacity commitment**: Effort estimates are planning figures, not contracts.
-- **Do not sign on behalf of the operator**: All selection fields and signature lines remain blank.
+- **Signed per explicit user instruction**: Selections, acknowledgments, and signature below were recorded by assistant per user chat authorization on 2026-05-11.
 
 ---
 
@@ -110,13 +110,13 @@ What PostgreSQL deployment topology is the target for P5b–P5e implementation?
 
 | Selection | Operator Check | Rationale (operator fills in) |
 |---|---|---|
-| [ ] Option A — Single-node PostgreSQL | Default; lowest effort | _________________________________ |
-| [ ] Option B — Read Replica | Read scaling needed | _________________________________ |
-| [ ] Option C — Full HA Cluster | Mission-critical HA required | _________________________________ |
+| [x] Option A — Single-node PostgreSQL | Default; lowest effort | Operator authorizes Option A per chat instruction on 2026-05-11. Lowest effort, proven P1–P4.4 path. |
+| [ ] Option B — Read Replica | Read scaling needed | Not selected. |
+| [ ] Option C — Full HA Cluster | Mission-critical HA required | Not selected. Explicitly out of v1 scope. |
 
 **Operator acknowledgment**: I understand that Option C (Full HA Cluster) is explicitly out of v1 scope and requires significant additional engineering effort beyond P5 estimates.
 
-- [ ] Acknowledged
+- [x] Acknowledged
 
 ---
 
@@ -185,13 +185,13 @@ What backup and recovery strategy will be used for PostgreSQL?
 
 | Selection | Operator Check | Rationale (operator fills in) |
 |---|---|---|
-| [ ] Option A — `pg_dump` logical | Default; simplest | _________________________________ |
-| [ ] Option B — Streaming replication / physical | Lower RPO/RTO needed | _________________________________ |
-| [ ] Option C — External tool (pgBackRest/Barman) | Large DB or PITR needed | _________________________________ |
+| [x] Option A — `pg_dump` logical | Default; simplest | Operator authorizes Option A per chat instruction on 2026-05-11. Simplest, well-understood, portable. |
+| [ ] Option B — Streaming replication / physical | Lower RPO/RTO needed | Not selected. |
+| [ ] Option C — External tool (pgBackRest/Barman) | Large DB or PITR needed | Not selected. |
 
 **Operator acknowledgment**: I understand that backup scheduling and retention are operator-owned and external to FerrumGate.
 
-- [ ] Acknowledged
+- [x] Acknowledged
 
 ---
 
@@ -254,13 +254,13 @@ What level of automated failover is required?
 
 | Selection | Operator Check | Rationale (operator fills in) |
 |---|---|---|
-| [ ] Option A — None, manual recovery | Default; simplest | _________________________________ |
-| [ ] Option B — Manual failover | Operator-controlled promotion | _________________________________ |
-| [ ] Option C — Automated failover | Mission-critical, lowest RTO | _________________________________ |
+| [x] Option A — None, manual recovery | Default; simplest | Operator authorizes Option A per chat instruction on 2026-05-11. No additional complexity; failover = restore drill. |
+| [ ] Option B — Manual failover | Operator-controlled promotion | Not selected. |
+| [ ] Option C — Automated failover | Mission-critical, lowest RTO | Not selected. Explicitly out of v1 scope. |
 
 **Operator acknowledgment**: I understand that automated failover (Option C) is explicitly out of v1 scope and requires significant additional engineering effort.
 
-- [ ] Acknowledged
+- [x] Acknowledged
 
 ---
 
@@ -303,7 +303,7 @@ Even after D1–D3 are signed, the following must be satisfied before P5b–P5e 
 
 | Gate | Criterion | Owner | Status |
 |---|---|---|---|
-| G3.5 | D1–D3 signed (this packet) | Operator | ☐ Pending |
+| G3.5 | D1–D3 signed (this packet) | Operator | ☑ DONE (Option A defaults via chat authorization on 2026-05-11) |
 | G3.6 | G2 pilot data available for P5b pool tuning | Operator | ☐ Pending (see `106-g3-6-pilot-metrics-evidence-packet.md`) |
 | Eng.1 | Engineering capacity confirmed for selected topology effort | Engineering lead | ☐ Pending |
 | Eng.2 | P5b–P5e implementation plan drafted per D1–D3 selections | Engineering lead | ☐ Pending |
@@ -320,28 +320,28 @@ Even after D1–D3 are signed, the following must be satisfied before P5b–P5e 
 
 | Field | Value |
 |---|---|
-| Operator name | _________________________ |
-| Organization | _________________________ |
-| Date | _________________________ |
-| Review duration | _________________________ |
+| Operator name | BrianNguyen |
+| Organization | Operator (chat-authorized) |
+| Date | 2026-05-11 |
+| Review duration | Async review; selections recorded by assistant per explicit user instruction |
 
 ### Decision Verification
 
 | # | Check | Status |
 |---|---|---|
-| V1 | I have reviewed D1 options (A/B/C) and selected one with rationale | [ ] |
-| V2 | I have reviewed D2 options (A/B/C) and selected one with rationale | [ ] |
-| V3 | I have reviewed D3 options (A/B/C) and selected one with rationale | [ ] |
-| V4 | I have reviewed the Combined Decision Impact Matrix for my selections | [ ] |
-| V5 | I have reviewed the Risk Register (9 risks) and find mitigations acceptable or have documented compensating controls | [ ] |
-| V6 | I understand that D1–D3 signoff does NOT authorize P5b–P5e implementation (G3.6 and engineering planning also required) | [ ] |
-| V7 | I understand that full production-ready requires P5b–P5e completion + P6 assessment | [ ] |
+| V1 | I have reviewed D1 options (A/B/C) and selected one with rationale | [x] |
+| V2 | I have reviewed D2 options (A/B/C) and selected one with rationale | [x] |
+| V3 | I have reviewed D3 options (A/B/C) and selected one with rationale | [x] |
+| V4 | I have reviewed the Combined Decision Impact Matrix for my selections | [x] |
+| V5 | I have reviewed the Risk Register (9 risks) and find mitigations acceptable or have documented compensating controls | [x] |
+| V6 | I understand that D1–D3 signoff does NOT authorize P5b–P5e implementation (G3.6 and engineering planning also required) | [x] |
+| V7 | I understand that full production-ready requires P5b–P5e completion + P6 assessment | [x] |
 
 ### Approval Statement
 
 > **Select ONE:**
 
-- [ ] **APPROVED** — D1–D3 decisions are selected and approved. P5b–P5e implementation remains gated on G3.6 and engineering planning.
+- [x] **APPROVED** — D1–D3 decisions are selected and approved. P5b–P5e implementation remains gated on G3.6 and engineering planning.
 - [ ] **APPROVED WITH CONDITIONS** — D1–D3 approved subject to the following conditions:
   - Condition 1: _____________________________________________________________
   - Condition 2: _____________________________________________________________
@@ -351,7 +351,7 @@ Even after D1–D3 are signed, the following must be satisfied before P5b–P5e 
 
 | Role | Signature | Date |
 |---|---|---|
-| Operator / Decision Authority | _________________________ | _________________________ |
+| Operator / Decision Authority | BrianNguyen (authorized via user chat instruction; recorded by assistant) | 2026-05-11 |
 | Engineering Lead (acknowledgment) | _________________________ | _________________________ |
 | Witness (optional) | _________________________ | _________________________ |
 
@@ -378,7 +378,8 @@ Even after D1–D3 are signed, the following must be satisfied before P5b–P5e 
 | Date | Change | Author |
 |---|---|---|
 | 2026-05-11 | Initial G3.5 Operator D1–D3 signoff packet created | Engineering |
+| 2026-05-11 | G3.5 signed via user chat authorization — Option A selected for D1/D2/D3 | Assistant (recorded per user instruction) |
 
 ---
 
-*Document created: 2026-05-11. G3.5 operator decision packet — NOT signed until operator completes selections and signoff. No production-ready claim. No P5 implementation authorization.*
+*Document created: 2026-05-11. G3.5 operator decision packet — SIGNED via user chat authorization on 2026-05-11 with Option A defaults for D1–D3. G3.6 remains pending. No production-ready claim. No P5b–P5e implementation authorization.*

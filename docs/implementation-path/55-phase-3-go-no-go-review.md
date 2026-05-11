@@ -17,7 +17,7 @@ This document is the standalone go/no-go review form for entering Phase 3 Postgr
 
 ## Phase 3 Entry Gates (G3.1–G3.6)
 
-G3.1–G3.4 must be satisfied before beginning Phase P1. G3.5–G3.6 gate P5b–P5e implementation.
+G3.1–G3.4 must be satisfied before beginning Phase P1. G3.5 is satisfied; G3.6 gates P5b–P5e implementation.
 (ADR-50 terminology: P1 = first PostgreSQL implementation phase, not to be confused with the Phase 1/2/3 numbering used elsewhere in the documentation).
 
 > **Phase naming clarification**: ADR-50 uses "Phase P1–P4" for PostgreSQL implementation stages. This document's "Phase 3" maps to ADR-50 Phase P1 start through Phase P4 completion. See `50-p4-postgres-store-facade-adr.md` §1 for the full ADR-50 phase naming table.
@@ -28,10 +28,10 @@ G3.1–G3.4 must be satisfied before beginning Phase P1. G3.5–G3.6 gate P5b–
 | G3.2 | Production pilot (Path 2) has confirmed single-node SQLite posture is acceptable for target workload | Operator signoff per `27-production-evaluation-plan.md` | Operator | ☑ DONE (conditional pilot only; not full production) |
 | G3.3 | Engineering capacity confirmed for ~2000–3000 LOC + migrations + container tests | ADR-50 effort estimate | Engineering lead | ☑ DONE (local Docker/runtime; not production deployment) |
 | G3.4 | ADR-50 P5a design review approved to proceed | `50-p4-postgres-store-facade-adr.md` §3.5 P5a + `104-g3-4-p5a-adr-approval-packet.md` | Engineering lead | ☑ DONE (P5a design only; P5b–P5e still gated) |
-| G3.5 | Operator D1–D3 signoff obtained for P5b–P5e | `105-g3-5-operator-d1-d3-signoff-packet.md` | Operator | ☐ Pending (ready for operator review) |
+| G3.5 | Operator D1–D3 signoff obtained for P5b–P5e | `105-g3-5-operator-d1-d3-signoff-packet.md` | Operator | ☑ DONE (Option A defaults via chat authorization on 2026-05-11; P5b–P5e still gated) |
 | G3.6 | G2 pilot data available for P5b pool-tuning input | `106-g3-6-pilot-metrics-evidence-packet.md` | Operator | ☐ Pending (awaiting real pilot metrics) |
 
-**Do not begin Phase P1 (ADR-50) until G3.1–G3.4 are all satisfied.** G3.1–G3.4 are now satisfied. G3.5–G3.6 remain pending and block P5b–P5e implementation.
+**Do not begin Phase P1 (ADR-50) until G3.1–G3.4 are all satisfied.** G3.1–G3.4 are now satisfied. G3.5 is satisfied. G3.6 remains pending and blocks P5b–P5e implementation.
 
 ---
 

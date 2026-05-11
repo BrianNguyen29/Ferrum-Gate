@@ -110,7 +110,7 @@ All P0/P1/P2 items closed. U1-U4 upgrade tracks complete. Full workspace check/c
 
 1. **Path 1 (RC tag)**: Requires git repo + re-run G1 gates before tagging. See [`31-release-paths-todo.md`](./31-release-paths-todo.md) §Path 1.
 2. **Path 2 (Operator signoff/pilot)**: Limited production deployment with explicit operator signoff. See [`54-operator-signoff-packet.md`](./54-operator-signoff-packet.md).
-3. **Path 3 (PostgreSQL/Phase3)**: P3 repository implementations and P4.1–P4.3 local Docker/runtime complete. Production/HA/multi-node remains deferred. See [`55-phase-3-go-no-go-review.md`](./55-phase-3-go-no-go-review.md).
+3. **Path 3 (PostgreSQL/Phase3)**: P3 repository implementations and P4.1–P4.4 MVP/local Docker/runtime complete. Production/HA/multi-node remains deferred. See [`31-release-paths-todo.md`](./31-release-paths-todo.md) §Path 3.
 
 Remaining work is documented in:
 - [33-feature-completion-backlog.md](./33-feature-completion-backlog.md) — Must/Should/Production-only backlog for incomplete/partial features

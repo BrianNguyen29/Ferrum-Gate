@@ -217,7 +217,7 @@ Engineering lead / architect.
 | G3.2 | Conditional single-node SQLite pilot signed (doc59/doc54) | Operator signoff per `27-production-evaluation-plan.md` | Operator | ☑ DONE (conditional pilot only; not full production) |
 | G3.3 | P1–P4.4 local Docker/runtime implementation complete | ADR-50 §6 summary table; `cargo test --workspace` with `--features postgres` passes | Engineering lead | ☑ DONE (local Docker/runtime; not production deployment) |
 | G3.4 | ADR-50 P5a design review approved | `50-p4-postgres-store-facade-adr.md` §3.5 P5a + `104-g3-4-p5a-adr-approval-packet.md` | Engineering lead | ☑ DONE (P5a design only; P5b–P5e still gated) |
-| G3.5 | Operator D1–D3 signoff obtained for P5b–P5e | `105-g3-5-operator-d1-d3-signoff-packet.md` | Operator | ☐ Pending (ready for operator review) |
+| G3.5 | Operator D1–D3 signoff obtained for P5b–P5e | `105-g3-5-operator-d1-d3-signoff-packet.md` | Operator | ☑ DONE (Option A defaults via chat authorization on 2026-05-11; P5b–P5e still gated) |
 | G3.6 | G2 pilot data available for P5b pool-tuning input | Path 2 pilot metrics/logs (sustained write rate, connection patterns) | Operator | ☐ Pending |
 
 > **Phase naming note**: ADR-50 uses "Phase P1–P4" for PostgreSQL implementation stages and "Phase P5" for production readiness. P5 is split into P5a (design/ADR) and P5b–P5e (implementation). This document's "Phase 3" maps to ADR-50 Phase P1 start through P5e completion. P5a is the only currently authorized phase.
@@ -260,20 +260,20 @@ Per `50-p4-postgres-store-facade-adr.md` §3 Phase P1:
 - [ ] Backup automation design (external scheduler, not in-tree)
 - [ ] Restore drill procedure for PostgreSQL defined
 - [ ] RPO/RTO targets for PostgreSQL documented and operator-accepted
-- [ ] **Blocked until**: G3.5 operator D1–D3 signoff
+- [ ] **Blocked until**: G3.6 pilot data available; Eng.1/Eng.2 planning complete; P5b pool-tuning design complete
 
 #### P5d — HA / Clustering Design (Implementation Gated)
 - [ ] HA topology reviewed (read replica, failover, partitioning)
 - [ ] Multi-node deployment validated in staging (not production)
 - [ ] StoreFacade concurrency model adapted for multi-node (if required)
-- [ ] **Blocked until**: G3.5 operator D1–D3 signoff; explicitly out of v1 scope
+- [ ] **Blocked until**: G3.6 pilot data available; Eng.1/Eng.2 planning complete; explicitly out of v1 scope
 
 #### P5e — Migration Grade-Up (Implementation Gated)
 - [ ] SQLite → PostgreSQL migration upgraded from MVP to production-grade
 - [ ] Idempotent/resumable migration with checkpointing
 - [ ] Content-hash validation for lineage equivalence
 - [ ] Large-dataset streaming and chunking
-- [ ] **Blocked until**: G3.5 operator D1–D3 signoff; P5c backup/restore design complete
+- [ ] **Blocked until**: G3.6 pilot data available; Eng.1/Eng.2 planning complete; P5b–P5c design complete
 
 > **P5 completion does not claim production-ready.** Even after P5a–P5e complete, a later P6 assessment is required before any full production-ready claim. PostgreSQL production deployment remains operator-owned and gated.
 
@@ -340,7 +340,7 @@ Per `50-p4-postgres-store-facade-adr.md` §3 Phase P1:
 | `100-phase3f-conditional-sqlite-pilot-authorization.md` | This doc | Conditional pilot authorization with G2 signed status |
 | `50-p4-postgres-store-facade-adr.md` §3.5 P5a | This doc | P5a design/ADR review entry criteria |
 | `104-g3-4-p5a-adr-approval-packet.md` | This doc | G3.4 approval packet (ready for approval) |
-| `105-g3-5-operator-d1-d3-signoff-packet.md` | This doc | G3.5 operator D1–D3 signoff packet (ready for operator review) |
+| `105-g3-5-operator-d1-d3-signoff-packet.md` | This doc | G3.5 operator D1–D3 signoff packet (signed via chat authorization) |
 | `106-g3-6-pilot-metrics-evidence-packet.md` | This doc | G3.6 pilot metrics evidence packet (pending operator data) |
 
 ---

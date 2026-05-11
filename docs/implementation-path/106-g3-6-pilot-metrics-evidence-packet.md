@@ -2,7 +2,7 @@
 
 > **Status**: Pending. Awaiting operator-supplied pilot metrics/logs. Do not mark complete without real evidence.  
 > **Scope**: Path 2 single-node SQLite pilot metrics collection for P5b pool-tuning input only.  
-> **Constraint**: This packet does NOT authorize P5b–P5e implementation. G3.5 and Eng.1 must also be satisfied before P5b–P5e begin.  
+> **Constraint**: This packet does NOT authorize P5b–P5e implementation. G3.5 is now satisfied; G3.6 and Eng.1/Eng.2 must also be satisfied before P5b–P5e begin.  
 > **Purpose**: Structured evidence collection template for G3.6 per `31-release-paths-todo.md` §Path 3 Gate.
 
 ---
@@ -15,7 +15,7 @@ This packet captures the real pilot metrics and logs required to satisfy **G3.6*
 
 G3.6 is an **operator-owned gate**. Engineering cannot fabricate or assume pilot data.
 The evidence in this packet is used solely for P5b connection-pool sizing and circuit-breaker tuning.
-It does **not** constitute a production-ready claim, does **not** authorize P5b–P5e implementation by itself, and does **not** replace G3.5 operator D1–D3 signoff or Eng.1 capacity confirmation.
+It does **not** constitute a production-ready claim, does **not** authorize P5b–P5e implementation by itself, and does **not** replace Eng.1/Eng.2 engineering planning confirmation.
 
 **Operator-owned**: All fields below require real data from the target pilot environment.
 Do not pre-fill with estimates or local simulation results unless explicitly labeled as such.
@@ -25,7 +25,7 @@ Do not pre-fill with estimates or local simulation results unless explicitly lab
 ## Explicit Non-Claims
 
 - **No production-ready claim**: Collecting G3.6 metrics does NOT make FerrumGate production-ready.
-- **No P5 implementation authorization**: P5b–P5e remain gated on G3.5 (operator D1–D3) and Eng.1 (engineering planning).
+- **No P5 implementation authorization**: P5b–P5e remain gated on G3.6 (this packet) and Eng.1/Eng.2 (engineering planning). G3.5 is satisfied but does not alone authorize implementation.
 - **No HA/multi-node authorization**: Pilot metrics from single-node SQLite do not validate HA/clustering behavior.
 - **No PostgreSQL production deployment**: G3.6 data informs P5b design only; production deployment requires P5b–P5e completion + P6 assessment.
 - **No operator signature pre-filled**: All signoff fields remain blank until the operator attaches real evidence and signs.
@@ -39,9 +39,10 @@ Before collecting G3.6 evidence, confirm the following:
 | # | Prerequisite | Evidence | Status |
 |---|---|---|---|
 | R1 | G3.4 (P5a design) approved | `104-g3-4-p5a-adr-approval-packet.md` signed | ☑ DONE |
-| R2 | Path 2 pilot is running or has completed | `59-pilot-readiness-evidence-packet.md` signed; `ferrumd` operational on target host | ☐ Pending (operator) |
-| R3 | Monitoring endpoint accessible | `/v1/metrics` and `/v1/readyz/deep` reachable | ☐ Pending (operator) |
-| R4 | Backup schedule operational | At least one automated backup has run and verified successfully | ☐ Pending (operator) |
+| R2 | G3.5 (operator D1–D3) signed | `105-g3-5-operator-d1-d3-signoff-packet.md` signed | ☑ DONE (Option A defaults via chat authorization on 2026-05-11) |
+| R3 | Path 2 pilot is running or has completed | `59-pilot-readiness-evidence-packet.md` signed; `ferrumd` operational on target host | ☐ Pending (operator) |
+| R4 | Monitoring endpoint accessible | `/v1/metrics` and `/v1/readyz/deep` reachable | ☐ Pending (operator) |
+| R5 | Backup schedule operational | At least one automated backup has run and verified successfully | ☐ Pending (operator) |
 
 ---
 

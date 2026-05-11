@@ -410,7 +410,7 @@ Per [`31-release-paths-todo.md`](./31-release-paths-todo.md) §Path 3 Gate:
 | G3.2 | Conditional single-node SQLite pilot signed (doc59/doc54) | Operator signoff per [`27-production-evaluation-plan.md`](./27-production-evaluation-plan.md) | Operator | ☑ DONE (conditional pilot only; not full production) |
 | G3.3 | P1–P4.4 local Docker/runtime implementation complete | ADR-50 §6 summary table | Engineering lead | ☑ DONE (local Docker/runtime; not production) |
 | G3.4 | ADR-50 P5a design review approved | [`104-g3-4-p5a-adr-approval-packet.md`](./104-g3-4-p5a-adr-approval-packet.md) | Engineering lead | ☑ DONE (P5a design only; P5b–P5e still gated) |
-| G3.5 | Operator D1–D3 signoff obtained for P5b–P5e | P5a ADR §Operator Decisions D1–D3 | Operator | ☐ Pending |
+| G3.5 | Operator D1–D3 signoff obtained for P5b–P5e | P5a ADR §Operator Decisions D1–D3 | Operator | ☑ DONE (Option A defaults via chat authorization on 2026-05-11; P5b–P5e still gated) |
 | G3.6 | G2 pilot data available for P5b pool-tuning input | Path 2 pilot metrics/logs | Operator | ☐ Pending |
 
 **Do not begin P5b–P5e until G3.4–G3.6 are satisfied. P5a (design only) is the currently authorized phase.**
@@ -420,7 +420,7 @@ Per [`31-release-paths-todo.md`](./31-release-paths-todo.md) §Path 3 Gate:
 | Trigger | Action |
 |---|---|
 | G3.4 (P5a design) not approved | Do not proceed to P5b–P5e; resolve P5a open items first |
-| G3.5 (Operator D1–D3) not signed | Do not begin P5b–P5e; obtain operator signoff first |
+| G3.5 (Operator D1–D3) not signed | Do not begin P5b–P5e; obtain operator signoff first *(G3.5 now satisfied as of 2026-05-11)* |
 | G3.6 (Pilot data) not available | Do not begin P5b pool tuning; collect pilot metrics first |
 | Proceed to P5b–P5e without G3.4–G3.6 | Abort; P5b–P5e are gated on design approval and operator decisions |
 
