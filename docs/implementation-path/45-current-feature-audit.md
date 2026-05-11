@@ -248,7 +248,7 @@ Kiểm toán được coi là hoàn thành khi:
 | Runtime bridges / cross-runtime provenance | ✅ Đã triển khai | `RuntimeBridge` trait; `McpBridge`; GET /v1/bridges endpoints |
 | Stress testing | ✅ Đã triển khai | `ferrum-stress` binary |
 | Backup/restore | ✅ Đã triển khai (bounded) | `ferrumctl backup create/verify/restore`; SQLite-only; offline/local; opt-in retention pruning (`--retention-days N`); no scheduling/encryption |
-| PostgreSQL (local runtime) | ✅ Implemented (P3/P4.1–P4.3) | `PostgresStore` with all 9 repos, embedded migrations, integration tests, benchmark. Production deployment, P4.4 data migration, and P5 production readiness remain deferred. |
+| PostgreSQL (local runtime) | ✅ Implemented (P3/P4.1–P4.3) | `PostgresStore` with all 9 repos, embedded migrations, integration tests, benchmark. P4.4 MVP complete (dry-run default, --apply, empty-target safety, count+ID validation); P5 production readiness deferred. |
 | Multi-node / HA | ❌ Deferred | Not implemented; requires cross-instance coordination and operator signoff |
 | cancel_execution | ✅ Implemented (post-v1 boundary) | `ferrumctl` client path now has matching `POST /v1/executions/{execution_id}/cancel` server route, handler, state guards, and integration tests |
 

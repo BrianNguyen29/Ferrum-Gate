@@ -65,7 +65,7 @@ Before claiming PostgreSQL support, all items below must be satisfied:
 - [x] Implement all nine PostgresStore repos (Intent, Proposal, Capability, Execution, Rollback, Approval, Provenance, Ledger, PolicyBundle)
 - [ ] Adapt write queue architecture for PostgreSQL concurrency model — **deferred**
 - [x] Implement embedded migration runner for postgres (schema creation)
-- [ ] Data integrity validation: SQLite backup restore to PostgreSQL produces identical lineage and state — **deferred to P4.4**
+- [ ] Data integrity validation: SQLite backup restore to PostgreSQL produces identical lineage and state — **Partially addressed by P4.4 MVP count+ID validation; content-hash/production equivalence deferred**
 - [x] Integration tests with live postgres pass
 - [x] Benchmark validation: ≥1000 writes/s sustained throughput confirmed — **achieved 3853.2 writes/s local Docker release**
 

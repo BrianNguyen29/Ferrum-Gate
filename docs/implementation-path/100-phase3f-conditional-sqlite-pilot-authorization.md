@@ -43,7 +43,7 @@ Phase 3F synthesizes signed operator documents and Phase 3A–3E evidence into a
 | Multi-node/HA/replica | **NO** | Single-node only; scale-out requires a separate PostgreSQL/HA phase that is not started |
 | Full production posture | **NO** | Conditional single-node SQLite pilot only; nip.io is temporary |
 | Production domain/TLS | **NO** | Real domain required for production; nip.io is temporary/non-prod |
-| Phase 3 PostgreSQL | **NO** | P4.1–P4.3 complete; P4.4/P5 deferred |
+| Phase 3 PostgreSQL | **NO** | P4.1–P4.4 MVP complete; P5 production readiness deferred |
 
 ---
 
@@ -158,11 +158,11 @@ Phase 3F synthesizes signed operator documents and Phase 3A–3E evidence into a
 ## What This Authorization Does NOT Cover
 
 1. **Full production-ready claim** — FerrumGate v1 remains RC-ready/conditional
-2. **PostgreSQL** — Production deployment deferred; ADR-50 P4.1–P4.3 runtime support complete, P4.4 data migration deferred
+2. **PostgreSQL** — Production deployment deferred; ADR-50 P4.1–P4.3 runtime support complete. P4.4 MVP complete (dry-run default, --apply, empty-target safety, count+ID validation); P5 production readiness deferred.
 3. **Multi-node/HA/replica** — Single-node only in Phase 1
 4. **Production domain** — nip.io is temporary and not suitable for production
 5. **Production deployment** — Conditional pilot on GCP non-prod VM only
-6. **Phase 3 PostgreSQL** — P4.1–P4.3 complete; P4.4 data migration and P5 production deployment deferred
+6. **Phase 3 PostgreSQL** — P4.1–P4.4 MVP complete; P5 production readiness deferred
 
 ---
 

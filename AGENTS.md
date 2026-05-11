@@ -1,7 +1,7 @@
 # AGENTS.md — FerrumGate Repository
 
 ## Workspace & Toolchain
-- Rust edition 2024, resolver "2", 20 workspace members (see Cargo.toml lines 2-22)
+- Rust edition 2024, resolver "2", 22 workspace members (see Cargo.toml lines 3-24)
 - Toolchain: stable; clippy MSRV 1.85.0; rustfmt max_width=100, Unix newline, reorder_imports=true
 - clippy.toml: msrv=1.85.0, too-many-arguments-threshold=8, type-complexity-threshold=350
 
@@ -13,6 +13,7 @@ make lint    # cargo clippy --workspace --all-targets -- -D warnings
 make test    # cargo test --workspace
 ```
 - Check formatting without mutation: `cargo fmt --all -- --check`
+- Feature-gated package check (e.g., ferrum-migrate): `cargo check --package ferrum-migrate --features postgres`
 - Layout/contract validation: `bash scripts/validate_repo_layout.sh && python3 scripts/check_contract_consistency.py`
 - CI runs: layout validation, contract consistency, fmt check, cargo check, clippy, and cargo test (no `|| true` — failures are not swallowed)
 - Pre-target gate (local only): `bash scripts/run_pre_target_gate.sh` — validates config examples, restore drill, evidence skeleton generator, docs present, bearer-auth smoke

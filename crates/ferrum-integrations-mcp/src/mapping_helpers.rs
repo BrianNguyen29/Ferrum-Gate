@@ -1041,7 +1041,10 @@ mod tests {
         // D78-5: Different actor_ids produce different PrincipalIds
         let id1 = derive_stable_principal_id("agent-001");
         let id2 = derive_stable_principal_id("agent-002");
-        assert_ne!(id1, id2, "Different actor_ids must produce different PrincipalIds");
+        assert_ne!(
+            id1, id2,
+            "Different actor_ids must produce different PrincipalIds"
+        );
     }
 
     #[test]

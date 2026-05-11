@@ -1,6 +1,6 @@
 # 103 — PostgreSQL P3 Local Implementation Plan
 
-> **Status**: P3 — Local Docker Implementation Complete. P4.1–P4.3 Complete. P4.4 Data Migration and P5 Production deferred.
+> **Status**: P3 — Local Docker Implementation Complete. P4.1–P4.4 MVP complete (dry-run default, --apply, empty-target safety, count+ID validation); P5 production readiness deferred.
 > **Date**: 2026-05-10
 > **Scope**: Documentation artifact. P3 Rust implementation complete; no database creation, no GCP, no commit.
 > **Constraint**: Do NOT claim PostgreSQL runtime YES. Do NOT claim production-ready/HA/full posture. No secrets.
@@ -54,7 +54,7 @@ P3 delivered a working `PostgresStore` where all 9 repos have functional impleme
 
 - No production PostgreSQL deployment
 - No HA/multi-node
-- No SQLite → PostgreSQL data migration (P4.4 deferred)
+- P4.4 MVP complete (dry-run default, --apply, empty-target safety, count+ID validation); P5 production readiness deferred
 - No GCP
 
 ---
@@ -494,7 +494,7 @@ postgres://ferrumgate_dev:ferrumgate_dev_password@localhost:5432/ferrumgate_p2_t
 
 | Phase | Item | Status |
 |-------|------|--------|
-| P4 | Schema migration (SQLite → PostgreSQL) | **Deferred** (P4.4 data migration) |
+| P4 | Schema migration (SQLite → PostgreSQL) | **P4.4 MVP complete** (dry-run default, --apply, empty-target safety, count+ID validation); content-hash/production equivalence deferred |
 | P4 | Embedded migration runner | ✅ **Complete** (`apply_embedded_migrations` in P3) |
 | P4 | Integration tests with live postgres | ✅ **Complete** (`postgres_intents.rs` in P3) |
 | P4 | Benchmark validation (1000+ writes/s target) | ✅ **Complete** (`postgres_bench.rs`: 3853.2 writes/s local Docker release) |
@@ -524,7 +524,7 @@ postgres://ferrumgate_dev:ferrumgate_dev_password@localhost:5432/ferrumgate_p2_t
 | P3 plan created | ✅ This artifact |
 | 9 repos to implement | ✅ Listed in §3 |
 | Schema strategy | ✅ Inline SQL in `migrations.rs` |
-| Migration strategy | ✅ Schema creation first; data migration deferred to P4 |
+| Migration strategy | ✅ Schema creation first; P4.4 MVP complete (dry-run default, --apply, empty-target safety, count+ID validation); content-hash/production equivalence deferred |
 | Test gates | ✅ Unit, integration, schema, health check in §5 |
 | Invariant gates | ✅ Functional, behavioral, non-claims in §6 |
 | Local Docker target | ✅ Existing `docker-compose.postgres.yml` |

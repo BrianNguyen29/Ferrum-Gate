@@ -229,7 +229,7 @@ Per `50-p4-postgres-store-facade-adr.md` §3 Phase P1:
 - [x] Implement all nine PostgresStore repos (Intent, Proposal, Capability, Execution, Rollback, Approval, Provenance, Ledger, PolicyBundle)
 - [ ] Adapt write queue architecture for PostgreSQL concurrency model — **deferred**; no v1 PostgreSQL write queue (SQLite write queue remains the v1 path)
 - [x] Implement embedded migration runner for postgres
-- [ ] Data integrity validation: SQLite backup restore to PostgreSQL produces identical lineage and state — **deferred** (P4.4 data migration)
+- [ ] Data integrity validation: SQLite backup restore to PostgreSQL produces identical lineage and state — **Partially addressed by P4.4 MVP count+ID validation; content-hash/production equivalence deferred**
 - [x] Integration tests with live postgres pass
 - [x] Benchmark validation: ≥1000 writes/s sustained throughput confirmed (local Docker only; not a production benchmark)
 

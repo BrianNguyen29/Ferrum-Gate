@@ -195,7 +195,8 @@ async fn migrate_table(
     tm: &TableMigration<'_>,
     apply: bool,
 ) -> Result<TableResult> {
-    let (rows, source_ids) = read_source_rows(sqlite, tm.select_columns, tm.name, tm.id_column).await?;
+    let (rows, source_ids) =
+        read_source_rows(sqlite, tm.select_columns, tm.name, tm.id_column).await?;
     let source_count = rows.len();
 
     let mut result = TableResult {
@@ -226,10 +227,9 @@ async fn migrate_table(
                 let col_name = match col_name {
                     Some(c) => c,
                     None => {
-                        result.errors.push(format!(
-                            "column mismatch at parameter index {}",
-                            i + 1
-                        ));
+                        result
+                            .errors
+                            .push(format!("column mismatch at parameter index {}", i + 1));
                         continue;
                     }
                 };
@@ -450,17 +450,15 @@ mod tests {
             dry_run: true,
             applied: false,
             overall_success: true,
-            tables: vec![
-                TableResult {
-                    table: "intents".to_string(),
-                    source_count: 3,
-                    target_count: 0,
-                    migrated_count: 0,
-                    id_match: true,
-                    count_match: true,
-                    errors: vec![],
-                },
-            ],
+            tables: vec![TableResult {
+                table: "intents".to_string(),
+                source_count: 3,
+                target_count: 0,
+                migrated_count: 0,
+                id_match: true,
+                count_match: true,
+                errors: vec![],
+            }],
         };
         let json = serde_json::to_string(&report).unwrap();
         assert!(json.contains("\"dry_run\":true"));
@@ -549,11 +547,10 @@ mod tests {
     async fn test_migrate_intents_integration() {
         use ferrum_store::IntentRepo;
 
-        let pg_dsn = std::env::var("FERRUM_MIGRATE_TEST_PG_DSN")
-            .unwrap_or_else(|_| {
-                "postgres://ferrumgate_dev:ferrumgate_dev_password@localhost:5432/ferrumgate_p2_test"
-                    .to_string()
-            });
+        let pg_dsn = std::env::var("FERRUM_MIGRATE_TEST_PG_DSN").unwrap_or_else(|_| {
+            "postgres://ferrumgate_dev:ferrumgate_dev_password@localhost:5432/ferrumgate_p2_test"
+                .to_string()
+        });
 
         let pg = match connect_postgres(&pg_dsn).await {
             Ok(p) => p,
@@ -564,7 +561,9 @@ mod tests {
         };
 
         // Set up target schema
-        let pg_store = ferrum_store::postgres::PostgresStore::connect(&pg_dsn).await.unwrap();
+        let pg_store = ferrum_store::postgres::PostgresStore::connect(&pg_dsn)
+            .await
+            .unwrap();
         pg_store.apply_embedded_migrations().await.unwrap();
 
         // Clear target intents table for idempotency
@@ -574,7 +573,9 @@ mod tests {
             .unwrap();
 
         // Set up source SQLite with schema and one intent
-        let sqlite_store = ferrum_store::SqliteStore::connect("sqlite::memory:").await.unwrap();
+        let sqlite_store = ferrum_store::SqliteStore::connect("sqlite::memory:")
+            .await
+            .unwrap();
         sqlite_store.apply_embedded_migrations().await.unwrap();
 
         let intent_id = ferrum_proto::IntentId::new();
@@ -632,7 +633,9 @@ mod tests {
         assert!(result.errors.is_empty(), "expected no errors");
 
         // Verify the intent is readable via Postgres repo
-        let pg_store = ferrum_store::postgres::PostgresStore::connect(&pg_dsn).await.unwrap();
+        let pg_store = ferrum_store::postgres::PostgresStore::connect(&pg_dsn)
+            .await
+            .unwrap();
         let fetched = pg_store.intents().get(intent_id).await.unwrap();
         assert!(fetched.is_some(), "intent should be readable from postgres");
         let fetched = fetched.unwrap();
