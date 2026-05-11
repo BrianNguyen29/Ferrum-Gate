@@ -304,7 +304,7 @@ Even after D1–D3 are signed, the following must be satisfied before P5b–P5e 
 | Gate | Criterion | Owner | Status |
 |---|---|---|---|
 | G3.5 | D1–D3 signed (this packet) | Operator | ☑ DONE (Option A defaults via chat authorization on 2026-05-11) |
-| G3.6 | G2 pilot data available for P5b pool tuning | Operator | ☐ Pending (see `106-g3-6-pilot-metrics-evidence-packet.md`) |
+| G3.6 | G2 pilot data available for P5b pool tuning | Operator | ☐ Pending (A1–A5 met with caveats; A6 operator signoff pending — see `106-g3-6-pilot-metrics-evidence-packet.md`) |
 | Eng.1 | Engineering capacity confirmed for selected topology effort | Engineering lead | ☑ DONE (via chat authorization on 2026-05-11) |
 | Eng.2 | P5b–P5e implementation plan drafted per D1–D3 selections | Engineering lead | ☑ DONE (via chat authorization on 2026-05-11) |
 

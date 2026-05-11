@@ -365,6 +365,6 @@ store_dsn = "sqlite::memory:"
 - `docs/implementation-path/23-production-readiness-assessment.md` — production readiness
 - `docs/implementation-path/104-g3-4-p5a-adr-approval-packet.md` — G3.4 P5a approval packet (signed)
 - `docs/implementation-path/105-g3-5-operator-d1-d3-signoff-packet.md` — G3.5 operator D1–D3 signoff packet (signed via chat authorization; Option A defaults)
-- `docs/implementation-path/106-g3-6-pilot-metrics-evidence-packet.md` — G3.6 pilot metrics evidence packet (pending operator data)
+- `docs/implementation-path/106-g3-6-pilot-metrics-evidence-packet.md` — G3.6 pilot metrics evidence packet (A1–A5 met with caveats; A6 operator signoff pending)
 - `docs/implementation-path/107-eng-1-capacity-confirmation-packet.md` — Eng.1 capacity confirmation packet (signed via chat authorization)
 - `docs/implementation-path/108-eng-2-p5b-p5e-implementation-planning-packet.md` — Eng.2 P5b–P5e implementation planning packet (approved via chat authorization)

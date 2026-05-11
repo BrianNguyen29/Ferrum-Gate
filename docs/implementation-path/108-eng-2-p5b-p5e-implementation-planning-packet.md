@@ -45,7 +45,7 @@ Before drafting/reviewing this plan, confirm the following:
 | R1 | G3.4 (P5a design) approved | `104-g3-4-p5a-adr-approval-packet.md` signed | ☑ DONE |
 | R2 | G3.5 (operator D1–D3) signed with A/A/A | `105-g3-5-operator-d1-d3-signoff-packet.md` signed | ☑ DONE (Option A/A/A via chat authorization on 2026-05-11) |
 | R3 | Eng.1 capacity confirmed | `107-eng-1-capacity-confirmation-packet.md` signed | ☑ DONE (via chat authorization on 2026-05-11) |
-| R4 | G3.6 pilot data available | `106-g3-6-pilot-metrics-evidence-packet.md` signed | ☐ Pending (operator) |
+| R4 | G3.6 pilot data available | `106-g3-6-pilot-metrics-evidence-packet.md` A1–A5 met with caveats; A6 operator signoff pending | ☐ Pending (operator) |
 
 ---
 
