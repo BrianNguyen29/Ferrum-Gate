@@ -107,14 +107,14 @@ D1.3.3 is **compile-only**. The following are excluded and belong to D1.3.4+:
 **Current State**:
 - `IntentCompileResponse { proposal_id }` marked `#[deprecated]`
 - Real response: `ferrum_proto::IntentCompileResponse { envelope, warnings }`
-- `generate_proposal_id()` helper exists but returns `String` not `ProposalId`
+- `generate_proposal_id()` helper exists and returns `ProposalId`
 
 **Decision Required**:
 1. Remove deprecated `IntentCompileResponse` from `stage2_types` and re-export from `ferrum_proto`?
 2. Or keep deprecated struct for backward compatibility with tests?
 3. Or create new `DraftCompileResponse` type?
 
-**Recommendation**: Remove deprecated `IntentCompileResponse` from `stage2_types`. Re-export `ferrum_proto::IntentCompileResponse` in `lib.rs`. Update `generate_proposal_id()` to return `ProposalId` not `String`.
+**Recommendation**: Remove deprecated `IntentCompileResponse` from `stage2_types`. Re-export `ferrum_proto::IntentCompileResponse` in `lib.rs`. Verify `generate_proposal_id()` returns `ProposalId` in all call sites (code already correct).
 
 **Dependencies**: D78-2 (already resolved — compile response has no proposal_id)
 
@@ -151,7 +151,7 @@ If P1-P4 are approved, D1.3.3 implementation may proceed with:
 - Replace `PrincipalId::new()` with UUID v5 derivation from `actor_id`
 - Implement MCP-derived `IntentInputRef` with source_type="mcp", trust_labels=[Untrusted]
 - Remove deprecated `IntentCompileResponse`, re-export real type from `ferrum_proto`
-- Update `generate_proposal_id()` to return `ProposalId` not `String`
+- Verify `generate_proposal_id()` returns `ProposalId` in all call sites (code already correct)
 - Implement `POST /v1/intents/compile` using `FerrumGatewayClient`
 - Add tests for real compile flow (mocked responses)
 

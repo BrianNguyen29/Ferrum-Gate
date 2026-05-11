@@ -92,9 +92,9 @@ This packet turns those findings into a decision checklist. It is intended to be
 
 **Conflict:**
 - Doc 76 classifies `principal_id` as a true blocker with no default.
-- D-1.3.2a currently auto-generates `PrincipalId::new()` in pure mapping.
+- Current code (`mapping_helpers.rs`) derives a stable `PrincipalId` from `actor_id` via UUID v5, not auto-generating `PrincipalId::new()`.
 
-**Decision:** Accept generated `PrincipalId` only as a D1.3.2b draft mapping field, not an identity/authentication claim. Before D1.3.3 REST calls, define stable `actor_id -> PrincipalId` mapping.
+**Decision:** Accept UUID v5 stable derivation as the D1.3.2b principal mapping strategy. It is deterministic per-actor but not an identity/authentication claim. Before D1.3.3 REST calls, confirm the `actor_id -> PrincipalId` mapping contract with the gateway auth layer.
 
 ### C-RAW — `raw_inputs -> IntentInputRef` Mapping
 
@@ -117,7 +117,7 @@ This packet turns those findings into a decision checklist. It is intended to be
 
 Answer these before opening an implementation task:
 
-1. **Principal strategy**: Is generated `PrincipalId::new()` acceptable for draft mapping, or must MCP map `actor_id` into a stable principal?
+1. **Principal strategy**: Is UUID v5 stable derivation from `actor_id` acceptable for draft mapping, or must MCP use a gateway-authenticated principal mapping?
 2. **Intent input strategy**: What exact `IntentInputRef` values are allowed for MCP tool parameters?
 3. **Scope grammar**: Is the D-1.3.2a `parse_resource_scope()` grammar the canonical MCP scope grammar?
 4. **Server vocabulary**: Are the current action prefixes and server names accepted?
@@ -139,7 +139,7 @@ Required before D-1.3.2b:
 - [x] C-E6 corrected: compile response has no `proposal_id`; MCP/client generates proposal ID before evaluate.
 - [x] C-RISK resolved: final `http_post` risk tier is `High`.
 - [x] C-RB resolved: final `http_post` rollback class is `R3IrreversibleHighConsequence`.
-- [x] C-PRIN resolved for D1.3.2b: generated principal is draft-only; D1.3.3+ requires stable mapping.
+- [x] C-PRIN resolved for D1.3.2b: UUID v5 stable derivation from `actor_id` is draft-only mapping; D1.3.3+ requires gateway auth contract confirmation.
 - [x] C-RAW explicitly deferred: do not fabricate `IntentInputRef` trust/provenance fields.
 
 ### GATE-2 — Helper Signoff
@@ -205,7 +205,7 @@ Unless the reviewer chooses otherwise, use these conservative defaults:
 | `http_post` risk | `RiskTier::High` |
 | `http_post` rollback | `RollbackClass::R3IrreversibleHighConsequence` |
 | unknown action type | **D78-8: fail closed → `RiskTier::High`** |
-| principal identity | generated draft ID allowed only with explicit non-auth claim |
+| principal identity | UUID v5 stable derivation from `actor_id` (draft mapping only; not an auth claim) |
 | raw inputs | unresolved unless an untrusted MCP-derived `IntentInputRef` policy is written |
 | approval mode | **D78-9: `Required` (not `DraftOnly`)** |
 | provenance timing | resolved for D1.3.2b: gateway emits at authorize; MCP direct emission remains forbidden |
@@ -234,7 +234,7 @@ Before D-1.3.2b code changes:
 | D78-2: Correct compile response shape | Accepted | Keep old `proposal_id` assumption | Correct to `{ envelope, warnings }`; generate proposal ID separately |
 | D78-3: `http_post` risk | Accepted | Medium vs High | High |
 | D78-4: `http_post` rollback | Accepted | R2 vs R3 | R3 until explicit compensation contract exists |
-| D78-5: principal derivation | Accepted for D1.3.2b only | generated draft ID vs stable actor mapping | generated draft ID only with explicit non-auth caveat; stable mapping required before D1.3.3 |
+| D78-5: principal derivation | Accepted for D1.3.2b only | generated draft ID vs stable actor mapping | UUID v5 stable derivation from `actor_id` (draft mapping only; not an auth claim); gateway auth contract required before D1.3.3 |
 | D78-6: raw input mapping | Explicitly deferred | direct parameter conversion vs untrusted draft ref vs blocked | remain blocked unless untrusted draft policy is written |
 | D78-7: provenance timing | Accepted/resolved | gateway-authorize-time vs MCP-side earlier emission | gateway emits at authorize; MCP direct emission forbidden |
 | D78-8: unknown action risk | Accepted | Medium (fail-open) vs High (fail-closed) | High — conservative default; multi-segment git/sql paths noted as TODO |
