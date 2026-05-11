@@ -396,9 +396,9 @@ operator acknowledgment and, where indicated, documented accepted-risk signoff.
 
 | Item | Required Action | Reference |
 |---|---|---|
-| PostgreSQL not implemented | Operator acknowledges PostgreSQL is not implemented; `postgres://` DSNs are rejected at startup | ADR-50 |
+| PostgreSQL runtime support (local) | Operator acknowledges local PostgreSQL runtime support exists (`postgres://` DSNs connect at startup) but production deployment, HA/multi-node, and P4.4 data migration remain deferred | ADR-50, `31-release-paths-todo.md` |
 | Multi-node/HA not implemented | Operator acknowledges v1 is single-node only; scale-out requires Phase 3 | ADR-50, Production roadmap |
-| Phase 3 not started | Operator confirms no expectation of PostgreSQL support in the current pilot | ADR-50 Phase P1 |
+| Phase 3 local runtime complete | Operator acknowledges local PostgreSQL runtime support (P3/P4.1–P4.3) is implemented but production deployment, P4.4 data migration, and P5 production readiness remain deferred and are not part of the current pilot | ADR-50 Phase P1, `31-release-paths-todo.md` |
 
 **Signoff phrase required**: "Operator acknowledges PostgreSQL/multi-node is deferred and not part of the current production pilot scope."
 

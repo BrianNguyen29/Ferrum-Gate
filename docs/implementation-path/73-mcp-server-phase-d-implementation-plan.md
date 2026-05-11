@@ -100,7 +100,7 @@ Phase B (JSON-RPC handlers) ✅ COMPLETE
 Phase C (stdio transport + binary) ✅ COMPLETE
     │
     ▼
-Phase D-0 (read-only REST client) ☐ READY TO IMPLEMENT
+Phase D-0 (read-only REST client) ✅ COMPLETE
     │
     ▼
 Phase D-1 (mutating governance pipeline) ☐ DEFERRED — requires separate design

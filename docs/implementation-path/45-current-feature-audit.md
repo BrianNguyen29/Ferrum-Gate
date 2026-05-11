@@ -25,7 +25,7 @@ Tài liệu này định nghĩa kế hoạch kiểm toán toàn diện các tín
 | Trạng thái RC | RC-ready (single-node SQLite) | Cần đánh giá trước triển khai |
 | Invariant | 12 VERIFIED / 0 PARTIAL / 0 INFERRED | Xem `26-EV-v1-single-node-invariant-control-test-evidence-matrix.md` |
 | Phase 2 | Deferred/regressed | Perf regression trong benchmarking |
-| Phase 3 (PostgreSQL) | Chưa triển khai | Cần thiết cho mở rộng quy mô |
+| Phase 3 (PostgreSQL) | Local runtime implemented (P3/P4.1–P4.3); production deployment deferred | Cần thiết cho mở rộng quy mô |
 
 **Lưu ý quan trọng**: Tài liệu này không khẳng định FerrumGate đã sẵn sàng sản xuất đầy đủ. Việc triển khai sản xuất chỉ được thực hiện sau khi đánh giá theo `27-production-evaluation-plan.md`.
 
@@ -248,7 +248,8 @@ Kiểm toán được coi là hoàn thành khi:
 | Runtime bridges / cross-runtime provenance | ✅ Đã triển khai | `RuntimeBridge` trait; `McpBridge`; GET /v1/bridges endpoints |
 | Stress testing | ✅ Đã triển khai | `ferrum-stress` binary |
 | Backup/restore | ✅ Đã triển khai (bounded) | `ferrumctl backup create/verify/restore`; SQLite-only; offline/local; opt-in retention pruning (`--retention-days N`); no scheduling/encryption |
-| PostgreSQL / multi-node / HA | ❌ Deferred | Not implemented; PostgreSQL recommended for production scale |
+| PostgreSQL (local runtime) | ✅ Implemented (P3/P4.1–P4.3) | `PostgresStore` with all 9 repos, embedded migrations, integration tests, benchmark. Production deployment, P4.4 data migration, and P5 production readiness remain deferred. |
+| Multi-node / HA | ❌ Deferred | Not implemented; requires cross-instance coordination and operator signoff |
 | cancel_execution | ✅ Implemented (post-v1 boundary) | `ferrumctl` client path now has matching `POST /v1/executions/{execution_id}/cancel` server route, handler, state guards, and integration tests |
 
 ---
@@ -325,7 +326,7 @@ Kiểm toán được coi là hoàn thành khi:
 | G4 | Output sanitization — gateway-wide response path chưa integration | Medium | ✅ Bounded wiring hoàn thành per design note 48 — M1 IMPLEMENTED (docs-only design) |
 | G5 | DLP stub only (không có triển khai thực) | Low | Stub — post-v1 scope — S1 DOCS-ONLY |
 | G6 | Backup/restore ✅ Đã triển khai (P5 bounded) | — | ✅ Hoàn thành — bounded SQLite-only offline workflow với safety guardrails |
-| G7 | PostgreSQL / multi-node / HA chưa triển khai | High (cho scale) | Deferred — PostgreSQL recommended cho production |
+| G7 | PostgreSQL production deployment / multi-node / HA deferred | High (cho scale) | Deferred — local runtime implemented; PostgreSQL recommended cho production scale |
 | G8 | cancel_execution CLI-only, không có HTTP endpoint | Low | ✅ M3 IMPLEMENTED — route/handler/state/provenance/tests added |
 | G9 | healthz/readyz shallow (không deep health check) | Low | ✅ S2 improved — 2026-04-28: /v1/readyz/deep với store probe + bounded failure-mode tests (503/degraded/healthy=false/component error) |
 | S4 | Policy bundle / bridge support boundary clarity | Low | ✅ Clarified — 2026-04-28: Doc 19 §2.4 explicitly lists policy bundle (6 routes) and bridge (2 routes) as implemented but outside v1 support contract; Doc 33 S4 status updated |

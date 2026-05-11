@@ -13,7 +13,7 @@
 
 - `StoreFacade` trait in `crates/ferrum-store/src/repos.rs` is **DB-agnostic**
 - `SqliteStore` fully implements `StoreFacade` in `crates/ferrum-store/src/sqlite/mod.rs`
-- `ferrumd` currently connects via `SqliteStore::connect_with_tuning()` only
+- `ferrumd` selects `SqliteStore` by default and `PostgresStore` for `postgres://`/`postgresql://` DSNs when built with the non-default `postgres` feature
 - `PostgresStore` implements all 9 repos for local Docker/runtime; `MySqlStore` not implemented
 - `sqlx` is configured for SQLite by default; `sqlx::postgres` feature enabled for non-default builds
 - Config files show `postgres://` as a working local Docker example; `mysql://` is **not implemented**
@@ -25,7 +25,7 @@
 - `bins/ferrumd/src/main.rs:236-240` — store connection
 - `configs/ferrumgate.dev.toml:14` — postgres example comment
 - `configs/ferrumgate.prod.toml:15` — postgres example comment
-- `docs/implementation-path/45-current-feature-audit.md:324` — G7: PostgreSQL deferred
+- `docs/implementation-path/45-current-feature-audit.md` — PostgreSQL local runtime implemented; production deployment / multi-node / HA deferred
 
 ### Gap
 

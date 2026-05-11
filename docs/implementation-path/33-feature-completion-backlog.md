@@ -117,12 +117,12 @@ These require PostgreSQL, multi-node, or broader adapter surface — not in v1 s
 
 | Aspect | Detail |
 |--------|--------|
-| **Current state** | Not implemented |
-| **Gap** | SQLite single-writer bottleneck; write-queue Phase 1 eliminates lock thrash but not raw throughput ceiling |
-| **Phase 3 path** | `PERFORMANCE_OPTIMIZATION_PLAN.md` §Phase 3 documents design; no implementation exists |
-| **Risk** | HIGH for sustained high-write production |
-| **Production ready** | **No** — not implemented |
-| **Recommendation** | PostgreSQL for production scale; see `PERFORMANCE_OPTIMIZATION_PLAN.md` |
+| **Current state** | Local Docker/runtime implementation complete (P3/P4.1–P4.3). All 9 repos, embedded migrations, integration tests, and sustained-insert benchmark (≥1000 writes/s) are implemented. |
+| **Gap** | SQLite single-writer bottleneck; write-queue Phase 1 eliminates lock thrash but not raw throughput ceiling. No v1 PostgreSQL write queue; SQLite write queue remains the v1 path. |
+| **Phase 3 path** | `PERFORMANCE_OPTIMIZATION_PLAN.md` §Phase 3 documents design; `31-release-paths-todo.md` tracks P4.4 data migration and P5 production readiness as deferred. |
+| **Risk** | HIGH for sustained high-write production if SQLite is used beyond single-node scope. |
+| **Production ready** | **No** — local/runtime support only. P4.4 data migration and P5 production readiness (HA, multi-node, operator signoff) remain deferred. |
+| **Recommendation** | PostgreSQL for production scale; see `PERFORMANCE_OPTIMIZATION_PLAN.md` and `31-release-paths-todo.md` for deferred items. |
 
 ### P2 — Multi-node / HA / read-replica
 
@@ -188,7 +188,7 @@ These require PostgreSQL, multi-node, or broader adapter surface — not in v1 s
 | S2 | Should | Deep health check coverage | Partial | No |
 | S3 | Should | Backup/restore (opt-in retention pruning; no scheduling/encryption) | Bounded SQLite-only + `--retention-days N` | No |
 | S4 | Should | Policy bundle/bridge boundary | Post-v1/experimental | No |
-| P1 | Production-only | PostgreSQL backend | Not implemented | N/A |
+| P1 | Production-only | PostgreSQL backend | Local/runtime implemented; production/HA/P4.4/P5 deferred | N/A |
 | P2 | Production-only | Multi-node/HA | Not implemented | N/A |
 | P3 | Production-only | fs adapter remaining surface | Post-v1 | N/A |
 | P4 | Production-only | git adapter remaining surface | Post-v1 | N/A |

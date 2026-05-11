@@ -129,7 +129,7 @@ The following prerequisites must be satisfied before executing target-environmen
 |-----|-----|
 | G2 gate completion | Requires target-environment execution and operator signoff per docs 58/59 |
 | Production-ready claim | FerrumGate v1 is RC-ready/conditional only |
-| PostgreSQL support | Not implemented; blocked until Phase 3 |
+| PostgreSQL production deployment | Local runtime support implemented (P3/P4.1–P4.3); production deployment, HA/multi-node, and P4.4 data migration remain deferred |
 | Automatic RPO/RTO | Operator must calculate and accept based on workload SLA |
 | TLS certificate procurement | Operator must obtain from CA or certbot |
 

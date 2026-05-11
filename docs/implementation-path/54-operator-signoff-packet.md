@@ -123,9 +123,9 @@ Operator signature: BrianNguyen Date: 09/05/2026
 
 | Item | Required Action | Reference |
 |---|---|---|
-| PostgreSQL not implemented | Operator acknowledges PostgreSQL is not implemented; `postgres://` DSNs are rejected at startup | ADR-50 |
+| PostgreSQL runtime support (local) | Operator acknowledges local PostgreSQL runtime support exists (`postgres://` DSNs connect at startup) but production deployment, HA/multi-node, and P4.4 data migration remain deferred | ADR-50, `31-release-paths-todo.md` |
 | Multi-node/HA not implemented | Operator acknowledges v1 is single-node only; scale-out requires Phase 3 | ADR-50, Production roadmap |
-| Phase 3 not started | Operator confirms no expectation of PostgreSQL support in the current pilot | ADR-50 Phase P1 |
+| Phase 3 local runtime complete | Operator acknowledges local PostgreSQL runtime support (P3/P4.1–P4.3) is implemented but production deployment, P4.4 data migration, and P5 production readiness remain deferred and are not part of the current pilot | ADR-50 Phase P1, `31-release-paths-todo.md` |
 
 **Signoff phrase required**: "Operator acknowledges PostgreSQL/multi-node is deferred and not part of the current production pilot scope."
 
@@ -159,7 +159,7 @@ Before the first production pilot deployment, the following must be all confirme
 **FerrumGate v1 is RC-ready/conditional for single-node SQLite only.**
 
 - No production-ready claim is made in this document
-- PostgreSQL/multi-node/HA are not implemented and not in scope
+- PostgreSQL production deployment, multi-node, and HA are not implemented and not in scope; local PostgreSQL runtime support exists behind the non-default `postgres` feature
 - Phase 2 transaction batching was deferred/regressed
 - This signoff packet confirms operator evaluation only — it does not authorize deployment or claim production readiness
 
@@ -410,7 +410,7 @@ Operator final signoff (all weak spots reviewed and accepted risks acknowledged)
 |---|---|---|---|
 | G2.3/G2.4 | `cargo test --package ferrumctl -- backup` | PASS | 8 backup tests passed; restore guardrails, corruption detection, pre-restore copy, and locked DB refusal covered |
 | G2.2 | `cargo test --package ferrumd -- test_resolve_config_rejects_bearer_mode_without_token` | PASS | bearer mode without token rejected |
-| G2.2/G3 guardrail | `cargo test --package ferrumd -- test_resolve_config_rejects_postgres_dsn` | PASS | PostgreSQL DSN remains rejected for v1 single-node scope |
+| G2.2/G3 guardrail | `cargo test --package ferrumd -- test_resolve_config_rejects_postgres_dsn_without_feature` | PASS | PostgreSQL DSN remains rejected for v1 single-node scope without `--features postgres` |
 | G2.7 | `cargo test --package ferrum-integration-tests -- test_scope_mismatch_deny_on_empty_scope_with_mutation` | PASS | scope-mismatch deny verified |
 | G2.7 | `cargo test --package ferrum-integration-tests -- test_r3_contracts_have_auto_commit_false` | PASS | R3 no-auto-commit invariant verified |
 | G2.8 | `cargo test --package ferrum-integration-tests -- compensate_execution_flow` | PASS | compensate flow exercised; operator still must accept noop-backed adapter risk |

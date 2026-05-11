@@ -150,7 +150,7 @@ Each slice is designed to be completable in a single session with local verifica
 | 1.2 | FS permissions/symlink handling (chmod, lstat, readlink) | ferrum-adapter-fs | +5 | Low | Existing FileWrite pattern | ✅ DONE |
 | 1.3 | HTTP PUT/PATCH replay beyond POST-only | ferrum-adapter-http | +5 | Medium | Existing http.replay_v1 | ✅ DONE |
 | 1.4 | SQLite adapter: transaction-based rollback, schema migration guard | ferrum-adapter-sqlite | +8 | Medium | Existing SqliteAdapter | ✅ DONE |
-| 1.5 | G-E1 SQLite verify fail-closed: DB connection/lock/path errors return verified=false | ferrum-adapter-sqlite | +2 | Low | Existing verify pattern | 🟡 IN PROGRESS |
+| 1.5 | G-E1 SQLite verify fail-closed: DB connection/lock/path errors return verified=false | ferrum-adapter-sqlite | +2 | Low | Existing verify pattern | ✅ DONE |
 
 #### Tier 2 — Skeleton → real implementation
 
@@ -183,7 +183,7 @@ Each slice is designed to be completable in a single session with local verifica
 
 ### Estimated effort to complete Tier 1+2
 
-- **Tier 1** (5 slices, 4 done, 1 in progress): ✅ DONE — 33 new tests added (GitBranchDelete +7, FileChmod +8, PUT/PATCH +10, SQLite transaction rollback +8), all passing; G-E1 SQLite hardening slice in progress (+2 tests)
+- **Tier 1** (5 slices, 5 done): ✅ DONE — 35 new tests added (GitBranchDelete +7, FileChmod +8, PUT/PATCH +10, SQLite transaction rollback +8, G-E1 verify fail-closed +2), all passing
 - **Tier 2** (4 slices): ✅ DONE — current coverage includes ferrum-ledger 13, ferrum-firewall 21, ferrum-graph 10, ferrum-adapter-maildraft 16; all passing
 - **Total projected**: historical estimate superseded by fresh P6 validation
 - **After Tier 1+2+3+U1-U4**: All 19 crates have real implementations with test coverage; observed workspace total is ~797 tests in fresh feature-completeness validation
