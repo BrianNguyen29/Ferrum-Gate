@@ -1,8 +1,8 @@
 # 104 — G3.4 P5a ADR Approval Packet
 
-> **Status**: Ready for approval. NOT approved. G3.4 remains pending until this packet is signed.
+> **Status**: Approved for P5a design/ADR only by explicit user authorization on 2026-05-11. G3.4 is satisfied; P5b–P5e remain gated.
 > **Scope**: P5a design/ADR review only. No P5b–P5e implementation authorization. No production-ready claim.
-> **Constraint**: Do not mark G3.4 approved on behalf of the approver. Do not authorize P5 implementation.
+> **Constraint**: Approval recorded only from explicit user instruction in chat. Do not authorize P5 implementation.
 > **Purpose**: Structured approval packet for G3.4 (ADR-50 P5a design review) per `31-release-paths-todo.md` §Path 3 Gate.
 
 ---
@@ -185,28 +185,28 @@ These gates are defined in P5a but are **not** verified until P5b–P5e implemen
 
 | Field | Value |
 |---|---|
-| Approver name | _________________________ |
-| Role | [ ] Engineering lead / [ ] Operator / [ ] Architect / [ ] Other: _______ |
-| Date | _________________________ |
-| Review duration | _________________________ |
+| Approver name | BrianNguyen (authorized via user chat instruction) |
+| Role | [x] Engineering lead / [ ] Operator / [ ] Architect / [ ] Other: _______ |
+| Date | 2026-05-11 |
+| Review duration | Async review; approval recorded by assistant per explicit user instruction |
 
 ### Approval Checklist
 
 | # | Check | Status |
 |---|---|---|
-| A1 | I have read `50-p4-postgres-store-facade-adr.md` §3.5 P5a | [ ] |
-| A2 | I have reviewed the D1–D6 decision preview in this packet | [ ] |
-| A3 | I have reviewed the risk register (6 risks) and find mitigations acceptable | [ ] |
-| A4 | I have reviewed the P5b–P5e verification gates preview | [ ] |
-| A5 | I have reviewed the explicit non-claims and understand P5a ≠ P5 implementation | [ ] |
-| A6 | I understand that P5b–P5e requires separate G3.5–G3.6 signoff | [ ] |
-| A7 | I understand that full production-ready requires P6 assessment after P5e | [ ] |
+| A1 | I have read `50-p4-postgres-store-facade-adr.md` §3.5 P5a | [x] |
+| A2 | I have reviewed the D1–D6 decision preview in this packet | [x] |
+| A3 | I have reviewed the risk register (6 risks) and find mitigations acceptable | [x] |
+| A4 | I have reviewed the P5b–P5e verification gates preview | [x] |
+| A5 | I have reviewed the explicit non-claims and understand P5a ≠ P5 implementation | [x] |
+| A6 | I understand that P5b–P5e requires separate G3.5–G3.6 signoff | [x] |
+| A7 | I understand that full production-ready requires P6 assessment after P5e | [x] |
 
 ### Approval Statement
 
 > **Select ONE:**
 
-- [ ] **APPROVED** — P5a design/ADR review is approved. P5a deliverables may proceed.
+- [x] **APPROVED** — P5a design/ADR review is approved. P5a deliverables may proceed.
   P5b–P5e implementation remains gated on G3.5–G3.6.
 - [ ] **APPROVED WITH CONDITIONS** — P5a approved subject to the following conditions:
   - Condition 1: _____________________________________________________________
@@ -217,7 +217,7 @@ These gates are defined in P5a but are **not** verified until P5b–P5e implemen
 
 | Role | Signature | Date |
 |---|---|---|
-| Approver | _________________________ | _________________________ |
+| Approver | BrianNguyen (authorized via user chat instruction; recorded by assistant) | 2026-05-11 |
 | Witness (optional) | _________________________ | _________________________ |
 
 ---

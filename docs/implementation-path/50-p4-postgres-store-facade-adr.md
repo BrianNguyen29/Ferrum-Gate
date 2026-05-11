@@ -157,20 +157,20 @@ implemented for local Docker; production/HA/multi-node remains deferred.
 
 > **Oracle verdict**: P5 GO for design/ADR only (P5a). P5b–P5e implementation requires G2 pilot data, G3 gate refresh, and operator D1–D3 signoff. P5 completion does not claim production-ready; P6 assessment required afterward.
 
-#### 3.5 P5a — Design / ADR Review (Authorized)
+#### 3.5 P5a — Design / ADR Review (Approved for Design Only)
 
-P5a is the only currently authorized P5 subphase. It produces a design document, risk register, operator decision framework, and verification gates for P5b–P5e. No P5b–P5e implementation begins until P5a is approved and G3.4–G3.6 are satisfied.
+P5a is the only currently authorized P5 subphase. It produces a design document, risk register, operator decision framework, and verification gates for P5b–P5e. G3.4 is satisfied by the approval packet; no P5b–P5e implementation begins until G3.5–G3.6 are satisfied.
 
-> **Approval workflow**: G3.4 approval is managed through [`104-g3-4-p5a-adr-approval-packet.md`](./104-g3-4-p5a-adr-approval-packet.md).
+> **Approval workflow**: G3.4 approval is recorded in [`104-g3-4-p5a-adr-approval-packet.md`](./104-g3-4-p5a-adr-approval-packet.md).
 > That packet contains the structured review checklist, signoff fields, and explicit non-claims.
-> Do not mark G3.4 approved without completing the approval packet.
+> G3.4 approval authorizes P5a design/ADR only and does not authorize P5b–P5e implementation.
 
 **P5a Deliverables**:
-- [ ] P5a design doc (this ADR §3.5 or standalone doc) with D1–D6 decisions
-- [ ] Risk register with P5-specific risks (pool exhaustion, failover gaps, backup inconsistency, migration divergence)
-- [ ] Verification gates defined for P5b–P5e with pass/fail criteria
-- [ ] Operator decision framework D1–D6 drafted and ready for signoff
-- [ ] Non-claims language reviewed and preserved
+- [x] P5a design doc (this ADR §3.5 or standalone doc) with D1–D6 decisions
+- [x] Risk register with P5-specific risks (pool exhaustion, failover gaps, backup inconsistency, migration divergence)
+- [x] Verification gates defined for P5b–P5e with pass/fail criteria
+- [x] Operator decision framework D1–D6 drafted and ready for signoff
+- [x] Non-claims language reviewed and preserved
 
 **Operator Decisions (D1–D6)**:
 
