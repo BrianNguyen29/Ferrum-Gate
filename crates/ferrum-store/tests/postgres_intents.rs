@@ -124,8 +124,8 @@ async fn setup() -> Option<(PostgresStore, tokio::sync::MutexGuard<'static, ()>)
         .execute(store.pool())
         .await;
 
-    if let Err(e) = store.apply_intent_migration().await {
-        eprintln!("apply_intent_migration failed: {}", e);
+    if let Err(e) = store.apply_embedded_migrations().await {
+        eprintln!("apply_embedded_migrations failed: {}", e);
         return None;
     }
 

@@ -1,12 +1,12 @@
 //! PostgreSQL P3 runtime infrastructure — all repos implemented.
 //!
-//! **PostgreSQL runtime support is partial (P3).**
+//! **PostgreSQL runtime support is partial (P4.2).**
 //! All P3 repos have real implementations: `PostgresIntentRepo`,
 //! `PostgresProposalRepo`, `PostgresExecutionRepo`, `PostgresCapabilityRepo`,
 //! `PostgresRollbackRepo`, `PostgresApprovalRepo`, `PostgresProvenanceRepo`,
 //! `PostgresLedgerRepo`, and `PostgresPolicyBundleRepo`.
 //!
-//! # P3 Status
+//! # P4.2 Status
 //!
 //! - [x] PostgresIntentRepo with real sqlx queries
 //! - [x] PostgresProposalRepo with real sqlx queries
@@ -17,7 +17,7 @@
 //! - [x] PostgresProvenanceRepo with real sqlx queries
 //! - [x] PostgresLedgerRepo with real sqlx queries
 //! - [x] PostgresPolicyBundleRepo with real sqlx queries
-//! - [ ] Migration infrastructure (P4)
+//! - [x] Migration infrastructure (P4.2)
 //! - [ ] Production readiness (P5)
 //!
 //! See ADR-50 for the phased implementation plan.
@@ -28,6 +28,7 @@ mod executions;
 mod helpers;
 mod intents;
 mod ledger;
+mod migrations;
 mod policy_bundles;
 mod proposals;
 mod provenance;
@@ -82,259 +83,42 @@ impl PostgresStore {
         &self.pool
     }
 
-    /// Apply minimal schema migrations required for the intent repo.
-    pub async fn apply_intent_migration(&self) -> Result<()> {
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS intents (
-                intent_id TEXT PRIMARY KEY,
-                principal_id TEXT NOT NULL,
-                normalized_goal TEXT NOT NULL,
-                status TEXT NOT NULL,
-                risk_tier TEXT NOT NULL,
-                approval_mode TEXT NOT NULL,
-                default_rollback_class TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                expires_at TEXT NOT NULL,
-                raw_json TEXT NOT NULL
-            )",
-        )
-        .execute(&self.pool)
-        .await?;
+    /// Apply embedded schema migrations for all P3 repos within a transaction.
+    pub async fn apply_embedded_migrations(&self) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        let mut statement = String::new();
 
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS executions (
-                execution_id TEXT PRIMARY KEY,
-                intent_id TEXT NOT NULL,
-                proposal_id TEXT NOT NULL,
-                capability_id TEXT NOT NULL,
-                rollback_contract_id TEXT,
-                decision TEXT NOT NULL,
-                state TEXT NOT NULL,
-                started_at TEXT NOT NULL,
-                finished_at TEXT,
-                result_digest TEXT,
-                raw_json TEXT NOT NULL
-            )",
-        )
-        .execute(&self.pool)
-        .await?;
+        for line in migrations::INIT_MIGRATION.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("--") {
+                continue;
+            }
 
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_executions_intent_id ON executions(intent_id)")
-            .execute(&self.pool)
-            .await?;
+            statement.push_str(line);
+            statement.push('\n');
 
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_executions_capability_id ON executions(capability_id)",
-        )
-        .execute(&self.pool)
-        .await?;
+            if trimmed.ends_with(';') {
+                let sql = statement.trim();
+                if !sql.is_empty() {
+                    sqlx::query(sql).execute(&mut *tx).await?;
+                }
+                statement.clear();
+            }
+        }
 
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_executions_state ON executions(state)")
-            .execute(&self.pool)
-            .await?;
+        let sql = statement.trim();
+        if !sql.is_empty() {
+            sqlx::query(sql).execute(&mut *tx).await?;
+        }
 
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS proposals (
-                proposal_id TEXT PRIMARY KEY,
-                intent_id TEXT NOT NULL,
-                step_index INTEGER NOT NULL,
-                server_name TEXT NOT NULL,
-                tool_name TEXT NOT NULL,
-                estimated_risk TEXT NOT NULL,
-                requested_rollback_class TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                raw_json TEXT NOT NULL
-            )",
-        )
-        .execute(&self.pool)
-        .await?;
-
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_proposals_intent_id ON proposals(intent_id)")
-            .execute(&self.pool)
-            .await?;
-
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS capabilities (
-                capability_id TEXT PRIMARY KEY,
-                intent_id TEXT NOT NULL,
-                proposal_id TEXT NOT NULL,
-                server_name TEXT NOT NULL,
-                tool_name TEXT NOT NULL,
-                status TEXT NOT NULL,
-                issued_at TEXT NOT NULL,
-                expires_at TEXT NOT NULL,
-                revoked_at TEXT,
-                raw_json TEXT NOT NULL
-            )",
-        )
-        .execute(&self.pool)
-        .await?;
-
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_capabilities_intent_id ON capabilities(intent_id)",
-        )
-        .execute(&self.pool)
-        .await?;
-
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS rollback_contracts (
-                contract_id TEXT PRIMARY KEY,
-                intent_id TEXT NOT NULL,
-                proposal_id TEXT NOT NULL,
-                execution_id TEXT NOT NULL,
-                adapter_key TEXT NOT NULL,
-                action_type TEXT NOT NULL,
-                rollback_class TEXT NOT NULL,
-                state TEXT NOT NULL,
-                auto_commit BOOLEAN NOT NULL,
-                created_at TEXT NOT NULL,
-                expires_at TEXT,
-                raw_json TEXT NOT NULL
-            )",
-        )
-        .execute(&self.pool)
-        .await?;
-
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_rollback_contracts_execution_id ON rollback_contracts(execution_id)",
-        )
-        .execute(&self.pool)
-        .await?;
-
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS approvals (
-                approval_id TEXT PRIMARY KEY,
-                intent_id TEXT NOT NULL,
-                proposal_id TEXT NOT NULL,
-                execution_id TEXT,
-                action_digest TEXT NOT NULL,
-                state TEXT NOT NULL,
-                expires_at TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                raw_json TEXT NOT NULL
-            )",
-        )
-        .execute(&self.pool)
-        .await?;
-
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_approvals_proposal_id ON approvals(proposal_id)",
-        )
-        .execute(&self.pool)
-        .await?;
-
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_approvals_state_created_at ON approvals(state, created_at DESC, approval_id DESC)",
-        )
-        .execute(&self.pool)
-        .await?;
-
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS provenance_events (
-                event_id TEXT PRIMARY KEY,
-                kind TEXT NOT NULL,
-                occurred_at TEXT NOT NULL,
-                intent_id TEXT,
-                proposal_id TEXT,
-                execution_id TEXT,
-                capability_id TEXT,
-                rollback_contract_id TEXT,
-                policy_bundle_id TEXT,
-                raw_json TEXT NOT NULL
-            )",
-        )
-        .execute(&self.pool)
-        .await?;
-
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_provenance_events_occurred_at ON provenance_events(occurred_at ASC)",
-        )
-        .execute(&self.pool)
-        .await?;
-
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS provenance_edges (
-                to_event_id TEXT NOT NULL,
-                from_event_id TEXT NOT NULL,
-                edge_type TEXT NOT NULL,
-                summary TEXT
-            )",
-        )
-        .execute(&self.pool)
-        .await?;
-
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_provenance_edges_to_event_id ON provenance_edges(to_event_id)",
-        )
-        .execute(&self.pool)
-        .await?;
-
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_provenance_edges_from_event_id ON provenance_edges(from_event_id)",
-        )
-        .execute(&self.pool)
-        .await?;
-
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS ledger_entries (
-                entry_id BIGSERIAL PRIMARY KEY,
-                event_id TEXT NOT NULL UNIQUE,
-                intent_id TEXT,
-                execution_id TEXT,
-                occurred_at TEXT NOT NULL,
-                content_hash TEXT,
-                previous_ledger_hash TEXT,
-                raw_json TEXT NOT NULL
-            )",
-        )
-        .execute(&self.pool)
-        .await?;
-
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_ledger_entries_occurred_at ON ledger_entries(occurred_at)",
-        )
-        .execute(&self.pool)
-        .await?;
-
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_ledger_entries_intent_id ON ledger_entries(intent_id)",
-        )
-        .execute(&self.pool)
-        .await?;
-
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_ledger_entries_execution_id ON ledger_entries(execution_id)",
-        )
-        .execute(&self.pool)
-        .await?;
-
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS policy_bundles (
-                bundle_id TEXT PRIMARY KEY,
-                version TEXT NOT NULL,
-                active BOOLEAN NOT NULL DEFAULT false,
-                content_hash TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                raw_json TEXT NOT NULL
-            )",
-        )
-        .execute(&self.pool)
-        .await?;
-
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_policy_bundles_content_hash ON policy_bundles(content_hash)",
-        )
-        .execute(&self.pool)
-        .await?;
-
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_policy_bundles_active ON policy_bundles(active)",
-        )
-        .execute(&self.pool)
-        .await?;
-
+        tx.commit().await?;
         Ok(())
+    }
+
+    /// Backward-compatible alias for `apply_embedded_migrations`.
+    #[deprecated(since = "0.1.0", note = "use `apply_embedded_migrations` instead")]
+    pub async fn apply_intent_migration(&self) -> Result<()> {
+        self.apply_embedded_migrations().await
     }
 
     pub fn intents(&self) -> PostgresIntentRepo {

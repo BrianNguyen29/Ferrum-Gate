@@ -309,7 +309,7 @@ async fn main() -> Result<()> {
                 .await
                 .context("failed to connect to postgres")?;
             pg_store
-                .apply_intent_migration()
+                .apply_embedded_migrations()
                 .await
                 .context("failed to apply postgres migrations")?;
             Arc::new(pg_store) as Arc<dyn StoreFacade>
