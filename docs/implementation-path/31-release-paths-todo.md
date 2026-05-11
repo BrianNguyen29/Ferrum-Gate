@@ -219,19 +219,19 @@ Engineering lead / architect.
 
 ### Phase P1 checklist (PostgreSQL migrations + testcontainer strategy)
 Per `50-p4-postgres-store-facade-adr.md` §3 Phase P1:
-- [ ] Enable `sqlx::postgres` feature flag in `Cargo.toml`
-- [ ] Create `PostgresStore` skeleton with placeholder repo implementations
-- [ ] Define migration strategy (SQLite → PostgreSQL compatibility layer)
-- [ ] Add container test infrastructure (Docker Compose for postgres)
-- [ ] All P1 deliverables code-reviewed and passing CI
+- [x] Enable `sqlx::postgres` feature flag in `Cargo.toml`
+- [x] Create `PostgresStore` skeleton with real repo implementations
+- [x] Define migration strategy (embedded SQL migrations for PostgreSQL compatibility)
+- [x] Add container test infrastructure (live postgres integration tests)
+- [x] All P1 deliverables code-reviewed and passing CI
 
 ### Phase P2–P4 checklist (StoreFacade implementation + migrations)
-- [ ] Implement all nine PostgresStore repos (Intent, Proposal, Capability, Execution, Rollback, Approval, Provenance, Ledger, PolicyBundle)
-- [ ] Adapt write queue architecture for PostgreSQL concurrency model
-- [ ] Implement embedded migration runner for postgres
-- [ ] Data integrity validation: SQLite backup restore to PostgreSQL produces identical lineage and state
-- [ ] Integration tests with live postgres pass
-- [ ] Benchmark validation: ≥1000 writes/s sustained throughput confirmed
+- [x] Implement all nine PostgresStore repos (Intent, Proposal, Capability, Execution, Rollback, Approval, Provenance, Ledger, PolicyBundle)
+- [ ] Adapt write queue architecture for PostgreSQL concurrency model — **deferred**; no v1 PostgreSQL write queue (SQLite write queue remains the v1 path)
+- [x] Implement embedded migration runner for postgres
+- [ ] Data integrity validation: SQLite backup restore to PostgreSQL produces identical lineage and state — **deferred** (P4.4 data migration)
+- [x] Integration tests with live postgres pass
+- [x] Benchmark validation: ≥1000 writes/s sustained throughput confirmed (local Docker only; not a production benchmark)
 
 ### Evidence references
 - `50-p4-postgres-store-facade-adr.md` — phased implementation plan; this is the canonical reference

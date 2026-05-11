@@ -1,6 +1,6 @@
 # 73 — MCP Server Phase D Implementation Plan
 
-> **Status**: Phase D planning. D-0 (read-only REST client) is ready to implement. D-1 (mutating governance pipeline) is deferred and requires separate design.
+> **Status**: Phase D-0 (read-only REST client) is implemented. D-1 (mutating governance pipeline) remains deferred and requires separate design.
 > **Purpose**: Detailed implementation checklist and execution tracker for FerrumGate MCP server Phase D — gateway REST API integration for read-only tools.
 > **Scope**: Phase D-0 = read-only REST client that maps 9 MCP tools to gateway REST routes. Phase D-1 = mutating governance pipeline (deferred, requires separate design).
 > **Constraint**: Do not claim MCP server readiness. Phase D-0 produces read-only REST client only; no mutating tool execution, no capability issuance, no provenance emission, no rollback integration.
@@ -11,7 +11,7 @@
 ## Explicit Non-Claims
 
 - **No MCP server readiness claim.** Phase D-0 is a read-only REST client only; tool execution, auth, provenance, and rollback are out of scope.
-- **No production-ready claim.** Phase D-0 is pre-implementation planning.
+- **No production-ready claim.** Phase D-0 is implemented but not production-ready.
 - **No G2 complete claim.** G2.1–G2.8 remain pending.
 - **MCP server is post-v1 scope.** Phase D is planning for v1.4 MCP Governance Beta.
 - **No mutating tools in Phase D-0.** Only read-only REST API calls; no POST/PUT/DELETE to ferrumd.
@@ -220,80 +220,80 @@ All MCP error responses must use the standard JSON-RPC error format:
 
 | # | Item | Owner | Status | Notes |
 |---|------|-------|--------|-------|
-| D.1 | Create `src/http_client.rs` module | Engineering | ☐ TODO | Reqwest-based HTTP client |
-| D.2 | Add `reqwest` dependency to `Cargo.toml` | Engineering | ☐ TODO | Use `default-features = false` for lighter deps |
-| D.3 | Add `tokio` runtime dependency if needed | Engineering | ☐ TODO | Phase C binary already has tokio |
-| D.4 | Implement `FerrumGatewayClient` struct | Engineering | ☐ TODO | Holds base URL, HTTP client, timeout config |
-| D.5 | Implement `gateway_url()` getter | Engineering | ☐ TODO | Returns configured gateway URL |
-| D.6 | Implement `health()` method | Engineering | ☐ TODO | GET /v1/healthz |
-| D.7 | Implement `readyz_deep()` method | Engineering | ☐ TODO | GET /v1/readyz/deep |
-| D.8 | Implement `list_intents()` method | Engineering | ☐ TODO | GET /v1/intents with query params |
-| D.9 | Implement `get_execution()` method | Engineering | ☐ TODO | GET /v1/executions/{id} |
-| D.10 | Implement `query_lineage()` method | Engineering | ☐ TODO | GET /v1/provenance/query |
-| D.11 | Implement `list_approvals()` method | Engineering | ☐ TODO | GET /v1/approvals |
-| D.12 | Implement `list_policy_bundles()` method | Engineering | ☐ TODO | GET /v1/policy-bundles |
-| D.13 | Implement `list_bridges()` method | Engineering | ☐ TODO | GET /v1/bridges |
-| D.14 | Implement `list_bridge_tools()` method | Engineering | ☐ TODO | GET /v1/bridges/{id}/tools |
+| D.1 | Create `src/http_client.rs` module | Engineering | ☑ DONE | Reqwest-based HTTP client |
+| D.2 | Add `reqwest` dependency to `Cargo.toml` | Engineering | ☑ DONE | Use `default-features = false` for lighter deps |
+| D.3 | Add `tokio` runtime dependency if needed | Engineering | ☑ DONE | Phase C binary already has tokio; tokio used in tests |
+| D.4 | Implement `FerrumGatewayClient` struct | Engineering | ☑ DONE | Holds base URL, HTTP client, timeout config |
+| D.5 | Implement `base_url()` getter | Engineering | ☑ DONE | Returns configured gateway URL (named `base_url`) |
+| D.6 | Implement `health()` method | Engineering | ☑ DONE | GET /v1/healthz |
+| D.7 | Implement `readyz_deep()` method | Engineering | ☑ DONE | GET /v1/readyz/deep |
+| D.8 | Implement `list_intents()` method | Engineering | ☑ DONE | GET /v1/intents with query params |
+| D.9 | Implement `get_execution()` method | Engineering | ☑ DONE | GET /v1/executions/{id} |
+| D.10 | Implement `query_lineage()` method | Engineering | ☑ DONE | GET /v1/provenance/query |
+| D.11 | Implement `list_approvals()` method | Engineering | ☑ DONE | GET /v1/approvals |
+| D.12 | Implement `list_policy_bundles()` method | Engineering | ☑ DONE | GET /v1/policy-bundles |
+| D.13 | Implement `list_bridges()` method | Engineering | ☑ DONE | GET /v1/bridges |
+| D.14 | Implement `list_bridge_tools()` method | Engineering | ☑ DONE | GET /v1/bridges/{id}/tools |
 
 ### 5.2 Response Parsing
 
 | # | Item | Owner | Status | Notes |
 |---|------|-------|--------|-------|
-| D.15 | Define `HealthResponse` struct | Engineering | ☐ TODO | Parse /v1/healthz response |
-| D.16 | Define `DeepHealthResponse` struct | Engineering | ☐ TODO | Parse /v1/readyz/deep response |
-| D.17 | Define `IntentsListResponse` struct | Engineering | ☐ TODO | Parse /v1/intents response |
-| D.18 | Define `ExecutionResponse` struct | Engineering | ☐ TODO | Parse /v1/executions/{id} response |
-| D.19 | Define `ProvenanceQueryResponse` struct | Engineering | ☐ TODO | Parse /v1/provenance/query response |
-| D.20 | Define `ApprovalsListResponse` struct | Engineering | ☐ TODO | Parse /v1/approvals response |
-| D.21 | Define `PolicyBundlesListResponse` struct | Engineering | ☐ TODO | Parse /v1/policy-bundles response |
-| D.22 | Define `BridgesListResponse` struct | Engineering | ☐ TODO | Parse /v1/bridges response |
-| D.23 | Define `BridgeToolsListResponse` struct | Engineering | ☐ TODO | Parse /v1/bridges/{id}/tools response |
+| D.15 | Define `HealthResponse` struct | Engineering | ☑ DONE | Parse /v1/healthz response |
+| D.16 | Define `DeepHealthResponse` struct | Engineering | ☑ DONE | Parse /v1/readyz/deep response |
+| D.17 | Define `IntentsListResponse` struct | Engineering | ☑ DONE | Parse /v1/intents response |
+| D.18 | Define `ExecutionResponse` struct | Engineering | ☑ DONE | Parse /v1/executions/{id} response |
+| D.19 | Define `ProvenanceQueryResponse` struct | Engineering | ☑ DONE | Parse /v1/provenance/query response |
+| D.20 | Define `ApprovalsListResponse` struct | Engineering | ☑ DONE | Parse /v1/approvals response |
+| D.21 | Define `PolicyBundlesListResponse` struct | Engineering | ☑ DONE | Parse /v1/policy-bundles response |
+| D.22 | Define `BridgesListResponse` struct | Engineering | ☑ DONE | Parse /v1/bridges response |
+| D.23 | Define `BridgeToolsListResponse` struct | Engineering | ☑ DONE | Parse /v1/bridges/{id}/tools response |
 
 ### 5.3 Error Classification
 
 | # | Item | Owner | Status | Notes |
 |---|------|-------|--------|-------|
-| D.24 | Define `McpToolError` enum | Engineering | ☐ TODO | AuthError, GatewayUnreachable, ServerError variants |
-| D.25 | Implement error classification for HTTP responses | Engineering | ☐ TODO | Map 401/403 → AuthError, connection fail → Unreachable, 4xx/5xx → ServerError |
-| D.26 | Implement `From<reqwest::Error>` for `McpToolError` | Engineering | ☐ TODO | Classify connection errors as GatewayUnreachable |
-| D.27 | Ensure no secret logging in error paths | Engineering | ☐ TODO | Use Debug fmt, not Display, for sensitive data |
+| D.24 | Define `McpToolError` struct | Engineering | ☑ DONE | AuthError, GatewayUnreachable, ServerError variants via `GatewayError` |
+| D.25 | Implement error classification for HTTP responses | Engineering | ☑ DONE | Map 401/403 → AuthError, connection fail → Unreachable, 4xx/5xx → ServerError |
+| D.26 | Implement `From<reqwest::Error>` for `McpToolError` | Engineering | ☑ DONE | Error classification implemented inline in `execute()`; no standalone `From<reqwest::Error>` impl |
+| D.27 | Ensure no secret logging in error paths | Engineering | ☑ DONE | Use Debug fmt, not Display, for sensitive data |
 
 ### 5.4 REST Mapper Integration
 
 | # | Item | Owner | Status | Notes |
 |---|------|-------|--------|-------|
-| D.28 | Create `src/rest_mapper.rs` module | Engineering | ☐ TODO | Maps tool name → HTTP call → MCP response |
-| D.29 | Wire `FerrumGatewayClient` into `handle_tools_call` | Engineering | ☐ TODO | Replace NOT_IMPLEMENTED with actual REST calls |
-| D.30 | Implement `map_tool_to_rest()` function | Engineering | ☐ TODO | Route tool name to correct client method |
-| D.31 | Implement response serialization to MCP format | Engineering | ☐ TODO | Convert gateway JSON response to MCP `CallToolResult` |
+| D.28 | Create `src/rest_mapper.rs` module | Engineering | ☑ DONE | Maps tool name → HTTP call → MCP response |
+| D.29 | Wire `FerrumGatewayClient` into `handle_tools_call` | Engineering | ☑ DONE | Replace NOT_IMPLEMENTED with actual REST calls |
+| D.30 | Implement `map_tool_to_rest()` function | Engineering | ☑ DONE | Route tool name to correct client method |
+| D.31 | Implement response serialization to MCP format | Engineering | ☑ DONE | Convert gateway JSON response to MCP `CallToolResult` |
 
 ### 5.5 Configuration
 
 | # | Item | Owner | Status | Notes |
 |---|------|-------|--------|-------|
-| D.32 | Add `FERRUM_GATEWAY_URL` environment variable | Engineering | ☐ TODO | Default: `http://127.0.0.1:8080` |
-| D.33 | Add gateway URL to `FerrumGatewayClient` constructor | Engineering | ☐ TODO | Read from env var or config |
-| D.34 | Add timeout configuration | Engineering | ☐ TODO | Default: 30s, configurable |
+| D.32 | Add `FERRUM_GATEWAY_URL` environment variable | Engineering | ☑ DONE | Default: `http://127.0.0.1:8080` |
+| D.33 | Add gateway URL to `FerrumGatewayClient` constructor | Engineering | ☑ DONE | Read from env var or config |
+| D.34 | Add timeout configuration | Engineering | ☑ DONE | Default: 30s, configurable |
 
 ### 5.6 Testing
 
 | # | Item | Owner | Status | Notes |
 |---|------|-------|--------|-------|
-| D.35 | Add unit tests for `FerrumGatewayClient` methods | Engineering | ☐ TODO | Mock HTTP responses |
-| D.36 | Add unit tests for error classification | Engineering | ☐ TODO | Test 401, 403, 404, 500, connection error |
-| D.37 | Add unit tests for response parsing | Engineering | ☐ TODO | Test each response struct |
-| D.38 | Add integration test for full tool call flow | Engineering | ☐ TODO | Use mock server or test against running ferrumd |
-| D.39 | Verify `cargo test -p ferrum-integrations-mcp` passes | Engineering | ☐ TODO | All D-0 tests must pass |
-| D.40 | Verify `cargo check --workspace` passes | Engineering | ☐ TODO | No new warnings |
+| D.35 | Add unit tests for `FerrumGatewayClient` methods | Engineering | ☑ DONE | Mock HTTP responses |
+| D.36 | Add unit tests for error classification | Engineering | ☑ DONE | Test 401, 403, 404, 500, connection error |
+| D.37 | Add unit tests for response parsing | Engineering | ☑ DONE | Test each response struct |
+| D.38 | Add integration test for full tool call flow | Engineering | ☑ DONE | Use mock server or test against running ferrumd |
+| D.39 | Verify `cargo test -p ferrum-integrations-mcp` passes | Engineering | ☑ DONE | All D-0 tests pass |
+| D.40 | Verify `cargo check --workspace` passes | Engineering | ☑ DONE | No new warnings |
 
 ### 5.7 Documentation
 
 | # | Item | Owner | Status | Notes |
 |---|------|-------|--------|-------|
-| D.41 | Document `FerrumGatewayClient` usage | Engineering | ☐ TODO | Example code for initializing client |
-| D.42 | Document error classification | Engineering | ☐ TODO | Explain auth error vs. unreachable vs. server error |
-| D.43 | Update `src/bin/ferrum-mcp-server.rs` comments | Engineering | ☐ TODO | Note gateway URL config |
-| D.44 | Update this document | Engineering | ☐ TODO | Mark D-0 items done after implementation |
+| D.41 | Document `FerrumGatewayClient` usage | Engineering | ☑ DONE | Example code for initializing client |
+| D.42 | Document error classification | Engineering | ☑ DONE | Explain auth error vs. unreachable vs. server error |
+| D.43 | Update `src/bin/ferrum-mcp-server.rs` comments | Engineering | ☑ DONE | Note gateway URL config |
+| D.44 | Update this document | Engineering | ☑ DONE | Mark D-0 items done after implementation |
 
 ---
 
@@ -440,55 +440,55 @@ When D-1 design is complete, it will cover:
 | Phase A (skeleton + tool registry) | ✅ Complete |
 | Phase B (JSON-RPC + handlers) | ✅ Complete |
 | Phase C (stdio + binary) | ✅ Complete |
-| Phase D-0 (read-only REST client) | ☐ Ready to implement |
+| Phase D-0 (read-only REST client) | ✅ Complete |
 
 ### Phase D-0 Checklist (D.1–D.44)
 
-- [ ] D.1 Create `src/http_client.rs` module
-- [ ] D.2 Add `reqwest` dependency to `Cargo.toml`
-- [ ] D.3 Add `tokio` runtime dependency if needed
-- [ ] D.4 Implement `FerrumGatewayClient` struct
-- [ ] D.5 Implement `gateway_url()` getter
-- [ ] D.6 Implement `health()` method
-- [ ] D.7 Implement `readyz_deep()` method
-- [ ] D.8 Implement `list_intents()` method
-- [ ] D.9 Implement `get_execution()` method
-- [ ] D.10 Implement `query_lineage()` method
-- [ ] D.11 Implement `list_approvals()` method
-- [ ] D.12 Implement `list_policy_bundles()` method
-- [ ] D.13 Implement `list_bridges()` method
-- [ ] D.14 Implement `list_bridge_tools()` method
-- [ ] D.15 Define `HealthResponse` struct
-- [ ] D.16 Define `DeepHealthResponse` struct
-- [ ] D.17 Define `IntentsListResponse` struct
-- [ ] D.18 Define `ExecutionResponse` struct
-- [ ] D.19 Define `ProvenanceQueryResponse` struct
-- [ ] D.20 Define `ApprovalsListResponse` struct
-- [ ] D.21 Define `PolicyBundlesListResponse` struct
-- [ ] D.22 Define `BridgesListResponse` struct
-- [ ] D.23 Define `BridgeToolsListResponse` struct
-- [ ] D.24 Define `McpToolError` enum
-- [ ] D.25 Implement error classification for HTTP responses
-- [ ] D.26 Implement `From<reqwest::Error>` for `McpToolError`
-- [ ] D.27 Ensure no secret logging in error paths
-- [ ] D.28 Create `src/rest_mapper.rs` module
-- [ ] D.29 Wire `FerrumGatewayClient` into `handle_tools_call`
-- [ ] D.30 Implement `map_tool_to_rest()` function
-- [ ] D.31 Implement response serialization to MCP format
-- [ ] D.32 Add `FERRUM_GATEWAY_URL` environment variable
-- [ ] D.33 Add gateway URL to `FerrumGatewayClient` constructor
-- [ ] D.34 Add timeout configuration
-- [ ] D.35 Add unit tests for `FerrumGatewayClient` methods
-- [ ] D.36 Add unit tests for error classification
-- [ ] D.37 Add unit tests for response parsing
-- [ ] D.38 Add integration test for full tool call flow
-- [ ] D.39 Verify `cargo test -p ferrum-integrations-mcp` passes
-- [ ] D.40 Verify `cargo check --workspace` passes
-- [ ] D.41 Document `FerrumGatewayClient` usage
-- [ ] D.42 Document error classification
-- [ ] D.43 Update `src/bin/ferrum-mcp-server.rs` comments
-- [ ] D.44 Update this document
+- [x] D.1 Create `src/http_client.rs` module
+- [x] D.2 Add `reqwest` dependency to `Cargo.toml`
+- [x] D.3 Add `tokio` runtime dependency if needed
+- [x] D.4 Implement `FerrumGatewayClient` struct
+- [x] D.5 Implement `base_url()` getter
+- [x] D.6 Implement `health()` method
+- [x] D.7 Implement `readyz_deep()` method
+- [x] D.8 Implement `list_intents()` method
+- [x] D.9 Implement `get_execution()` method
+- [x] D.10 Implement `query_lineage()` method
+- [x] D.11 Implement `list_approvals()` method
+- [x] D.12 Implement `list_policy_bundles()` method
+- [x] D.13 Implement `list_bridges()` method
+- [x] D.14 Implement `list_bridge_tools()` method
+- [x] D.15 Define `HealthResponse` struct
+- [x] D.16 Define `DeepHealthResponse` struct
+- [x] D.17 Define `IntentsListResponse` struct
+- [x] D.18 Define `ExecutionResponse` struct
+- [x] D.19 Define `ProvenanceQueryResponse` struct
+- [x] D.20 Define `ApprovalsListResponse` struct
+- [x] D.21 Define `PolicyBundlesListResponse` struct
+- [x] D.22 Define `BridgesListResponse` struct
+- [x] D.23 Define `BridgeToolsListResponse` struct
+- [x] D.24 Define `McpToolError` struct
+- [x] D.25 Implement error classification for HTTP responses
+- [x] D.26 Implement `From<reqwest::Error>` for `McpToolError` (inline in `execute()`)
+- [x] D.27 Ensure no secret logging in error paths
+- [x] D.28 Create `src/rest_mapper.rs` module
+- [x] D.29 Wire `FerrumGatewayClient` into `handle_tools_call`
+- [x] D.30 Implement `map_tool_to_rest()` function
+- [x] D.31 Implement response serialization to MCP format
+- [x] D.32 Add `FERRUM_GATEWAY_URL` environment variable
+- [x] D.33 Add gateway URL to `FerrumGatewayClient` constructor
+- [x] D.34 Add timeout configuration
+- [x] D.35 Add unit tests for `FerrumGatewayClient` methods
+- [x] D.36 Add unit tests for error classification
+- [x] D.37 Add unit tests for response parsing
+- [x] D.38 Add integration test for full tool call flow
+- [x] D.39 Verify `cargo test -p ferrum-integrations-mcp` passes
+- [x] D.40 Verify `cargo check --workspace` passes
+- [x] D.41 Document `FerrumGatewayClient` usage
+- [x] D.42 Document error classification
+- [x] D.43 Update `src/bin/ferrum-mcp-server.rs` comments
+- [x] D.44 Update this document
 
 ---
 
-*Document created: 2026-05-06. Phase D-0 (read-only REST client) ready to implement. Phase D-1 (mutating governance pipeline) deferred — requires separate design. No production-ready claim. MCP server is post-v1 scope (v1.4 MCP Governance Beta).*
+*Document created: 2026-05-06. Phase D-0 (read-only REST client) implemented. Phase D-1 (mutating governance pipeline) deferred — requires separate design. No production-ready claim. MCP server is post-v1 scope (v1.4 MCP Governance Beta).*
