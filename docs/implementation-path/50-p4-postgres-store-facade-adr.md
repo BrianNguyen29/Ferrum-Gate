@@ -364,3 +364,4 @@ store_dsn = "sqlite::memory:"
 - `docs/implementation-path/30-production-roadmap.md` — Phase 3 PostgreSQL
 - `docs/implementation-path/23-production-readiness-assessment.md` — production readiness
 - `docs/implementation-path/104-g3-4-p5a-adr-approval-packet.md` — G3.4 P5a approval packet (ready for approval)
+- `docs/implementation-path/105-g3-5-operator-d1-d3-signoff-packet.md` — G3.5 operator D1–D3 signoff packet (ready for operator review)

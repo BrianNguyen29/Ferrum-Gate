@@ -222,6 +222,20 @@ These gates are defined in P5a but are **not** verified until P5b–P5e implemen
 
 ---
 
+## Next Steps After G3.4 Approval
+
+Once G3.4 is approved, the next gated step is **G3.5: Operator D1–D3 signoff**.
+
+| Step | Document | Purpose | Owner |
+|---|---|---|---|
+| G3.5 | [`105-g3-5-operator-d1-d3-signoff-packet.md`](./105-g3-5-operator-d1-d3-signoff-packet.md) | Operator selects D1 (topology), D2 (backup), D3 (failover) with impact analysis | Operator |
+| G3.6 | Path 2 pilot metrics/logs | G2 pilot data for P5b pool-tuning input | Operator |
+| Eng.1 | Engineering planning | Confirm capacity for selected topology effort | Engineering lead |
+
+**P5b–P5e implementation remains gated until G3.5, G3.6, and Eng.1 are all satisfied.**
+
+---
+
 ## Cross-References
 
 | This Doc | Links To | Purpose |
@@ -232,6 +246,7 @@ These gates are defined in P5a but are **not** verified until P5b–P5e implemen
 | `104-g3-4-p5a-adr-approval-packet.md` | `100-phase3f-conditional-sqlite-pilot-authorization.md` | Conditional pilot authorization |
 | `31-release-paths-todo.md` | This doc | G3.4 evidence reference |
 | `50-p4-postgres-store-facade-adr.md` | This doc | P5a approval packet cross-reference |
+| `105-g3-5-operator-d1-d3-signoff-packet.md` | This doc | Next step after G3.4: G3.5 operator D1–D3 signoff |
 
 ---
 
