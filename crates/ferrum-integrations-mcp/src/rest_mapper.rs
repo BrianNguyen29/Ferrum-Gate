@@ -416,13 +416,14 @@ fn call_submit_intent(
         parameters,
         principal_id.to_string(),
     );
-    let draft = crate::mapping_helpers::tool_call_action_to_draft_intent_compile_request(
-        &action,
-        principal_id.to_string(),
-    );
+    let draft = crate::mapping_helpers::tool_call_action_to_draft_intent_compile_request(&action);
 
     let request = ferrum_proto::IntentCompileRequest {
-        principal_id: parse_uuid_into_id(principal_id, ferrum_proto::PrincipalId)?,
+        // D78-5: Use UUID v5 stable derivation from actor_id (via draft) rather
+        // than separately parsing a raw principal_id UUID string.
+        principal_id: draft
+            .principal_id
+            .map_err(|e| McpToolError::invalid_args(&e.to_string()))?,
         session_id: None,
         channel_id: None,
         title: title.to_string(),

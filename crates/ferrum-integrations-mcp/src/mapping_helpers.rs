@@ -1,7 +1,9 @@
-//! # D1.3.2a Pure Mapping Helpers
+//! # D1.3.2b Pure Mapping Helpers
 //!
-//! > **D1.3.2a Scope**: Pure (side-effect-free) helper functions for mapping MCP tool calls
+//! > **D1.3.2b Scope**: Pure (side-effect-free) helper functions for mapping MCP tool calls
 //! > to gateway governance types. No HTTP calls, no state changes, no governance pipeline execution.
+//! > All D78 defaults implemented: UUID v5 principal derivation, untrusted MCP input refs,
+//! > http_post=High/R3, unknown actions fail-closed High, Medium+ approval Required.
 //!
 //! ## Design Decisions (per doc 77)
 //!
@@ -96,11 +98,11 @@ impl std::error::Error for MappingError {}
 /// //
 /// // Example:
 /// // let action = ToolCallAction::new(...);
-/// // let result = tool_call_action_to_draft_intent_compile_request(&action, "agent-001".to_string());
-/// // // principal_id returns Err(Todo) — B-MAP-1
+/// // let result = tool_call_action_to_draft_intent_compile_request(&action);
+/// // // principal_id derived from actor_id via UUID v5 — D78-5
 /// // // session_id returns Ok(Some(...)) — auto-generated
 /// // // channel_id returns Ok(None) — MCP has no channel concept
-/// // // goal returns Err(Todo) — MCP has no goal concept
+/// // // goal returns Ok(...) — draft goal from action_type and target
 /// ```
 #[derive(Debug, Clone)]
 pub struct DraftIntentCompileRequestParts {
@@ -263,11 +265,11 @@ fn make_untrusted_intent_input_ref(
 /// Converts a `ToolCallAction` into `DraftIntentCompileRequestParts`.
 ///
 /// This helper is PURE — no side effects, deterministic, no I/O.
+/// Principal ID is derived from `action.actor_id` via UUID v5 (D78-5).
 ///
 /// # Arguments
 ///
 /// * `action` - The `ToolCallAction` to convert
-/// * `principal_id` - Principal ID string (from `ActorIdentity::resolve()`)
 ///
 /// # Returns
 ///
@@ -276,10 +278,8 @@ fn make_untrusted_intent_input_ref(
 #[allow(dead_code)]
 pub fn tool_call_action_to_draft_intent_compile_request(
     action: &ToolCallAction,
-    _principal_id: String,
 ) -> DraftIntentCompileRequestParts {
     let risk_tier = infer_risk_tier(&action.action_type);
-    let _approval_mode = derive_approval_mode(Some(risk_tier.clone()));
 
     DraftIntentCompileRequestParts {
         // P1 (per doc 79): stable principal ID derived from actor_id using UUID v5.
@@ -1025,6 +1025,39 @@ mod tests {
     }
 
     // -------------------------------------------------------------------------
+    // derive_stable_principal_id Tests (D78-5)
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_stable_principal_id_deterministic() {
+        // D78-5: Same actor_id always produces the same PrincipalId
+        let id1 = derive_stable_principal_id("agent-001");
+        let id2 = derive_stable_principal_id("agent-001");
+        assert_eq!(id1, id2, "Same actor_id must produce identical PrincipalId");
+    }
+
+    #[test]
+    fn test_stable_principal_id_different_actors() {
+        // D78-5: Different actor_ids produce different PrincipalIds
+        let id1 = derive_stable_principal_id("agent-001");
+        let id2 = derive_stable_principal_id("agent-002");
+        assert_ne!(id1, id2, "Different actor_ids must produce different PrincipalIds");
+    }
+
+    #[test]
+    fn test_stable_principal_id_valid_uuid() {
+        // D78-5: Derived PrincipalId must be a valid UUID
+        let id = derive_stable_principal_id("agent-001");
+        let id_str = id.to_string();
+        assert_eq!(id_str.len(), 36, "UUID must be 36 characters");
+        assert_eq!(
+            id_str.chars().filter(|c| *c == '-').count(),
+            4,
+            "UUID must have 4 hyphens"
+        );
+    }
+
+    // -------------------------------------------------------------------------
     // tool_call_action_to_draft_intent_compile_request Tests
     // -------------------------------------------------------------------------
 
@@ -1039,11 +1072,16 @@ mod tests {
             "agent-001".to_string(),
         );
 
-        let parts =
-            tool_call_action_to_draft_intent_compile_request(&action, "agent-001".to_string());
+        let parts = tool_call_action_to_draft_intent_compile_request(&action);
 
-        // principal_id should be Ok (auto-generated)
+        // principal_id should be Ok and derived from actor_id via UUID v5 (D78-5)
         assert!(parts.principal_id.is_ok());
+        let expected_principal = derive_stable_principal_id("agent-001");
+        assert_eq!(
+            parts.principal_id.unwrap(),
+            expected_principal,
+            "principal_id must be UUID v5 derived from actor_id"
+        );
         // session_id should be Some
         assert!(parts.session_id.is_some());
         // channel_id should be None (MCP has no channel)
@@ -1082,8 +1120,7 @@ mod tests {
             "agent-002".to_string(),
         );
 
-        let parts =
-            tool_call_action_to_draft_intent_compile_request(&action, "agent-002".to_string());
+        let parts = tool_call_action_to_draft_intent_compile_request(&action);
 
         assert_eq!(parts.requested_risk_tier, Some(RiskTier::Low));
         assert_eq!(parts.approval_mode, Some(ApprovalMode::None));
@@ -1120,6 +1157,59 @@ mod tests {
             RollbackClass::R2Compensatable
         );
         assert!(parts.taint_inputs.is_empty());
+    }
+
+    #[test]
+    fn test_tool_call_action_to_draft_action_proposal_http_post() {
+        // D78-3: http_post risk is High; D78-4: http_post rollback is R3
+        let action = ToolCallAction::new(
+            "intent-http".to_string(),
+            "http_post".to_string(),
+            "http:post:https://api.example.com/endpoint".to_string(),
+            "https://api.example.com/endpoint".to_string(),
+            serde_json::json!({ "body": "data" }),
+            "agent-004".to_string(),
+        );
+
+        let parts = tool_call_action_to_draft_action_proposal(
+            &action,
+            "http_post: https://api.example.com/endpoint".to_string(),
+        );
+
+        assert_eq!(parts.intent_id, "intent-http");
+        assert_eq!(parts.tool_name, "http_post");
+        assert_eq!(parts.estimated_risk, RiskTier::High);
+        assert_eq!(
+            parts.requested_rollback_class,
+            RollbackClass::R3IrreversibleHighConsequence
+        );
+        assert_eq!(parts.server_name.unwrap(), "http");
+    }
+
+    #[test]
+    fn test_tool_call_action_to_draft_action_proposal_unknown_fails_closed() {
+        // D78-8: Unknown actions fail closed (High risk, R3 rollback)
+        let action = ToolCallAction::new(
+            "intent-unknown".to_string(),
+            "unknown_action".to_string(),
+            "unknown:scope".to_string(),
+            "unknown_target".to_string(),
+            serde_json::json!({}),
+            "agent-005".to_string(),
+        );
+
+        let parts = tool_call_action_to_draft_action_proposal(
+            &action,
+            "unknown_action: unknown_target".to_string(),
+        );
+
+        assert_eq!(parts.estimated_risk, RiskTier::High);
+        assert_eq!(
+            parts.requested_rollback_class,
+            RollbackClass::R3IrreversibleHighConsequence
+        );
+        // server_name should be Err(Todo) for unknown prefix
+        assert!(parts.server_name.is_err());
     }
 
     // -------------------------------------------------------------------------
