@@ -50,13 +50,13 @@ Before claiming PostgreSQL support, all items below must be satisfied:
 
 | # | Gate Criterion | Evidence | Owner | Satisfied |
 |---|---|---|---|---|
-| G3.P3.1 | All PostgreSQL repos implemented and integration-tested | `cargo test --workspace` passes with postgres feature | Engineering | ☐ |
+| G3.P3.1 | All PostgreSQL repos implemented and integration-tested | `cargo test --workspace` passes with postgres feature; all 9 repos have real `sqlx::query` implementations | Engineering | ☑ DONE |
 | G3.P3.2 | Production evaluation framework re-run and all dimensions SATISFIED or CONDITIONAL | Fresh run of `27-production-evaluation-plan.md` Evaluation Decision Framework | Operator | ☐ |
 | G3.P3.3 | Backup/restore validated for PostgreSQL | Operator drill with `pg_dump`/`pg_restore` or equivalent | Operator | ☐ |
 | G3.P3.4 | RPO/RTO confirmed for target workload with PostgreSQL | Operator signoff | Operator | ☐ |
 | G3.P3.5 | Multi-node / HA topology reviewed and capacity planned if required | Site reliability / architecture review | SRE / Architect | ☐ |
 
-**Full production-ready claim only after G3.P3.1–G3.P3.5 are satisfied.**
+**G3.P3.1 satisfied — P3 local Docker/runtime complete. Full production-ready claim only after G3.P3.2–G3.P3.5 are also satisfied.**
 
 ---
 
