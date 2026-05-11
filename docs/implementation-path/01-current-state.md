@@ -1,6 +1,6 @@
 # 01 — Current state
 
-Last updated: 2026-04-28 — G1 observed PASS
+Last updated: 2026-05-11 — PostgreSQL P3/P4 local Docker/runtime support documented
 Single-node v1 scope unless noted.
 
 **Repository**: `https://github.com/BrianNguyen29/Ferrum-Gate` (upstream/original — private, accessible with authorized GitHub credentials) | **Default package version**: `0.1.0` | **Status**: RC candidate v0.1.0-rc.1 published (GitHub prerelease) — Path 1 complete; Path 2 pilot pending operator signoff
@@ -8,7 +8,7 @@ Single-node v1 scope unless noted.
 **Release support contract**:
 - Supported = SQLite-backed single-node governance core.
 - Partial = adapter crates and extended runtime integrations (uneven implementation slices exist, not production-verified).
-- Deferred/post-v1 = broader adapter completion, multi-node/HA/read-replica, PostgreSQL (not yet implemented).
+- Deferred/post-v1 = broader adapter completion, multi-node/HA/read-replica, PostgreSQL production deployment (local Docker/runtime support is implemented).
 
 ## What exists
 
@@ -110,7 +110,7 @@ All P0/P1/P2 items closed. U1-U4 upgrade tracks complete. Full workspace check/c
 
 1. **Path 1 (RC tag)**: Requires git repo + re-run G1 gates before tagging. See [`31-release-paths-todo.md`](./31-release-paths-todo.md) §Path 1.
 2. **Path 2 (Operator signoff/pilot)**: Limited production deployment with explicit operator signoff. See [`54-operator-signoff-packet.md`](./54-operator-signoff-packet.md).
-3. **Path 3 (PostgreSQL/Phase3)**: Begins only after Path 1 RC tag + Path 2 pilot confirmation + G3 gates satisfied. See [`55-phase-3-go-no-go-review.md`](./55-phase-3-go-no-go-review.md).
+3. **Path 3 (PostgreSQL/Phase3)**: P3 repository implementations and P4.1–P4.3 local Docker/runtime complete. Production/HA/multi-node remains deferred. See [`55-phase-3-go-no-go-review.md`](./55-phase-3-go-no-go-review.md).
 
 Remaining work is documented in:
 - [33-feature-completion-backlog.md](./33-feature-completion-backlog.md) — Must/Should/Production-only backlog for incomplete/partial features

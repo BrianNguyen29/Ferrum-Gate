@@ -139,11 +139,11 @@ Phase 3 PostgreSQL (Path 3) — both are outside the scope of this roadmap.
 
 ---
 
-## P3 — Post-Pilot / Deferred
+## P3 — Post-Pilot / Deferred (P3.1 Complete)
 
 | # | Item | Owner | Status | Notes |
 |---|---|---|---|---|
-| P3.1 | **PostgreSQL implementation** | Engineering | ☐ Pending | Path 3; ADR-50 Phase P1–P4; ~2000–3000 LOC + migrations + container tests |
+| P3.1 | **PostgreSQL local Docker/runtime implementation** | Engineering | ✅ Complete (local Docker) | Path 3; ADR-50 Phase P1–P4; ~2000–3000 LOC + migrations + container tests — **P3 repos + P4.1 DSN switching + P4.2 migration infra + P4.3 benchmark validation complete**. Production/HA/multi-node remains deferred. |
 | P3.2 | **Multi-node / HA / read-replica** | Engineering | ☐ Pending | Not implemented; out of v1 scope |
 | P3.3 | **Target-host execution beyond local slices** | Operator | ☐ Pending | D1–D6 drills require operator execution on target host |
 | P3.4 | **Phase 2 transaction batching** | Engineering | ✅ Reverted | Benchmark regression; Phase 1 write queue remains production target |
@@ -154,8 +154,8 @@ Phase 3 PostgreSQL (Path 3) — both are outside the scope of this roadmap.
 
 ### P3 Notes
 
-- P3.1–P3.2 are Phase 3 / Path 3 items. They are blocked until G2.1–G2.8 are signed
-  and Phase 3 go/no-go gates (G3.1–G3.4) are satisfied.
+- P3.1 is complete for local Docker/runtime. Production/HA/multi-node remains deferred.
+- P3.2 is blocked until G2.1–G2.8 are signed and Phase 3 go/no-go gates (G3.1–G3.4) are satisfied.
 - P3.3 is operator-owned target execution evidence.
 - P3.5–P3.8 are implemented but explicitly outside the v1 single-node support baseline.
   They do not contribute to the production-ready claim.
@@ -175,7 +175,7 @@ Phase 3 PostgreSQL (Path 3) — both are outside the scope of this roadmap.
 | Backup automation not configured | Operator | Operator | Configure external scheduler (cron/systemd timer) |
 | Restore drill not executed | Operator | Operator | Execute non-prod restore drill per `61-path-2-execution-plan.md` §3 |
 | TLS/reverse proxy not configured | Operator | Operator | Deploy behind TLS-terminating reverse proxy |
-| PostgreSQL not implemented | Out of scope | N/A | Path 3; blocked until G2 complete |
+| PostgreSQL local runtime | Engineering | Engineering | ✅ Complete — local Docker/runtime support implemented; production/HA/multi-node deferred |
 
 ---
 

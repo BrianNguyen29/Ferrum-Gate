@@ -8,10 +8,12 @@
 bind_addr = "0.0.0.0:8080"
 
 # Store data source name (DSN)
-# NOTE: PostgreSQL and MySQL are NOT implemented. See ADR-50.
+# NOTE: PostgreSQL local Docker/runtime support is implemented; production/HA/multi-node is NOT.
+# MySQL is NOT implemented. See ADR-50.
 # IMPORTANT: Use a persistent database in production
 # Examples:
 #   sqlite:///var/lib/ferrumgate/ferrumgate.db
+#   postgres://user:pass@localhost:5432/db - PostgreSQL (local Docker/runtime only)
 store_dsn = "sqlite:///var/lib/ferrumgate/ferrumgate.db"
 
 # Authentication mode: "disabled" or "bearer"

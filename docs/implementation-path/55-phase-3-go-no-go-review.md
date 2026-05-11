@@ -1,6 +1,6 @@
 # 55 — Phase 3 Go/No-Go Review
 
-> **Status**: Documentation-only. No Phase 3 implementation performed.
+> **Status**: P3 repository implementations and P4.1–P4.3 local Docker/runtime complete. Production/HA/multi-node posture remains NO.
 > **Purpose**: Standalone go/no-go review form for Phase 3 PostgreSQL entry decision.
 > **Scope**: Phase 3 PostgreSQL migration per ADR-50. ~2000–3000 LOC + migrations + container tests.
 > **Constraint**: No production-ready claim. Full production posture requires all Phase P1–P4 completion and re-running the production evaluation framework.
@@ -36,11 +36,11 @@ All four gates must be satisfied before beginning Phase P1 (ADR-50 terminology: 
 
 Per `50-p4-postgres-store-facade-adr.md` §3 Phase P1. All items must be verified before Phase P1 starts:
 
-- [ ] Enable `sqlx::postgres` feature flag in `Cargo.toml`
-- [ ] Create `PostgresStore` skeleton with placeholder repo implementations
-- [ ] Define migration strategy (SQLite → PostgreSQL compatibility layer)
-- [ ] Add container test infrastructure (Docker Compose for postgres)
-- [ ] All P1 deliverables code-reviewed and passing CI
+- [x] Enable `sqlx::postgres` feature flag in `Cargo.toml`
+- [x] Create `PostgresStore` skeleton with placeholder repo implementations
+- [x] Define migration strategy (schema creation; SQLite → PostgreSQL data migration deferred)
+- [x] Add container test infrastructure (Docker Compose for postgres)
+- [x] All P1 deliverables code-reviewed and passing CI
 
 ---
 
@@ -62,12 +62,12 @@ Before claiming PostgreSQL support, all items below must be satisfied:
 
 ## Phase P2–P4 Checklist
 
-- [ ] Implement all nine PostgresStore repos (Intent, Proposal, Capability, Execution, Rollback, Approval, Provenance, Ledger, PolicyBundle)
-- [ ] Adapt write queue architecture for PostgreSQL concurrency model
-- [ ] Implement embedded migration runner for postgres
-- [ ] Data integrity validation: SQLite backup restore to PostgreSQL produces identical lineage and state
-- [ ] Integration tests with live postgres pass
-- [ ] Benchmark validation: ≥1000 writes/s sustained throughput confirmed
+- [x] Implement all nine PostgresStore repos (Intent, Proposal, Capability, Execution, Rollback, Approval, Provenance, Ledger, PolicyBundle)
+- [ ] Adapt write queue architecture for PostgreSQL concurrency model — **deferred**
+- [x] Implement embedded migration runner for postgres (schema creation)
+- [ ] Data integrity validation: SQLite backup restore to PostgreSQL produces identical lineage and state — **deferred to P4.4**
+- [x] Integration tests with live postgres pass
+- [x] Benchmark validation: ≥1000 writes/s sustained throughput confirmed — **achieved 3853.2 writes/s local Docker release**
 
 ---
 
@@ -95,12 +95,12 @@ Before claiming PostgreSQL support, all items below must be satisfied:
 
 ## Disclaimer
 
-**FerrumGate v1 is RC-ready/conditional for single-node SQLite only.**
+**FerrumGate v1 is RC-ready/conditional for single-node SQLite only. PostgreSQL local Docker/runtime support is implemented; production/HA/multi-node remains NO.**
 
 - No production-ready claim is made in this document
 - Phase 3 entry requires all G3.1–G3.4 gates satisfied first
-- Phase 3 completion does not automatically confer production-ready status
-- PostgreSQL/multi-node are explicitly not implemented in v1 RC
+- Phase 3 local Docker/runtime completion does not automatically confer production-ready status
+- PostgreSQL production/HA/multi-node are explicitly not implemented in v1 RC
 
 ---
 
@@ -115,4 +115,4 @@ Before claiming PostgreSQL support, all items below must be satisfied:
 
 ---
 
-*Document generated: 2026-04-28. Documentation-only — no Phase 3 implementation performed.*
+*Document generated: 2026-04-28. Updated 2026-05-11: P3 repository implementations and P4.1–P4.3 local Docker/runtime complete. Production/HA/multi-node posture remains NO.*

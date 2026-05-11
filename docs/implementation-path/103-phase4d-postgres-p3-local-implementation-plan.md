@@ -1,8 +1,8 @@
 # 103 — PostgreSQL P3 Local Implementation Plan
 
-> **Status**: P3 — Local Docker Implementation Planning Only
+> **Status**: P3 — Local Docker Implementation Complete. P4.1–P4.3 Complete. P4.4 Data Migration and P5 Production deferred.
 > **Date**: 2026-05-10
-> **Scope**: Documentation artifact. No Rust implementation, no database creation, no GCP, no commit.
+> **Scope**: Documentation artifact. P3 Rust implementation complete; no database creation, no GCP, no commit.
 > **Constraint**: Do NOT claim PostgreSQL runtime YES. Do NOT claim production-ready/HA/full posture. No secrets.
 > **Target**: Local Docker PostgreSQL first; production PostgreSQL deferred until after P3 complete.
 
@@ -12,26 +12,26 @@
 
 ### Current State (P2 Skeleton)
 
-- `PostgresStore` skeleton in `crates/ferrum-store/src/postgres/mod.rs` exists (P2 done)
-- All 9 skeleton repos return `StoreError::Other("PostgreSQL P2 skeleton only; runtime support not implemented")`
+- `PostgresStore` in `crates/ferrum-store/src/postgres/mod.rs` is fully implemented (P3 complete)
+- All 9 repos have functional `sqlx::query` implementations for local Docker/runtime
 - `docker-compose.postgres.yml` provides a local PostgreSQL 16 container for development/testing
-- `sqlx::postgres` feature is non-default and compile-time only — does not enable runtime functionality
-- ADR-50 Phase P3 lists 9 repos to implement with ~1500-2000 LOC estimated
-- `StoreFacade` trait is DB-agnostic; `SqliteStore` is the working implementation
+- `sqlx::postgres` feature is non-default but enables full runtime functionality when enabled
+- ADR-50 Phase P3 ~1500-2000 LOC estimate — **actual implementation complete**
+- `StoreFacade` trait is DB-agnostic; `SqliteStore` remains the default; `PostgresStore` is runtime-selectable via DSN
 
 ### Evidence References
 
-- `crates/ferrum-store/src/postgres/mod.rs` — PostgresStore skeleton
-- `crates/ferrum-store/src/postgres/{intents,proposals,capabilities,executions,rollback,approvals,provenance,ledger,policy_bundles}.rs` — 9 skeleton repos
+- `crates/ferrum-store/src/postgres/mod.rs` — PostgresStore implementation
+- `crates/ferrum-store/src/postgres/{intents,proposals,capabilities,executions,rollback,approvals,provenance,ledger,policy_bundles}.rs` — 9 implemented repos
 - `docker-compose.postgres.yml` — local PostgreSQL 16 container definition
 - `crates/ferrum-store/src/sqlite/mod.rs` — working SQLite store (reference implementation)
 - `crates/ferrum-store/src/sqlite/{intents,proposals,capabilities,executions,rollback,approvals,provenance,ledger,policy_bundles}.rs` — SQLite repo implementations (reference patterns)
 - `crates/ferrum-store/src/repos.rs` — StoreFacade trait definition
-- `ADR-50 (docs/implementation-path/50-p4-postgres-store-facade-adr.md)` — phased plan with P3 deferred
+- `ADR-50 (docs/implementation-path/50-p4-postgres-store-facade-adr.md)` — phased plan with P3 complete and P4.1–P4.3 complete
 
 ### Gap
 
-P3 must deliver a working `PostgresStore` where all 9 repos have functional implementations backed by a local Docker PostgreSQL instance. This plan provides the actionable implementation checklist, schema strategy, test gates, and invariant gates.
+P3 delivered a working `PostgresStore` where all 9 repos have functional implementations backed by a local Docker PostgreSQL instance. This plan documents the completed implementation checklist, schema strategy, test gates, and invariant gates.
 
 **Post-P3 claim boundaries**: P3 does NOT deliver production PostgreSQL, HA, multi-node, or full production posture. These are P4/P5 scope.
 
@@ -52,12 +52,10 @@ P3 must deliver a working `PostgresStore` where all 9 repos have functional impl
 
 ### OUT
 
-- No Rust implementation (this is a planning artifact only)
-- No database creation
-- No GCP
-- No commit
 - No production PostgreSQL deployment
 - No HA/multi-node
+- No SQLite → PostgreSQL data migration (P4.4 deferred)
+- No GCP
 
 ---
 
@@ -531,7 +529,7 @@ postgres://ferrumgate_dev:ferrumgate_dev_password@localhost:5432/ferrumgate_p2_t
 | Invariant gates | ✅ Functional, behavioral, non-claims in §6 |
 | Local Docker target | ✅ Existing `docker-compose.postgres.yml` |
 | Claim boundaries | ✅ Explicit in §9 |
-| README index update | ☐ Pending (must be done when this plan is committed) |
+| README index update | ✅ Done |
 
 **Total estimated LOC for P3**: ~1500-2000 LOC (9 repos × ~150-200 LOC each + connection pooling + migrations)
 
@@ -540,8 +538,8 @@ postgres://ferrumgate_dev:ferrumgate_dev_password@localhost:5432/ferrumgate_p2_t
 ## 12. References
 
 - [ADR-50 — PostgreSQL StoreFacade Phased Implementation Plan](./50-p4-postgres-store-facade-adr.md)
-- [Production Readiness Roadmap](./67-production-readiness-roadmap.md) — P3.1 PostgreSQL deferred
+- [Production Readiness Roadmap](./67-production-readiness-roadmap.md) — P3.1 PostgreSQL local Docker/runtime complete; production/HA/multi-node deferred
 - [docker-compose.postgres.yml](../../docker-compose.postgres.yml) — local PostgreSQL container
-- `crates/ferrum-store/src/postgres/mod.rs` — PostgresStore skeleton
+- `crates/ferrum-store/src/postgres/mod.rs` — PostgresStore implementation
 - `crates/ferrum-store/src/sqlite/mod.rs` — SqliteStore reference implementation
 - `crates/ferrum-store/src/repos.rs` — StoreFacade trait definition

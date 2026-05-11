@@ -1,15 +1,15 @@
-# Docker Compose for PostgreSQL P2 Infrastructure Testing
+# Docker Compose for PostgreSQL Local Testing
 #
-# ⚠️  DISCLAIMER: This is P2 infrastructure skeleton only.
-#     Runtime PostgreSQL support is NOT implemented.
+# ⚠️  DISCLAIMER: Local Docker/runtime PostgreSQL support is complete.
+#     Production deployment remains deferred.
 #     DO NOT use this for production workloads.
 #
 # Usage:
 #   docker compose -f docker-compose.postgres.yml up -d postgres_p2
 #   docker compose -f docker-compose.postgres.yml down -v  # Cleanup
 #
-# This service is intended for future P3+ development only.
-# Current ferrum-store with postgres feature will error on all operations.
+# This service is intended for local development and benchmarking.
+# postgres:// DSNs are accepted when ferrum-store is built with --features postgres.
 
 services:
   postgres_p2:

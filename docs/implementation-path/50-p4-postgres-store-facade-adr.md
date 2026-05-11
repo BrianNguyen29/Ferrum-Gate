@@ -1,8 +1,8 @@
 # ADR-50 — PostgreSQL StoreFacade: Phased Implementation Plan
 
-> **Status**: P2 Infrastructure Preparation — In Progress (Skeleton only)
-> **Date**: 2026-04-27 (P2 status updated 2026-05-09)
-> **Deciders**: Oracle NO-GO verdict for full implementation
+> **Status**: P3 Repository Implementations — Complete (local Docker). P4.1 Runtime DSN switching — Complete. P4.2 Migration infrastructure — Complete. P4.3 Benchmark validation — Complete (3853.2 writes/s local Docker release). P5 Production Readiness — Deferred.
+> **Date**: 2026-05-11
+> **Deciders**: Engineering implementation complete for local Docker/runtime; production/HA/multi-node posture remains NO.
 > **Estimated Effort**: ~2000-3000 LOC + migrations + container tests
 
 ---
@@ -14,9 +14,9 @@
 - `StoreFacade` trait in `crates/ferrum-store/src/repos.rs` is **DB-agnostic**
 - `SqliteStore` fully implements `StoreFacade` in `crates/ferrum-store/src/sqlite/mod.rs`
 - `ferrumd` currently connects via `SqliteStore::connect_with_tuning()` only
-- No `PostgresStore` or `MySqlStore` implementation exists
-- `sqlx` is configured for SQLite only (no `sqlx::postgres` feature enabled)
-- Config files show `postgres://` and `mysql://` as examples but these are **not implemented**
+- `PostgresStore` implements all 9 repos for local Docker/runtime; `MySqlStore` not implemented
+- `sqlx` is configured for SQLite by default; `sqlx::postgres` feature enabled for non-default builds
+- Config files show `postgres://` as a working local Docker example; `mysql://` is **not implemented**
 
 ### Evidence References
 
@@ -29,15 +29,15 @@
 
 ### Gap
 
-The codebase references PostgreSQL in documentation and config comments but provides **no implementation path**. This creates a misleading impression that PostgreSQL support exists or is readily available. Oracle has issued a NO-GO verdict for full implementation at this time.
+The codebase now has a working `PostgresStore` for local Docker/runtime. PostgreSQL production/HA/multi-node posture remains explicitly deferred. Oracle NO-GO verdict for full production implementation still stands.
 
 ---
 
 ## 2. Decision
 
-### Immediate Action: Explicit Rejection
+### Historical P1 Action: Explicit Rejection (Superseded by P4.1)
 
-Add DSN guardrails in `ServerConfig::validate()` that explicitly reject non-SQLite DSNs with clear error messages:
+During P1, DSN guardrails in `ServerConfig::validate()` explicitly rejected non-SQLite DSNs:
 
 ```
 store_dsn "postgres://...": PostgreSQL is not implemented.
@@ -51,18 +51,21 @@ store_dsn "mysql://...": MySQL is not implemented.
   Use sqlite:// or sqlite::memory: for local development.
 ```
 
-### Rationale
+**P4.1 Update**: Runtime DSN switching now enables `postgres://` for local Docker/runtime.
+MySQL remains rejected.
 
-1. **No false claims**: SQLite-only status is unambiguous
-2. **Clear error path**: Users get actionable guidance instead of cryptic connection failures
-3. **Low risk**: Validation happens at startup before any resource acquisition
-4. **No overclaim**: Does not add stub implementation that appears working
+### Rationale (P1)
+
+1. **No false claims**: SQLite-only status was unambiguous at v1 RC
+2. **Clear error path**: Users got actionable guidance instead of cryptic connection failures
+3. **Low risk**: Validation happened at startup before any resource acquisition
+4. **No overclaim**: No stub implementation was added
 
 ---
 
 ## 3. Phased Implementation Plan
 
-> **Note**: Full implementation is deferred. This plan is for design-ready artifact purposes only.
+> **Note**: Production/HA/full posture remains deferred. This plan documents completed local Docker/runtime work.
 
 ### Phase P1 — Guardrails (This Artifact)
 
@@ -92,44 +95,49 @@ store_dsn "mysql://...": MySQL is not implemented.
 - `crates/ferrum-store/src/postgres/*.rs` — skeleton repos (9 total) ✅
 - `docker-compose.yml` or `P2_INFRA.md` for local postgres testing ✅
 
-**P2 Status (2026-05-09)**: Skeleton infrastructure complete. All 9 repos return
-`StoreError::Other("PostgreSQL P2 skeleton only; runtime support not implemented")`.
-Runtime PostgreSQL support NOT implemented. The `postgres` feature is non-default
-and does not enable any runtime functionality.
+**P2 Status (2026-05-11)**: Skeleton infrastructure complete. All 9 repos are now
+fully implemented for local Docker/runtime. Runtime PostgreSQL support is
+implemented for local Docker; production/HA/multi-node remains deferred.
 
 ---
 
 ### Phase P3 — Repository Implementations (Post-P2)
 
 **Goals**:
-- [ ] Implement `PostgresIntentRepo`
-- [ ] Implement `PostgresProposalRepo`
-- [ ] Implement `PostgresCapabilityRepo`
-- [ ] Implement `PostgresExecutionRepo`
-- [ ] Implement `PostgresRollbackRepo`
-- [ ] Implement `PostgresApprovalRepo`
-- [ ] Implement `PostgresProvenanceRepo`
-- [ ] Implement `PostgresLedgerRepo`
-- [ ] Implement `PostgresPolicyBundleRepo`
+- [x] Implement `PostgresIntentRepo`
+- [x] Implement `PostgresProposalRepo`
+- [x] Implement `PostgresCapabilityRepo`
+- [x] Implement `PostgresExecutionRepo`
+- [x] Implement `PostgresRollbackRepo`
+- [x] Implement `PostgresApprovalRepo`
+- [x] Implement `PostgresProvenanceRepo`
+- [x] Implement `PostgresLedgerRepo`
+- [x] Implement `PostgresPolicyBundleRepo`
 
-**Estimated Effort**: ~1500-2000 LOC (9 repos × ~150-200 LOC each + connection pooling)
+**Estimated Effort**: ~1500-2000 LOC (9 repos × ~150-200 LOC each + connection pooling) — **actual: complete**
 
 **Key Considerations**:
-- Write queue architecture must be adapted for PostgreSQL (different concurrency model)
-- Connection pooling via `sqlx::Pool<Postgres>`
-- Batch INSERT patterns for write queue
+- Write queue architecture must be adapted for PostgreSQL (different concurrency model) — **deferred**
+- Connection pooling via `sqlx::Pool<Postgres>` — **implemented**
+- Batch INSERT patterns for write queue — **deferred**
 
 ---
 
 ### Phase P4 — Migrations and Testing (Post-P3)
 
 **Goals**:
-- [ ] Design SQLite → PostgreSQL migration path
-- [ ] Implement embedded migration runner for postgres
-- [ ] Add integration tests with live postgres
-- [ ] Benchmark validation (target: 1000+ writes/s)
+- [ ] Design SQLite → PostgreSQL data migration path
+- [x] Implement embedded migration runner for postgres (schema creation)
+- [x] Add integration tests with live postgres
+- [x] Benchmark validation (target: 1000+ writes/s) — **achieved 3853.2 writes/s local Docker release**
 
-**Estimated Effort**: ~300-500 LOC migrations + tests
+**P4 Sub-phase Status**:
+- P4.1 Runtime DSN switching — ✅ Complete
+- P4.2 Migration infrastructure (schema runner) — ✅ Complete
+- P4.3 Benchmark validation — ✅ Complete (3853.2 writes/s local Docker release)
+- P4.4 Data migration (SQLite → PostgreSQL) — ☐ Deferred
+
+**Estimated Effort**: ~300-500 LOC migrations + tests — **P4.1–P4.3 complete; P4.4 deferred**
 
 ---
 
@@ -173,11 +181,12 @@ and does not enable any runtime functionality.
 ### After (Accurate)
 
 ```toml
-# Store DSN — SQLite only for v1
+# Store DSN — SQLite default; PostgreSQL local Docker/runtime supported
 # Examples:
 #   sqlite::memory: - in-memory database (default)
 #   sqlite://ferrumgate.dev.db - file-based SQLite
-# PostgreSQL and MySQL are not implemented.
+#   postgres://user:pass@localhost:5432/db - PostgreSQL (local Docker/runtime only)
+# MySQL is not implemented.
 # See ADR-50 for the phased implementation plan.
 store_dsn = "sqlite::memory:"
 ```
@@ -188,11 +197,14 @@ store_dsn = "sqlite::memory:"
 
 | Phase | Status | Notes |
 |-------|--------|-------|
-| P1 Guardrails | ✅ **This artifact** | DSN validation + docs |
-| P2 Infrastructure | 🏗️ **In Progress** | Skeleton + container tests (P2 infra done) |
-| P3 Repo impl | Deferred | Full postgres store |
-| P4 Migrations | Deferred | Schema + data migration |
-| P5 Production | Deferred | HA/clustering |
+| P1 Guardrails | ✅ Complete | DSN validation + docs |
+| P2 Infrastructure | ✅ Complete | Skeleton + container tests |
+| P3 Repo impl | ✅ Complete | Local Docker/runtime; all 9 repos implemented |
+| P4.1 DSN switching | ✅ Complete | Runtime `postgres://` DSN support |
+| P4.2 Migration infra | ✅ Complete | Embedded schema migration runner |
+| P4.3 Benchmark | ✅ Complete | 3853.2 writes/s local Docker release |
+| P4.4 Data migration | ☐ Deferred | SQLite → PostgreSQL data migration |
+| P5 Production | ☐ Deferred | HA/clustering, pool tuning, backup/restore, multi-node |
 
 **Total estimated for full PostgreSQL**: ~3000-4000 LOC + significant testing infrastructure
 

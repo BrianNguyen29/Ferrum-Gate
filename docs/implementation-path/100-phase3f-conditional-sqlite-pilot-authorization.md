@@ -39,11 +39,11 @@ Phase 3F synthesizes signed operator documents and Phase 3A–3E evidence into a
 | Item | Decision | Reason |
 |------|----------|--------|
 | Full production-ready claim | **NO** | FerrumGate v1 is RC-ready/conditional; full production-ready not claimed |
-| PostgreSQL support | **NO** | PostgreSQL not implemented; `postgres://` DSNs rejected at startup |
+| PostgreSQL support | **NO** | PostgreSQL production deployment deferred; local Docker/runtime support complete. `postgres://` DSNs accepted when built with `--features postgres` |
 | Multi-node/HA/replica | **NO** | Single-node only; scale-out requires a separate PostgreSQL/HA phase that is not started |
 | Full production posture | **NO** | Conditional single-node SQLite pilot only; nip.io is temporary |
 | Production domain/TLS | **NO** | Real domain required for production; nip.io is temporary/non-prod |
-| Phase 3 PostgreSQL | **NO** | Not started; ADR-50 Phase P1 not entered |
+| Phase 3 PostgreSQL | **NO** | P4.1–P4.3 complete; P4.4/P5 deferred |
 
 ---
 
@@ -158,11 +158,11 @@ Phase 3F synthesizes signed operator documents and Phase 3A–3E evidence into a
 ## What This Authorization Does NOT Cover
 
 1. **Full production-ready claim** — FerrumGate v1 remains RC-ready/conditional
-2. **PostgreSQL** — Not implemented; ADR-50 Phase P1 not entered
+2. **PostgreSQL** — Production deployment deferred; ADR-50 P4.1–P4.3 runtime support complete, P4.4 data migration deferred
 3. **Multi-node/HA/replica** — Single-node only in Phase 1
 4. **Production domain** — nip.io is temporary and not suitable for production
 5. **Production deployment** — Conditional pilot on GCP non-prod VM only
-6. **Phase 3 PostgreSQL** — Not started; requires separate ADR-50 Phase P1 entry
+6. **Phase 3 PostgreSQL** — P4.1–P4.3 complete; P4.4 data migration and P5 production deployment deferred
 
 ---
 
