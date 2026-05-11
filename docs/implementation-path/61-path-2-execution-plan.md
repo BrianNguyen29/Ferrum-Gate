@@ -58,14 +58,17 @@ Complete [`59-pilot-readiness-evidence-packet.md`](./59-pilot-readiness-evidence
 
 | G2 Item | Description | Evidence Required | Status |
 |---|---|---|---|
-| G2.1 | Workload Model | Write workload modeled against SQLite capacity | ☐ Pending |
-| G2.2 | Auth/TLS Configuration | Bearer auth + TLS/reverse proxy confirmed | ☐ Pending |
-| G2.3 | Backup Schedule | External backup scheduling implemented | ☐ Pending |
-| G2.4 | Restore Drill | Restore drill with `PRAGMA integrity_check` passing | ☐ Pending |
-| G2.5 | RPO/RTO Acceptance | Backup/restore objectives formally accepted | ☐ Pending |
-| G2.6 | Production Evaluation | Evaluation framework completed as SATISFIED or CONDITIONAL | ☐ Pending |
-| G2.7 | Accepted-Risk Review | Known limitations and weak spots reviewed | ☐ Pending |
-| G2.8 | Compensate Noop Acceptance | Adapter compensate/noop semantics accepted for target workload | ☐ Pending |
+| G2.1 | Workload Model | Write workload modeled against SQLite capacity | ☑ Signed (conditional pilot only) |
+| G2.2 | Auth/TLS Configuration | Bearer auth + TLS/reverse proxy confirmed | ☑ Signed (conditional pilot only) |
+| G2.3 | Backup Schedule | External backup scheduling implemented | ☑ Signed (conditional pilot only) |
+| G2.4 | Restore Drill | Restore drill with `PRAGMA integrity_check` passing | ☑ Signed (conditional pilot only) |
+| G2.5 | RPO/RTO Acceptance | Backup/restore objectives formally accepted | ☑ Signed (conditional pilot only) |
+| G2.6 | Production Evaluation | Evaluation framework completed as SATISFIED or CONDITIONAL | ☑ Signed (conditional pilot only) |
+| G2.7 | Accepted-Risk Review | Known limitations and weak spots reviewed | ☑ Signed (conditional pilot only) |
+| G2.8 | Compensate Noop Acceptance | Adapter compensate/noop semantics accepted for target workload | ☑ Signed (conditional pilot only) |
+
+> **Signed by**: BrianNguyen on 09/05/2026 per `59-pilot-readiness-evidence-packet.md`.
+> **Scope**: Conditional single-node SQLite pilot only. NOT full production-ready.
 
 ### 1.2 Workload-Fit Review Checklist
 
@@ -389,30 +392,37 @@ All of the following must be satisfied before Phase 3 decision:
 
 | Decision | Criteria | Next Action |
 |---|---|---|
-| **Proceed to Phase 3** | Pilot confirms single-node SQLite inadequate for workload (e.g., >300 writes/s, multi-node required) OR operator prefers PostgreSQL for production scale | Engineering lead initiates Phase P1 per [`50-p4-postgres-store-facade-adr.md`](./50-p4-postgres-store-facade-adr.md) |
-| **Continue Path 2 (bounded single-node)** | Pilot confirms single-node SQLite acceptable for target workload | Operator continues bounded production use; Phase 3 deferred |
+| **Proceed to P5a design** | Pilot confirms single-node SQLite inadequate for workload (e.g., >300 writes/s, multi-node required) OR operator prefers PostgreSQL for production scale | Engineering lead initiates P5a per [`50-p4-postgres-store-facade-adr.md`](./50-p4-postgres-store-facade-adr.md) §3.5 |
+| **Continue Path 2 (bounded single-node)** | Pilot confirms single-node SQLite acceptable for target workload | Operator continues bounded production use; Phase 3 / P5 deferred |
 | **Abort pilot** | Any abort trigger from [`31-release-paths-todo.md`](./31-release-paths-todo.md) §Path 2 fires | Investigate, fix, and re-evaluate or formally close pilot |
 
-### 5.3 Phase 3 Go/No-Go Gates (G3.1–G3.4)
+> **Note**: Phase P1–P4.4 is already complete for local Docker/runtime per ADR-50.
+> The decision now is whether to proceed to **P5a design** (authorized) or defer.
+> P5b–P5e implementation remains gated on G3.4–G3.6.
+
+### 5.3 Phase 3 / P5a Go/No-Go Gates (G3.1–G3.6)
 
 Per [`31-release-paths-todo.md`](./31-release-paths-todo.md) §Path 3 Gate:
 
 | Gate | Criterion | Evidence | Owner | Status |
 |---|---|---|---|---|
 | G3.1 | v1 RC tag cut and Path 1 complete | RC tag `v0.1.0-rc.1` at commit `5fce844d` | Release engineer | ☑ DONE |
-| G3.2 | Production pilot (Path 2) confirmed single-node SQLite acceptable | Operator signoff per [`27-production-evaluation-plan.md`](./27-production-evaluation-plan.md) | Operator | ☐ Pending |
-| G3.3 | Engineering capacity confirmed for ~2000–3000 LOC + migrations + tests | ADR-50 effort estimate | Engineering lead | ☐ Pending |
-| G3.4 | ADR-50 Phase P1 reviewed and approved | [`50-p4-postgres-store-facade-adr.md`](./50-p4-postgres-store-facade-adr.md) §3 | Engineering lead | ☐ Pending |
+| G3.2 | Conditional single-node SQLite pilot signed (doc59/doc54) | Operator signoff per [`27-production-evaluation-plan.md`](./27-production-evaluation-plan.md) | Operator | ☑ DONE (conditional pilot only; not full production) |
+| G3.3 | P1–P4.4 local Docker/runtime implementation complete | ADR-50 §6 summary table | Engineering lead | ☑ DONE (local Docker/runtime; not production) |
+| G3.4 | ADR-50 P5a design review approved | [`50-p4-postgres-store-facade-adr.md`](./50-p4-postgres-store-facade-adr.md) §3.5 P5a | Engineering lead | ☐ Pending |
+| G3.5 | Operator D1–D3 signoff obtained for P5b–P5e | P5a ADR §Operator Decisions D1–D3 | Operator | ☐ Pending |
+| G3.6 | G2 pilot data available for P5b pool-tuning input | Path 2 pilot metrics/logs | Operator | ☐ Pending |
 
-**Do not begin Phase P1 until G3.1–G3.4 are satisfied.**
+**Do not begin P5b–P5e until G3.4–G3.6 are satisfied. P5a (design only) is the currently authorized phase.**
 
 ### 5.4 Stop Conditions for Step 5
 
 | Trigger | Action |
 |---|---|
-| G3.2 (Path 2 complete) not satisfied | Do not proceed to Phase 3; resolve Path 2 gaps first |
-| G3.3 (Engineering capacity) not confirmed | Do not begin Phase P1; evaluate capacity or defer |
-| G3.4 (ADR-50 Phase P1) not approved | Do not begin Phase P1; resolve ADR-50 open items first |
+| G3.4 (P5a design) not approved | Do not proceed to P5b–P5e; resolve P5a open items first |
+| G3.5 (Operator D1–D3) not signed | Do not begin P5b–P5e; obtain operator signoff first |
+| G3.6 (Pilot data) not available | Do not begin P5b pool tuning; collect pilot metrics first |
+| Proceed to P5b–P5e without G3.4–G3.6 | Abort; P5b–P5e are gated on design approval and operator decisions |
 
 ### 5.5 Evidence Files Generated
 
@@ -428,13 +438,16 @@ Complete steps in order. Do not mark complete on behalf of the operator.
 ### Pre-Pilot Preparation
 
 | # | Action | Owner | Done | Evidence |
-|---|---|---|---|---|
-| 1 | Complete G2.1–G2.8 pilot readiness evidence | Operator | ☐ | `59-pilot-readiness-evidence-packet.md` signed |
-| 2 | Execute D1–D6 compensation drills | Operator | ☐ | `58-workload-compensation-drill-evidence-template.md` signed |
-| 3 | Run non-prod restore drill | Operator | ☐ | Restore drill log with `PRAGMA integrity_check` passing |
-| 4 | Configure backup scheduler externally | Operator | ☐ | Scheduler configuration + evidence of successful runs |
-| 5 | Configure TLS/reverse proxy externally | Operator | ☐ | Proxy configuration + probe verification |
-| 6 | Complete operator signoff | Operator | ☐ | `54-operator-signoff-packet.md` signed |
+|---|---|---|---|---|---|
+| 1 | Complete G2.1–G2.8 pilot readiness evidence | Operator | ☑ | `59-pilot-readiness-evidence-packet.md` signed by BrianNguyen 09/05/2026 |
+| 2 | Execute D1–D6 compensation drills | Operator | ☐ | `58-workload-compensation-drill-evidence-template.md` signed (local prefill done; operator review still required for full signoff) |
+| 3 | Run non-prod restore drill | Operator | ☑ | Restore drill log with `PRAGMA integrity_check` passing (local drill done; target-host drill remains operator-owned) |
+| 4 | Configure backup scheduler externally | Operator | ☑ | Scheduler configuration + evidence of successful runs (systemd timer configured on GCP non-prod) |
+| 5 | Configure TLS/reverse proxy externally | Operator | ☑ | Proxy configuration + probe verification (Caddy + nip.io on GCP non-prod) |
+| 6 | Complete operator signoff | Operator | ☑ | `54-operator-signoff-packet.md` signed by BrianNguyen 09/05/2026 |
+
+> **Scope**: All ☑ items above are for **conditional single-node SQLite pilot only**.
+> They do **not** constitute full production signoff or PostgreSQL authorization.
 
 ### Phase 3 Decision
 
@@ -473,9 +486,10 @@ Complete steps in order. Do not mark complete on behalf of the operator.
 - No production-ready claim is made in this document
 - PostgreSQL/multi-node/HA are not implemented and not in scope
 - Phase 2 transaction batching was deferred/regressed
-- G2 remains pending/operator-owned until signed in `54-operator-signoff-packet.md`
-- Phase 3 decision is blocked until G2/Path2 evidence is complete
-- PostgreSQL is blocked until Phase 3 decision gates (G3.1–G3.4) are satisfied
+- G2.1–G2.8 are **signed for conditional single-node SQLite pilot only** (BrianNguyen, 09/05/2026)
+- G2 signoff does **not** constitute full production-ready or PostgreSQL authorization
+- Phase 3 P1–P4.4 is complete for local Docker/runtime only; P5a design is authorized; P5b–P5e implementation is gated
+- PostgreSQL production deployment is blocked until P5a–P5e complete and P6 assessment is done
 
 ---
 

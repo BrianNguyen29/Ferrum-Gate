@@ -24,9 +24,11 @@ Phase 3 PostgreSQL (Path 3) — both are outside the scope of this roadmap.
 - **No production-ready claim**: This roadmap does not make FerrumGate "production-ready."
   FerrumGate v1 is RC-ready/conditional. Full production posture requires Path 2 operator
   signoff and optional Phase 3 PostgreSQL.
-- **No G2 complete**: G2.1–G2.8 remain pending until operator signs `59-pilot-readiness-evidence-packet.md`
-  and `54-operator-signoff-packet.md`.
-- **No pilot authorized**: Pilot is not authorized until doc 54 is signed.
+- **No G2 complete beyond conditional pilot**: G2.1–G2.8 are signed for conditional single-node SQLite
+  pilot only (BrianNguyen, 09/05/2026). They do **not** constitute full production signoff or PostgreSQL
+  authorization.
+- **No pilot authorized beyond conditional scope**: Conditional pilot is authorized per doc100.
+  Full production pilot remains pending.
 - **No PostgreSQL**: PostgreSQL/multi-node/HA is Path 3 — not in scope for Phase 1.
 - **No target-host evidence**: All target-host execution evidence (D1–D6 drills, restore drill,
   probe evidence) requires operator action on target environment.
@@ -54,14 +56,15 @@ Phase 3 PostgreSQL (Path 3) — both are outside the scope of this roadmap.
 | P0.2 | **Target-host execution evidence missing** | Operator | D1–D6 drill evidence on target host; `readyz/deep` returns HTTP 200 on target | ☐ Pending (operator-owned) |
 | P0.3 | **Restore drill not executed on target** | Operator | Restore drill log with `PRAGMA integrity_check` passing on target | ☐ Pending (operator-owned) |
 | P0.4 | **Backup automation not configured** | Operator | External scheduler (cron/systemd timer) configured; `ferrumctl backup verify` passes | ☐ Pending (operator-owned) |
-| P0.5 | **G2.1–G2.8 not signed** | Operator | `59-pilot-readiness-evidence-packet.md` G2.1–G2.8 filled and signed | ☐ Pending (operator-owned) |
-| P0.6 | **Operator signoff not obtained** | Operator | `54-operator-signoff-packet.md` signed | ☐ Pending (operator-owned) |
+| P0.5 | **G2.1–G2.8 signed for conditional pilot** | Operator | `59-pilot-readiness-evidence-packet.md` G2.1–G2.8 signed by BrianNguyen 09/05/2026 for conditional single-node SQLite pilot | ✅ Done (conditional pilot only; not full production) |
+| P0.6 | **Operator signoff obtained for conditional pilot** | Operator | `54-operator-signoff-packet.md` signed by BrianNguyen 09/05/2026 | ✅ Done (conditional pilot only; not full production) |
 
 ### P0 Notes
 
 - P0.1 is a repo-side blocker fixed by CI hardening (2026-05-03).
-- P0.2–P0.6 are **operator-owned** and cannot be completed by the engineering team.
-  They require operator action on the target host.
+- P0.2–P0.4 remain **operator-owned** target-host blockers.
+- P0.5–P0.6 are signed for **conditional single-node SQLite pilot only** (BrianNguyen, 09/05/2026).
+  They do **not** constitute full production signoff or PostgreSQL authorization.
 - See [`61-path-2-execution-plan.md`](./61-path-2-execution-plan.md) §Step 1–5 for the ordered
   execution checklist.
 - See [`66-path-2-operator-handoff.md`](./66-path-2-operator-handoff.md) §Phase B for blockers.
@@ -76,12 +79,14 @@ Phase 3 PostgreSQL (Path 3) — both are outside the scope of this roadmap.
 | P1.2 | **Configurable rate limit** | Engineering | Rate limit configurable via CLI/env/config file (2 req/s, burst 50 default); operator confirms fit for target workload | ✅ Done — CLI: `--rate-limit-per-second` and `--rate-limit-burst`; env: `FERRUMD_RATE_LIMIT_PER_SECOND` and `FERRUMD_RATE_LIMIT_BURST`; config file: `rate_limit_per_second` and `rate_limit_burst` under `[server]` |
 | P1.3 | **Structured logging (JSON)** | Engineering | Logs are unstructured text; production debugging and log aggregation benefit from JSON structured output | ✅ Done — CLI: `--log-format`; env: `FERRUMD_LOG_FORMAT`; config file: `log_format` under `[server]`; default is "text" (human-readable); accepted values: "text", "compact", "json"; documented in `PRODUCTION_NOTES.md` |
 | P1.4 | **Full metrics/observability** | Engineering | `/v1/metrics` with method labels on request/governance counters and latency histograms for public endpoints | ✅ Done — `/v1/metrics` provides: request counters per endpoint with HTTP method labels (healthz, readyz, readyz/deep, metrics), bounded HTTP status labels for public endpoints (status="200" for healthz/readyz/metrics; status="200"/"503" for readyz/deep), store health gauge (`ferrumgate_store_health_up`), SQLite write queue depth gauge (`ferrumgate_write_queue_depth`), governance error counters per route with HTTP method labels (26 routes), governance success counters per route with HTTP method labels (26 routes), and latency histogram (`ferrumgate_request_duration_seconds`) for public endpoints with bounded labels (route, method, status, le) emitting _bucket/_sum/_count lines |
-| P1.5 | **RPO/RTO formally accepted** | Operator | Backup/restore objectives formally accepted per `27-production-evaluation-plan.md` §Operator Signoff Packet §3 | ☐ Pending (operator-owned) |
-| P1.6 | **Compensate noop risk accepted** | Operator | Operator acknowledges compensate may be noop-backed for target adapters per G2.8 | ☐ Pending (operator-owned) |
+| P1.5 | **RPO/RTO formally accepted** | Operator | Backup/restore objectives formally accepted per `27-production-evaluation-plan.md` §Operator Signoff Packet §3 | ✅ Done (conditional pilot only; RPO=15min, RTO=15min) |
+| P1.6 | **Compensate noop risk accepted** | Operator | Operator acknowledges compensate may be noop-backed for target adapters per G2.8 | ✅ Done (conditional pilot only) |
 
 ### P1 Notes
 
-- P1.1–P1.4 are engineering items. P1.5–P1.6 are operator-owned.
+- P1.1–P1.4 are engineering items. P1.5–P1.6 are operator-owned and signed for conditional pilot only.
+- P1.5: RPO/RTO accepted by BrianNguyen 09/05/2026 for conditional single-node SQLite pilot (15min/15min).
+- P1.6: Compensate noop risk accepted by BrianNguyen 09/05/2026 for conditional single-node SQLite pilot.
 - P1.2: Rate limiting is built-in via `tower_governor` with per-IP enforcement. Configurable via
   CLI flags (`--rate-limit-per-second`, `--rate-limit-burst`), environment variables
   (`FERRUMD_RATE_LIMIT_PER_SECOND`, `FERRUMD_RATE_LIMIT_BURST`), or config file fields
@@ -143,7 +148,7 @@ Phase 3 PostgreSQL (Path 3) — both are outside the scope of this roadmap.
 
 | # | Item | Owner | Status | Notes |
 |---|---|---|---|---|
-| P3.1 | **PostgreSQL local Docker/runtime implementation** | Engineering | ✅ Complete (local Docker) | Path 3; ADR-50 Phase P1–P4; ~2000–3000 LOC + migrations + container tests — **P3 repos + P4.1 DSN switching + P4.2 migration infra + P4.3 benchmark validation complete**. Production/HA/multi-node remains deferred. |
+| P3.1 | **PostgreSQL local Docker/runtime implementation** | Engineering | ✅ Complete (local Docker) | Path 3; ADR-50 Phase P1–P4.4; ~2000–3000 LOC + migrations + container tests — **P3 repos + P4.1 DSN switching + P4.2 migration infra + P4.3 benchmark validation + P4.4 MVP migration complete**. Production/HA/multi-node remains deferred. P5a design authorized; P5b–P5e implementation gated. |
 | P3.2 | **Multi-node / HA / read-replica** | Engineering | ☐ Pending | Not implemented; out of v1 scope |
 | P3.3 | **Target-host execution beyond local slices** | Operator | ☐ Pending | D1–D6 drills require operator execution on target host |
 | P3.4 | **Phase 2 transaction batching** | Engineering | ✅ Reverted | Benchmark regression; Phase 1 write queue remains production target |
@@ -154,8 +159,9 @@ Phase 3 PostgreSQL (Path 3) — both are outside the scope of this roadmap.
 
 ### P3 Notes
 
-- P3.1 is complete for local Docker/runtime. Production/HA/multi-node remains deferred.
-- P3.2 is blocked until G2.1–G2.8 are signed and Phase 3 go/no-go gates (G3.1–G3.4) are satisfied.
+- P3.1 is complete for local Docker/runtime (P1–P4.4). Production/HA/multi-node remains deferred.
+- P5a (design/ADR) is authorized. P5b–P5e implementation is gated on G3.4–G3.6 and operator D1–D3 signoff.
+- P3.2 is blocked until P5a–P5e are complete and P6 assessment is done.
 - P3.3 is operator-owned target execution evidence.
 - P3.5–P3.8 are implemented but explicitly outside the v1 single-node support baseline.
   They do not contribute to the production-ready claim.
@@ -170,8 +176,8 @@ Phase 3 PostgreSQL (Path 3) — both are outside the scope of this roadmap.
 | CI swallows cargo check | Repo-side | Engineering | ✅ Fixed — CI now runs fmt/check/clippy/test without `\|\| true` |
 | Readiness probe semantics undocumented | Engineering | Engineering | ✅ Fixed — `/v1/readyz/deep` documented as functional probe in `PRODUCTION_NOTES.md` |
 | Target-host execution evidence | Operator | Operator | Complete D1–D6 drills on target host |
-| G2.1–G2.8 not signed | Operator | Operator | Fill and sign `59-pilot-readiness-evidence-packet.md` |
-| Operator signoff not obtained | Operator | Operator | Sign `54-operator-signoff-packet.md` |
+| G2.1–G2.8 signed (conditional pilot) | Operator | Operator | ✅ Signed 09/05/2026 by BrianNguyen for conditional single-node SQLite pilot only |
+| Operator signoff obtained (conditional pilot) | Operator | Operator | ✅ Signed 09/05/2026 by BrianNguyen for conditional single-node SQLite pilot only |
 | Backup automation not configured | Operator | Operator | Configure external scheduler (cron/systemd timer) |
 | Restore drill not executed | Operator | Operator | Execute non-prod restore drill per `61-path-2-execution-plan.md` §3 |
 | TLS/reverse proxy not configured | Operator | Operator | Deploy behind TLS-terminating reverse proxy |

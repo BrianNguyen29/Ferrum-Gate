@@ -1,9 +1,10 @@
 # ADR-50 — PostgreSQL StoreFacade: Phased Implementation Plan
 
-> **Status**: P3 Repository Implementations — Complete (local Docker). P4.1 Runtime DSN switching — Complete. P4.2 Migration infrastructure — Complete. P4.3 Benchmark validation — Complete (3853.2 writes/s local Docker release). P4.4 SQLite→PostgreSQL migration MVP — Complete. P5 Production Readiness — Deferred.
+> **Status**: P3 Repository Implementations — Complete (local Docker). P4.1 Runtime DSN switching — Complete. P4.2 Migration infrastructure — Complete. P4.3 Benchmark validation — Complete (3853.2 writes/s local Docker release). P4.4 SQLite→PostgreSQL migration MVP — Complete. P5a Production Readiness Design — GO for ADR/design only. P5b–P5e Implementation — Gated on G3.4–G3.6 and operator D1–D3 signoff.
 > **Date**: 2026-05-11
-> **Deciders**: Engineering implementation complete for local Docker/runtime; production/HA/multi-node posture remains NO.
-> **Estimated Effort**: ~2000-3000 LOC + migrations + container tests
+> **Deciders**: Engineering implementation complete for local Docker/runtime; production/HA/multi-node posture remains NO. P5a design phase authorized; P5b–P5e blocked.
+> **Estimated Effort**: P1–P4.4 ~2000-3000 LOC + migrations + container tests; P5a design only; P5b–P5e ~500+ LOC + testing (gated)
+> **Next Step**: P5a ADR/design review (G3.4). No P5b–P5e until G3.4–G3.6 satisfied.
 
 ---
 
@@ -154,13 +155,135 @@ implemented for local Docker; production/HA/multi-node remains deferred.
 
 ### Phase P5 — Production Readiness (Post-P4)
 
-**Goals**:
-- [ ] HA/clustering architecture design
-- [ ] Connection pool tuning for production
-- [ ] Backup/restore for PostgreSQL
-- [ ] Multi-node deployment validation
+> **Oracle verdict**: P5 GO for design/ADR only (P5a). P5b–P5e implementation requires G2 pilot data, G3 gate refresh, and operator D1–D3 signoff. P5 completion does not claim production-ready; P6 assessment required afterward.
 
-**Estimated Effort**: ~500+ LOC + significant testing
+#### 3.5 P5a — Design / ADR Review (Authorized)
+
+P5a is the only currently authorized P5 subphase. It produces a design document, risk register, operator decision framework, and verification gates for P5b–P5e. No P5b–P5e implementation begins until P5a is approved and G3.4–G3.6 are satisfied.
+
+**P5a Deliverables**:
+- [ ] P5a design doc (this ADR §3.5 or standalone doc) with D1–D6 decisions
+- [ ] Risk register with P5-specific risks (pool exhaustion, failover gaps, backup inconsistency, migration divergence)
+- [ ] Verification gates defined for P5b–P5e with pass/fail criteria
+- [ ] Operator decision framework D1–D6 drafted and ready for signoff
+- [ ] Non-claims language reviewed and preserved
+
+**Operator Decisions (D1–D6)**:
+
+| Decision | Question | Options | Default | Signoff Required |
+|---|---|---|---|---|
+| D1 | Target topology | Single-node PostgreSQL / Read replica / Full HA cluster | Single-node PostgreSQL | Operator |
+| D2 | Backup strategy | `pg_dump` logical / Streaming replication / External tool (e.g., pgBackRest) | `pg_dump` logical | Operator |
+| D3 | Failover requirement | None (single-node) / Manual failover / Automated failover | None | Operator |
+| D4 | Pool sizing model | Fixed min/max / Dynamic based on pilot data | Dynamic (needs G3.6) | Engineering |
+| D5 | Migration grade | MVP (P4.4) / Production-grade (P5e) | MVP until P5e authorized | Engineering + Operator |
+| D6 | Production claim timeline | P5e complete + P6 assessment / Deferred beyond P5 | Deferred beyond P5 | Operator + Engineering |
+
+**P5a Risks**:
+
+| Risk | Impact | Mitigation | Owner |
+|---|---|---|---|
+| Pool exhaustion under pilot load | Connection timeouts, request failures | Size pool from G2 pilot metrics; add circuit breaker | Engineering |
+| Failover gap not modeled | Data loss during failover if replication lag unchecked | Define RPO for replication lag; operator accepts | Operator |
+| Backup inconsistency (concurrent writes) | Backup captures inconsistent state | Use PostgreSQL consistent snapshot or stop writes | Operator |
+| Migration divergence (content hash mismatch) | SQLite and PostgreSQL states not equivalent | Content-hash validation in P5e; operator accepts MVP risk | Engineering + Operator |
+| Operator D1–D3 not signed | P5b–P5e cannot begin | Gate on G3.5; do not proceed without signoff | Engineering lead |
+
+**P5a Verification Gates**:
+
+| Gate | Criterion | Evidence |
+|---|---|---|
+| P5a.V1 | D1–D6 decision framework documented and reviewed | Design doc §Operator Decisions |
+| P5a.V2 | Risk register contains at least 4 P5-specific risks | Design doc §P5a Risks |
+| P5a.V3 | P5b–P5e verification gates defined with pass/fail criteria | Design doc §P5b–P5e Verification Gates |
+| P5a.V4 | Non-claims language reviewed by second party | Design doc signoff or review comment |
+
+#### 3.5.1 P5b — Connection Pool Tuning (Implementation Gated)
+
+**Goals**:
+- [ ] Pool size model validated against pilot workload data (G2 metrics)
+- [ ] `max_connections`, `min_idle`, `acquire_timeout` tuned for target throughput
+- [ ] Connection-leak detection and circuit-breaker behavior defined
+
+**Blocked until**: G3.6 pilot data available; G3.5 operator D1–D3 signoff
+
+**Estimated Effort**: ~100-200 LOC + configuration changes
+
+**Verification Gates**:
+
+| Gate | Criterion | Evidence |
+|---|---|---|
+| P5b.V1 | Pool config validated in local Docker stress test | Benchmark ≥1000 writes/s with tuned pool |
+| P5b.V2 | No connection leaks observed in 30-min stress test | `sqlx` pool metrics or custom leak detector |
+| P5b.V3 | Circuit breaker triggers within 5s on pool exhaustion | Integration test or manual verification |
+
+#### 3.5.2 P5c — Backup / Restore for PostgreSQL (Implementation Gated)
+
+**Goals**:
+- [ ] `pg_dump`/`pg_restore` or logical-replication backup strategy documented
+- [ ] Backup automation design (external scheduler, not in-tree)
+- [ ] Restore drill procedure for PostgreSQL defined
+- [ ] RPO/RTO targets for PostgreSQL documented and operator-accepted
+
+**Blocked until**: G3.5 operator D1–D3 signoff
+
+**Estimated Effort**: ~100-200 LOC + documentation + operator runbook
+
+**Verification Gates**:
+
+| Gate | Criterion | Evidence |
+|---|---|---|
+| P5c.V1 | Backup produces consistent snapshot | `pg_dump` with `--snapshot` or equivalent; integrity verified |
+| P5c.V2 | Restore drill completes successfully | Operator drill log with restored DB verification |
+| P5c.V3 | RPO/RTO operator-accepted for PostgreSQL | Signed operator acknowledgment |
+
+#### 3.5.3 P5d — HA / Clustering Design (Implementation Gated)
+
+**Goals**:
+- [ ] HA topology reviewed (read replica, failover, partitioning)
+- [ ] Multi-node deployment validated in staging (not production)
+- [ ] StoreFacade concurrency model adapted for multi-node (if required)
+
+**Blocked until**: G3.5 operator D1–D3 signoff; explicitly out of v1 scope
+
+**Estimated Effort**: ~200-300 LOC + significant testing infrastructure
+
+**Verification Gates**:
+
+| Gate | Criterion | Evidence |
+|---|---|---|
+| P5d.V1 | HA topology documented and operator-approved | Architecture diagram + operator signoff |
+| P5d.V2 | Staging multi-node deployment passes integration tests | Test evidence from staging environment |
+| P5d.V3 | Failover procedure tested in staging | Operator drill log |
+
+#### 3.5.4 P5e — Migration Grade-Up (Implementation Gated)
+
+**Goals**:
+- [ ] SQLite → PostgreSQL migration upgraded from MVP to production-grade
+- [ ] Idempotent/resumable migration with checkpointing
+- [ ] Content-hash validation for lineage equivalence
+- [ ] Large-dataset streaming and chunking
+
+**Blocked until**: G3.5 operator D1–D3 signoff; P5c backup/restore design complete
+
+**Estimated Effort**: ~300-500 LOC + migration testing
+
+**Verification Gates**:
+
+| Gate | Criterion | Evidence |
+|---|---|---|
+| P5e.V1 | Migration is idempotent (rerunnable without duplication) | Integration test with repeated runs |
+| P5e.V2 | Content-hash validation passes for all migrated records | Hash comparison log |
+| P5e.V3 | Large dataset (≥1M records) streams without OOM | Memory profile or benchmark evidence |
+
+#### 3.5.5 P5 Non-Claims
+
+- P5a approval does **NOT** authorize P5b–P5e implementation
+- P5 completion (P5a–P5e) does **NOT** claim production-ready
+- Full production-ready claim requires **P6 assessment** after P5e
+- PostgreSQL production deployment remains **operator-owned** and gated
+- HA/multi-node is **explicitly out of v1 scope** even if P5d is designed
+- All P5b–P5e estimates are **rough planning figures**, not commitments
 
 ---
 
@@ -215,9 +338,15 @@ store_dsn = "sqlite::memory:"
 | P4.2 Migration infra | ✅ Complete | Embedded schema migration runner |
 | P4.3 Benchmark | ✅ Complete | 3853.2 writes/s local Docker release |
 | P4.4 Data migration | ✅ Complete (MVP) | SQLite → PostgreSQL migration CLI; dry-run default, empty-target safety, count+ID validation |
-| P5 Production | ☐ Deferred | HA/clustering, pool tuning, backup/restore, multi-node |
+| P5a Design/ADR | ☐ Pending | D1–D6 decisions, risk register, verification gates, non-claims — **GO for design only** |
+| P5b Pool tuning | ☐ Deferred | Blocked on G3.6 pilot data |
+| P5c Backup/restore | ☐ Deferred | Blocked on G3.5 operator D1–D3 signoff |
+| P5d HA/clustering | ☐ Deferred | Blocked on G3.5; explicitly out of v1 scope |
+| P5e Migration grade-up | ☐ Deferred | Blocked on G3.5; P5c complete |
 
-**Total estimated for full PostgreSQL**: ~3000-4000 LOC + significant testing infrastructure
+**Total estimated for full PostgreSQL production readiness**: ~3500-4500 LOC + significant testing infrastructure
+
+> **P5 completion does not claim production-ready.** Even after P5a–P5e complete, a P6 assessment is required before any full production-ready claim.
 
 ---
 
