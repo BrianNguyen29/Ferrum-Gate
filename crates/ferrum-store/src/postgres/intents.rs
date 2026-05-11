@@ -18,6 +18,64 @@ impl PostgresIntentRepo {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
+
+    /// Batch insert multiple intents in a single query.
+    ///
+    /// **Postgres-specific helper — not part of the `IntentRepo` trait.**
+    /// Chunks the input to stay within PostgreSQL parameter limits.
+    pub async fn insert_many(&self, intents: &[IntentEnvelope]) -> Result<()> {
+        if intents.is_empty() {
+            return Ok(());
+        }
+
+        // PostgreSQL limit: 32767 parameters per query.
+        // 10 columns per row => max ~3000 rows, but stay conservative.
+        const CHUNK_SIZE: usize = 500;
+
+        for chunk in intents.chunks(CHUNK_SIZE) {
+            let rows: Vec<_> = chunk
+                .iter()
+                .map(|intent| {
+                    Ok((
+                        intent.intent_id.to_string(),
+                        intent.principal_id.to_string(),
+                        intent.normalized_goal.clone(),
+                        enum_text(&intent.status)?,
+                        enum_text(&intent.risk_tier)?,
+                        enum_text(&intent.approval_mode)?,
+                        enum_text(&intent.default_rollback_class)?,
+                        intent.created_at,
+                        intent.expires_at,
+                        to_json(intent)?,
+                    ))
+                })
+                .collect::<Result<Vec<_>>>()?;
+
+            let mut builder = sqlx::QueryBuilder::new(
+                "INSERT INTO intents (
+                    intent_id, principal_id, normalized_goal, status, risk_tier, approval_mode,
+                    default_rollback_class, created_at, expires_at, raw_json
+                ) ",
+            );
+
+            builder.push_values(&rows, |mut b, row| {
+                b.push_bind(&row.0)
+                    .push_bind(&row.1)
+                    .push_bind(&row.2)
+                    .push_bind(&row.3)
+                    .push_bind(&row.4)
+                    .push_bind(&row.5)
+                    .push_bind(&row.6)
+                    .push_bind(row.7)
+                    .push_bind(row.8)
+                    .push_bind(&row.9);
+            });
+
+            builder.build().execute(&self.pool).await?;
+        }
+
+        Ok(())
+    }
 }
 
 #[async_trait]
