@@ -124,7 +124,7 @@ D6 does not:
 
 - **No production-ready claim is made in this document.**
 - D6 items are **not implemented** — their existence in this document does not change the implementation status of any feature.
-- PostgreSQL (priority 1) is explicitly **not implemented** per ADR-50: NO-GO verdict for full implementation.
+- PostgreSQL full-production posture (priority 1) remains **not implemented** per ADR-50; local Docker/runtime/store support is implemented through the bounded P3/P4.1-P4.3 path, while P4.4 data migration and P5 production readiness remain deferred.
 - Multi-node/HA (priority 2) is **not implemented** and not in v1 scope.
 - Backup automation/retention/encryption (priority 3): opt-in retention pruning (`--retention-days N`) is **implemented**; scheduling and encryption are **not implemented** in v1; operator-owned per `18-single-node-operations-runbook.md`.
 - Observability/metrics (priority 4): bounded `/v1/metrics` endpoint (health/metrics counters, store up/down gauge, bounded governance error counters, and public endpoint latency histograms (`ferrumgate_request_duration_seconds`)) is implemented; governance route latency, WAL/page gauges, and pool saturation metrics remain future/deferred work per `21-v1-single-node-observability-minimums.md`

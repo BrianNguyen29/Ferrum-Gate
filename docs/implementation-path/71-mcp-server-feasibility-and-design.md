@@ -1,16 +1,16 @@
 # 71 — MCP Server Feasibility and Design
 
-> **Status**: Design documentation only. No implementation.
-> **Purpose**: Detailed planning reference for building FerrumGate into an MCP server for AI agents, based on completed feasibility research.
+> **Status**: Historical design documentation. MCP implementation is now tracked by docs 72-89 and `crates/ferrum-integrations-mcp`.
+> **Purpose**: Preserved planning reference for building FerrumGate into an MCP server for AI agents, based on completed feasibility research.
 > **Scope**: FerrumGate v1.4 MCP Governance Beta (post-v1). Not v1 single-node scope.
-> **Constraint**: Docs-only. Do not implement MCP server. Do not claim production-ready, G2 complete, MCP server ready, or target evidence collected.
+> **Constraint**: Historical docs-only planning packet. Do not claim production-ready, G2 complete, full MCP production readiness, or target evidence collected from this packet.
 
 ---
 
 ## Explicit Non-Claims
 
-- **FerrumGate is NOT currently an MCP server.** FerrumGate has an MCP bridge/client skeleton (`McpBridge` in `ferrum-sync/src/mcp_bridge.rs`), which allows FerrumGate to call external MCP runtimes. It does not currently act as an MCP server that AI agents can call.
-- **No MCP server implementation exists.** This document is a design and todo-list for future work. It does not represent existing code.
+- **FerrumGate now has an MCP server implementation.** The implementation lives in `crates/ferrum-integrations-mcp`; current status is tracked by docs 72-89. This document is preserved as historical planning context.
+- **This document is not the current implementation tracker.** Historical TODOs below may be superseded by later MCP D-1 records; use docs 72-89 and code/tests for current status.
 - **MCP server is post-v1 scope.** MCP Governance Beta is targeted for v1.4, which is explicitly outside the v1 single-node support baseline per `../ferrumgate-roadmap-v1/19-v1-single-node-support-contract.md`.
 - **No production-ready claim.** MCP server implementation does not make FerrumGate production-ready.
 - **No G2 complete claim.** G2.1–G2.8 remain pending regardless of MCP server progress.
@@ -22,7 +22,7 @@
 
 ### 1.1 What Exists Today
 
-FerrumGate currently has an **MCP bridge/client skeleton**, not an MCP server:
+At the time this document was written, FerrumGate had an **MCP bridge/client skeleton**, not an MCP server:
 
 | Component | Location | Description |
 |-----------|----------|-------------|
