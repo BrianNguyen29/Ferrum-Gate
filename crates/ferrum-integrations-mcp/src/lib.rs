@@ -1636,8 +1636,13 @@ mod tests {
     // Phase D-1 Tests (Auth Context)
     // -------------------------------------------------------------------------
 
+    // Serialize env-var tests to avoid parallel mutation races on FERRUMD_MCP_AGENT_ID.
+    use std::sync::Mutex;
+    static ENV_TEST_MUTEX: Mutex<()> = Mutex::new(());
+
     #[test]
     fn test_actor_identity_from_env_var_with_label() {
+        let _guard = ENV_TEST_MUTEX.lock().unwrap();
         unsafe { std::env::set_var("FERRUMD_MCP_AGENT_ID", "actor-123:Test Agent") };
         let identity = ActorIdentity::from_env_var().unwrap();
         assert_eq!(identity.actor_id, "actor-123");
@@ -1648,6 +1653,7 @@ mod tests {
 
     #[test]
     fn test_actor_identity_from_env_var_without_label() {
+        let _guard = ENV_TEST_MUTEX.lock().unwrap();
         unsafe { std::env::set_var("FERRUMD_MCP_AGENT_ID", "actor-456") };
         let identity = ActorIdentity::from_env_var().unwrap();
         assert_eq!(identity.actor_id, "actor-456");
@@ -1658,6 +1664,7 @@ mod tests {
 
     #[test]
     fn test_actor_identity_from_env_var_empty() {
+        let _guard = ENV_TEST_MUTEX.lock().unwrap();
         unsafe { std::env::set_var("FERRUMD_MCP_AGENT_ID", "") };
         assert!(ActorIdentity::from_env_var().is_none());
         unsafe { std::env::remove_var("FERRUMD_MCP_AGENT_ID") };
@@ -1665,6 +1672,7 @@ mod tests {
 
     #[test]
     fn test_actor_identity_resolve_precedence() {
+        let _guard = ENV_TEST_MUTEX.lock().unwrap();
         // Env var takes precedence
         unsafe { std::env::set_var("FERRUMD_MCP_AGENT_ID", "env-actor:Env Label") };
         let identity = ActorIdentity::resolve(Some("client-name"));

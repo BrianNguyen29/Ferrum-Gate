@@ -874,6 +874,7 @@ fn call_reject_intent(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ClientConfig;
 
     #[test]
     fn test_mcp_tool_error_missing_arg() {
@@ -916,5 +917,135 @@ mod tests {
         let err = McpToolError::from_gateway_error(&gateway_err);
         assert_eq!(err.code, -32004); // SERVER_ERROR
         assert_eq!(err.message, "Internal error");
+    }
+
+    // -------------------------------------------------------------------------
+    // call_submit_intent Tests (D1.3.3 compile-only)
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_call_submit_intent_missing_args() {
+        // Verify call_submit_intent fails with missing required arguments.
+        let args = serde_json::json!({});
+        // Dummy client — request should fail before reaching the client.
+        let config = ClientConfig::new().base_url("http://127.0.0.1:1");
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let result = call_submit_intent(&client, &args);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.code, -32602); // INVALID_PARAMS
+        assert!(err.message.contains("principal_id"));
+    }
+
+    #[test]
+    fn test_call_submit_intent_successful_compile() {
+        // D1.3.3: Verify successful compile request path through call_submit_intent.
+        let mut server = mockito::Server::new();
+        let mock = server
+            .mock("POST", "/v1/intents/compile")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{
+                "envelope": {
+                    "intent_id": "550e8400-e29b-41d4-a716-446655440000",
+                    "principal_id": "550e8400-e29b-41d4-a716-446655440001",
+                    "session_id": null,
+                    "channel_id": null,
+                    "title": "fs_write: /tmp/test.txt",
+                    "goal": "MCP tool call: fs_write on /tmp/test.txt",
+                    "normalized_goal": "MCP tool call: fs_write on /tmp/test.txt",
+                    "allowed_outcomes": [],
+                    "forbidden_outcomes": [],
+                    "resource_scope": [],
+                    "risk_tier": "High",
+                    "approval_mode": "Required",
+                    "default_rollback_class": "R0NativeReversible",
+                    "time_budget": { "max_duration_ms": 30000, "max_steps": 8, "max_retries_per_step": 1 },
+                    "trust_context": {
+                        "input_labels": [],
+                        "sensitivity_labels": [],
+                        "taint_score": 0,
+                        "contains_external_metadata": false,
+                        "contains_tool_output": false,
+                        "contains_untrusted_text": false
+                    },
+                    "derived_from_event_ids": [],
+                    "tags": [],
+                    "metadata": {},
+                    "status": "Active",
+                    "created_at": "2025-01-01T00:00:00Z",
+                    "expires_at": "2025-12-31T23:59:59Z"
+                },
+                "warnings": []
+            }"#)
+            .expect_at_least(1)
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let args = serde_json::json!({
+            "principal_id": "550e8400-e29b-41d4-a716-446655440001",
+            "title": "fs_write: /tmp/test.txt",
+            "goal": "MCP tool call: fs_write on /tmp/test.txt",
+            "action_type": "fs_write",
+            "target": "/tmp/test.txt",
+            "scope": "fs:write:/tmp/test.txt",
+            "parameters": {}
+        });
+
+        let result = call_submit_intent(&client, &args);
+        assert!(
+            result.is_ok(),
+            "call_submit_intent should succeed: {:?}",
+            result.err()
+        );
+
+        let tools_result = result.unwrap();
+        assert!(!tools_result.is_error);
+        assert_eq!(tools_result.content.len(), 1);
+        assert_eq!(tools_result.content[0].r#type, "text");
+        assert!(tools_result.content[0].text.is_some());
+        let text = tools_result.content[0].text.as_ref().unwrap();
+        assert!(text.contains("fs_write: /tmp/test.txt"));
+        assert!(text.contains("550e8400-e29b-41d4-a716-446655440000"));
+
+        mock.assert();
+    }
+
+    #[test]
+    fn test_call_submit_intent_gateway_error_mapping() {
+        // D1.3.3: Verify error mapping when compile returns a gateway server error.
+        let mut server = mockito::Server::new();
+        let mock = server
+            .mock("POST", "/v1/intents/compile")
+            .with_status(500)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"message": "compile failed"}"#)
+            .expect_at_least(1)
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let args = serde_json::json!({
+            "principal_id": "550e8400-e29b-41d4-a716-446655440001",
+            "title": "test",
+            "goal": "test goal",
+            "action_type": "fs_write",
+            "target": "/tmp/test.txt",
+            "scope": "fs:write:/tmp/test.txt",
+            "parameters": {}
+        });
+
+        let result = call_submit_intent(&client, &args);
+        assert!(result.is_err(), "call_submit_intent should fail on 500");
+
+        let err = result.unwrap_err();
+        assert_eq!(err.code, -32004); // SERVER_ERROR
+        assert!(err.message.contains("compile failed"));
+
+        mock.assert();
     }
 }
