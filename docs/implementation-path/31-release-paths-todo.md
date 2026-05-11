@@ -341,6 +341,7 @@ Per `50-p4-postgres-store-facade-adr.md` §3 Phase P1:
 | `50-p4-postgres-store-facade-adr.md` §3.5 P5a | This doc | P5a design/ADR review entry criteria |
 | `104-g3-4-p5a-adr-approval-packet.md` | This doc | G3.4 approval packet (ready for approval) |
 | `105-g3-5-operator-d1-d3-signoff-packet.md` | This doc | G3.5 operator D1–D3 signoff packet (ready for operator review) |
+| `106-g3-6-pilot-metrics-evidence-packet.md` | This doc | G3.6 pilot metrics evidence packet (pending operator data) |
 
 ---
 

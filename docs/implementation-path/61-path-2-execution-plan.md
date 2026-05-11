@@ -409,7 +409,7 @@ Per [`31-release-paths-todo.md`](./31-release-paths-todo.md) §Path 3 Gate:
 | G3.1 | v1 RC tag cut and Path 1 complete | RC tag `v0.1.0-rc.1` at commit `5fce844d` | Release engineer | ☑ DONE |
 | G3.2 | Conditional single-node SQLite pilot signed (doc59/doc54) | Operator signoff per [`27-production-evaluation-plan.md`](./27-production-evaluation-plan.md) | Operator | ☑ DONE (conditional pilot only; not full production) |
 | G3.3 | P1–P4.4 local Docker/runtime implementation complete | ADR-50 §6 summary table | Engineering lead | ☑ DONE (local Docker/runtime; not production) |
-| G3.4 | ADR-50 P5a design review approved | [`50-p4-postgres-store-facade-adr.md`](./50-p4-postgres-store-facade-adr.md) §3.5 P5a | Engineering lead | ☐ Pending |
+| G3.4 | ADR-50 P5a design review approved | [`104-g3-4-p5a-adr-approval-packet.md`](./104-g3-4-p5a-adr-approval-packet.md) | Engineering lead | ☑ DONE (P5a design only; P5b–P5e still gated) |
 | G3.5 | Operator D1–D3 signoff obtained for P5b–P5e | P5a ADR §Operator Decisions D1–D3 | Operator | ☐ Pending |
 | G3.6 | G2 pilot data available for P5b pool-tuning input | Path 2 pilot metrics/logs | Operator | ☐ Pending |
 
@@ -455,7 +455,7 @@ Complete steps in order. Do not mark complete on behalf of the operator.
 |---|---|---|---|---|
 | 7 | Assess Path 2 pilot outcome | Operator + Engineering | ☐ | Decision log entry |
 | 8 | Confirm or deny Phase 3 need | Operator + Engineering | ☐ | Decision log entry |
-| 9 | Complete G3.2–G3.4 if proceeding to Phase 3 | Operator + Engineering | ☐ | `55-phase-3-go-no-go-review.md` updated |
+| 9 | Complete remaining Phase 3 gates (G3.5–G3.6) if proceeding to P5b–P5e | Operator + Engineering | ☐ | `55-phase-3-go-no-go-review.md` updated |
 
 ---
 
@@ -474,6 +474,7 @@ Complete steps in order. Do not mark complete on behalf of the operator.
 | This doc | [`18-single-node-operations-runbook.md`](../ferrumgate-roadmap-v1/18-single-node-operations-runbook.md) | Backup/restore procedures |
 | This doc | [`50-p4-postgres-store-facade-adr.md`](./50-p4-postgres-store-facade-adr.md) | Phase 3 PostgreSQL plan |
 | This doc | [`55-phase-3-go-no-go-review.md`](./55-phase-3-go-no-go-review.md) | Phase 3 go/no-go gates |
+| This doc | [`106-g3-6-pilot-metrics-evidence-packet.md`](./106-g3-6-pilot-metrics-evidence-packet.md) | G3.6 pilot metrics evidence collection |
 | This doc | [`scripts/run_d1_d6_drills.py`](../../scripts/run_d1_d6_drills.py) | Automated local D1–D6 evidence runner |
 | This doc | [`scripts/generate_evidence_skeleton.py`](../../scripts/generate_evidence_skeleton.py) | Automated evidence skeleton helper |
 

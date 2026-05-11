@@ -304,7 +304,7 @@ Even after D1–D3 are signed, the following must be satisfied before P5b–P5e 
 | Gate | Criterion | Owner | Status |
 |---|---|---|---|
 | G3.5 | D1–D3 signed (this packet) | Operator | ☐ Pending |
-| G3.6 | G2 pilot data available for P5b pool tuning | Operator | ☐ Pending |
+| G3.6 | G2 pilot data available for P5b pool tuning | Operator | ☐ Pending (see `106-g3-6-pilot-metrics-evidence-packet.md`) |
 | Eng.1 | Engineering capacity confirmed for selected topology effort | Engineering lead | ☐ Pending |
 | Eng.2 | P5b–P5e implementation plan drafted per D1–D3 selections | Engineering lead | ☐ Pending |
 
@@ -369,6 +369,7 @@ Even after D1–D3 are signed, the following must be satisfied before P5b–P5e 
 | `31-release-paths-todo.md` | This doc | G3.5 evidence reference |
 | `50-p4-postgres-store-facade-adr.md` | This doc | P5a D1–D3 signoff packet cross-reference |
 | `104-g3-4-p5a-adr-approval-packet.md` | This doc | Next step after G3.4 approval |
+| `106-g3-6-pilot-metrics-evidence-packet.md` | This doc | G3.6 pilot metrics evidence collection (pending operator data) |
 
 ---
 

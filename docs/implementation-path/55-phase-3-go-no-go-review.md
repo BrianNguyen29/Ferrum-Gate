@@ -15,20 +15,23 @@ This document is the standalone go/no-go review form for entering Phase 3 Postgr
 
 ---
 
-## Phase 3 Entry Gates (G3.1–G3.4)
+## Phase 3 Entry Gates (G3.1–G3.6)
 
-All four gates must be satisfied before beginning Phase P1 (ADR-50 terminology: P1 = first PostgreSQL implementation phase, not to be confused with the Phase 1/2/3 numbering used elsewhere in the documentation).
+G3.1–G3.4 must be satisfied before beginning Phase P1. G3.5–G3.6 gate P5b–P5e implementation.
+(ADR-50 terminology: P1 = first PostgreSQL implementation phase, not to be confused with the Phase 1/2/3 numbering used elsewhere in the documentation).
 
 > **Phase naming clarification**: ADR-50 uses "Phase P1–P4" for PostgreSQL implementation stages. This document's "Phase 3" maps to ADR-50 Phase P1 start through Phase P4 completion. See `50-p4-postgres-store-facade-adr.md` §1 for the full ADR-50 phase naming table.
 
 | # | Gate Criterion | Evidence | Owner | Satisfied |
 |---|---|---|---|---|
 | G3.1 | v1 RC tag cut and Path 1 complete | RC tag `v0.1.0-rc.1` exists at commit `5fce844d`; release notes published; GitHub prerelease | Release engineer | ☑ YES |
-| G3.2 | Production pilot (Path 2) has confirmed single-node SQLite posture is acceptable for target workload | Operator signoff per `27-production-evaluation-plan.md` | Operator | ☐ |
-| G3.3 | Engineering capacity confirmed for ~2000–3000 LOC + migrations + container tests | ADR-50 effort estimate | Engineering lead | ☐ |
-| G3.4 | ADR-50 Phase P1 reviewed and approved to proceed | `50-p4-postgres-store-facade-adr.md` §3 | Engineering lead | ☐ |
+| G3.2 | Production pilot (Path 2) has confirmed single-node SQLite posture is acceptable for target workload | Operator signoff per `27-production-evaluation-plan.md` | Operator | ☑ DONE (conditional pilot only; not full production) |
+| G3.3 | Engineering capacity confirmed for ~2000–3000 LOC + migrations + container tests | ADR-50 effort estimate | Engineering lead | ☑ DONE (local Docker/runtime; not production deployment) |
+| G3.4 | ADR-50 P5a design review approved to proceed | `50-p4-postgres-store-facade-adr.md` §3.5 P5a + `104-g3-4-p5a-adr-approval-packet.md` | Engineering lead | ☑ DONE (P5a design only; P5b–P5e still gated) |
+| G3.5 | Operator D1–D3 signoff obtained for P5b–P5e | `105-g3-5-operator-d1-d3-signoff-packet.md` | Operator | ☐ Pending (ready for operator review) |
+| G3.6 | G2 pilot data available for P5b pool-tuning input | `106-g3-6-pilot-metrics-evidence-packet.md` | Operator | ☐ Pending (awaiting real pilot metrics) |
 
-**Do not begin Phase P1 (ADR-50) until G3.1–G3.4 are all satisfied.** G3.1 is now satisfied. G3.2–G3.4 remain blocked pending operator signoff and engineering capacity confirmation.
+**Do not begin Phase P1 (ADR-50) until G3.1–G3.4 are all satisfied.** G3.1–G3.4 are now satisfied. G3.5–G3.6 remain pending and block P5b–P5e implementation.
 
 ---
 
@@ -111,6 +114,9 @@ Before claiming PostgreSQL support, all items below must be satisfied:
 | `31-release-paths-todo.md` §Path 3 | Full Phase 3 release path with gates and rollback criteria |
 | `50-p4-postgres-store-facade-adr.md` | ADR-50 — PostgreSQL phased implementation plan |
 | `52-d6-priority-expansion-list.md` | Priority ranking for Phase 3 extensions |
+| `104-g3-4-p5a-adr-approval-packet.md` | G3.4 P5a ADR approval packet |
+| `105-g3-5-operator-d1-d3-signoff-packet.md` | G3.5 operator D1–D3 signoff packet |
+| `106-g3-6-pilot-metrics-evidence-packet.md` | G3.6 pilot metrics evidence packet |
 | `27-production-evaluation-plan.md` | Production evaluation framework (re-run after Phase 3) |
 
 ---
