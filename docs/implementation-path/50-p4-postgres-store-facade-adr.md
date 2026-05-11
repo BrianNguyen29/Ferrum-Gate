@@ -343,7 +343,7 @@ store_dsn = "sqlite::memory:"
 | P4.3 Benchmark | ✅ Complete | 3853.2 writes/s local Docker release |
 | P4.4 Data migration | ✅ Complete (MVP) | SQLite → PostgreSQL migration CLI; dry-run default, empty-target safety, count+ID validation |
 | P5a Design/ADR | ☑ DONE | D1–D6 decisions, risk register, verification gates, non-claims — **G3.4 satisfied** |
-| P5b Pool tuning | ☐ Deferred | Blocked on G3.6 pilot data (Eng.1/Eng.2 satisfied) |
+| P5b Pool tuning | ☑ CONDITIONALLY ACCEPTED for planning | G3.6 conditionally accepted (2026-05-11; BrianNguyen). Implementation must use conservative defaults + post-deploy monitoring. |
 | P5c Backup/restore | ☐ Deferred | Blocked on P5b design complete; D2=A pg_dump logical (lowest effort) |
 | P5d HA/clustering | ☐ Skipped | D1=A/D3=A; explicitly out of v1 scope |
 | P5e Migration grade-up | ☐ Deferred | Blocked on P5b–P5c design complete; P4.4 MVP baseline |

@@ -218,7 +218,7 @@ Engineering lead / architect.
 | G3.3 | P1–P4.4 local Docker/runtime implementation complete | ADR-50 §6 summary table; `cargo test --workspace` with `--features postgres` passes | Engineering lead | ☑ DONE (local Docker/runtime; not production deployment) |
 | G3.4 | ADR-50 P5a design review approved | `50-p4-postgres-store-facade-adr.md` §3.5 P5a + `104-g3-4-p5a-adr-approval-packet.md` | Engineering lead | ☑ DONE (P5a design only; P5b–P5e still gated) |
 | G3.5 | Operator D1–D3 signoff obtained for P5b–P5e | `105-g3-5-operator-d1-d3-signoff-packet.md` | Operator | ☑ DONE (Option A defaults via chat authorization on 2026-05-11; P5b–P5e still gated) |
-| G3.6 | G2 pilot data available for P5b pool-tuning input | Path 2 pilot metrics/logs (sustained write rate, connection patterns) | Operator | ☐ Pending |
+| G3.6 | G2 pilot data available for P5b pool-tuning input | Path 2 pilot metrics/logs (sustained write rate, connection patterns) | Operator | ☑ CONDITIONALLY ACCEPTED (2026-05-11; BrianNguyen; compile-only/light workload; P5b conservative defaults + post-deploy monitoring required) |
 
 > **Phase naming note**: ADR-50 uses "Phase P1–P4" for PostgreSQL implementation stages and "Phase P5" for production readiness. P5 is split into P5a (design/ADR) and P5b–P5e (implementation). This document's "Phase 3" maps to ADR-50 Phase P1 start through P5e completion. P5a is the only currently authorized phase.
 

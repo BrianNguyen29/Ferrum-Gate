@@ -1,8 +1,8 @@
 # 2026-05-11 — G3.6 Live Metrics Partial Evidence
 
-> **Status**: Partial evidence. A1–A5 met with caveats; A6 (operator signoff) remains pending. G3.6 conditionally ready for operator review.  
+> **Status**: G3.6 CONDITIONALLY ACCEPTED for initial P5b planning on 2026-05-11. Operator direct signoff: **BrianNguyen**. A1–A5 met with caveats; A6 accepted with explicit conditions.  
 > **Scope**: Sanitized live metrics collected from `ferrumgate-nonprod` GCP VM on 2026-05-11.  
-> **Constraint**: This artifact does NOT complete G3.6 until A6 is satisfied.  
+> **Constraint**: This conditional acceptance authorizes P5b planning and conservative-default implementation ONLY. It does NOT constitute full production workload validation. P5b must use conservative defaults and mandatory post-deploy monitoring.  
 > **Purpose**: Evidence attachment for `106-g3-6-pilot-metrics-evidence-packet.md`.
 
 ---
@@ -211,7 +211,7 @@ rm -rf "$TMPDIR"
 
 ---
 
-## Why G3.6 Remains Incomplete
+## G3.6 Conditional Acceptance Assessment
 
 | Criterion | Status | Reason |
 |---|---|---|
@@ -220,9 +220,9 @@ rm -rf "$TMPDIR"
 | A3 — `readyz/deep` success rate ≥99% | **MET** | 100% over 10 samples (5 pre + 5 post) + 1h Prometheus window. |
 | A4 — Metrics snapshot at target load with all required counters | **MET with caveat** | Baseline + post-workload snapshots collected; all 5 required metrics present. **Caveat**: no low/target/spike/cooldown sequence. |
 | A5 — Backup verify passes + restore drill within RTO | **MET with caveat** | Backup verify OK; restore drill OK (temp path, verified, cleaned up). **Caveat**: RPO/RTO not formally operator-accepted; exact RTO not instrumented. |
-| A6 — Operator signoff | **NOT MET** | Operator has not signed §Operator Signoff. |
+| A6 — Operator signoff | **CONDITIONALLY ACCEPTED** | Operator **BrianNguyen** signed via direct chat authorization on 2026-05-11. Acceptance is **conditional** with explicit caveats: compile-only/light workload; HTTP 429 rate-limit observed; adapter paths unexercised; P5b must use conservative defaults and post-deploy monitoring. |
 
-**Conclusion**: G3.6 is conditionally ready for operator review. A1–A5 are met with caveats. The only remaining blocker is A6 (operator signoff).
+**Conclusion**: G3.6 is **CONDITIONALLY ACCEPTED for initial P5b planning** on 2026-05-11. A1–A5 are met with caveats. A6 is satisfied with operator direct signoff under explicit conditions. P5b may proceed ONLY with conservative defaults and mandatory post-deploy monitoring. Full production workload validation (including adapter execution paths) remains future work.
 
 ---
 
@@ -232,8 +232,8 @@ rm -rf "$TMPDIR"
 |---|---|---|
 | This artifact | `106-g3-6-pilot-metrics-evidence-packet.md` | Evidence attachment for Field 1, Field 3, Field 4, Field 5, Field 6 |
 | This artifact | `107-eng-1-capacity-confirmation-packet.md` | Eng.1 context (capacity confirmed) |
-| This artifact | `108-eng-2-p5b-p5e-implementation-planning-packet.md` | Eng.2 context (P5b blocked on G3.6) |
+| This artifact | `108-eng-2-p5b-p5e-implementation-planning-packet.md` | Eng.2 context (P5b conditionally unblocked for conservative-default planning)
 
 ---
 
-*Artifact generated: 2026-05-11. Sanitized live metrics from `ferrumgate-nonprod`. G3.6 remains pending. No production-ready claim. No P5b–P5e implementation authorization.*
+*Artifact generated: 2026-05-11. Sanitized live metrics from `ferrumgate-nonprod`. G3.6 CONDITIONALLY ACCEPTED for initial P5b planning on 2026-05-11. Operator: BrianNguyen. P5b may proceed ONLY with conservative defaults and post-deploy monitoring. No production-ready claim. No full production workload validation.*

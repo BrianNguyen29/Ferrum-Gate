@@ -1,6 +1,6 @@
 # 105 — G3.5 Operator D1–D3 Signoff Packet
 
-> **Status**: Signed via user chat authorization on 2026-05-11. G3.5 is satisfied with Option A defaults for D1–D3. G3.6 remains pending.
+> **Status**: Signed via user chat authorization on 2026-05-11. G3.5 is satisfied with Option A defaults for D1–D3. G3.6 is conditionally accepted (BrianNguyen, 2026-05-11) for initial P5b planning with conservative defaults + post-deploy monitoring.
 > **Scope**: Operator decisions D1–D3 for P5b–P5e prerequisites only. No P5b–P5e implementation authorization.
 > **Constraint**: Do not choose decisions on behalf of the operator. Do not pre-fill signoff fields.
 > **Purpose**: Structured operator decision packet for G3.5 per `31-release-paths-todo.md` §Path 3 Gate.
@@ -304,7 +304,7 @@ Even after D1–D3 are signed, the following must be satisfied before P5b–P5e 
 | Gate | Criterion | Owner | Status |
 |---|---|---|---|
 | G3.5 | D1–D3 signed (this packet) | Operator | ☑ DONE (Option A defaults via chat authorization on 2026-05-11) |
-| G3.6 | G2 pilot data available for P5b pool tuning | Operator | ☐ Pending (A1–A5 met with caveats; A6 operator signoff pending — see `106-g3-6-pilot-metrics-evidence-packet.md`) |
+| G3.6 | G2 pilot data available for P5b pool tuning | Operator | ☑ CONDITIONALLY ACCEPTED (2026-05-11; BrianNguyen; see `106-g3-6-pilot-metrics-evidence-packet.md` for caveats) |
 | Eng.1 | Engineering capacity confirmed for selected topology effort | Engineering lead | ☑ DONE (via chat authorization on 2026-05-11) |
 | Eng.2 | P5b–P5e implementation plan drafted per D1–D3 selections | Engineering lead | ☑ DONE (via chat authorization on 2026-05-11) |
 
@@ -384,4 +384,4 @@ Even after D1–D3 are signed, the following must be satisfied before P5b–P5e 
 
 ---
 
-*Document created: 2026-05-11. G3.5 operator decision packet — SIGNED via user chat authorization on 2026-05-11 with Option A defaults for D1–D3. G3.6 remains pending. No production-ready claim. No P5b–P5e implementation authorization.*
+*Document created: 2026-05-11. G3.5 operator decision packet — SIGNED via user chat authorization on 2026-05-11 with Option A defaults for D1–D3. G3.6 conditionally accepted (BrianNguyen, 2026-05-11). No production-ready claim. P5b may proceed ONLY with conservative defaults and post-deploy monitoring.*

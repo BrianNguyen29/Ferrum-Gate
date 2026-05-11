@@ -1,8 +1,8 @@
 # 107 — Eng.1 Capacity Confirmation Packet
 
-> **Status**: Signed/approved via user chat authorization on 2026-05-11. Eng.1 is satisfied. G3.6 remains pending and blocks P5b–P5e implementation.  
+> **Status**: Signed/approved via user chat authorization on 2026-05-11. Eng.1 is satisfied. G3.6 is conditionally accepted (BrianNguyen, 2026-05-11) for initial P5b planning. P5b may proceed ONLY with conservative defaults and post-deploy monitoring.  
 > **Scope**: Engineering capacity confirmation for P5b–P5e implementation given D1=A/D2=A/D3=A operator selections.  
-> **Constraint**: This packet does NOT authorize P5b–P5e implementation. G3.6 must also be satisfied before implementation begins.  
+> **Constraint**: This packet authorizes P5b conservative-default planning ONLY. Full P5b–P5e implementation requires post-deploy monitoring validation. G3.6 conditional acceptance does NOT constitute full production workload validation.  
 > **Purpose**: Structured capacity confirmation for Eng.1 per `31-release-paths-todo.md` §Path 3 Gate and `105-g3-5-operator-d1-d3-signoff-packet.md` §Prerequisites for P5b–P5e Implementation.
 
 ---
@@ -194,4 +194,4 @@ Eng.1 is satisfied when **all** of the following are true:
 
 ---
 
-*Document created: 2026-05-11. Eng.1 engineering capacity packet — SIGNED via user chat authorization on 2026-05-11. G3.6 remains pending. No production-ready claim. No P5b–P5e implementation authorization.*
+*Document created: 2026-05-11. Eng.1 engineering capacity packet — SIGNED via user chat authorization on 2026-05-11. G3.6 conditionally accepted (BrianNguyen, 2026-05-11). No production-ready claim. P5b may proceed ONLY with conservative defaults and post-deploy monitoring.*
