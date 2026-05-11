@@ -17,13 +17,14 @@ make test    # cargo test --workspace
 - CI runs: layout validation, contract consistency, fmt check, cargo check, clippy, and cargo test (no `|| true` — failures are not swallowed)
 - Pre-target gate (local only): `bash scripts/run_pre_target_gate.sh` — validates config examples, restore drill, evidence skeleton generator, docs present, bearer-auth smoke
 
-## Current Verification Status (2026-05-03)
+## Current Verification Status (2026-05-11)
 - Layout/contract validation: PASSES locally
 - `cargo fmt --all -- --check`: PASSES locally
 - `cargo check --workspace`: PASSES locally
 - `cargo clippy --workspace --all-targets -- -D warnings`: PASSES locally
 - `cargo test --workspace`: PASSES locally (all packages)
-- Summary: layout=0 contract=0 fmt=0 check=0 clippy=0 test=0
+- `bash scripts/run_pre_target_gate.sh --full`: PASSES locally
+- Summary: layout=0 contract=0 fmt=0 check=0 test=0 clippy=0 pre_target_gate_full=0
 
 ## ferrumd Config Precedence
 CLI args > env vars > config file > defaults.
