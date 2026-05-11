@@ -216,7 +216,7 @@ Engineering lead / architect.
 | G3.1 | v1 RC tag cut and Path 1 complete | RC tag `v0.1.0-rc.1` at commit `5fce844d`; GitHub prerelease published | Release engineer | ☑ DONE |
 | G3.2 | Conditional single-node SQLite pilot signed (doc59/doc54) | Operator signoff per `27-production-evaluation-plan.md` | Operator | ☑ DONE (conditional pilot only; not full production) |
 | G3.3 | P1–P4.4 local Docker/runtime implementation complete | ADR-50 §6 summary table; `cargo test --workspace` with `--features postgres` passes | Engineering lead | ☑ DONE (local Docker/runtime; not production deployment) |
-| G3.4 | ADR-50 P5a design review approved | `50-p4-postgres-store-facade-adr.md` §3.5 P5a | Engineering lead | ☐ Pending |
+| G3.4 | ADR-50 P5a design review approved | `50-p4-postgres-store-facade-adr.md` §3.5 P5a + `104-g3-4-p5a-adr-approval-packet.md` | Engineering lead | ☐ Pending (ready for approval) |
 | G3.5 | Operator D1–D3 signoff obtained for P5b–P5e | P5a ADR §Operator Decisions D1–D3 | Operator | ☐ Pending |
 | G3.6 | G2 pilot data available for P5b pool-tuning input | Path 2 pilot metrics/logs (sustained write rate, connection patterns) | Operator | ☐ Pending |
 
@@ -339,6 +339,7 @@ Per `50-p4-postgres-store-facade-adr.md` §3 Phase P1:
 | `RELEASE.md` | `60-bounded-hardening-examples.md` | Bounded hardening examples cross-reference |
 | `100-phase3f-conditional-sqlite-pilot-authorization.md` | This doc | Conditional pilot authorization with G2 signed status |
 | `50-p4-postgres-store-facade-adr.md` §3.5 P5a | This doc | P5a design/ADR review entry criteria |
+| `104-g3-4-p5a-adr-approval-packet.md` | This doc | G3.4 approval packet (ready for approval) |
 
 ---
 

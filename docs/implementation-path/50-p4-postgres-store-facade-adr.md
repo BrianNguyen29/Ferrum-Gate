@@ -161,6 +161,10 @@ implemented for local Docker; production/HA/multi-node remains deferred.
 
 P5a is the only currently authorized P5 subphase. It produces a design document, risk register, operator decision framework, and verification gates for P5b–P5e. No P5b–P5e implementation begins until P5a is approved and G3.4–G3.6 are satisfied.
 
+> **Approval workflow**: G3.4 approval is managed through [`104-g3-4-p5a-adr-approval-packet.md`](./104-g3-4-p5a-adr-approval-packet.md).
+> That packet contains the structured review checklist, signoff fields, and explicit non-claims.
+> Do not mark G3.4 approved without completing the approval packet.
+
 **P5a Deliverables**:
 - [ ] P5a design doc (this ADR §3.5 or standalone doc) with D1–D6 decisions
 - [ ] Risk register with P5-specific risks (pool exhaustion, failover gaps, backup inconsistency, migration divergence)
@@ -359,3 +363,4 @@ store_dsn = "sqlite::memory:"
 - `docs/implementation-path/45-current-feature-audit.md` — G7 gap record
 - `docs/implementation-path/30-production-roadmap.md` — Phase 3 PostgreSQL
 - `docs/implementation-path/23-production-readiness-assessment.md` — production readiness
+- `docs/implementation-path/104-g3-4-p5a-adr-approval-packet.md` — G3.4 P5a approval packet (ready for approval)
