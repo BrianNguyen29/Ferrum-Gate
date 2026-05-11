@@ -1,6 +1,6 @@
 # ADR-50 — PostgreSQL StoreFacade: Phased Implementation Plan
 
-> **Status**: P3 Repository Implementations — Complete (local Docker). P4.1 Runtime DSN switching — Complete. P4.2 Migration infrastructure — Complete. P4.3 Benchmark validation — Complete (3853.2 writes/s local Docker release). P5 Production Readiness — Deferred.
+> **Status**: P3 Repository Implementations — Complete (local Docker). P4.1 Runtime DSN switching — Complete. P4.2 Migration infrastructure — Complete. P4.3 Benchmark validation — Complete (3853.2 writes/s local Docker release). P4.4 SQLite→PostgreSQL migration MVP — Complete. P5 Production Readiness — Deferred.
 > **Date**: 2026-05-11
 > **Deciders**: Engineering implementation complete for local Docker/runtime; production/HA/multi-node posture remains NO.
 > **Estimated Effort**: ~2000-3000 LOC + migrations + container tests
@@ -126,18 +126,29 @@ implemented for local Docker; production/HA/multi-node remains deferred.
 ### Phase P4 — Migrations and Testing (Post-P3)
 
 **Goals**:
-- [ ] Design SQLite → PostgreSQL data migration path
+- [x] Design SQLite → PostgreSQL data migration path
 - [x] Implement embedded migration runner for postgres (schema creation)
 - [x] Add integration tests with live postgres
 - [x] Benchmark validation (target: 1000+ writes/s) — **achieved 3853.2 writes/s local Docker release**
+- [x] Implement P4.4 MVP migration CLI (dry-run default, --apply, empty-target safety, count + ID validation)
 
 **P4 Sub-phase Status**:
 - P4.1 Runtime DSN switching — ✅ Complete
 - P4.2 Migration infrastructure (schema runner) — ✅ Complete
 - P4.3 Benchmark validation — ✅ Complete (3853.2 writes/s local Docker release)
-- P4.4 Data migration (SQLite → PostgreSQL) — ☐ Deferred
+- P4.4 Data migration (SQLite → PostgreSQL) — ✅ Complete (MVP only)
 
-**Estimated Effort**: ~300-500 LOC migrations + tests — **P4.1–P4.3 complete; P4.4 deferred**
+**P4.4 MVP Scope**:
+- Standalone CLI binary: `bins/ferrum-migrate`
+- Feature-gated by `--features postgres`; does not alter default non-postgres posture
+- Dry-run by default; explicit `--apply` required to write to target
+- `--apply` requires empty target for MVP and fails fast otherwise
+- Migrates core governance records in dependency-safe order: intents, proposals, capabilities, executions, rollback_contracts, approvals, provenance_events, provenance_edges, ledger_entries, policy_bundles
+- Count + stable ID-set validation implemented and tested
+- Human-readable default output and `--json` output supported
+- **Non-goals**: production-grade migration, idempotent/upsert/resume/checkpointing, content hash validation, large dataset streaming
+
+**Estimated Effort**: ~300-500 LOC migrations + tests — **P4.1–P4.4 complete; P4.4 is MVP only**
 
 ---
 
@@ -203,7 +214,7 @@ store_dsn = "sqlite::memory:"
 | P4.1 DSN switching | ✅ Complete | Runtime `postgres://` DSN support |
 | P4.2 Migration infra | ✅ Complete | Embedded schema migration runner |
 | P4.3 Benchmark | ✅ Complete | 3853.2 writes/s local Docker release |
-| P4.4 Data migration | ☐ Deferred | SQLite → PostgreSQL data migration |
+| P4.4 Data migration | ✅ Complete (MVP) | SQLite → PostgreSQL migration CLI; dry-run default, empty-target safety, count+ID validation |
 | P5 Production | ☐ Deferred | HA/clustering, pool tuning, backup/restore, multi-node |
 
 **Total estimated for full PostgreSQL**: ~3000-4000 LOC + significant testing infrastructure
