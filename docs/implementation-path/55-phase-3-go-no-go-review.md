@@ -117,6 +117,8 @@ Before claiming PostgreSQL support, all items below must be satisfied:
 | `104-g3-4-p5a-adr-approval-packet.md` | G3.4 P5a ADR approval packet |
 | `105-g3-5-operator-d1-d3-signoff-packet.md` | G3.5 operator D1–D3 signoff packet |
 | `106-g3-6-pilot-metrics-evidence-packet.md` | G3.6 pilot metrics evidence packet |
+| `107-eng-1-capacity-confirmation-packet.md` | Eng.1 capacity confirmation packet |
+| `108-eng-2-p5b-p5e-implementation-planning-packet.md` | Eng.2 P5b–P5e implementation planning packet |
 | `27-production-evaluation-plan.md` | Production evaluation framework (re-run after Phase 3) |
 
 ---

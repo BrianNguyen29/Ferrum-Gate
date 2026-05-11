@@ -2,7 +2,7 @@
 
 > **Status**: Pending. Awaiting operator-supplied pilot metrics/logs. Do not mark complete without real evidence.  
 > **Scope**: Path 2 single-node SQLite pilot metrics collection for P5b pool-tuning input only.  
-> **Constraint**: This packet does NOT authorize P5b–P5e implementation. G3.5 is now satisfied; G3.6 and Eng.1/Eng.2 must also be satisfied before P5b–P5e begin.  
+> **Constraint**: This packet does NOT authorize P5b–P5e implementation. G3.5, Eng.1, and Eng.2 are now satisfied; G3.6 must also be satisfied before P5b–P5e begin.  
 > **Purpose**: Structured evidence collection template for G3.6 per `31-release-paths-todo.md` §Path 3 Gate.
 
 ---
@@ -25,7 +25,7 @@ Do not pre-fill with estimates or local simulation results unless explicitly lab
 ## Explicit Non-Claims
 
 - **No production-ready claim**: Collecting G3.6 metrics does NOT make FerrumGate production-ready.
-- **No P5 implementation authorization**: P5b–P5e remain gated on G3.6 (this packet) and Eng.1/Eng.2 (engineering planning). G3.5 is satisfied but does not alone authorize implementation.
+- **No P5 implementation authorization**: P5b–P5e remain gated on G3.6 (this packet). G3.5, Eng.1, and Eng.2 are satisfied but do not alone authorize implementation.
 - **No HA/multi-node authorization**: Pilot metrics from single-node SQLite do not validate HA/clustering behavior.
 - **No PostgreSQL production deployment**: G3.6 data informs P5b design only; production deployment requires P5b–P5e completion + P6 assessment.
 - **No operator signature pre-filled**: All signoff fields remain blank until the operator attaches real evidence and signs.
@@ -216,7 +216,7 @@ G3.6 is satisfied when **all** of the following are true:
 
 > **Operator instruction**: Attach real evidence for all fields above, confirm all acceptance criteria (A1–A6) are met, and sign below.  
 > **Do not sign if any field is estimated, simulated, or incomplete.**  
-> **This signoff does NOT authorize P5b–P5e implementation.** G3.5 and Eng.1 are still required.
+> **This signoff does NOT authorize P5b–P5e implementation.** G3.6 is the remaining gate.
 
 ### Operator Information
 
@@ -274,6 +274,8 @@ G3.6 is satisfied when **all** of the following are true:
 | `31-release-paths-todo.md` | This doc | G3.6 evidence reference |
 | `61-path-2-execution-plan.md` | This doc | G3.6 pilot metrics reference |
 | `105-g3-5-operator-d1-d3-signoff-packet.md` | This doc | G3.6 next step context |
+| `107-eng-1-capacity-confirmation-packet.md` | This doc | Eng.1 capacity confirmation (signed via chat authorization) |
+| `108-eng-2-p5b-p5e-implementation-planning-packet.md` | This doc | Eng.2 implementation planning (approved via chat authorization) |
 
 ---
 

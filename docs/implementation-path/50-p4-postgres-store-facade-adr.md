@@ -1,10 +1,10 @@
 # ADR-50 — PostgreSQL StoreFacade: Phased Implementation Plan
 
-> **Status**: P3 Repository Implementations — Complete (local Docker). P4.1 Runtime DSN switching — Complete. P4.2 Migration infrastructure — Complete. P4.3 Benchmark validation — Complete (3853.2 writes/s local Docker release). P4.4 SQLite→PostgreSQL migration MVP — Complete. P5a Production Readiness Design — GO for ADR/design only. P5b–P5e Implementation — Gated on G3.4–G3.6 and operator D1–D3 signoff.
+> **Status**: P3 Repository Implementations — Complete (local Docker). P4.1 Runtime DSN switching — Complete. P4.2 Migration infrastructure — Complete. P4.3 Benchmark validation — Complete (3853.2 writes/s local Docker release). P4.4 SQLite→PostgreSQL migration MVP — Complete. P5a Production Readiness Design — GO for ADR/design only. G3.5 operator D1–D3 signoff satisfied (Option A defaults). Eng.1 capacity confirmed and Eng.2 plan approved via chat authorization. P5b–P5e Implementation — Gated on G3.6 (Eng.1 and Eng.2 satisfied).
 > **Date**: 2026-05-11
-> **Deciders**: Engineering implementation complete for local Docker/runtime; production/HA/multi-node posture remains NO. P5a design phase authorized; P5b–P5e blocked.
-> **Estimated Effort**: P1–P4.4 ~2000-3000 LOC + migrations + container tests; P5a design only; P5b–P5e ~500+ LOC + testing (gated)
-> **Next Step**: P5a ADR/design review (G3.4). No P5b–P5e until G3.4–G3.6 satisfied.
+> **Deciders**: Engineering implementation complete for local Docker/runtime; production/HA/multi-node posture remains NO. P5a design phase authorized; P5b–P5e blocked on G3.6 pilot data and engineering planning.
+> **Estimated Effort**: P1–P4.4 ~2000-3000 LOC + migrations + container tests; P5a design only; P5b–P5e ~200-400 LOC + testing for D1=A/D2=A/D3=A (gated on G3.6/Eng.1/Eng.2)
+> **Next Step**: G3.6 pilot metrics collection per `106-g3-6-pilot-metrics-evidence-packet.md`. No P5b–P5e until G3.6 is satisfied (Eng.1 and Eng.2 are now satisfied).
 
 ---
 
@@ -209,7 +209,7 @@ P5a is the only currently authorized P5 subphase. It produces a design document,
 - [ ] `max_connections`, `min_idle`, `acquire_timeout` tuned for target throughput
 - [ ] Connection-leak detection and circuit-breaker behavior defined
 
-**Blocked until**: G3.6 pilot data available; G3.5 operator D1–D3 signoff
+**Blocked until**: G3.6 pilot data available; Eng.1 capacity confirmed; Eng.2 implementation plan approved
 
 **Estimated Effort**: ~100-200 LOC + configuration changes
 
@@ -229,9 +229,9 @@ P5a is the only currently authorized P5 subphase. It produces a design document,
 - [ ] Restore drill procedure for PostgreSQL defined
 - [ ] RPO/RTO targets for PostgreSQL documented and operator-accepted
 
-**Blocked until**: G3.5 operator D1–D3 signoff
+**Blocked until**: Eng.1 capacity confirmed; Eng.2 implementation plan approved; P5b design complete
 
-**Estimated Effort**: ~100-200 LOC + documentation + operator runbook
+**Estimated Effort**: ~50-100 LOC + documentation + operator runbook (D2=A pg_dump logical backup; lowest effort)
 
 **Verification Gates**:
 
@@ -248,9 +248,9 @@ P5a is the only currently authorized P5 subphase. It produces a design document,
 - [ ] Multi-node deployment validated in staging (not production)
 - [ ] StoreFacade concurrency model adapted for multi-node (if required)
 
-**Blocked until**: G3.5 operator D1–D3 signoff; explicitly out of v1 scope
+**Blocked until**: D1=A and D3=A selected; P5d explicitly skipped/out of v1 scope unless operator revises D1/D3
 
-**Estimated Effort**: ~200-300 LOC + significant testing infrastructure
+**Estimated Effort**: ~0 LOC for D1=A/D3=A (skipped); ~200-300 LOC if D1/D3 revised later
 
 **Verification Gates**:
 
@@ -268,9 +268,9 @@ P5a is the only currently authorized P5 subphase. It produces a design document,
 - [ ] Content-hash validation for lineage equivalence
 - [ ] Large-dataset streaming and chunking
 
-**Blocked until**: G3.5 operator D1–D3 signoff; P5c backup/restore design complete
+**Blocked until**: Eng.1 capacity confirmed; Eng.2 implementation plan approved; P5b–P5c design complete; P4.4 MVP migration baseline available
 
-**Estimated Effort**: ~300-500 LOC + migration testing
+**Estimated Effort**: ~100-200 LOC + migration testing (upgrade from P4.4 MVP)
 
 **Verification Gates**:
 
@@ -342,11 +342,11 @@ store_dsn = "sqlite::memory:"
 | P4.2 Migration infra | ✅ Complete | Embedded schema migration runner |
 | P4.3 Benchmark | ✅ Complete | 3853.2 writes/s local Docker release |
 | P4.4 Data migration | ✅ Complete (MVP) | SQLite → PostgreSQL migration CLI; dry-run default, empty-target safety, count+ID validation |
-| P5a Design/ADR | ☐ Pending | D1–D6 decisions, risk register, verification gates, non-claims — **GO for design only** |
-| P5b Pool tuning | ☐ Deferred | Blocked on G3.6 pilot data |
-| P5c Backup/restore | ☐ Deferred | Blocked on G3.5 operator D1–D3 signoff |
-| P5d HA/clustering | ☐ Deferred | Blocked on G3.5; explicitly out of v1 scope |
-| P5e Migration grade-up | ☐ Deferred | Blocked on G3.5; P5c complete |
+| P5a Design/ADR | ☑ DONE | D1–D6 decisions, risk register, verification gates, non-claims — **G3.4 satisfied** |
+| P5b Pool tuning | ☐ Deferred | Blocked on G3.6 pilot data (Eng.1/Eng.2 satisfied) |
+| P5c Backup/restore | ☐ Deferred | Blocked on P5b design complete; D2=A pg_dump logical (lowest effort) |
+| P5d HA/clustering | ☐ Skipped | D1=A/D3=A; explicitly out of v1 scope |
+| P5e Migration grade-up | ☐ Deferred | Blocked on P5b–P5c design complete; P4.4 MVP baseline |
 
 **Total estimated for full PostgreSQL production readiness**: ~3500-4500 LOC + significant testing infrastructure
 
@@ -363,5 +363,8 @@ store_dsn = "sqlite::memory:"
 - `docs/implementation-path/45-current-feature-audit.md` — G7 gap record
 - `docs/implementation-path/30-production-roadmap.md` — Phase 3 PostgreSQL
 - `docs/implementation-path/23-production-readiness-assessment.md` — production readiness
-- `docs/implementation-path/104-g3-4-p5a-adr-approval-packet.md` — G3.4 P5a approval packet (ready for approval)
-- `docs/implementation-path/105-g3-5-operator-d1-d3-signoff-packet.md` — G3.5 operator D1–D3 signoff packet (ready for operator review)
+- `docs/implementation-path/104-g3-4-p5a-adr-approval-packet.md` — G3.4 P5a approval packet (signed)
+- `docs/implementation-path/105-g3-5-operator-d1-d3-signoff-packet.md` — G3.5 operator D1–D3 signoff packet (signed via chat authorization; Option A defaults)
+- `docs/implementation-path/106-g3-6-pilot-metrics-evidence-packet.md` — G3.6 pilot metrics evidence packet (pending operator data)
+- `docs/implementation-path/107-eng-1-capacity-confirmation-packet.md` — Eng.1 capacity confirmation packet (signed via chat authorization)
+- `docs/implementation-path/108-eng-2-p5b-p5e-implementation-planning-packet.md` — Eng.2 P5b–P5e implementation planning packet (approved via chat authorization)

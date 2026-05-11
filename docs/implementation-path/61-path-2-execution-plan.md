@@ -475,6 +475,8 @@ Complete steps in order. Do not mark complete on behalf of the operator.
 | This doc | [`50-p4-postgres-store-facade-adr.md`](./50-p4-postgres-store-facade-adr.md) | Phase 3 PostgreSQL plan |
 | This doc | [`55-phase-3-go-no-go-review.md`](./55-phase-3-go-no-go-review.md) | Phase 3 go/no-go gates |
 | This doc | [`106-g3-6-pilot-metrics-evidence-packet.md`](./106-g3-6-pilot-metrics-evidence-packet.md) | G3.6 pilot metrics evidence collection |
+| This doc | [`107-eng-1-capacity-confirmation-packet.md`](./107-eng-1-capacity-confirmation-packet.md) | Eng.1 capacity confirmation packet |
+| This doc | [`108-eng-2-p5b-p5e-implementation-planning-packet.md`](./108-eng-2-p5b-p5e-implementation-planning-packet.md) | Eng.2 P5b–P5e implementation planning packet |
 | This doc | [`scripts/run_d1_d6_drills.py`](../../scripts/run_d1_d6_drills.py) | Automated local D1–D6 evidence runner |
 | This doc | [`scripts/generate_evidence_skeleton.py`](../../scripts/generate_evidence_skeleton.py) | Automated evidence skeleton helper |
 

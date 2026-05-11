@@ -342,6 +342,8 @@ Per `50-p4-postgres-store-facade-adr.md` §3 Phase P1:
 | `104-g3-4-p5a-adr-approval-packet.md` | This doc | G3.4 approval packet (ready for approval) |
 | `105-g3-5-operator-d1-d3-signoff-packet.md` | This doc | G3.5 operator D1–D3 signoff packet (signed via chat authorization) |
 | `106-g3-6-pilot-metrics-evidence-packet.md` | This doc | G3.6 pilot metrics evidence packet (pending operator data) |
+| `107-eng-1-capacity-confirmation-packet.md` | This doc | Eng.1 capacity confirmation packet (signed via chat authorization) |
+| `108-eng-2-p5b-p5e-implementation-planning-packet.md` | This doc | Eng.2 P5b–P5e implementation planning packet (approved via chat authorization) |
 
 ---
 
