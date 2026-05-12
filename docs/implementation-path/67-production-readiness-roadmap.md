@@ -160,7 +160,9 @@ Phase 3 PostgreSQL (Path 3) — both are outside the scope of this roadmap.
 ### P3 Notes
 
 - P3.1 is complete for local Docker/runtime (P1–P4.4). Production/HA/multi-node remains deferred.
-- P5a (design/ADR) is authorized. P5b–P5e implementation is gated on G3.4–G3.6 and operator D1–D3 signoff.
+- P5a (design/ADR) is authorized. P5b conservative defaults implemented; post-deploy monitoring required.
+- P5c (backup/restore design/docs) is complete (`109-p5c-postgresql-backup-restore-runbook.md`; RPO=15min/RTO=30min). P5c.V1–V2 pending operator drill.
+- P5d skipped (D1=A/D3=A). P5e implementation remains gated on P5b–P5c design complete.
 - P3.2 is blocked until P5a–P5e are complete and P6 assessment is done.
 - P3.3 is operator-owned target execution evidence.
 - P3.5–P3.8 are implemented but explicitly outside the v1 single-node support baseline.

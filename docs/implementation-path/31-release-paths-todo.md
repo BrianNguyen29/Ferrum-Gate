@@ -258,12 +258,13 @@ Per `50-p4-postgres-store-facade-adr.md` §3 Phase P1:
 - [ ] Connection-leak detection and circuit-breaker behavior defined — deferred
 - [ ] **Post-deploy monitoring required**: G3.6 conditional acceptance still applies
 
-#### P5c — Backup / Restore for PostgreSQL (Implementation Gated)
-- [ ] `pg_dump`/`pg_restore` or logical-replication backup strategy documented
-- [ ] Backup automation design (external scheduler, not in-tree)
-- [ ] Restore drill procedure for PostgreSQL defined
-- [ ] RPO/RTO targets for PostgreSQL documented and operator-accepted
-- [ ] **Blocked until**: G3.6 pilot data available; Eng.1/Eng.2 planning complete; P5b pool-tuning design complete
+#### P5c — Backup / Restore for PostgreSQL (Design / Docs Complete)
+- [x] `pg_dump`/`pg_restore` backup strategy documented in `109-p5c-postgresql-backup-restore-runbook.md`
+- [x] Backup automation design (external scheduler, not in-tree) — cron/systemd timer examples in `configs/examples/postgres-backup.*`
+- [x] Restore drill procedure for PostgreSQL defined
+- [x] RPO/RTO targets for PostgreSQL documented and operator-accepted (RPO=15min, RTO=30min)
+- [ ] **P5c.V1–V2 pending operator drill**: backup/restore drills must be executed in non-production environment
+- [x] **Design/docs complete** (2026-05-12). No live DB operations. No production deployment authorization.
 
 #### P5d — HA / Clustering Design (Implementation Gated)
 - [ ] HA topology reviewed (read replica, failover, partitioning)

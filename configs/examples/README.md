@@ -11,6 +11,8 @@ Files:
 - `ferrumd.env.example` — Template environment file for bearer token. Copy to `/etc/ferrumgate/ferrumd.env` and replace the placeholder with a generated token (`openssl rand -hex 32`). **Do not store real tokens in version control.**
 - `ferrumgate-backup.cron` — cron-based SQLite backup schedule example.
 - `ferrumgate-backup.service` / `ferrumgate-backup.timer` — systemd timer-based backup schedule example.
+- `postgres-backup.cron` — cron-based PostgreSQL `pg_dump` backup schedule example (15-minute interval for RPO=15min).
+- `postgres-backup.service` / `postgres-backup.timer` — systemd timer-based PostgreSQL backup schedule example.
 - `nginx-ferrumgate.conf` — TLS-terminating reverse proxy example.
 
 ## Handoff Flow

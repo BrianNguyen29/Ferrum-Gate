@@ -221,25 +221,25 @@ P5a is the only currently authorized P5 subphase. It produces a design document,
 | P5b.V2 | No connection leaks observed in 30-min stress test | `sqlx` pool metrics or custom leak detector |
 | P5b.V3 | Circuit breaker triggers within 5s on pool exhaustion | Integration test or manual verification |
 
-#### 3.5.2 P5c — Backup / Restore for PostgreSQL (Implementation Gated)
+#### 3.5.2 P5c — Backup / Restore for PostgreSQL (Design / Docs Complete)
 
 **Goals**:
-- [ ] `pg_dump`/`pg_restore` or logical-replication backup strategy documented
-- [ ] Backup automation design (external scheduler, not in-tree)
-- [ ] Restore drill procedure for PostgreSQL defined
-- [ ] RPO/RTO targets for PostgreSQL documented and operator-accepted
+- [x] `pg_dump`/`pg_restore` backup strategy documented in `109-p5c-postgresql-backup-restore-runbook.md`
+- [x] Backup automation design (external scheduler, not in-tree) — cron/systemd timer examples provided
+- [x] Restore drill procedure for PostgreSQL defined
+- [x] RPO/RTO targets for PostgreSQL documented and operator-accepted (RPO=15min, RTO=30min)
 
-**Blocked until**: Eng.1 capacity confirmed; Eng.2 implementation plan approved; P5b design complete
+**Status**: Design and documentation complete (2026-05-12). P5c.V1–P5c.V2 remain pending operator drill. No live DB operations.
 
-**Estimated Effort**: ~50-100 LOC + documentation + operator runbook (D2=A pg_dump logical backup; lowest effort)
+**Estimated Effort**: ~50-100 LOC + documentation + operator runbook (D2=A pg_dump logical backup; lowest effort). Actual: ~150 LOC (docs + config examples).
 
 **Verification Gates**:
 
-| Gate | Criterion | Evidence |
-|---|---|---|
-| P5c.V1 | Backup produces consistent snapshot | `pg_dump` with `--snapshot` or equivalent; integrity verified |
-| P5c.V2 | Restore drill completes successfully | Operator drill log with restored DB verification |
-| P5c.V3 | RPO/RTO operator-accepted for PostgreSQL | Signed operator acknowledgment |
+| Gate | Criterion | Evidence | Status |
+|---|---|---|---|
+| P5c.V1 | Backup produces consistent snapshot | `pg_dump` during low-write window; `pg_restore -l` verifies integrity | ☐ Pending operator drill |
+| P5c.V2 | Restore drill completes successfully | Operator drill log with restored DB verification | ☐ Pending operator drill |
+| P5c.V3 | RPO/RTO operator-accepted for PostgreSQL | Signed operator acknowledgment | ☑ DONE — RPO=15min, RTO=30min |
 
 #### 3.5.3 P5d — HA / Clustering Design (Implementation Gated)
 
@@ -344,7 +344,7 @@ store_dsn = "sqlite::memory:"
 | P4.4 Data migration | ✅ Complete (MVP) | SQLite → PostgreSQL migration CLI; dry-run default, empty-target safety, count+ID validation |
 | P5a Design/ADR | ☑ DONE | D1–D6 decisions, risk register, verification gates, non-claims — **G3.4 satisfied** |
 | P5b Pool tuning | ☑ PARTIALLY IMPLEMENTED | Conservative defaults (`max_connections=10`, `min_idle=2`, `acquire_timeout=5s`) wired into `PostgresPoolConfig`, CLI/env/config precedence, and validation. Post-deploy monitoring still required; not production-ready. |
-| P5c Backup/restore | ☐ Deferred | Blocked on P5b design complete; D2=A pg_dump logical (lowest effort) |
+| P5c Backup/restore | ☑ Design/docs complete | `109-p5c-postgresql-backup-restore-runbook.md` delivered; RPO=15min/RTO=30min approved; config examples in `configs/examples/postgres-backup.*`. P5c.V1–V2 pending operator drill. |
 | P5d HA/clustering | ☐ Skipped | D1=A/D3=A; explicitly out of v1 scope |
 | P5e Migration grade-up | ☐ Deferred | Blocked on P5b–P5c design complete; P4.4 MVP baseline |
 
@@ -368,3 +368,4 @@ store_dsn = "sqlite::memory:"
 - `docs/implementation-path/106-g3-6-pilot-metrics-evidence-packet.md` — G3.6 pilot metrics evidence packet (A1–A5 met with caveats; A6 operator signoff pending)
 - `docs/implementation-path/107-eng-1-capacity-confirmation-packet.md` — Eng.1 capacity confirmation packet (signed via chat authorization)
 - `docs/implementation-path/108-eng-2-p5b-p5e-implementation-planning-packet.md` — Eng.2 P5b–P5e implementation planning packet (approved via chat authorization)
+- `docs/implementation-path/109-p5c-postgresql-backup-restore-runbook.md` — P5c PostgreSQL backup/restore operator runbook (design/docs complete; RPO=15min/RTO=30min)

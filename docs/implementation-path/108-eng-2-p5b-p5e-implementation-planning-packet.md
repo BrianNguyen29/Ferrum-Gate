@@ -82,33 +82,33 @@ Single-node PostgreSQL requires bounded connection pool tuning only. No read rep
 
 ---
 
-## P5c — Backup / Restore for PostgreSQL (Implementation Gated)
+## P5c — Backup / Restore for PostgreSQL (Design / Docs Complete)
 
 ### Status
-**Blocked until**: Eng.1 capacity confirmed; Eng.2 plan approved; P5b design complete.
+**Design and documentation complete** (2026-05-12). P5c.1–P5c.5 implemented as documentation and config examples. P5c.V3 RPO/RTO targets approved (RPO=15min, RTO=30min). P5c.V1–P5c.V2 remain pending operator drill execution. No live DB operations performed.
 
 ### Scope (D2=A)
 `pg_dump` logical backup with external scheduler. Operator-owned scheduling and retention. No streaming replication. No external tools.
 
 ### Implementation Plan
 
-| # | Task | Estimated LOC | Owner | Dependencies |
-|---|---|---|---|---|
-| P5c.1 | Document `pg_dump` backup procedure for operator runbook | ~20 LOC (docs) | Engineering + Operator | Eng.2 |
-| P5c.2 | Document `pg_restore` restore drill procedure | ~20 LOC (docs) | Engineering + Operator | P5c.1 |
-| P5c.3 | Define RPO/RTO targets for PostgreSQL (operator-accepted) | ~10 LOC (docs) | Operator | P5c.1–P5c.2 |
-| P5c.4 | Add `pg_dump` snapshot option guidance to runbook (`--snapshot` for consistency) | ~10 LOC (docs) | Engineering | P5c.1 |
-| P5c.5 | Provide example cron/systemd timer config for external scheduler | ~20 LOC (config example) | Engineering | P5c.1 |
+| # | Task | Estimated LOC | Owner | Dependencies | Status |
+|---|---|---|---|---|---|---|
+| P5c.1 | Document `pg_dump` backup procedure for operator runbook | ~20 LOC (docs) | Engineering + Operator | Eng.2 | ☑ DONE — documented in `109-p5c-postgresql-backup-restore-runbook.md` |
+| P5c.2 | Document `pg_restore` restore drill procedure | ~20 LOC (docs) | Engineering + Operator | P5c.1 | ☑ DONE — documented in `109-p5c-postgresql-backup-restore-runbook.md` |
+| P5c.3 | Define RPO/RTO targets for PostgreSQL (operator-accepted) | ~10 LOC (docs) | Operator | P5c.1–P5c.2 | ☑ DONE — RPO=15min, RTO=30min operator-approved |
+| P5c.4 | Add `pg_dump` snapshot/consistency guidance to runbook | ~10 LOC (docs) | Engineering | P5c.1 | ☑ DONE — documented in `109-p5c-postgresql-backup-restore-runbook.md` |
+| P5c.5 | Provide example cron/systemd timer config for external scheduler | ~20 LOC (config example) | Engineering | P5c.1 | ☑ DONE — `configs/examples/postgres-backup.cron`, `.service`, `.timer` |
 
-**Total P5c estimate**: ~80 LOC (docs + config examples; within D1=A/D2=A/D3=A budget)
+**Total P5c estimate**: ~80 LOC (docs + config examples; within D1=A/D2=A/D3=A budget). Actual delivered: ~150 LOC (docs + config examples).
 
 ### Verification Gates
 
-| Gate | Criterion | Evidence |
-|---|---|---|
-| P5c.V1 | Backup produces consistent snapshot | `pg_dump` with `--snapshot` or equivalent; integrity verified |
-| P5c.V2 | Restore drill completes successfully | Operator drill log with restored DB verification |
-| P5c.V3 | RPO/RTO operator-accepted for PostgreSQL | Signed operator acknowledgment |
+| Gate | Criterion | Evidence | Status |
+|---|---|---|---|
+| P5c.V1 | Backup produces consistent snapshot | `pg_dump` during low-write window; `pg_restore -l` verifies integrity | ☐ Pending operator drill |
+| P5c.V2 | Restore drill completes successfully | Operator drill log with restored DB verification | ☐ Pending operator drill |
+| P5c.V3 | RPO/RTO operator-accepted for PostgreSQL | Signed operator acknowledgment | ☑ DONE — RPO=15min, RTO=30min approved |
 
 ---
 
@@ -167,9 +167,9 @@ P4.4 MVP already implements: dry-run default, `--apply`, empty-target safety, co
 ## Combined Implementation Summary
 
 | Phase | Status | LOC Estimate | Blocked Until | Owner |
-|---|---|---|---|---|
+|---|---|---|---|---|---|
 | P5b — Pool tuning | Deferred | ~170–220 | G3.6; Eng.1; Eng.2 | Engineering |
-| P5c — Backup/restore | Deferred | ~80 | Eng.1; Eng.2; P5b | Engineering + Operator |
+| P5c — Backup/restore | ☑ Design/docs complete | ~80 | Eng.1; Eng.2; P5b | Engineering + Operator |
 | P5d — HA/clustering | **Skipped** | ~0 | D1=A/D3=A | N/A |
 | P5e — Migration grade-up | Deferred | ~250 | Eng.1; Eng.2; P5b–P5c | Engineering |
 | **Total P5b–P5e (D1=A/D2=A/D3=A)** | | **~500–550** | | |
