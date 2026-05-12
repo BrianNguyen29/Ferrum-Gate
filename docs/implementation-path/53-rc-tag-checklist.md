@@ -54,6 +54,8 @@ The following items were completed before publishing `v0.1.0-rc.1`:
 - [x] Do NOT bump Cargo.toml version; `Cargo.toml` remains `0.1.0`
 - [x] Publish CHANGELOG.md and RELEASE.md as release-facing documentation
 
+> **Future RC refresh note**: Any future RC tag refresh (e.g., v0.1.0-rc.2 or later) should wait until the operator blockers in `66-path-2-operator-handoff.md` and P5c drills are resolved. This document remains historical for v0.1.0-rc.1.
+
 ---
 
 ## Accepted Risks (Must Appear in Release Notes)

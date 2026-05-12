@@ -88,16 +88,31 @@ This phase is complete when:
 
 > **Next step**: For a complete actionable next-steps plan for Phase B, see [`92-path-2-target-intake-next-actions.md`](./92-path-2-target-intake-next-actions.md).
 
-### B.1 Blockers
+### B.0 — Consolidated Operator Blocker Checklist (8 Items)
 
-Execution on the target host is blocked until:
+The following 8 items must be resolved before Path 2 pilot execution and signoff. Check each box only when the operator has produced evidence or completed the task on the target host.
+
+| # | Blocker | Evidence Required | Owner | Status |
+|---|---------|-------------------|-------|--------|
+| 1 | Target-host D1–D6 evidence | Completed drill logs from doc 62 Phase 3 | Operator | ☐ |
+| 2 | SQLite restore drill with `PRAGMA integrity_check` | Restore drill log showing `integrity_check: ok` | Operator | ☐ |
+| 3 | Backup automation / external scheduler | Configured cron or systemd timer; retention policy documented | Operator | ☐ |
+| 4 | TLS/reverse proxy configuration | nginx config with real domain and TLS paths; probe passes | Operator | ☐ |
+| 5 | Bearer token generation | Token generated via `openssl rand -hex 32`; stored in env file (value NOT recorded in docs) | Operator | ☐ |
+| 6 | P5c.V1 PostgreSQL backup drill | Evidence template 110 filled: `pg_dump` exit 0, `pg_restore -l` OK, artifact path/size/checksum | Operator | ☐ |
+| 7 | P5c.V2 PostgreSQL restore drill | Evidence template 110 filled: drill DB created, row counts verified, cleanup confirmed | Operator | ☐ |
+| 8 | G3.6 real workload / post-deploy monitoring | Post-deploy monitoring shows sustained workload without error; doc 62 probes pass under load | Operator | ☐ |
+
+> **P6 CONDITIONAL GO**: Blockers 6–7 (P5c) are conditional on the PostgreSQL evaluation path. If SQLite remains the production store, P5c blockers are N/A but must be explicitly waived by operator in doc 105. Blocker 8 (G3.6) is conditional on pilot workload schedule and may be deferred with documented risk. No production-ready claim is made by completing any subset of this checklist.
+
+### B.1 — Prerequisite Blockers
+
+Execution on the target host is also blocked until the operator has satisfied the following prerequisites:
 
 | Blocker | Resolution |
 |---------|------------|
 | Operator has access to target host | Operator or infrastructure team provides SSH access |
-| Operator has generated bearer token | Operator generates token via `openssl rand -hex 32` |
 | Operator has completed doc 65 | Operator fills all PROVIDE fields |
-| TLS certificates available | Operator or security team provides certs |
 | DNS configured | Operator or network team confirms A record |
 
 ### B.2 Phase B Steps (Operator-Owned)

@@ -418,6 +418,7 @@ NoNewPrivileges=true
 | `109-p5c-postgresql-backup-restore-runbook.md` | `50-p4-postgres-store-facade-adr.md` §3.5.2 | ADR-50 P5c scope and verification gates |
 | `109-p5c-postgresql-backup-restore-runbook.md` | `108-eng-2-p5b-p5e-implementation-planning-packet.md` | Eng.2 P5c planning and estimates |
 | `109-p5c-postgresql-backup-restore-runbook.md` | `31-release-paths-todo.md` §Path 3 | P5c checklist in release paths |
+| `109-p5c-postgresql-backup-restore-runbook.md` | `110-p5c-postgresql-drill-evidence-template.md` | **Fillable operator evidence template for P5c.V1/V2** |
 | `108-eng-2-p5b-p5e-implementation-planning-packet.md` | This doc | P5c design completion evidence |
 | `50-p4-postgres-store-facade-adr.md` | This doc | P5c runbook cross-reference |
 
