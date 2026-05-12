@@ -1,6 +1,6 @@
 # 116 — G3.6 Monitoring Execution Plan
 
-> **Status**: Planning/checklist artifact. Not executed. No production-ready claim.  
+> **Status**: Planning/checklist artifact. Partial evidence gathered 2026-05-12 (authenticated bounded compile-only probe: 133×200, 40×429, p50 ~205.12ms). Full G3.6 acceptance not achieved. No production-ready claim.  
 > **Purpose**: Execution plan for transitioning G3.6 from **conditionally accepted** (compile-only/light workload) to **full acceptance** with real workload validation.  
 > **Scope**: Post-deploy monitoring on target host. Adapter execution paths exercised.  
 > **Constraint**: This plan does NOT make FerrumGate production-ready. P5b–P5e remain gated on G3.6 full acceptance. Do not record secrets.
@@ -14,11 +14,13 @@ This plan provides the operator and engineering teams with a structured approach
 > **G3.6**: G2 pilot data available for P5b pool-tuning input — sustained write rate, connection patterns, queue depth, readyz/deep behavior, metrics snapshots, and backup/restore status.
 
 Current status per `106-g3-6-pilot-metrics-evidence-packet.md`:
-- **Conditionally accepted** on 2026-05-11 for initial P5b planning
+- **Conditionally accepted** on 2026-05-11 for initial P5b planning only
 - Compile-only workload; adapter execution paths (FS, Git, HTTP, SQLite, Maildraft) **unexercised**
 - No low/target/spike/cooldown metrics sequence
 
-This plan closes those gaps.
+**Update 2026-05-12**: Authenticated bounded compile-only probe executed on target host (173 total requests, 133 HTTP 200, 40 HTTP 429, p50 ~205.12ms). This is **not** full G3.6 acceptance. See [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](../artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md) §9.
+
+This plan closes the remaining gaps.
 
 ---
 
@@ -294,7 +296,8 @@ Refresh `106-g3-6-pilot-metrics-evidence-packet.md` with real workload data:
 | Date | Change | Author |
 |---|---|---|
 | 2026-05-12 | Initial G3.6 monitoring execution plan | Engineering |
+| 2026-05-12 | Partial evidence update: authenticated bounded compile-only probe executed on target host (133×200, 40×429, p50 ~205.12ms). Full phase sequence and adapter mix remain not executed. Full G3.6 acceptance not achieved. See [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](../artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md). | Engineering |
 
 ---
 
-*Document created: 2026-05-12. G3.6 Monitoring Execution Plan — planning/checklist artifact. No execution claimed. No production-ready claim. P6 CONDITIONAL GO.*
+*Document updated: 2026-05-12. G3.6 Monitoring Execution Plan — planning/checklist artifact. Partial evidence only. No production-ready claim. P6 CONDITIONAL GO.*

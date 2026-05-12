@@ -18,7 +18,7 @@
 | Populated local drill | **PASSED** — local Docker PostgreSQL backup/restore with non-zero rows verified; see [`artifacts/2026-05-12-p5c-populated-local-drill-evidence.md`](./artifacts/2026-05-12-p5c-populated-local-drill-evidence.md) |
 | Path decision | **DONE** — Option A (SQLite Path 2) selected; see [`113-operator-path-selection-packet.md`](./113-operator-path-selection-packet.md) (commit `b320f5c`) |
 | Production-ready claim | **NO** |
-| Target-host operator blockers | **NOT CLOSED** — target-host attempt blocked; see [`artifacts/2026-05-12-sqlite-path2-target-host-blocked-attempt.md`](./artifacts/2026-05-12-sqlite-path2-target-host-blocked-attempt.md) |
+| Target-host operator blockers | **PARTIAL EVIDENCE** — SSH unblocked, authenticated probe and safe restore drill executed; B1 D1–D6 not executed; see [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](./artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md) and [`artifacts/2026-05-12-sqlite-path2-target-host-blocked-attempt.md`](./artifacts/2026-05-12-sqlite-path2-target-host-blocked-attempt.md) |
 | PostgreSQL production deployment | **NO** |
 | HA/multi-node | **NO** |
 
@@ -48,8 +48,8 @@
 | **Phase 0** | P5c local smoke baseline | Track 1 baseline | Engineering | ✅ Done | None |
 | **Phase 1** | Populated-data local drill | Track 2 | Engineering | ✅ Done | None — see [`artifacts/2026-05-12-p5c-populated-local-drill-evidence.md`](./artifacts/2026-05-12-p5c-populated-local-drill-evidence.md) |
 | **Phase 2** | Operator path decision gate | Track 1, 3, 4 | Operator + Engineering | ✅ Done — Option A SQLite selected (commit `b320f5c`) | See [`113-operator-path-selection-packet.md`](./113-operator-path-selection-packet.md) |
-| **Phase 3** | Target-host drill prep & execution | Track 1, 3, 4 | Operator | ☐ Blocked | Phase 2 done; target host access blocked — see [`artifacts/2026-05-12-sqlite-path2-target-host-blocked-attempt.md`](./artifacts/2026-05-12-sqlite-path2-target-host-blocked-attempt.md) |
-| **Phase 4** | G3.6 real workload / post-deploy monitoring | Track 3 | Operator + Engineering | ☐ Blocked | Phase 3 blocked; live workload unavailable — see [`116-g36-monitoring-execution-plan.md`](./116-g36-monitoring-execution-plan.md) |
+| **Phase 3** | Target-host drill prep & execution | Track 1, 3, 4 | Operator | ☐ Partial evidence | SSH unblocked 2026-05-12; Phase3E evidence script passed; safe restore drill done (`table_count=0` caveat); B1 D1–D6 not executed — see [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](./artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md) |
+| **Phase 4** | G3.6 real workload / post-deploy monitoring | Track 3 | Operator + Engineering | ☐ Partial evidence | Authenticated bounded compile-only probe executed (133×200, 40×429); full phase sequence and adapter mix not performed — see [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](./artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md) and [`116-g36-monitoring-execution-plan.md`](./116-g36-monitoring-execution-plan.md) |
 | **Phase 5** | Final evidence consolidation & conditional signoff | All tracks | Operator | ☐ No | All prior phases complete |
 
 ### 2.1 Dependency Map
@@ -369,27 +369,27 @@ Phase 0 (P5c local smoke) ──► Phase 1 (populated local drill)
 - [x] P2.4 If PostgreSQL: operator refreshes `105-g3-5-operator-d1-d3-signoff-packet.md` — N/A (SQLite selected)
 - [x] P2.5 If SQLite: operator signs N/A waiver for B6/B7 — waived per doc113 §6
 
-### Phase 3 — Target-Host Drill Prep & Execution (Blocked — Target Host Inaccessible)
+### Phase 3 — Target-Host Drill Prep & Execution (Partial Evidence — B1 Still Not Executed)
 
 - [ ] P3.1 If PG: Engineering adapts drill plan for target host — N/A (SQLite selected); readiness prep continues in [`117-postgresql-readiness-acceleration-plan.md`](./117-postgresql-readiness-acceleration-plan.md)
 - [ ] P3.2 If PG: Operator executes target-host P5c.V1 — N/A (SQLite selected)
 - [ ] P3.3 If PG: Operator executes target-host P5c.V2 — N/A (SQLite selected)
-- [ ] P3.4 SQLite target-host D1–D6 drills executed — blocked, see [`artifacts/2026-05-12-sqlite-path2-target-host-blocked-attempt.md`](./artifacts/2026-05-12-sqlite-path2-target-host-blocked-attempt.md)
-- [ ] P3.5 SQLite target-host restore drill with `integrity_check` passed — blocked
-- [ ] P3.6 Backup automation configured and verified — blocked
-- [ ] P3.7 TLS/reverse proxy configured and probed — blocked
-- [ ] P3.8 Bearer token generated and deployed — blocked
+- [ ] P3.4 SQLite target-host D1–D6 drills executed — **not executed**, remains operator-owned; see [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](./artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md)
+- [ ] P3.5 SQLite target-host restore drill with `integrity_check` passed — partial evidence: safe temp-copy drill passed (`integrity_check: ok`, `table_count=0` caveat); see [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](./artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md)
+- [ ] P3.6 Backup automation configured and verified — partial evidence: timer enabled, latest backup present; retention pruning not verified; see [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](./artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md)
+- [ ] P3.7 TLS/reverse proxy configured and probed — partial evidence: HTTPS probes pass, caddy active; operator-independent cert-path verification not done; see [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](./artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md)
+- [ ] P3.8 Bearer token generated and deployed — partial evidence: token present, auth_mode=bearer; generation command not independently witnessed; see [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](./artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md)
 
-### Phase 4 — G3.6 Real Workload (Blocked on Phase 3)
+### Phase 4 — G3.6 Real Workload (Partial Evidence — Full Acceptance Not Achieved)
 
-- [ ] P4.1 Engineering delivers load generator script — blocked on target host
-- [ ] P4.2 Engineering delivers Grafana dashboard JSON — blocked on target host
-- [ ] P4.3 Operator deploys load generator + monitoring — blocked
-- [ ] P4.4 Baseline → low → target → spike → cooldown sequence executed — blocked
-- [ ] P4.5 Sustained write-rate histograms collected — blocked
-- [ ] P4.6 Queue depth verified under load — blocked
-- [ ] P4.7 `readyz/deep` success rate ≥ 99% confirmed — blocked
-- [ ] P4.8 G3.6 evidence packet refreshed with real workload data — blocked
+- [ ] P4.1 Engineering delivers load generator script — not yet delivered
+- [ ] P4.2 Engineering delivers Grafana dashboard JSON — not yet delivered
+- [ ] P4.3 Operator deploys load generator + monitoring — not yet done
+- [ ] P4.4 Baseline → low → target → spike → cooldown sequence executed — **not executed**; bounded compile-only probe only; see [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](./artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md)
+- [ ] P4.5 Sustained write-rate histograms collected — partial: p50 ~205.12ms from compile-only probe; adapter-mixed histograms not collected; see [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](./artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md)
+- [ ] P4.6 Queue depth verified under load — partial: idle/post-workload depth=0; peak under target/spike load not measured; see [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](./artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md)
+- [ ] P4.7 `readyz/deep` success rate ≥ 99% confirmed — partial: probes passed during evidence script; not measured across full workload sequence; see [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](./artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md)
+- [ ] P4.8 G3.6 evidence packet refreshed with real workload data — not yet done
 
 ### Phase 5 — Consolidation & Conditional Signoff (Blocked on All Prior)
 
@@ -486,6 +486,7 @@ These steps are **executable now** (no operator dependency, no target-host acces
 | 2026-05-12 | Initial phased completion execution plan for four tracks post-P5c | Engineering |
 | 2026-05-12 | Target-host execution attempted from runner IP `118.68.117.136`; blocked by SSH firewall (`118.69.4.63/32` only) and absent bearer token. See [`artifacts/2026-05-12-sqlite-path2-target-host-blocked-attempt.md`](./artifacts/2026-05-12-sqlite-path2-target-host-blocked-attempt.md). B1–B5 and B8 remain open. | Engineering |
 | 2026-05-12 | Updated Phase 1/2 status: populated local drill completed, Option A SQLite path selected (commit `b320f5c`). Phase 3/4 remain blocked on target host. PostgreSQL readiness linked to [`117-postgresql-readiness-acceleration-plan.md`](./117-postgresql-readiness-acceleration-plan.md). | Engineering |
+| 2026-05-12 | Firewall unblocked; SSH OK; Phase3E evidence script passed; safe temp restore drill done (`table_count=0` caveat); authenticated compile-only probe executed. Phase 3/4 updated to "partial evidence". B1 still not executed. G3.6 full acceptance not claimed. See [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](./artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md). | Engineering |
 
 ---
 

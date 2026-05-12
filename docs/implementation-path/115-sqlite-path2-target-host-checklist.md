@@ -1,6 +1,6 @@
 # 115 — SQLite Path 2 Target-Host Checklist
 
-> **Status**: Operator checklist. Not executed. No production-ready claim.  
+> **Status**: Operator checklist. Partial evidence gathered 2026-05-12 (SSH unblocked, Phase3E script passed, safe restore drill, authenticated compile-only probe). B1 D1–D6 not executed. G3.6 full acceptance not achieved. No production-ready claim.  
 > **Purpose**: Target-host execution checklist for closing SQLite Path 2 operator blockers B1–B5 and B8 from `66-path-2-operator-handoff.md`.  
 > **Scope**: Single-node SQLite target host only. No PostgreSQL/multi-node.  
 > **Constraint**: This checklist does NOT authorize production deployment. All target-host work remains operator-owned. Do not record token values.
@@ -63,7 +63,7 @@ Before starting, confirm:
 | B5-4 | Set secure permissions on env file | `chmod 600 /etc/ferrumgate/ferrumd.env` | ☐ |
 | B5-5 | Verify `ferrumd` starts with `auth_mode=bearer` | `ferrumd --config /etc/ferrumgate/ferrumgate.toml` starts without auth error | ☐ |
 
-**Evidence**: Config file review showing `auth_mode = "bearer"` (token value redacted).
+**Evidence**: Config file review showing `auth_mode = "bearer"` (token value redacted). Partial evidence: token present on target host (`TOKEN_PRESENT`); see [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](../artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md) §5, §8.
 
 ---
 
@@ -81,7 +81,7 @@ Before starting, confirm:
 | B4-8 | Verify HTTPS probe passes | `curl -I https://<domain>/v1/readyz/deep` returns HTTP 200 | ☐ |
 | B4-9 | Verify bearer auth through proxy | `curl -H "Authorization: Bearer $TOKEN" https://<domain>/v1/metrics` returns HTTP 200 | ☐ |
 
-**Evidence**: TLS config excerpt (cert paths redacted), `curl` output showing HTTP 200.
+**Evidence**: TLS config excerpt (cert paths redacted), `curl` output showing HTTP 200. Partial evidence: HTTPS probes pass, `caddy.service` active; see [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](../artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md) §6, §8.
 
 ---
 
@@ -98,7 +98,7 @@ Before starting, confirm:
 | B3-7 | Verify backup integrity | `ferrumctl backup verify --db-path /var/backups/ferrumgate/ferrumgate_*.db` | ☐ |
 | B3-8 | Verify retention pruning (after > retention period) | Oldest backups removed per policy | ☐ |
 
-**Evidence**: Systemd status output, backup listing, `verify` OK output.
+**Evidence**: Systemd status output, backup listing, `verify` OK output. Partial evidence: `ferrumgate-backup.timer` enabled; latest backup `ferrumgate_20260508_154446.db` present; retention pruning not yet verified; see [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](../artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md) §6.
 
 ---
 
@@ -117,7 +117,7 @@ Before starting, confirm:
 | B2-9 | Restart ferrumd | `systemctl start ferrumd` | ☐ |
 | B2-10 | Verify readiness after restart | `curl -H "Authorization: Bearer $TOKEN" https://<domain>/v1/readyz/deep` → HTTP 200 | ☐ |
 
-**Evidence**: Restore drill log showing `integrity_check: ok`, `readyz/deep` HTTP 200.
+**Evidence**: Restore drill log showing `integrity_check: ok`, `readyz/deep` HTTP 200. Partial evidence: safe temp-copy drill passed (`INTEGRITY=ok`, `SIZE_BYTES=4239360`, `TEMP_CLEANED=yes`); **caveat** `table_count=0` observed on both backup and current DB — operator review required; see [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](../artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md) §7.
 
 ### B2 Stop Conditions
 
@@ -145,7 +145,7 @@ Before starting, confirm:
 | B1-10 | Fill `58-workload-compensation-drill-evidence-template.md` | Operator annotations per drill | ☐ |
 | B1-11 | Verify no `fail_closed_verified: false` on critical adapters | GitPush and HTTP non-idempotent must be fail-closed | ☐ |
 
-**Evidence**: Completed `58-workload-compensation-drill-evidence-template.md`.
+**Evidence**: Completed `58-workload-compensation-drill-evidence-template.md`. **Not yet executed** — B1 remains open; see [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](../artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md) §11.
 
 ### B1 Stop Conditions
 
@@ -170,7 +170,7 @@ Before starting, confirm:
 | B8-5 | Update `106-g3-6-pilot-metrics-evidence-packet.md` with real workload data | ☐ |
 | B8-6 | Operator re-signs G3.6 (full, not conditional) | ☐ |
 
-**Evidence**: Updated G3.6 evidence packet with real workload metrics.
+**Evidence**: Updated G3.6 evidence packet with real workload metrics. Partial evidence: authenticated bounded compile-only probe executed (173 total, 133×200, 40×429, p50 ~205.12ms); full phase sequence and adapter mix not performed; see [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](../artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md) §9, §10.
 
 ---
 
@@ -227,4 +227,13 @@ Before starting, confirm:
 
 ---
 
-*Document created: 2026-05-12. SQLite Path 2 Target-Host Checklist — operator-executable. No production-ready claim. No token values. P6 CONDITIONAL GO.*
+## 13. Document History
+
+| Date | Change | Author |
+|---|---|---|
+| 2026-05-12 | Initial checklist | Engineering |
+| 2026-05-12 | Partial evidence gathered: SSH unblocked, Phase3E script passed, safe restore drill (`table_count=0` caveat), authenticated compile-only probe. B1 still not executed. G3.6 full acceptance not claimed. See [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](../artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md). | Engineering |
+
+---
+
+*Document updated: 2026-05-12. SQLite Path 2 Target-Host Checklist — operator-executable. No production-ready claim. No token values. P6 CONDITIONAL GO.*

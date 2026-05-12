@@ -171,7 +171,7 @@ Phase B is complete when:
 | Phase | Owner | Status | Completion Criteria |
 |-------|-------|--------|---------------------|
 | Phase A (Repo-Side) | FerrumGate team | ✅ Complete | All artifacts present, no secrets in docs; pre-target gate passed 2026-05-08 |
-| Phase B (Target Execution) | Operator | ☐ Blocked | All blockers resolved; drills executed. **Latest attempt 2026-05-12 blocked** — runner IP `118.68.117.136` not in firewall SSH range `118.69.4.63/32`; no bearer token available. See [`artifacts/2026-05-12-sqlite-path2-target-host-blocked-attempt.md`](./artifacts/2026-05-12-sqlite-path2-target-host-blocked-attempt.md). |
+| Phase B (Target Execution) | Operator | ☐ Partial evidence | SSH unblocked 2026-05-12; Phase3E evidence script passed; safe temp restore drill done (`table_count=0` caveat); authenticated compile-only probe executed. B1 D1–D6 still not executed. Full G3.6 acceptance not achieved. See [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](./artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md) and [`artifacts/2026-05-12-sqlite-path2-target-host-blocked-attempt.md`](./artifacts/2026-05-12-sqlite-path2-target-host-blocked-attempt.md). |
 | G2 Signoff | Operator | ☐ Blocked | Doc 59 G2.1–G2.8 filled and signed |
 | Doc 54 Signoff | Operator | ☐ Blocked | Pilot acceptance statement signed |
 
