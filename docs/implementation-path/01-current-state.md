@@ -1,9 +1,9 @@
 # 01 — Current state
 
-Last updated: 2026-05-11 — PostgreSQL P3/P4 local Docker/runtime support documented
+Last updated: 2026-05-12 — P5a–P5e complete; P6 CONDITIONAL GO; full workspace gate passed
 Single-node v1 scope unless noted.
 
-**Repository**: `https://github.com/BrianNguyen29/Ferrum-Gate` (upstream/original — private, accessible with authorized GitHub credentials) | **Default package version**: `0.1.0` | **Status**: RC candidate v0.1.0-rc.1 published (GitHub prerelease) — Path 1 complete; Path 2 pilot pending operator signoff
+**Repository**: `https://github.com/BrianNguyen29/Ferrum-Gate` (upstream/original — private, accessible with authorized GitHub credentials) | **Default package version**: `0.1.0` | **Status**: P5a–P5e engineering complete within authorized scope; P6 CONDITIONAL GO for operator signoff/pilot; production-ready remains NO; HA/multi-node/PostgreSQL production deployment remain NO; single-node SQLite-backed deployment is the only supported runtime
 
 **Release support contract**:
 - Supported = SQLite-backed single-node governance core.
@@ -36,6 +36,7 @@ Single-node v1 scope unless noted.
 - `ferrumd` — server binary
 - `ferrumctl` — CLI (health, inspect-execution, inspect-approvals, inspect-approval, inspect-lineage, inspect-provenance)
   - **Policy bundle authoring (H1.1d)**: `server create-policy-bundle`, `server get-policy-bundle` (with `--export`), `server list-policy-bundles`, `server update-policy-bundle`, `server delete-policy-bundle`, `server set-policy-bundle-active`; local `author bundle bump` for version bumping
+- `ferrum-migrate` — database migration binary (SQLite → PostgreSQL migration; runs schema migrations against configured store DSN; feature-gated `--features postgres`)
 
 ### Integrations
 - `ferrum-integration-tests` — integration tests covering: capability single-use, R3 no-auto-commit, rollback/compensate distinct ops, taint-based quarantine, compensate end-to-end flow, pending-approvals pagination/filter, lineage endpoint shape/validation
@@ -106,10 +107,21 @@ Full workspace check/clippy/test pass locally with 0 failures. Prefer command-le
 
 ## Next step
 
-All P0/P1/P2 items closed. U1-U4 upgrade tracks complete. Full workspace check/clippy/test verified locally (G1 observed PASS 2026-04-28). v1 RC is unblocked for single-node SQLite-backed deployment. Next decision routing:
+All P0–P2 items closed. U1–U4 upgrade tracks complete. P5a–P5e engineering complete within authorized scope. Full workspace gate rerun passed (ALL LOCAL CHECKS PASSED 2026-05-12; repo prepared for Tier 1 target deployment preparation). P6 oracle verdict: CONDITIONAL GO. Production-ready remains NO; HA/multi-node/PostgreSQL production deployment remain NO.
 
-1. **Path 1 (RC tag)**: Requires git repo + re-run G1 gates before tagging. See [`31-release-paths-todo.md`](./31-release-paths-todo.md) §Path 1.
-2. **Path 2 (Operator signoff/pilot)**: Limited production deployment with explicit operator signoff. See [`54-operator-signoff-packet.md`](./54-operator-signoff-packet.md).
+Remaining operator blockers before pilot:
+- Target-host D1–D6 evidence
+- SQLite restore drill
+- Backup automation
+- TLS/reverse proxy configuration
+- Bearer token generation
+- P5c.V1 backup drill
+- P5c.V2 restore drill
+- G3.6 real workload/post-deploy monitoring
+
+Next decision routing:
+1. **Path 1 (RC tag)**: Requires git repo + G1 gates verified. See [`31-release-paths-todo.md`](./31-release-paths-todo.md) §Path 1.
+2. **Path 2 (Operator signoff/pilot)**: Conditional deployment with explicit operator signoff and blockers resolved. See [`54-operator-signoff-packet.md`](./54-operator-signoff-packet.md).
 3. **Path 3 (PostgreSQL/Phase3)**: P3 repository implementations and P4.1–P4.4 MVP/local Docker/runtime complete. Production/HA/multi-node remains deferred. See [`31-release-paths-todo.md`](./31-release-paths-todo.md) §Path 3.
 
 Remaining work is documented in:

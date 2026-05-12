@@ -18,16 +18,15 @@ make test    # cargo test --workspace
 - CI runs: layout validation, contract consistency, fmt check, cargo check, clippy, and cargo test (no `|| true` — failures are not swallowed)
 - Pre-target gate (local only): `bash scripts/run_pre_target_gate.sh` — validates config examples, restore drill, evidence skeleton generator, docs present, bearer-auth smoke
 
-## Current Verification Status (2026-05-11)
+## Current Verification Status (2026-05-12)
 - Layout/contract validation: PASSES locally
 - `cargo fmt --all -- --check`: PASSES locally
 - `cargo check --workspace`: PASSES locally
 - `cargo clippy --workspace --all-targets -- -D warnings`: PASSES locally
 - `cargo test --workspace`: PASSES locally (all packages)
 - `bash scripts/run_pre_target_gate.sh --full`: PASSES locally
-- Summary: layout=0 contract=0 fmt=0 check=0 test=0 clippy=0 pre_target_gate_full=0
-
-> **Bounded P5b/P5e check (2026-05-12)**: `cargo check/clippy/test -p ferrum-migrate --features postgres` passes. Full workspace gate was **not** re-run after P5e completion; run `make check && make lint && make test` before updating the baseline above.
+- Full workspace gate rerun after P5e: PASSED (ALL LOCAL CHECKS PASSED)
+- Summary: layout=0 contract=0 fmt=0 check=0 clippy=0 test=0 pre_target_gate_full=0
 
 ## ferrumd Config Precedence
 CLI args > env vars > config file > defaults.

@@ -2,7 +2,7 @@
 
 > **Status**: P3 Repository Implementations — Complete (local Docker). P4.1–P4.4 Complete. P5a Production Readiness Design — GO for ADR/design only. P5b Partially Implemented (conservative defaults wired; leak detection/circuit-breaker deferred). P5c Design/docs complete (RPO/RTO approved; operator drills pending). P5d Skipped (D1=A/D3=A). P5e Migration Grade-Up — Complete (P5e.1–P5e.5 implemented). G3.5 operator D1–D3 signoff satisfied (Option A defaults). Eng.1/Eng.2 satisfied. G3.6 conditionally accepted for conservative-default implementation.
 > **Date**: 2026-05-12
-> **Deciders**: Engineering implementation complete for local Docker/runtime; production/HA/multi-node posture remains NO. P5a–P5e implementation is complete for the authorized scope; P6 assessment is the next gate before any production-ready claim.
+> **Deciders**: Engineering implementation complete for local Docker/runtime; production/HA/multi-node posture remains NO. P5a–P5e implementation is complete for the authorized scope. P6 oracle verdict (2026-05-12): CONDITIONAL GO for operator signoff path; PostgreSQL production deployment remains NO; HA/multi-node remains NO.
 > **Estimated Effort**: P1–P4.4 ~2000-3000 LOC + migrations + container tests; P5a design only; P5b ~80 LOC (conservative defaults); P5c ~150 LOC (docs + config); P5d 0 LOC (skipped); P5e ~200 LOC + tests (D1=A/D2=A/D3=A).
 > **Next Step**: P6 assessment before any production-ready claim. Operator-owned blockers remain: G3.6 real workload validation (post-deploy monitoring), P5c.V1–V2 backup/restore drills.
 

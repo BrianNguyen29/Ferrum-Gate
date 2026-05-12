@@ -4,7 +4,9 @@ use anyhow::{Result, bail};
 use anyhow::Context;
 use clap::Parser;
 use serde::Serialize;
+#[cfg(any(feature = "postgres", test))]
 use sha2::{Digest, Sha256};
+#[cfg(any(feature = "postgres", test))]
 use sqlx::{ColumnIndex, Row};
 #[cfg(feature = "postgres")]
 use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
@@ -210,6 +212,7 @@ async fn is_target_empty(pg: &PgPool, table: &str) -> Result<bool> {
 /// - Boolean-like columns (`auto_commit`, `active`) are rendered as `true`/`false`.
 /// - Integer columns (`step_index`, `entry_id`) are rendered as decimal strings.
 /// - All other columns are rendered as their raw text value.
+#[cfg(any(feature = "postgres", test))]
 fn canonical_row<R: Row>(row: &R, select_columns: &str) -> Result<String>
 where
     for<'r> &'r str: ColumnIndex<R>,
@@ -242,6 +245,7 @@ where
 }
 
 /// Aggregate a collection of per-row SHA-256 hashes into a single sorted hash.
+#[cfg(any(feature = "postgres", test))]
 fn aggregate_hash(mut hashes: Vec<String>) -> String {
     hashes.sort_unstable();
     let joined = hashes.join("\n");
