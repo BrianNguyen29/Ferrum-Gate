@@ -1247,4 +1247,369 @@ mod tests {
         assert_eq!(fetched.intent_id, intent_id);
         assert_eq!(fetched.normalized_goal, "test goal");
     }
+
+    #[cfg(feature = "postgres")]
+    async fn clear_all_target_tables(pg: &sqlx::PgPool) {
+        for table in [
+            "provenance_edges",
+            "ledger_entries",
+            "provenance_events",
+            "approvals",
+            "rollback_contracts",
+            "executions",
+            "capabilities",
+            "proposals",
+            "intents",
+            "policy_bundles",
+        ] {
+            let _ = sqlx::query(&format!("DELETE FROM {}", table))
+                .execute(pg)
+                .await;
+        }
+        let _ = sqlx::query("DROP TABLE IF EXISTS _migration_checkpoints")
+            .execute(pg)
+            .await;
+    }
+
+    /// Integration test: repeated-run resume idempotency.
+    /// Skips if PostgreSQL is not reachable.
+    #[cfg(feature = "postgres")]
+    #[tokio::test]
+    async fn test_migrate_resume_idempotency() {
+        use ferrum_store::IntentRepo;
+
+        let pg_dsn = std::env::var("FERRUM_MIGRATE_TEST_PG_DSN").unwrap_or_else(|_| {
+            "postgres://ferrumgate_dev:ferrumgate_dev_password@localhost:5432/ferrumgate_p2_test"
+                .to_string()
+        });
+
+        let pg = match connect_postgres(&pg_dsn).await {
+            Ok(p) => p,
+            Err(_) => {
+                eprintln!("Skipping integration test: PostgreSQL not reachable");
+                return;
+            }
+        };
+
+        let pg_store = ferrum_store::postgres::PostgresStore::connect(&pg_dsn)
+            .await
+            .unwrap();
+        pg_store.apply_embedded_migrations().await.unwrap();
+        clear_all_target_tables(&pg).await;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let sqlite_dsn = format!(
+            "sqlite://{}",
+            temp_dir.path().join("test.db").to_str().unwrap()
+        );
+
+        let sqlite_store = ferrum_store::SqliteStore::connect(&sqlite_dsn)
+            .await
+            .unwrap();
+        sqlite_store.apply_embedded_migrations().await.unwrap();
+
+        for i in 0..2 {
+            let intent = ferrum_proto::IntentEnvelope {
+                intent_id: ferrum_proto::IntentId::new(),
+                principal_id: ferrum_proto::PrincipalId::new(),
+                session_id: None,
+                channel_id: None,
+                title: format!("test-{}", i),
+                goal: format!("goal-{}", i),
+                normalized_goal: format!("goal-{}", i),
+                allowed_outcomes: vec![],
+                forbidden_outcomes: vec![],
+                resource_scope: vec![],
+                risk_tier: ferrum_proto::RiskTier::Low,
+                approval_mode: ferrum_proto::ApprovalMode::None,
+                default_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+                time_budget: ferrum_proto::TimeBudget {
+                    max_duration_ms: 30000,
+                    max_steps: 8,
+                    max_retries_per_step: 1,
+                },
+                trust_context: ferrum_proto::TrustContextSummary {
+                    input_labels: vec![],
+                    sensitivity_labels: vec![],
+                    taint_score: 0,
+                    contains_external_metadata: false,
+                    contains_tool_output: false,
+                    contains_untrusted_text: false,
+                },
+                derived_from_event_ids: vec![],
+                tags: vec![],
+                metadata: ferrum_proto::JsonMap::new(),
+                status: ferrum_proto::IntentStatus::Active,
+                created_at: chrono::Utc::now(),
+                expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
+            };
+            sqlite_store.intents().insert(&intent).await.unwrap();
+        }
+
+        let args_first = Args {
+            from: sqlite_dsn.clone(),
+            to: pg_dsn.clone(),
+            apply: true,
+            json: false,
+            chunk_size: 1000,
+            resume: false,
+        };
+        let report_first = run_migration(&args_first).await.unwrap();
+        let intents_first = report_first
+            .tables
+            .iter()
+            .find(|t| t.table == "intents")
+            .unwrap();
+        assert_eq!(
+            intents_first.source_count, 2,
+            "first run: expected 2 source intents"
+        );
+        assert_eq!(
+            intents_first.target_count, 2,
+            "first run: expected 2 target intents"
+        );
+        assert_eq!(
+            intents_first.migrated_count, 2,
+            "first run: expected 2 migrated intents"
+        );
+        assert!(intents_first.count_match, "first run: count should match");
+        assert!(intents_first.hash_match, "first run: hash should match");
+        assert!(
+            intents_first.errors.is_empty(),
+            "first run: no errors expected"
+        );
+
+        let args_second = Args {
+            from: sqlite_dsn,
+            to: pg_dsn,
+            apply: true,
+            json: false,
+            chunk_size: 1000,
+            resume: true,
+        };
+        let report_second = run_migration(&args_second).await.unwrap();
+        let intents_second = report_second
+            .tables
+            .iter()
+            .find(|t| t.table == "intents")
+            .unwrap();
+        assert_eq!(
+            intents_second.source_count, 2,
+            "second run: expected 2 source intents"
+        );
+        assert_eq!(
+            intents_second.target_count, 2,
+            "second run: expected 2 target intents"
+        );
+        assert_eq!(
+            intents_second.migrated_count, 0,
+            "second run: resume should skip already-migrated table"
+        );
+        assert!(intents_second.count_match, "second run: count should match");
+        assert!(intents_second.hash_match, "second run: hash should match");
+        assert!(
+            intents_second.errors.is_empty(),
+            "second run: no errors expected"
+        );
+    }
+
+    /// Integration test: content-hash validation.
+    /// Skips if PostgreSQL is not reachable.
+    #[cfg(feature = "postgres")]
+    #[tokio::test]
+    async fn test_migrate_content_hash_validation() {
+        use ferrum_store::IntentRepo;
+
+        let pg_dsn = std::env::var("FERRUM_MIGRATE_TEST_PG_DSN").unwrap_or_else(|_| {
+            "postgres://ferrumgate_dev:ferrumgate_dev_password@localhost:5432/ferrumgate_p2_test"
+                .to_string()
+        });
+
+        let pg = match connect_postgres(&pg_dsn).await {
+            Ok(p) => p,
+            Err(_) => {
+                eprintln!("Skipping integration test: PostgreSQL not reachable");
+                return;
+            }
+        };
+
+        let pg_store = ferrum_store::postgres::PostgresStore::connect(&pg_dsn)
+            .await
+            .unwrap();
+        pg_store.apply_embedded_migrations().await.unwrap();
+        clear_all_target_tables(&pg).await;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let sqlite_dsn = format!(
+            "sqlite://{}",
+            temp_dir.path().join("test.db").to_str().unwrap()
+        );
+
+        let sqlite_store = ferrum_store::SqliteStore::connect(&sqlite_dsn)
+            .await
+            .unwrap();
+        sqlite_store.apply_embedded_migrations().await.unwrap();
+
+        for i in 0..3 {
+            let intent = ferrum_proto::IntentEnvelope {
+                intent_id: ferrum_proto::IntentId::new(),
+                principal_id: ferrum_proto::PrincipalId::new(),
+                session_id: None,
+                channel_id: None,
+                title: format!("hash-test-{}", i),
+                goal: format!("hash-goal-{}", i),
+                normalized_goal: format!("hash-goal-{}", i),
+                allowed_outcomes: vec![],
+                forbidden_outcomes: vec![],
+                resource_scope: vec![],
+                risk_tier: ferrum_proto::RiskTier::Low,
+                approval_mode: ferrum_proto::ApprovalMode::None,
+                default_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+                time_budget: ferrum_proto::TimeBudget {
+                    max_duration_ms: 30000,
+                    max_steps: 8,
+                    max_retries_per_step: 1,
+                },
+                trust_context: ferrum_proto::TrustContextSummary {
+                    input_labels: vec![],
+                    sensitivity_labels: vec![],
+                    taint_score: 0,
+                    contains_external_metadata: false,
+                    contains_tool_output: false,
+                    contains_untrusted_text: false,
+                },
+                derived_from_event_ids: vec![],
+                tags: vec![],
+                metadata: ferrum_proto::JsonMap::new(),
+                status: ferrum_proto::IntentStatus::Active,
+                created_at: chrono::Utc::now(),
+                expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
+            };
+            sqlite_store.intents().insert(&intent).await.unwrap();
+        }
+
+        let args = Args {
+            from: sqlite_dsn,
+            to: pg_dsn,
+            apply: true,
+            json: false,
+            chunk_size: 1000,
+            resume: false,
+        };
+        let report = run_migration(&args).await.unwrap();
+        let intents = report.tables.iter().find(|t| t.table == "intents").unwrap();
+        assert!(intents.hash_match, "hash should match for intents");
+        assert!(
+            intents.source_content_hash.is_some(),
+            "source hash should be present"
+        );
+        assert!(
+            intents.target_content_hash.is_some(),
+            "target hash should be present"
+        );
+        assert_eq!(
+            intents.source_content_hash, intents.target_content_hash,
+            "source and target content hashes should be equal"
+        );
+        assert!(intents.errors.is_empty(), "no errors expected for intents");
+    }
+
+    /// Integration test: large-dataset streaming.
+    /// Skips by default; set FERRUM_MIGRATE_TEST_LARGE_DATASET=1 to enable.
+    /// Skips if PostgreSQL is not reachable.
+    #[cfg(feature = "postgres")]
+    #[tokio::test]
+    async fn test_migrate_large_dataset() {
+        if std::env::var("FERRUM_MIGRATE_TEST_LARGE_DATASET").is_err() {
+            eprintln!(
+                "Skipping large dataset test: set FERRUM_MIGRATE_TEST_LARGE_DATASET=1 to enable"
+            );
+            return;
+        }
+
+        let pg_dsn = std::env::var("FERRUM_MIGRATE_TEST_PG_DSN").unwrap_or_else(|_| {
+            "postgres://ferrumgate_dev:ferrumgate_dev_password@localhost:5432/ferrumgate_p2_test"
+                .to_string()
+        });
+
+        let pg = match connect_postgres(&pg_dsn).await {
+            Ok(p) => p,
+            Err(_) => {
+                eprintln!("Skipping integration test: PostgreSQL not reachable");
+                return;
+            }
+        };
+
+        let pg_store = ferrum_store::postgres::PostgresStore::connect(&pg_dsn)
+            .await
+            .unwrap();
+        pg_store.apply_embedded_migrations().await.unwrap();
+        clear_all_target_tables(&pg).await;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let sqlite_dsn = format!(
+            "sqlite://{}",
+            temp_dir.path().join("test.db").to_str().unwrap()
+        );
+
+        let sqlite_store = ferrum_store::SqliteStore::connect(&sqlite_dsn)
+            .await
+            .unwrap();
+        sqlite_store.apply_embedded_migrations().await.unwrap();
+
+        let n: i32 = std::env::var("FERRUM_MIGRATE_TEST_LARGE_DATASET_SIZE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(5000);
+
+        eprintln!("Inserting {} intents into SQLite...", n);
+        for i in 0..n {
+            let intent_id = ferrum_proto::IntentId::new().to_string();
+            let principal_id = ferrum_proto::PrincipalId::new().to_string();
+            let goal = format!("large-goal-{}", i);
+            sqlx::query(
+                "INSERT INTO intents (
+                    intent_id, principal_id, normalized_goal,
+                    status, risk_tier, approval_mode, default_rollback_class,
+                    created_at, expires_at, raw_json
+                ) VALUES (
+                    $1, $2, $3,
+                    'active', 'low', 'none', 'r0',
+                    datetime('now'), datetime('now', '+1 hour'), '{}'
+                )",
+            )
+            .bind(&intent_id)
+            .bind(&principal_id)
+            .bind(&goal)
+            .execute(sqlite_store.pool())
+            .await
+            .unwrap();
+        }
+
+        let args = Args {
+            from: sqlite_dsn,
+            to: pg_dsn,
+            apply: true,
+            json: false,
+            chunk_size: 1000,
+            resume: false,
+        };
+        let report = run_migration(&args).await.unwrap();
+        let intents = report.tables.iter().find(|t| t.table == "intents").unwrap();
+        assert_eq!(
+            intents.source_count, n as usize,
+            "source count should match inserted rows"
+        );
+        assert_eq!(
+            intents.target_count, n as usize,
+            "target count should match inserted rows"
+        );
+        assert!(intents.count_match, "count should match");
+        assert!(intents.hash_match, "hash should match");
+        assert!(
+            intents.errors.is_empty(),
+            "no errors expected for large dataset"
+        );
+        eprintln!("Large dataset test passed for {} rows", n);
+    }
 }

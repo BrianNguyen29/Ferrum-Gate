@@ -136,7 +136,7 @@ Single-node PostgreSQL requires bounded connection pool tuning only. No read rep
 ## P5e — Migration Grade-Up (Partially Implemented)
 
 ### Status
-P5e.1–P5e.4 implemented (upsert/resume, checkpointing, content-hash validation, streaming/chunking). P5e.5 integration tests remain pending.
+P5e.1–P5e.5 implemented (upsert/resume, checkpointing, content-hash validation, streaming/chunking, integration tests). P5e completion does not claim production-ready; P6 assessment is still required.
 
 ### Scope
 Upgrade P4.4 MVP migration CLI (`bins/ferrum-migrate`) to production-grade.
@@ -150,7 +150,7 @@ P4.4 MVP already implements: dry-run default, `--apply`, empty-target safety, co
 | P5e.2 | Add checkpointing (save migration progress, resume from last checkpoint) | ~50 LOC | Engineering | P5e.1 | ☑ DONE — PostgreSQL `_migration_checkpoints` table; per-table checkpoint write after success; skip on resume when row_count matches; stale checkpoint deletion when row_count differs; unit-tested action logic |
 | P5e.3 | Add content-hash validation for lineage equivalence (SHA-256 per record) | ~50 LOC | Engineering | P5e.1 | ☑ DONE — canonical row serialization (col=value;...); per-row SHA-256; sorted aggregate hash; source vs target comparison in migrate_table; unit-tested determinism, null handling, order independence |
 | P5e.4 | Add large-dataset streaming (chunked read/write to avoid OOM) | ~50 LOC | Engineering | P5e.1 | ☑ DONE — default chunk-size 1000, max 10000; per-chunk transaction with row-by-row fallback |
-| P5e.5 | Integration tests for repeated runs, hash validation, and large dataset | ~50 LOC (tests) | Engineering | P5e.2–P5e.4 | ☐ Pending |
+| P5e.5 | Integration tests for repeated runs, hash validation, and large dataset | ~50 LOC (tests) | Engineering | P5e.2–P5e.4 | ☑ DONE — resume idempotency test (first-run + resume skip); content-hash validation test; large-dataset streaming test (opt-in via FERRUM_MIGRATE_TEST_LARGE_DATASET, default 5000 rows); all skip cleanly if PostgreSQL unavailable |
 
 **Total P5e estimate**: ~250 LOC (incremental upgrade from P4.4 MVP; if this exceeds Eng.1 budget, defer P5e or split into post-P5b/P5c phase). P5e.4 delivered ~80 LOC.
 
@@ -158,9 +158,9 @@ P4.4 MVP already implements: dry-run default, `--apply`, empty-target safety, co
 
 | Gate | Criterion | Evidence | Status |
 |---|---|---|---|
-| P5e.V1 | Migration is idempotent (rerunnable without duplication) | Integration test with repeated runs | ☑ Partially satisfied — upsert/resume semantics implemented; repeated-run integration test pending |
-| P5e.V2 | Content-hash validation passes for all migrated records | Hash comparison log | ☑ Partially satisfied — source and target aggregate SHA-256 comparison implemented; large-scale integration test pending |
-| P5e.V3 | Large dataset (≥1M records) streams without OOM | Memory profile or benchmark evidence | ☑ Partially satisfied — chunking implemented; ≥1M benchmark deferred |
+| P5e.V1 | Migration is idempotent (rerunnable without duplication) | Integration test with repeated runs | ☑ Satisfied — `test_migrate_resume_idempotency` exercises first-run + resume skip against live PostgreSQL (skipped if unavailable) |
+| P5e.V2 | Content-hash validation passes for all migrated records | Hash comparison log | ☑ Satisfied — `test_migrate_content_hash_validation` verifies source_content_hash == target_content_hash against live PostgreSQL (skipped if unavailable) |
+| P5e.V3 | Large dataset (≥1M records) streams without OOM | Memory profile or benchmark evidence | ☑ Partially satisfied — chunking implemented; opt-in test validates 5k rows default (configurable via FERRUM_MIGRATE_TEST_LARGE_DATASET_SIZE); ≥1M benchmark remains operator-owned/deferred |
 
 ---
 
@@ -171,7 +171,7 @@ P4.4 MVP already implements: dry-run default, `--apply`, empty-target safety, co
 | P5b — Pool tuning | Deferred | ~170–220 | G3.6; Eng.1; Eng.2 | Engineering |
 | P5c — Backup/restore | ☑ Design/docs complete | ~80 | Eng.1; Eng.2; P5b | Engineering + Operator |
 | P5d — HA/clustering | **Skipped** | ~0 | D1=A/D3=A | N/A |
-| P5e — Migration grade-up | Partially Implemented (P5e.1–P5e.4 delivered; P5e.5 integration tests pending) | ~250 | Eng.1; Eng.2; P5b–P5c | Engineering |
+| P5e — Migration grade-up | ☑ Partially Implemented (P5e.1–P5e.5 delivered) | ~250 | Eng.1; Eng.2; P5b–P5c | Engineering |
 | **Total P5b–P5e (D1=A/D2=A/D3=A)** | | **~500–550** | | |
 
 > **Budget check**: The Combined Decision Impact Matrix estimates ~200–400 LOC for D1=A/D2=A/D3=A. P5e (~250 LOC) may push total above budget. Engineering lead should decide whether to:

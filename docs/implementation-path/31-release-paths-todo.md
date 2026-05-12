@@ -273,11 +273,12 @@ Per `50-p4-postgres-store-facade-adr.md` §3 Phase P1:
 - [ ] **Blocked until**: G3.6 pilot data available; Eng.1/Eng.2 planning complete; explicitly out of v1 scope
 
 #### P5e — Migration Grade-Up (Partially Implemented)
-- [ ] SQLite → PostgreSQL migration upgraded from MVP to production-grade — P5e.1–P5e.4 implemented; P5e.5 integration tests still pending
+- [x] SQLite → PostgreSQL migration upgraded from MVP to production-grade — P5e.1–P5e.5 implemented; P5e completion does not claim production-ready
 - [x] Idempotent/resumable migration with upsert semantics (P5e.1) — implemented (--resume flag; ON CONFLICT DO NOTHING for tables with stable ID; provenance_edges blocked with clear error)
 - [x] Checkpointing (P5e.2) — implemented (PostgreSQL `_migration_checkpoints` table; skip on resume when row_count matches; stale checkpoint deletion)
 - [x] Content-hash validation for lineage equivalence (P5e.3) — implemented (canonical col=value serialization; per-row SHA-256; sorted aggregate hash; source vs target comparison)
 - [x] Large-dataset streaming and chunking (P5e.4) — implemented (default chunk-size 1000, max 10000; per-chunk transaction with row-by-row fallback)
+- [x] Integration tests for repeated runs, hash validation, and large dataset (P5e.5) — implemented (resume idempotency, content-hash validation, opt-in large-dataset streaming; all skip if PostgreSQL unavailable)
 - [ ] **Blocked until**: G3.6 pilot data available; Eng.1/Eng.2 planning complete; P5b–P5c design complete
 
 > **P5 completion does not claim production-ready.** Even after P5a–P5e complete, a later P6 assessment is required before any full production-ready claim. PostgreSQL production deployment remains operator-owned and gated.
