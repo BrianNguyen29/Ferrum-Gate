@@ -1,6 +1,6 @@
 # 116 — G3.6 Monitoring Execution Plan
 
-> **Status**: Planning/checklist artifact. Partial evidence gathered 2026-05-12 (authenticated bounded compile-only probe: 133×200, 40×429, p50 ~205.12ms). Full G3.6 acceptance not achieved. No production-ready claim.  
+> **Status**: Planning/checklist artifact. Partial evidence gathered 2026-05-12 (authenticated bounded compile-only probe and full-duration compile-only sequence: baseline→low→target→spike→cooldown; 1,078×200, 1,987×429, `readyz/deep` degraded at target/spike). Full G3.6 acceptance not achieved. No production-ready claim.  
 > **Purpose**: Execution plan for transitioning G3.6 from **conditionally accepted** (compile-only/light workload) to **full acceptance** with real workload validation.  
 > **Scope**: Post-deploy monitoring on target host. Adapter execution paths exercised.  
 > **Constraint**: This plan does NOT make FerrumGate production-ready. P5b–P5e remain gated on G3.6 full acceptance. Do not record secrets.
@@ -18,7 +18,9 @@ Current status per `106-g3-6-pilot-metrics-evidence-packet.md`:
 - Compile-only workload; adapter execution paths (FS, Git, HTTP, SQLite, Maildraft) **unexercised**
 - No low/target/spike/cooldown metrics sequence
 
-**Update 2026-05-12**: Authenticated bounded compile-only probe executed on target host (173 total requests, 133 HTTP 200, 40 HTTP 429, p50 ~205.12ms). This is **not** full G3.6 acceptance. See [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](../artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md) §9.
+**Update 2026-05-12 (bounded probe)**: Authenticated bounded compile-only probe executed on target host (173 total requests, 133 HTTP 200, 40 HTTP 429, p50 ~205.12ms). This is **not** full G3.6 acceptance. See [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](../artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md) §9.
+
+**Update 2026-05-12 (full-duration sequence)**: Full-duration compile-only phase sequence executed (baseline 600s → low 600s → target 1800s → spike 300s → cooldown 600s; 1,078×200, 1,987×429, overall p50 ~203.2ms). `readyz/deep` degraded to 3/5 at target and 2/5 at spike. No adapter mix. **Not** full G3.6 acceptance. See [`artifacts/2026-05-12-g36-full-duration-compile-only-evidence.md`](../artifacts/2026-05-12-g36-full-duration-compile-only-evidence.md) §7.
 
 This plan closes the remaining gaps.
 
@@ -297,6 +299,7 @@ Refresh `106-g3-6-pilot-metrics-evidence-packet.md` with real workload data:
 |---|---|---|
 | 2026-05-12 | Initial G3.6 monitoring execution plan | Engineering |
 | 2026-05-12 | Partial evidence update: authenticated bounded compile-only probe executed on target host (133×200, 40×429, p50 ~205.12ms). Full phase sequence and adapter mix remain not executed. Full G3.6 acceptance not achieved. See [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](../artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md). | Engineering |
+| 2026-05-12 | Extended evidence: full-duration compile-only phase sequence executed (baseline→low→target→spike→cooldown; 1,078×200, 1,987×429, `readyz/deep` degraded). No adapter mix. Full G3.6 acceptance not achieved. See [`artifacts/2026-05-12-g36-full-duration-compile-only-evidence.md`](../artifacts/2026-05-12-g36-full-duration-compile-only-evidence.md). | Engineering |
 
 ---
 

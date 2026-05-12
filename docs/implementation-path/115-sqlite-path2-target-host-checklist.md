@@ -1,6 +1,6 @@
 # 115 — SQLite Path 2 Target-Host Checklist
 
-> **Status**: Operator checklist. Partial evidence gathered 2026-05-12 (SSH unblocked, Phase3E script passed, safe restore drill, authenticated compile-only probe). B1 D1–D6 not executed. G3.6 full acceptance not achieved. No production-ready claim.  
+> **Status**: Operator checklist. Partial evidence gathered 2026-05-12 (SSH unblocked, Phase3E script passed, safe restore drill with `table_count=0` caveat resolved, authenticated compile-only probe, full-duration compile-only G3.6 sequence). B1 D1–D6 not executed. G3.6 full acceptance not achieved. No production-ready claim.  
 > **Purpose**: Target-host execution checklist for closing SQLite Path 2 operator blockers B1–B5 and B8 from `66-path-2-operator-handoff.md`.  
 > **Scope**: Single-node SQLite target host only. No PostgreSQL/multi-node.  
 > **Constraint**: This checklist does NOT authorize production deployment. All target-host work remains operator-owned. Do not record token values.
@@ -117,7 +117,7 @@ Before starting, confirm:
 | B2-9 | Restart ferrumd | `systemctl start ferrumd` | ☐ |
 | B2-10 | Verify readiness after restart | `curl -H "Authorization: Bearer $TOKEN" https://<domain>/v1/readyz/deep` → HTTP 200 | ☐ |
 
-**Evidence**: Restore drill log showing `integrity_check: ok`, `readyz/deep` HTTP 200. Partial evidence: safe temp-copy drill passed (`INTEGRITY=ok`, `SIZE_BYTES=4239360`, `TEMP_CLEANED=yes`); **caveat** `table_count=0` observed on both backup and current DB — operator review required; see [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](../artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md) §7.
+**Evidence**: Restore drill log showing `integrity_check: ok`, `readyz/deep` HTTP 200. Partial evidence: safe temp-copy drill passed (`INTEGRITY=ok`, `SIZE_BYTES=4239360`, `TEMP_CLEANED=yes`); `table_count=0` caveat **resolved** as query/DSN parsing issue — actual DB has 14 tables, 41 indexes, `integrity_check: ok`; see [`artifacts/2026-05-12-g36-full-duration-compile-only-evidence.md`](../artifacts/2026-05-12-g36-full-duration-compile-only-evidence.md) §3, §4. Full restore-to-production still **not executed**.
 
 ### B2 Stop Conditions
 
@@ -145,7 +145,7 @@ Before starting, confirm:
 | B1-10 | Fill `58-workload-compensation-drill-evidence-template.md` | Operator annotations per drill | ☐ |
 | B1-11 | Verify no `fail_closed_verified: false` on critical adapters | GitPush and HTTP non-idempotent must be fail-closed | ☐ |
 
-**Evidence**: Completed `58-workload-compensation-drill-evidence-template.md`. **Not yet executed** — B1 remains open; see [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](../artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md) §11.
+**Evidence**: Completed `58-workload-compensation-drill-evidence-template.md`. **Not yet executed** — B1 remains open; no valid end-to-end adapter drill runner/API payload available for target host; local adapter runner exists but does not satisfy target-host B1 closure; see [`artifacts/2026-05-12-g36-full-duration-compile-only-evidence.md`](../artifacts/2026-05-12-g36-full-duration-compile-only-evidence.md) §5.
 
 ### B1 Stop Conditions
 
@@ -170,7 +170,7 @@ Before starting, confirm:
 | B8-5 | Update `106-g3-6-pilot-metrics-evidence-packet.md` with real workload data | ☐ |
 | B8-6 | Operator re-signs G3.6 (full, not conditional) | ☐ |
 
-**Evidence**: Updated G3.6 evidence packet with real workload metrics. Partial evidence: authenticated bounded compile-only probe executed (173 total, 133×200, 40×429, p50 ~205.12ms); full phase sequence and adapter mix not performed; see [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](../artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md) §9, §10.
+**Evidence**: Updated G3.6 evidence packet with real workload metrics. Partial evidence: authenticated bounded compile-only probe executed (173 total, 133×200, 40×429, p50 ~205.12ms); full-duration compile-only sequence also executed (baseline 600s → low 600s → target 1800s → spike 300s → cooldown 600s; 1,078×200, 1,987×429, `readyz/deep` degraded to 3/5 target and 2/5 spike); full phase sequence and adapter mix not performed; not full G3.6 acceptance; see [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](../artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md) §9, §10 and [`artifacts/2026-05-12-g36-full-duration-compile-only-evidence.md`](../artifacts/2026-05-12-g36-full-duration-compile-only-evidence.md) §7.
 
 ---
 
@@ -233,6 +233,7 @@ Before starting, confirm:
 |---|---|---|
 | 2026-05-12 | Initial checklist | Engineering |
 | 2026-05-12 | Partial evidence gathered: SSH unblocked, Phase3E script passed, safe restore drill (`table_count=0` caveat), authenticated compile-only probe. B1 still not executed. G3.6 full acceptance not claimed. See [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](../artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md). | Engineering |
+| 2026-05-12 | Extended evidence: `table_count=0` caveat resolved as DSN-query parsing issue (14 tables, 41 indexes, integrity ok); B1 limitation documented (no target-host adapter drill runner); full-duration compile-only G3.6 sequence executed. See [`artifacts/2026-05-12-g36-full-duration-compile-only-evidence.md`](../artifacts/2026-05-12-g36-full-duration-compile-only-evidence.md). | Engineering |
 
 ---
 

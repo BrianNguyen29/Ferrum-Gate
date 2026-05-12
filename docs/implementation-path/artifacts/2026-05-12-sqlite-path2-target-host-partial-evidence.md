@@ -105,11 +105,13 @@ A safe restore drill was performed using a **temporary copy** (not overwriting t
 | Size (bytes) | `SIZE_BYTES=4239360` |
 | Temp cleaned | `TEMP_CLEANED=yes` |
 
-### 7.3 Caveat — Table Count = 0
+### 7.3 Caveat — Table Count = 0 (RESOLVED in extended evidence)
 
-`TABLE_COUNT=0` was observed on the restored backup. The same `table_count=0` was also observed on the **configured current database** on the target host. This suggests the database may be in a freshly initialized or schema-only state, or that the counting query used a non-standard table name filter.
+`TABLE_COUNT=0` was observed on the restored backup. The same `table_count=0` was also observed on the **configured current database** on the target host.
 
-> **Action required**: Operator review needed to confirm whether `table_count=0` is expected for the current pilot state, or whether it indicates missing seeded data or an incorrect query filter. **This caveat is flagged, not hidden.**
+> **Resolution**: The `table_count=0` was caused by the counting query operating against the raw DSN string (including query parameters) rather than the resolved file path. Extended evidence in [`artifacts/2026-05-12-g36-full-duration-compile-only-evidence.md`](./2026-05-12-g36-full-duration-compile-only-evidence.md) §3 confirms the actual database has `sqlite_master` count=55 (14 tables, 41 indexes) and `PRAGMA integrity_check: ok`. The latest backup matches these counts. **This caveat is resolved.**
+>
+> **Remaining gap**: A full **restore-to-production** drill (stop ferrumd, overwrite live DB, restart, verify `readyz/deep`) remains **not executed**.
 
 ---
 
@@ -176,11 +178,11 @@ Metrics collected after the bounded compile-only probe:
 | Blocker | Status | Evidence | Caveats |
 |---|---|---|---|
 | B1 — Target-host D1–D6 evidence | **NOT EXECUTED** | — | Drills not run. Remains operator-owned. |
-| B2 — SQLite restore drill | **PARTIAL EVIDENCE** | Safe temp-copy drill passed (`integrity_check: ok`); see §7 | `table_count=0` caveat; not a full production restore drill. Operator review required. |
+| B2 — SQLite restore drill | **PARTIAL EVIDENCE** | Safe temp-copy drill passed (`integrity_check: ok`); see §7 | `table_count=0` caveat **resolved** as query/DSN parsing issue; actual DB has 14 tables, 41 indexes. Full restore-to-production still **not executed**. |
 | B3 — Backup automation | **PARTIAL EVIDENCE** | Backup timer enabled; latest backup file present (`ferrumgate_20260508_154446.db`); see §6 | Retention pruning and full `ferrumctl backup verify` not yet demonstrated. |
 | B4 — TLS/reverse proxy configuration | **PARTIAL EVIDENCE** | HTTPS probes pass; `caddy.service` active; see §6, §8 | Operator has not independently verified cert paths or config adaptation. |
 | B5 — Bearer token generation | **PARTIAL EVIDENCE** | Token present on host (`TOKEN_PRESENT`); `auth_mode=bearer`; see §5, §8 | Token generation command (`openssl rand -hex 32`) not independently witnessed. |
-| B8 — G3.6 real workload / post-deploy monitoring | **PARTIAL EVIDENCE** | Authenticated compile-only probe executed; 133×200, 40×429; see §9 | Full phase sequence not executed; no adapter mix; not full G3.6 acceptance. |
+| B8 — G3.6 real workload / post-deploy monitoring | **PARTIAL EVIDENCE** | Authenticated compile-only probe executed; 133×200, 40×429; see §9. Full-duration compile-only sequence also executed; see [`artifacts/2026-05-12-g36-full-duration-compile-only-evidence.md`](./2026-05-12-g36-full-duration-compile-only-evidence.md) §7 | Full phase sequence executed **compile-only**; no adapter mix; `readyz/deep` degraded under load (3/5 target, 2/5 spike); not full G3.6 acceptance. |
 
 ### 11.2 Doc 116 — G3.6 Monitoring Execution Plan
 
@@ -219,6 +221,7 @@ Metrics collected after the bounded compile-only probe:
 | This artifact | `112-post-p5c-completion-execution-plan.md` | Track 4 and Phase 3–5 context |
 | This artifact | `66-path-2-operator-handoff.md` §B.0 | Consolidated operator blockers B1–B8 |
 | This artifact | `106-g3-6-pilot-metrics-evidence-packet.md` | G3.6 conditional acceptance baseline |
+| This artifact | `artifacts/2026-05-12-g36-full-duration-compile-only-evidence.md` | Extended evidence: schema review, B1 limitation, full-duration compile-only G3.6 sequence |
 | This artifact | `58-workload-compensation-drill-evidence-template.md` | D1–D6 drill evidence template (not yet filled) |
 
 ---
@@ -229,6 +232,7 @@ Metrics collected after the bounded compile-only probe:
 |---|---|---|
 | 2026-05-12 | Initial partial evidence artifact — post-firewall-unblock SSH and authenticated probe | Engineering |
 | 2026-05-12 | Recorded SSH firewall restoration to original source range after evidence collection | Engineering |
+| 2026-05-12 | Cross-referenced extended evidence artifact; B2 `table_count=0` caveat resolved as DSN-query parsing issue; B8 updated to reference full-duration compile-only sequence | Engineering |
 
 ---
 

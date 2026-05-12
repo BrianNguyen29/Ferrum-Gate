@@ -51,8 +51,8 @@ Even though Option A (SQLite) is the active pilot, engineering maintains a **par
 
 | # | Task | Owner | Status | Evidence |
 |---|---|---|---|---|
-| A.1 | Adapt [`111-p5c-local-docker-drill-plan.md`](./111-p5c-local-docker-drill-plan.md) for generic target host: replace `localhost:5432` with placeholders, add `.pgpass` / `PGPASSFILE` guidance, add scheduler verification checklist | Engineering | ☐ Ready to start | Adapted plan document |
-| A.2 | Prepare environment-variable-only configuration template for target host (no hardcoded credentials) | Engineering | ☐ Ready to start | `configs/examples/postgres-target-env.template` (placeholders only) |
+| A.1 | Adapt [`111-p5c-local-docker-drill-plan.md`](./111-p5c-local-docker-drill-plan.md) for generic target host: replace `localhost:5432` with placeholders, add `.pgpass` / `PGPASSFILE` guidance, add scheduler verification checklist | Engineering | ✅ Completed 2026-05-12 — see [`118-target-host-p5c-drill-plan-adapted.md`](./118-target-host-p5c-drill-plan-adapted.md) | Adapted plan document |
+| A.2 | Prepare environment-variable-only configuration template for target host (no hardcoded credentials) | Engineering | ✅ Completed 2026-05-12 — see `configs/examples/postgres-target-env.template` | `configs/examples/postgres-target-env.template` (placeholders only) |
 | A.3 | Document minimum `pg_dump`/`pg_restore` version compatibility matrix (client vs server) | Engineering | ☐ Ready to start | Compatibility table in this doc or ADR-50 |
 | A.4 | Draft one-page "P5c target-host go/no-go" checklist for operator self-assessment before executing drills | Engineering | ☐ Ready to start | Checklist markdown |
 | A.5 | Review [`114-target-host-p5c-drill-checklist.md`](./114-target-host-p5c-drill-checklist.md) for outdated commands or schema references; refresh if needed | Engineering | ☐ Ready to start | Refresh commit |
@@ -102,8 +102,8 @@ Even though Option A (SQLite) is the active pilot, engineering maintains a **par
 |---|---|---|---|---|
 | D.1 | Re-run populated SQLite → local PostgreSQL migration using `ferrum-migrate --features postgres` | Engineering | Weekly during active pilot development | ✅ Completed 2026-05-12 — see [`artifacts/2026-05-12-d1-populated-local-migration-rehearsal-evidence.md`](./artifacts/2026-05-12-d1-populated-local-migration-rehearsal-evidence.md) |
 | D.2 | Exercise `--resume` path (P5e.1): migrate half, interrupt, resume, verify idempotency | Engineering | Bi-weekly | ✅ Completed 2026-05-12 — partial-resume checkpoint drill passed; true live-process interruption not tested due to CLI speed limitation. See [`artifacts/2026-05-12-d2-partial-resume-local-migration-rehearsal-evidence.md`](./artifacts/2026-05-12-d2-partial-resume-local-migration-rehearsal-evidence.md) |
-| D.3 | Exercise content-hash validation (P5e.3): verify `source_content_hash == target_content_hash` | Engineering | Weekly | ☐ Ready to start |
-| D.4 | Exercise large-dataset streaming (P5e.4): use chunk-size 1000, verify memory stays bounded | Engineering | Monthly | ☐ Ready to start |
+| D.3 | Exercise content-hash validation (P5e.3): verify `source_content_hash == target_content_hash` | Engineering | Weekly | ✅ Completed 2026-05-12 — see [`artifacts/2026-05-12-d3-content-hash-validation-rehearsal-evidence.md`](./artifacts/2026-05-12-d3-content-hash-validation-rehearsal-evidence.md) |
+| D.4 | Exercise large-dataset streaming (P5e.4): use chunk-size 1000, verify memory stays bounded | Engineering | Monthly | ✅ Completed 2026-05-12 — see [`artifacts/2026-05-12-d4-large-dataset-streaming-rehearsal-evidence.md`](./artifacts/2026-05-12-d4-large-dataset-streaming-rehearsal-evidence.md). Fixture ~16K rows; quantitative memory measurement not performed. |
 | D.5 | Record rehearsal outcomes in `artifacts/` with date-stamped evidence | Engineering | Per run | ☐ Ready to start |
 | D.6 | If rehearsal fails, treat as P1 bug: stop, investigate, fix migration or schema | Engineering | Ad hoc | ☐ Ready to start |
 
@@ -187,6 +187,10 @@ Even though Option A (SQLite) is the active pilot, engineering maintains a **par
 | 2026-05-12 | Initial PostgreSQL readiness acceleration plan | Engineering |
 | 2026-05-12 | Track D.1 completed: populated local migration rehearsal passed; evidence recorded | Engineering |
 | 2026-05-12 | Track D.2 completed: partial-resume checkpoint drill passed (limitation: true live-process interruption not tested); evidence recorded | Engineering |
+| 2026-05-12 | Track D.3 completed: content-hash validation rehearsal passed; 10/10 tables matched | Engineering |
+| 2026-05-12 | Track D.4 completed: large-dataset streaming rehearsal passed (~16K rows, chunk-size 1000); quantitative memory measurement not performed | Engineering |
+| 2026-05-12 | Track A.1 completed: adapted target-host P5c drill plan created with placeholders and scheduler checklist | Engineering |
+| 2026-05-12 | Track A.2 completed: placeholder-only PostgreSQL target env template created at `configs/examples/postgres-target-env.template` | Engineering |
 
 ---
 
