@@ -470,6 +470,10 @@ These steps are **executable now** (no operator dependency, no target-host acces
 | `112-post-p5c-completion-execution-plan.md` | `67-production-readiness-roadmap.md` | Priority and blocker context |
 | `112-post-p5c-completion-execution-plan.md` | `31-release-paths-todo.md` §Path 3 | G3 gates and Phase 3 decision |
 | `112-post-p5c-completion-execution-plan.md` | `55-phase-3-go-no-go-review.md` | Phase 2 decision recording |
+| `112-post-p5c-completion-execution-plan.md` | `113-operator-path-selection-packet.md` | Phase 2 operator path decision packet |
+| `112-post-p5c-completion-execution-plan.md` | `114-target-host-p5c-drill-checklist.md` | Track 1 target-host P5c drill checklist |
+| `112-post-p5c-completion-execution-plan.md` | `115-sqlite-path2-target-host-checklist.md` | Track 4 SQLite target-host blocker checklist |
+| `112-post-p5c-completion-execution-plan.md` | `116-g36-monitoring-execution-plan.md` | Track 3 G3.6 real workload monitoring plan |
 
 ---
 

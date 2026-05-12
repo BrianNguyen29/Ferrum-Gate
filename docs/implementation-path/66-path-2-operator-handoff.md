@@ -191,6 +191,11 @@ Phase B is complete when:
 | This doc | `54-operator-signoff-packet.md` | Final operator signoff form |
 | This doc | `67-production-readiness-roadmap.md` | Consolidated roadmap with priorities, blockers, owners, evidence |
 | This doc | `69-local-dummy-target-values.md` | **Optional**: Local-only dummy values for rehearsal (NOT operator evidence) |
+| This doc | `112-post-p5c-completion-execution-plan.md` | Post-P5c phased completion plan |
+| This doc | `113-operator-path-selection-packet.md` | Phase 2 operator path decision (SQLite vs PostgreSQL) |
+| This doc | `114-target-host-p5c-drill-checklist.md` | Blockers B6/B7 target-host drill checklist (Option B) |
+| This doc | `115-sqlite-path2-target-host-checklist.md` | Blockers B1–B5/B8 target-host checklist (Option A) |
+| This doc | `116-g36-monitoring-execution-plan.md` | Blocker B8 G3.6 real workload monitoring plan |
 
 > **For a concise operator quick-reference**, see [`68-path-2-operator-handoff-packet.md`](./68-path-2-operator-handoff-packet.md).
 
