@@ -276,6 +276,84 @@ async fn compute_target_hash(
     Ok(aggregate_hash(hashes))
 }
 
+/// Ensure the checkpoint table exists on the PostgreSQL target.
+#[cfg(feature = "postgres")]
+async fn ensure_checkpoint_table(pg: &PgPool) -> Result<()> {
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS _migration_checkpoints (
+            table_name TEXT PRIMARY KEY,
+            completed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            row_count BIGINT NOT NULL
+        )",
+    )
+    .execute(pg)
+    .await?;
+    Ok(())
+}
+
+/// Read the checkpoint row count for a table, if any.
+#[cfg(feature = "postgres")]
+async fn read_checkpoint(pg: &PgPool, table: &str) -> Result<Option<i64>> {
+    let row_count: Option<i64> =
+        sqlx::query_scalar("SELECT row_count FROM _migration_checkpoints WHERE table_name = $1")
+            .bind(table)
+            .fetch_optional(pg)
+            .await?;
+    Ok(row_count)
+}
+
+/// Write or update a checkpoint for a table.
+#[cfg(feature = "postgres")]
+async fn write_checkpoint(pg: &PgPool, table: &str, row_count: i64) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO _migration_checkpoints (table_name, row_count)
+         VALUES ($1, $2)
+         ON CONFLICT (table_name) DO UPDATE
+         SET completed_at = NOW(), row_count = EXCLUDED.row_count",
+    )
+    .bind(table)
+    .bind(row_count)
+    .execute(pg)
+    .await?;
+    Ok(())
+}
+
+/// Delete a stale checkpoint for a table.
+#[cfg(feature = "postgres")]
+async fn delete_checkpoint(pg: &PgPool, table: &str) -> Result<()> {
+    sqlx::query("DELETE FROM _migration_checkpoints WHERE table_name = $1")
+        .bind(table)
+        .execute(pg)
+        .await?;
+    Ok(())
+}
+
+/// Decide what to do with a checkpoint for a table.
+#[cfg(any(feature = "postgres", test))]
+#[derive(Debug, Clone, PartialEq)]
+enum CheckpointAction {
+    Skip,
+    DeleteStale,
+    Migrate,
+}
+
+#[cfg(any(feature = "postgres", test))]
+fn checkpoint_action(
+    checkpoint_row_count: Option<i64>,
+    source_count: i64,
+    resume: bool,
+    apply: bool,
+) -> CheckpointAction {
+    if !apply || !resume {
+        return CheckpointAction::Migrate;
+    }
+    match checkpoint_row_count {
+        Some(cp) if cp == source_count => CheckpointAction::Skip,
+        Some(_) => CheckpointAction::DeleteStale,
+        None => CheckpointAction::Migrate,
+    }
+}
+
 /// Build the INSERT (or upsert) SQL for a table.
 #[cfg(any(feature = "postgres", test))]
 fn build_insert_sql(insert_sql: &str, id_column: Option<&str>, resume: bool) -> Result<String> {
@@ -303,12 +381,8 @@ async fn migrate_table(
     apply: bool,
     chunk_size: usize,
     resume: bool,
+    source_count: usize,
 ) -> Result<TableResult> {
-    let source_count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {}", tm.name))
-        .fetch_one(sqlite)
-        .await?;
-    let source_count = source_count as usize;
-
     let mut result = TableResult {
         table: tm.name.to_string(),
         source_count,
@@ -537,6 +611,7 @@ async fn run_migration(args: &Args) -> Result<MigrationReport> {
     if args.apply {
         let pg_store = ferrum_store::postgres::PostgresStore::connect(&args.to).await?;
         pg_store.apply_embedded_migrations().await?;
+        ensure_checkpoint_table(&pg).await?;
     }
 
     let migrations = table_migrations();
@@ -544,18 +619,84 @@ async fn run_migration(args: &Args) -> Result<MigrationReport> {
     let mut overall_success = true;
 
     for tm in &migrations {
-        match migrate_table(&sqlite, &pg, tm, args.apply, args.chunk_size, args.resume).await {
+        let source_count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {}", tm.name))
+            .fetch_one(&sqlite)
+            .await?;
+
+        if args.apply && args.resume {
+            match checkpoint_action(
+                read_checkpoint(&pg, tm.name).await?,
+                source_count,
+                args.resume,
+                args.apply,
+            ) {
+                CheckpointAction::Skip => {
+                    let target_count: i64 =
+                        sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {}", tm.name))
+                            .fetch_one(&pg)
+                            .await?;
+                    let count_match = target_count == source_count;
+                    if !count_match {
+                        overall_success = false;
+                    }
+                    tables.push(TableResult {
+                        table: tm.name.to_string(),
+                        source_count: source_count as usize,
+                        target_count: target_count as usize,
+                        migrated_count: 0,
+                        id_match: count_match,
+                        count_match,
+                        hash_match: count_match,
+                        source_content_hash: None,
+                        target_content_hash: None,
+                        errors: if count_match {
+                            vec![]
+                        } else {
+                            vec![
+                                "checkpoint skip: target row count does not match checkpoint"
+                                    .to_string(),
+                            ]
+                        },
+                    });
+                    continue;
+                }
+                CheckpointAction::DeleteStale => {
+                    delete_checkpoint(&pg, tm.name).await?;
+                }
+                CheckpointAction::Migrate => {}
+            }
+        }
+
+        match migrate_table(
+            &sqlite,
+            &pg,
+            tm,
+            args.apply,
+            args.chunk_size,
+            args.resume,
+            source_count as usize,
+        )
+        .await
+        {
             Ok(tr) => {
-                if !tr.count_match || !tr.id_match || !tr.errors.is_empty() {
+                if !tr.count_match || !tr.id_match || !tr.hash_match || !tr.errors.is_empty() {
                     overall_success = false;
                 }
                 tables.push(tr);
+                if args.apply {
+                    if let Err(e) = write_checkpoint(&pg, tm.name, source_count).await {
+                        overall_success = false;
+                        if let Some(last) = tables.last_mut() {
+                            last.errors.push(format!("checkpoint write error: {}", e));
+                        }
+                    }
+                }
             }
             Err(e) => {
                 overall_success = false;
                 tables.push(TableResult {
                     table: tm.name.to_string(),
-                    source_count: 0,
+                    source_count: source_count as usize,
                     target_count: 0,
                     migrated_count: 0,
                     id_match: false,
@@ -879,6 +1020,46 @@ mod tests {
         assert_eq!(parsed.tables[0].source_count, 2);
     }
 
+    #[test]
+    fn test_checkpoint_action_skip_when_match() {
+        assert_eq!(
+            checkpoint_action(Some(10), 10, true, true),
+            CheckpointAction::Skip
+        );
+    }
+
+    #[test]
+    fn test_checkpoint_action_delete_stale_when_mismatch() {
+        assert_eq!(
+            checkpoint_action(Some(5), 10, true, true),
+            CheckpointAction::DeleteStale
+        );
+    }
+
+    #[test]
+    fn test_checkpoint_action_migrate_when_no_checkpoint() {
+        assert_eq!(
+            checkpoint_action(None, 10, true, true),
+            CheckpointAction::Migrate
+        );
+    }
+
+    #[test]
+    fn test_checkpoint_action_migrate_when_no_resume() {
+        assert_eq!(
+            checkpoint_action(Some(10), 10, false, true),
+            CheckpointAction::Migrate
+        );
+    }
+
+    #[test]
+    fn test_checkpoint_action_migrate_when_dry_run() {
+        assert_eq!(
+            checkpoint_action(Some(10), 10, true, false),
+            CheckpointAction::Migrate
+        );
+    }
+
     #[tokio::test]
     async fn test_canonical_row_determinism_and_format() {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
@@ -1045,7 +1226,7 @@ mod tests {
             .into_iter()
             .find(|t| t.name == "intents")
             .unwrap();
-        let result = migrate_table(sqlite_store.pool(), &pg, &tm, true, 1, false)
+        let result = migrate_table(sqlite_store.pool(), &pg, &tm, true, 1, false, 1)
             .await
             .unwrap();
 

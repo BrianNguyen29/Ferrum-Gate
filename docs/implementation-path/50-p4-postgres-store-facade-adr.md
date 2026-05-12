@@ -265,14 +265,14 @@ P5a is the only currently authorized P5 subphase. It produces a design document,
 **Goals**:
 - [ ] SQLite → PostgreSQL migration upgraded from MVP to production-grade
 - [x] Idempotent/resumable migration with upsert semantics (P5e.1) — implemented (--resume flag; ON CONFLICT DO NOTHING for tables with stable ID; provenance_edges blocked with clear error)
-- [ ] Checkpointing (P5e.2) — pending
+- [x] Checkpointing (P5e.2) — implemented (PostgreSQL `_migration_checkpoints` table; skip on resume when row_count matches; stale checkpoint deletion)
 - [x] Content-hash validation for lineage equivalence (P5e.3) — implemented (canonical col=value serialization; per-row SHA-256; sorted aggregate hash; source vs target comparison)
 - [x] Large-dataset streaming and chunking (P5e.4) — implemented (default chunk-size 1000, max 10000; per-chunk transaction with row-by-row fallback)
 - [ ] Integration tests for repeated runs, hash validation, and large dataset (P5e.5)
 
 **Blocked until**: Eng.1 capacity confirmed; Eng.2 implementation plan approved; P5b–P5c design complete; P4.4 MVP migration baseline available
 
-**Estimated Effort**: ~100-200 LOC + migration testing (upgrade from P4.4 MVP). P5e.1 + P5e.3 + P5e.4 delivered ~160 LOC.
+**Estimated Effort**: ~100-200 LOC + migration testing (upgrade from P4.4 MVP). P5e.1–P5e.4 delivered ~200 LOC.
 
 **Verification Gates**:
 
@@ -348,7 +348,7 @@ store_dsn = "sqlite::memory:"
 | P5b Pool tuning | ☑ PARTIALLY IMPLEMENTED | Conservative defaults (`max_connections=10`, `min_idle=2`, `acquire_timeout=5s`) wired into `PostgresPoolConfig`, CLI/env/config precedence, and validation. Post-deploy monitoring still required; not production-ready. |
 | P5c Backup/restore | ☑ Design/docs complete | `109-p5c-postgresql-backup-restore-runbook.md` delivered; RPO=15min/RTO=30min approved; config examples in `configs/examples/postgres-backup.*`. P5c.V1–V2 pending operator drill. |
 | P5d HA/clustering | ☐ Skipped | D1=A/D3=A; explicitly out of v1 scope |
-| P5e Migration grade-up | ☐ Partially Implemented | P5e.1 resume + P5e.3 hash validation + P5e.4 streaming/chunking implemented. P5e.2 checkpointing and P5e.5 integration tests still pending. |
+| P5e Migration grade-up | ☐ Partially Implemented | P5e.1–P5e.4 implemented (resume, checkpointing, hash validation, streaming/chunking). P5e.5 integration tests still pending. |
 
 **Total estimated for full PostgreSQL production readiness**: ~3500-4500 LOC + significant testing infrastructure
 
