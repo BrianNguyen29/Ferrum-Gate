@@ -74,6 +74,18 @@ struct Args {
     /// Write queue depth threshold for deep readiness probe (1..=10000).
     #[arg(long)]
     write_queue_threshold: Option<u64>,
+
+    /// PostgreSQL pool max_connections (conservative default: 10).
+    #[arg(long)]
+    pg_max_connections: Option<u32>,
+
+    /// PostgreSQL pool min_idle (conservative default: 2).
+    #[arg(long)]
+    pg_min_idle: Option<u32>,
+
+    /// PostgreSQL pool acquire_timeout in seconds (conservative default: 5).
+    #[arg(long)]
+    pg_acquire_timeout_secs: Option<u64>,
 }
 
 fn get_env<T: std::str::FromStr>(key: &str) -> Option<T> {
@@ -112,6 +124,12 @@ struct ServerSection {
     log_format: Option<String>,
     #[serde(default)]
     write_queue_threshold: Option<u64>,
+    #[serde(default)]
+    pg_max_connections: Option<u32>,
+    #[serde(default)]
+    pg_min_idle: Option<u32>,
+    #[serde(default)]
+    pg_acquire_timeout_secs: Option<u64>,
 }
 
 fn load_config_file(path: &PathBuf) -> Result<ConfigFile> {
@@ -226,6 +244,24 @@ fn resolve_config(args: &Args) -> Result<ServerConfig> {
         .or_else(|| server.as_ref().and_then(|s| s.write_queue_threshold))
         .unwrap_or(100);
 
+    let pg_max_connections = args
+        .pg_max_connections
+        .or_else(|| get_env("FERRUMD_PG_MAX_CONNECTIONS"))
+        .or_else(|| server.as_ref().and_then(|s| s.pg_max_connections))
+        .unwrap_or(10);
+
+    let pg_min_idle = args
+        .pg_min_idle
+        .or_else(|| get_env("FERRUMD_PG_MIN_IDLE"))
+        .or_else(|| server.as_ref().and_then(|s| s.pg_min_idle))
+        .unwrap_or(2);
+
+    let pg_acquire_timeout_secs = args
+        .pg_acquire_timeout_secs
+        .or_else(|| get_env("FERRUMD_PG_ACQUIRE_TIMEOUT_SECS"))
+        .or_else(|| server.as_ref().and_then(|s| s.pg_acquire_timeout_secs))
+        .unwrap_or(5);
+
     let bind_addr_parsed: SocketAddr = bind_addr
         .parse()
         .with_context(|| format!("failed to parse bind address: {}", bind_addr))?;
@@ -247,6 +283,9 @@ fn resolve_config(args: &Args) -> Result<ServerConfig> {
         rate_limit_per_second,
         rate_limit_burst,
         write_queue_threshold,
+        pg_max_connections,
+        pg_min_idle,
+        pg_acquire_timeout_secs,
     };
 
     // Validate configuration
@@ -305,7 +344,12 @@ async fn main() -> Result<()> {
     {
         #[cfg(feature = "postgres")]
         {
-            let pg_store = PostgresStore::connect(&config.store_dsn)
+            let pg_pool_config = ferrum_store::postgres::PostgresPoolConfig {
+                max_connections: config.pg_max_connections,
+                min_idle: config.pg_min_idle,
+                acquire_timeout_secs: config.pg_acquire_timeout_secs,
+            };
+            let pg_store = PostgresStore::connect_with_config(&config.store_dsn, pg_pool_config)
                 .await
                 .context("failed to connect to postgres")?;
             pg_store
@@ -366,6 +410,9 @@ mod tests {
             "FERRUMD_RATE_LIMIT_BURST",
             "FERRUMD_LOG_FORMAT",
             "FERRUMD_WRITE_QUEUE_THRESHOLD",
+            "FERRUMD_PG_MAX_CONNECTIONS",
+            "FERRUMD_PG_MIN_IDLE",
+            "FERRUMD_PG_ACQUIRE_TIMEOUT_SECS",
         ] {
             unsafe { std::env::remove_var(key) };
         }
@@ -415,6 +462,9 @@ log_filter = "warn"
             rate_limit_burst: None,
             log_format: None,
             write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -458,6 +508,9 @@ allow_insecure_nonlocal_bind = false
             rate_limit_burst: None,
             log_format: None,
             write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -495,6 +548,9 @@ auth_mode = "bearer"
             rate_limit_burst: None,
             log_format: None,
             write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -531,6 +587,9 @@ auth_mode = "disabled"
             rate_limit_burst: None,
             log_format: None,
             write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -573,6 +632,9 @@ auth_mode = "disabled"
             rate_limit_burst: None,
             log_format: None,
             write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -615,6 +677,9 @@ auth_mode = "disabled"
             rate_limit_burst: None,
             log_format: None,
             write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
         };
 
         let config = resolve_config(&args).expect("expected config to be accepted");
@@ -651,6 +716,9 @@ auth_mode = "disabled"
             rate_limit_burst: None,
             log_format: None,
             write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
         };
 
         let config = resolve_config(&args).expect("expected config to be accepted");
@@ -686,6 +754,9 @@ auth_mode = "disabled"
             rate_limit_burst: None,
             log_format: None,
             write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -724,6 +795,9 @@ auth_mode = "disabled"
             rate_limit_burst: None,
             log_format: None,
             write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -762,6 +836,9 @@ rate_limit_burst = 100
             rate_limit_burst: None,
             log_format: None,
             write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -800,6 +877,9 @@ rate_limit_burst = 100
             rate_limit_burst: Some(200),
             log_format: None,
             write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -843,6 +923,9 @@ rate_limit_burst = 100
             rate_limit_burst: None,
             log_format: None,
             write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -881,6 +964,9 @@ rate_limit_per_second = 0
             rate_limit_burst: None,
             log_format: None,
             write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -920,6 +1006,9 @@ rate_limit_burst = 0
             rate_limit_burst: None,
             log_format: None,
             write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -959,6 +1048,9 @@ rate_limit_burst = 20000
             rate_limit_burst: None,
             log_format: None,
             write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -997,6 +1089,9 @@ auth_mode = "disabled"
             rate_limit_burst: None,
             log_format: None,
             write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -1032,6 +1127,9 @@ log_format = "json"
             rate_limit_burst: None,
             log_format: None,
             write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -1067,6 +1165,9 @@ log_format = "text"
             rate_limit_burst: None,
             log_format: Some("json".to_string()),
             write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -1106,6 +1207,9 @@ log_format = "text"
             rate_limit_burst: None,
             log_format: None,
             write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -1142,6 +1246,9 @@ log_format = "invalid"
             rate_limit_burst: None,
             log_format: None,
             write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -1177,6 +1284,9 @@ log_format = "compact"
             rate_limit_burst: None,
             log_format: None,
             write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -1214,6 +1324,9 @@ auth_mode = "disabled"
             rate_limit_burst: None,
             log_format: None,
             write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -1250,6 +1363,9 @@ write_queue_threshold = 500
             rate_limit_burst: None,
             log_format: None,
             write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -1286,6 +1402,9 @@ write_queue_threshold = 500
             rate_limit_burst: None,
             log_format: None,
             write_queue_threshold: Some(200),
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -1326,6 +1445,9 @@ write_queue_threshold = 500
             rate_limit_burst: None,
             log_format: None,
             write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -1362,6 +1484,9 @@ write_queue_threshold = 0
             rate_limit_burst: None,
             log_format: None,
             write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -1401,6 +1526,9 @@ write_queue_threshold = 10001
             rate_limit_burst: None,
             log_format: None,
             write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -1408,6 +1536,264 @@ write_queue_threshold = 10001
             error
                 .to_string()
                 .contains("write_queue_threshold must be between 1 and 10000")
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    // === PostgreSQL pool config tests ===
+
+    #[test]
+    fn test_resolve_config_pg_pool_defaults() {
+        let _guard = env_lock().lock().unwrap();
+        clear_test_env();
+
+        let path = write_temp_config(
+            r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+"#,
+        );
+
+        let args = Args {
+            config: Some(path.clone()),
+            bind_addr: None,
+            store_dsn: None,
+            auth_mode: None,
+            bearer_token: None,
+            allow_insecure_nonlocal_bind: false,
+            log_filter: None,
+            store_synchronous: None,
+            store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
+            write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
+        };
+
+        let config = resolve_config(&args).unwrap();
+        assert_eq!(config.pg_max_connections, 10);
+        assert_eq!(config.pg_min_idle, 2);
+        assert_eq!(config.pg_acquire_timeout_secs, 5);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_resolve_config_pg_pool_from_config_file() {
+        let _guard = env_lock().lock().unwrap();
+        clear_test_env();
+
+        let path = write_temp_config(
+            r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+pg_max_connections = 20
+pg_min_idle = 5
+pg_acquire_timeout_secs = 10
+"#,
+        );
+
+        let args = Args {
+            config: Some(path.clone()),
+            bind_addr: None,
+            store_dsn: None,
+            auth_mode: None,
+            bearer_token: None,
+            allow_insecure_nonlocal_bind: false,
+            log_filter: None,
+            store_synchronous: None,
+            store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
+            write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
+        };
+
+        let config = resolve_config(&args).unwrap();
+        assert_eq!(config.pg_max_connections, 20);
+        assert_eq!(config.pg_min_idle, 5);
+        assert_eq!(config.pg_acquire_timeout_secs, 10);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_resolve_config_pg_pool_env_overrides_config_file() {
+        let _guard = env_lock().lock().unwrap();
+        clear_test_env();
+
+        let path = write_temp_config(
+            r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+pg_max_connections = 20
+pg_min_idle = 5
+pg_acquire_timeout_secs = 10
+"#,
+        );
+
+        unsafe {
+            std::env::set_var("FERRUMD_PG_MAX_CONNECTIONS", "30");
+            std::env::set_var("FERRUMD_PG_MIN_IDLE", "8");
+            std::env::set_var("FERRUMD_PG_ACQUIRE_TIMEOUT_SECS", "15");
+        }
+
+        let args = Args {
+            config: Some(path.clone()),
+            bind_addr: None,
+            store_dsn: None,
+            auth_mode: None,
+            bearer_token: None,
+            allow_insecure_nonlocal_bind: false,
+            log_filter: None,
+            store_synchronous: None,
+            store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
+            write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
+        };
+
+        let config = resolve_config(&args).unwrap();
+        assert_eq!(config.pg_max_connections, 30);
+        assert_eq!(config.pg_min_idle, 8);
+        assert_eq!(config.pg_acquire_timeout_secs, 15);
+
+        let _ = fs::remove_file(path);
+        clear_test_env();
+    }
+
+    #[test]
+    fn test_resolve_config_pg_pool_cli_overrides_env() {
+        let _guard = env_lock().lock().unwrap();
+        clear_test_env();
+
+        let path = write_temp_config(
+            r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+"#,
+        );
+
+        unsafe {
+            std::env::set_var("FERRUMD_PG_MAX_CONNECTIONS", "30");
+        }
+
+        let args = Args {
+            config: Some(path.clone()),
+            bind_addr: None,
+            store_dsn: None,
+            auth_mode: None,
+            bearer_token: None,
+            allow_insecure_nonlocal_bind: false,
+            log_filter: None,
+            store_synchronous: None,
+            store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
+            write_queue_threshold: None,
+            pg_max_connections: Some(50),
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
+        };
+
+        let config = resolve_config(&args).unwrap();
+        assert_eq!(config.pg_max_connections, 50);
+
+        let _ = fs::remove_file(path);
+        clear_test_env();
+    }
+
+    #[test]
+    fn test_resolve_config_rejects_zero_pg_max_connections() {
+        let _guard = env_lock().lock().unwrap();
+        clear_test_env();
+
+        let path = write_temp_config(
+            r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+pg_max_connections = 0
+"#,
+        );
+
+        let args = Args {
+            config: Some(path.clone()),
+            bind_addr: None,
+            store_dsn: None,
+            auth_mode: None,
+            bearer_token: None,
+            allow_insecure_nonlocal_bind: false,
+            log_filter: None,
+            store_synchronous: None,
+            store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
+            write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
+        };
+
+        let error = resolve_config(&args).err().expect("expected config error");
+        assert!(
+            error
+                .to_string()
+                .contains("pg_max_connections must be at least 1")
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_resolve_config_rejects_zero_pg_acquire_timeout() {
+        let _guard = env_lock().lock().unwrap();
+        clear_test_env();
+
+        let path = write_temp_config(
+            r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+pg_acquire_timeout_secs = 0
+"#,
+        );
+
+        let args = Args {
+            config: Some(path.clone()),
+            bind_addr: None,
+            store_dsn: None,
+            auth_mode: None,
+            bearer_token: None,
+            allow_insecure_nonlocal_bind: false,
+            log_filter: None,
+            store_synchronous: None,
+            store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
+            write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
+        };
+
+        let error = resolve_config(&args).err().expect("expected config error");
+        assert!(
+            error
+                .to_string()
+                .contains("pg_acquire_timeout_secs must be at least 1")
         );
 
         let _ = fs::remove_file(path);

@@ -53,6 +53,30 @@ use async_trait::async_trait;
 use sqlx::PgPool;
 use std::sync::Arc;
 
+/// Conservative PostgreSQL connection pool configuration.
+///
+/// Defaults are chosen for single-node, bounded workloads and are
+/// **not** tuned for HA/multi-node or production-scale deployment.
+#[derive(Debug, Clone)]
+pub struct PostgresPoolConfig {
+    /// Maximum number of connections in the pool.
+    pub max_connections: u32,
+    /// Minimum idle connections to maintain.
+    pub min_idle: u32,
+    /// Timeout in seconds when acquiring a connection from the pool.
+    pub acquire_timeout_secs: u64,
+}
+
+impl Default for PostgresPoolConfig {
+    fn default() -> Self {
+        Self {
+            max_connections: 10,
+            min_idle: 2,
+            acquire_timeout_secs: 5,
+        }
+    }
+}
+
 /// PostgreSQL P3 store.
 ///
 /// **Partial runtime support.** All P3 repos are functional:
@@ -69,10 +93,21 @@ pub struct PostgresStore {
 impl PostgresStore {
     /// Connect to PostgreSQL using the provided database URL.
     ///
-    /// Uses a connection pool with `max_connections = 5`.
+    /// Uses conservative default pool settings (`max_connections = 10`,
+    /// `min_idle = 2`, `acquire_timeout = 5s`).
     pub async fn connect(database_url: &str) -> Result<Self> {
+        Self::connect_with_config(database_url, PostgresPoolConfig::default()).await
+    }
+
+    /// Connect to PostgreSQL with explicit pool configuration.
+    pub async fn connect_with_config(
+        database_url: &str,
+        config: PostgresPoolConfig,
+    ) -> Result<Self> {
         let pool = sqlx::postgres::PgPoolOptions::new()
-            .max_connections(5)
+            .max_connections(config.max_connections)
+            .min_connections(config.min_idle)
+            .acquire_timeout(std::time::Duration::from_secs(config.acquire_timeout_secs))
             .connect(database_url)
             .await?;
         Ok(Self { pool })
@@ -283,5 +318,13 @@ mod tests {
     fn postgres_policy_bundle_repo_implements_policy_bundle_repo() {
         fn _check<T: PolicyBundleRepo>() {}
         _check::<PostgresPolicyBundleRepo>();
+    }
+
+    #[test]
+    fn postgres_pool_config_defaults_are_conservative() {
+        let config = super::PostgresPoolConfig::default();
+        assert_eq!(config.max_connections, 10);
+        assert_eq!(config.min_idle, 2);
+        assert_eq!(config.acquire_timeout_secs, 5);
     }
 }

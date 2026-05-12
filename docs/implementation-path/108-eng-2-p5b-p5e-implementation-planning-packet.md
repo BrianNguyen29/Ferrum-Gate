@@ -49,35 +49,36 @@ Before drafting/reviewing this plan, confirm the following:
 
 ---
 
-## P5b — Connection Pool Tuning (Implementation Gated)
+## P5b — Connection Pool Tuning (Partially Implemented)
 
 ### Status
-**Blocked until**: G3.6 pilot data available; Eng.1 capacity confirmed.
+**G3.6 conditionally accepted** (2026-05-11; BrianNguyen). **P5b.1–P5b.3 implemented** with conservative defaults; P5b.4–P5b.6 remain deferred. Post-deploy monitoring is mandatory.
 
 ### Scope (D1=A)
 Single-node PostgreSQL requires bounded connection pool tuning only. No read replica routing. No multi-node concurrency model.
 
 ### Implementation Plan
 
-| # | Task | Estimated LOC | Owner | Dependencies |
-|---|---|---|---|---|
-| P5b.1 | Review G3.6 pilot metrics (sustained write rate, connection patterns, queue depth) | 0 (analysis) | Engineering | G3.6 |
-| P5b.2 | Define `max_connections` based on `concurrent_client_connections_peak` from G3.6 | ~20 LOC (config) | Engineering | G3.6 |
-| P5b.3 | Define `min_idle` and `acquire_timeout` based on p50/p95 latency from G3.6 | ~20 LOC (config) | Engineering | G3.6 |
-| P5b.4 | Implement connection-leak detection (pool metrics export or health check) | ~50 LOC | Engineering | P5b.2–P5b.3 |
-| P5b.5 | Implement circuit-breaker on pool exhaustion (fail-fast with 503) | ~50–100 LOC | Engineering | P5b.4 |
-| P5b.6 | Local Docker stress test with tuned pool (benchmark ≥1000 writes/s) | ~20 LOC (test) | Engineering | All above |
-| P5b.7 | Update ADR-50 or operator runbook with tuned config values | ~10 LOC (docs) | Engineering | P5b.6 |
+| # | Task | Estimated LOC | Owner | Dependencies | Status |
+|---|---|---|---|---|---|
+| P5b.1 | Review G3.6 pilot metrics (sustained write rate, connection patterns, queue depth) | 0 (analysis) | Engineering | G3.6 | ☑ DONE (compile-only/light workload; conservative defaults chosen) |
+| P5b.2 | Define `max_connections` based on `concurrent_client_connections_peak` from G3.6 | ~20 LOC (config) | Engineering | G3.6 | ☑ DONE — conservative default `10` wired into `PostgresPoolConfig` and `ServerConfig` |
+| P5b.3 | Define `min_idle` and `acquire_timeout` based on p50/p95 latency from G3.6 | ~20 LOC (config) | Engineering | G3.6 | ☑ DONE — conservative defaults `min_idle=2`, `acquire_timeout=5s` wired |
+| P5b.4 | Implement connection-leak detection (pool metrics export or health check) | ~50 LOC | Engineering | P5b.2–P5b.3 | ☐ Deferred |
+| P5b.5 | Implement circuit-breaker on pool exhaustion (fail-fast with 503) | ~50–100 LOC | Engineering | P5b.4 | ☐ Deferred |
+| P5b.6 | Local Docker stress test with tuned pool (benchmark ≥1000 writes/s) | ~20 LOC (test) | Engineering | All above | ☐ Deferred |
+| P5b.7 | Update ADR-50 or operator runbook with tuned config values | ~10 LOC (docs) | Engineering | P5b.6 | ☑ DONE — ADR-50 and config examples updated |
 
-**Total P5b estimate**: ~170–220 LOC (within D1=A/D2=A/D3=A ~200–400 LOC budget)
+**Total P5b estimate**: ~170–220 LOC (within D1=A/D2=A/D3=A ~200–400 LOC budget). Actual P5b.1–P5b.3 + docs ≈ 80 LOC.
 
 ### Verification Gates
 
-| Gate | Criterion | Evidence |
-|---|---|---|
-| P5b.V1 | Pool config validated in local Docker stress test | Benchmark ≥1000 writes/s with tuned pool |
-| P5b.V2 | No connection leaks in 30-min stress test | `sqlx` pool metrics or custom detector |
-| P5b.V3 | Circuit breaker triggers within 5s on pool exhaustion | Integration test or manual verification |
+| Gate | Criterion | Evidence | Status |
+|---|---|---|---|
+| P5b.V1 | Pool config validated in local Docker stress test | Benchmark ≥1000 writes/s with tuned pool | ☐ Deferred |
+| P5b.V2 | No connection leaks in 30-min stress test | `sqlx` pool metrics or custom detector | ☐ Deferred |
+| P5b.V3 | Circuit breaker triggers within 5s on pool exhaustion | Integration test or manual verification | ☐ Deferred |
+| P5b.V4 | Conservative defaults compile and integrate correctly | `cargo check --workspace` passes; config precedence tests pass | ☑ DONE |
 
 ---
 

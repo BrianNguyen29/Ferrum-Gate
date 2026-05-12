@@ -29,3 +29,9 @@ allow_insecure_nonlocal_bind = false
 
 # Log filter (info, debug, warn, error)
 log_filter = "info"
+
+# PostgreSQL connection pool tuning (conservative defaults)
+# Only used when store_dsn starts with postgres:// or postgresql://
+pg_max_connections = 10
+pg_min_idle = 2
+pg_acquire_timeout_secs = 5

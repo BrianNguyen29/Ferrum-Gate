@@ -249,11 +249,14 @@ Per `50-p4-postgres-store-facade-adr.md` §3 Phase P1:
 - [ ] Non-claims language reviewed and preserved (no production-ready, no HA, no multi-node)
 - [ ] Operator decision framework D1–D6 drafted and ready for signoff
 
-#### P5b — Connection Pool Tuning (Implementation Gated)
-- [ ] Pool size model validated against pilot workload data (G2 metrics)
-- [ ] `max_connections`, `min_idle`, `acquire_timeout` tuned for target throughput
-- [ ] Connection-leak detection and circuit-breaker behavior defined
-- [ ] **Blocked until**: G3.6 pilot data available
+#### P5b — Connection Pool Tuning (Partially Implemented)
+- [x] Conservative defaults defined (`max_connections=10`, `min_idle=2`, `acquire_timeout=5s`)
+- [x] `PostgresPoolConfig` struct and `connect_with_config` method added to `PostgresStore`
+- [x] CLI/env/config precedence wired for `pg_max_connections`, `pg_min_idle`, `pg_acquire_timeout_secs`
+- [x] Config examples updated with conservative pool values
+- [ ] Pool size model validated against pilot workload data (G2 metrics) — still pending real workload
+- [ ] Connection-leak detection and circuit-breaker behavior defined — deferred
+- [ ] **Post-deploy monitoring required**: G3.6 conditional acceptance still applies
 
 #### P5c — Backup / Restore for PostgreSQL (Implementation Gated)
 - [ ] `pg_dump`/`pg_restore` or logical-replication backup strategy documented

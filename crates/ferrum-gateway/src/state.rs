@@ -128,6 +128,15 @@ pub struct ServerConfig {
     /// Write queue depth threshold for deep readiness probe.
     /// Valid range: 1..=10000. Default: 100.
     pub write_queue_threshold: u64,
+    /// PostgreSQL pool max_connections.
+    /// Conservative default: 10.
+    pub pg_max_connections: u32,
+    /// PostgreSQL pool min_idle.
+    /// Conservative default: 2.
+    pub pg_min_idle: u32,
+    /// PostgreSQL pool acquire_timeout in seconds.
+    /// Conservative default: 5.
+    pub pg_acquire_timeout_secs: u64,
 }
 
 impl Default for ServerConfig {
@@ -145,6 +154,9 @@ impl Default for ServerConfig {
             rate_limit_per_second: 2,
             rate_limit_burst: 50,
             write_queue_threshold: 100,
+            pg_max_connections: 10,
+            pg_min_idle: 2,
+            pg_acquire_timeout_secs: 5,
         }
     }
 }
@@ -192,6 +204,14 @@ impl ServerConfig {
                 "write_queue_threshold must be between 1 and 10000, got {}",
                 self.write_queue_threshold
             ));
+        }
+
+        // Validate PostgreSQL pool settings
+        if self.pg_max_connections == 0 {
+            return Err("pg_max_connections must be at least 1".to_string());
+        }
+        if self.pg_acquire_timeout_secs == 0 {
+            return Err("pg_acquire_timeout_secs must be at least 1".to_string());
         }
 
         Ok(())

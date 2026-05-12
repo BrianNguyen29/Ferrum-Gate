@@ -251,6 +251,9 @@ impl StressServer {
                 rate_limit_per_second: 2,
                 rate_limit_burst: 50,
                 write_queue_threshold: 100,
+                pg_max_connections: 10,
+                pg_min_idle: 2,
+                pg_acquire_timeout_secs: 5,
             };
             ferrum_gateway::build_router_with_auth(runtime, config)
         } else {

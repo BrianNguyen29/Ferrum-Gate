@@ -1,7 +1,12 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
+
+#[cfg(feature = "postgres")]
+use anyhow::Context;
 use clap::Parser;
 use serde::Serialize;
+#[cfg(feature = "postgres")]
 use sqlx::{Row, SqlitePool, sqlite::SqlitePoolOptions};
+#[cfg(feature = "postgres")]
 use std::collections::BTreeSet;
 
 #[cfg(feature = "postgres")]
@@ -50,6 +55,8 @@ struct MigrationReport {
 }
 
 /// Migration configuration for a single table.
+#[allow(dead_code)]
+#[cfg(any(feature = "postgres", test))]
 struct TableMigration<'a> {
     name: &'a str,
     /// Columns to select from SQLite (must match INSERT columns).
@@ -63,6 +70,7 @@ struct TableMigration<'a> {
 }
 
 /// Core governance tables in dependency-safe order.
+#[cfg(any(feature = "postgres", test))]
 fn table_migrations() -> Vec<TableMigration<'static>> {
     vec![
         TableMigration {
@@ -139,6 +147,7 @@ fn table_migrations() -> Vec<TableMigration<'static>> {
 }
 
 /// Connect to SQLite source.
+#[cfg(feature = "postgres")]
 async fn connect_sqlite(dsn: &str) -> Result<SqlitePool> {
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
@@ -167,6 +176,7 @@ async fn is_target_empty(pg: &PgPool, table: &str) -> Result<bool> {
 }
 
 /// Read all source rows for a table and collect IDs.
+#[cfg(feature = "postgres")]
 async fn read_source_rows(
     sqlite: &SqlitePool,
     select_columns: &str,
@@ -235,10 +245,7 @@ async fn migrate_table(
                 };
 
                 // Bind based on column name for type-specific handling
-                if col_name == "auto_commit" {
-                    let val: i64 = row.try_get(col_name)?;
-                    query = query.bind(val != 0);
-                } else if col_name == "active" {
+                if col_name == "auto_commit" || col_name == "active" {
                     let val: i64 = row.try_get(col_name)?;
                     query = query.bind(val != 0);
                 } else if col_name == "step_index" || col_name == "entry_id" {
