@@ -100,7 +100,7 @@ Even though Option A (SQLite) is the active pilot, engineering maintains a **par
 
 | # | Task | Owner | Cadence | Status |
 |---|---|---|---|---|
-| D.1 | Re-run populated SQLite → local PostgreSQL migration using `ferrum-migrate --features postgres` | Engineering | Weekly during active pilot development | ☐ Ready to start |
+| D.1 | Re-run populated SQLite → local PostgreSQL migration using `ferrum-migrate --features postgres` | Engineering | Weekly during active pilot development | ✅ Completed 2026-05-12 — see [`artifacts/2026-05-12-d1-populated-local-migration-rehearsal-evidence.md`](./artifacts/2026-05-12-d1-populated-local-migration-rehearsal-evidence.md) |
 | D.2 | Exercise `--resume` path (P5e.1): migrate half, interrupt, resume, verify idempotency | Engineering | Bi-weekly | ☐ Ready to start |
 | D.3 | Exercise content-hash validation (P5e.3): verify `source_content_hash == target_content_hash` | Engineering | Weekly | ☐ Ready to start |
 | D.4 | Exercise large-dataset streaming (P5e.4): use chunk-size 1000, verify memory stays bounded | Engineering | Monthly | ☐ Ready to start |
@@ -185,6 +185,7 @@ Even though Option A (SQLite) is the active pilot, engineering maintains a **par
 | Date | Change | Author |
 |---|---|---|
 | 2026-05-12 | Initial PostgreSQL readiness acceleration plan | Engineering |
+| 2026-05-12 | Track D.1 completed: populated local migration rehearsal passed; evidence recorded | Engineering |
 
 ---
 

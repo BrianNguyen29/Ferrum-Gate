@@ -15,9 +15,10 @@
 |---|---|
 | Base commit | `1e7adca` (`docs: add P5c local Docker drill evidence`) |
 | P5c local smoke | **PASSED** — local Docker PostgreSQL backup/restore mechanics verified |
-| Data scope | Schema-only; 0 rows (expected for local smoke) |
+| Populated local drill | **PASSED** — local Docker PostgreSQL backup/restore with non-zero rows verified; see [`artifacts/2026-05-12-p5c-populated-local-drill-evidence.md`](./artifacts/2026-05-12-p5c-populated-local-drill-evidence.md) |
+| Path decision | **DONE** — Option A (SQLite Path 2) selected; see [`113-operator-path-selection-packet.md`](./113-operator-path-selection-packet.md) (commit `b320f5c`) |
 | Production-ready claim | **NO** |
-| Target-host operator blockers | **NOT CLOSED** |
+| Target-host operator blockers | **NOT CLOSED** — target-host attempt blocked; see [`artifacts/2026-05-12-sqlite-path2-target-host-blocked-attempt.md`](./artifacts/2026-05-12-sqlite-path2-target-host-blocked-attempt.md) |
 | PostgreSQL production deployment | **NO** |
 | HA/multi-node | **NO** |
 
@@ -25,9 +26,9 @@
 
 | Phase | Verdict | Owner | Rationale |
 |---|---|---|---|
-| **Phase 1** | Populated-data local drill is **highest leverage and safe** | Engineering | Increases confidence in backup/restore before target-host exposure; no operator dependency |
-| **Phase 2** | Operator path decision required (SQLite vs PostgreSQL) | Operator + Engineering | Determines whether P5c blockers 6–7 are N/A or active |
-| **Phase 3–5** | Target-host / operator-executed only | Operator | Requires real environment, real credentials, real scheduler |
+| **Phase 1** | Populated-data local drill **completed** | Engineering | Evidence: [`artifacts/2026-05-12-p5c-populated-local-drill-evidence.md`](./artifacts/2026-05-12-p5c-populated-local-drill-evidence.md) |
+| **Phase 2** | Operator path decision **completed** — Option A (SQLite) selected | Operator + Engineering | Recorded in [`113-operator-path-selection-packet.md`](./113-operator-path-selection-packet.md) (commit `b320f5c`); B6/B7 waived |
+| **Phase 3–5** | Target-host / operator-executed only — **blocked** on target host access | Operator | Requires real environment; see [`artifacts/2026-05-12-sqlite-path2-target-host-blocked-attempt.md`](./artifacts/2026-05-12-sqlite-path2-target-host-blocked-attempt.md) |
 
 ### 1.3 Explicit Non-Claims
 
@@ -45,10 +46,10 @@
 | Phase | Name | Tracks Covered | Owner | Executable Now? | Blocker |
 |---|---|---|---|---|---|
 | **Phase 0** | P5c local smoke baseline | Track 1 baseline | Engineering | ✅ Done | None |
-| **Phase 1** | Populated-data local drill | Track 2 | Engineering | ✅ Yes | None |
-| **Phase 2** | Operator path decision gate | Track 1, 3, 4 | Operator + Engineering | ☐ No | Operator must choose SQLite or PostgreSQL path |
-| **Phase 3** | Target-host drill prep & execution | Track 1, 3, 4 | Operator | ☐ No | Phase 2 decision; target host access |
-| **Phase 4** | G3.6 real workload / post-deploy monitoring | Track 3 | Operator + Engineering | ☐ No | Phase 3 complete; live workload available |
+| **Phase 1** | Populated-data local drill | Track 2 | Engineering | ✅ Done | None — see [`artifacts/2026-05-12-p5c-populated-local-drill-evidence.md`](./artifacts/2026-05-12-p5c-populated-local-drill-evidence.md) |
+| **Phase 2** | Operator path decision gate | Track 1, 3, 4 | Operator + Engineering | ✅ Done — Option A SQLite selected (commit `b320f5c`) | See [`113-operator-path-selection-packet.md`](./113-operator-path-selection-packet.md) |
+| **Phase 3** | Target-host drill prep & execution | Track 1, 3, 4 | Operator | ☐ Blocked | Phase 2 done; target host access blocked — see [`artifacts/2026-05-12-sqlite-path2-target-host-blocked-attempt.md`](./artifacts/2026-05-12-sqlite-path2-target-host-blocked-attempt.md) |
+| **Phase 4** | G3.6 real workload / post-deploy monitoring | Track 3 | Operator + Engineering | ☐ Blocked | Phase 3 blocked; live workload unavailable — see [`116-g36-monitoring-execution-plan.md`](./116-g36-monitoring-execution-plan.md) |
 | **Phase 5** | Final evidence consolidation & conditional signoff | All tracks | Operator | ☐ No | All prior phases complete |
 
 ### 2.1 Dependency Map
@@ -91,31 +92,31 @@ Phase 0 (P5c local smoke) ──► Phase 1 (populated local drill)
 | Blocker IDs | B6 (P5c.V1 backup), B7 (P5c.V2 restore) from `66-path-2-operator-handoff.md` |
 | Conditionality | Active only if operator selects PostgreSQL path in Phase 2 |
 | Owner | Operator (execution); Engineering (planning / template support) |
-| Current gap | No automated target-host PG drill script exists; no single populated local drill pipeline exists |
+| Current gap | No automated target-host PG drill script exists; populated local drill completed |
 
 #### Track 1 — Phase Breakdown
 
 | Sub-phase | Task | Owner | Inputs | Outputs | Status |
 |---|---|---|---|---|---|
 | T1-P0 | Local smoke baseline (schema-only) | Engineering | `111-p5c-local-docker-drill-plan.md` | `artifacts/2026-05-12-p5c-local-docker-drill-evidence.md` | ✅ Done |
-| T1-P1 | Populated-data local drill | Engineering | Populated SQLite fixture or seeded local PG | Local evidence with non-zero row counts | ☐ Ready to start |
-| T1-P2 | Operator selects PG or SQLite path | Operator + Engineering | Path 2 pilot outcome, workload model | Signed path decision in `55-phase-3-go-no-go-review.md` | ☐ Blocked on operator |
-| T1-P3 | If PG: Target-host PG drill plan adaptation | Engineering | `109-p5c-postgresql-backup-restore-runbook.md`, target env spec (doc 63) | Adapted target-host drill plan (this doc §5) | ☐ Blocked on Phase 2 |
-| T1-P4 | If PG: Operator executes P5c.V1 on target | Operator | Adapted plan, target credentials, `pg_dump` | Completed `110-p5c-postgresql-drill-evidence-template.md` | ☐ Blocked on Phase 3 |
-| T1-P5 | If PG: Operator executes P5c.V2 on target | Operator | Backup artifact from T1-P4, drill DB | Completed evidence template + restore log | ☐ Blocked on T1-P4 |
-| T1-P6 | If SQLite: Explicit N/A waiver for B6/B7 | Operator | `105-g3-5-operator-d1-d3-signoff-packet.md` | Signed waiver acknowledging P5c deferred | ☐ Blocked on Phase 2 |
+| T1-P1 | Populated-data local drill | Engineering | Populated SQLite fixture or seeded local PG | Local evidence with non-zero row counts | ✅ Done — [`artifacts/2026-05-12-p5c-populated-local-drill-evidence.md`](./artifacts/2026-05-12-p5c-populated-local-drill-evidence.md) |
+| T1-P2 | Operator selects PG or SQLite path | Operator + Engineering | Path 2 pilot outcome, workload model | Signed path decision in [`113-operator-path-selection-packet.md`](./113-operator-path-selection-packet.md) (commit `b320f5c`) | ✅ Done — Option A SQLite selected |
+| T1-P3 | If PG: Target-host PG drill plan adaptation | Engineering | `109-p5c-postgresql-backup-restore-runbook.md`, target env spec (doc 63) | Adapted target-host drill plan (this doc §5) | ☐ N/A (SQLite selected); readiness prep in [`117-postgresql-readiness-acceleration-plan.md`](./117-postgresql-readiness-acceleration-plan.md) |
+| T1-P4 | If PG: Operator executes P5c.V1 on target | Operator | Adapted plan, target credentials, `pg_dump` | Completed `110-p5c-postgresql-drill-evidence-template.md` | ☐ N/A (SQLite selected) |
+| T1-P5 | If PG: Operator executes P5c.V2 on target | Operator | Backup artifact from T1-P4, drill DB | Completed evidence template + restore log | ☐ N/A (SQLite selected) |
+| T1-P6 | If SQLite: Explicit N/A waiver for B6/B7 | Operator | `105-g3-5-operator-d1-d3-signoff-packet.md` | Signed waiver acknowledging P5c deferred | ✅ Done — waived per doc113 §6 |
 
 #### Track 1 — Checklist
 
-- [ ] **T1.1** (Eng) Create or obtain a populated SQLite fixture (≥100 rows across `intents`, `proposals`, `executions`) for local seeding.
-- [ ] **T1.2** (Eng) Run populated-data local P5c.V1: `pg_dump` with non-zero row counts, record size/checksum/`pg_restore -l`.
-- [ ] **T1.3** (Eng) Run populated-data local P5c.V2: restore into drill DB, verify row counts match source, cleanup.
-- [ ] **T1.4** (Eng) Record populated local evidence in new artifact: `artifacts/2026-XX-XX-p5c-populated-local-drill-evidence.md`.
-- [ ] **T1.5** (Op + Eng) Phase 2 decision gate: operator selects SQLite (continue Path 2) or PostgreSQL (proceed to P5b–P5e).
-- [ ] **T1.6** (Eng, if PG) Adapt `111-p5c-local-docker-drill-plan.md` for target host: replace `localhost:5432` with target host, add `.pgpass` guidance, add scheduler verification.
-- [ ] **T1.7** (Op, if PG) Execute target-host P5c.V1 per adapted plan; fill `110-p5c-postgresql-drill-evidence-template.md`.
-- [ ] **T1.8** (Op, if PG) Execute target-host P5c.V2 per adapted plan; fill evidence template.
-- [ ] **T1.9** (Op, if SQLite) Sign explicit N/A waiver for B6/B7 in `105-g3-5-operator-d1-d3-signoff-packet.md` refresh.
+- [x] **T1.1** (Eng) Create or obtain a populated SQLite fixture (≥100 rows across `intents`, `proposals`, `executions`) for local seeding.
+- [x] **T1.2** (Eng) Run populated-data local P5c.V1: `pg_dump` with non-zero row counts, record size/checksum/`pg_restore -l`.
+- [x] **T1.3** (Eng) Run populated-data local P5c.V2: restore into drill DB, verify row counts match source, cleanup.
+- [x] **T1.4** (Eng) Record populated local evidence in artifact: [`artifacts/2026-05-12-p5c-populated-local-drill-evidence.md`](./artifacts/2026-05-12-p5c-populated-local-drill-evidence.md).
+- [x] **T1.5** (Op + Eng) Phase 2 decision gate: operator selects SQLite (continue Path 2) or PostgreSQL (proceed to P5b–P5e). Decision recorded in [`113-operator-path-selection-packet.md`](./113-operator-path-selection-packet.md) (commit `b320f5c`).
+- [ ] **T1.6** (Eng, if PG) Adapt `111-p5c-local-docker-drill-plan.md` for target host: replace `localhost:5432` with target host, add `.pgpass` guidance, add scheduler verification — N/A (SQLite selected); readiness prep continues in [`117-postgresql-readiness-acceleration-plan.md`](./117-postgresql-readiness-acceleration-plan.md).
+- [ ] **T1.7** (Op, if PG) Execute target-host P5c.V1 per adapted plan; fill `110-p5c-postgresql-drill-evidence-template.md` — N/A (SQLite selected).
+- [ ] **T1.8** (Op, if PG) Execute target-host P5c.V2 per adapted plan; fill evidence template — N/A (SQLite selected).
+- [x] **T1.9** (Op, if SQLite) Sign explicit N/A waiver for B6/B7 in `105-g3-5-operator-d1-d3-signoff-packet.md` refresh — waived per [`113-operator-path-selection-packet.md`](./113-operator-path-selection-packet.md) §6.
 
 #### Track 1 — Stop Conditions
 
@@ -155,30 +156,30 @@ Phase 0 (P5c local smoke) ──► Phase 1 (populated local drill)
 
 | Sub-phase | Task | Owner | Inputs | Outputs | Status |
 |---|---|---|---|---|---|
-| T2-P1 | Generate or reuse populated SQLite fixture | Engineering | Existing test fixtures, migration schema | SQLite `.db` file with ≥100 rows | ☐ Ready to start |
-| T2-P2 | Seed local PostgreSQL from populated fixture | Engineering | `ferrum-migrate --features postgres`, fixture DB | Local PG with realistic data | ☐ Ready to start |
-| T2-P3 | Execute P5c.V1 backup with populated data | Engineering | `pg_dump` inside Docker container | Backup artifact with size > schema-only baseline | ☐ Ready to start |
-| T2-P4 | Execute P5c.V2 restore with populated data | Engineering | Backup artifact, drill DB | Restored DB with matching row counts | ☐ Ready to start |
-| T2-P5 | Record evidence artifact | Engineering | Drill logs, checksums, row counts | `artifacts/2026-XX-XX-p5c-populated-local-drill-evidence.md` | ☐ Ready to start |
+| T2-P1 | Generate or reuse populated SQLite fixture | Engineering | Existing test fixtures, migration schema | SQLite `.db` file with ≥100 rows | ✅ Done |
+| T2-P2 | Seed local PostgreSQL from populated fixture | Engineering | `ferrum-migrate --features postgres`, fixture DB | Local PG with realistic data | ✅ Done |
+| T2-P3 | Execute P5c.V1 backup with populated data | Engineering | `pg_dump` inside Docker container | Backup artifact with size > schema-only baseline | ✅ Done |
+| T2-P4 | Execute P5c.V2 restore with populated data | Engineering | Backup artifact, drill DB | Restored DB with matching row counts | ✅ Done |
+| T2-P5 | Record evidence artifact | Engineering | Drill logs, checksums, row counts | [`artifacts/2026-05-12-p5c-populated-local-drill-evidence.md`](./artifacts/2026-05-12-p5c-populated-local-drill-evidence.md) | ✅ Done |
 
 #### Track 2 — Checklist
 
-- [ ] **T2.1** Identify or create populated SQLite fixture. Minimum: 50 `intents`, 30 `proposals`, 20 `executions`, plus linked `capabilities`, `provenance_events`, `ledger_entries`.
-- [ ] **T2.2** Start local PostgreSQL container (`docker-compose.postgres.yml`).
-- [ ] **T2.3** Migrate from populated SQLite to local PostgreSQL:
+- [x] **T2.1** Identify or create populated SQLite fixture. Minimum: 50 `intents`, 30 `proposals`, 20 `executions`, plus linked `capabilities`, `provenance_events`, `ledger_entries`.
+- [x] **T2.2** Start local PostgreSQL container (`docker-compose.postgres.yml`).
+- [x] **T2.3** Migrate from populated SQLite to local PostgreSQL:
   ```bash
   cargo run --package ferrum-migrate --features postgres -- \
     --from "sqlite:/path/to/populated_fixture.db" \
     --to "postgres://ferrumgate_dev@localhost:55432/ferrumgate_p2_test" \
     --apply --chunk-size 100
   ```
-- [ ] **T2.4** Verify row counts in local PG before backup.
-- [ ] **T2.5** Run `pg_dump -Fc -v --no-owner --no-privileges` inside container; copy artifact to host.
-- [ ] **T2.6** Record SHA-256, size, `pg_restore -l` object count.
-- [ ] **T2.7** Create drill DB; run `pg_restore`; verify all tables present.
-- [ ] **T2.8** Verify row counts in drill DB match source (±0).
-- [ ] **T2.9** Drop drill DB; stop container.
-- [ ] **T2.10** Write evidence artifact with sanitized commands (passwords redacted).
+- [x] **T2.4** Verify row counts in local PG before backup.
+- [x] **T2.5** Run `pg_dump -Fc -v --no-owner --no-privileges` inside container; copy artifact to host.
+- [x] **T2.6** Record SHA-256, size, `pg_restore -l` object count.
+- [x] **T2.7** Create drill DB; run `pg_restore`; verify all tables present.
+- [x] **T2.8** Verify row counts in drill DB match source (±0).
+- [x] **T2.9** Drop drill DB; stop container.
+- [x] **T2.10** Write evidence artifact with sanitized commands (passwords redacted).
 
 #### Track 2 — Stop Conditions
 
@@ -350,45 +351,45 @@ Phase 0 (P5c local smoke) ──► Phase 1 (populated local drill)
 - [x] P0.2 Evidence artifact committed (`artifacts/2026-05-12-p5c-local-docker-drill-evidence.md`)
 - [x] P0.3 Explicit non-claims recorded (production-ready = NO, target-host = NOT CLOSED)
 
-### Phase 1 — Populated Local Drill (Engineering-Owned, Executable Now)
+### Phase 1 — Populated Local Drill (Engineering-Owned, Done)
 
-- [ ] P1.1 Obtain or create populated SQLite fixture (≥100 rows)
-- [ ] P1.2 Seed local PostgreSQL from fixture
-- [ ] P1.3 Execute populated P5c.V1 backup
-- [ ] P1.4 Execute populated P5c.V2 restore
-- [ ] P1.5 Verify row counts match (±0)
-- [ ] P1.6 Write populated local evidence artifact
-- [ ] P1.7 Textual self-check: no secrets, no production-ready claim
+- [x] P1.1 Obtain or create populated SQLite fixture (≥100 rows)
+- [x] P1.2 Seed local PostgreSQL from fixture
+- [x] P1.3 Execute populated P5c.V1 backup
+- [x] P1.4 Execute populated P5c.V2 restore
+- [x] P1.5 Verify row counts match (±0)
+- [x] P1.6 Write populated local evidence artifact — [`artifacts/2026-05-12-p5c-populated-local-drill-evidence.md`](./artifacts/2026-05-12-p5c-populated-local-drill-evidence.md)
+- [x] P1.7 Textual self-check: no secrets, no production-ready claim
 
-### Phase 2 — Operator Path Decision (Blocked on Operator)
+### Phase 2 — Operator Path Decision (Done — Option A SQLite Selected)
 
-- [ ] P2.1 Operator reviews Path 2 pilot outcome (workload rate, capacity)
-- [ ] P2.2 Operator selects SQLite (continue Path 2) or PostgreSQL (proceed to P5b–P5e)
-- [ ] P2.3 Decision recorded in `55-phase-3-go-no-go-review.md`
-- [ ] P2.4 If PostgreSQL: operator refreshes `105-g3-5-operator-d1-d3-signoff-packet.md`
-- [ ] P2.5 If SQLite: operator signs N/A waiver for B6/B7
+- [x] P2.1 Operator reviews Path 2 pilot outcome (workload rate, capacity)
+- [x] P2.2 Operator selects SQLite (continue Path 2) or PostgreSQL (proceed to P5b–P5e)
+- [x] P2.3 Decision recorded in [`113-operator-path-selection-packet.md`](./113-operator-path-selection-packet.md) (commit `b320f5c`)
+- [x] P2.4 If PostgreSQL: operator refreshes `105-g3-5-operator-d1-d3-signoff-packet.md` — N/A (SQLite selected)
+- [x] P2.5 If SQLite: operator signs N/A waiver for B6/B7 — waived per doc113 §6
 
-### Phase 3 — Target-Host Drill Prep & Execution (Blocked on Phase 2 + Target Host)
+### Phase 3 — Target-Host Drill Prep & Execution (Blocked — Target Host Inaccessible)
 
-- [ ] P3.1 If PG: Engineering adapts drill plan for target host
-- [ ] P3.2 If PG: Operator executes target-host P5c.V1
-- [ ] P3.3 If PG: Operator executes target-host P5c.V2
-- [ ] P3.4 SQLite target-host D1–D6 drills executed
-- [ ] P3.5 SQLite target-host restore drill with `integrity_check` passed
-- [ ] P3.6 Backup automation configured and verified
-- [ ] P3.7 TLS/reverse proxy configured and probed
-- [ ] P3.8 Bearer token generated and deployed
+- [ ] P3.1 If PG: Engineering adapts drill plan for target host — N/A (SQLite selected); readiness prep continues in [`117-postgresql-readiness-acceleration-plan.md`](./117-postgresql-readiness-acceleration-plan.md)
+- [ ] P3.2 If PG: Operator executes target-host P5c.V1 — N/A (SQLite selected)
+- [ ] P3.3 If PG: Operator executes target-host P5c.V2 — N/A (SQLite selected)
+- [ ] P3.4 SQLite target-host D1–D6 drills executed — blocked, see [`artifacts/2026-05-12-sqlite-path2-target-host-blocked-attempt.md`](./artifacts/2026-05-12-sqlite-path2-target-host-blocked-attempt.md)
+- [ ] P3.5 SQLite target-host restore drill with `integrity_check` passed — blocked
+- [ ] P3.6 Backup automation configured and verified — blocked
+- [ ] P3.7 TLS/reverse proxy configured and probed — blocked
+- [ ] P3.8 Bearer token generated and deployed — blocked
 
 ### Phase 4 — G3.6 Real Workload (Blocked on Phase 3)
 
-- [ ] P4.1 Engineering delivers load generator script
-- [ ] P4.2 Engineering delivers Grafana dashboard JSON
-- [ ] P4.3 Operator deploys load generator + monitoring
-- [ ] P4.4 Baseline → low → target → spike → cooldown sequence executed
-- [ ] P4.5 Sustained write-rate histograms collected
-- [ ] P4.6 Queue depth verified under load
-- [ ] P4.7 `readyz/deep` success rate ≥ 99% confirmed
-- [ ] P4.8 G3.6 evidence packet refreshed with real workload data
+- [ ] P4.1 Engineering delivers load generator script — blocked on target host
+- [ ] P4.2 Engineering delivers Grafana dashboard JSON — blocked on target host
+- [ ] P4.3 Operator deploys load generator + monitoring — blocked
+- [ ] P4.4 Baseline → low → target → spike → cooldown sequence executed — blocked
+- [ ] P4.5 Sustained write-rate histograms collected — blocked
+- [ ] P4.6 Queue depth verified under load — blocked
+- [ ] P4.7 `readyz/deep` success rate ≥ 99% confirmed — blocked
+- [ ] P4.8 G3.6 evidence packet refreshed with real workload data — blocked
 
 ### Phase 5 — Consolidation & Conditional Signoff (Blocked on All Prior)
 
@@ -406,12 +407,12 @@ These steps are **executable now** (no operator dependency, no target-host acces
 
 | # | Step | Owner | ETA | Evidence |
 |---|---|---|---|---|
-| 1 | Create populated SQLite fixture or identify existing test fixture with ≥100 rows | Engineering | 1h | Fixture file path recorded |
-| 2 | Run Track 2 populated-data local drill (T2.1–T2.10) | Engineering | 2h | Drill evidence artifact |
-| 3 | Draft `scripts/run_real_workload_generator.py` scaffold (T3.2) | Engineering | 4h | Python script in `scripts/` |
-| 4 | Draft `configs/examples/grafana-ferrumgate.json` (T3.3) | Engineering | 2h | JSON dashboard file |
-| 5 | Update this plan with actual Track 2 execution dates and outcomes | Engineering | 0.5h | Edits to this doc |
-| 6 | Present Track 2 evidence + Phase 2 decision brief to operator | Engineering | 0.5h | Operator decision recorded |
+| 1 | Create populated SQLite fixture or identify existing test fixture with ≥100 rows | Engineering | 1h | ✅ Done — fixture created |
+| 2 | Run Track 2 populated-data local drill (T2.1–T2.10) | Engineering | 2h | ✅ Done — [`artifacts/2026-05-12-p5c-populated-local-drill-evidence.md`](./artifacts/2026-05-12-p5c-populated-local-drill-evidence.md) |
+| 3 | Draft `scripts/run_real_workload_generator.py` scaffold (T3.2) | Engineering | 4h | ☐ Ready to start |
+| 4 | Draft `configs/examples/grafana-ferrumgate.json` (T3.3) | Engineering | 2h | ☐ Ready to start |
+| 5 | Update this plan with actual Track 2 execution dates and outcomes | Engineering | 0.5h | ✅ Done — this edit |
+| 6 | Present Track 2 evidence + Phase 2 decision brief to operator | Engineering | 0.5h | ✅ Done — Option A recorded in [`113-operator-path-selection-packet.md`](./113-operator-path-selection-packet.md) (commit `b320f5c`) |
 
 ---
 
@@ -484,7 +485,8 @@ These steps are **executable now** (no operator dependency, no target-host acces
 |---|---|---|
 | 2026-05-12 | Initial phased completion execution plan for four tracks post-P5c | Engineering |
 | 2026-05-12 | Target-host execution attempted from runner IP `118.68.117.136`; blocked by SSH firewall (`118.69.4.63/32` only) and absent bearer token. See [`artifacts/2026-05-12-sqlite-path2-target-host-blocked-attempt.md`](./artifacts/2026-05-12-sqlite-path2-target-host-blocked-attempt.md). B1–B5 and B8 remain open. | Engineering |
+| 2026-05-12 | Updated Phase 1/2 status: populated local drill completed, Option A SQLite path selected (commit `b320f5c`). Phase 3/4 remain blocked on target host. PostgreSQL readiness linked to [`117-postgresql-readiness-acceleration-plan.md`](./117-postgresql-readiness-acceleration-plan.md). | Engineering |
 
 ---
 
-*Document created: 2026-05-12. Post-P5c Completion Execution Plan — planning artifact only. No execution claimed. No production-ready claim. Target-host blockers remain operator-owned.*
+*Document updated: 2026-05-12. Post-P5c Completion Execution Plan — planning artifact only. No execution claimed. No production-ready claim. Target-host blockers remain operator-owned.*
