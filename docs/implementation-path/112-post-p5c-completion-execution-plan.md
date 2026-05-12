@@ -474,6 +474,7 @@ These steps are **executable now** (no operator dependency, no target-host acces
 | `112-post-p5c-completion-execution-plan.md` | `114-target-host-p5c-drill-checklist.md` | Track 1 target-host P5c drill checklist |
 | `112-post-p5c-completion-execution-plan.md` | `115-sqlite-path2-target-host-checklist.md` | Track 4 SQLite target-host blocker checklist |
 | `112-post-p5c-completion-execution-plan.md` | `116-g36-monitoring-execution-plan.md` | Track 3 G3.6 real workload monitoring plan |
+| `112-post-p5c-completion-execution-plan.md` | `117-postgresql-readiness-acceleration-plan.md` | PostgreSQL readiness acceleration (parallel to Path 2 pilot) |
 
 ---
 
@@ -482,6 +483,7 @@ These steps are **executable now** (no operator dependency, no target-host acces
 | Date | Change | Author |
 |---|---|---|
 | 2026-05-12 | Initial phased completion execution plan for four tracks post-P5c | Engineering |
+| 2026-05-12 | Target-host execution attempted from runner IP `118.68.117.136`; blocked by SSH firewall (`118.69.4.63/32` only) and absent bearer token. See [`artifacts/2026-05-12-sqlite-path2-target-host-blocked-attempt.md`](./artifacts/2026-05-12-sqlite-path2-target-host-blocked-attempt.md). B1–B5 and B8 remain open. | Engineering |
 
 ---
 
