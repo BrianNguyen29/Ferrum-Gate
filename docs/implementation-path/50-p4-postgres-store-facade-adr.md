@@ -260,25 +260,27 @@ P5a is the only currently authorized P5 subphase. It produces a design document,
 | P5d.V2 | Staging multi-node deployment passes integration tests | Test evidence from staging environment |
 | P5d.V3 | Failover procedure tested in staging | Operator drill log |
 
-#### 3.5.4 P5e — Migration Grade-Up (Implementation Gated)
+#### 3.5.4 P5e — Migration Grade-Up (Partially Implemented)
 
 **Goals**:
 - [ ] SQLite → PostgreSQL migration upgraded from MVP to production-grade
-- [ ] Idempotent/resumable migration with checkpointing
-- [ ] Content-hash validation for lineage equivalence
-- [ ] Large-dataset streaming and chunking
+- [x] Idempotent/resumable migration with upsert semantics (P5e.1) — implemented (--resume flag; ON CONFLICT DO NOTHING for tables with stable ID; provenance_edges blocked with clear error)
+- [ ] Checkpointing (P5e.2) — pending
+- [ ] Content-hash validation for lineage equivalence (P5e.3) — pending
+- [x] Large-dataset streaming and chunking (P5e.4) — implemented (default chunk-size 1000, max 10000; per-chunk transaction with row-by-row fallback)
+- [ ] Integration tests for repeated runs, hash validation, and large dataset (P5e.5)
 
 **Blocked until**: Eng.1 capacity confirmed; Eng.2 implementation plan approved; P5b–P5c design complete; P4.4 MVP migration baseline available
 
-**Estimated Effort**: ~100-200 LOC + migration testing (upgrade from P4.4 MVP)
+**Estimated Effort**: ~100-200 LOC + migration testing (upgrade from P4.4 MVP). P5e.1 + P5e.4 delivered ~120 LOC.
 
 **Verification Gates**:
 
-| Gate | Criterion | Evidence |
-|---|---|---|
-| P5e.V1 | Migration is idempotent (rerunnable without duplication) | Integration test with repeated runs |
-| P5e.V2 | Content-hash validation passes for all migrated records | Hash comparison log |
-| P5e.V3 | Large dataset (≥1M records) streams without OOM | Memory profile or benchmark evidence |
+| Gate | Criterion | Evidence | Status |
+|---|---|---|---|
+| P5e.V1 | Migration is idempotent (rerunnable without duplication) | Integration test with repeated runs | ☑ Partially satisfied — upsert/resume semantics implemented; repeated-run integration test pending |
+| P5e.V2 | Content-hash validation passes for all migrated records | Hash comparison log | ☐ Pending |
+| P5e.V3 | Large dataset (≥1M records) streams without OOM | Memory profile or benchmark evidence | ☑ Partially satisfied — chunking implemented; ≥1M benchmark deferred |
 
 #### 3.5.5 P5 Non-Claims
 
@@ -346,7 +348,7 @@ store_dsn = "sqlite::memory:"
 | P5b Pool tuning | ☑ PARTIALLY IMPLEMENTED | Conservative defaults (`max_connections=10`, `min_idle=2`, `acquire_timeout=5s`) wired into `PostgresPoolConfig`, CLI/env/config precedence, and validation. Post-deploy monitoring still required; not production-ready. |
 | P5c Backup/restore | ☑ Design/docs complete | `109-p5c-postgresql-backup-restore-runbook.md` delivered; RPO=15min/RTO=30min approved; config examples in `configs/examples/postgres-backup.*`. P5c.V1–V2 pending operator drill. |
 | P5d HA/clustering | ☐ Skipped | D1=A/D3=A; explicitly out of v1 scope |
-| P5e Migration grade-up | ☐ Deferred | Blocked on P5b–P5c design complete; P4.4 MVP baseline |
+| P5e Migration grade-up | ☐ Partially Implemented | P5e.1 resume + P5e.4 streaming/chunking implemented. P5e.2–P5e.3 and P5e.5 still pending. |
 
 **Total estimated for full PostgreSQL production readiness**: ~3500-4500 LOC + significant testing infrastructure
 

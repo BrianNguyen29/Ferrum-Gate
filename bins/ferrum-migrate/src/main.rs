@@ -12,9 +12,22 @@ use std::collections::BTreeSet;
 #[cfg(feature = "postgres")]
 use sqlx::PgPool;
 
+fn parse_chunk_size(s: &str) -> Result<usize, String> {
+    let val: usize = s
+        .parse()
+        .map_err(|_| format!("`{}` is not a valid chunk size", s))?;
+    if val == 0 {
+        return Err("chunk-size must be greater than 0".to_string());
+    }
+    if val > 10_000 {
+        return Err("chunk-size must not exceed 10000".to_string());
+    }
+    Ok(val)
+}
+
 #[derive(Debug, Parser)]
 #[command(name = "ferrum-migrate")]
-#[command(about = "FerrumGate SQLite to PostgreSQL migration tool (P4.4 MVP)")]
+#[command(about = "FerrumGate SQLite to PostgreSQL migration tool (P5e.4 streaming)")]
 struct Args {
     /// Source SQLite DSN (e.g., sqlite://path/to/db or sqlite::memory:).
     #[arg(long)]
@@ -31,6 +44,15 @@ struct Args {
     /// Output results as JSON.
     #[arg(long)]
     json: bool,
+
+    /// Number of rows to process per chunk during migration.
+    #[arg(long, default_value = "1000", value_parser = parse_chunk_size)]
+    chunk_size: usize,
+
+    /// Resume a previous migration using idempotent upsert semantics.
+    /// Tables without a stable unique key cannot be resumed safely.
+    #[arg(long)]
+    resume: bool,
 }
 
 /// A single table migration result.
@@ -175,26 +197,22 @@ async fn is_target_empty(pg: &PgPool, table: &str) -> Result<bool> {
     Ok(count == 0)
 }
 
-/// Read all source rows for a table and collect IDs.
-#[cfg(feature = "postgres")]
-async fn read_source_rows(
-    sqlite: &SqlitePool,
-    select_columns: &str,
-    table: &str,
-    id_column: Option<&str>,
-) -> Result<(Vec<sqlx::sqlite::SqliteRow>, BTreeSet<String>)> {
-    let sql = format!("SELECT {} FROM {}", select_columns, table);
-    let rows = sqlx::query(&sql).fetch_all(sqlite).await?;
-
-    let ids: BTreeSet<String> = if let Some(id_col) = id_column {
-        rows.iter()
-            .filter_map(|row| row.try_get::<String, _>(id_col).ok())
-            .collect()
-    } else {
-        BTreeSet::new()
-    };
-
-    Ok((rows, ids))
+/// Build the INSERT (or upsert) SQL for a table.
+#[cfg(any(feature = "postgres", test))]
+fn build_insert_sql(insert_sql: &str, id_column: Option<&str>, resume: bool) -> Result<String> {
+    if !resume {
+        return Ok(insert_sql.to_string());
+    }
+    match id_column {
+        Some(id_col) => Ok(format!(
+            "{} ON CONFLICT ({}) DO NOTHING",
+            insert_sql, id_col
+        )),
+        None => bail!(
+            "Table has no stable ID column and cannot be safely resumed. \
+             Run without --resume or add a PRIMARY KEY/UNIQUE constraint."
+        ),
+    }
 }
 
 /// Migrate a single table from SQLite to PostgreSQL.
@@ -204,10 +222,13 @@ async fn migrate_table(
     pg: &PgPool,
     tm: &TableMigration<'_>,
     apply: bool,
+    chunk_size: usize,
+    resume: bool,
 ) -> Result<TableResult> {
-    let (rows, source_ids) =
-        read_source_rows(sqlite, tm.select_columns, tm.name, tm.id_column).await?;
-    let source_count = rows.len();
+    let source_count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {}", tm.name))
+        .fetch_one(sqlite)
+        .await?;
+    let source_count = source_count as usize;
 
     let mut result = TableResult {
         table: tm.name.to_string(),
@@ -220,60 +241,116 @@ async fn migrate_table(
     };
 
     if apply {
-        // Target-empty safety check
-        if !is_target_empty(pg, tm.name).await? {
+        // Target-empty safety check (skipped when resuming)
+        if !resume && !is_target_empty(pg, tm.name).await? {
             bail!(
                 "target table '{}' is not empty; P4.4 MVP requires an empty target",
                 tm.name
             );
         }
 
-        // Insert rows one by one (MVP: simple, not batched streaming)
-        for row in &rows {
-            let mut query = sqlx::query(tm.insert_sql);
+        let sql = build_insert_sql(tm.insert_sql, tm.id_column, resume)?;
+        let mut source_ids = BTreeSet::new();
 
-            for i in 0..tm.param_count {
-                let col_name = tm.select_columns.split(',').nth(i).map(|s| s.trim());
-                let col_name = match col_name {
-                    Some(c) => c,
-                    None => {
-                        result
-                            .errors
-                            .push(format!("column mismatch at parameter index {}", i + 1));
-                        continue;
+        for offset in (0..source_count).step_by(chunk_size) {
+            let select_sql = format!(
+                "SELECT {} FROM {} LIMIT {} OFFSET {}",
+                tm.select_columns, tm.name, chunk_size, offset
+            );
+            let rows = sqlx::query(&select_sql).fetch_all(sqlite).await?;
+
+            if let Some(id_col) = tm.id_column {
+                for row in &rows {
+                    if let Ok(id) = row.try_get::<String, _>(id_col) {
+                        source_ids.insert(id);
                     }
-                };
-
-                // Bind based on column name for type-specific handling
-                if col_name == "auto_commit" || col_name == "active" {
-                    let val: i64 = row.try_get(col_name)?;
-                    query = query.bind(val != 0);
-                } else if col_name == "step_index" || col_name == "entry_id" {
-                    let val: i64 = row.try_get(col_name)?;
-                    query = query.bind(val);
-                } else {
-                    let val: String = row.try_get(col_name)?;
-                    query = query.bind(val);
                 }
             }
 
-            if let Err(e) = query.execute(pg).await {
-                result.errors.push(format!("insert error: {}", e));
+            // Attempt chunk-wide transaction for efficiency
+            let mut txn = pg.begin().await?;
+            let mut chunk_ok = true;
+            let mut chunk_errors = Vec::new();
+            for row in &rows {
+                let mut query = sqlx::query(&sql);
+                for i in 0..tm.param_count {
+                    let col_name = tm.select_columns.split(',').nth(i).map(|s| s.trim());
+                    let col_name = match col_name {
+                        Some(c) => c,
+                        None => {
+                            chunk_errors
+                                .push(format!("column mismatch at parameter index {}", i + 1));
+                            chunk_ok = false;
+                            continue;
+                        }
+                    };
+                    if col_name == "auto_commit" || col_name == "active" {
+                        let val: i64 = row.try_get(col_name)?;
+                        query = query.bind(val != 0);
+                    } else if col_name == "step_index" || col_name == "entry_id" {
+                        let val: i64 = row.try_get(col_name)?;
+                        query = query.bind(val);
+                    } else {
+                        let val: String = row.try_get(col_name)?;
+                        query = query.bind(val);
+                    }
+                }
+                if let Err(e) = query.execute(&mut *txn).await {
+                    chunk_errors.push(format!("insert error: {}", e));
+                    chunk_ok = false;
+                }
+            }
+
+            if chunk_ok {
+                txn.commit().await?;
+                result.migrated_count += rows.len();
             } else {
-                result.migrated_count += 1;
+                txn.rollback().await?;
+                // Fallback to row-by-row to preserve per-row error semantics
+                for row in &rows {
+                    let mut query = sqlx::query(&sql);
+                    for i in 0..tm.param_count {
+                        let col_name = tm.select_columns.split(',').nth(i).map(|s| s.trim());
+                        let col_name = match col_name {
+                            Some(c) => c,
+                            None => {
+                                result
+                                    .errors
+                                    .push(format!("column mismatch at parameter index {}", i + 1));
+                                continue;
+                            }
+                        };
+                        if col_name == "auto_commit" || col_name == "active" {
+                            let val: i64 = row.try_get(col_name)?;
+                            query = query.bind(val != 0);
+                        } else if col_name == "step_index" || col_name == "entry_id" {
+                            let val: i64 = row.try_get(col_name)?;
+                            query = query.bind(val);
+                        } else {
+                            let val: String = row.try_get(col_name)?;
+                            query = query.bind(val);
+                        }
+                    }
+                    if let Err(e) = query.execute(pg).await {
+                        result.errors.push(format!("insert error: {}", e));
+                    } else {
+                        result.migrated_count += 1;
+                    }
+                }
+                result.errors.extend(chunk_errors);
             }
         }
 
         // Validate: count
-        let sql = format!("SELECT COUNT(*) FROM {}", tm.name);
-        let target_count: i64 = sqlx::query_scalar(&sql).fetch_one(pg).await?;
+        let count_sql = format!("SELECT COUNT(*) FROM {}", tm.name);
+        let target_count: i64 = sqlx::query_scalar(&count_sql).fetch_one(pg).await?;
         result.target_count = target_count as usize;
         result.count_match = result.target_count == result.source_count;
 
         // Validate: ID set
         if let Some(id_col) = tm.id_column {
-            let sql = format!("SELECT {} FROM {}", id_col, tm.name);
-            let target_rows = sqlx::query(&sql).fetch_all(pg).await?;
+            let id_sql = format!("SELECT {} FROM {}", id_col, tm.name);
+            let target_rows = sqlx::query(&id_sql).fetch_all(pg).await?;
             let target_ids: BTreeSet<String> = target_rows
                 .iter()
                 .filter_map(|row| row.try_get::<String, _>(id_col).ok())
@@ -354,7 +431,7 @@ async fn run_migration(args: &Args) -> Result<MigrationReport> {
     let mut overall_success = true;
 
     for tm in &migrations {
-        match migrate_table(&sqlite, &pg, tm, args.apply).await {
+        match migrate_table(&sqlite, &pg, tm, args.apply, args.chunk_size, args.resume).await {
             Ok(tr) => {
                 if !tr.count_match || !tr.id_match || !tr.errors.is_empty() {
                     overall_success = false;
@@ -432,6 +509,61 @@ mod tests {
         assert_eq!(args.to, "postgres://localhost/db");
         assert!(!args.apply);
         assert!(!args.json);
+        assert_eq!(args.chunk_size, 1000);
+    }
+
+    #[test]
+    fn test_cli_chunk_size_custom() {
+        let args = Args::parse_from([
+            "ferrum-migrate",
+            "--from",
+            "sqlite::memory:",
+            "--to",
+            "postgres://localhost/db",
+            "--chunk-size",
+            "5000",
+        ]);
+        assert_eq!(args.chunk_size, 5000);
+    }
+
+    #[test]
+    fn test_cli_chunk_size_max_enforced() {
+        let result = Args::try_parse_from([
+            "ferrum-migrate",
+            "--from",
+            "sqlite::memory:",
+            "--to",
+            "postgres://localhost/db",
+            "--chunk-size",
+            "10001",
+        ]);
+        assert!(result.is_err(), "chunk-size above 10000 should be rejected");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("10000"),
+            "error should mention max 10000: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_cli_chunk_size_zero_rejected() {
+        let result = Args::try_parse_from([
+            "ferrum-migrate",
+            "--from",
+            "sqlite::memory:",
+            "--to",
+            "postgres://localhost/db",
+            "--chunk-size",
+            "0",
+        ]);
+        assert!(result.is_err(), "chunk-size of 0 should be rejected");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("greater") || err.contains("0"),
+            "error should mention invalid zero: {}",
+            err
+        );
     }
 
     #[test]
@@ -449,6 +581,81 @@ mod tests {
         assert_eq!(args.to, "postgres://u:p@host/db");
         assert!(args.apply);
         assert!(args.json);
+        assert!(!args.resume);
+    }
+
+    #[test]
+    fn test_cli_resume_flag_parsing() {
+        let args = Args::parse_from([
+            "ferrum-migrate",
+            "--from",
+            "sqlite::memory:",
+            "--to",
+            "postgres://localhost/db",
+            "--resume",
+        ]);
+        assert!(args.resume);
+        assert!(!args.apply);
+    }
+
+    #[test]
+    fn test_cli_resume_with_apply() {
+        let args = Args::parse_from([
+            "ferrum-migrate",
+            "--from",
+            "sqlite::memory:",
+            "--to",
+            "postgres://localhost/db",
+            "--apply",
+            "--resume",
+        ]);
+        assert!(args.apply);
+        assert!(args.resume);
+    }
+
+    #[test]
+    fn test_build_insert_sql_non_resume() {
+        let sql = build_insert_sql("INSERT INTO t (a) VALUES ($1)", Some("a"), false).unwrap();
+        assert_eq!(sql, "INSERT INTO t (a) VALUES ($1)");
+    }
+
+    #[test]
+    fn test_build_insert_sql_resume_with_id() {
+        let sql = build_insert_sql("INSERT INTO t (a) VALUES ($1)", Some("a"), true).unwrap();
+        assert_eq!(
+            sql,
+            "INSERT INTO t (a) VALUES ($1) ON CONFLICT (a) DO NOTHING"
+        );
+    }
+
+    #[test]
+    fn test_build_insert_sql_resume_without_id_fails() {
+        let result = build_insert_sql("INSERT INTO t (a) VALUES ($1)", None, true);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("no stable ID column"),
+            "error should explain missing ID: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_table_migrations_have_conflict_target_except_edges() {
+        for tm in table_migrations() {
+            if tm.name == "provenance_edges" {
+                assert!(
+                    tm.id_column.is_none(),
+                    "provenance_edges is expected to lack a safe conflict target"
+                );
+            } else {
+                assert!(
+                    tm.id_column.is_some(),
+                    "table '{}' must have an id_column to support resume",
+                    tm.name
+                );
+            }
+        }
     }
 
     #[test]
@@ -628,7 +835,7 @@ mod tests {
             .into_iter()
             .find(|t| t.name == "intents")
             .unwrap();
-        let result = migrate_table(sqlite_store.pool(), &pg, &tm, true)
+        let result = migrate_table(sqlite_store.pool(), &pg, &tm, true, 1, false)
             .await
             .unwrap();
 

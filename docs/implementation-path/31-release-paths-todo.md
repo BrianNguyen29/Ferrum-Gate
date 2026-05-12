@@ -272,11 +272,12 @@ Per `50-p4-postgres-store-facade-adr.md` §3 Phase P1:
 - [ ] StoreFacade concurrency model adapted for multi-node (if required)
 - [ ] **Blocked until**: G3.6 pilot data available; Eng.1/Eng.2 planning complete; explicitly out of v1 scope
 
-#### P5e — Migration Grade-Up (Implementation Gated)
-- [ ] SQLite → PostgreSQL migration upgraded from MVP to production-grade
-- [ ] Idempotent/resumable migration with checkpointing
-- [ ] Content-hash validation for lineage equivalence
-- [ ] Large-dataset streaming and chunking
+#### P5e — Migration Grade-Up (Partially Implemented)
+- [ ] SQLite → PostgreSQL migration upgraded from MVP to production-grade — P5e.1 resume + P5e.4 streaming implemented; P5e.2–P5e.3 and P5e.5 still pending
+- [x] Idempotent/resumable migration with upsert semantics (P5e.1) — implemented (--resume flag; ON CONFLICT DO NOTHING for tables with stable ID; provenance_edges blocked with clear error)
+- [ ] Checkpointing (P5e.2) — pending
+- [ ] Content-hash validation for lineage equivalence (P5e.3) — pending
+- [x] Large-dataset streaming and chunking (P5e.4) — implemented (default chunk-size 1000, max 10000; per-chunk transaction with row-by-row fallback)
 - [ ] **Blocked until**: G3.6 pilot data available; Eng.1/Eng.2 planning complete; P5b–P5c design complete
 
 > **P5 completion does not claim production-ready.** Even after P5a–P5e complete, a later P6 assessment is required before any full production-ready claim. PostgreSQL production deployment remains operator-owned and gated.
