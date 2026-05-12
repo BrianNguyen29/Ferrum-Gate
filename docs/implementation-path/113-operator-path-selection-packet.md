@@ -1,9 +1,9 @@
 # 113 — Operator Path Selection Packet
 
-> **Status**: Fillable operator decision packet. Not signed. No execution claimed.  
+> **Status**: Operator decision recorded — Option A (SQLite Path 2 pilot) selected 2026-05-12. No execution claimed.  
 > **Purpose**: Formal operator decision on SQLite (continue Path 2) vs PostgreSQL (proceed to P5b–P5e) after P5c local smoke evidence.  
 > **Scope**: Single decision gate. No live infra changes. No secrets.  
-> **Constraint**: `production-ready = NO`. This packet does NOT authorize production deployment. P6 CONDITIONAL GO language applies.
+> **Constraint**: `production-ready = NO`. This packet does NOT authorize production deployment. P6 CONDITIONAL GO language applies. PostgreSQL remains an engineering/readiness track only; no PostgreSQL production deployment is claimed.
 
 ---
 
@@ -37,11 +37,11 @@ Before making this decision, confirm:
 
 | # | Prerequisite | Evidence | Status |
 |---|---|---|---|
-| R1 | P5c local smoke evidence reviewed | `artifacts/2026-05-12-p5c-local-docker-drill-evidence.md` read | ☐ Operator confirms |
-| R2 | Post-P5c completion plan reviewed | `112-post-p5c-completion-execution-plan.md` read | ☐ Operator confirms |
-| R3 | Workload model understood | Operator knows sustained write rate, peak concurrency, data growth | ☐ Operator confirms |
-| R4 | Path 2 pilot status known | `59-pilot-readiness-evidence-packet.md` reviewed; conditional pilot understood | ☐ Operator confirms |
-| R5 | P5a design reviewed (if considering PostgreSQL) | `50-p4-postgres-store-facade-adr.md` §3.5 read | ☐ Operator confirms (Option B only) |
+| R1 | P5c local smoke evidence reviewed | `artifacts/2026-05-12-p5c-local-docker-drill-evidence.md` read | ☑ Operator confirms |
+| R2 | Post-P5c completion plan reviewed | `112-post-p5c-completion-execution-plan.md` read | ☑ Operator confirms |
+| R3 | Workload model understood | Operator knows sustained write rate, peak concurrency, data growth | ☑ Operator confirms |
+| R4 | Path 2 pilot status known | `59-pilot-readiness-evidence-packet.md` reviewed; conditional pilot understood | ☑ Operator confirms |
+| R5 | P5a design reviewed (if considering PostgreSQL) | `50-p4-postgres-store-facade-adr.md` §3.5 read | ☐ N/A — Option A selected; PostgreSQL track remains readiness-only |
 
 ---
 
@@ -128,9 +128,9 @@ If the operator selects **Option A**, the following waiver must be acknowledged 
 
 | Waiver Item | Acknowledged |
 |---|---|
-| B6 (P5c.V1 target-host backup drill) | `☐ N/A — SQLite path` |
-| B7 (P5c.V2 target-host restore drill) | `☐ N/A — SQLite path` |
-| B6/B7 may become active if path changes to PostgreSQL | `☐ Acknowledged` |
+| B6 (P5c.V1 target-host backup drill) | `☑ N/A — SQLite path` |
+| B7 (P5c.V2 target-host restore drill) | `☑ N/A — SQLite path` |
+| B6/B7 may become active if path changes to PostgreSQL | `☑ Acknowledged` |
 
 ---
 
@@ -140,18 +140,18 @@ If the operator selects **Option A**, the following waiver must be acknowledged 
 
 | Field | Value |
 |---|---|
-| Date | `<YYYY-MM-DD>` |
-| Operator name | `<operator name>` |
-| Organization | `<organization>` |
-| Pilot environment | `<e.g., ferrumgate-nonprod>` |
+| Date | `2026-05-12` |
+| Operator name | `User (via agent instruction)` |
+| Organization | `FerrumGate` |
+| Pilot environment | `Conditional single-node SQLite pilot` |
 
 ### 7.2 Path Selection
 
 > **Select ONE and initial:**
 
-- [ ] **Option A — Continue SQLite (Path 2)**
-  - Initials: ______
-  - Rationale: _________________________________
+- [x] **Option A — Continue SQLite (Path 2)**
+  - Initials: `User authorization via agent instruction`
+  - Rationale: `Close Conditional single-node SQLite pilot first; continue PostgreSQL readiness as a separate non-production track.`
 
 - [ ] **Option B — Proceed to PostgreSQL (Path 3 / P5b–P5e)**
   - Initials: ______
@@ -161,18 +161,18 @@ If the operator selects **Option A**, the following waiver must be acknowledged 
 
 | # | Acknowledgment | Initials |
 |---|---|---|
-| K1 | I understand that this decision does NOT make FerrumGate production-ready | |
-| K2 | I understand that Option B requires P5b–P5e engineering implementation + P6 assessment before production PostgreSQL deployment | |
-| K3 | I understand that Option A retains the ≤300 writes/s single-node SQLite ceiling | |
-| K4 | I understand that blockers remain active for the selected path and require separate execution and evidence | |
-| K5 | I understand that switching paths after signoff requires a new decision packet and may invalidate prior evidence | |
+| K1 | I understand that this decision does NOT make FerrumGate production-ready | `Acknowledged via agent instruction` |
+| K2 | I understand that Option B requires P5b–P5e engineering implementation + P6 assessment before production PostgreSQL deployment | `Acknowledged; PostgreSQL remains readiness-only` |
+| K3 | I understand that Option A retains the ≤300 writes/s single-node SQLite ceiling | `Acknowledged` |
+| K4 | I understand that blockers remain active for the selected path and require separate execution and evidence | `Acknowledged` |
+| K5 | I understand that switching paths after signoff requires a new decision packet and may invalidate prior evidence | `Acknowledged` |
 
 ### 7.4 Signature
 
 | Role | Name | Date | Signature |
 |---|---|---|---|
-| Operator / Decision Authority | | | |
-| Engineering Lead (acknowledgment of receipt) | | | |
+| Operator / Decision Authority | `User (via agent instruction)` | `2026-05-12` | `Recorded by agent; no secret values` |
+| Engineering Lead (acknowledgment of receipt) | `FerrumGate engineering` | `2026-05-12` | `Acknowledged` |
 | Witness (optional) | | | |
 
 ---
@@ -196,7 +196,8 @@ If the operator selects **Option A**, the following waiver must be acknowledged 
 | Date | Change | Author |
 |---|---|---|
 | 2026-05-12 | Initial operator path selection packet | Engineering |
+| 2026-05-12 | Recorded Option A SQLite Path 2 pilot selection; PostgreSQL remains readiness-only track | Agent per user instruction |
 
 ---
 
-*Document created: 2026-05-12. Operator Path Selection Packet — fillable. No production-ready claim. P6 CONDITIONAL GO. No secret values.*
+*Document updated: 2026-05-12. Operator Path Selection Packet — Option A selected. No production-ready claim. No PostgreSQL production deployment claim. No HA/multi-node claim. No secret values.*
