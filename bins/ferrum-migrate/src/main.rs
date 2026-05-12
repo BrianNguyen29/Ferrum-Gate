@@ -4,8 +4,10 @@ use anyhow::{Result, bail};
 use anyhow::Context;
 use clap::Parser;
 use serde::Serialize;
+use sha2::{Digest, Sha256};
+use sqlx::{ColumnIndex, Row};
 #[cfg(feature = "postgres")]
-use sqlx::{Row, SqlitePool, sqlite::SqlitePoolOptions};
+use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
 #[cfg(feature = "postgres")]
 use std::collections::BTreeSet;
 
@@ -64,6 +66,10 @@ struct TableResult {
     migrated_count: usize,
     id_match: bool,
     count_match: bool,
+    #[serde(default)]
+    hash_match: bool,
+    source_content_hash: Option<String>,
+    target_content_hash: Option<String>,
     errors: Vec<String>,
 }
 
@@ -197,6 +203,79 @@ async fn is_target_empty(pg: &PgPool, table: &str) -> Result<bool> {
     Ok(count == 0)
 }
 
+/// Canonicalize a database row into a deterministic string for hashing.
+///
+/// Format: `column1=value1;column2=value2;...` ordered by `select_columns`.
+/// - NULL values are rendered as `NULL`.
+/// - Boolean-like columns (`auto_commit`, `active`) are rendered as `true`/`false`.
+/// - Integer columns (`step_index`, `entry_id`) are rendered as decimal strings.
+/// - All other columns are rendered as their raw text value.
+fn canonical_row<R: Row>(row: &R, select_columns: &str) -> Result<String>
+where
+    for<'r> &'r str: ColumnIndex<R>,
+    Option<i64>: sqlx::Type<R::Database>,
+    for<'r> Option<i64>: sqlx::Decode<'r, R::Database>,
+    Option<String>: sqlx::Type<R::Database>,
+    for<'r> Option<String>: sqlx::Decode<'r, R::Database>,
+{
+    let mut parts = Vec::new();
+    for col_name in select_columns.split(',').map(|s| s.trim()) {
+        let val = if col_name == "auto_commit" || col_name == "active" {
+            match row.try_get::<Option<i64>, _>(col_name)? {
+                Some(v) => (v != 0).to_string(),
+                None => "NULL".to_string(),
+            }
+        } else if col_name == "step_index" || col_name == "entry_id" {
+            match row.try_get::<Option<i64>, _>(col_name)? {
+                Some(v) => v.to_string(),
+                None => "NULL".to_string(),
+            }
+        } else {
+            match row.try_get::<Option<String>, _>(col_name)? {
+                Some(v) => v,
+                None => "NULL".to_string(),
+            }
+        };
+        parts.push(format!("{}={}", col_name, val));
+    }
+    Ok(parts.join(";"))
+}
+
+/// Aggregate a collection of per-row SHA-256 hashes into a single sorted hash.
+fn aggregate_hash(mut hashes: Vec<String>) -> String {
+    hashes.sort_unstable();
+    let joined = hashes.join("\n");
+    format!("{:x}", Sha256::digest(joined.as_bytes()))
+}
+
+/// Compute the aggregate content hash for a PostgreSQL target table.
+#[cfg(feature = "postgres")]
+async fn compute_target_hash(
+    pg: &PgPool,
+    table: &str,
+    select_columns: &str,
+    chunk_size: usize,
+) -> Result<String> {
+    let count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {}", table))
+        .fetch_one(pg)
+        .await?;
+    let count = count as usize;
+    let mut hashes = Vec::new();
+    for offset in (0..count).step_by(chunk_size) {
+        let sql = format!(
+            "SELECT {} FROM {} LIMIT {} OFFSET {}",
+            select_columns, table, chunk_size, offset
+        );
+        let rows = sqlx::query(&sql).fetch_all(pg).await?;
+        for row in &rows {
+            let canonical = canonical_row(row, select_columns)?;
+            let hash = format!("{:x}", Sha256::digest(canonical.as_bytes()));
+            hashes.push(hash);
+        }
+    }
+    Ok(aggregate_hash(hashes))
+}
+
 /// Build the INSERT (or upsert) SQL for a table.
 #[cfg(any(feature = "postgres", test))]
 fn build_insert_sql(insert_sql: &str, id_column: Option<&str>, resume: bool) -> Result<String> {
@@ -237,6 +316,9 @@ async fn migrate_table(
         migrated_count: 0,
         id_match: true,
         count_match: true,
+        hash_match: true,
+        source_content_hash: None,
+        target_content_hash: None,
         errors: Vec::new(),
     };
 
@@ -251,6 +333,7 @@ async fn migrate_table(
 
         let sql = build_insert_sql(tm.insert_sql, tm.id_column, resume)?;
         let mut source_ids = BTreeSet::new();
+        let mut source_hashes = Vec::new();
 
         for offset in (0..source_count).step_by(chunk_size) {
             let select_sql = format!(
@@ -263,6 +346,19 @@ async fn migrate_table(
                 for row in &rows {
                     if let Ok(id) = row.try_get::<String, _>(id_col) {
                         source_ids.insert(id);
+                    }
+                }
+            }
+
+            // Compute source content hashes for this chunk
+            for row in &rows {
+                match canonical_row(row, tm.select_columns) {
+                    Ok(canonical) => {
+                        let hash = format!("{:x}", Sha256::digest(canonical.as_bytes()));
+                        source_hashes.push(hash);
+                    }
+                    Err(e) => {
+                        result.errors.push(format!("canonicalization error: {}", e));
                     }
                 }
             }
@@ -341,6 +437,8 @@ async fn migrate_table(
             }
         }
 
+        result.source_content_hash = Some(aggregate_hash(source_hashes));
+
         // Validate: count
         let count_sql = format!("SELECT COUNT(*) FROM {}", tm.name);
         let target_count: i64 = sqlx::query_scalar(&count_sql).fetch_one(pg).await?;
@@ -356,6 +454,20 @@ async fn migrate_table(
                 .filter_map(|row| row.try_get::<String, _>(id_col).ok())
                 .collect();
             result.id_match = source_ids == target_ids;
+        }
+
+        // Validate: content hash
+        match compute_target_hash(pg, tm.name, tm.select_columns, chunk_size).await {
+            Ok(target_hash) => {
+                result.target_content_hash = Some(target_hash.clone());
+                result.hash_match = result.source_content_hash.as_ref().unwrap() == &target_hash;
+            }
+            Err(e) => {
+                result
+                    .errors
+                    .push(format!("target hash computation error: {}", e));
+                result.hash_match = false;
+            }
         }
     } else {
         // Dry-run: just report what would happen
@@ -381,19 +493,20 @@ fn print_human(report: &MigrationReport) {
 
     let mut all_ok = true;
     for tr in &report.tables {
-        let status = if tr.count_match && tr.id_match && tr.errors.is_empty() {
+        let status = if tr.count_match && tr.id_match && tr.hash_match && tr.errors.is_empty() {
             "OK"
         } else {
             all_ok = false;
             "MISMATCH"
         };
         println!(
-            "{:20} source={:4} target={:4} migrated={:4} ids={:3} [{}]",
+            "{:20} source={:4} target={:4} migrated={:4} ids={:5} hash={:5} [{}]",
             tr.table,
             tr.source_count,
             tr.target_count,
             tr.migrated_count,
             if tr.id_match { "match" } else { "diff" },
+            if tr.hash_match { "match" } else { "diff" },
             status
         );
         for err in &tr.errors {
@@ -447,6 +560,9 @@ async fn run_migration(args: &Args) -> Result<MigrationReport> {
                     migrated_count: 0,
                     id_match: false,
                     count_match: false,
+                    hash_match: false,
+                    source_content_hash: None,
+                    target_content_hash: None,
                     errors: vec![e.to_string()],
                 });
             }
@@ -671,6 +787,9 @@ mod tests {
                 migrated_count: 0,
                 id_match: true,
                 count_match: true,
+                hash_match: true,
+                source_content_hash: None,
+                target_content_hash: None,
                 errors: vec![],
             }],
         };
@@ -726,6 +845,9 @@ mod tests {
                 migrated_count: 0,
                 id_match: false,
                 count_match: false,
+                hash_match: false,
+                source_content_hash: None,
+                target_content_hash: None,
                 errors: vec!["demo error".to_string()],
             }],
         };
@@ -745,6 +867,9 @@ mod tests {
                 migrated_count: 2,
                 id_match: true,
                 count_match: true,
+                hash_match: true,
+                source_content_hash: None,
+                target_content_hash: None,
                 errors: vec![],
             }],
         };
@@ -752,6 +877,91 @@ mod tests {
         let parsed: MigrationReport = serde_json::from_str(&json).unwrap();
         assert!(parsed.overall_success);
         assert_eq!(parsed.tables[0].source_count, 2);
+    }
+
+    #[tokio::test]
+    async fn test_canonical_row_determinism_and_format() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE t (auto_commit INTEGER, step_index INTEGER, name TEXT)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO t (auto_commit, step_index, name) VALUES (1, 42, 'hello')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let row = sqlx::query("SELECT auto_commit, step_index, name FROM t")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let canonical1 = canonical_row(&row, "auto_commit, step_index, name").unwrap();
+        let canonical2 = canonical_row(&row, "auto_commit, step_index, name").unwrap();
+        assert_eq!(canonical1, canonical2);
+        assert_eq!(canonical1, "auto_commit=true;step_index=42;name=hello");
+    }
+
+    #[tokio::test]
+    async fn test_canonical_row_null_handling() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE t (auto_commit INTEGER, step_index INTEGER, name TEXT)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO t (auto_commit, step_index, name) VALUES (NULL, NULL, NULL)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let row = sqlx::query("SELECT auto_commit, step_index, name FROM t")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let canonical = canonical_row(&row, "auto_commit, step_index, name").unwrap();
+        assert_eq!(canonical, "auto_commit=NULL;step_index=NULL;name=NULL");
+    }
+
+    #[test]
+    fn test_aggregate_hash_determinism_and_order_independence() {
+        let h1 = "aaa".to_string();
+        let h2 = "bbb".to_string();
+        let agg1 = aggregate_hash(vec![h1.clone(), h2.clone()]);
+        let agg2 = aggregate_hash(vec![h2, h1]);
+        assert_eq!(agg1, agg2, "aggregate hash must be order-independent");
+    }
+
+    #[tokio::test]
+    async fn test_canonical_row_different_rows_different_hashes() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE t (auto_commit INTEGER, step_index INTEGER, name TEXT)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO t (auto_commit, step_index, name) VALUES (1, 1, 'a')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO t (auto_commit, step_index, name) VALUES (0, 1, 'a')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let rows = sqlx::query("SELECT auto_commit, step_index, name FROM t ORDER BY rowid")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        let c1 = canonical_row(&rows[0], "auto_commit, step_index, name").unwrap();
+        let c2 = canonical_row(&rows[1], "auto_commit, step_index, name").unwrap();
+        assert_ne!(
+            c1, c2,
+            "different rows must produce different canonical strings"
+        );
     }
 
     /// Integration test: migrate a real SQLite database to PostgreSQL.

@@ -273,10 +273,10 @@ Per `50-p4-postgres-store-facade-adr.md` §3 Phase P1:
 - [ ] **Blocked until**: G3.6 pilot data available; Eng.1/Eng.2 planning complete; explicitly out of v1 scope
 
 #### P5e — Migration Grade-Up (Partially Implemented)
-- [ ] SQLite → PostgreSQL migration upgraded from MVP to production-grade — P5e.1 resume + P5e.4 streaming implemented; P5e.2–P5e.3 and P5e.5 still pending
+- [ ] SQLite → PostgreSQL migration upgraded from MVP to production-grade — P5e.1 resume + P5e.3 hash validation + P5e.4 streaming implemented; P5e.2 checkpointing and P5e.5 integration tests still pending
 - [x] Idempotent/resumable migration with upsert semantics (P5e.1) — implemented (--resume flag; ON CONFLICT DO NOTHING for tables with stable ID; provenance_edges blocked with clear error)
 - [ ] Checkpointing (P5e.2) — pending
-- [ ] Content-hash validation for lineage equivalence (P5e.3) — pending
+- [x] Content-hash validation for lineage equivalence (P5e.3) — implemented (canonical col=value serialization; per-row SHA-256; sorted aggregate hash; source vs target comparison)
 - [x] Large-dataset streaming and chunking (P5e.4) — implemented (default chunk-size 1000, max 10000; per-chunk transaction with row-by-row fallback)
 - [ ] **Blocked until**: G3.6 pilot data available; Eng.1/Eng.2 planning complete; P5b–P5c design complete
 
