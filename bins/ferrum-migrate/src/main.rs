@@ -210,7 +210,11 @@ async fn is_target_empty(pg: &PgPool, table: &str) -> Result<bool> {
 /// Format: `column1=value1;column2=value2;...` ordered by `select_columns`.
 /// - NULL values are rendered as `NULL`.
 /// - Boolean-like columns (`auto_commit`, `active`) are rendered as `true`/`false`.
+///   Supports PostgreSQL `BOOL` (via `Option<bool>`) and SQLite `INTEGER` 0/1
+///   (via `Option<i64>` / `Option<i32>`) with consistent canonicalization.
 /// - Integer columns (`step_index`, `entry_id`) are rendered as decimal strings.
+///   Supports PostgreSQL `INT4` (via `Option<i32>`) and SQLite `INTEGER`
+///   (via `Option<i64>`) with fallback decoding.
 /// - All other columns are rendered as their raw text value.
 #[cfg(any(feature = "postgres", test))]
 fn canonical_row<R: Row>(row: &R, select_columns: &str) -> Result<String>
@@ -218,20 +222,55 @@ where
     for<'r> &'r str: ColumnIndex<R>,
     Option<i64>: sqlx::Type<R::Database>,
     for<'r> Option<i64>: sqlx::Decode<'r, R::Database>,
+    Option<i32>: sqlx::Type<R::Database>,
+    for<'r> Option<i32>: sqlx::Decode<'r, R::Database>,
+    Option<bool>: sqlx::Type<R::Database>,
+    for<'r> Option<bool>: sqlx::Decode<'r, R::Database>,
     Option<String>: sqlx::Type<R::Database>,
     for<'r> Option<String>: sqlx::Decode<'r, R::Database>,
 {
     let mut parts = Vec::new();
     for col_name in select_columns.split(',').map(|s| s.trim()) {
         let val = if col_name == "auto_commit" || col_name == "active" {
-            match row.try_get::<Option<i64>, _>(col_name)? {
-                Some(v) => (v != 0).to_string(),
-                None => "NULL".to_string(),
+            // PostgreSQL BOOL -> Option<bool>; SQLite INTEGER 0/1 -> Option<i64>/Option<i32>
+            if let Ok(v) = row.try_get::<Option<bool>, _>(col_name) {
+                match v {
+                    Some(b) => b.to_string(),
+                    None => "NULL".to_string(),
+                }
+            } else if let Ok(v) = row.try_get::<Option<i64>, _>(col_name) {
+                match v {
+                    Some(i) => (i != 0).to_string(),
+                    None => "NULL".to_string(),
+                }
+            } else if let Ok(v) = row.try_get::<Option<i32>, _>(col_name) {
+                match v {
+                    Some(i) => (i != 0).to_string(),
+                    None => "NULL".to_string(),
+                }
+            } else {
+                bail!(
+                    "failed to decode boolean column '{}' as bool, i64, or i32",
+                    col_name
+                );
             }
         } else if col_name == "step_index" || col_name == "entry_id" {
-            match row.try_get::<Option<i64>, _>(col_name)? {
-                Some(v) => v.to_string(),
-                None => "NULL".to_string(),
+            // PostgreSQL INT4 -> Option<i32>; SQLite INTEGER / PostgreSQL BIGINT -> Option<i64>
+            if let Ok(v) = row.try_get::<Option<i64>, _>(col_name) {
+                match v {
+                    Some(i) => i.to_string(),
+                    None => "NULL".to_string(),
+                }
+            } else if let Ok(v) = row.try_get::<Option<i32>, _>(col_name) {
+                match v {
+                    Some(i) => i.to_string(),
+                    None => "NULL".to_string(),
+                }
+            } else {
+                bail!(
+                    "failed to decode integer column '{}' as i64 or i32",
+                    col_name
+                );
             }
         } else {
             match row.try_get::<Option<String>, _>(col_name)? {
@@ -459,14 +498,20 @@ async fn migrate_table(
                         }
                     };
                     if col_name == "auto_commit" || col_name == "active" {
-                        let val: i64 = row.try_get(col_name)?;
-                        query = query.bind(val != 0);
+                        match row.try_get::<Option<i64>, _>(col_name)? {
+                            Some(v) => query = query.bind(v != 0),
+                            None => query = query.bind(None::<bool>),
+                        }
                     } else if col_name == "step_index" || col_name == "entry_id" {
-                        let val: i64 = row.try_get(col_name)?;
-                        query = query.bind(val);
+                        match row.try_get::<Option<i64>, _>(col_name)? {
+                            Some(v) => query = query.bind(v),
+                            None => query = query.bind(None::<i64>),
+                        }
                     } else {
-                        let val: String = row.try_get(col_name)?;
-                        query = query.bind(val);
+                        match row.try_get::<Option<String>, _>(col_name)? {
+                            Some(v) => query = query.bind(v),
+                            None => query = query.bind(None::<String>),
+                        }
                     }
                 }
                 if let Err(e) = query.execute(&mut *txn).await {
@@ -495,14 +540,20 @@ async fn migrate_table(
                             }
                         };
                         if col_name == "auto_commit" || col_name == "active" {
-                            let val: i64 = row.try_get(col_name)?;
-                            query = query.bind(val != 0);
+                            match row.try_get::<Option<i64>, _>(col_name)? {
+                                Some(v) => query = query.bind(v != 0),
+                                None => query = query.bind(None::<bool>),
+                            }
                         } else if col_name == "step_index" || col_name == "entry_id" {
-                            let val: i64 = row.try_get(col_name)?;
-                            query = query.bind(val);
+                            match row.try_get::<Option<i64>, _>(col_name)? {
+                                Some(v) => query = query.bind(v),
+                                None => query = query.bind(None::<i64>),
+                            }
                         } else {
-                            let val: String = row.try_get(col_name)?;
-                            query = query.bind(val);
+                            match row.try_get::<Option<String>, _>(col_name)? {
+                                Some(v) => query = query.bind(v),
+                                None => query = query.bind(None::<String>),
+                            }
                         }
                     }
                     if let Err(e) = query.execute(pg).await {
