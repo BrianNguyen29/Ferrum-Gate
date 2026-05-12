@@ -27,10 +27,12 @@ make test    # cargo test --workspace
 - `bash scripts/run_pre_target_gate.sh --full`: PASSES locally
 - Summary: layout=0 contract=0 fmt=0 check=0 test=0 clippy=0 pre_target_gate_full=0
 
+> **Bounded P5b/P5e check (2026-05-12)**: `cargo check/clippy/test -p ferrum-migrate --features postgres` passes. Full workspace gate was **not** re-run after P5e completion; run `make check && make lint && make test` before updating the baseline above.
+
 ## ferrumd Config Precedence
 CLI args > env vars > config file > defaults.
 
-Env vars: `FERRUMD_CONFIG`, `FERRUMD_BIND_ADDR`, `FERRUMD_STORE_DSN`, `FERRUMD_AUTH_MODE`, `FERRUMD_BEARER_TOKEN`, `FERRUMD_ALLOW_INSECURE_NONLOCAL_BIND`, `FERRUMD_LOG_FILTER`, `FERRUMD_STORE_SYNCHRONOUS`, `FERRUMD_STORE_WAL_AUTOCHECKPOINT`.
+Env vars: `FERRUMD_CONFIG`, `FERRUMD_BIND_ADDR`, `FERRUMD_STORE_DSN`, `FERRUMD_AUTH_MODE`, `FERRUMD_BEARER_TOKEN`, `FERRUMD_ALLOW_INSECURE_NONLOCAL_BIND`, `FERRUMD_LOG_FILTER`, `FERRUMD_STORE_SYNCHRONOUS`, `FERRUMD_STORE_WAL_AUTOCHECKPOINT`, `FERRUMD_PG_MAX_CONNECTIONS`, `FERRUMD_PG_MIN_IDLE`, `FERRUMD_PG_ACQUIRE_TIMEOUT_SECS`.
 
 Dev config `configs/ferrumgate.dev.toml` auto-loads if no `--config` specified and file exists (auth=disabled, in-memory SQLite). Prod config requires bearer auth; generate token with `openssl rand -hex 32`.
 

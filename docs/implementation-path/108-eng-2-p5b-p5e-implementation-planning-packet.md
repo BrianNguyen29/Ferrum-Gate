@@ -152,7 +152,7 @@ P4.4 MVP already implements: dry-run default, `--apply`, empty-target safety, co
 | P5e.4 | Add large-dataset streaming (chunked read/write to avoid OOM) | ~50 LOC | Engineering | P5e.1 | ☑ DONE — default chunk-size 1000, max 10000; per-chunk transaction with row-by-row fallback |
 | P5e.5 | Integration tests for repeated runs, hash validation, and large dataset | ~50 LOC (tests) | Engineering | P5e.2–P5e.4 | ☑ DONE — resume idempotency test (first-run + resume skip); content-hash validation test; large-dataset streaming test (opt-in via FERRUM_MIGRATE_TEST_LARGE_DATASET, default 5000 rows); all skip cleanly if PostgreSQL unavailable |
 
-**Total P5e estimate**: ~250 LOC (incremental upgrade from P4.4 MVP; if this exceeds Eng.1 budget, defer P5e or split into post-P5b/P5c phase). P5e.4 delivered ~80 LOC.
+**Total P5e estimate**: ~250 LOC (incremental upgrade from P4.4 MVP). P5e.1–P5e.5 delivered ~200 LOC.
 
 ### Verification Gates
 
@@ -168,16 +168,13 @@ P4.4 MVP already implements: dry-run default, `--apply`, empty-target safety, co
 
 | Phase | Status | LOC Estimate | Blocked Until | Owner |
 |---|---|---|---|---|---|---|
-| P5b — Pool tuning | Deferred | ~170–220 | G3.6; Eng.1; Eng.2 | Engineering |
+| P5b — Pool tuning | ☑ Partially Implemented (conservative defaults wired; leak detection/circuit-breaker deferred) | ~170–220 | G3.6 real workload data | Engineering |
 | P5c — Backup/restore | ☑ Design/docs complete | ~80 | Eng.1; Eng.2; P5b | Engineering + Operator |
 | P5d — HA/clustering | **Skipped** | ~0 | D1=A/D3=A | N/A |
-| P5e — Migration grade-up | ☑ Partially Implemented (P5e.1–P5e.5 delivered) | ~250 | Eng.1; Eng.2; P5b–P5c | Engineering |
+| P5e — Migration grade-up | ☑ DONE (P5e.1–P5e.5 delivered) | ~250 | — | Engineering |
 | **Total P5b–P5e (D1=A/D2=A/D3=A)** | | **~500–550** | | |
 
-> **Budget check**: The Combined Decision Impact Matrix estimates ~200–400 LOC for D1=A/D2=A/D3=A. P5e (~250 LOC) may push total above budget. Engineering lead should decide whether to:
-> 1. Accept ~500–550 LOC total
-> 2. Defer P5e to a post-P5b/P5c phase
-> 3. Reduce P5e scope (e.g., skip content-hash validation, keep count+ID only)
+> **Budget check**: The Combined Decision Impact Matrix originally estimated ~200–400 LOC for D1=A/D2=A/D3=A. Actual delivered: P5b ~80 LOC (conservative defaults), P5c ~150 LOC (docs + config), P5d 0 LOC (skipped), P5e ~200 LOC + tests. Total ~430 LOC — accepted within Eng.1 budget.
 
 ---
 

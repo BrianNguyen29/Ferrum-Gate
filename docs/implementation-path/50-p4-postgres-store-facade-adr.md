@@ -1,10 +1,10 @@
 # ADR-50 — PostgreSQL StoreFacade: Phased Implementation Plan
 
-> **Status**: P3 Repository Implementations — Complete (local Docker). P4.1 Runtime DSN switching — Complete. P4.2 Migration infrastructure — Complete. P4.3 Benchmark validation — Complete (3853.2 writes/s local Docker release). P4.4 SQLite→PostgreSQL migration MVP — Complete. P5a Production Readiness Design — GO for ADR/design only. G3.5 operator D1–D3 signoff satisfied (Option A defaults). Eng.1 capacity confirmed and Eng.2 plan approved via chat authorization. P5b–P5e Implementation — Gated on G3.6 (Eng.1 and Eng.2 satisfied).
-> **Date**: 2026-05-11
-> **Deciders**: Engineering implementation complete for local Docker/runtime; production/HA/multi-node posture remains NO. P5a design phase authorized; P5b–P5e blocked on G3.6 pilot data and engineering planning.
-> **Estimated Effort**: P1–P4.4 ~2000-3000 LOC + migrations + container tests; P5a design only; P5b–P5e ~200-400 LOC + testing for D1=A/D2=A/D3=A (gated on G3.6/Eng.1/Eng.2)
-> **Next Step**: G3.6 pilot metrics collection per `106-g3-6-pilot-metrics-evidence-packet.md`. No P5b–P5e until G3.6 is satisfied (Eng.1 and Eng.2 are now satisfied).
+> **Status**: P3 Repository Implementations — Complete (local Docker). P4.1–P4.4 Complete. P5a Production Readiness Design — GO for ADR/design only. P5b Partially Implemented (conservative defaults wired; leak detection/circuit-breaker deferred). P5c Design/docs complete (RPO/RTO approved; operator drills pending). P5d Skipped (D1=A/D3=A). P5e Migration Grade-Up — Complete (P5e.1–P5e.5 implemented). G3.5 operator D1–D3 signoff satisfied (Option A defaults). Eng.1/Eng.2 satisfied. G3.6 conditionally accepted for conservative-default implementation.
+> **Date**: 2026-05-12
+> **Deciders**: Engineering implementation complete for local Docker/runtime; production/HA/multi-node posture remains NO. P5a–P5e implementation is complete for the authorized scope; P6 assessment is the next gate before any production-ready claim.
+> **Estimated Effort**: P1–P4.4 ~2000-3000 LOC + migrations + container tests; P5a design only; P5b ~80 LOC (conservative defaults); P5c ~150 LOC (docs + config); P5d 0 LOC (skipped); P5e ~200 LOC + tests (D1=A/D2=A/D3=A).
+> **Next Step**: P6 assessment before any production-ready claim. Operator-owned blockers remain: G3.6 real workload validation (post-deploy monitoring), P5c.V1–V2 backup/restore drills.
 
 ---
 
@@ -155,15 +155,15 @@ implemented for local Docker; production/HA/multi-node remains deferred.
 
 ### Phase P5 — Production Readiness (Post-P4)
 
-> **Oracle verdict**: P5 GO for design/ADR only (P5a). P5b–P5e implementation requires G2 pilot data, G3 gate refresh, and operator D1–D3 signoff. P5 completion does not claim production-ready; P6 assessment required afterward.
+> **Oracle verdict**: P5a design/ADR approved. P5b–P5e implementation authorized for conservative-default scope (D1=A/D2=A/D3=A) with G3.6 conditional acceptance. P5b partially implemented (conservative defaults); P5c design/docs complete; P5d skipped; P5e migration grade-up complete. P5 completion does not claim production-ready; P6 assessment is required before any production-ready claim.
 
 #### 3.5 P5a — Design / ADR Review (Approved for Design Only)
 
-P5a is the only currently authorized P5 subphase. It produces a design document, risk register, operator decision framework, and verification gates for P5b–P5e. G3.4 is satisfied by the approval packet; no P5b–P5e implementation begins until G3.5–G3.6 are satisfied.
+P5a produced the design document, risk register, operator decision framework, and verification gates for P5b–P5e. G3.4 is satisfied by the approval packet. P5b–P5e implementation proceeded under G3.5 (D1–D3 signed) and G3.6 conditional acceptance (conservative defaults + post-deploy monitoring).
 
 > **Approval workflow**: G3.4 approval is recorded in [`104-g3-4-p5a-adr-approval-packet.md`](./104-g3-4-p5a-adr-approval-packet.md).
 > That packet contains the structured review checklist, signoff fields, and explicit non-claims.
-> G3.4 approval authorizes P5a design/ADR only and does not authorize P5b–P5e implementation.
+> G3.4 approval originally authorized P5a design/ADR only; P5b–P5e implementation was subsequently authorized via G3.5/G3.6 and Eng.1/Eng.2 signoff.
 
 **P5a Deliverables**:
 - [x] P5a design doc (this ADR §3.5 or standalone doc) with D1–D6 decisions
@@ -209,7 +209,7 @@ P5a is the only currently authorized P5 subphase. It produces a design document,
 - [ ] `max_connections`, `min_idle`, `acquire_timeout` tuned for target throughput
 - [ ] Connection-leak detection and circuit-breaker behavior defined
 
-**Blocked until**: G3.6 pilot data available; Eng.1 capacity confirmed; Eng.2 implementation plan approved
+**Status**: P5b.1–P5b.3 implemented with conservative defaults; P5b.4–P5b.6 deferred until G3.6 real workload data is available. Post-deploy monitoring required.
 
 **Estimated Effort**: ~100-200 LOC + configuration changes
 

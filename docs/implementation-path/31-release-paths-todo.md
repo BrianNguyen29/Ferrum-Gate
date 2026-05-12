@@ -279,7 +279,7 @@ Per `50-p4-postgres-store-facade-adr.md` §3 Phase P1:
 - [x] Content-hash validation for lineage equivalence (P5e.3) — implemented (canonical col=value serialization; per-row SHA-256; sorted aggregate hash; source vs target comparison)
 - [x] Large-dataset streaming and chunking (P5e.4) — implemented (default chunk-size 1000, max 10000; per-chunk transaction with row-by-row fallback)
 - [x] Integration tests for repeated runs, hash validation, and large dataset (P5e.5) — implemented (resume idempotency, content-hash validation, opt-in large-dataset streaming; all skip if PostgreSQL unavailable)
-- [ ] **Blocked until**: G3.6 pilot data available; Eng.1/Eng.2 planning complete; P5b–P5c design complete
+- [ ] **Remaining operator-owned blockers**: G3.6 real workload validation (post-deploy monitoring), P5c.V1–V2 backup/restore drills, P6 assessment before production-ready claim
 
 > **P5 completion does not claim production-ready.** Even after P5a–P5e complete, a later P6 assessment is required before any full production-ready claim. PostgreSQL production deployment remains operator-owned and gated.
 
