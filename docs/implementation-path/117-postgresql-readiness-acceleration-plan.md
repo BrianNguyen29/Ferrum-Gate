@@ -53,11 +53,49 @@ Even though Option A (SQLite) is the active pilot, engineering maintains a **par
 |---|---|---|---|---|
 | A.1 | Adapt [`111-p5c-local-docker-drill-plan.md`](./111-p5c-local-docker-drill-plan.md) for generic target host: replace `localhost:5432` with placeholders, add `.pgpass` / `PGPASSFILE` guidance, add scheduler verification checklist | Engineering | ✅ Completed 2026-05-12 — see [`118-target-host-p5c-drill-plan-adapted.md`](./118-target-host-p5c-drill-plan-adapted.md) | Adapted plan document |
 | A.2 | Prepare environment-variable-only configuration template for target host (no hardcoded credentials) | Engineering | ✅ Completed 2026-05-12 — see `configs/examples/postgres-target-env.template` | `configs/examples/postgres-target-env.template` (placeholders only) |
-| A.3 | Document minimum `pg_dump`/`pg_restore` version compatibility matrix (client vs server) | Engineering | ☐ Ready to start | Compatibility table in this doc or ADR-50 |
-| A.4 | Draft one-page "P5c target-host go/no-go" checklist for operator self-assessment before executing drills | Engineering | ☐ Ready to start | Checklist markdown |
-| A.5 | Review [`114-target-host-p5c-drill-checklist.md`](./114-target-host-p5c-drill-checklist.md) for outdated commands or schema references; refresh if needed | Engineering | ☐ Ready to start | Refresh commit |
+| A.3 | Document minimum `pg_dump`/`pg_restore` version compatibility matrix (client vs server) | Engineering | ✅ Completed 2026-05-13 — see §A.3 compatibility matrix below | Compatibility table in this doc |
+| A.4 | Draft one-page "P5c target-host go/no-go" checklist for operator self-assessment before executing drills | Engineering | ✅ Completed 2026-05-13 — see [`121-p5c-target-host-go-no-go-checklist.md`](./121-p5c-target-host-go-no-go-checklist.md) | Checklist markdown |
+| A.5 | Review [`114-target-host-p5c-drill-checklist.md`](./114-target-host-p5c-drill-checklist.md) for outdated commands or schema references; refresh if needed | Engineering | ✅ Completed 2026-05-13 — no refresh needed; 11-table count validated by evidence artifacts `2026-05-12-p5c-local-docker-drill-evidence.md` and `2026-05-12-p5c-populated-local-drill-evidence.md` | Review note |
 
 **Stop condition**: If populated local drill (Track 2 of doc112) reveals a migration or schema bug, **pause** Track A until the bug is fixed — no point in preparing target-host drills for a broken baseline.
+
+---
+
+#### Track A Supplement — A.3 pg_dump / pg_restore Version Compatibility Matrix
+
+> **Rule of thumb**: Client major version must be **≥** server major version. Newer clients can generally work with older servers, but older clients cannot understand newer server features or dump formats.
+
+##### Compatibility Table
+
+| Client Tool | Client Version | Minimum Server | Maximum Server | Compatible with Local Rehearsal (`postgres:16`)? |
+|-------------|----------------|----------------|----------------|--------------------------------------------------|
+| `pg_dump` | 17.x | 12 | 17 | ✅ Yes |
+| `pg_dump` | 16.x | 11 | 16 | ✅ Yes |
+| `pg_dump` | 15.x | 10 | 15 | ❌ No — cannot dump from PostgreSQL 16 |
+| `pg_dump` | 14.x | 9.6 | 14 | ❌ No |
+| `pg_restore` | 17.x | 12 | 17 | ✅ Yes — reads custom-format dumps from 12–17 |
+| `pg_restore` | 16.x | 11 | 16 | ✅ Yes |
+| `pg_restore` | 15.x | 10 | 15 | ⚠️ Risk — may fail on 16+ specific objects |
+| `pg_restore` | 14.x | 9.6 | 14 | ❌ No |
+
+##### FerrumGate Context
+
+- Local rehearsal evidence (D.1–D.4) uses `postgres:16` image.
+- Therefore, `pg_dump`/`pg_restore` client **16.x or 17.x** is required for local rehearsal compatibility.
+- For future target-host drills, the operator must verify client version **≥** target server version before proceeding (see [`121-p5c-target-host-go-no-go-checklist.md`](./121-p5c-target-host-go-no-go-checklist.md) G4).
+
+##### Operator Verification Command
+
+```bash
+# Check client version
+pg_dump --version
+pg_restore --version
+
+# Check server version
+psql -h <TARGET_HOST> -p <TARGET_PORT> -U <BACKUP_USER> -d <TARGET_DB> -c "SHOW server_version;"
+```
+
+> **No secret values**: Replace `<TARGET_HOST>`, `<TARGET_PORT>`, `<BACKUP_USER>`, and `<TARGET_DB>` with placeholders in documentation. Use `.pgpass` or `PGPASSFILE` for actual credentials.
 
 ---
 
@@ -104,8 +142,8 @@ Even though Option A (SQLite) is the active pilot, engineering maintains a **par
 | D.2 | Exercise `--resume` path (P5e.1): migrate half, interrupt, resume, verify idempotency | Engineering | Bi-weekly | ✅ Completed 2026-05-12 — partial-resume checkpoint drill passed; true live-process interruption not tested due to CLI speed limitation. See [`artifacts/2026-05-12-d2-partial-resume-local-migration-rehearsal-evidence.md`](./artifacts/2026-05-12-d2-partial-resume-local-migration-rehearsal-evidence.md) |
 | D.3 | Exercise content-hash validation (P5e.3): verify `source_content_hash == target_content_hash` | Engineering | Weekly | ✅ Completed 2026-05-12 — see [`artifacts/2026-05-12-d3-content-hash-validation-rehearsal-evidence.md`](./artifacts/2026-05-12-d3-content-hash-validation-rehearsal-evidence.md) |
 | D.4 | Exercise large-dataset streaming (P5e.4): use chunk-size 1000, verify memory stays bounded | Engineering | Monthly | ✅ Completed 2026-05-12 — see [`artifacts/2026-05-12-d4-large-dataset-streaming-rehearsal-evidence.md`](./artifacts/2026-05-12-d4-large-dataset-streaming-rehearsal-evidence.md). Fixture ~16K rows; quantitative memory measurement not performed. |
-| D.5 | Record rehearsal outcomes in `artifacts/` with date-stamped evidence | Engineering | Per run | ☐ Ready to start |
-| D.6 | If rehearsal fails, treat as P1 bug: stop, investigate, fix migration or schema | Engineering | Ad hoc | ☐ Ready to start |
+| D.5 | Record rehearsal outcomes in `artifacts/` with date-stamped evidence | Engineering | Per run | ✅ Completed 2026-05-13 — process documented in [`119-postgresql-readiness-operations-cadence.md`](./119-postgresql-readiness-operations-cadence.md) §D.5 |
+| D.6 | If rehearsal fails, treat as P1 bug: stop, investigate, fix migration or schema | Engineering | Ad hoc | ✅ Completed 2026-05-13 — process documented in [`119-postgresql-readiness-operations-cadence.md`](./119-postgresql-readiness-operations-cadence.md) §D.6 |
 
 **Acceptance criteria for each rehearsal**:
 - Migration exits 0
@@ -138,14 +176,14 @@ Even though Option A (SQLite) is the active pilot, engineering maintains a **par
 
 ### Immediate (This Sprint)
 
-1. **A.1–A.2** — Prepare target-host drill templates (low risk, high leverage if path switches).
+1. **A.1–A.5** — Prepare target-host drill templates, compatibility matrix, go/no-go checklist, and doc114 review. ✅ **All complete 2026-05-13.**
 2. **B.1–B.2** — Document conservative-default rationale and escalation thresholds.
-3. **D.1** — First populated local migration rehearsal (validates P5e tooling against current schema).
+3. **D.1** — First populated local migration rehearsal (validates P5e tooling against current schema). ✅ **Complete 2026-05-12.**
 
 ### Parallel With Path 2 Pilot
 
 4. **C.1–C.6** — Extract PostgreSQL design inputs from G3.6 real workload data as it becomes available.
-5. **D.2–D.5** — Maintain weekly/bi-weekly migration rehearsal cadence.
+5. **D.2–D.6** — Maintain weekly/bi-weekly migration rehearsal cadence and artifact recording process. ✅ **Process docs complete 2026-05-13; cadence continues per `119-postgresql-readiness-operations-cadence.md`.**
 
 ### Deferred Until Operator Action
 
@@ -177,6 +215,8 @@ Even though Option A (SQLite) is the active pilot, engineering maintains a **par
 | `117-postgresql-readiness-acceleration-plan.md` | `111-p5c-local-docker-drill-plan.md` | Local drill basis for target adaptation |
 | `117-postgresql-readiness-acceleration-plan.md` | `109-p5c-postgresql-backup-restore-runbook.md` | P5c commands and RPO/RTO |
 | `117-postgresql-readiness-acceleration-plan.md` | `106-g3-6-pilot-metrics-evidence-packet.md` | G3.6 baseline and conditional acceptance |
+| `117-postgresql-readiness-acceleration-plan.md` | [`119-postgresql-readiness-operations-cadence.md`](./119-postgresql-readiness-operations-cadence.md) | Track D.5/D.6 rehearsal cadence and failure handling |
+| `117-postgresql-readiness-acceleration-plan.md` | [`121-p5c-target-host-go-no-go-checklist.md`](./121-p5c-target-host-go-no-go-checklist.md) | Track A.4 operator go/no-go self-assessment |
 
 ---
 
@@ -191,6 +231,11 @@ Even though Option A (SQLite) is the active pilot, engineering maintains a **par
 | 2026-05-12 | Track D.4 completed: large-dataset streaming rehearsal passed (~16K rows, chunk-size 1000); quantitative memory measurement not performed | Engineering |
 | 2026-05-12 | Track A.1 completed: adapted target-host P5c drill plan created with placeholders and scheduler checklist | Engineering |
 | 2026-05-12 | Track A.2 completed: placeholder-only PostgreSQL target env template created at `configs/examples/postgres-target-env.template` | Engineering |
+| 2026-05-13 | Track A.3 completed: pg_dump/pg_restore version compatibility matrix documented in §A.3 | Engineering |
+| 2026-05-13 | Track A.4 completed: P5c target-host go/no-go checklist created at `121-p5c-target-host-go-no-go-checklist.md` | Engineering |
+| 2026-05-13 | Track A.5 completed: doc114 reviewed; no refresh needed (11-table claim validated by evidence artifacts) | Engineering |
+| 2026-05-13 | Track D.5 completed: rehearsal artifact cadence process documented in `119-postgresql-readiness-operations-cadence.md` | Engineering |
+| 2026-05-13 | Track D.6 completed: failure handling and escalation process documented in `119-postgresql-readiness-operations-cadence.md` | Engineering |
 
 ---
 
