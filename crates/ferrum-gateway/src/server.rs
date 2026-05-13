@@ -4792,6 +4792,12 @@ fn infer_action_type_and_adapter(tool_name: &str) -> (ferrum_proto::ActionType, 
         (ferrum_proto::ActionType::GitPull, "git".to_string())
     } else if tool_lower.contains("git_fetch") {
         (ferrum_proto::ActionType::GitFetch, "git".to_string())
+    } else if tool_lower.contains("http_post")
+        || tool_lower.contains("http_put")
+        || tool_lower.contains("http_patch")
+        || tool_lower.contains("http_delete")
+    {
+        (ferrum_proto::ActionType::HttpMutation, "http".to_string())
     } else {
         (
             ferrum_proto::ActionType::McpToolMutation,

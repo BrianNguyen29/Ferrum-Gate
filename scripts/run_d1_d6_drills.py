@@ -696,7 +696,7 @@ API_DRILL_TEMPLATES = {
             "raw_arguments": {
                 "draft_id": "d6-drill-1",
                 "from": "drill@example.com",
-                "to": ["recipient@example.com"],
+                "to": ["drill@example.com"],
                 "subject": "D6 drill",
                 "body": "D6 maildraft compensation drill",
             },
@@ -709,7 +709,7 @@ API_DRILL_TEMPLATES = {
         "capability": {
             "tool_binding": {"server_name": "local", "tool_name": "maildraft_create", "tool_version": None},
             "resource_bindings": [
-                {"kind": "EmailDraft", "recipients": ["recipient@example.com"], "allow_send": False, "mode": "Write"}
+                {"kind": "EmailDraft", "recipients": ["drill@example.com"], "allow_send": False, "mode": "Write"}
             ],
             "argument_constraints": [],
             "taint_budget": {
@@ -725,7 +725,7 @@ API_DRILL_TEMPLATES = {
         "execute_payload": {
             "draft_id": "d6-drill-1",
             "from": "drill@example.com",
-            "to": ["recipient@example.com"],
+            "to": ["drill@example.com"],
             "subject": "D6 drill",
             "body": "D6 maildraft compensation drill",
         },
