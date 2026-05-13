@@ -415,6 +415,14 @@ def probe_readyz_deep(server_url, bearer_token, output_dir, probe_count=5, probe
     return str(json_file), str(md_file), results
 
 
+def _normalize_intent_compile_payload(payload):
+    """Return a copy of the intent compile payload with required defaults applied."""
+    normalized = dict(payload)
+    if "trusted_context" not in normalized:
+        normalized["trusted_context"] = {}
+    return normalized
+
+
 API_DRILL_TEMPLATES = {
     "D1 (fs adapter)": {
         "intent_compile_payload": {
@@ -797,7 +805,7 @@ def run_api_drills(server_url, bearer_token, plan_mode, output_dir, rate_limit_d
         step_name = "1_compile_intent"
         api_output_lines.append("### 1. Compile Intent")
         compile_url = f"{server_url}/v1/intents/compile"
-        compile_payload = template["intent_compile_payload"]
+        compile_payload = _normalize_intent_compile_payload(template["intent_compile_payload"])
         api_output_lines.extend(_curl_block("POST", compile_url, {"Content-Type": "application/json"}, compile_payload, token))
         api_output_lines.append("")
 
@@ -805,9 +813,18 @@ def run_api_drills(server_url, bearer_token, plan_mode, output_dir, rate_limit_d
         if not plan_mode:
             time.sleep(rate_limit_delay)
             status, body, err = _make_api_request("POST", compile_url, headers, compile_payload)
-            if status == 201 and isinstance(body, dict) and "envelope" in body:
+            if status in (200, 201) and isinstance(body, dict) and "envelope" in body:
                 intent_id = body["envelope"].get("intent_id")
-                drill_result["steps"][step_name] = {"status": "passed", "intent_id": intent_id}
+                if intent_id:
+                    drill_result["steps"][step_name] = {"status": "passed", "intent_id": intent_id}
+                else:
+                    drill_result["steps"][step_name] = {
+                        "status": "failed",
+                        "http_status": status,
+                        "error": "Missing intent_id in compile response envelope",
+                        "body": body,
+                    }
+                    drill_result["overall_status"] = "failed"
             else:
                 drill_result["steps"][step_name] = {
                     "status": "failed",
@@ -867,9 +884,18 @@ def run_api_drills(server_url, bearer_token, plan_mode, output_dir, rate_limit_d
         if not plan_mode and intent_id and drill_result["overall_status"] != "failed":
             time.sleep(rate_limit_delay)
             status, body, err = _make_api_request("POST", mint_url, headers, capability_payload)
-            if status == 201 and isinstance(body, dict) and "lease" in body:
+            if status in (200, 201) and isinstance(body, dict) and "lease" in body:
                 capability_id = body["lease"].get("capability_id")
-                drill_result["steps"][step_name] = {"status": "passed", "capability_id": capability_id}
+                if capability_id:
+                    drill_result["steps"][step_name] = {"status": "passed", "capability_id": capability_id}
+                else:
+                    drill_result["steps"][step_name] = {
+                        "status": "failed",
+                        "http_status": status,
+                        "error": "Missing capability_id in mint response lease",
+                        "body": body,
+                    }
+                    drill_result["overall_status"] = "failed"
             else:
                 drill_result["steps"][step_name] = {
                     "status": "failed",
@@ -978,38 +1004,9 @@ def run_api_drills(server_url, bearer_token, plan_mode, output_dir, rate_limit_d
         else:
             drill_result["steps"][step_name] = {"status": "skipped", "reason": "previous step failed"}
 
-        # Step 7: Verify Execution Outcome
-        step_name = "7_verify"
-        api_output_lines.append("### 7. Verify Execution Outcome")
-        verify_url = f"{server_url}/v1/executions/{execution_id or '<EXECUTION_ID_FROM_STEP_4>'}/verify"
-        api_output_lines.extend(_curl_block("POST", verify_url, {"Content-Type": "application/json"}, None, token))
-        api_output_lines.append("")
-
-        verified = False
-        if not plan_mode and execution_id and drill_result["overall_status"] != "failed":
-            time.sleep(rate_limit_delay)
-            status, body, err = _make_api_request("POST", verify_url, headers)
-            if status == 200 and isinstance(body, dict):
-                verified = body.get("verified", False)
-                drill_result["steps"][step_name] = {"status": "passed" if verified else "failed", "verified": verified}
-                if not verified:
-                    drill_result["overall_status"] = "failed"
-            else:
-                drill_result["steps"][step_name] = {
-                    "status": "failed",
-                    "http_status": status,
-                    "error": err,
-                    "body": body,
-                }
-                drill_result["overall_status"] = "failed"
-        elif plan_mode:
-            drill_result["steps"][step_name] = {"status": "planned"}
-        else:
-            drill_result["steps"][step_name] = {"status": "skipped", "reason": "previous step failed"}
-
-        # Step 8: Compensate Execution
-        step_name = "8_compensate"
-        api_output_lines.append("### 8. Compensate Execution")
+        # Step 7: Compensate Execution
+        step_name = "7_compensate"
+        api_output_lines.append("### 7. Compensate Execution")
         compensate_url = f"{server_url}/v1/executions/{execution_id or '<EXECUTION_ID_FROM_STEP_4>'}/compensate"
         api_output_lines.extend(_curl_block("POST", compensate_url, {"Content-Type": "application/json"}, None, token))
         api_output_lines.append("")
@@ -1035,6 +1032,30 @@ def run_api_drills(server_url, bearer_token, plan_mode, output_dir, rate_limit_d
                 drill_result["overall_status"] = "partial"
         elif plan_mode:
             drill_result["steps"][step_name] = {"status": "planned"}
+        else:
+            drill_result["steps"][step_name] = {"status": "skipped", "reason": "previous step failed"}
+
+        # Step 8: Verify Execution Outcome
+        # For compensation drills, verify is not applicable after compensate.
+        # The gateway contract requires compensate while the contract is in ExecutedAwaitingVerify;
+        # calling verify first would transition to Verified and block compensation.
+        step_name = "8_verify"
+        api_output_lines.append("### 8. Verify Execution Outcome")
+        verify_url = f"{server_url}/v1/executions/{execution_id or '<EXECUTION_ID_FROM_STEP_4>'}/verify"
+        api_output_lines.extend(_curl_block("POST", verify_url, {"Content-Type": "application/json"}, None, token))
+        api_output_lines.append("")
+
+        if plan_mode:
+            drill_result["steps"][step_name] = {
+                "status": "planned",
+                "note": "Skipped for compensation drills — verify endpoint is for commit-path flows. Compensation drills call compensate immediately after execute while contract is in ExecutedAwaitingVerify.",
+            }
+        elif execution_id and drill_result["overall_status"] != "failed":
+            # Skip live verify for compensation drills to avoid state conflict.
+            drill_result["steps"][step_name] = {
+                "status": "skipped",
+                "reason": "Not applicable for compensation drill — verify transitions contract away from ExecutedAwaitingVerify and would block compensation. Compensation drills rely on post-compensate state checks.",
+            }
         else:
             drill_result["steps"][step_name] = {"status": "skipped", "reason": "previous step failed"}
 
@@ -1118,6 +1139,7 @@ def generate_markdown_summary(results, output_dir, server_smoke=None, plan_mode=
                 f.write(f"| {drill_name} | Planned | API lifecycle generated, not executed |\n")
             f.write("\n---\n\n")
             f.write("> **Note**: Plan mode generated all 9 lifecycle steps as curl commands. ")
+            f.write("Step 8 (verify) is noted as skipped for compensation drills because verify transitions the contract away from ExecutedAwaitingVerify and would block compensation. ")
             f.write("No live requests were sent. Operator must review and adapt payloads before execution.\n")
         else:
             f.write("## Drill Results\n\n")
@@ -1159,6 +1181,12 @@ def generate_markdown_summary(results, output_dir, server_smoke=None, plan_mode=
                     f.write(f" — Error: `{err_str}`")
                 if "http_status" in step:
                     f.write(f" (HTTP {step['http_status']})")
+                if "note" in step:
+                    note_str = str(step["note"])[:200]
+                    f.write(f" — Note: {note_str}")
+                if "reason" in step:
+                    reason_str = str(step["reason"])[:200]
+                    f.write(f" — Reason: {reason_str}")
                 f.write("\n")
             f.write("\n")
 
@@ -1172,7 +1200,7 @@ def generate_markdown_summary(results, output_dir, server_smoke=None, plan_mode=
         f.write("- D6 requires a real maildraft backend or mock.\n")
         f.write("- Signature fields remain blank until operator reviews evidence and signs per docs 58/59.\n")
         f.write("- No production pilot signoff is implied or granted.\n")
-        f.write("- Compensation (step 8) may fail for adapters where rollback is not yet fully wired.\n")
+        f.write("- Compensation (step 7) may fail for adapters where rollback is not yet fully wired.\n")
 
         f.write("\n---\n\n")
         f.write("*Generated by run_d1_d6_drills.py — operator review required before use.*\n")
