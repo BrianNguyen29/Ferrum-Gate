@@ -284,6 +284,58 @@ paths:
       security:
         - BearerAuth: []
 
+  /v1/executions/{execution_id}/execute:
+    post:
+      summary: Execute the prepared rollback contract
+      description: |
+        Executes the adapter operation for the given execution. The execution must be in
+        Prepared or Authorized state and the rollback contract must be in Prepared state.
+        Payload format is adapter-specific (e.g., `{"content": "..."}` for FileWrite).
+      operationId: executeExecution
+      parameters:
+        - $ref: '#/components/parameters/ExecutionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExecuteExecutionRequest'
+      responses:
+        '200':
+          description: Execution completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecuteExecutionResponse'
+        '404':
+          $ref: '#/components/responses/ApiError'
+        '409':
+          description: Execution not in a valid state for execute
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/executions/{execution_id}/verify:
+    post:
+      summary: Verify execution outcome against the rollback contract
+      description: |
+        Runs verify checks on the rollback contract to confirm the side effect
+        was applied correctly. Returns verified=true if all checks pass.
+      operationId: verifyExecution
+      parameters:
+        - $ref: '#/components/parameters/ExecutionId'
+      responses:
+        '200':
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerifyExecutionResponse'
+        '404':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
   /v1/executions/{execution_id}:
     get:
       summary: Get execution record
@@ -1654,3 +1706,48 @@ components:
           type: boolean
         adapter_metadata:
           type: object
+
+    ExecuteExecutionRequest:
+      type: object
+      required: [payload]
+      properties:
+        payload:
+          type: object
+          description: Adapter-specific execution payload. For FileWrite, use a content field. For SqliteMutation, use a sql field.
+
+    ExecuteExecutionResponse:
+      type: object
+      required: [execution_id, executed, warnings]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+        executed:
+          type: boolean
+        result_digest:
+          type: string
+          nullable: true
+        rollback_contract:
+          $ref: '#/components/schemas/RollbackContract'
+          nullable: true
+        warnings:
+          type: array
+          items:
+            type: string
+
+    VerifyExecutionResponse:
+      type: object
+      required: [execution_id, verified, warnings]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+        verified:
+          type: boolean
+        rollback_contract:
+          $ref: '#/components/schemas/RollbackContract'
+          nullable: true
+        warnings:
+          type: array
+          items:
+            type: string

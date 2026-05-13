@@ -552,6 +552,12 @@ impl RollbackAdapter for SqliteAdapter {
     }
 }
 
+/// Register the SqliteAdapter with the given registry using "sqlite" as the adapter key.
+/// This allows the adapter to be used for SqlMutation operations via the rollback service.
+pub fn register_sqlite_adapter(registry: &mut ferrum_rollback::AdapterRegistry) {
+    registry.register(std::sync::Arc::new(SqliteAdapter::new("sqlite")));
+}
+
 // =============================================================================
 // Plannable adapter for SQLite operations
 // =============================================================================

@@ -1339,6 +1339,12 @@ impl HttpAdapter {
     }
 }
 
+/// Register the HttpAdapter with the given registry using "http" as the adapter key.
+/// This allows the adapter to be used for HttpMutation operations via the rollback service.
+pub fn register_http_adapter(registry: &mut ferrum_rollback::AdapterRegistry) {
+    registry.register(std::sync::Arc::new(HttpAdapter::new("http")));
+}
+
 #[async_trait]
 impl RollbackAdapter for HttpAdapter {
     fn key(&self) -> &'static str {

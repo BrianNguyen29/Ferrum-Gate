@@ -34,6 +34,38 @@ complete on behalf of the operator.
 
 ---
 
+## API Lifecycle Overview
+
+The FerrumGate v1 control plane exposes the following endpoints for the intent→execution lifecycle.
+Operators should use these exact paths when constructing drill commands.
+
+| Step | Method | Path | Notes |
+|------|--------|------|-------|
+| Compile intent | POST | `/v1/intents/compile` | Creates an intent envelope |
+| List intents | GET | `/v1/intents` | Lists compiled intents |
+| Evaluate proposal | POST | `/v1/proposals/{proposal_id}/evaluate` | Policy evaluation |
+| Mint capability | POST | `/v1/capabilities/mint` | Creates a capability lease |
+| Revoke capability | POST | `/v1/capabilities/{capability_id}/revoke` | Revokes a lease |
+| Authorize execution | POST | `/v1/executions/authorize` | Creates an execution from proposal + capability |
+| Prepare execution | POST | `/v1/executions/{execution_id}/prepare` | Preflight / rollback prepare |
+| **Execute** | **POST** | **`/v1/executions/{execution_id}/execute`** | **Runs the adapter operation** |
+| Verify execution | POST | `/v1/executions/{execution_id}/verify` | Post-execution verification |
+| Compensate execution | POST | `/v1/executions/{execution_id}/compensate` | Rollback / compensation |
+| Cancel execution | POST | `/v1/executions/{execution_id}/cancel` | Cancel non-terminal execution |
+| List approvals | GET | `/v1/approvals` | Lists pending approvals |
+| Resolve approval | POST | `/v1/approvals/{approval_id}/resolve` | Grant or deny an approval |
+| Health check | GET | `/v1/healthz` | Unauthenticated |
+| Readiness check | GET | `/v1/readyz` | Unauthenticated |
+| Deep readiness | GET | `/v1/readyz/deep` | Unauthenticated |
+| Metrics | GET | `/v1/metrics` | Unauthenticated, Prometheus format |
+
+> **Note**: The Phase 3 drill examples below use illustrative endpoint shapes
+> (`/v1/intents`, `/v1/proposals`, `/v1/approvals`) that may not match the exact
+> API paths above. Operators should adapt curl commands to the actual endpoints
+> listed in this table and in `openapi/ferrumgate-control-api.v1.yaml`.
+
+---
+
 ## Option B: Non-Prod / Prod-Like Pilot
 
 **Option B selected**: Single-node SQLite deployment in a non-production environment that

@@ -145,7 +145,7 @@ Before starting, confirm:
 | B1-10 | Fill `58-workload-compensation-drill-evidence-template.md` | Operator annotations per drill | ☐ |
 | B1-11 | Verify no `fail_closed_verified: false` on critical adapters | GitPush and HTTP non-idempotent must be fail-closed | ☐ |
 
-**Evidence**: Completed `58-workload-compensation-drill-evidence-template.md`. **Not yet executed** — B1 remains open; no valid end-to-end adapter drill runner/API payload available for target host; local adapter runner exists but does not satisfy target-host B1 closure; see [`artifacts/2026-05-12-g36-full-duration-compile-only-evidence.md`](../artifacts/2026-05-12-g36-full-duration-compile-only-evidence.md) §5.
+**Evidence**: Completed `58-workload-compensation-drill-evidence-template.md`. **Not yet executed** — B1 remains open; D1–D6 platform support improved (adapter wiring in `ferrumd`, API plan mode with token-safe output, OpenAPI execute/verify coverage), but full target-host lifecycle automation remains incomplete; see [`artifacts/2026-05-13-d1d6-platform-support-evidence.md`](../artifacts/2026-05-13-d1d6-platform-support-evidence.md).
 
 ### B1 Stop Conditions
 
@@ -224,6 +224,7 @@ Before starting, confirm:
 | `115-sqlite-path2-target-host-checklist.md` | `116-g36-monitoring-execution-plan.md` | B8 execution plan |
 | `115-sqlite-path2-target-host-checklist.md` | `59-pilot-readiness-evidence-packet.md` | G2.1–G2.8 evidence packet |
 | `115-sqlite-path2-target-host-checklist.md` | `54-operator-signoff-packet.md` | Final operator signoff |
+| `115-sqlite-path2-target-host-checklist.md` | `artifacts/2026-05-13-d1d6-platform-support-evidence.md` | D1–D6 platform support evidence (adapter wiring, API plan mode, local checks) |
 
 ---
 
@@ -234,7 +235,8 @@ Before starting, confirm:
 | 2026-05-12 | Initial checklist | Engineering |
 | 2026-05-12 | Partial evidence gathered: SSH unblocked, Phase3E script passed, safe restore drill (`table_count=0` caveat), authenticated compile-only probe. B1 still not executed. G3.6 full acceptance not claimed. See [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](../artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md). | Engineering |
 | 2026-05-12 | Extended evidence: `table_count=0` caveat resolved as DSN-query parsing issue (14 tables, 41 indexes, integrity ok); B1 limitation documented (no target-host adapter drill runner); full-duration compile-only G3.6 sequence executed. See [`artifacts/2026-05-12-g36-full-duration-compile-only-evidence.md`](../artifacts/2026-05-12-g36-full-duration-compile-only-evidence.md). | Engineering |
+| 2026-05-13 | D1–D6 platform support improved: adapter wiring in `ferrumd`, API drill plan mode added, OpenAPI execute/verify coverage added, runbook lifecycle overview corrected, local checks passed. B1 remains not executed. No production-ready claim. See [`artifacts/2026-05-13-d1d6-platform-support-evidence.md`](../artifacts/2026-05-13-d1d6-platform-support-evidence.md). | Engineering |
 
 ---
 
-*Document updated: 2026-05-12. SQLite Path 2 Target-Host Checklist — operator-executable. No production-ready claim. No token values. P6 CONDITIONAL GO.*
+*Document updated: 2026-05-13. SQLite Path 2 Target-Host Checklist — operator-executable. No production-ready claim. No token values. P6 CONDITIONAL GO.*

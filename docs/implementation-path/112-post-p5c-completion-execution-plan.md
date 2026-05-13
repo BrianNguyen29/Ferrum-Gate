@@ -374,7 +374,7 @@ Phase 0 (P5c local smoke) ──► Phase 1 (populated local drill)
 - [ ] P3.1 If PG: Engineering adapts drill plan for target host — N/A (SQLite selected); readiness prep continues in [`117-postgresql-readiness-acceleration-plan.md`](./117-postgresql-readiness-acceleration-plan.md)
 - [ ] P3.2 If PG: Operator executes target-host P5c.V1 — N/A (SQLite selected)
 - [ ] P3.3 If PG: Operator executes target-host P5c.V2 — N/A (SQLite selected)
-- [ ] P3.4 SQLite target-host D1–D6 drills executed — **not executed**, remains operator-owned; see [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](./artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md)
+- [ ] P3.4 SQLite target-host D1–D6 drills executed — **not executed**, remains operator-owned; D1–D6 platform support improved (adapter wiring in `ferrumd`, API plan mode, OpenAPI execute/verify coverage); see [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](./artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md) and [`artifacts/2026-05-13-d1d6-platform-support-evidence.md`](./artifacts/2026-05-13-d1d6-platform-support-evidence.md)
 - [ ] P3.5 SQLite target-host restore drill with `integrity_check` passed — partial evidence: safe temp-copy drill passed (`integrity_check: ok`, `table_count=0` caveat); see [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](./artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md)
 - [ ] P3.6 Backup automation configured and verified — partial evidence: timer enabled, latest backup present; retention pruning not verified; see [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](./artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md)
 - [ ] P3.7 TLS/reverse proxy configured and probed — partial evidence: HTTPS probes pass, caddy active; operator-independent cert-path verification not done; see [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](./artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md)
@@ -476,6 +476,7 @@ These steps are **executable now** (no operator dependency, no target-host acces
 | `112-post-p5c-completion-execution-plan.md` | `115-sqlite-path2-target-host-checklist.md` | Track 4 SQLite target-host blocker checklist |
 | `112-post-p5c-completion-execution-plan.md` | `116-g36-monitoring-execution-plan.md` | Track 3 G3.6 real workload monitoring plan |
 | `112-post-p5c-completion-execution-plan.md` | `117-postgresql-readiness-acceleration-plan.md` | PostgreSQL readiness acceleration (parallel to Path 2 pilot) |
+| `112-post-p5c-completion-execution-plan.md` | `artifacts/2026-05-13-d1d6-platform-support-evidence.md` | D1–D6 platform support evidence (adapter wiring, API plan mode, local checks) |
 
 ---
 
@@ -488,7 +489,8 @@ These steps are **executable now** (no operator dependency, no target-host acces
 | 2026-05-12 | Updated Phase 1/2 status: populated local drill completed, Option A SQLite path selected (commit `b320f5c`). Phase 3/4 remain blocked on target host. PostgreSQL readiness linked to [`117-postgresql-readiness-acceleration-plan.md`](./117-postgresql-readiness-acceleration-plan.md). | Engineering |
 | 2026-05-12 | Firewall unblocked; SSH OK; Phase3E evidence script passed; safe temp restore drill done (`table_count=0` caveat); authenticated compile-only probe executed. Phase 3/4 updated to "partial evidence". B1 still not executed. G3.6 full acceptance not claimed. See [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](./artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md). | Engineering |
 | 2026-05-12 | Extended evidence: `table_count=0` caveat resolved as DSN-query parsing issue; B1 limitation documented; full-duration compile-only G3.6 sequence executed. See [`artifacts/2026-05-12-g36-full-duration-compile-only-evidence.md`](./artifacts/2026-05-12-g36-full-duration-compile-only-evidence.md). | Engineering |
+| 2026-05-13 | D1–D6 platform support improved: adapter wiring in `ferrumd`, API drill plan mode added, OpenAPI execute/verify coverage added, runbook lifecycle overview corrected, local checks passed. B1 remains not executed. No production-ready claim. See [`artifacts/2026-05-13-d1d6-platform-support-evidence.md`](./artifacts/2026-05-13-d1d6-platform-support-evidence.md). | Engineering |
 
 ---
 
-*Document updated: 2026-05-12. Post-P5c Completion Execution Plan — planning artifact only. No execution claimed. No production-ready claim. Target-host blockers remain operator-owned.*
+*Document updated: 2026-05-13. Post-P5c Completion Execution Plan — planning artifact only. No execution claimed. No production-ready claim. Target-host blockers remain operator-owned.*

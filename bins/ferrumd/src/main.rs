@@ -2,6 +2,9 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use ferrum_adapter_fs::{PlannableFsAdapter, register_fs_adapter};
 use ferrum_adapter_git::register_git_adapter;
+use ferrum_adapter_http::register_http_adapter;
+use ferrum_adapter_maildraft::{PlannableMailDraftAdapter, register_maildraft_adapter};
+use ferrum_adapter_sqlite::{PlannableSqliteAdapter, register_sqlite_adapter};
 use ferrum_cap::InMemoryCapabilityService;
 use ferrum_gateway::{AuthMode, GatewayRuntime, ServerConfig, run_http_server};
 use ferrum_pdp::StaticPdpEngine;
@@ -335,8 +338,13 @@ async fn main() -> Result<()> {
     registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
     register_git_adapter(&mut registry);
     register_fs_adapter(&mut registry);
+    register_http_adapter(&mut registry);
+    register_sqlite_adapter(&mut registry);
+    register_maildraft_adapter(&mut registry);
     let mut rollback_service = RollbackService::new(Arc::new(registry));
     rollback_service.register_planner(Arc::new(PlannableFsAdapter));
+    rollback_service.register_planner(Arc::new(PlannableSqliteAdapter));
+    rollback_service.register_planner(Arc::new(PlannableMailDraftAdapter));
     let rollback = Arc::new(rollback_service);
 
     let store: Arc<dyn StoreFacade> = if config.store_dsn.to_lowercase().starts_with("postgres://")
