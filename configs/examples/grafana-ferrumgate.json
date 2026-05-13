@@ -1,0 +1,192 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "ferrumgate-g36",
+    "title": "FerrumGate G3.6 Workload Dashboard",
+    "tags": ["ferrumgate", "g3.6", "workload", "monitoring"],
+    "timezone": "utc",
+    "schemaVersion": 36,
+    "refresh": "10s",
+    "annotations": {
+      "list": [
+        {
+          "name": "Workload phases",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "",
+          "tagKeys": "phase",
+          "textFormat": "{{phase}}",
+          "iconColor": "blue"
+        }
+      ]
+    },
+    "templating": {
+      "list": [
+        {
+          "name": "datasource",
+          "type": "datasource",
+          "query": "prometheus",
+          "current": {},
+          "hide": 0,
+          "label": "Prometheus",
+          "multi": false
+        },
+        {
+          "name": "instance",
+          "type": "query",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "query": "label_values(ferrumgate_http_requests_total, instance)",
+          "refresh": 1,
+          "hide": 0,
+          "label": "Instance",
+          "multi": false,
+          "includeAll": true
+        }
+      ]
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "Request Rate by Route",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "sum by (route) (rate(ferrumgate_http_requests_total{instance=~\"$instance\"}[1m]))",
+            "legendFormat": "{{route}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps",
+            "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10}
+          }
+        },
+        "options": {"tooltip": {"mode": "multi"}}
+      },
+      {
+        "id": 2,
+        "title": "HTTP Status Distribution",
+        "type": "piechart",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "sum by (status) (ferrumgate_http_requests_total{instance=~\"$instance\"})",
+            "legendFormat": "{{status}}",
+            "refId": "A"
+          }
+        ],
+        "options": {"pieType": "donut"}
+      },
+      {
+        "id": 3,
+        "title": "Latency Percentiles",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8},
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, sum by (le) (rate(ferrumgate_request_duration_seconds_bucket{instance=~\"$instance\"}[1m])))",
+            "legendFormat": "p50",
+            "refId": "A"
+          },
+          {
+            "expr": "histogram_quantile(0.95, sum by (le) (rate(ferrumgate_request_duration_seconds_bucket{instance=~\"$instance\"}[1m])))",
+            "legendFormat": "p95",
+            "refId": "B"
+          },
+          {
+            "expr": "histogram_quantile(0.99, sum by (le) (rate(ferrumgate_request_duration_seconds_bucket{instance=~\"$instance\"}[1m])))",
+            "legendFormat": "p99",
+            "refId": "C"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s",
+            "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 0}
+          }
+        },
+        "options": {"tooltip": {"mode": "multi"}}
+      },
+      {
+        "id": 4,
+        "title": "Write Queue Depth",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "ferrumgate_write_queue_depth{instance=~\"$instance\"}",
+            "legendFormat": "queue depth",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "spanNulls": true}
+          }
+        },
+        "options": {"tooltip": {"mode": "single"}}
+      },
+      {
+        "id": 5,
+        "title": "Store Health",
+        "type": "stat",
+        "gridPos": {"h": 8, "w": 6, "x": 12, "y": 16},
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "ferrumgate_store_health_up{instance=~\"$instance\"}",
+            "legendFormat": "up",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "bool",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "red", "value": null},
+                {"color": "green", "value": 1}
+              ]
+            }
+          }
+        },
+        "options": {"graphMode": "area", "colorMode": "background"}
+      },
+      {
+        "id": 6,
+        "title": "Governance Errors",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 18, "y": 16},
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "sum by (route) (rate(ferrumgate_governance_errors_total{instance=~\"$instance\"}[1m]))",
+            "legendFormat": "{{route}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps",
+            "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10}
+          }
+        },
+        "options": {"tooltip": {"mode": "multi"}}
+      }
+    ]
+  },
+  "overwrite": true
+}
