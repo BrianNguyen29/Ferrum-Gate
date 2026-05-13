@@ -48,11 +48,13 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
 import uuid
 from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent.resolve()
@@ -313,6 +315,49 @@ def _redact_token(value):
     return value[:4] + "..." + value[-4:]
 
 
+# Local echo server for D4 (avoids external httpbin.org dependency)
+class _EchoHandler(BaseHTTPRequestHandler):
+    """Minimal POST echo handler for D4 HTTP adapter drill."""
+
+    def do_POST(self):
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length)
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format, *args):
+        # Suppress request logs to keep output clean
+        pass
+
+
+def _start_echo_server(host="127.0.0.1", port=19081):
+    """Start the echo server in a background thread. Returns the server object."""
+    server = HTTPServer((host, port), _EchoHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server
+
+
+def _stop_echo_server(server):
+    """Shut down the echo server gracefully."""
+    if server:
+        server.shutdown()
+
+
+def _maybe_start_echo_server(api_mode, plan_mode, selected_drills):
+    """Start echo server only in live API mode when D4 is selected."""
+    if plan_mode or not api_mode:
+        return None
+    if selected_drills is not None and "D4" not in selected_drills:
+        return None
+    print("[LIVE MODE] Starting local echo server for D4 on 127.0.0.1:19081...")
+    server = _start_echo_server()
+    time.sleep(0.3)  # brief warmup
+    return server
+
+
 def _make_api_request(method, url, headers, payload=None, timeout=30):
     """Make an API request using urllib and return (status, body_dict or str, error)."""
     data = None
@@ -475,12 +520,12 @@ API_DRILL_TEMPLATES = {
         "intent_compile_payload": {
             "principal_id": "00000000-0000-0000-0000-000000000001",
             "title": "D2 Git Drill",
-            "goal": "Git branch create in /tmp/ferrum_d2_repo for rollback verification",
+            "goal": "Git branch create in /var/lib/ferrumgate/drill/ferrum_d2_repo for rollback verification",
             "raw_inputs": [],
             "requested_resource_scope": [
                 {
                     "kind": "GitRepository",
-                    "repo_path": "/tmp/ferrum_d2_repo",
+                    "repo_path": "/var/lib/ferrumgate/drill/ferrum_d2_repo",
                     "allowed_refs": ["main"],
                     "mode": "Write",
                 }
@@ -502,7 +547,7 @@ API_DRILL_TEMPLATES = {
         "capability": {
             "tool_binding": {"server_name": "local", "tool_name": "git_branch_create", "tool_version": None},
             "resource_bindings": [
-                {"kind": "Git", "repo_path": "/tmp/ferrum_d2_repo", "allowed_refs": ["main"], "mode": "Write"}
+                {"kind": "Git", "repo_path": "/var/lib/ferrumgate/drill/ferrum_d2_repo", "allowed_refs": ["main"], "mode": "Write"}
             ],
             "argument_constraints": [],
             "taint_budget": {
@@ -527,7 +572,7 @@ API_DRILL_TEMPLATES = {
             "requested_resource_scope": [
                 {
                     "kind": "GitRepository",
-                    "repo_path": "/tmp/ferrum_d3_repo",
+                    "repo_path": "/var/lib/ferrumgate/drill/ferrum_d3_repo",
                     "allowed_refs": ["main"],
                     "mode": "Write",
                 }
@@ -549,7 +594,7 @@ API_DRILL_TEMPLATES = {
         "capability": {
             "tool_binding": {"server_name": "local", "tool_name": "git_push", "tool_version": None},
             "resource_bindings": [
-                {"kind": "Git", "repo_path": "/tmp/ferrum_d3_repo", "allowed_refs": ["main"], "mode": "Write"}
+                {"kind": "Git", "repo_path": "/var/lib/ferrumgate/drill/ferrum_d3_repo", "allowed_refs": ["main"], "mode": "Write"}
             ],
             "argument_constraints": [],
             "taint_budget": {
@@ -563,7 +608,7 @@ API_DRILL_TEMPLATES = {
             "metadata": {},
         },
         "execute_payload": {},
-        "adapter_notes": "Requires non-prod bare remote. Fail-closed verified via pre-receive hook.",
+        "adapter_notes": "Uses normal worktree repo. Fail-closed verified via pre-receive hook.",
     },
     "D4 (http adapter)": {
         "intent_compile_payload": {
@@ -575,7 +620,7 @@ API_DRILL_TEMPLATES = {
                 {
                     "kind": "HttpEndpoint",
                     "method": "Post",
-                    "base_url": "https://httpbin.org",
+                    "base_url": "http://127.0.0.1:19081",
                     "path_prefix": "/post",
                     "mode": "Write",
                 }
@@ -587,7 +632,7 @@ API_DRILL_TEMPLATES = {
             "title": "D4 HTTP POST",
             "tool_name": "http_post",
             "server_name": "local",
-            "raw_arguments": {"url": "https://httpbin.org/post", "body": "{\"drill\": \"D4\"}"},
+            "raw_arguments": {"url": "http://127.0.0.1:19081/post", "body": "{\"drill\": \"D4\"}"},
             "expected_effect": "ExternalApiCall",
             "estimated_risk": "Medium",
             "requested_rollback_class": "R2Compensatable",
@@ -600,7 +645,7 @@ API_DRILL_TEMPLATES = {
                 {
                     "kind": "Http",
                     "method": "Post",
-                    "base_url": "https://httpbin.org",
+                    "base_url": "http://127.0.0.1:19081",
                     "path_prefix": "/post",
                     "header_allowlist": ["Content-Type"],
                     "mode": "Write",
@@ -621,6 +666,8 @@ API_DRILL_TEMPLATES = {
         "adapter_notes": (
             "HTTP adapter supports POST/PUT/PATCH with idempotency key. "
             "Compensation plan must use http.replay_v1 operation. "
+            "Live drill uses local echo server at http://127.0.0.1:19081/post; "
+            "the runner starts it automatically in live mode when D4 is selected. "
             "NOTE: server infer_action_type_and_adapter may default HTTP tools to noop adapter; "
             "live execution may fail unless HTTP adapter is fully wired in target build."
         ),
@@ -1455,25 +1502,36 @@ def main():
 
     # API mode (legacy --api-drills or new --api-live)
     api_mode = args.api_drills or args.api_live
+    echo_server = None
     if api_mode:
         if not args.server_url:
             print("ERROR: --api-drills/--api-live requires --server-url")
             return 1
+        echo_server = _maybe_start_echo_server(
+            api_mode=api_mode,
+            plan_mode=args.plan,
+            selected_drills=selected_drills,
+        )
         print("=" * 60)
         print("RUNNING API-LEVEL DRILLS")
         print("=" * 60)
-        api_results, api_file = run_api_drills(
-            args.server_url,
-            args.bearer_token,
-            args.plan,
-            output_dir,
-            args.rate_limit_delay,
-            selected_drills=selected_drills,
-        )
-        results.update(api_results)
-        print(f"\nAPI drill output: {api_file}")
-        if args.plan:
-            print("[PLAN MODE] No live requests were sent.")
+        try:
+            api_results, api_file = run_api_drills(
+                args.server_url,
+                args.bearer_token,
+                args.plan,
+                output_dir,
+                args.rate_limit_delay,
+                selected_drills=selected_drills,
+            )
+            results.update(api_results)
+            print(f"\nAPI drill output: {api_file}")
+            if args.plan:
+                print("[PLAN MODE] No live requests were sent.")
+        finally:
+            if echo_server:
+                print("[LIVE MODE] Stopping local echo server...")
+                _stop_echo_server(echo_server)
         # Skip cargo tests in API mode unless explicitly skipped
         args.skip_cargo = True
 
