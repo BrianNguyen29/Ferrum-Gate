@@ -560,8 +560,8 @@ API_DRILL_TEMPLATES = {
             "requested_ttl_secs": 300,
             "metadata": {},
         },
-        "execute_payload": {},
-        "adapter_notes": "Git adapter execute payload is typically empty; operation is encoded in the contract target.",
+        "execute_payload": {"branch_name": "d2-drill-branch"},
+        "adapter_notes": "Git adapter execute payload is typically empty; operation is encoded in the contract target. Belt-and-suspenders: branch_name included in payload.",
     },
     "D3 (git remote fail-closed)": {
         "intent_compile_payload": {

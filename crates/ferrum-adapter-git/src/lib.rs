@@ -476,31 +476,30 @@ impl RollbackAdapter for GitRollbackAdapter {
                 .and_then(|v| v.as_str())
                 .is_some();
 
-            // If branch_name is provided in metadata (direct adapter call), validate and store it.
-            // Empty branch_name is an error (must be non-empty if provided).
-            // If not provided at all (gateway flow), skip - execute will get it from payload.
-            if let Some(branch_name) = request.metadata.get("branch_name").and_then(|v| v.as_str())
-            {
-                if branch_name.is_empty() {
+            // Fail-closed: require branch_name in metadata (direct adapter call or gateway flow).
+            let branch_name = match request.metadata.get("branch_name").and_then(|v| v.as_str()) {
+                Some(s) if !s.is_empty() => s,
+                _ => {
                     return Err(AdapterError::Validation(
                         "branch_name is required in request.metadata for GitBranchCreate"
                             .to_string(),
                     ));
                 }
-                // Fail-closed: validate branch name using git-native rules during prepare.
-                Self::validate_branch_name(branch_name).map_err(AdapterError::from)?;
+            };
 
-                // Fail-closed: check if branch already exists locally during prepare.
-                if Self::branch_exists(&repo_path, branch_name).map_err(AdapterError::from)? {
-                    return Err(AdapterError::Validation(format!(
-                        "branch '{}' already exists locally",
-                        branch_name
-                    )));
-                }
+            // Fail-closed: validate branch name using git-native rules during prepare.
+            Self::validate_branch_name(branch_name).map_err(AdapterError::from)?;
 
-                // Store in adapter_metadata so it gets copied to contract.metadata
-                metadata.insert("branch_name".to_string(), serde_json::json!(branch_name));
+            // Fail-closed: check if branch already exists locally during prepare.
+            if Self::branch_exists(&repo_path, branch_name).map_err(AdapterError::from)? {
+                return Err(AdapterError::Validation(format!(
+                    "branch '{}' already exists locally",
+                    branch_name
+                )));
             }
+
+            // Store in adapter_metadata so it gets copied to contract.metadata
+            metadata.insert("branch_name".to_string(), serde_json::json!(branch_name));
 
             // Resolve base_ref to SHA and persist for verification.
             // If base_ref is provided in metadata, use it; otherwise default to HEAD.

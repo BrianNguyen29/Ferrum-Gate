@@ -2590,6 +2590,7 @@ async fn prepare_execution(
         &rollback_class,
         &proposal.tool_name,
         &intent.resource_scope,
+        &proposal.raw_arguments,
     );
 
     let response = match state.runtime.rollback.prepare(request).await {
@@ -2875,11 +2876,30 @@ async fn execute_execution(
     {
         *after_hash = receipt.result_digest.clone();
     }
+    // For HTTP targets, propagate request_digest from execute receipt into target
+    // so that compensation replay can validate digest matching.
+    if let ferrum_proto::RollbackTarget::HttpRequest {
+        ref mut request_digest,
+        ..
+    } = updated_contract.target
+    {
+        if let Some(digest) = receipt
+            .adapter_metadata
+            .get("request_digest")
+            .and_then(|v| v.as_str())
+        {
+            *request_digest = digest.to_string();
+        }
+    }
     // Propagate adapter_metadata from execute receipt into contract metadata so that
     // rollback/compensate can access critical fields (e.g., branch_name for GitBranchCreate).
     for (key, value) in &receipt.adapter_metadata {
         updated_contract.metadata.insert(key.clone(), value.clone());
     }
+    // Store execute payload for later compensation enrichment (HTTP replay).
+    updated_contract
+        .metadata
+        .insert("execute_payload".to_string(), request.payload.clone());
     if let Err(e) = state
         .runtime
         .store
@@ -3383,6 +3403,10 @@ async fn compensate_execution(
             );
         }
     }
+
+    // Enrich HTTP placeholder compensation plans before compensate so that
+    // parse_replay_contract can validate method/payload/expected_statuses.
+    let contract = enrich_http_compensation_if_needed(contract);
 
     // Call compensate on the contract
     if let Err(e) = state.runtime.rollback.compensate(&contract).await {
@@ -4811,10 +4835,11 @@ fn build_prepare_request_for_proposal(
     rollback_class: &RollbackClass,
     tool_name: &str,
     resource_scope: &[ferrum_proto::ResourceSelector],
+    raw_arguments: &serde_json::Value,
 ) -> ferrum_proto::RollbackPrepareRequest {
     let (action_type, adapter_key) = infer_action_type_and_adapter(tool_name);
     let target = infer_target_from_scope(resource_scope, &action_type);
-    rollback.build_prepare_request_with_target(
+    let mut request = rollback.build_prepare_request_with_target(
         intent_id,
         proposal_id,
         execution_id,
@@ -4822,7 +4847,92 @@ fn build_prepare_request_for_proposal(
         action_type,
         adapter_key,
         target,
-    )
+    );
+
+    // Merge proposal raw_arguments into metadata for git tools so prepare can
+    // validate branch_name/remote_name during prepare (fail-closed).
+    if let Some(args) = raw_arguments.as_object() {
+        match request.action_type {
+            ferrum_proto::ActionType::GitBranchCreate => {
+                if let Some(branch) = args.get("branch").and_then(|v| v.as_str()) {
+                    request
+                        .metadata
+                        .insert("branch_name".to_string(), serde_json::json!(branch));
+                }
+            }
+            ferrum_proto::ActionType::GitPush
+            | ferrum_proto::ActionType::GitPull
+            | ferrum_proto::ActionType::GitFetch => {
+                if let Some(refspec) = args.get("refspec").and_then(|v| v.as_str()) {
+                    request
+                        .metadata
+                        .insert("branch_name".to_string(), serde_json::json!(refspec));
+                }
+                if let Some(remote) = args.get("remote").and_then(|v| v.as_str()) {
+                    request
+                        .metadata
+                        .insert("remote_name".to_string(), serde_json::json!(remote));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    request
+}
+
+/// If the contract has an HTTP placeholder compensation plan (only url present),
+/// enrich it with method, payload, and expected_statuses from contract target
+/// and metadata so that http.replay_v1 validation succeeds.
+/// Fails closed by leaving the contract unchanged when required data is missing.
+fn enrich_http_compensation_if_needed(
+    mut contract: ferrum_proto::RollbackContract,
+) -> ferrum_proto::RollbackContract {
+    if contract.adapter_key != "http" || contract.compensation_plan.len() != 1 {
+        return contract;
+    }
+    let step = &contract.compensation_plan[0];
+    if step.operation != "http.replay_v1" || step.args.contains_key("method") {
+        return contract;
+    }
+
+    let method = match &contract.target {
+        ferrum_proto::RollbackTarget::HttpRequest { method, .. } => format!("{:?}", method),
+        _ => return contract,
+    };
+
+    let payload = contract
+        .metadata
+        .get("execute_payload")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+
+    let expected_statuses: Vec<u16> = contract
+        .metadata
+        .get("response_status")
+        .and_then(|v| v.as_u64())
+        .map(|s| vec![s as u16])
+        .unwrap_or_else(|| vec![200]);
+
+    let enriched_step = ferrum_proto::CompensationStep {
+        order: step.order,
+        adapter_key: step.adapter_key.clone(),
+        operation: step.operation.clone(),
+        idempotency_key: step.idempotency_key.clone(),
+        args: {
+            let mut args = step.args.clone();
+            args.insert("method".to_string(), serde_json::json!(method));
+            args.insert("payload".to_string(), payload);
+            args.insert(
+                "expected_statuses".to_string(),
+                serde_json::json!(expected_statuses),
+            );
+            args
+        },
+    };
+
+    contract.compensation_plan = vec![enriched_step];
+    contract
 }
 
 /// Infers the RollbackTarget from resource_scope.
