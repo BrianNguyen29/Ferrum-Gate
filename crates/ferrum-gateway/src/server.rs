@@ -1537,12 +1537,7 @@ async fn compile_intent(
             effect_type: ferrum_proto::EffectType::ReadOnlyAnalysis,
             required: true,
         }],
-        forbidden_outcomes: vec![OutcomeClause {
-            id: "forbid-git".to_string(),
-            description: "no git mutations".to_string(),
-            effect_type: ferrum_proto::EffectType::GitMutation,
-            required: false,
-        }],
+        forbidden_outcomes: Vec::new(),
         resource_scope: req.requested_resource_scope,
         risk_tier: requested_risk,
         approval_mode: req
@@ -4930,6 +4925,30 @@ fn infer_target_from_scope(
         }
     }
 
+    // HttpEndpoint selector for HttpMutation action type
+    if matches!(action_type, ferrum_proto::ActionType::HttpMutation) {
+        for selector in scope {
+            if let ferrum_proto::ResourceSelector::HttpEndpoint {
+                method,
+                base_url,
+                path_prefix,
+                mode: _,
+            } = selector
+            {
+                let url = if path_prefix.starts_with('/') {
+                    format!("{}{}", base_url, path_prefix)
+                } else {
+                    format!("{}/{}", base_url, path_prefix)
+                };
+                return RollbackTarget::HttpRequest {
+                    method: method.clone(),
+                    url,
+                    request_digest: String::new(),
+                };
+            }
+        }
+    }
+
     // Default fallback
     RollbackTarget::Generic {
         namespace: "mcp".to_string(),
@@ -4994,12 +5013,7 @@ fn minimal_intent_for(
             effect_type: ferrum_proto::EffectType::ReadOnlyAnalysis,
             required: true,
         }],
-        forbidden_outcomes: vec![OutcomeClause {
-            id: "forbid-git".to_string(),
-            description: "no git mutations".to_string(),
-            effect_type: ferrum_proto::EffectType::GitMutation,
-            required: false,
-        }],
+        forbidden_outcomes: Vec::new(),
         resource_scope: Vec::new(),
         risk_tier: RiskTier::Medium,
         approval_mode: ferrum_proto::ApprovalMode::None,
@@ -6455,7 +6469,8 @@ mod tests {
         let runtime = test_runtime().await;
         let router = build_router(runtime.clone());
 
-        // Create an intent with only read-only allowed but forbid git mutations
+        // Create an intent with only ReadOnlyAnalysis allowed; outcome mismatch
+        // (non-allowed effect) should be rejected.
         let intent_id = ferrum_proto::IntentId::new();
         let intent = IntentEnvelope {
             intent_id,
@@ -6471,12 +6486,7 @@ mod tests {
                 effect_type: ferrum_proto::EffectType::ReadOnlyAnalysis,
                 required: true,
             }],
-            forbidden_outcomes: vec![OutcomeClause {
-                id: "forbid-git".to_string(),
-                description: "no git mutations".to_string(),
-                effect_type: ferrum_proto::EffectType::GitMutation,
-                required: false,
-            }],
+            forbidden_outcomes: Vec::new(),
             resource_scope: Vec::new(),
             risk_tier: RiskTier::Low,
             approval_mode: ferrum_proto::ApprovalMode::None,
@@ -6568,7 +6578,7 @@ mod tests {
         };
         runtime.store.executions().insert(&record).await.unwrap();
 
-        // Build a forbidden outcome report (git mutation instead of read-only)
+        // Build an outcome report with a non-allowed effect (git mutation instead of read-only)
         let report = OutcomeReport {
             execution_id,
             actual_effect: ferrum_proto::EffectType::GitMutation,

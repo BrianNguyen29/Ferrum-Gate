@@ -634,7 +634,7 @@ API_DRILL_TEMPLATES = {
             "requested_resource_scope": [
                 {
                     "kind": "SqliteDatabase",
-                    "db_path": "/tmp/ferrum_d5.db",
+                    "db_path": "/var/lib/ferrumgate/drill/ferrum_d5.db",
                     "tables": ["drill_table"],
                     "mode": "Write",
                 }
@@ -656,7 +656,7 @@ API_DRILL_TEMPLATES = {
         "capability": {
             "tool_binding": {"server_name": "local", "tool_name": "sql_mutate", "tool_version": None},
             "resource_bindings": [
-                {"kind": "Sqlite", "db_path": "/tmp/ferrum_d5.db", "tables": ["drill_table"], "mode": "Write"}
+                {"kind": "Sqlite", "db_path": "/var/lib/ferrumgate/drill/ferrum_d5.db", "tables": ["drill_table"], "mode": "Write"}
             ],
             "argument_constraints": [],
             "taint_budget": {
