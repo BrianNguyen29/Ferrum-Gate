@@ -125,6 +125,39 @@ impl SqliteAdapter {
         }
     }
 
+    /// Attempts to auto-generate a reversal SQL statement for simple DML patterns.
+    /// Currently supports single-row INSERT with an explicit VALUES clause.
+    /// Returns None for unsupported patterns (UPDATE, DELETE, multi-row INSERT, etc.).
+    fn generate_reversal_sql(conn: &Connection, sql: &str) -> Option<String> {
+        let trimmed = sql.trim();
+        let upper = trimmed.to_uppercase();
+
+        // Simple INSERT reversal: extract table name and use last_insert_rowid()
+        if upper.starts_with("INSERT") {
+            // Extract table name after INSERT INTO using simple token scanning
+            let tokens: Vec<&str> = trimmed.split_whitespace().collect();
+            if let Some(into_pos) = tokens.iter().position(|&t| t.eq_ignore_ascii_case("INTO")) {
+                if let Some(table_token) = tokens.get(into_pos + 1) {
+                    // Strip any trailing punctuation like commas or parentheses
+                    let table_name = table_token.trim_end_matches(['(', ',', ';']);
+                    if !table_name.is_empty() {
+                        // Get the rowid of the most recent insert on this connection
+                        let last_rowid: i64 = conn
+                            .query_row("SELECT last_insert_rowid()", [], |row| row.get(0))
+                            .ok()?;
+
+                        return Some(format!(
+                            "DELETE FROM {} WHERE rowid = {}",
+                            table_name, last_rowid
+                        ));
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
     /// Generates a unique savepoint name.
     fn generate_savepoint_name() -> String {
         let counter = SAVEPOINT_COUNTER.fetch_add(1, Ordering::SeqCst);
@@ -375,6 +408,14 @@ impl RollbackAdapter for SqliteAdapter {
                 "DDL"
             }),
         );
+        metadata.insert("original_sql".to_string(), serde_json::json!(sql));
+
+        // Attempt to auto-generate reversal SQL for simple DML patterns
+        if sql_type == SqlType::Dml {
+            if let Some(reversal) = Self::generate_reversal_sql(&conn, sql) {
+                metadata.insert("reversal_sql".to_string(), serde_json::json!(reversal));
+            }
+        }
 
         if let Some(sp_name) = &savepoint_name {
             metadata.insert("savepoint_name".to_string(), serde_json::json!(sp_name));
@@ -473,10 +514,30 @@ impl RollbackAdapter for SqliteAdapter {
                     )
                 })?;
 
+                const PLACEHOLDER_SQL: &str = "/* compensation SQL must be provided by caller */";
+
                 for step in &contract.compensation_plan {
                     if step.operation == "rollback" {
                         if let Some(sql) = step.args.get("sql").and_then(|v| v.as_str()) {
-                            Self::execute_sql(&conn, sql).map_err(|e| {
+                            let sql_to_execute = if sql.trim() == PLACEHOLDER_SQL {
+                                // Fallback to auto-generated reversal SQL if available
+                                contract
+                                    .metadata
+                                    .get("reversal_sql")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or(sql)
+                            } else {
+                                sql
+                            };
+
+                            if sql_to_execute.trim() == PLACEHOLDER_SQL {
+                                return Err(AdapterError::Validation(
+                                    "compensation_plan contains placeholder SQL and no auto-generated reversal is available; provide explicit reversal SQL"
+                                        .into(),
+                                ));
+                            }
+
+                            Self::execute_sql(&conn, sql_to_execute).map_err(|e| {
                                 Self::phase_wrap_internal(
                                     PHASE_ROLLBACK,
                                     format!("compensation failed: {}", e),
@@ -1343,6 +1404,101 @@ mod tests {
                 .query_row("SELECT COUNT(*) FROM items", [], |row| row.get(0))
                 .unwrap();
             assert_eq!(count, 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_sql_rollback_insert_with_placeholder_uses_auto_reversal() {
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let db_path_str = db_path.display().to_string();
+
+        let adapter = SqliteAdapter::new("sqlite");
+
+        // Create table
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
+                .unwrap();
+        }
+
+        // Prepare
+        let request = create_test_request(&db_path_str);
+        let prep_receipt = adapter.prepare(&request).await.unwrap();
+
+        // Execute INSERT
+        let contract = RollbackContract {
+            contract_id: RollbackContractId::new(),
+            intent_id: IntentId::new(),
+            proposal_id: ProposalId::new(),
+            execution_id: ExecutionId::new(),
+            action_type: ActionType::SqlMutation,
+            rollback_class: ferrum_proto::RollbackClass::R1SnapshotRecoverable,
+            adapter_key: "sqlite".to_string(),
+            target: RollbackTarget::SqliteTxn {
+                db_path: db_path_str.clone(),
+                tx_id: "test-tx".to_string(),
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![CompensationStep {
+                order: 1,
+                adapter_key: "sqlite".to_string(),
+                operation: "rollback".to_string(),
+                args: json_map_from_serde_map(
+                    serde_json::json!({
+                        "sql": "/* compensation SQL must be provided by caller */"
+                    })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                ),
+                idempotency_key: "rollback-placeholder".to_string(),
+            }],
+            auto_commit: false,
+            state: RollbackState::Prepared,
+            created_at: Utc::now(),
+            expires_at: None,
+            metadata: prep_receipt.adapter_metadata,
+        };
+
+        let payload = serde_json::json!({
+            "sql": "INSERT INTO items (name) VALUES ('test_item')"
+        });
+        let exec_receipt = adapter.execute(&contract, &payload).await.unwrap();
+
+        // Verify auto-generated reversal_sql is present in metadata
+        assert!(
+            exec_receipt.adapter_metadata.get("reversal_sql").is_some(),
+            "reversal_sql should be auto-generated for INSERT"
+        );
+
+        // Update contract metadata with execute metadata
+        let mut contract = contract;
+        for (k, v) in &exec_receipt.adapter_metadata {
+            contract.metadata.insert(k.clone(), v.clone());
+        }
+
+        // Verify row exists before rollback
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            let count: i64 = conn
+                .query_row("SELECT COUNT(*) FROM items", [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(count, 1);
+        }
+
+        // Rollback with placeholder compensation plan should use auto-generated reversal
+        let rollback_receipt = adapter.rollback(&contract).await.unwrap();
+        assert!(rollback_receipt.recovered);
+
+        // Verify row is gone after rollback
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            let count: i64 = conn
+                .query_row("SELECT COUNT(*) FROM items", [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(count, 0);
         }
     }
 

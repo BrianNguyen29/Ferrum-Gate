@@ -107,6 +107,39 @@ impl PlannableAdapter for PlannableGitAdapter {
                     plan_description: format!("git tag create plan for repo {}", repo_path),
                 }))
             }
+            // GitPush: push branch to remote
+            // Compensation is remote ref deletion (force-push empty ref)
+            (
+                ActionType::GitPush,
+                RollbackTarget::GitRef {
+                    repo_path,
+                    before_ref: _,
+                    after_ref: _,
+                },
+            ) => {
+                Ok(Some(ExecutionPlan {
+                    prepare_checks: Vec::new(),
+                    verify_checks: Vec::new(),
+                    compensation_plan: vec![CompensationStep {
+                        order: 1,
+                        adapter_key: "git".to_string(),
+                        // GitRollbackAdapter.rollback() handles GitPush by deleting
+                        // the remote ref using push :refs/heads/<branch>
+                        operation: "rollback".to_string(),
+                        args: json_map_from_serde_map(
+                            serde_json::json!({
+                                "repo_path": repo_path
+                            })
+                            .as_object()
+                            .unwrap()
+                            .clone(),
+                        ),
+                        idempotency_key: next_idempotency_key(),
+                    }],
+                    auto_commit: false,
+                    plan_description: format!("git push plan for repo {}", repo_path),
+                }))
+            }
             _ => Ok(None), // Not plannable by this adapter
         }
     }
@@ -161,6 +194,30 @@ mod tests {
         assert_eq!(plan.compensation_plan.len(), 1);
         assert!(!plan.auto_commit);
         assert_eq!(plan.compensation_plan[0].adapter_key, "git");
+    }
+
+    #[tokio::test]
+    async fn test_plannable_git_git_push_plan() {
+        let adapter = PlannableGitAdapter;
+        let plan = adapter
+            .generate_plan(
+                &ActionType::GitPush,
+                &RollbackTarget::GitRef {
+                    repo_path: "/tmp/test-repo".to_string(),
+                    before_ref: None,
+                    after_ref: None,
+                },
+            )
+            .await
+            .unwrap();
+        assert!(plan.is_some());
+        let plan = plan.unwrap();
+        assert_eq!(plan.prepare_checks.len(), 0);
+        assert_eq!(plan.verify_checks.len(), 0);
+        assert_eq!(plan.compensation_plan.len(), 1);
+        assert!(!plan.auto_commit);
+        assert_eq!(plan.compensation_plan[0].adapter_key, "git");
+        assert_eq!(plan.compensation_plan[0].operation, "rollback");
     }
 
     #[tokio::test]

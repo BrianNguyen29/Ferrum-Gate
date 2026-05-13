@@ -36,6 +36,9 @@ use std::io::{Read, Write};
 use std::time::Duration;
 use thiserror::Error;
 
+pub mod planner;
+pub use planner::PlannableHttpAdapter;
+
 #[derive(Debug, Clone)]
 pub struct PoolConfig {
     /// Maximum number of concurrent connections.
