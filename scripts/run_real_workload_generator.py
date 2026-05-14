@@ -253,6 +253,14 @@ def _percentile(values, p):
     return s[int(f)] * (c - k) + s[int(c)] * (k - f)
 
 
+def _normalize_intent_compile_payload(payload):
+    """Return a copy of the intent compile payload with required defaults applied."""
+    normalized = dict(payload)
+    if "trusted_context" not in normalized:
+        normalized["trusted_context"] = {}
+    return normalized
+
+
 # ---------------------------------------------------------------------------
 # Plan generation
 # ---------------------------------------------------------------------------
@@ -317,7 +325,7 @@ def generate_plan(server_url, phases, adapter_mix, output_dir):
             f.write(f"| {k} | {v['weight']} | {v['intent_type']} | {v['tool_name']} |\n")
         f.write("\n## Sample Intent Compile Payloads\n\n")
         for adapter_key in adapter_mix:
-            template = ADAPTER_TEMPLATES.get(adapter_key, {})
+            template = _normalize_intent_compile_payload(ADAPTER_TEMPLATES.get(adapter_key, {}))
             f.write(f"### {adapter_key.upper()}\n\n")
             f.write("```json\n")
             f.write(json.dumps(template, indent=2))
@@ -333,7 +341,7 @@ def generate_plan(server_url, phases, adapter_mix, output_dir):
 
 def _execute_single_request(server_url, adapter_key, headers):
     """Execute a single intent-compile request for the given adapter."""
-    payload = ADAPTER_TEMPLATES.get(adapter_key, {})
+    payload = _normalize_intent_compile_payload(ADAPTER_TEMPLATES.get(adapter_key, {}))
     url = f"{server_url}/v1/intents/compile"
     start = time.perf_counter()
     status, body, err = _make_api_request("POST", url, headers, payload, timeout=30)

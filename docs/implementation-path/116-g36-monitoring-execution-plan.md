@@ -291,10 +291,136 @@ Refresh `106-g3-6-pilot-metrics-evidence-packet.md` with real workload data:
 | `116-g36-monitoring-execution-plan.md` | `31-release-paths-todo.md` §Path 3 | G3 gate definitions |
 | `116-g36-monitoring-execution-plan.md` | `scripts/check_pilot_readiness.py` | Automated probe helper |
 | `116-g36-monitoring-execution-plan.md` | `artifacts/2026-05-13-d1d6-platform-support-evidence.md` | D1–D6 platform support evidence (adapter wiring, API plan mode, local checks) |
+| `116-g36-monitoring-execution-plan.md` | `artifacts/2026-05-14-g36-adapter-mix-failed-run-evidence.md` | G3.6 adapter-mix failed run (3,355 requests, 0×2xx, 1,104×422, 2,251×429) |
 
 ---
 
-## 12. Document History
+## 12. Rate-Limit Precheck Guidance
+
+Before any live G3.6 rerun, verify the effective rate-limit policy on the target host.
+Failure to do so may result in a repeat of the 2026-05-14 run where 2,251 requests
+returned HTTP 429 before adapter execution could be validated.
+
+### 12.1 Pre-Run Checks
+
+| # | Check | How to Verify | Pass Criteria |
+|---|---|---|---|
+| RL-1 | Identify current rate-limit threshold | Query `/v1/metrics` for `ferrumgate_rate_limit_requests_total` or inspect server config | Threshold documented |
+| RL-2 | Confirm authenticated vs unauthenticated limits | Compare limits for bearer-token requests vs anonymous requests | Authenticated limit ≥ target load (1 req/s sustained, 5 req/s spike) |
+| RL-3 | Verify burst allowance | Check `rate_limit_burst` or equivalent config parameter | Burst ≥ spike load (≥ 5 req/s) |
+| RL-4 | Check per-adapter rate limits | Some adapters may have separate quotas; confirm in config or metrics | No adapter-specific limit below target load |
+| RL-5 | Document rate-limit config in evidence | Attach config snippet or metric scrape to evidence packet | Operator can reproduce the check |
+
+### 12.2 Mitigation Options if Limits Are Too Low
+
+| Option | Trade-off | Recommendation |
+|---|---|---|
+| Temporarily raise limits for test window | Test data may not reflect production constraints | Acceptable if documented and reverted |
+| Reduce generator rate to stay under limit | May not validate spike behavior | Use only for baseline/low validation |
+| Use multiple authenticated principals | Distributes quota across identities | Effective if server supports per-principal limits |
+| Run without rate limiter (dev config) | Invalidates production-like evidence | **Not recommended** for G3.6 acceptance |
+
+> **Rule of thumb**: If the server returns >5% HTTP 429 at target load, the run
+> **must not** be claimed as G3.6 acceptance evidence until the limit is raised
+> or the load is adjusted.
+
+---
+
+## 13. Rerun / Acceptance Checklist
+
+Use this checklist for every G3.6 rerun after the `trusted_context` fix and
+rate-limit precheck. All items must pass before claiming full acceptance.
+
+### 13.1 Per-Adapter 2xx Validation
+
+| # | Adapter | Intent Type | Required Evidence | Status |
+|---|---|---|---|---|
+| A-1 | FS | `FileWrite` | ≥1 HTTP 200/201 intent-compile response with adapter execution confirmed | ☐ |
+| A-2 | Git | `GitCommit` | ≥1 HTTP 200/201 intent-compile response with adapter execution confirmed | ☐ |
+| A-3 | HTTP | `HttpMutation` | ≥1 HTTP 200/201 intent-compile response with adapter execution confirmed | ☐ |
+| A-4 | SQLite | `SqliteMutation` | ≥1 HTTP 200/201 intent-compile response with adapter execution confirmed | ☐ |
+| A-5 | Maildraft | `MailDraftCreate` | ≥1 HTTP 200/201 intent-compile response with adapter execution confirmed | ☐ |
+
+> **Note**: "Adapter execution confirmed" means the response body or subsequent
+> `readyz/deep` / metrics data shows the request was processed by the adapter,
+> not rejected at the gateway or rate-limit layer.
+
+### 13.2 Readyz / Deep Threshold
+
+| # | Check | Threshold | Status |
+|---|---|---|---|
+| R-1 | Baseline phase (idle) | 5/5 HTTP 200, `store_ok=true`, `write_queue_ok=true` | ☐ |
+| R-2 | Low phase (0.1 req/s) | 5/5 HTTP 200, `store_ok=true`, `write_queue_ok=true` | ☐ |
+| R-3 | Target phase (1 req/s) | ≥99% HTTP 200 over 30 min observation window | ☐ |
+| R-4 | Spike phase (5 req/s) | ≥99% HTTP 200 over 5 min observation window | ☐ |
+| R-5 | Cooldown phase (idle) | 5/5 HTTP 200, `store_ok=true`, `write_queue_ok=true`, depth→0 | ☐ |
+
+> **Caution**: `readyz/deep` HTTP 200 alone is **insufficient** if workload
+> requests are rejected before adapter execution (as observed on 2026-05-14).
+> Cross-reference `readyz` results with per-adapter 2xx counts.
+
+### 13.3 Metrics Counters Presence
+
+| # | Metric | Required in Target-Load Snapshot | Status |
+|---|---|---|---|
+| M-1 | `ferrumgate_http_requests_total` | Yes | ☐ |
+| M-2 | `ferrumgate_request_duration_seconds` | Yes | ☐ |
+| M-3 | `ferrumgate_write_queue_depth` | Yes | ☐ |
+| M-4 | `ferrumgate_store_health_up` | Yes | ☐ |
+| M-5 | `ferrumgate_governance_errors_total` | Yes | ☐ |
+| M-6 | `ferrumgate_governance_success_total` | Yes | ☐ |
+
+### 13.4 Queue Depth Snapshots
+
+| # | Phase | Required Reading | Status |
+|---|---|---|---|
+| Q-1 | Baseline | Depth = 0 | ☐ |
+| Q-2 | Low | Peak and sustained depth recorded | ☐ |
+| Q-3 | Target | Peak and sustained depth recorded | ☐ |
+| Q-4 | Spike | Peak depth recorded | ☐ |
+| Q-5 | Cooldown | Depth trending to 0 | ☐ |
+
+> **Stop condition**: If queue backlog > 100 sustained at target load, abort and
+> evaluate backpressure tuning or PostgreSQL path.
+
+### 13.5 Backup / Restore
+
+| # | Check | Required Evidence | Status |
+|---|---|---|---|
+| B-1 | Most recent backup verify | `ferrumctl backup verify` output showing OK | ☐ |
+| B-2 | Restore drill within RTO | Restore log showing success within operator-accepted RTO | ☐ |
+
+### 13.6 Operator Signoff
+
+| # | Check | Status |
+|---|---|---|
+| S-1 | All 5 workload phases executed with evidence attached | ☐ |
+| S-2 | All 5 adapters returned HTTP 2xx at least once | ☐ |
+| S-3 | `readyz/deep` ≥ 99% success over combined observation window | ☐ |
+| S-4 | All 6 required metrics counters present in target-load snapshot | ☐ |
+| S-5 | Queue depth recorded at all 5 phases | ☐ |
+| S-6 | Backup verify and restore drill completed | ☐ |
+| S-7 | No secrets recorded in evidence artifacts | ☐ |
+| S-8 | Operator understands G3.6 full acceptance does NOT make FerrumGate production-ready | ☐ |
+| S-9 | Operator understands P5b–P5e requires engineering go-ahead in addition to G3.6 | ☐ |
+
+### 13.7 Approval Statement
+
+> **Select ONE:**
+
+- [ ] **FULL ACCEPTANCE** — All 13.1–13.6 checks passed. G3.6 is accepted for P5b engineering review.
+- [ ] **CONDITIONAL ACCEPTANCE** — Some checks remain incomplete. Conditions: _________________________________
+- [ ] **INCOMPLETE** — Evidence insufficient. Reason: _________________________________
+
+| Role | Name | Date | Signature |
+|---|---|---|---|
+| Operator / Decision Authority | | | |
+| Engineering Lead (acknowledgment of receipt) | | | |
+| Witness (optional) | | | |
+
+---
+
+## 14. Document History
 
 | Date | Change | Author |
 |---|---|---|
@@ -302,7 +428,8 @@ Refresh `106-g3-6-pilot-metrics-evidence-packet.md` with real workload data:
 | 2026-05-12 | Partial evidence update: authenticated bounded compile-only probe executed on target host (133×200, 40×429, p50 ~205.12ms). Full phase sequence and adapter mix remain not executed. Full G3.6 acceptance not achieved. See [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](../artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md). | Engineering |
 | 2026-05-12 | Extended evidence: full-duration compile-only phase sequence executed (baseline→low→target→spike→cooldown; 1,078×200, 1,987×429, `readyz/deep` degraded). No adapter mix. Full G3.6 acceptance not achieved. See [`artifacts/2026-05-12-g36-full-duration-compile-only-evidence.md`](../artifacts/2026-05-12-g36-full-duration-compile-only-evidence.md). | Engineering |
 | 2026-05-13 | D1–D6 platform support improved: adapter wiring in `ferrumd`, API drill plan mode added, OpenAPI execute/verify coverage added, runbook lifecycle overview corrected, local checks passed. B1 remains not executed. No production-ready claim. See [`artifacts/2026-05-13-d1d6-platform-support-evidence.md`](../artifacts/2026-05-13-d1d6-platform-support-evidence.md). | Engineering |
+| 2026-05-14 | Adapter-mix run failed (3,355 requests, 0×2xx, 1,104×422, 2,251×429). `trusted_context` normalization added to workload generator. Rate-limit precheck guidance and rerun/acceptance checklist added. See [`artifacts/2026-05-14-g36-adapter-mix-failed-run-evidence.md`](../artifacts/2026-05-14-g36-adapter-mix-failed-run-evidence.md). | Engineering |
 
 ---
 
-*Document updated: 2026-05-13. G3.6 Monitoring Execution Plan — planning/checklist artifact. Partial evidence only. No production-ready claim. P6 CONDITIONAL GO.*
+*Document updated: 2026-05-14. G3.6 Monitoring Execution Plan — planning/checklist artifact. Partial evidence only. No production-ready claim. P6 CONDITIONAL GO.*
