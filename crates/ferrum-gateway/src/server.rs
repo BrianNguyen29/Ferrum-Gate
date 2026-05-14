@@ -1354,6 +1354,12 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
          # HELP ferrumgate_write_queue_depth Number of pending SQLite write operations\n\
          # TYPE ferrumgate_write_queue_depth gauge\n\
          ferrumgate_write_queue_depth {}\n\
+         # HELP ferrumgate_rate_limit_per_second Effective rate limit per second per IP\n\
+         # TYPE ferrumgate_rate_limit_per_second gauge\n\
+         ferrumgate_rate_limit_per_second {}\n\
+         # HELP ferrumgate_rate_limit_burst Effective rate limit burst size per IP\n\
+         # TYPE ferrumgate_rate_limit_burst gauge\n\
+         ferrumgate_rate_limit_burst {}\n\
          # HELP ferrumgate_metrics_scrapes_total Number of times /v1/metrics was scraped\n\
          # TYPE ferrumgate_metrics_scrapes_total counter\n\
          ferrumgate_metrics_scrapes_total {}\n\
@@ -1421,9 +1427,11 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
         readyz_deep_count_200,
         readyz_deep_count_503,
         metrics_count,
-        store_up,
-        write_queue_depth,
-        metrics_count,
+         store_up,
+         write_queue_depth,
+         state.server_config.rate_limit_per_second,
+         state.server_config.rate_limit_burst,
+         metrics_count,
         gov_err_intents_compile,
         gov_err_intents_list,
         gov_err_proposals_evaluate,
@@ -7529,6 +7537,8 @@ mod tests {
         ));
         assert!(body_str.contains("ferrumgate_store_health_up"));
         assert!(body_str.contains("ferrumgate_write_queue_depth"));
+        assert!(body_str.contains("ferrumgate_rate_limit_per_second"));
+        assert!(body_str.contains("ferrumgate_rate_limit_burst"));
         assert!(body_str.contains("ferrumgate_metrics_scrapes_total"));
     }
 

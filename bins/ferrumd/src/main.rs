@@ -324,11 +324,13 @@ async fn main() -> Result<()> {
     }
 
     tracing::info!(
-        "starting ferrumd with config: auth_mode={}, bind_addr={}, store_dsn={}, log_format={}",
+        "starting ferrumd with config: auth_mode={}, bind_addr={}, store_dsn={}, log_format={}, rate_limit_per_second={}, rate_limit_burst={}",
         config.auth_mode,
         config.bind_addr,
         config.store_dsn,
-        config.log_format
+        config.log_format,
+        config.rate_limit_per_second,
+        config.rate_limit_burst
     );
 
     let pdp = Arc::new(StaticPdpEngine);

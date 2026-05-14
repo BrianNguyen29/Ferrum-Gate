@@ -1,8 +1,8 @@
 # 116 — G3.6 Monitoring Execution Plan
 
-> **Status**: Planning/checklist artifact. Partial evidence gathered 2026-05-12 (authenticated bounded compile-only probe and full-duration compile-only sequence: baseline→low→target→spike→cooldown; 1,078×200, 1,987×429, `readyz/deep` degraded at target/spike). Full G3.6 acceptance not achieved. No production-ready claim.  
-> **Purpose**: Execution plan for transitioning G3.6 from **conditionally accepted** (compile-only/light workload) to **full acceptance** with real workload validation.  
-> **Scope**: Post-deploy monitoring on target host. Adapter execution paths exercised.  
+> **Status**: Planning/checklist artifact. Partial evidence gathered 2026-05-12 (authenticated bounded compile-only probe and full-duration compile-only sequence: baseline→low→target→spike→cooldown; 1,078×200, 1,987×429, `readyz/deep` degraded at target/spike). Adapter-mix rerun executed 2026-05-14 at commit `7bcb025`: 422 resolved, all adapters exercised, but rate limiter blocked ~48.7% at target and ~89.9% at spike. D1 target-focused rerun attempted 2026-05-14 (`rate_limit_per_second=2`, `burst=50`): low phase passed, target phase aborted at req ~88 due to persistent ~1s rate-limit wait. D1b pre-run verification attempted 2026-05-14 (`rate_limit_per_second=5`, `burst=100`): V-2 readyz burst probe produced 86×200/94×429; V-4 metrics burst probe produced 2×200/178×429 with sample "Wait for 4s". STOP invoked; workload not started; config reverted. Code changes implemented: `/v1/metrics` now exposes `ferrumgate_rate_limit_per_second` and `ferrumgate_rate_limit_burst`; startup log includes effective rate-limit config. Full G3.6 acceptance not achieved. No production-ready claim.
+> **Purpose**: Execution plan for transitioning G3.6 from **conditionally accepted** (compile-only/light workload) to **full acceptance** with real workload validation.
+> **Scope**: Post-deploy monitoring on target host. Adapter execution paths exercised.
 > **Constraint**: This plan does NOT make FerrumGate production-ready. P5b–P5e remain gated on G3.6 full acceptance. Do not record secrets.
 
 ---
@@ -21,6 +21,12 @@ Current status per `106-g3-6-pilot-metrics-evidence-packet.md`:
 **Update 2026-05-12 (bounded probe)**: Authenticated bounded compile-only probe executed on target host (173 total requests, 133 HTTP 200, 40 HTTP 429, p50 ~205.12ms). This is **not** full G3.6 acceptance. See [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](../artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md) §9.
 
 **Update 2026-05-12 (full-duration sequence)**: Full-duration compile-only phase sequence executed (baseline 600s → low 600s → target 1800s → spike 300s → cooldown 600s; 1,078×200, 1,987×429, overall p50 ~203.2ms). `readyz/deep` degraded to 3/5 at target and 2/5 at spike. No adapter mix. **Not** full G3.6 acceptance. See [`artifacts/2026-05-12-g36-full-duration-compile-only-evidence.md`](../artifacts/2026-05-12-g36-full-duration-compile-only-evidence.md) §7.
+
+**Update 2026-05-14 (adapter-mix rerun, commit `7bcb025`)**: `trusted_context` normalization fix applied. Full phase sequence with adapter mix executed (baseline→low→target→spike→cooldown; 3,340 total requests, 1,132×200, 2,208×429, 0×422). Low phase achieved 100% HTTP 200 across all adapters. Target phase ~51.3% HTTP 200 (~48.7% HTTP 429). Spike phase ~10.1% HTTP 200 (~89.9% HTTP 429). Rate limiter remains the blocking issue. **Not** full G3.6 acceptance. See [`artifacts/2026-05-14-g36-rerun-7bcb025-evidence.md`](../artifacts/2026-05-14-g36-rerun-7bcb025-evidence.md).
+
+**Update 2026-05-14 (D1 target-focused rerun attempt)**: D1 policy applied (`rate_limit_per_second=2`, `burst=50`). Low phase passed (100% HTTP 200). Target phase aborted at request ~88 due to rapid HTTP 429s. Mid-run readyz/metrics probes returned "Too Many Requests! Wait for 1s". D1 configuration did not effectively relax rate-limit pressure. Run aborted via Ctrl+C; config reverted from backup. SSH firewall restored. **Not** full G3.6 acceptance. See [`artifacts/2026-05-14-g36-d1-abort-evidence.md`](../artifacts/2026-05-14-g36-d1-abort-evidence.md).
+
+**Update 2026-05-14 (D1b pre-run verification attempt)**: D1b policy applied (`rate_limit_per_second=5`, `burst=100`). Service active; readyz HTTP 200. V-2 readyz burst probe: 86×200, 94×429 (sample "Wait for 0s"). V-4 metrics burst probe: 2×200, 178×429 (sample "Wait for 4s"). STOP invoked per verification rule (>0.3s wait = STOP). Workload not started. Config reverted; service active; readyz 200; firewall restored. Code changes implemented: `/v1/metrics` exposes `ferrumgate_rate_limit_per_second` and `ferrumgate_rate_limit_burst`; startup log includes effective rate-limit config. **Not** full G3.6 acceptance. See [`artifacts/2026-05-14-g36-d1b-pre-run-stop-evidence.md`](../artifacts/2026-05-14-g36-d1b-pre-run-stop-evidence.md).
 
 This plan closes the remaining gaps.
 
@@ -292,6 +298,9 @@ Refresh `106-g3-6-pilot-metrics-evidence-packet.md` with real workload data:
 | `116-g36-monitoring-execution-plan.md` | `scripts/check_pilot_readiness.py` | Automated probe helper |
 | `116-g36-monitoring-execution-plan.md` | `artifacts/2026-05-13-d1d6-platform-support-evidence.md` | D1–D6 platform support evidence (adapter wiring, API plan mode, local checks) |
 | `116-g36-monitoring-execution-plan.md` | `artifacts/2026-05-14-g36-adapter-mix-failed-run-evidence.md` | G3.6 adapter-mix failed run (3,355 requests, 0×2xx, 1,104×422, 2,251×429) |
+| `116-g36-monitoring-execution-plan.md` | `artifacts/2026-05-14-g36-rerun-7bcb025-evidence.md` | G3.6 rerun at commit 7bcb025 (3,340 requests, 1,132×200, 2,208×429, 0×422; rate-limit blocker) |
+| `116-g36-monitoring-execution-plan.md` | `artifacts/2026-05-14-g36-d1-abort-evidence.md` | G3.6 D1 target-focused rerun abort (low passed, target aborted at req ~88, ~1s wait, config reverted) |
+| `116-g36-monitoring-execution-plan.md` | `artifacts/2026-05-14-g36-d1b-pre-run-stop-evidence.md` | G3.6 D1b pre-run verification STOP (V-2: 86×200/94×429, V-4: 2×200/178×429 "Wait for 4s"; workload not started) |
 
 ---
 
@@ -420,7 +429,156 @@ rate-limit precheck. All items must pass before claiming full acceptance.
 
 ---
 
-## 14. Document History
+## 14. Next Rerun Strategy
+
+The 2026-05-14 rerun at commit `7bcb025` proved the `trusted_context` fix and
+confirmed all adapters return HTTP 200, but the rate limiter blocked ~48.7% of
+requests at target load and ~89.9% at spike load. The next rerun must follow
+this strategy.
+
+### 14.1 Operator Policy Decision
+
+**Status: DECIDED and SIGNED on 2026-05-14.**
+
+This section records the explicit rate-limit / load policy decision for the next
+G3.6 target-focused rerun. The operator authority was delegated to the assistant
+by explicit user instruction on 2026-05-14, bounded to this G3.6 rate-limit/load
+policy decision for the next rerun only.
+
+#### Policy History
+
+| Decision | Status | Outcome |
+|---|---|---|
+| **D1** (`rate_limit_per_second=2`, `burst=50`) | **ABORTED** | Low phase passed. Target phase aborted at req ~88 due to persistent ~1s rate-limit wait. Config reverted. See [`artifacts/2026-05-14-g36-d1-abort-evidence.md`](../artifacts/2026-05-14-g36-d1-abort-evidence.md). |
+| **D1b** (`rate_limit_per_second=5`, `burst=100`) | **SELECTED** | Higher ceiling to ensure headroom for 1 rps generator + diagnostic probes. |
+| D2 — Reduce target load to match current limit | **REJECTED** | Would produce acceptance evidence at a lower rate than the designed target, making the evidence non-representative for P5b planning. |
+| D3 — Accept operational ceiling as design baseline | **ACKNOWLEDGED** | The current inferred ceiling of ~1 rps remains the **production ceiling** until a separate operator decision explicitly changes it. D1b is a test-window exception only. |
+
+#### Revert Requirement
+
+After the G3.6 target-focused test concludes (whether pass or fail), the
+rate-limit configuration **must be reverted** to the pre-test state. The D1b
+change is authorized **only** for the test window.
+
+#### Non-Claims
+
+This signature explicitly does **NOT**:
+- Grant G3.6 full or conditional acceptance.
+- Authorize P5b–P5e implementation.
+- Declare FerrumGate production-ready, pilot-ready, HA-ready, or PostgreSQL-deployed.
+- Change the production rate-limit policy beyond the bounded test window.
+
+#### Delegated Signature
+
+> **Operator Policy Signature — G3.6 Rate-Limit / Load Policy D1b (Bounded)**
+>
+> I, acting under delegated operator authority per explicit user instruction on
+> 2026-05-14, have selected **D1b** for the next G3.6 target-focused rerun:
+> - `rate_limit_per_second` raised to **5 rps** for test window.
+> - `burst` raised to **100**.
+> - Revert required after test.
+> - D3 acknowledged: ~1 rps remains production ceiling until separate decision.
+> - D1 acknowledged as attempted and aborted due to ineffective rate-limit relaxation.
+>
+> This signature is bounded to the G3.6 rate-limit/load policy decision for the
+> next rerun only and does not imply any G3.6 acceptance, P5b–P5e authorization,
+> or production-ready claim.
+>
+> | Role | Delegated Authority | Date |
+> |---|---|---|
+> | Operator / Decision Authority | Assistant (delegated by user instruction) | 2026-05-14 |
+
+---
+
+### 14.2 Target-Focused Rerun Plan (Under D1b)
+
+Execute the following **target-focused** sequence. **Spike is excluded** from
+this acceptance rerun; it may be attempted separately only after target phase
+passes.
+
+| Step | Phase | Rate | Duration | Purpose |
+|---|---|---|---|---|
+| T-1 | Baseline | 0 rps | 600 s (10 min) | Confirm idle health, queue depth = 0 |
+| T-2 | Low | 0.1 rps | 600 s (10 min) | Warm-up adapter mix; confirm 100% 2xx |
+| T-3 | Target | **1 rps** | 1,800 s (30 min) | Primary evidence collection; must achieve >95% HTTP 200 |
+| T-4 | Cooldown | 0 rps | 600 s (10 min) | Confirm queue drains to 0 |
+
+> **Note**: Target rate remains **1 rps** (the designed load). D1b raises the
+> rate-limit ceiling to 5 rps with burst=100 to provide headroom for the generator
+> plus diagnostic probes; the generator does not increase its request rate.
+
+#### Deterministic Config Evidence (Must Pass Before Burst Probes)
+
+**The D1b pre-run failure proved that env vars alone are insufficient evidence
+that the effective rate-limit configuration has changed. Do NOT proceed to
+burst probes (V-2/V-4) until the following deterministic evidence confirms the
+effective values.**
+
+| # | Evidence Source | Command / Method | Pass Criteria | Stop Criteria |
+|---|---|---|---|---|
+| E-1 | `/v1/metrics` gauge | `curl -s https://<host>/v1/metrics` (authenticated) | `ferrumgate_rate_limit_per_second` value matches intended policy | **STOP** — effective value does not match policy |
+| E-2 | `/v1/metrics` gauge | Same as E-1 | `ferrumgate_rate_limit_burst` value matches intended policy | **STOP** — effective value does not match policy |
+| E-3 | Startup log or runtime config | `journalctl -u ferrumd` or equivalent | Log line contains `rate_limit_per_second=<policy>` and `rate_limit_burst=<policy>` | **STOP** — effective value does not match policy |
+
+> **Block rule**: If E-1, E-2, or E-3 does not match the intended policy, the
+> configuration change has not taken effect. **Do not proceed to V-2/V-4.**
+> Investigate config propagation (process restart, config file path, layer
+> override) and retry.
+
+#### Burst Probes (Only After E-1/E-2/E-3 Pass)
+
+| # | Check | Command / Method | Pass Criteria | Stop Criteria |
+|---|---|---|---|---|
+| V-1 | Confirm D1b env vars set | Inspect env vars / config: `FERRUMD_RATE_LIMIT_PER_SECOND=5`, `FERRUMD_RATE_LIMIT_BURST=100` | Values match D1b spec | **STOP** — fix config before proceeding |
+| V-2 | Verify rate-limit wait on readyz | `curl -s https://<host>/v1/readyz` (unauthenticated, low-frequency burst) | Response body **does NOT** contain "Wait for ~1s"; 429 rate <10% | **STOP** if wait is ~1s or >0.3s |
+| V-3 | Confirm service active and readyz 200 | `systemctl status ferrumd` + `curl -s -o /dev/null -w "%{http_code}" https://<host>/v1/readyz` | Service active; HTTP 200 | **STOP** — service unhealthy |
+| V-4 | Verify rate-limit wait on metrics | `curl -s https://<host>/v1/metrics` (authenticated, low-frequency burst) | Response returns metrics payload; **does NOT** contain "Wait for ~1s"; 429 rate <10% | **STOP** if wait is ~1s or >0.3s |
+
+> **Critical**: The D1 abort occurred because readyz and metrics probes returned
+> "Too Many Requests! Wait for 1s" even with `rate_limit_per_second=2`. The D1b
+> pre-run failure showed metrics probes returning "Wait for 4s" with 178×429.
+> A wait of **~0.2s** indicates the rate limiter has sufficient headroom. A wait
+> of **~1s** or **>0.3s** means the configuration is not effectively relaxing the
+> limit and the run **must not proceed**.
+
+**Stop conditions for target phase:**
+- If HTTP 429 exceeds 5% at target load: **abort**, revert rate limit, return to §14.1.
+- If any adapter returns zero HTTP 200: **abort**, investigate adapter wiring or payload before continuing.
+- If `readyz/deep` success rate < 99%: **abort**, investigate store health or queue saturation.
+- If queue backlog > 100 sustained: **abort**, evaluate backpressure tuning or PostgreSQL path.
+
+### 14.3 Spike / Backpressure (Out of Scope for Acceptance Rerun)
+
+Under the D1b policy, **spike is not part of the G3.6 acceptance rerun.**
+Spike/backpressure validation may be attempted as a **separate, optional
+characterization test** only after the target phase passes with >95% HTTP 200
+and operator explicitly authorizes it.
+
+If a separate spike test is later authorized:
+- Use the **default** spike definition (5 rps, 5 min) or operator-specified rate.
+- Spike evidence is **backpressure characterization**, not acceptance.
+- Revert rate limit to pre-test state immediately after spike test concludes.
+
+**Rationale for exclusion**: The D1b decision is bounded to a target-focused
+validation. Adding spike would expand the scope beyond the signed policy and
+risk invalidating the acceptance evidence with uncontrolled 429 rates.
+
+### 14.4 Evidence Required from Next Rerun
+
+| File | Required? | Notes |
+|---|---|---|
+| `workload_results.json` | Yes | Full generator output with per-phase, per-adapter status |
+| `readyz_probe_log.json` | Yes | Continuous probes during target phase, not just post-run |
+| `metrics_target_*.txt` | Yes | `/v1/metrics` snapshot during target phase |
+| `metrics_baseline_*.txt` | Yes | Idle snapshot |
+| `metrics_low_*.txt` | Yes | Low-load snapshot |
+| `metrics_cooldown_*.txt` | Yes | Recovery snapshot |
+| Rate-limit policy decision record | Yes | Operator document confirming D1, D2, or D3 |
+| Backup verify + restore drill | Yes | Per acceptance criterion A5 |
+
+---
+
+## 15. Document History
 
 | Date | Change | Author |
 |---|---|---|
@@ -429,6 +587,10 @@ rate-limit precheck. All items must pass before claiming full acceptance.
 | 2026-05-12 | Extended evidence: full-duration compile-only phase sequence executed (baseline→low→target→spike→cooldown; 1,078×200, 1,987×429, `readyz/deep` degraded). No adapter mix. Full G3.6 acceptance not achieved. See [`artifacts/2026-05-12-g36-full-duration-compile-only-evidence.md`](../artifacts/2026-05-12-g36-full-duration-compile-only-evidence.md). | Engineering |
 | 2026-05-13 | D1–D6 platform support improved: adapter wiring in `ferrumd`, API drill plan mode added, OpenAPI execute/verify coverage added, runbook lifecycle overview corrected, local checks passed. B1 remains not executed. No production-ready claim. See [`artifacts/2026-05-13-d1d6-platform-support-evidence.md`](../artifacts/2026-05-13-d1d6-platform-support-evidence.md). | Engineering |
 | 2026-05-14 | Adapter-mix run failed (3,355 requests, 0×2xx, 1,104×422, 2,251×429). `trusted_context` normalization added to workload generator. Rate-limit precheck guidance and rerun/acceptance checklist added. See [`artifacts/2026-05-14-g36-adapter-mix-failed-run-evidence.md`](../artifacts/2026-05-14-g36-adapter-mix-failed-run-evidence.md). | Engineering |
+| 2026-05-14 | Rerun at commit 7bcb025 executed (3,340 requests, 1,132×200, 2,208×429, 0×422). `trusted_context` fix confirmed; adapter mix exercised; rate limiter remains blocker. Next rerun strategy added (target-first, spike-separated, policy decision required). See [`artifacts/2026-05-14-g36-rerun-7bcb025-evidence.md`](../artifacts/2026-05-14-g36-rerun-7bcb025-evidence.md). | Engineering |
+| 2026-05-14 | Delegated operator policy decision recorded: D1 selected (`rate_limit_per_second=2` for test window, burst=50, revert required), D2 rejected, D3 acknowledged (~1 rps production ceiling). Target-focused rerun plan updated: baseline→low→target→cooldown, no spike in acceptance rerun. | Engineering (delegated operator authority) |
+| 2026-05-14 | D1 target-focused rerun attempted and aborted (low passed, target aborted at req ~88, readyz/metrics returned "Wait for 1s", config reverted). D1b policy selected (`rate_limit_per_second=5`, `burst=100`). Mandatory pre-run verification V-1 through V-4 added with STOP criteria (~1s or >0.3s wait = STOP). | Engineering (delegated operator authority) |
+| 2026-05-14 | D1b pre-run verification attempted and STOPPED (V-2: 86×200/94×429, V-4: 2×200/178×429 with "Wait for 4s"; workload not started; config reverted). Deterministic config evidence checks E-1/E-2/E-3 added. Code changes: `/v1/metrics` exposes `ferrumgate_rate_limit_per_second` and `ferrumgate_rate_limit_burst`; startup log includes effective rate-limit config. | Engineering (delegated operator authority) |
 
 ---
 
