@@ -18,9 +18,10 @@
 | Populated local drill | **PASSED** — local Docker PostgreSQL backup/restore with non-zero rows verified; see [`artifacts/2026-05-12-p5c-populated-local-drill-evidence.md`](./artifacts/2026-05-12-p5c-populated-local-drill-evidence.md) |
 | Path decision | **DONE** — Option A (SQLite Path 2) selected; see [`113-operator-path-selection-packet.md`](./113-operator-path-selection-packet.md) (commit `b320f5c`) |
 | Production-ready claim | **NO** |
-| Target-host operator blockers | **B1 PASSED, B2 PASSED, B3 CLOSED, G3.6 ACCEPTED** — B1 D1–D6 passed 6/6 on 2026-05-13; B2 restore drill passed on 2026-05-15 after ferrumctl fix (0.463s); B3 closed via delegated authority on 2026-05-15 (run id 20260515T1606Z-b3-retention); G3.6 fully accepted for P5b engineering review only on 2026-05-15; see [`artifacts/2026-05-13-d1-d6-target-host-evidence.md`](./artifacts/2026-05-13-d1-d6-target-host-evidence.md), [`artifacts/2026-05-15-g36-t3b-restore-drill-fixed-success-evidence.md`](./artifacts/2026-05-15-g36-t3b-restore-drill-fixed-success-evidence.md), and [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](./artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md) |
+| Target-host operator blockers | **B1 PASSED, B2 PASSED, B3 CLOSED, B4 CLOSED, B5 CLOSED, G3.6 ACCEPTED** — B1 D1–D6 passed 6/6 on 2026-05-13; B2 restore drill passed on 2026-05-15 after ferrumctl fix (0.463s); B3/B4/B5 closed via delegated authority on 2026-05-15 (B3 run id 20260515T1606Z-b3-retention); G3.6 fully accepted for P5b engineering review only on 2026-05-15; see [`artifacts/2026-05-13-d1-d6-target-host-evidence.md`](./artifacts/2026-05-13-d1-d6-target-host-evidence.md), [`artifacts/2026-05-15-g36-t3b-restore-drill-fixed-success-evidence.md`](./artifacts/2026-05-15-g36-t3b-restore-drill-fixed-success-evidence.md), and [`artifacts/2026-05-15-b3-b4-b5-delegated-signing-status.md`](./artifacts/2026-05-15-b3-b4-b5-delegated-signing-status.md) |
 | PostgreSQL production deployment | **NO** |
 | HA/multi-node | **NO** |
+| Local full gate | **PASSED** — `bash scripts/run_pre_target_gate.sh --full` returned `ALL LOCAL CHECKS PASSED` on 2026-05-15; includes cargo workspace tests and clippy |
 
 ### 1.2 Strategic Verdict
 
@@ -369,7 +370,7 @@ Phase 0 (P5c local smoke) ──► Phase 1 (populated local drill)
 - [x] P2.4 If PostgreSQL: operator refreshes `105-g3-5-operator-d1-d3-signoff-packet.md` — N/A (SQLite selected)
 - [x] P2.5 If SQLite: operator signs N/A waiver for B6/B7 — waived per doc113 §6
 
-### Phase 3 — Target-Host Drill Prep & Execution (Partial Evidence — B1 Still Not Executed)
+### Phase 3 — Target-Host Drill Prep & Execution (B1–B5 Closed or Delegated-Closed)
 
 - [ ] P3.1 If PG: Engineering adapts drill plan for target host — N/A (SQLite selected); readiness prep continues in [`117-postgresql-readiness-acceleration-plan.md`](./117-postgresql-readiness-acceleration-plan.md)
 - [ ] P3.2 If PG: Operator executes target-host P5c.V1 — N/A (SQLite selected)
@@ -377,8 +378,8 @@ Phase 0 (P5c local smoke) ──► Phase 1 (populated local drill)
 - [x] P3.4 SQLite target-host D1–D6 drills executed — **passed 6/6 on 2026-05-13**; see [`artifacts/2026-05-13-d1-d6-target-host-evidence.md`](./artifacts/2026-05-13-d1-d6-target-host-evidence.md). D1–D6 platform support improved earlier (adapter wiring, API plan mode, OpenAPI execute/verify); see [`artifacts/2026-05-13-d1d6-platform-support-evidence.md`](./artifacts/2026-05-13-d1d6-platform-support-evidence.md)
 - [x] P3.5 SQLite target-host restore drill with `integrity_check` passed — **passed on 2026-05-15** after ferrumctl fix (0.463s restore; live DB verify OK; service healthy); see [`artifacts/2026-05-15-g36-t3b-restore-drill-fixed-success-evidence.md`](./artifacts/2026-05-15-g36-t3b-restore-drill-fixed-success-evidence.md). Historical: safe temp-copy drill passed on 2026-05-12.
 - [x] P3.6 Backup automation configured and verified — **closed via delegated authority on 2026-05-15** (run id 20260515T1606Z-b3-retention: old matching sentinel pruned, nonmatching preserved, new backup verified OK rc=0, service healthy); timer enabled and latest backup present; see [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](./artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md)
-- [ ] P3.7 TLS/reverse proxy configured and probed — partial evidence: HTTPS probes pass, caddy active; operator-independent cert-path verification not done; see [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](./artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md)
-- [ ] P3.8 Bearer token generated and deployed — partial evidence: token present, auth_mode=bearer; generation command not independently witnessed; see [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](./artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md)
+- [x] P3.7 TLS/reverse proxy configured and probed — **closed via delegated authority on 2026-05-15**; HTTPS probes pass, HTTP→HTTPS redirect verified (308), with-token auth through proxy verified (200 after remediation); see [`artifacts/2026-05-15-b3-b4-b5-delegated-signing-status.md`](./artifacts/2026-05-15-b3-b4-b5-delegated-signing-status.md)
+- [x] P3.8 Bearer token generated and deployed — **closed via delegated authority on 2026-05-15**; no-token rejection verified (401), with-token acceptance verified (200 after remediation); generation command not independently witnessed; see [`artifacts/2026-05-15-b3-b4-b5-delegated-signing-status.md`](./artifacts/2026-05-15-b3-b4-b5-delegated-signing-status.md)
 
 ### Phase 4 — G3.6 Real Workload (Full Acceptance for P5b Engineering Review Only)
 
@@ -492,8 +493,8 @@ These steps are **executable now** (no operator dependency, no target-host acces
 | 2026-05-12 | Firewall unblocked; SSH OK; Phase3E evidence script passed; safe temp restore drill done (`table_count=0` caveat); authenticated compile-only probe executed. Phase 3/4 updated to "partial evidence". B1 still not executed. G3.6 full acceptance not claimed. See [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](./artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md). | Engineering |
 | 2026-05-12 | Extended evidence: `table_count=0` caveat resolved as DSN-query parsing issue; B1 limitation documented; full-duration compile-only G3.6 sequence executed. See [`artifacts/2026-05-12-g36-full-duration-compile-only-evidence.md`](./artifacts/2026-05-12-g36-full-duration-compile-only-evidence.md). | Engineering |
 | 2026-05-13 | D1–D6 platform support improved: adapter wiring in `ferrumd`, API drill plan mode added, OpenAPI execute/verify coverage added, runbook lifecycle overview corrected, local checks passed. B1 remains not executed. No production-ready claim. See [`artifacts/2026-05-13-d1d6-platform-support-evidence.md`](./artifacts/2026-05-13-d1d6-platform-support-evidence.md). | Engineering |
-| 2026-05-15 | B1 D1–D6 passed 6/6 on 2026-05-13. B2 restore drill passed on 2026-05-15 after ferrumctl fix (0.463s). G3.6 fully accepted for P5b engineering review only on 2026-05-15. B3 retention pruning remains not verified. Phase 3/4 checklists updated. No production-ready claim. | Engineering |
-| 2026-05-15 | B3/B4/B5 closed via delegated authority on 2026-05-15. B1/B2/B8 previously closed/accepted. Target-host blockers now have documented closure or delegated signoff. Conditional single-node SQLite pilot readiness ACCEPTABLE/YES (scoped only). No production-ready claim. | Assistant under user-delegated documentation authority |
+| 2026-05-15 | (SUPERSEDED — see later 2026-05-15 delegated closure row.) B1 D1–D6 passed 6/6 on 2026-05-13. B2 restore drill passed on 2026-05-15 after ferrumctl fix (0.463s). G3.6 fully accepted for P5b engineering review only on 2026-05-15. At this time B3 retention pruning was not yet verified. Phase 3/4 checklists updated. No production-ready claim. | Engineering |
+| 2026-05-15 | B3/B4/B5 closed via delegated authority on 2026-05-15. B1/B2/B8 previously closed/accepted. Target-host blockers now have documented closure or delegated signoff. Local full gate passed. Conditional single-node SQLite pilot readiness ACCEPTABLE/YES (scoped only). No production-ready claim. | Assistant under user-delegated documentation authority |
 
 ---
 
