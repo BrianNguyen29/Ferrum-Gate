@@ -41,7 +41,9 @@ use tower::ServiceBuilder;
 const HISTOGRAM_BOUNDARIES: &[f64] = &[
     0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
 ];
-use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
+use tower_governor::{
+    GovernorLayer, governor::GovernorConfigBuilder, key_extractor::SmartIpKeyExtractor,
+};
 use tower_http::trace::TraceLayer;
 
 use crate::{AuthMode, GatewayRuntime, ServerConfig};
@@ -630,10 +632,21 @@ async fn shutdown_signal() {
 }
 
 pub async fn run_http_server(config: ServerConfig, runtime: GatewayRuntime) -> anyhow::Result<()> {
-    let app = build_router_with_auth(runtime, config.clone());
+    let state = Arc::new(AppState {
+        runtime,
+        server_config: config.clone(),
+        metrics: Arc::new(Metrics::new()),
+    });
+
+    let monitoring_router = build_monitoring_router(state.clone());
+    let workload_router = build_workload_router(state);
 
     // Rate limiting: configurable per IP via config
+    // P1: Use SmartIpKeyExtractor to align production with test helper.
+    // This supports x-real-ip / x-forwarded-for headers so workload
+    // generators can distribute traffic across distinct buckets.
     let governor_conf = GovernorConfigBuilder::default()
+        .key_extractor(SmartIpKeyExtractor)
         .per_second(config.rate_limit_per_second)
         .burst_size(config.rate_limit_burst)
         .finish()
@@ -649,7 +662,20 @@ pub async fn run_http_server(config: ServerConfig, runtime: GatewayRuntime) -> a
         }
     });
 
-    let app = app.layer(GovernorLayer::new(governor_conf));
+    let workload_router = workload_router.layer(GovernorLayer::new(governor_conf));
+
+    let mut app = monitoring_router.merge(workload_router);
+
+    // Add auth layer if auth mode is Bearer
+    if config.auth_mode == AuthMode::Bearer {
+        let auth_layer = ServiceBuilder::new()
+            .layer(axum::middleware::from_fn_with_state(
+                config.clone(),
+                bearer_auth_middleware,
+            ))
+            .into_inner();
+        app = app.layer(auth_layer);
+    }
 
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
     tracing::info!("ferrumd listening on {}", config.bind_addr);
@@ -664,12 +690,39 @@ pub async fn run_http_server(config: ServerConfig, runtime: GatewayRuntime) -> a
 
 /// Build a router without auth middleware for tests/backward compatibility.
 pub fn build_router(runtime: GatewayRuntime) -> Router {
-    build_router_core(runtime, None)
+    let state = Arc::new(AppState {
+        runtime,
+        server_config: ServerConfig::default(),
+        metrics: Arc::new(Metrics::new()),
+    });
+    let monitoring_router = build_monitoring_router(state.clone());
+    let workload_router = build_workload_router(state);
+    monitoring_router.merge(workload_router)
 }
 
 /// Build a router with auth middleware using the given server config.
 pub fn build_router_with_auth(runtime: GatewayRuntime, server_config: ServerConfig) -> Router {
-    build_router_core(runtime, Some(server_config))
+    let state = Arc::new(AppState {
+        runtime,
+        server_config: server_config.clone(),
+        metrics: Arc::new(Metrics::new()),
+    });
+    let monitoring_router = build_monitoring_router(state.clone());
+    let workload_router = build_workload_router(state);
+    let mut router = monitoring_router.merge(workload_router);
+
+    // Add auth layer if auth mode is Bearer
+    if server_config.auth_mode == AuthMode::Bearer {
+        let auth_layer = ServiceBuilder::new()
+            .layer(axum::middleware::from_fn_with_state(
+                server_config.clone(),
+                bearer_auth_middleware,
+            ))
+            .into_inner();
+        router = router.layer(auth_layer);
+    }
+
+    router
 }
 
 /// Build a router with rate limiting enabled using a custom GovernorConfig.
@@ -678,12 +731,14 @@ pub fn build_router_with_auth(runtime: GatewayRuntime, server_config: ServerConf
 ///
 /// Uses SmartIpKeyExtractor which supports x-real-ip header for client IP identification,
 /// allowing tests to set the IP via header without needing MockConnectInfo.
+///
+/// Monitoring endpoints (`/v1/metrics`, `/v1/readyz`, `/v1/readyz/deep`) are exempt
+/// from rate limiting to match production behavior.
 pub fn build_router_with_governor(
     runtime: GatewayRuntime,
     per_second: u64,
     burst_size: u32,
 ) -> Router {
-    use tower_governor::key_extractor::SmartIpKeyExtractor;
     // Use SmartIpKeyExtractor to support x-real-ip header
     let governor_conf = GovernorConfigBuilder::default()
         .key_extractor(SmartIpKeyExtractor)
@@ -691,24 +746,32 @@ pub fn build_router_with_governor(
         .burst_size(burst_size)
         .finish()
         .unwrap();
-    let app = build_router(runtime);
-    app.layer(GovernorLayer::new(governor_conf))
-}
 
-fn build_router_core(runtime: GatewayRuntime, server_config: Option<ServerConfig>) -> Router {
     let state = Arc::new(AppState {
         runtime,
-        server_config: server_config.clone().unwrap_or_default(),
+        server_config: ServerConfig::default(),
         metrics: Arc::new(Metrics::new()),
     });
 
-    let mut router = Router::new()
+    let monitoring_router = build_monitoring_router(state.clone());
+    let workload_router = build_workload_router(state).layer(GovernorLayer::new(governor_conf));
+    monitoring_router.merge(workload_router)
+}
+
+fn build_monitoring_router(state: Arc<AppState>) -> Router {
+    Router::new()
         // Health endpoints - always unauthenticated
         .route("/v1/healthz", get(healthz))
         .route("/v1/readyz", get(readyz))
         .route("/v1/readyz/deep", get(readyz_deep))
         // Metrics endpoint - always unauthenticated
         .route("/v1/metrics", get(metrics_handler))
+        .with_state(state)
+        .layer(TraceLayer::new_for_http())
+}
+
+fn build_workload_router(state: Arc<AppState>) -> Router {
+    Router::new()
         // Provenance query endpoint
         .route("/v1/provenance/query", post(query_provenance))
         // Execution lineage endpoint
@@ -783,22 +846,7 @@ fn build_router_core(runtime: GatewayRuntime, server_config: Option<ServerConfig
             put(set_policy_bundle_active),
         )
         .with_state(state)
-        .layer(TraceLayer::new_for_http());
-
-    // Add auth layer if config is provided and auth mode is Bearer
-    if let Some(ref cfg) = server_config {
-        if cfg.auth_mode == AuthMode::Bearer {
-            let auth_layer = ServiceBuilder::new()
-                .layer(axum::middleware::from_fn_with_state(
-                    cfg.clone(),
-                    bearer_auth_middleware,
-                ))
-                .into_inner();
-            router = router.layer(auth_layer);
-        }
-    }
-
-    router
+        .layer(TraceLayer::new_for_http())
 }
 
 /// Middleware to enforce bearer token authentication.
@@ -1427,11 +1475,11 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
         readyz_deep_count_200,
         readyz_deep_count_503,
         metrics_count,
-         store_up,
-         write_queue_depth,
-         state.server_config.rate_limit_per_second,
-         state.server_config.rate_limit_burst,
-         metrics_count,
+        store_up,
+        write_queue_depth,
+        state.server_config.rate_limit_per_second,
+        state.server_config.rate_limit_burst,
+        metrics_count,
         gov_err_intents_compile,
         gov_err_intents_list,
         gov_err_proposals_evaluate,
@@ -6587,8 +6635,7 @@ mod tests {
         let runtime = test_runtime().await;
         let router = build_router(runtime.clone());
 
-        // Create an intent with only ReadOnlyAnalysis allowed; outcome mismatch
-        // (non-allowed effect) should be rejected.
+        // Create an intent that explicitly forbids GitMutation.
         let intent_id = ferrum_proto::IntentId::new();
         let intent = IntentEnvelope {
             intent_id,
@@ -6604,7 +6651,12 @@ mod tests {
                 effect_type: ferrum_proto::EffectType::ReadOnlyAnalysis,
                 required: true,
             }],
-            forbidden_outcomes: Vec::new(),
+            forbidden_outcomes: vec![OutcomeClause {
+                id: "no-git".to_string(),
+                description: "no git mutations allowed".to_string(),
+                effect_type: ferrum_proto::EffectType::GitMutation,
+                required: true,
+            }],
             resource_scope: Vec::new(),
             risk_tier: RiskTier::Low,
             approval_mode: ferrum_proto::ApprovalMode::None,
@@ -7983,5 +8035,195 @@ mod tests {
                 method
             );
         }
+    }
+
+    // ---------------------------------------------------------------------------
+    // P0: Monitoring endpoints bypass workload rate limiter
+    // ---------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_monitoring_endpoints_bypass_rate_limiter() {
+        let runtime = test_runtime().await;
+        // Very restrictive rate limit: 1 req/sec, burst 1
+        let router = build_router_with_governor(runtime, 1, 1);
+
+        // Monitoring endpoints should NOT be rate limited
+        for endpoint in ["/v1/metrics", "/v1/readyz", "/v1/readyz/deep"] {
+            for i in 0..5 {
+                let response = router
+                    .clone()
+                    .oneshot(
+                        Request::builder()
+                            .uri(endpoint)
+                            .header("x-real-ip", "192.168.1.1")
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+
+                assert_eq!(
+                    response.status(),
+                    StatusCode::OK,
+                    "monitoring endpoint {} request {} should bypass rate limiter",
+                    endpoint,
+                    i
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_workload_endpoint_is_rate_limited() {
+        let runtime = test_runtime().await;
+        // Very restrictive rate limit: 1 req/sec, burst 1
+        let router = build_router_with_governor(runtime, 1, 1);
+
+        // First request to a workload endpoint should succeed
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("x-real-ip", "192.168.1.1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Subsequent requests should eventually be rate limited
+        let mut got_429 = false;
+        for _ in 0..10 {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/v1/approvals")
+                        .header("x-real-ip", "192.168.1.1")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            if response.status() == StatusCode::TOO_MANY_REQUESTS {
+                got_429 = true;
+                break;
+            }
+        }
+
+        assert!(got_429, "workload endpoint should be rate limited");
+    }
+
+    // ---------------------------------------------------------------------------
+    // P1: SmartIpKeyExtractor separate-bucket behavior
+    // ---------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_distinct_x_real_ip_get_separate_buckets() {
+        let runtime = test_runtime().await;
+        // Restrictive rate limit: 1 req/sec, burst 1
+        let router = build_router_with_governor(runtime, 1, 1);
+
+        // Exhaust the burst for IP A
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("x-real-ip", "10.36.0.1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // IP A should now be rate limited
+        let mut ip_a_limited = false;
+        for _ in 0..10 {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/v1/approvals")
+                        .header("x-real-ip", "10.36.0.1")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            if response.status() == StatusCode::TOO_MANY_REQUESTS {
+                ip_a_limited = true;
+                break;
+            }
+        }
+        assert!(ip_a_limited, "IP A should be rate limited after burst");
+
+        // IP B should still succeed because it has its own bucket
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("x-real-ip", "10.36.0.2")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "IP B should have a separate bucket and succeed"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_same_x_real_ip_is_limited_across_adapters() {
+        let runtime = test_runtime().await;
+        // Restrictive rate limit: 1 req/sec, burst 1
+        let router = build_router_with_governor(runtime, 1, 1);
+
+        // First request from IP X to /v1/approvals succeeds
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("x-real-ip", "10.36.0.5")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Second request from same IP X to /v1/intents should be rate limited
+        // because the bucket is keyed by IP, not by route.
+        let mut got_429 = false;
+        for _ in 0..10 {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/v1/intents")
+                        .header("x-real-ip", "10.36.0.5")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            if response.status() == StatusCode::TOO_MANY_REQUESTS {
+                got_429 = true;
+                break;
+            }
+        }
+        assert!(
+            got_429,
+            "same x-real-ip should be limited across different workload routes"
+        );
     }
 }

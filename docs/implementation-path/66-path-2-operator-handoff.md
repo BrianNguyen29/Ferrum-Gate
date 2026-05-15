@@ -80,7 +80,7 @@ This phase is complete when:
 > **This document marks the end of repo-side Path 2 preparation.**
 > It does NOT authorize pilot execution. It does NOT complete G2.
 > It does NOT sign any operator documents.
-> All G2 gates remain pending operator action on the target host.
+> G2.1–G2.8 were signed by BrianNguyen on 09/05/2026 for conditional single-node SQLite pilot scope. B3/B4/B5 were closed via delegated authority on 2026-05-15. Operator-executed steps on the target host remain operator-owned.
 
 ---
 
@@ -94,14 +94,14 @@ The following 8 items must be resolved before Path 2 pilot execution and signoff
 
 | # | Blocker | Evidence Required | Owner | Status |
 |---|---------|-------------------|-------|--------|
-| 1 | Target-host D1–D6 evidence | Completed drill logs from doc 62 Phase 3 | Operator | ☐ |
-| 2 | SQLite restore drill with `PRAGMA integrity_check` | Restore drill log showing `integrity_check: ok` | Operator | ☐ |
-| 3 | Backup automation / external scheduler | Configured cron or systemd timer; retention policy documented | Operator | ☐ |
-| 4 | TLS/reverse proxy configuration | nginx config with real domain and TLS paths; probe passes | Operator | ☐ |
-| 5 | Bearer token generation | Token generated via `openssl rand -hex 32`; stored in env file (value NOT recorded in docs) | Operator | ☐ |
-| 6 | P5c.V1 PostgreSQL backup drill | Evidence template 110 filled: `pg_dump` exit 0, `pg_restore -l` OK, artifact path/size/checksum | Operator | ☐ |
-| 7 | P5c.V2 PostgreSQL restore drill | Evidence template 110 filled: drill DB created, row counts verified, cleanup confirmed | Operator | ☐ |
-| 8 | G3.6 real workload / post-deploy monitoring | Post-deploy monitoring shows sustained workload without error; doc 62 probes pass under load | Operator | ☐ |
+| 1 | Target-host D1–D6 evidence | Completed drill logs from doc 62 Phase 3 | Operator | ☑ (passed 6/6 on 2026-05-13) |
+| 2 | SQLite restore drill with `PRAGMA integrity_check` | Restore drill log showing `integrity_check: ok` | Operator | ☑ (passed on 2026-05-15 after ferrumctl fix; 0.463s) |
+| 3 | Backup automation / external scheduler | Configured cron or systemd timer; retention policy documented | Operator | ☑ (closed via delegated authority on 2026-05-15; evidence-backed; see docs 54/59 and May-15 evidence) |
+| 4 | TLS/reverse proxy configuration | nginx config with real domain and TLS paths; probe passes | Operator | ☑ (closed via delegated authority on 2026-05-15; evidence-backed; see docs 54/59 and May-15 evidence) |
+| 5 | Bearer token generation | Token generated via `openssl rand -hex 32`; stored in env file (value NOT recorded in docs) | Operator | ☑ (closed via delegated authority on 2026-05-15; evidence-backed; see docs 54/59 and May-15 evidence) |
+| 6 | P5c.V1 PostgreSQL backup drill | Evidence template 110 filled: `pg_dump` exit 0, `pg_restore -l` OK, artifact path/size/checksum | Operator | ☐ (N/A — SQLite selected) |
+| 7 | P5c.V2 PostgreSQL restore drill | Evidence template 110 filled: drill DB created, row counts verified, cleanup confirmed | Operator | ☐ (N/A — SQLite selected) |
+| 8 | G3.6 real workload / post-deploy monitoring | Post-deploy monitoring shows sustained workload without error; doc 62 probes pass under load | Operator | ☑ (fully accepted for P5b engineering review only on 2026-05-15) |
 
 > **P6 CONDITIONAL GO**: Blockers 6–7 (P5c) are conditional on the PostgreSQL evaluation path. If SQLite remains the production store, P5c blockers are N/A but must be explicitly waived by operator in doc 105. Blocker 8 (G3.6) is conditional on pilot workload schedule and may be deferred with documented risk. No production-ready claim is made by completing any subset of this checklist.
 
@@ -158,7 +158,7 @@ Phase B is complete when:
 
 ## Explicit Non-Claims
 
-- **No G2 complete**: G2.1–G2.8 remain pending until operator signs doc 59 and doc 54
+- **No G2 complete**: G2.1–G2.8 were signed by BrianNguyen on 09/05/2026 for conditional single-node SQLite pilot scope; B3/B4/B5 closed via delegated authority on 2026-05-15. This does not claim full production-ready signoff.
 - **No pilot authorized**: Pilot is not authorized until doc 54 is signed
 - **No production-ready**: FerrumGate v1 remains RC-ready/conditional
 - **No PostgreSQL**: PostgreSQL/multi-node/HA not in scope for Phase 1
@@ -171,9 +171,9 @@ Phase B is complete when:
 | Phase | Owner | Status | Completion Criteria |
 |-------|-------|--------|---------------------|
 | Phase A (Repo-Side) | FerrumGate team | ✅ Complete | All artifacts present, no secrets in docs; pre-target gate passed 2026-05-08 |
-| Phase B (Target Execution) | Operator | ☐ Partial evidence | SSH unblocked 2026-05-12; Phase3E evidence script passed; safe temp restore drill done (`table_count=0` caveat resolved as DSN-query issue); authenticated compile-only probe and full-duration compile-only sequence executed; B1 D1–D6 still not executed (no target-host adapter drill runner). Full G3.6 acceptance not achieved. See [`artifacts/2026-05-12-g36-full-duration-compile-only-evidence.md`](./artifacts/2026-05-12-g36-full-duration-compile-only-evidence.md), [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](./artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md), and [`artifacts/2026-05-12-sqlite-path2-target-host-blocked-attempt.md`](./artifacts/2026-05-12-sqlite-path2-target-host-blocked-attempt.md). |
-| G2 Signoff | Operator | ☐ Blocked | Doc 59 G2.1–G2.8 filled and signed |
-| Doc 54 Signoff | Operator | ☐ Blocked | Pilot acceptance statement signed |
+| Phase B (Target Execution) | Operator | 🟡 Partial — B1/B2/B3/B4/B5 closed, B8 accepted | B1 D1–D6 passed 6/6 on 2026-05-13. B2 restore drill passed on 2026-05-15 after ferrumctl fix (0.463s). **B3/B4/B5 closed via delegated authority on 2026-05-15; evidence-backed; see docs 54/59 and May-15 evidence.** G3.6 fully accepted for P5b engineering review only on 2026-05-15. Broader handoff caveats preserved: conditional single-node SQLite pilot readiness ACCEPTABLE/YES (scoped only); not production-ready; no PostgreSQL production; no HA/multi-node. See [`artifacts/2026-05-13-d1-d6-target-host-evidence.md`](./artifacts/2026-05-13-d1-d6-target-host-evidence.md), [`artifacts/2026-05-15-g36-t3b-restore-drill-fixed-success-evidence.md`](./artifacts/2026-05-15-g36-t3b-restore-drill-fixed-success-evidence.md), and [`artifacts/2026-05-15-b3-b4-b5-delegated-signing-status.md`](./artifacts/2026-05-15-b3-b4-b5-delegated-signing-status.md). |
+| G2 Signoff | Operator | ☑ Signed by BrianNguyen on 09/05/2026 for conditional single-node SQLite pilot scope only | Doc 59 G2.1–G2.8 filled and signed |
+| Doc 54 Signoff | Operator | ☑ Signed by BrianNguyen on 09/05/2026 for conditional single-node SQLite pilot scope only | Pilot acceptance statement signed |
 
 **Phase A evidence**: [`2026-05-08-path2-phase-a-pre-target-gate.md`](./artifacts/2026-05-08-path2-phase-a-pre-target-gate.md)
 
@@ -196,8 +196,22 @@ Phase B is complete when:
 | This doc | `114-target-host-p5c-drill-checklist.md` | Blockers B6/B7 target-host drill checklist (Option B) |
 | This doc | `115-sqlite-path2-target-host-checklist.md` | Blockers B1–B5/B8 target-host checklist (Option A) |
 | This doc | `116-g36-monitoring-execution-plan.md` | Blocker B8 G3.6 real workload monitoring plan |
+| This doc | `artifacts/2026-05-13-d1-d6-target-host-evidence.md` | D1–D6 target-host drill pass evidence |
+| This doc | `artifacts/2026-05-15-g36-t3b-restore-drill-fixed-success-evidence.md` | T3b fixed restore drill success and G3.6 full acceptance |
+| This doc | `artifacts/2026-05-15-b3-b4-b5-delegated-signing-status.md` | B3/B4/B5 evidence boundary and delegated signing status (2026-05-15) |
 
 > **For a concise operator quick-reference**, see [`68-path-2-operator-handoff-packet.md`](./68-path-2-operator-handoff-packet.md).
+
+---
+
+## Document History
+
+| Date | Change | Author |
+|---|---|---|
+| 2026-05-08 | Initial Path 2 operator handoff document; Phase A complete | Engineering |
+| 2026-05-15 | Reconciled with latest evidence: B1 D1–D6 passed 6/6; B2 restore drill passed after ferrumctl fix; G3.6 fully accepted for P5b engineering review only. B3 retention pruning remains not verified. B4 partial evidence (public endpoints, redirect, with-token auth). B5 with-token PASSED after target-env remediation; operator checklist steps remain not independently witnessed. Full operator execution pending. Broader handoff caveats preserved. | Engineering |
+| 2026-05-15 | B3 target retention-pruning functional evidence recorded (run id 20260515T1606Z-b3-retention). Old matching sentinel pruned, non-matching preserved, new backup verified OK, service healthy. Operator checklist steps remain not independently witnessed. B4/B5 unchanged. No production-ready claim. | Engineering |
+| 2026-05-15 | B3/B4/B5 closed via delegated authority on 2026-05-15; evidence-backed. G2 and doc 54 signoff status reconciled (signed 09/05/2026, not blocked). Phase B status updated. Conditional single-node SQLite pilot readiness ACCEPTABLE/YES (scoped only). No production-ready claim. | Assistant under user-delegated documentation authority |
 
 ---
 

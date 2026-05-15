@@ -153,7 +153,7 @@ Target-host operator blocker closure: NO
 
 - D.5–D.6 cadence per `117-postgresql-readiness-acceleration-plan.md`
 - Quantitative memory profiling on a ≥100K or ≥1M row fixture if engineering time permits
-- Target-host operator blockers remain open
+- Target-host operator blockers were open at that time
 
 ---
 

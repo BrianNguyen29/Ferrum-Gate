@@ -2,9 +2,9 @@
 
 **Prepared for**: BrianNguyen
 
-**Status**: UNSIGNED — This document maps G2 gates to current GCP non-prod evidence. No gate is marked complete. Operator review and signoff is still required.
+**Status**: SUPERSEDED — Doc 59 and doc 54 were signed by BrianNguyen on 09/05/2026 for conditional single-node SQLite pilot scope. B3/B4/B5 closed via delegated authority on 2026-05-15. This document is retained as historical rehearsal evidence.
 
-> **Important**: This document does **not** complete any G2 gate. It maps current evidence to gate readiness. G2 completion requires operator signoff via canonical doc 54.
+> **Important**: This document did **not** complete any G2 gate at the time of preparation. It maps historical rehearsal evidence to gate readiness. Operator signoff was later completed via docs 54/59 on 09/05/2026. See canonical docs 54/59 and 115/66 for current status.
 
 ---
 
@@ -35,7 +35,9 @@
 | G2.7 | Accepted-risk review | **partial** | Repo-side evidence present; operator signature pending on doc 54 |
 | G2.8 | Compensate noop risk acceptance | **partial** | Compensate flow exercised; operator acceptance of noop-backed adapters pending |
 
-**Conservative conclusion**: G2 is not complete. Phase 3D evidence suggests the GCP non-prod target is **ready for operator review only** if the evidence packet is acceptable to the operator. All G2 gates remain open pending operator signoff.
+**Conservative conclusion**: G2 is not complete. Phase 3D evidence suggests the GCP non-prod target is **ready for operator review only** if the evidence packet is acceptable to the operator. All G2 gates were open pending operator signoff at that time.
+
+> **Superseded (2026-05-15)**: Doc 59 and doc 54 were subsequently signed by BrianNguyen on 09/05/2026 for conditional single-node SQLite pilot scope. B3/B4/B5 were closed via delegated authority on 2026-05-15. Conditional single-node SQLite pilot readiness is ACCEPTABLE/YES (scoped only). Production-ready remains NO.
 
 ---
 
@@ -310,7 +312,7 @@ All endpoints returned HTTP 200 in all 5 sequential requests.
 
 ## Conservative Conclusion
 
-**G2 is NOT complete.** The evidence collected in Phase 3D suggests:
+**G2 is NOT complete (historical).** The evidence collected in Phase 3D suggests:
 
 1. **G2.2 (auth/TLS)**: Evidence is `ready` for operator review — GCP non-prod TLS via nip.io + Caddy works, auth returns 401/200 as expected.
 
@@ -320,7 +322,9 @@ All endpoints returned HTTP 200 in all 5 sequential requests.
 
 4. **G2.1, G2.5**: Evidence is `operator-required` — no workload model or RPO/RTO acceptance provided.
 
-**The GCP non-prod target is ready for operator review** — meaning the evidence packet suggests the implementation is functioning correctly in a non-prod context, but all G2 gates remain open pending operator signoff via canonical doc 54.
+**The GCP non-prod target is ready for operator review** — meaning the evidence packet suggests the implementation is functioning correctly in a non-prod context, but all G2 gates were open pending operator signoff via canonical doc 54 at that time.
+
+> **Superseded (2026-05-15)**: Doc 59 and doc 54 were subsequently signed by BrianNguyen on 09/05/2026 for conditional single-node SQLite pilot scope. B3/B4/B5 were closed via delegated authority on 2026-05-15. Conditional single-node SQLite pilot readiness is ACCEPTABLE/YES (scoped only). Production-ready remains NO.
 
 **No production-ready claim is made. No G2 completion is claimed. No pilot authorization is made.**
 

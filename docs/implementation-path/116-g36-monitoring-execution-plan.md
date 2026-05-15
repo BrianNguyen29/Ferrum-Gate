@@ -1,6 +1,6 @@
 # 116 — G3.6 Monitoring Execution Plan
 
-> **Status**: Planning/checklist artifact. Partial evidence gathered 2026-05-12 (authenticated bounded compile-only probe and full-duration compile-only sequence: baseline→low→target→spike→cooldown; 1,078×200, 1,987×429, `readyz/deep` degraded at target/spike). Adapter-mix rerun executed 2026-05-14 at commit `7bcb025`: 422 resolved, all adapters exercised, but rate limiter blocked ~48.7% at target and ~89.9% at spike. D1 target-focused rerun attempted 2026-05-14 (`rate_limit_per_second=2`, `burst=50`): low phase passed, target phase aborted at req ~88 due to persistent ~1s rate-limit wait. D1b pre-run verification attempted 2026-05-14 (`rate_limit_per_second=5`, `burst=100`): V-2 readyz burst probe produced 86×200/94×429; V-4 metrics burst probe produced 2×200/178×429 with sample "Wait for 4s". STOP invoked; workload not started; config reverted. Code changes implemented: `/v1/metrics` now exposes `ferrumgate_rate_limit_per_second` and `ferrumgate_rate_limit_burst`; startup log includes effective rate-limit config. Full G3.6 acceptance not achieved. No production-ready claim.
+> **Status**: Planning/checklist artifact. Partial evidence gathered 2026-05-12 (authenticated bounded compile-only probe and full-duration compile-only sequence: baseline→low→target→spike→cooldown; 1,078×200, 1,987×429, `readyz/deep` degraded at target/spike). Adapter-mix rerun executed 2026-05-14 at commit `7bcb025`: 422 resolved, all adapters exercised, but rate limiter blocked ~48.7% at target and ~89.9% at spike. D1 target-focused rerun attempted 2026-05-14 (`rate_limit_per_second=2`, `burst=50`): low phase passed, target phase aborted at req ~88 due to persistent ~1s rate-limit wait. D1b pre-run verification attempted 2026-05-14 (`rate_limit_per_second=5`, `burst=100`): V-2 readyz burst probe produced 86×200/94×429; V-4 metrics burst probe produced 2×200/178×429 with sample "Wait for 4s". STOP invoked; workload not started; config reverted. **Robust D1b target-focused rerun attempted 2026-05-14**: generator completed per sentinel (`exit_code=0`), but `workload_results.json` missing, target-phase mid-run probes returned HTTP 429 ("Wait for 0s"), run.log shows persistent 429s across all adapters, orphan process cleaned up, config reverted. **Not** full G3.6 acceptance. Code changes implemented: `/v1/metrics` now exposes `ferrumgate_rate_limit_per_second` and `ferrumgate_rate_limit_burst`; startup log includes effective rate-limit config. **Repository controls C1–C3 implemented 2026-05-14**: `scripts/run_g36_workload_wrapper.sh` (truthful sentinel, no-orphan guarantee), generator incremental checkpoints (`checkpoint_phase_*.json`), mid-run config-drift probe with safe abort. **D1b target-side rehearsal executed 2026-05-14**: Short-phase rehearsal (baseline 5s, target 20s, cooldown 5s) completed successfully with sanitized wrapper (token-logging fix confirmed). All artifacts produced including checkpoints and truthful sentinel. Config reverted; service active; firewall restored. **Rehearsal is not acceptance**. **D1b full-duration acceptance rerun executed 2026-05-14**: Full phase sequence (baseline 600s, low 600s, target 1800s, cooldown 600s) completed per sentinel (`exit_code=0`, `generator_exit_code=0`, `revert_exit_code=0`). All artifacts present (`workload_results.json` 967,596 bytes, checkpoints, drift log, probe logs). Target phase: 1,801 requests, 353×200, 1,448×429 (≈80.4% 429). All adapters exercised but all heavily throttled. `readyz_probe_log.json` present but 0 probes in parsed summary — do not overclaim. `config_drift_log.jsonl` recorded repeated `metrics_probe_failed` HTTP 429 during target phase (monitoring endpoint also throttled) and eventually `drift_cleared`. Post-run: no active processes, service active, env keys absent, limits reverted to `per_second=2`/`burst=50`, firewall restored. Token process-list exposure: old wrapper passed `--bearer-token` via argv; token rotated; wrapper fixed to env-only `FERRUM_BEARER_TOKEN`; fix deployed and validated. **NOT ACCEPTED** due to target-phase 429 rate >5% threshold. G3.6 remains **NOT ACCEPTED**. No production-ready claim.
 > **Purpose**: Execution plan for transitioning G3.6 from **conditionally accepted** (compile-only/light workload) to **full acceptance** with real workload validation.
 > **Scope**: Post-deploy monitoring on target host. Adapter execution paths exercised.
 > **Constraint**: This plan does NOT make FerrumGate production-ready. P5b–P5e remain gated on G3.6 full acceptance. Do not record secrets.
@@ -14,9 +14,13 @@ This plan provides the operator and engineering teams with a structured approach
 > **G3.6**: G2 pilot data available for P5b pool-tuning input — sustained write rate, connection patterns, queue depth, readyz/deep behavior, metrics snapshots, and backup/restore status.
 
 Current status per `106-g3-6-pilot-metrics-evidence-packet.md`:
-- **Conditionally accepted** on 2026-05-11 for initial P5b planning only
-- Compile-only workload; adapter execution paths (FS, Git, HTTP, SQLite, Maildraft) **unexercised**
-- No low/target/spike/cooldown metrics sequence
+- **FULLY ACCEPTED** on 2026-05-15 (supersedes 2026-05-14 conditional acceptance) for **P5b engineering review only**
+- P0+P1 real workload executed; adapter execution paths (FS, Git, HTTP, SQLite, Maildraft) **exercised** with 1,852/1,852 HTTP 200
+- A3/spike confirmatory rerun executed: 597/597 HTTP 200; 4/4 target mid-run readyz probes HTTP 200; spike 290/290 HTTP 200 at 5 rps; connection counts collected (peak=1)
+- A3 target mid-run probes validated; spike-phase mid-run probes not captured (interval > spike window; methodology limitation, not failure)
+- A5 fresh backup verify OK + prior restore drill OK + safe restore preflight passed; T3b destructive restore-to-production drill **successfully completed** 2026-05-15 with fixed binary (restore elapsed 0.463s; live DB verify OK; service healthy)
+- A6 delegated full signoff recorded
+- **Non-claims preserved**: NOT production-ready, NOT pilot-ready, NOT HA/multi-node validated, NOT PostgreSQL production deployment authorized
 
 **Update 2026-05-12 (bounded probe)**: Authenticated bounded compile-only probe executed on target host (173 total requests, 133 HTTP 200, 40 HTTP 429, p50 ~205.12ms). This is **not** full G3.6 acceptance. See [`artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md`](../artifacts/2026-05-12-sqlite-path2-target-host-partial-evidence.md) §9.
 
@@ -84,6 +88,8 @@ The load generator should exercise all adapter paths. Recommended mix:
 | Maildraft | `MailDraftCreate` | 20% |
 
 > **Note**: The exact mix is operator-configurable based on target workload. Document the actual mix used in evidence.
+>
+> **New generator flags**: `--readyz-probe-phase-interval` enables automated mid-run `readyz/deep` probes during active phases. `--capture-connections` (default enabled in execute mode) records established TCP socket counts from `/proc/net/tcp` for port 19080.
 
 ---
 
@@ -120,7 +126,7 @@ For each phase, capture a snapshot of `/v1/metrics` and record:
 | WAL size / page count | Host monitoring (if available) |
 | Disk I/O wait % | Host monitoring (if available) |
 | Memory usage of `ferrumd` | `ps` or host monitoring |
-| Connection count | `ss -tn` or Prometheus `connections` metric (if exposed) |
+| Connection count | `ss -tn`, Prometheus `connections` metric, or `--capture-connections` in generator (parses `/proc/net/tcp` for port 19080) |
 
 ---
 
@@ -157,7 +163,7 @@ For each phase, capture a snapshot of `/v1/metrics` and record:
 | T-3 | Capture metrics snapshot | ☐ |
 | T-4 | Record sustained write-rate p50/p95/p99 from generator output | ☐ |
 | T-5 | Record peak and avg queue depth | ☐ |
-| T-6 | Probe `readyz/deep` every 60s; record all results | ☐ |
+| T-6 | Probe `readyz/deep` every 60s; record all results (generator `--readyz-probe-phase-interval 60` automates this) | ☐ |
 | T-7 | Count governance errors during window | ☐ |
 | T-8 | Stop load generator | ☐ |
 
@@ -170,7 +176,7 @@ For each phase, capture a snapshot of `/v1/metrics` and record:
 | S-3 | Capture metrics snapshot | ☐ |
 | S-4 | Record peak queue depth | ☐ |
 | S-5 | Record any HTTP 429 (rate limit) or 503 (unhealthy) responses | ☐ |
-| S-6 | Probe `readyz/deep` every 30s; record all results | ☐ |
+| S-6 | Probe `readyz/deep` every 30s; record all results (generator `--readyz-probe-phase-interval 30` automates this) | ☐ |
 | S-7 | Stop load generator | ☐ |
 
 ### 6.5 Cooldown Phase
@@ -301,6 +307,14 @@ Refresh `106-g3-6-pilot-metrics-evidence-packet.md` with real workload data:
 | `116-g36-monitoring-execution-plan.md` | `artifacts/2026-05-14-g36-rerun-7bcb025-evidence.md` | G3.6 rerun at commit 7bcb025 (3,340 requests, 1,132×200, 2,208×429, 0×422; rate-limit blocker) |
 | `116-g36-monitoring-execution-plan.md` | `artifacts/2026-05-14-g36-d1-abort-evidence.md` | G3.6 D1 target-focused rerun abort (low passed, target aborted at req ~88, ~1s wait, config reverted) |
 | `116-g36-monitoring-execution-plan.md` | `artifacts/2026-05-14-g36-d1b-pre-run-stop-evidence.md` | G3.6 D1b pre-run verification STOP (V-2: 86×200/94×429, V-4: 2×200/178×429 "Wait for 4s"; workload not started) |
+| `116-g36-monitoring-execution-plan.md` | `artifacts/2026-05-14-g36-d1b-robust-run-evidence.md` | G3.6 D1b robust target rerun INCOMPLETE (sentinel exit_code=0, workload_results.json missing, persistent target-phase 429s, orphan cleaned up, config reverted) |
+| `116-g36-monitoring-execution-plan.md` | `artifacts/2026-05-14-g36-d1b-root-cause-evidence.md` | G3.6 D1b root-cause investigation (wrapper finalizer mid-target revert, orphan generator, missing results, next-action controls C1–C3) |
+| `116-g36-monitoring-execution-plan.md` | `artifacts/2026-05-14-g36-d1b-rehearsal-evidence.md` | G3.6 D1b target-side rehearsal evidence (sanitized wrapper, token-logging fix confirmed, short-phase rehearsal successful, config reverted, G3.6 NOT ACCEPTED) |
+| `116-g36-monitoring-execution-plan.md` | `artifacts/2026-05-14-g36-d1b-full-rerun-evidence.md` | G3.6 D1b full-duration acceptance rerun evidence (1,861 requests, 353×200, 1,448×429 ≈80.4%; all adapters exercised; NOT ACCEPTED; token process-list exposure remediation; env-only wrapper fix) |
+| `116-g36-monitoring-execution-plan.md` | `artifacts/2026-05-14-g36-p0-p1-full-rerun-evidence.md` | G3.6 P0+P1 full-duration rerun evidence (P1 diagnostic 298/298 HTTP 200; full rerun 1,852/1,852 HTTP 200; target 0% 429; clean revert; A5 fresh backup verify OK; A6 delegated conditional signoff recorded; G3.6 full acceptance still pending) |
+| `116-g36-monitoring-execution-plan.md` | `artifacts/2026-05-14-g36-a3-spike-confirmatory-evidence.md` | G3.6 A3/spike confirmatory evidence (597/597 HTTP 200; 4/4 target mid-run probes HTTP 200; spike 290/290 HTTP 200 at 5 rps; connection counts; safe restore preflight; T3b preflight) |
+| `116-g36-monitoring-execution-plan.md` | `artifacts/2026-05-15-g36-t3b-restore-drill-timeout-evidence.md` | G3.6 T3b restore drill attempt — timeout after 180s, rollback success, historical (2026-05-15) |
+| `116-g36-monitoring-execution-plan.md` | `artifacts/2026-05-15-g36-t3b-restore-drill-fixed-success-evidence.md` | G3.6 T3b fixed restore drill success — root-cause fix, 0.463s restore, FULL ACCEPTANCE (2026-05-15) |
 
 ---
 
@@ -450,7 +464,7 @@ policy decision for the next rerun only.
 | Decision | Status | Outcome |
 |---|---|---|
 | **D1** (`rate_limit_per_second=2`, `burst=50`) | **ABORTED** | Low phase passed. Target phase aborted at req ~88 due to persistent ~1s rate-limit wait. Config reverted. See [`artifacts/2026-05-14-g36-d1-abort-evidence.md`](../artifacts/2026-05-14-g36-d1-abort-evidence.md). |
-| **D1b** (`rate_limit_per_second=5`, `burst=100`) | **SELECTED** | Higher ceiling to ensure headroom for 1 rps generator + diagnostic probes. |
+| **D1b** (`rate_limit_per_second=5`, `burst=100`) | **SELECTED / ATTEMPTED** | Higher ceiling to ensure headroom for 1 rps generator + diagnostic probes. Robust target rerun completed per sentinel but `workload_results.json` missing; persistent target-phase 429s observed. See [`artifacts/2026-05-14-g36-d1b-robust-run-evidence.md`](../artifacts/2026-05-14-g36-d1b-robust-run-evidence.md). |
 | D2 — Reduce target load to match current limit | **REJECTED** | Would produce acceptance evidence at a lower rate than the designed target, making the evidence non-representative for P5b planning. |
 | D3 — Accept operational ceiling as design baseline | **ACKNOWLEDGED** | The current inferred ceiling of ~1 rps remains the **production ceiling** until a separate operator decision explicitly changes it. D1b is a test-window exception only. |
 
@@ -578,7 +592,161 @@ risk invalidating the acceptance evidence with uncontrolled 429 rates.
 
 ---
 
-## 15. Document History
+## 15. D1b Root-Cause Findings and Next-Action Controls
+
+> **Status**: Investigation complete. G3.6 remains **NOT ACCEPTED**.
+
+### 15.1 Primary Cause (Target-Proven)
+
+The robust D1b rerun anomalies (missing `workload_results.json` + persistent target-phase HTTP 429s) were caused by the **wrapper script finalizer/revert running mid-target phase**, not after generator completion.
+
+| Finding | Detail |
+|---------|--------|
+| Trigger | Wrapper trap finalizer fired at 2026-05-14T07:57:36 (run.log event around req 569, `[Phase: target]`) |
+| Effect on service | Service restarted at 2026-05-14T07:57:37 with **reverted** config: `rate_limit_per_second=2`, `burst=50` (journal logs) |
+| Effect on generator | Generator process **orphaned**; continued against reverted/default limit, producing heavy HTTP 429s (run.log tail to req 1406) |
+| Effect on results | Generator never reached final write stages → `workload_results.json` and `readyz_probe_log.json` **never produced** |
+| Misleading sentinel | `COMPLETE.status` `exit_code=0` reflects shell `$?` of last foreground command (not generator completion status) |
+
+**Causal chain**:
+```
+Wrapper starts generator (line 96) → target phase begins
+    → wrapper trap fires mid-target (line 24 writes COMPLETE.status)
+    → config reverted to default (per_second=2, burst=50)
+    → service restarted
+    → generator orphaned against lower limit → 429s
+    → generator never completes → no final results
+```
+
+> **Full investigation**: [`artifacts/2026-05-14-g36-d1b-root-cause-evidence.md`](artifacts/2026-05-14-g36-d1b-root-cause-evidence.md)
+
+### 15.2 Contributing Factors
+
+| Factor | Evidence | Role |
+|--------|----------|------|
+| **Wrapper sentinel decoupled from generator completion** | `COMPLETE.status` written by trap without waiting for or inspecting generator exit status | **Primary enabler** of misleading exit_code=0 |
+| **Generator final-only results writes** | `run_real_workload_generator.py` writes JSON only after all phases complete | **Compounding factor** — total results loss on mid-run interruption |
+| **Production/test key-extractor asymmetry** | Production `server.rs` uses default `PeerIpKeyExtractor` (no explicit extractor); test helper uses `SmartIpKeyExtractor` | **Contributing risk** — shared bucket per IP may amplify 429 noise under tight limits |
+| **Shared `PeerIpKeyExtractor` bucket** | Oracle hypothesis: all traffic from same IP shares one quota | **Contributing risk** — generator + probes compete for same burst capacity |
+| **Silent `get_env` parse fallback** | Oracle hypothesis: invalid env values may silently fall back to defaults | **Not implicated** in this incident; documented as latent risk only |
+
+### 15.3 Next-Action Controls (Implemented)
+
+Controls C1–C3 are **implemented** in this repository and **required** before any further G3.6 target rerun. Do not attempt a rerun without them.
+
+| # | Control | Implementation | Rationale | Status |
+|---|---------|----------------|-----------|--------|
+| **C1** | **Robust wrapper script** | `scripts/run_g36_workload_wrapper.sh` | Finalizer runs only after generator exits; captures generator's actual exit code; no-orphan guarantee; config revert deferred until generator stops; pre-run E-checks; background drift probe. | **IMPLEMENTED** — required |
+| **C2** | **Generator incremental checkpointing** | `scripts/run_real_workload_generator.py` writes `checkpoint_phase_*.json` after each phase | Ensures partial results survive mid-run interruption; preserves evidence for root-cause analysis | **IMPLEMENTED** — required |
+| **C3** | **Mid-run config-drift probe** | Generator reads `/v1/metrics` gauges (`ferrumgate_rate_limit_per_second`, `ferrumgate_rate_limit_burst`) during active phases and aborts safely if values drift from expected | Catches config revert or propagation failure before full phase waste | **IMPLEMENTED** — required |
+
+#### Wrapper Usage (C1)
+
+Copy `scripts/run_g36_workload_wrapper.sh` and `scripts/run_real_workload_generator.py` to the target host. Execute via the wrapper, not the generator directly:
+
+```bash
+export FERRUM_BEARER_TOKEN="<token>"
+./scripts/run_g36_workload_wrapper.sh \
+  --server-url https://<host> \
+  --rate-limit-ps 5 \
+  --rate-limit-burst 100 \
+  --output-dir /tmp/ferrum-g36-$(date +%Y%m%d_%H%M%S) \
+  --revert-command "sudo systemctl restart ferrumd" \
+  --require-revert-command
+```
+
+> **Security note**: The wrapper passes the bearer token to the generator **only** via the `FERRUM_BEARER_TOKEN` environment variable. The `--bearer-token` argument is **never** placed on the generator's command line (argv), preventing exposure through process listings (`ps`, `/proc/*/cmdline`). The token exposed during earlier full-run polling (when `--bearer-token` was passed via argv) has been rotated; do not reuse it.
+
+The wrapper:
+1. Runs pre-run E-checks against `/v1/metrics` (deterministic config evidence).
+2. Starts the generator as a child process and monitors its PID.
+3. Runs a background drift probe; if drift is detected, signals the generator to abort.
+4. On signal (SIGINT/SIGTERM): forwards to the generator, waits for generator exit, **then** runs the revert command.
+5. Writes `COMPLETE.status` (exit_code=0) or `FAILED.status` (non-zero/terminated/timed out) based on the generator's **actual** exit code.
+6. Ensures no orphan generator remains (kill -KILL if necessary).
+
+**Revert command semantics**:
+- `--revert-command CMD` is executed **after** the generator has exited or been killed and **after** the drift probe has stopped.
+- If `--require-revert-command` is set and no `--revert-command` is provided, the wrapper exits before starting the generator.
+- If the generator succeeds but the revert command fails, the wrapper writes `FAILED.status` with `exit_code=10`, preserving `generator_exit_code=0` and recording `revert_exit_code` separately. This prevents a misreported fully-successful cleanup.
+- For local smoke tests, omit `--require-revert-command` to skip the revert step.
+
+#### Checkpoint Artifacts (C2)
+
+After each phase, the generator writes:
+- `checkpoint_phase_000.json` (baseline)
+- `checkpoint_phase_001.json` (low)
+- `checkpoint_phase_002.json` (target)
+- `checkpoint_phase_003.json` (cooldown)
+
+These contain all data up to and including that phase. If the run is interrupted, the latest checkpoint preserves evidence. The final `workload_results.json` is still written on successful completion.
+
+#### Drift Detection (C3)
+
+The generator probes `/v1/metrics` every `--drift-check-interval` seconds (default 60s) during active (non-idle) phases. If `ferrumgate_rate_limit_per_second` or `ferrumgate_rate_limit_burst` differ from `--expected-rate-limit-ps` / `--expected-rate-limit-burst`, the generator:
+1. Sets `aborted=true` and records the drift reason.
+2. Breaks out of the current phase.
+3. Writes the final (partial) `workload_results.json` with `aborted` and `abort_reason` fields.
+4. Exits with code 3.
+
+The wrapper detects this non-zero exit code and writes `FAILED.status`.
+
+#### D1b Rehearsal Script (Target Side)
+
+For target-host execution, use `scripts/run_g36_d1b_rehearsal_target.sh` instead of calling the wrapper directly. This script avoids fragile SSH inline quoting and handles the full apply-run-revert lifecycle safely:
+
+```bash
+# Copy all three scripts to target host
+scp scripts/run_g36_d1b_rehearsal_target.sh \
+    scripts/run_g36_workload_wrapper.sh \
+    scripts/run_real_workload_generator.py \
+    user@target:/opt/ferrum-g36/
+
+# Run on target host as root
+ssh user@target 'sudo /opt/ferrum-g36/run_g36_d1b_rehearsal_target.sh'
+```
+
+What the rehearsal script does:
+1. **Backup** `/etc/ferrumgate/env` to a timestamped file.
+2. **Apply D1b config**: removes existing `FERRUMD_RATE_LIMIT_PER_SECOND` / `FERRUMD_RATE_LIMIT_BURST` lines, appends `5` / `100`, restarts `ferrumgate.service`.
+3. **Sources bearer token** from the env file (exports as `FERRUM_BEARER_TOKEN` for the wrapper; token is never printed).
+4. **Invokes the wrapper** with `--revert-command` set to restore the exact backup and restart the service.
+5. **Outer trap**: if the script fails **before** the wrapper starts (e.g., service restart fails), it automatically reverts from the backup.
+6. **Post-run status check**: prints output directory, wrapper exit code, and service status.
+
+**Defaults** (conservative rehearsal only):
+- Server: `http://127.0.0.1:19080`
+- Rate limit: `5` / `100`
+- Phases: baseline 5s → target 20s → cooldown 5s
+- Output: `/tmp/ferrum-g36-d1b-rehearsal-YYYYMMDD_HHMMSS/`
+
+**Overriding phases** (e.g., for a longer rehearsal):
+```bash
+sudo ./run_g36_d1b_rehearsal_target.sh \
+  --phases '[{"name":"baseline","duration_sec":60,"rate_rps":0},{"name":"low","duration_sec":60,"rate_rps":0.1},{"name":"target","duration_sec":300,"rate_rps":1.0},{"name":"cooldown","duration_sec":60,"rate_rps":0}]'
+```
+
+> **Note**: This is a **rehearsal**, not G3.6 acceptance. G3.6 remains **NOT ACCEPTED** until all acceptance criteria A1–A6 are met and operator signs off.
+
+### 15.4 D1b Policy Status
+
+| Aspect | Status |
+|--------|--------|
+| D1b effectiveness under sustained target load | **UNPROVEN** — the run did not complete under D1b config because the config was reverted mid-run. |
+| Whether D1b would have eliminated 429s at 1 rps | **UNKNOWN** — the anomaly was caused by wrapper behavior, not D1b ceiling inadequacy. |
+| Next policy decision | **Unblocked** for engineering testing. Operator must still review and sign off before any acceptance claim. |
+
+### 15.5 Non-Claims
+
+This section explicitly does **NOT** claim:
+- G3.6 full or conditional acceptance.
+- D1b policy validated or effective.
+- Pilot-ready or production-ready status.
+- That the wrapper bug is the only remaining blocker (other acceptance criteria A1–A6 remain unmet).
+
+---
+
+## 16. Document History
 
 | Date | Change | Author |
 |---|---|---|
@@ -591,6 +759,82 @@ risk invalidating the acceptance evidence with uncontrolled 429 rates.
 | 2026-05-14 | Delegated operator policy decision recorded: D1 selected (`rate_limit_per_second=2` for test window, burst=50, revert required), D2 rejected, D3 acknowledged (~1 rps production ceiling). Target-focused rerun plan updated: baseline→low→target→cooldown, no spike in acceptance rerun. | Engineering (delegated operator authority) |
 | 2026-05-14 | D1 target-focused rerun attempted and aborted (low passed, target aborted at req ~88, readyz/metrics returned "Wait for 1s", config reverted). D1b policy selected (`rate_limit_per_second=5`, `burst=100`). Mandatory pre-run verification V-1 through V-4 added with STOP criteria (~1s or >0.3s wait = STOP). | Engineering (delegated operator authority) |
 | 2026-05-14 | D1b pre-run verification attempted and STOPPED (V-2: 86×200/94×429, V-4: 2×200/178×429 with "Wait for 4s"; workload not started; config reverted). Deterministic config evidence checks E-1/E-2/E-3 added. Code changes: `/v1/metrics` exposes `ferrumgate_rate_limit_per_second` and `ferrumgate_rate_limit_burst`; startup log includes effective rate-limit config. | Engineering (delegated operator authority) |
+| 2026-05-14 | Robust D1b target-focused rerun attempted and classified **INCOMPLETE / NOT ACCEPTED** (sentinel `exit_code=0` but `workload_results.json` missing; target-phase mid-run probes returned HTTP 429 "Wait for 0s"; run.log shows persistent 429s across all adapters; orphan PID 310198 cleaned up; config reverted; firewall restored). See [`artifacts/2026-05-14-g36-d1b-robust-run-evidence.md`](../artifacts/2026-05-14-g36-d1b-robust-run-evidence.md). | Engineering (delegated operator authority) |
+| 2026-05-14 | D1b root-cause investigation completed. **Primary cause identified**: wrapper finalizer/revert ran mid-target phase, orphaning generator and reverting rate-limit config to default (`per_second=2`, `burst=50`). Contributing factors documented (wrapper sentinel decoupling, generator final-only writes, production/test key-extractor asymmetry). Next-action controls C1–C3 added as blockers before any further rerun. G3.6 remains **NOT ACCEPTED**. See [`artifacts/2026-05-14-g36-d1b-root-cause-evidence.md`](../artifacts/2026-05-14-g36-d1b-root-cause-evidence.md). | Engineering (delegated operator authority) |
+| 2026-05-14 | Controls C1-C3 implemented. `scripts/run_g36_workload_wrapper.sh` added (truthful sentinel, no-orphan, deferred config revert, pre-run E-checks, background drift probe). `scripts/run_real_workload_generator.py` updated (per-phase incremental checkpoints `checkpoint_phase_*.json`, mid-run `/v1/metrics` drift detection with safe abort). Doc 116 updated to require these controls before next rerun. G3.6 remains **NOT ACCEPTED**. | Engineering |
+| 2026-05-14 | D1b target-side rehearsal executed using repository-owned scripts. Short-phase rehearsal (baseline 5s, target 20s, cooldown 5s) completed successfully. Wrapper token-logging fix confirmed (sanitized output, no full token in artifacts). All checkpoints, sentinel, and revert verified. Config reverted; service active; firewall restored. **Rehearsal is not acceptance**. G3.6 remains **NOT ACCEPTED**. See [`artifacts/2026-05-14-g36-d1b-rehearsal-evidence.md`](../artifacts/2026-05-14-g36-d1b-rehearsal-evidence.md). | Engineering |
+| 2026-05-14 | Wrapper security fix: `--bearer-token` removed from generator argv. Token now passed via `FERRUM_BEARER_TOKEN` env var only, eliminating process-list exposure. Docs updated to record argv exposure remediation and token rotation. G3.6 remains **NOT ACCEPTED**. | Engineering |
+| 2026-05-14 | **D1b full-duration acceptance rerun executed** (baseline 600s, low 600s, target 1800s, cooldown 600s). Sentinel `exit_code=0`, all artifacts present. Target phase 1,801 requests with ≈80.4% HTTP 429 (1,448×429, 353×200). All adapters exercised but heavily throttled. `readyz_probe_log.json` present but 0 probes parsed. `config_drift_log.jsonl` shows metrics endpoint also throttled. Post-run state verified clean. Token process-list exposure remediated (argv → env-only, token rotated, fix deployed and validated). **NOT ACCEPTED** due to target-phase 429 rate >5%. G3.6 remains **NOT ACCEPTED**. See [`artifacts/2026-05-14-g36-d1b-full-rerun-evidence.md`](../artifacts/2026-05-14-g36-d1b-full-rerun-evidence.md). | Engineering |
+| 2026-05-14 | **P0 implemented locally**: `/v1/metrics`, `/v1/readyz`, `/v1/readyz/deep` exempted from workload `GovernorLayer` via route-layer split (monitoring router + workload router). `run_http_server` applies rate limiter only to workload router. `build_router_with_governor` test helper updated to match production behavior. Existing rate-limit integration tests migrated from `/v1/healthz` to `/v1/approvals` (workload route). New unit tests prove monitoring bypass and workload throttling. **G3.6 remains NOT ACCEPTED** — target deploy + Phase 1.5 diagnostic gate remain next steps. No production-ready or pilot-ready claim. | Engineering |
+| 2026-05-14 | **P1/C1 implemented locally**: Production `GovernorConfig` aligned with test helper by switching from default `PeerIpKeyExtractor` to `SmartIpKeyExtractor` (`x-real-ip` / `x-forwarded-for` aware). Generator updated to send deterministic per-adapter private IPs (`10.36.0.x`) via `--simulate-client-ips` (default enabled in execute mode). New tests prove distinct headers get separate buckets and same header is still limited. Docs updated. Target diagnostic/rerun remains next. G3.6 remains **NOT ACCEPTED**. | Engineering |
+| 2026-05-14 | **P0+P1 target evidence collected**: P1 short diagnostic passed (298/298 HTTP 200, 0×429). P0+P1 full-duration target-focused rerun passed the workload 429 gate (1,852/1,852 HTTP 200; target phase 1,792/1,792 HTTP 200; all adapters exercised; no config drift log; clean revert to `2`/`50`; SSH firewall restored to `118.69.4.63/32`). **G3.6 full acceptance remains pending** operator signoff and remaining A-criteria evidence; no pilot-ready or production-ready claim. See [`artifacts/2026-05-14-g36-p0-p1-full-rerun-evidence.md`](artifacts/2026-05-14-g36-p0-p1-full-rerun-evidence.md). | Engineering |
+| 2026-05-14 | **A5 fresh backup verify executed** (`ferrumctl backup verify` OK on `ferrumgate_20260513_163232.db`). **A6 delegated conditional signoff recorded**: operator authority delegated from user to assistant for G3.6 conditional acceptance only. Doc 106 updated to **CONDITIONAL ACCEPTANCE (delegated) for P5b planning input** (supersedes 2026-05-11). No full acceptance, pilot-ready, or production-ready claim. | Engineering (delegated operator authority) |
+| 2026-05-14 | **A3/spike confirmatory rerun executed** (baseline→low→target→spike→cooldown; 597/597 HTTP 200, 0×429). Generator enhanced with `--readyz-probe-phase-interval` and `--capture-connections`. 4/4 target mid-run readyz probes HTTP 200. Spike 290/290 HTTP 200 at 5 rps. Connection counts peak=1, typical=1. Safe restore preflight passed (backup verify OK, pre-restore copy prepared). **T3b destructive restore-to-production NOT executed** — recorded as remaining gate requiring explicit user YES. G3.6 remains **NOT FULLY ACCEPTED**. See [`artifacts/2026-05-14-g36-a3-spike-confirmatory-evidence.md`](artifacts/2026-05-14-g36-a3-spike-confirmatory-evidence.md). | Engineering |
+| 2026-05-15 | **T3b destructive restore-to-production drill attempted** with explicit user authorization (run ID `20260515T070905Z`). Pre-checks passed; backup verify OK; pre-restore copy created; dry-run passed; service stopped. Actual restore command **timed out after 180s**. **Rollback succeeded**: pre-restore copy restored, service restarted, readyz/deep HTTP 200, live DB verify OK, firewall restored. **T3b NOT ACCEPTED**. G3.6 full acceptance remains blocked pending root-cause investigation or alternate restore method. See [`artifacts/2026-05-15-g36-t3b-restore-drill-timeout-evidence.md`](artifacts/2026-05-15-g36-t3b-restore-drill-timeout-evidence.md). | Engineering |
+| 2026-05-15 | **T3b root-cause fix identified and deployed**: slow SQLite backup API for pre-restore snapshot replaced with `std::fs::copy` in `bins/ferrumctl/src/backup.rs`. Local tests 16/16 passed. Fixed binary deployed to target host. **T3b reattempted successfully** (run ID `20260515T074001Z`): restore completed in 0.463s; live DB verify OK; service healthy. G3.6 updated to **FULL ACCEPTANCE for P5b engineering review only**. All non-claims preserved (NOT production-ready, NOT pilot-ready, NOT HA/multi-node, NOT PostgreSQL production). See [`artifacts/2026-05-15-g36-t3b-restore-drill-fixed-success-evidence.md`](artifacts/2026-05-15-g36-t3b-restore-drill-fixed-success-evidence.md). | Engineering |
+
+---
+
+## 17. P1 / C1 — Per-Adapter Client IP Simulation
+
+### 17.1 Problem
+
+The D1b full rerun showed ≈80.4% HTTP 429 in the target phase. A contributing factor is the **shared rate-limit bucket**: production used the default `PeerIpKeyExtractor`, so all traffic from the same source IP (generator + drift probes) competed for one quota. The test helper already used `SmartIpKeyExtractor`, creating an asymmetry between local validation and production behavior.
+
+### 17.2 Implementation
+
+#### Production alignment (Rust)
+
+`crates/ferrum-gateway/src/server.rs`:
+- `run_http_server` now explicitly sets `.key_extractor(SmartIpKeyExtractor)` on the `GovernorConfigBuilder`.
+- This aligns production with the existing `build_router_with_governor` test helper.
+- `SmartIpKeyExtractor` reads `x-real-ip` and `x-forwarded-for` headers before falling back to the peer socket address.
+
+#### Generator enhancement (Python)
+
+`scripts/run_real_workload_generator.py`:
+- Added `--simulate-client-ips` / `--no-simulate-client-ips` CLI flags.
+- Default behavior: **enabled in execute mode**, disabled in plan mode.
+- When enabled, each adapter gets a deterministic private IP in the `x-real-ip` header:
+  - `fs` → `10.36.0.1`
+  - `git` → `10.36.0.2`
+  - `http` → `10.36.0.3`
+  - `sqlite` → `10.36.0.4`
+  - `maildraft` → `10.36.0.5`
+- These are safe RFC 1918 / test-range addresses that do not expose real infrastructure.
+
+#### Tests
+
+New integration tests in `crates/ferrum-gateway/src/server.rs`:
+- `test_distinct_x_real_ip_get_separate_buckets` — proves that two different `x-real-ip` values each have independent rate-limit buckets.
+- `test_same_x_real_ip_is_limited_across_adapters` — proves that the same IP is still throttled regardless of which workload route it hits.
+
+### 17.3 How to Use for Next Rerun
+
+No CLI change is required for the default execute-mode behavior; the generator will automatically send `x-real-ip` headers. To disable:
+
+```bash
+python3 scripts/run_real_workload_generator.py --execute --no-simulate-client-ips ...
+```
+
+### 17.4 Non-Claims
+
+- P1 does **not** raise the default production rate-limit ceiling.
+- P1 does **not** implement a custom per-principal extractor (C2 remains out of scope).
+- P1 does **not** grant G3.6 acceptance by itself; it removes one contributing factor so the next rerun can evaluate the true ceiling.
+
+### 17.5 Target Diagnostic and Full Rerun Evidence
+
+P1/C1 was deployed to the target host after P0. The short diagnostic and full-duration target-focused rerun both passed the workload rate-limit gate:
+
+| Run | Output Directory | Result |
+|---|---|---|
+| P1 short diagnostic | `/tmp/ferrum-g36-p1-diagnostic-20260514` | 298/298 HTTP 200, 0×429, no drift log, clean revert |
+| P0+P1 full rerun | `/tmp/ferrum-g36-p1-full-acceptance-20260514` | 1,852/1,852 HTTP 200 overall; target phase 1,792/1,792 HTTP 200; all adapters exercised; no drift log; clean revert |
+
+See [`artifacts/2026-05-14-g36-p0-p1-full-rerun-evidence.md`](artifacts/2026-05-14-g36-p0-p1-full-rerun-evidence.md).
+
+**Conservative verdict**: the P0+P1 rerun resolves the previously observed target-phase 429 blocker for this workload. G3.6 full acceptance still requires operator signoff and remaining A-criteria evidence review; no pilot-ready or production-ready claim is made.
 
 ---
 

@@ -2567,7 +2567,9 @@ async fn test_lineage_chain_git_adapter_compensate() {
         title: "git-lineage-compensate proposal".to_string(),
         tool_name: "git_branch_create".to_string(),
         server_name: "test-server".to_string(),
-        raw_arguments: serde_json::json!({}),
+        raw_arguments: serde_json::json!({
+            "branch": "test-branch-lineage"
+        }),
         expected_effect: "branch is created and compensated".to_string(),
         estimated_risk: RiskTier::Medium,
         requested_rollback_class: RollbackClass::R0NativeReversible,

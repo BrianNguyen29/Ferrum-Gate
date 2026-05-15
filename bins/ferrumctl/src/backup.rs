@@ -324,15 +324,27 @@ pub fn backup_restore(
         return Ok(());
     }
 
-    // Create pre-restore snapshot if current db exists
+    // Create pre-restore snapshot if current db exists.
+    // Use std::fs::copy for speed: the exclusive lock check above ensures no
+    // concurrent writers, so a simple filesystem copy is safe and avoids the
+    // slow SQLite backup API (rusqlite backup run_to_completion) used by
+    // backup_create. For large DBs (~16 MB, ~4100 pages) the SQLite backup API
+    // can take >180 s and trip external timeouts; fs::copy completes in <1 s.
     if db_path.exists() {
         let pre_restore_path = PathBuf::from(format!("{}.pre_restore", db_path.display()));
-        copy_db_snapshot(db_path, &pre_restore_path).with_context(|| {
+        std::fs::copy(db_path, &pre_restore_path).with_context(|| {
             format!(
                 "failed to create pre-restore snapshot at '{}'",
                 pre_restore_path.display()
             )
         })?;
+        // Set restrictive permissions on Unix
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perms = std::fs::Permissions::from_mode(0o600);
+            let _ = std::fs::set_permissions(&pre_restore_path, perms);
+        }
         eprintln!("Pre-restore snapshot saved: {}", pre_restore_path.display());
     }
 

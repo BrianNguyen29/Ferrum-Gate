@@ -183,7 +183,7 @@ All endpoints responded correctly under sequential single-request load.
 | G2.7 | Accepted-risk review | partial | Weak spots resolved; operator signoff pending |
 | G2.8 | Compensate noop risk | partial | Compensate flow verified; operator acceptance pending |
 
-**Conservative conclusion**: G2 is NOT complete. The GCP non-prod target is ready for operator review only. All G2 gates remain open pending operator signoff via canonical doc 54.
+**Conservative conclusion**: G2 is NOT complete. The GCP non-prod target is ready for operator review only. All G2 gates were open pending operator signoff via canonical doc 54 at that time.
 
 ---
 

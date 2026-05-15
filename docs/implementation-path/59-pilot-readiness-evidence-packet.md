@@ -468,4 +468,20 @@ All G2.1–G2.8 gates above have been signed by BrianNguyen on 09/05/2026. Once 
 
 ---
 
+## Addendum: B3/B4/B5 Checklist Closure via Delegated Authority (2026-05-15)
+
+> **Scope**: This addendum records the closure of B3/B4/B5 operator checklist items via delegated authority on 2026-05-15. It does not alter the original G2.1–G2.8 signoff dated 09/05/2026.
+
+On 2026-05-15, the user authorized the assistant to close evidence-backed B3/B4/B5 checklist items. The following evidence supports this closure:
+
+- **B3**: Run id `20260515T1606Z-b3-retention`; old matching sentinel pruned; nonmatching sentinel preserved; new backup `ferrumgate.db_1778861166.db` verified OK rc=0; service active; local readyz 200; SSH firewall restored `118.69.4.63/32`; pre-existing `ferrumgate.db_1778783894.db` within retention window preserved.
+- **B4**: Public HTTPS `healthz`/`readyz`/`readyz/deep` returned 200; HTTP→HTTPS redirect returned 308; with-token auth through proxy returned 200 after target-env remediation.
+- **B5**: No-token `GET /v1/approvals` returned 401; with-token `GET /v1/approvals` returned 200 after target-env remediation; token not recorded.
+
+**Conditional single-node SQLite pilot readiness**: ACCEPTABLE/YES (scoped only). Production-ready remains NO. PostgreSQL/HA/multi-node remain NO.
+
+Original G2.1–G2.8 and pilot acceptance statement signatures by BrianNguyen on 09/05/2026 are preserved unchanged.
+
+---
+
 *Document generated: 2026-04-29. Documentation-only — no production deployment performed. G2 gates require explicit operator signoff.*

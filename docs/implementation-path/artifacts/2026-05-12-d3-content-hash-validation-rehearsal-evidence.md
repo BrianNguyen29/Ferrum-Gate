@@ -95,7 +95,7 @@ PostgreSQL container stopped and removed after rehearsal.
 ## Remaining Work
 
 - D.4–D.6 cadence per `117-postgresql-readiness-acceleration-plan.md`
-- Target-host operator blockers remain open
+- Target-host operator blockers were open at that time
 - Large-dataset hash validation (≥1M rows) deferred to future readiness work
 
 ---

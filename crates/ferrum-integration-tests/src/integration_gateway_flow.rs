@@ -4972,7 +4972,7 @@ async fn test_rate_limit_returns_429_when_exceeded() {
     for i in 0..10 {
         let request = axum::http::Request::builder()
             .method(axum::http::Method::GET)
-            .uri("/v1/healthz")
+            .uri("/v1/approvals")
             .header("content-type", "application/json")
             .header("x-real-ip", "192.168.1.100")
             .body(axum::body::Body::empty())
@@ -4980,7 +4980,7 @@ async fn test_rate_limit_returns_429_when_exceeded() {
 
         let response = tower::ServiceExt::oneshot(router.clone(), request)
             .await
-            .expect("healthz request should complete");
+            .expect("approvals request should complete");
 
         eprintln!("Request {} status: {:?}", i, response.status());
 
@@ -5045,7 +5045,7 @@ async fn test_rate_limit_allows_requests_under_limit() {
     for i in 0..10 {
         let request = axum::http::Request::builder()
             .method(axum::http::Method::GET)
-            .uri("/v1/healthz")
+            .uri("/v1/approvals")
             .header("content-type", "application/json")
             .header("x-real-ip", "192.168.1.100")
             .body(axum::body::Body::empty())
@@ -5053,7 +5053,7 @@ async fn test_rate_limit_allows_requests_under_limit() {
 
         let response = tower::ServiceExt::oneshot(router.clone(), request)
             .await
-            .expect("healthz request should complete");
+            .expect("approvals request should complete");
 
         assert_eq!(
             response.status(),
@@ -5105,14 +5105,14 @@ async fn test_rate_limit_per_ip_isolation() {
     for i in 0..3 {
         let request = axum::http::Request::builder()
             .method(axum::http::Method::GET)
-            .uri("/v1/healthz")
+            .uri("/v1/approvals")
             .header("x-real-ip", "192.168.1.1")
             .body(axum::body::Body::empty())
             .unwrap();
 
         let response = tower::ServiceExt::oneshot(router.clone(), request)
             .await
-            .expect("healthz request should complete");
+            .expect("approvals request should complete");
 
         eprintln!("IP A request {} status: {:?}", i, response.status());
     }
@@ -5120,14 +5120,14 @@ async fn test_rate_limit_per_ip_isolation() {
     // Now make a request from IP B - should succeed because rate limits are per-IP
     let request = axum::http::Request::builder()
         .method(axum::http::Method::GET)
-        .uri("/v1/healthz")
+        .uri("/v1/approvals")
         .header("x-real-ip", "192.168.1.2")
         .body(axum::body::Body::empty())
         .unwrap();
 
     let response = tower::ServiceExt::oneshot(router.clone(), request)
         .await
-        .expect("healthz request should complete");
+        .expect("approvals request should complete");
 
     assert_eq!(
         response.status(),
@@ -5171,14 +5171,14 @@ async fn test_rate_limit_recovery_after_cooldown() {
     for i in 0..3 {
         let request = axum::http::Request::builder()
             .method(axum::http::Method::GET)
-            .uri("/v1/healthz")
+            .uri("/v1/approvals")
             .header("x-real-ip", "192.168.1.50")
             .body(axum::body::Body::empty())
             .unwrap();
 
         let response = tower::ServiceExt::oneshot(router.clone(), request)
             .await
-            .expect("healthz request should complete");
+            .expect("approvals request should complete");
 
         eprintln!("Request {} status: {:?}", i, response.status());
     }
@@ -5190,14 +5190,14 @@ async fn test_rate_limit_recovery_after_cooldown() {
     // Next request should succeed after cooldown
     let request = axum::http::Request::builder()
         .method(axum::http::Method::GET)
-        .uri("/v1/healthz")
+        .uri("/v1/approvals")
         .header("x-real-ip", "192.168.1.50")
         .body(axum::body::Body::empty())
         .unwrap();
 
     let response = tower::ServiceExt::oneshot(router.clone(), request)
         .await
-        .expect("healthz request should complete");
+        .expect("approvals request should complete");
 
     // After waiting, the request may succeed (rate limit refilled) or still be 429
     // depending on the governor's refill rate. Both are acceptable - the key is that
@@ -5263,7 +5263,7 @@ async fn test_sustained_concurrent_rate_limit_overload() {
         let request_factory = move || {
             axum::http::Request::builder()
                 .method(axum::http::Method::GET)
-                .uri("/v1/healthz")
+                .uri("/v1/approvals")
                 .header("content-type", "application/json")
                 .header("x-real-ip", client_ip.clone())
                 .body(axum::body::Body::empty())
@@ -5278,7 +5278,7 @@ async fn test_sustained_concurrent_rate_limit_overload() {
                 let request = request_factory();
                 let response = tower::ServiceExt::oneshot(router.clone(), request)
                     .await
-                    .expect("healthz request should complete");
+                    .expect("approvals request should complete");
                 results.push(response.status());
                 count += 1;
                 // Brief yield to let other workers run

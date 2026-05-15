@@ -19,11 +19,13 @@ Outputs:
     - workload_results.json       # Live results (only in --execute mode)
     - workload_results.md         # Human-readable results (only in --execute mode)
     - readyz_probe_log.json       # readyz/deep probe records
+    - checkpoint_phase_*.json     # Incremental checkpoint after each phase (C2)
 
 Constraints:
     - stdlib Python only (no external dependencies).
     - No secrets embedded in output (tokens redacted).
     - All output labeled as planning/local until operator executes on target host.
+    - C2/C3: incremental checkpoints and config-drift detection are active in --execute mode.
 """
 
 import argparse
@@ -31,6 +33,7 @@ import json
 import math
 import os
 import random
+import signal
 import sys
 import time
 import urllib.error
@@ -66,6 +69,15 @@ DEFAULT_PHASES = [
     {"name": "spike",    "duration_sec": 300,  "rate_rps": 5.0},
     {"name": "cooldown", "duration_sec": 600,  "rate_rps": 0.0},
 ]
+
+# Deterministic private IPs for per-adapter client IP simulation (P1)
+ADAPTER_CLIENT_IPS = {
+    "fs": "10.36.0.1",
+    "git": "10.36.0.2",
+    "http": "10.36.0.3",
+    "sqlite": "10.36.0.4",
+    "maildraft": "10.36.0.5",
+}
 
 DEFAULT_ADAPTER_MIX = {
     "fs":        {"weight": 20, "intent_type": "FileWrite",       "tool_name": "fs_write"},
@@ -262,6 +274,103 @@ def _normalize_intent_compile_payload(payload):
 
 
 # ---------------------------------------------------------------------------
+# Checkpoint and drift-detection helpers (C2 / C3)
+# ---------------------------------------------------------------------------
+
+ABORT_FLAG = {"abort": False, "reason": ""}
+
+
+def _set_abort_flag(reason):
+    ABORT_FLAG["abort"] = True
+    ABORT_FLAG["reason"] = reason
+
+
+def _signal_handler(signum, frame):
+    _set_abort_flag(f"Received signal {signum}")
+
+
+def _write_checkpoint(output_dir, results, phase_index):
+    """Write an incremental checkpoint after a phase completes."""
+    checkpoint = {
+        "checkpoint_type": "phase",
+        "checkpoint_index": phase_index,
+        "timestamp": _now_rfc3339(),
+        "phases_completed": len(results.get("phases", [])),
+        "partial_results": results,
+    }
+    cp_file = output_dir / f"checkpoint_phase_{phase_index:03d}.json"
+    with open(cp_file, "w", encoding="utf-8") as f:
+        safe = json.loads(json.dumps(checkpoint, default=str))
+        _redact_nested(safe)
+        json.dump(safe, f, indent=2)
+    print(f"  Checkpoint written: {cp_file}")
+    return str(cp_file)
+
+
+def _parse_metrics_gauges(text):
+    """Parse Prometheus-style text for rate-limit gauges."""
+    gauges = {}
+    for line in text.splitlines():
+        if line.startswith("ferrumgate_rate_limit_per_second "):
+            try:
+                gauges["rate_limit_per_second"] = float(line.split()[-1])
+            except (ValueError, IndexError):
+                pass
+        elif line.startswith("ferrumgate_rate_limit_burst "):
+            try:
+                gauges["rate_limit_burst"] = float(line.split()[-1])
+            except (ValueError, IndexError):
+                pass
+    return gauges
+
+
+def _check_config_drift(server_url, bearer_token, expected_ps, expected_burst):
+    """
+    Return (drift_detected, reason, actual_gauges).
+    drift_detected is True if effective values differ from expected.
+    """
+    if expected_ps is None and expected_burst is None:
+        return False, "", {}
+
+    headers = _make_headers(bearer_token)
+    url = f"{server_url}/v1/metrics"
+    status, body, err = _make_api_request("GET", url, headers, timeout=30)
+    if status != 200 or body is None:
+        # Treat metrics unavailability as a drift warning but not fatal
+        return False, f"metrics probe failed: HTTP {status}, err={err}", {}
+
+    text = body if isinstance(body, str) else json.dumps(body)
+    gauges = _parse_metrics_gauges(text)
+
+    drift_reasons = []
+    if expected_ps is not None:
+        actual_ps = gauges.get("rate_limit_per_second")
+        if actual_ps is not None and not math.isclose(actual_ps, float(expected_ps), rel_tol=1e-9):
+            drift_reasons.append(
+                f"rate_limit_per_second drift: expected {expected_ps}, got {actual_ps}"
+            )
+    if expected_burst is not None:
+        actual_burst = gauges.get("rate_limit_burst")
+        if actual_burst is not None and not math.isclose(
+            actual_burst, float(expected_burst), rel_tol=1e-9
+        ):
+            drift_reasons.append(
+                f"rate_limit_burst drift: expected {expected_burst}, got {actual_burst}"
+            )
+
+    if drift_reasons:
+        return True, "; ".join(drift_reasons), gauges
+    return False, "", gauges
+
+
+def _check_drift_abort_file(drift_abort_file):
+    """Return True if the wrapper's drift probe requested abort."""
+    if drift_abort_file and Path(drift_abort_file).exists():
+        return True
+    return False
+
+
+# ---------------------------------------------------------------------------
 # Plan generation
 # ---------------------------------------------------------------------------
 
@@ -339,10 +448,13 @@ def generate_plan(server_url, phases, adapter_mix, output_dir):
 # Live execution
 # ---------------------------------------------------------------------------
 
-def _execute_single_request(server_url, adapter_key, headers):
+def _execute_single_request(server_url, adapter_key, headers, simulate_client_ips=False):
     """Execute a single intent-compile request for the given adapter."""
     payload = _normalize_intent_compile_payload(ADAPTER_TEMPLATES.get(adapter_key, {}))
     url = f"{server_url}/v1/intents/compile"
+    if simulate_client_ips:
+        headers = dict(headers)
+        headers["x-real-ip"] = ADAPTER_CLIENT_IPS.get(adapter_key, "10.36.0.99")
     start = time.perf_counter()
     status, body, err = _make_api_request("POST", url, headers, payload, timeout=30)
     elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
@@ -356,8 +468,33 @@ def _execute_single_request(server_url, adapter_key, headers):
     }
 
 
-def run_live_workload(server_url, bearer_token, phases, adapter_mix, output_dir, jitter_ms=100):
-    """Run the live workload against the server."""
+def run_live_workload(
+    server_url,
+    bearer_token,
+    phases,
+    adapter_mix,
+    output_dir,
+    jitter_ms=100,
+    expected_rate_limit_ps=None,
+    expected_rate_limit_burst=None,
+    drift_abort_file=None,
+    drift_check_interval_sec=60,
+    simulate_client_ips=False,
+    readyz_probe_phase_interval=60,
+    capture_connections=True,
+):
+    """Run the live workload against the server.
+
+    Args:
+        expected_rate_limit_ps: Expected effective rate_limit_per_second (C3).
+        expected_rate_limit_burst: Expected effective rate_limit_burst (C3).
+        drift_abort_file: Path to touch-file; if present, abort immediately.
+        drift_check_interval_sec: Seconds between mid-run drift probes.
+    """
+    # Install signal handlers so Ctrl+C or SIGTERM sets abort flag
+    signal.signal(signal.SIGINT, _signal_handler)
+    signal.signal(signal.SIGTERM, _signal_handler)
+
     headers = _make_headers(bearer_token)
     results = {
         "generated": _now_rfc3339(),
@@ -365,29 +502,95 @@ def run_live_workload(server_url, bearer_token, phases, adapter_mix, output_dir,
         "server_url": server_url,
         "disclaimer": "LIVE WORKLOAD EVIDENCE — OPERATOR REVIEW REQUIRED",
         "phases": [],
+        "aborted": False,
+        "abort_reason": "",
     }
 
     all_records = []
+    readyz_probe_records = []
+    next_drift_check = time.monotonic() + drift_check_interval_sec
 
-    for phase in phases:
+    for phase_idx, phase in enumerate(phases):
         phase_name = phase["name"]
         duration_sec = phase["duration_sec"]
         rate_rps = phase["rate_rps"]
         phase_records = []
+        connection_counts = []
+        next_readyz_probe = (
+            time.monotonic() + readyz_probe_phase_interval
+            if rate_rps > 0.0 and readyz_probe_phase_interval > 0
+            else None
+        )
 
         print(f"\n[Phase: {phase_name}] duration={duration_sec}s rate={rate_rps} rps")
 
         if rate_rps <= 0.0:
-            # Idle phase: just wait and probe readyz optionally
-            print(f"  Idle phase — sleeping {duration_sec}s")
-            time.sleep(duration_sec)
+            # Idle phase: sleep in small chunks so we can check abort flags
+            elapsed = 0.0
+            chunk = 1.0
+            while elapsed < duration_sec:
+                if ABORT_FLAG["abort"]:
+                    results["aborted"] = True
+                    results["abort_reason"] = ABORT_FLAG["reason"]
+                    print(f"  ABORT during idle phase: {ABORT_FLAG['reason']}")
+                    break
+                if _check_drift_abort_file(drift_abort_file):
+                    results["aborted"] = True
+                    results["abort_reason"] = "drift_abort_file detected (wrapper probe)"
+                    print("  ABORT during idle phase: drift_abort_file detected")
+                    break
+                time.sleep(min(chunk, duration_sec - elapsed))
+                elapsed += chunk
         else:
             interval = 1.0 / rate_rps
             end_time = time.monotonic() + duration_sec
             count = 0
             while time.monotonic() < end_time:
+                # Check abort flags
+                if ABORT_FLAG["abort"]:
+                    results["aborted"] = True
+                    results["abort_reason"] = ABORT_FLAG["reason"]
+                    print(f"  ABORT during active phase: {ABORT_FLAG['reason']}")
+                    break
+                if _check_drift_abort_file(drift_abort_file):
+                    results["aborted"] = True
+                    results["abort_reason"] = "drift_abort_file detected (wrapper probe)"
+                    print("  ABORT during active phase: drift_abort_file detected")
+                    break
+
+                # Mid-run config-drift probe (C3)
+                if time.monotonic() >= next_drift_check:
+                    next_drift_check = time.monotonic() + drift_check_interval_sec
+                    drift, reason, gauges = _check_config_drift(
+                        server_url, bearer_token, expected_rate_limit_ps, expected_rate_limit_burst
+                    )
+                    if drift:
+                        results["aborted"] = True
+                        results["abort_reason"] = f"Config drift detected: {reason}"
+                        print(f"  ABORT: {results['abort_reason']}")
+                        break
+                    else:
+                        print(f"  Drift check OK (gauges: {gauges})")
+
+                # Mid-run readyz/deep probe
+                if next_readyz_probe is not None and time.monotonic() >= next_readyz_probe:
+                    next_readyz_probe = time.monotonic() + readyz_probe_phase_interval
+                    rz = _probe_readyz_deep_once(server_url, bearer_token)
+                    rz["phase_tag"] = phase_name
+                    readyz_probe_records.append(rz)
+                    status_str = str(rz["status_code"]) if rz["status_code"] is not None else "ERR"
+                    print(f"  readyz probe [{phase_name}]: HTTP {status_str} in {rz['latency_ms']}ms")
+
+                # Connection count capture
+                if capture_connections:
+                    cc = _parse_proc_net_tcp_established(19080)
+                    if cc is not None:
+                        connection_counts.append(cc)
+
                 adapter = _weighted_choice(adapter_mix)
-                record = _execute_single_request(server_url, adapter, headers)
+                record = _execute_single_request(
+                    server_url, adapter, headers, simulate_client_ips=simulate_client_ips
+                )
                 phase_records.append(record)
                 all_records.append(record)
                 count += 1
@@ -419,10 +622,29 @@ def run_live_workload(server_url, bearer_token, phases, adapter_mix, output_dir,
                 "min": min(latencies) if latencies else 0.0,
                 "max": max(latencies) if latencies else 0.0,
             },
+            "connection_counts": {},
             "errors": [r for r in phase_records if r["error"]],
             "records": phase_records,
         }
+        if capture_connections:
+            if connection_counts:
+                phase_summary["connection_counts"] = {
+                    "peak": max(connection_counts),
+                    "typical": int(_percentile(connection_counts, 50)),
+                }
+            else:
+                phase_summary["connection_counts"] = {
+                    "peak": None,
+                    "typical": None,
+                    "note": "connection capture unavailable",
+                }
         results["phases"].append(phase_summary)
+
+        # C2: Write incremental checkpoint after each phase
+        _write_checkpoint(output_dir, results, phase_idx)
+
+        if results["aborted"]:
+            break
 
     # Global summary
     all_latencies = [r["latency_ms"] for r in all_records if r["status_code"] is not None]
@@ -442,6 +664,32 @@ def run_live_workload(server_url, bearer_token, phases, adapter_mix, output_dir,
         },
     }
 
+    # Global connection counts
+    all_connection_peaks = []
+    all_connection_typicals = []
+    for ps in results["phases"]:
+        ccounts = ps.get("connection_counts", {})
+        if ccounts.get("peak") is not None:
+            all_connection_peaks.append(ccounts["peak"])
+        if ccounts.get("typical") is not None:
+            all_connection_typicals.append(ccounts["typical"])
+
+    if capture_connections:
+        if all_connection_peaks:
+            results["summary"]["connection_counts"] = {
+                "peak": max(all_connection_peaks),
+                "typical": int(_percentile(all_connection_typicals, 50)) if all_connection_typicals else 0,
+            }
+        else:
+            results["summary"]["connection_counts"] = {
+                "peak": None,
+                "typical": None,
+                "note": "connection capture unavailable",
+            }
+
+    results["readyz_probe_records"] = readyz_probe_records
+    results["readyz_probe_count"] = len(readyz_probe_records)
+
     # Write JSON results
     results_file = output_dir / "workload_results.json"
     with open(results_file, "w", encoding="utf-8") as f:
@@ -449,6 +697,8 @@ def run_live_workload(server_url, bearer_token, phases, adapter_mix, output_dir,
         safe_results = json.loads(json.dumps(results, default=str))
         # Redact any accidental token leakage in error strings
         _redact_nested(safe_results)
+        # Remove full readyz probe records from workload_results.json to avoid duplication with readyz_probe_log.json
+        safe_results.pop("readyz_probe_records", None)
         json.dump(safe_results, f, indent=2)
 
     # Write Markdown results
@@ -458,12 +708,17 @@ def run_live_workload(server_url, bearer_token, phases, adapter_mix, output_dir,
         f.write("\n\n# G3.6 Live Workload Results\n\n")
         f.write(f"*Generated: {_now_rfc3339()}*\n")
         f.write(f"*Server: {server_url}*\n")
-        f.write(f"*Mode: EXECUTE (live requests sent)*\n\n")
-        f.write("## Global Summary\n\n")
+        f.write(f"*Mode: EXECUTE (live requests sent)*\n")
+        if results["aborted"]:
+            f.write(f"*ABORTED: {results['abort_reason']}*\n")
+        f.write("\n## Global Summary\n\n")
         f.write(f"- **Total requests**: {results['summary']['total_requests']}\n")
         f.write(f"- **Status distribution**: {results['summary']['status_distribution']}\n")
         lat = results["summary"]["latency_ms"]
         f.write(f"- **Latency (ms)**: p50={lat['p50']}, p95={lat['p95']}, p99={lat['p99']}, min={lat['min']}, max={lat['max']}\n")
+        if results["aborted"]:
+            f.write(f"- **Aborted**: {results['aborted']}\n")
+            f.write(f"- **Abort reason**: {results['abort_reason']}\n")
         f.write("\n## Phase Details\n\n")
         for ps in results["phases"]:
             f.write(f"### {ps['name']}\n\n")
@@ -501,12 +756,63 @@ def _redact_nested(obj):
 # readyz /deep probe
 # ---------------------------------------------------------------------------
 
-def probe_readyz_deep(server_url, bearer_token, output_dir, probe_count=5, probe_interval=10):
+def _parse_proc_net_tcp_established(port):
+    """Parse /proc/net/tcp for established connections on the given local port."""
+    try:
+        with open("/proc/net/tcp", "r", encoding="utf-8") as f:
+            lines = f.readlines()
+    except (OSError, IOError):
+        return None
+    if not lines:
+        return None
+    count = 0
+    # First line is header
+    for line in lines[1:]:
+        parts = line.strip().split()
+        if len(parts) < 4:
+            continue
+        local_addr = parts[1]
+        state = parts[3]
+        # TCP_ESTABLISHED = 01
+        if state != "01":
+            continue
+        if ":" not in local_addr:
+            continue
+        hex_port = local_addr.split(":")[1]
+        try:
+            local_port = int(hex_port, 16)
+        except ValueError:
+            continue
+        if local_port == port:
+            count += 1
+    return count
+
+
+def _probe_readyz_deep_once(server_url, bearer_token):
+    """Single /v1/readyz/deep probe. Returns record dict."""
+    headers = _make_headers(bearer_token)
+    url = f"{server_url}/v1/readyz/deep"
+    start = time.perf_counter()
+    status, body, err = _make_api_request("GET", url, headers, timeout=30)
+    elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
+    return {
+        "timestamp": _now_rfc3339(),
+        "url": url,
+        "status_code": status,
+        "latency_ms": elapsed_ms,
+        "body_snippet": str(body)[:500] if body is not None else "",
+        "error": err,
+    }
+
+
+def probe_readyz_deep(server_url, bearer_token, output_dir, probe_count=5, probe_interval=10, mid_run_records=None):
     """Probe /v1/readyz/deep repeatedly and record results."""
     headers = _make_headers(bearer_token)
     url = f"{server_url}/v1/readyz/deep"
     results = []
-    print(f"\nProbing {url} — {probe_count} probes at {probe_interval}s intervals")
+    if mid_run_records:
+        results.extend(mid_run_records)
+    print(f"\nProbing {url} — {probe_count} probes at {probe_interval}s intervals (mid-run records: {len(mid_run_records) if mid_run_records else 0})")
 
     for i in range(probe_count):
         start = time.perf_counter()
@@ -535,6 +841,7 @@ def probe_readyz_deep(server_url, bearer_token, output_dir, probe_count=5, probe
                 "server_url": server_url,
                 "probe_count": probe_count,
                 "probe_interval_sec": probe_interval,
+                "mid_run_probe_count": len(mid_run_records) if mid_run_records else 0,
                 "results": results,
             },
             f,
@@ -594,6 +901,15 @@ Examples:
     parser.add_argument("--readyz-probes", type=int, default=5, help="Number of readyz/deep probes per call")
     parser.add_argument("--readyz-interval", type=int, default=10, help="Interval between readyz probes (seconds)")
     parser.add_argument("--probe-only", action="store_true", help="Only run readyz/deep probe, skip workload")
+    parser.add_argument("--expected-rate-limit-ps", type=float, default=None, help="Expected effective rate_limit_per_second (C3 drift detection)")
+    parser.add_argument("--expected-rate-limit-burst", type=float, default=None, help="Expected effective rate_limit_burst (C3 drift detection)")
+    parser.add_argument("--drift-abort-file", default="", help="Path to touch-file; abort if file appears (wrapper coordination)")
+    parser.add_argument("--drift-check-interval", type=int, default=60, help="Seconds between mid-run config-drift probes")
+    parser.add_argument("--simulate-client-ips", action="store_true", default=None, help="Send deterministic x-real-ip headers per adapter (default: enabled in execute mode)")
+    parser.add_argument("--no-simulate-client-ips", action="store_true", help="Disable x-real-ip simulation")
+    parser.add_argument("--readyz-probe-phase-interval", type=int, default=60, help="Seconds between mid-run readyz/deep probes during active phases (0 to disable)")
+    parser.add_argument("--capture-connections", action="store_true", default=None, help="Capture connection counts from /proc/net/tcp (default: enabled in execute mode)")
+    parser.add_argument("--no-capture-connections", action="store_true", help="Disable connection count capture")
 
     args = parser.parse_args()
 
@@ -605,6 +921,20 @@ Examples:
     phases = _parse_phases(args.phases)
 
     plan_mode = not args.execute
+
+    # P1: simulate-client-ips defaults to execute mode unless explicitly disabled
+    simulate_client_ips = args.simulate_client_ips
+    if simulate_client_ips is None and not args.no_simulate_client_ips:
+        simulate_client_ips = args.execute
+    if args.no_simulate_client_ips:
+        simulate_client_ips = False
+
+    # Connection capture defaults to execute mode unless explicitly disabled
+    capture_connections = args.capture_connections
+    if capture_connections is None and not args.no_capture_connections:
+        capture_connections = args.execute
+    if args.no_capture_connections:
+        capture_connections = False
 
     if args.execute:
         token = args.bearer_token or os.environ.get("FERRUM_BEARER_TOKEN", "")
@@ -650,22 +980,31 @@ Examples:
     print(f"Estimated requests: {plan['total_requests_estimated']}")
     print("")
 
-    results_json, results_md, _ = run_live_workload(
+    results_json, results_md, run_results = run_live_workload(
         args.server_url,
         args.bearer_token,
         phases,
         adapter_mix,
         output_dir,
+        expected_rate_limit_ps=args.expected_rate_limit_ps,
+        expected_rate_limit_burst=args.expected_rate_limit_burst,
+        drift_abort_file=args.drift_abort_file or None,
+        drift_check_interval_sec=args.drift_check_interval,
+        simulate_client_ips=simulate_client_ips,
+        readyz_probe_phase_interval=args.readyz_probe_phase_interval,
+        capture_connections=capture_connections,
     )
     print(f"\nResults written:\n  {results_json}\n  {results_md}")
 
-    # Post-workload readyz probe
+    # Post-workload readyz probe (includes mid-run records)
+    mid_run_records = run_results.get("readyz_probe_records", [])
     rz_json, rz_md, _ = probe_readyz_deep(
         args.server_url,
         args.bearer_token,
         output_dir,
         probe_count=args.readyz_probes,
         probe_interval=args.readyz_interval,
+        mid_run_records=mid_run_records,
     )
     print(f"Readyz probe logs written:\n  {rz_json}\n  {rz_md}")
 

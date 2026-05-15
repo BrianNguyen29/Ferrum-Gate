@@ -2,9 +2,9 @@
 
 **Prepared for**: BrianNguyen
 
-**Status**: UNSIGNED — Prepared for operator review. This document is awaiting operator review and signature.
+**Status**: SUPERSEDED — Doc 59 and doc 54 were signed by BrianNguyen on 09/05/2026 for conditional single-node SQLite pilot scope. B3/B4/B5 closed via delegated authority on 2026-05-15. This document is retained as historical rehearsal evidence.
 
-> **Important**: This packet is **NOT signed**. It serves as a review preparation document. Operator signoff is required before any production pilot authorization. Do not treat this as an authorization document.
+> **Important**: This packet was **NOT signed** at the time of preparation. It serves as historical rehearsal evidence. Operator signoff was later completed via docs 54/59 on 09/05/2026. Do not treat this as the current authorization document. See canonical docs 54/59 and 115/66 for current status.
 
 ---
 
@@ -181,7 +181,9 @@ This Phase 3C rehearsal does **not** constitute:
 | G2.7 Accepted-risk review | partial |
 | G2.8 Compensate noop risk | partial |
 
-**Conservative conclusion**: G2 is NOT complete. Phase 3D evidence suggests the GCP non-prod target is ready for operator review only. All G2 gates remain open pending operator signoff.
+**Conservative conclusion**: G2 is NOT complete. Phase 3D evidence suggests the GCP non-prod target is ready for operator review only. All G2 gates were open pending operator signoff at that time.
+
+> **Superseded (2026-05-15)**: Doc 59 and doc 54 were subsequently signed by BrianNguyen on 09/05/2026 for conditional single-node SQLite pilot scope. B3/B4/B5 were closed via delegated authority on 2026-05-15. Conditional single-node SQLite pilot readiness is ACCEPTABLE/YES (scoped only). Production-ready remains NO.
 
 ### Phase 3D Non-Claims
 

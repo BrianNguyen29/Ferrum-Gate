@@ -218,9 +218,10 @@ if [[ $FAILED -eq 0 ]]; then
     echo "  3. Adapt configs/examples to target environment"
     echo "  4. Deploy ferrumd.service and backup service to target host"
     echo "  5. Run Phase 2 probes and D1-D6 drills on target"
-    echo "  6. Complete doc 59 G2.1-G2.8 and sign doc 54"
+    echo "  6. Operator target verification: B3 retention pruning, B4 TLS/proxy, B5 bearer-token witness/auth evidence"
     echo ""
-    echo "G2 gates remain PENDING until operator signs doc 59 and doc 54."
+    echo "Doc 59 G2.1-G2.8 and doc 54 are signed for conditional single-node SQLite pilot scope only."
+    echo "G2 remains CONDITIONAL; remaining target gaps (B3-B5) are operator-owned."
     echo "No production-ready claim. FerrumGate v1 remains RC-ready/conditional."
     echo ""
     exit 0

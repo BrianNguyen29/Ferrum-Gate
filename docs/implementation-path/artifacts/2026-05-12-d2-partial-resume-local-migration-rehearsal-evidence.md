@@ -162,7 +162,7 @@ Target-host operator blocker closure: NO
 
 - D.3–D.6 cadence per `117-postgresql-readiness-acceleration-plan.md`
 - If future engineering prioritizes true live-interruption testing, consider adding a `--delay-ms-per-table` debug flag or using a much larger fixture so that migration duration exceeds human/PTY reaction time.
-- Operator-owned target-host blockers remain open.
+- Operator-owned target-host blockers were open at that time.
 
 ---
 

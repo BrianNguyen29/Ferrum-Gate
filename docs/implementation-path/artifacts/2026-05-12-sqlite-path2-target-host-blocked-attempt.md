@@ -146,7 +146,7 @@ The 401 responses from the compile workload probe are **not** reflected in gover
 ## 10. Explicit Non-Claims
 
 - **No production-ready claim**: This artifact does not make FerrumGate production-ready.
-- **No blocker closure**: B1–B5 and B8 remain open and operator-owned.
+- **No blocker closure**: B1–B5 and B8 were open and operator-owned at that time.
 - **No G3.6 full acceptance**: G3.6 remains conditionally accepted only.
 - **No PostgreSQL deployment**: PostgreSQL/multi-node/HA remains out of scope.
 - **No secret recording**: No bearer token, password, or private key path is recorded in this artifact.

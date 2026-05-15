@@ -447,4 +447,18 @@ can be marked complete:
 
 ---
 
+## Addendum: B3/B4/B5 Checklist Closure via Delegated Authority (2026-05-15)
+
+On 2026-05-15, the user authorized the assistant to close evidence-backed B3/B4/B5 checklist items. The closure is recorded in [`artifacts/2026-05-15-b3-b4-b5-delegated-signing-status.md`](./artifacts/2026-05-15-b3-b4-b5-delegated-signing-status.md) and reflected in `115-sqlite-path2-target-host-checklist.md` and `66-path-2-operator-handoff.md`.
+
+- **B3**: Run id `20260515T1606Z-b3-retention`; old matching sentinel pruned; nonmatching sentinel preserved; new backup `ferrumgate.db_1778861166.db` verified OK rc=0; service active; local readyz 200; SSH firewall restored `118.69.4.63/32`; pre-existing `ferrumgate.db_1778783894.db` within retention window preserved.
+- **B4**: Public HTTPS `healthz`/`readyz`/`readyz/deep` returned 200; HTTP→HTTPS redirect returned 308; with-token auth through proxy returned 200 after target-env remediation.
+- **B5**: No-token `GET /v1/approvals` returned 401; with-token `GET /v1/approvals` returned 200 after target-env remediation; token not recorded.
+
+**Conditional single-node SQLite pilot readiness**: ACCEPTABLE/YES (scoped only). Production-ready remains NO. PostgreSQL/HA/multi-node remain NO.
+
+Original operator signature by BrianNguyen on 09/05/2026 is preserved unchanged.
+
+---
+
 *Appendix generated: 2026-04-28. All templates are repo-side tooling validation only. Operator signoff still required before production pilot begins.*
