@@ -59,7 +59,7 @@ README.md and CONTRIBUTING.md now correctly reference actual onboarding paths. O
 - P0 blockers: All closed — CI hardened, D1–D6 target-host drills passed (2026-05-13), restore drill passed (2026-05-15), backup automation verified with retention pruning (run id `20260515T1606Z-b3-retention`), G2.1–G2.8 signed, operator signoff obtained
 - Active operator blockers (Blocks A/B/C):
   - Block A: BLOCKED — no real owned domain or DNS available yet
-  - Block B: PARTIAL — inbox delivery confirmed for at least one contact (G-B1 partial); secondary contact (G-B2) and escalation matrix (G-B4) remain pending; bearer token rotation executed on VM (G-B3 partial — new token 200, old token 401, ROTATION_RESULT=PASS); SendGrid API key rotation remains pending/operator-blocked
+  - Block B: PARTIAL — inbox delivery confirmed for primary and secondary email paths (G-B1/G-B2); escalation matrix populated enough for primary+secondary email path (G-B4); bearer token rotation executed on VM (G-B3 partial — new token 200, old token 401, ROTATION_RESULT=PASS); SendGrid API key rotation remains pending/operator-blocked
   - Block C: CLOSED — C1 keyless backup verified, residual key removed, offsite sync confirmed
 - P1 items: readiness semantics, configurable rate limit, structured logging, metrics/observability — all done
 - No production-ready claim; FerrumGate v1 is RC-ready/conditional; G2 requires operator action

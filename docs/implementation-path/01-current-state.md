@@ -111,13 +111,14 @@ All P0–P2 items closed. U1–U4 upgrade tracks complete. P5a–P5e engineering
 
 Remaining operator blockers before pilot (as of 2026-05-16):
 - **Block A — Real owned domain**: BLOCKED — operator confirmed no real domain or DNS available yet
-- **Block B — Off-VM alerting**: PARTIAL — operator confirmed inbox receipt for at least one contact (TEST_ID `fg-inbox-check-20260516-052910`); secondary contact delivery confirmed (TEST_ID `fg-secondary-check-20260516-153221`, G-B2); escalation matrix populated enough for primary+secondary email path (G-B4); bearer token rotation executed on VM (G-B3 partial — new token 200, old token 401, ROTATION_RESULT=PASS); SendGrid API key rotation remains pending/operator-blocked
+- **Block B — Off-VM alerting**: PARTIAL — operator confirmed inbox receipt for primary and secondary contacts (TEST_IDs `fg-inbox-check-20260516-052910` and `fg-secondary-check-20260516-153221`, G-B1/G-B2); escalation matrix populated enough for primary+secondary email path (G-B4); bearer token rotation executed on VM (G-B3 partial — new token 200, old token 401, ROTATION_RESULT=PASS); SendGrid API key rotation remains pending/not VM-verified (`SENDGRID_SECRET_NONEMPTY=YES`, `SENDGRID_BACKUP_COUNT=0`, `SENDGRID_SECRET_MTIME_UTC=2026-05-10 04:58:58.710517174 +0000`)
 - **Block C — Keyless backup**: CLOSED — C1 keyless backup verified, residual key removed, offsite sync confirmed; `n2-standard-2` remains temporary operational type
 
 Engineering/operator items completed (May 16):
 - `cargo-deny v0.19.6` and `cargo-audit v0.22.1` installed; `make audit` passes with both tools (cargo-deny advisory DB fetched, advisories ok; cargo-audit loaded 1090 advisories, scanned 384 dependencies, 0 actionable issues). `RUSTSEC-2023-0071` (`rsa` via `sqlx-mysql`) ignored as uncompiled optional dependency blocked by `default-features = false` on `sqlx`.
 - Bearer token rotation executed on VM securely: token generated on VM and never printed; old token backed up; env updated; ferrumgate.service active; LOCAL_READYZ=200; LOCAL_DEEP=200; new token HTTP=200; old token HTTP=401; ROTATION_RESULT=PASS; PUBLIC_READYZ=200. SSH firewall temporarily opened to `14.239.184.129/32` for live work and restored to `118.69.4.63/32` after.
 - Secondary alert contact delivery confirmed: active AlertManager config (`/etc/prometheus/alertmanager.yml`) validated with `ACTIVE_CONFIG_CHECK=PASS`, `ALERTMANAGER_SERVICE=active`, `ACTIVE_SECONDARY_PRESENT=YES`, `ACTIVE_EMAIL_TO_COUNT=4`; synthetic alert posted successfully (`ALERT_POST_HTTP=200`, `ALERT_VISIBLE=YES`, TEST_ID `fg-secondary-check-20260516-153221`, START_AT_UTC `2026-05-16T15:32:21Z`); operator confirmed secondary inbox receipt.
+- SendGrid API key rotation VM verification: secret file nonempty (`SENDGRID_SECRET_NONEMPTY=YES`), zero backup files (`SENDGRID_BACKUP_COUNT=0`), secret mtime `2026-05-10 04:58:58.710517174 +0000` — rotation not executed on VM; remains pending operator dashboard workflow.
 
 Historical completed items (May 13–16):
 - ✅ Target-host D1–D6 evidence — passed 6/6 on 2026-05-13
