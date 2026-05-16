@@ -252,11 +252,24 @@ The `alertmanager-sendgrid-bridge.example.yaml` configures AlertManager to send 
 
 ---
 
+## Addendum: Production Blocker Cross-Reference (2026-05-15)
+
+Phase 4A SendGrid bridge is the technical template for **Block B — Off-VM Alerting** in the production blocker review.
+The bridge remains a scaffold until the operator provides a real provider, API key, and contacts.
+
+| Phase 4A Item | Production Blocker | Runbook / Policy |
+|---------------|-------------------|------------------|
+| SendGrid bridge template | Block B | [`artifacts/2026-05-15-r4-production-blocker-execution-runbook.md`](./artifacts/2026-05-15-r4-production-blocker-execution-runbook.md) §Block B |
+| Alert rotation policy | Block B | [`artifacts/2026-05-15-r1-alerting-rotation-policy.md`](./artifacts/2026-05-15-r1-alerting-rotation-policy.md) |
+
+---
+
 ## Document History
 
 | Date | Change |
 |------|--------|
 | 2026-05-09 | Initial Phase 4A ops hardening and alert bridge plan. Scaffolds only. No live GCP mutation. No SendGrid API key stored. |
+| 2026-05-15 | Added production blocker cross-reference addendum linking Block B to R1 and R4. No live changes. |
 
 ---
 

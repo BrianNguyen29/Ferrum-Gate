@@ -235,11 +235,24 @@ Located in `configs/monitoring/`:
 
 ---
 
+## Addendum: Production Blocker Cross-Reference (2026-05-15)
+
+Phase 3G scaffolds map directly to the active production blockers documented in `67-production-readiness-roadmap.md`.
+
+| Phase 3G Component | Production Blocker | Runbook / Policy |
+|--------------------|-------------------|------------------|
+| Real-Domain TLS (`phase3g_configure_real_domain.sh`) | Block A | [`artifacts/2026-05-15-r4-production-blocker-execution-runbook.md`](./artifacts/2026-05-15-r4-production-blocker-execution-runbook.md) §Block A |
+| Offsite Backup (`phase3g_configure_offsite_backup.sh`) | Block C | [`artifacts/2026-05-15-r2-key-based-backup-risk-acceptance.md`](./artifacts/2026-05-15-r2-key-based-backup-risk-acceptance.md) and R4 §Block C |
+| Monitoring (`phase3g_configure_monitoring.sh`) | Block B (local-only baseline) | [`artifacts/2026-05-15-r4-production-blocker-execution-runbook.md`](./artifacts/2026-05-15-r4-production-blocker-execution-runbook.md) §Block B |
+
+---
+
 ## Document History
 
 | Date | Change |
 |------|--------|
 | 2026-05-09 | Initial Phase 3G ops hardening plan. Scaffolds only. No GCP mutation. |
+| 2026-05-15 | Added production blocker cross-reference addendum linking Phase 3G components to R2 and R4. No live changes. |
 
 ---
 

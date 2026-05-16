@@ -191,16 +191,124 @@ Phase 3 PostgreSQL (Path 3) — both are outside the scope of this roadmap.
 ## Production Blocker Review (2026-05-15)
 
 > **Scope**: Operator-action blockers for single-node SQLite v1 conditional pilot.
-> **Status**: B1/B2/B3/B4/B5 closed/accepted or delegated-closed. New blockers identified.
+> **Status**: B1/B2/B3/B4/B5 closed/accepted or delegated-closed. New active blockers documented below as Blocks A/B/C with exact commands, evidence gates, and runbook references.
 > **No production-ready claim**.
 
 ### Active Operator-Action Blockers (Sequenced)
 
 | # | Blocker | Owner | Evidence Gate | Sequencing |
 |---|---------|-------|---------------|------------|
-| 1 | **Real owned domain** | Operator | DuckDNS is not a production-owned domain; operator must procure and configure a production domain | P0 — before any external exposure |
-| 2 | **Off-VM alerting / external notification** | Operator | Alerting must reach an off-VM channel (email/SMS/pager) with confirmed delivery | P0 — before unattended operation |
-| 3 | **Keyless backup / VM OAuth scope blocker** | Operator | Backup storage must not rely on VM-instance OAuth scopes; use service-account key or workload identity with scoped storage permissions; **or** operator explicitly accepts key-based backup risk | P0 — before production data volume |
+| 1 | **Real owned domain** (Block A) | Operator | DuckDNS is not a production-owned domain; operator must procure and configure a production domain | P0 — before any external exposure |
+| 2 | **Off-VM alerting / external notification** (Block B) | Operator | Alerting must reach an off-VM channel (email/SMS/pager) with confirmed delivery | P0 — before unattended operation |
+| 3 | **Keyless backup / VM OAuth scope blocker** (Block C) | Operator | Backup storage must not rely on VM-instance OAuth scopes; use service-account key or workload identity with scoped storage permissions; **or** operator explicitly accepts key-based backup risk | P0 — before production data volume |
+
+### Block A — Real Owned Domain
+
+**Current state**: VM uses DuckDNS (`ferrumgate.duckdns.org`). DuckDNS is acceptable for non-production exploration but is **not** a production-owned domain.
+
+**VM evidence**:
+- External IP: `34.158.51.8`
+- VM: `ferrumgate-nonprod` in `asia-southeast1-a`
+- Script: `scripts/gcp/phase3g_configure_real_domain.sh`
+
+**Exact command (placeholder)**:
+```bash
+bash scripts/gcp/phase3g_configure_real_domain.sh --confirm \
+  --project-id fairy-b13f4 \
+  --zone asia-southeast1-a \
+  --vm-name ferrumgate-nonprod \
+  --real-domain <REAL_DOMAIN>
+```
+
+**Operator inputs required**:
+- `REAL_DOMAIN`: operator-owned domain with DNS A record pointing to `34.158.51.8`
+
+**Evidence gates**:
+| Gate | Evidence |
+|------|----------|
+| G-A1 | `curl` HTTPS 200 on `https://<REAL_DOMAIN>/v1/healthz` |
+| G-A2 | `curl` HTTPS 200 on `https://<REAL_DOMAIN>/v1/approvals` with bearer token |
+| G-A3 | `dig` output showing `<REAL_DOMAIN>` → `34.158.51.8` |
+
+**Rollback**: Restore `/etc/caddy/Caddyfile.backup.*` on VM and reload Caddy.
+
+**Reference**: [`artifacts/2026-05-15-r4-production-blocker-execution-runbook.md`](./artifacts/2026-05-15-r4-production-blocker-execution-runbook.md) §Block A.
+
+---
+
+### Block B — Off-VM Alerting
+
+**Current state**: Prometheus + AlertManager are VM-local only. No off-VM alert delivery is configured.
+
+**Prior evidence**: Direct API test and AlertManager webhook delivered in non-prod (Phase 3H/4A).
+
+**SendGrid bridge template**: `configs/monitoring/alertmanager-sendgrid-bridge.example.yaml` (placeholder only; no real API key).
+
+**Operator inputs required**:
+- `ALERT_PROVIDER`: SendGrid, SES, PagerDuty, Slack webhook, or SMTP relay
+- `PROVIDER_API_KEY`: stored VM-locally at `/etc/ferrumgate/secrets/alert-provider-api-key`
+- `PRIMARY_CONTACT`: email or webhook URL
+- `SECONDARY_CONTACT`: escalation email or webhook URL
+- `ALERT_SENDER`: verified sender identity
+
+**Evidence gates**:
+| Gate | Evidence |
+|------|----------|
+| G-B1 | Test alert delivered to `PRIMARY_CONTACT` |
+| G-B2 | Test alert delivered to `SECONDARY_CONTACT` |
+| G-B3 | Key rotation procedure executed at least once in non-prod |
+| G-B4 | Escalation matrix documented and acknowledged by operator |
+
+**Rollback**: Remove external receivers from AlertManager config; reload AlertManager; delete API key secret.
+
+**Reference**:
+- [`artifacts/2026-05-15-r1-alerting-rotation-policy.md`](./artifacts/2026-05-15-r1-alerting-rotation-policy.md)
+- [`artifacts/2026-05-15-r4-production-blocker-execution-runbook.md`](./artifacts/2026-05-15-r4-production-blocker-execution-runbook.md) §Block B.
+
+---
+
+### Block C — Keyless Backup / VM OAuth Scope Blocker
+
+**Current state**: VM service account `905477274418-compute@developer.gserviceaccount.com` has OAuth scope `devstorage.read_only` but **not** `devstorage.read_write` or `cloud-platform`. Keyless GCS write is blocked.
+
+**Two paths**:
+
+#### Path C1 — Stop-start VM with GCS write scopes (keyless, preferred)
+- Primary: stop VM, update scopes via `set-service-account`, start VM (brief downtime)
+- Fallback (C1b): recreate VM from snapshot only if `set-service-account` fails
+- Zero long-lived key material on disk
+- Exact commands in runbook R4 §C.3
+
+#### Path C2 — Accept key-based backup risk with rotation procedure
+- Zero downtime
+- Service account key JSON stored on VM at `/etc/ferrumgate/secrets/gcs-service-account.json`
+- Operator must sign risk acceptance statement (see `R2` artifact)
+- 90-day key rotation required
+- Exact commands in runbook R4 §C.4
+
+**Operator inputs required**:
+- Path selection: `C1` or `C2`
+- `GCS_BUCKET`: e.g., `gs://ferrumgate-nonprod-backups-fairy-b13f4-20260509/ferrumgate/`
+- `OPERATOR_BACKUP_SA_ID` (C2 only): short ID for `gcloud iam service-accounts create`, e.g., `ferrumgate-backup`
+- `OPERATOR_BACKUP_SA_EMAIL` (C2 only): full email, e.g., `OPERATOR_BACKUP_SA_ID@fairy-b13f4.iam.gserviceaccount.com`
+
+**Evidence gates**:
+| Gate | Evidence |
+|------|----------|
+| G-C1 | Operator selects C1 or C2 and records decision with rationale |
+| G-C2 | If C1: VM scopes updated via `set-service-account` to include `storage-rw`; `gsutil rsync` from VM succeeds without key file |
+| G-C3 | If C2: Signed risk acceptance statement; key file present at `/etc/ferrumgate/secrets/gcs-service-account.json` with `chmod 600`; `gsutil rsync` succeeds |
+| G-C4 | If C2: Key rotation procedure documented and schedule acknowledged |
+
+**Rollback**:
+- C1: Stop VM, revert to original scopes with `set-service-account`, start VM; fallback C1b uses snapshot restore
+- C2: Revoke key at IAM; remove key file from VM; remove gsutil auth
+
+**Reference**:
+- [`artifacts/2026-05-15-r2-key-based-backup-risk-acceptance.md`](./artifacts/2026-05-15-r2-key-based-backup-risk-acceptance.md)
+- [`artifacts/2026-05-15-r4-production-blocker-execution-runbook.md`](./artifacts/2026-05-15-r4-production-blocker-execution-runbook.md) §Block C.
+
+---
 
 ### Settled Decisions (Not Blockers)
 
@@ -231,6 +339,9 @@ Phase 3 PostgreSQL (Path 3) — both are outside the scope of this roadmap.
 | This doc | [`73-mcp-server-phase-d-implementation-plan.md`](./73-mcp-server-phase-d-implementation-plan.md) | Phase D-0 read-only REST client plan + D-1 deferred governance pipeline |
 | This doc | [`artifacts/2026-05-13-d1-d6-target-host-evidence.md`](./artifacts/2026-05-13-d1-d6-target-host-evidence.md) | D1–D6 target-host drill pass evidence |
 | This doc | [`artifacts/2026-05-15-g36-t3b-restore-drill-fixed-success-evidence.md`](./artifacts/2026-05-15-g36-t3b-restore-drill-fixed-success-evidence.md) | T3b fixed restore drill success and G3.6 full acceptance |
+| This doc | [`artifacts/2026-05-15-r1-alerting-rotation-policy.md`](./artifacts/2026-05-15-r1-alerting-rotation-policy.md) | Block B alerting rotation policy |
+| This doc | [`artifacts/2026-05-15-r2-key-based-backup-risk-acceptance.md`](./artifacts/2026-05-15-r2-key-based-backup-risk-acceptance.md) | Block C key-based backup risk acceptance and C1/C2 decision matrix |
+| This doc | [`artifacts/2026-05-15-r4-production-blocker-execution-runbook.md`](./artifacts/2026-05-15-r4-production-blocker-execution-runbook.md) | Exact command sequences and rollback for Blocks A/B/C |
 
 ---
 
@@ -253,9 +364,10 @@ Phase 3 PostgreSQL (Path 3) — both are outside the scope of this roadmap.
 |---|---|---|
 | 2026-05-03 | Initial production-readiness roadmap | Engineering |
 | 2026-05-15 | Reconciled with latest evidence: P0.2 D1–D6 passed 6/6 on 2026-05-13; P0.3 restore drill passed on 2026-05-15; P0.4 retention pruning verified with run id `20260515T1606Z-b3-retention`; P2.4/P2.5 closed via delegated authority 2026-05-15. Added production blocker review with active blockers (real owned domain, off-VM alerting, keyless backup) and settled decisions (PostgreSQL=NO, HA=NO, CI cost accepted). Local full gate evidence recorded. No production-ready claim preserved. | Engineering |
+| 2026-05-15 | Added Blocks A/B/C detail with exact command sequences, evidence gates, and rollback. Cross-referenced new R1–R4 artifacts: alerting rotation policy (`R1`), key-based backup risk acceptance (`R2`), production blocker execution runbook (`R4`). Updated cross-reference index. No production-ready claim preserved. | Engineering |
 
 ---
 
 *Document created: 2026-05-03. Production-readiness roadmap — no production-ready claim, no G2 complete, no operator signature pre-populated.*
 
-*Next update: Operator-owned target execution evidence provided for D1–D6 (2026-05-13), restore drill (2026-05-15), and backup automation retention pruning closed (run id 20260515T1606Z-b3-retention). Active production blockers: real owned domain, off-VM alerting, keyless backup/VM OAuth scope. Engineering items tracked in `11-remaining-tasks.md`.*
+*Next update: Operator-owned target execution evidence provided for D1–D6 (2026-05-13), restore drill (2026-05-15), and backup automation retention pruning closed (run id 20260515T1606Z-b3-retention). Active production blockers: real owned domain (Block A), off-VM alerting (Block B), keyless backup/VM OAuth scope (Block C). Runbooks and evidence gates documented in R1–R4 artifacts. Engineering items tracked in `11-remaining-tasks.md`.*
