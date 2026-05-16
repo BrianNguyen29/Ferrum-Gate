@@ -7,7 +7,7 @@ use axum::{
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{Duration, Utc};
-use ferrum_cap::{CapabilityError, CapabilityService};
+use ferrum_cap::{CapabilityError, CapabilityService, InMemoryCapabilityService};
 use ferrum_firewall::{FirewallContext, SemanticFirewall, TaintScoringFirewall};
 use ferrum_graph::LineageGraph;
 use ferrum_pdp::StaticPdpEngine;
@@ -25,9 +25,10 @@ use ferrum_proto::{
     ProvenanceQueryResponse, ResourceSelector, RiskTier, RollbackClass, RollbackTarget, TimeBudget,
     TrustContextSummary, TrustLabel as ProtoTrustLabel,
 };
-use ferrum_rollback::RollbackService;
+use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
+use ferrum_store::SqliteStore;
 use ferrum_store::StoreFacade;
-use ferrum_sync::BridgeToolInfo;
+use ferrum_sync::{BridgeToolInfo, RuntimeBridge};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -5947,6 +5948,33 @@ fn evaluate_matcher(
     }
 }
 
+/// Test helper: create a GatewayRuntime with an in-memory SQLite store.
+///
+/// Intended for integration tests that need a real gateway runtime.
+/// Not for production use.
+pub async fn test_runtime() -> GatewayRuntime {
+    test_runtime_with_bridges(vec![]).await
+}
+
+/// Test helper: create a GatewayRuntime with an in-memory SQLite store
+/// and the given runtime bridges.
+///
+/// Intended for integration tests that need a real gateway runtime.
+/// Not for production use.
+pub async fn test_runtime_with_bridges(bridges: Vec<Arc<dyn RuntimeBridge>>) -> GatewayRuntime {
+    let pdp = Arc::new(StaticPdpEngine);
+    let cap = Arc::new(InMemoryCapabilityService::default());
+
+    let mut registry = AdapterRegistry::default();
+    registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
+    let rollback = Arc::new(RollbackService::new(Arc::new(registry)));
+
+    let store = Arc::new(SqliteStore::connect("sqlite::memory:").await.unwrap());
+    store.apply_embedded_migrations().await.unwrap();
+
+    GatewayRuntime::new(pdp, cap, rollback, store as Arc<dyn StoreFacade>, bridges)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5962,24 +5990,6 @@ mod tests {
     use ferrum_sync::{BridgeToolInfo, ExternalEventSource, McpBridge, RuntimeBridge};
     use std::sync::Arc;
     use tower::ServiceExt;
-
-    async fn test_runtime() -> GatewayRuntime {
-        test_runtime_with_bridges(vec![]).await
-    }
-
-    async fn test_runtime_with_bridges(bridges: Vec<Arc<dyn RuntimeBridge>>) -> GatewayRuntime {
-        let pdp = Arc::new(StaticPdpEngine);
-        let cap = Arc::new(InMemoryCapabilityService::default());
-
-        let mut registry = AdapterRegistry::default();
-        registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
-        let rollback = Arc::new(RollbackService::new(Arc::new(registry)));
-
-        let store = Arc::new(SqliteStore::connect("sqlite::memory:").await.unwrap());
-        store.apply_embedded_migrations().await.unwrap();
-
-        GatewayRuntime::new(pdp, cap, rollback, store as Arc<dyn StoreFacade>, bridges)
-    }
 
     /// A test-only StoreFacade that wraps a real store but always fails health_check.
     /// Used to verify /v1/readyz/deep returns 503 when the store is unhealthy.

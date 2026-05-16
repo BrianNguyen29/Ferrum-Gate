@@ -22,3 +22,5 @@ hex = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 mockito = "1.6"
 tiny_http = "0.12"
+ferrum-gateway = { path = "../ferrum-gateway" }
+axum = { workspace = true }

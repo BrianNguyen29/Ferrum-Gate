@@ -5043,4 +5043,266 @@ mod tests {
             }
         }
     }
+
+    // -------------------------------------------------------------------------
+    // D-1 Slice 6: Full MCP→Gateway Local Lifecycle Smoke Test
+    // -------------------------------------------------------------------------
+
+    /// Start a real gateway server in a background thread with bearer auth enabled.
+    /// Returns the socket address and a thread handle.
+    fn start_test_gateway_server() -> (std::net::SocketAddr, std::thread::JoinHandle<()>) {
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        let handle = std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                let gateway_runtime = ferrum_gateway::test_runtime().await;
+                let mut server_config = ferrum_gateway::ServerConfig::default();
+                server_config.auth_mode = ferrum_gateway::AuthMode::Bearer;
+                server_config.bearer_token = Some("test-smoke-token".to_string());
+
+                let router = ferrum_gateway::build_router_with_auth(gateway_runtime, server_config);
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let addr = listener.local_addr().unwrap();
+
+                tx.send(addr).unwrap();
+
+                axum::serve(listener, router).await.unwrap();
+            });
+        });
+
+        let addr = rx.recv().unwrap();
+        (addr, handle)
+    }
+
+    /// Extract the first ToolContent text as parsed JSON.
+    fn extract_first_text_json(result: &serde_json::Value) -> serde_json::Value {
+        let text = result.get("content").unwrap().as_array().unwrap()[0]
+            .get("text")
+            .unwrap()
+            .as_str()
+            .unwrap();
+        serde_json::from_str(text).unwrap()
+    }
+
+    /// D-1 Slice 6: full MCP→gateway lifecycle smoke through real local gateway.
+    ///
+    /// Steps: compile → evaluate → mint → authorize → prepare → execute → verify.
+    /// Uses a real in-process gateway server with bearer auth and in-memory SQLite.
+    #[test]
+    fn test_d1_slice6_full_lifecycle_real_gateway_smoke() {
+        let (addr, _server_thread) = start_test_gateway_server();
+        // Give the server a moment to start accepting connections
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        let config = ClientConfig::new()
+            .base_url(&format!("http://{}", addr))
+            .bearer_token("test-smoke-token");
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+        let rate_limiter = RateLimiter::default_mcp();
+        let actor_id = "smoke-test-actor";
+
+        // ------------------------------------------------------------------
+        // Step 1: submit_intent (compile)
+        // ------------------------------------------------------------------
+        let request = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            method: "tools/call".to_string(),
+            id: Some(JsonRpcId::Number(1)),
+            params: Some(serde_json::json!({
+                "name": "ferrum_gate_submit_intent",
+                "arguments": {
+                    "principal_id": "550e8400-e29b-41d4-a716-446655440000",
+                    "title": "Slice 6 Smoke Test",
+                    "goal": "Test full MCP→gateway lifecycle",
+                    "action_type": "fs_write",
+                    "target": "/tmp/smoke_test.txt",
+                    "scope": "fs:write:/tmp/smoke_test.txt",
+                    "risk_tier": "Low"
+                }
+            })),
+        };
+        let response = dispatch_with_client(request, &client, actor_id, &rate_limiter);
+        let result = match response {
+            JsonRpcResponse::Success(r) => r.result,
+            JsonRpcResponse::Error(e) => {
+                panic!("Step 1 (submit_intent) failed: {:?}", e)
+            }
+        };
+        let envelope_json = extract_first_text_json(&result);
+        let intent_id_str = envelope_json
+            .get("envelope")
+            .unwrap()
+            .get("intent_id")
+            .unwrap()
+            .as_str()
+            .unwrap();
+        let _intent_id = ferrum_proto::IntentId(uuid::Uuid::parse_str(intent_id_str).unwrap());
+
+        // ------------------------------------------------------------------
+        // Step 2: evaluate_intent
+        // ------------------------------------------------------------------
+        let proposal_id = ferrum_proto::ProposalId::new();
+        let request = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            method: "tools/call".to_string(),
+            id: Some(JsonRpcId::Number(2)),
+            params: Some(serde_json::json!({
+                "name": "ferrum_gate_evaluate_intent",
+                "arguments": {
+                    "proposal_id": proposal_id.to_string(),
+                    "intent_id": intent_id_str,
+                    "title": "test proposal",
+                    "tool_name": "fs.read",
+                    "server_name": "fs-server",
+                    "arguments": {},
+                    "expected_effect": "read file",
+                    "estimated_risk": "Low"
+                }
+            })),
+        };
+        let response = dispatch_with_client(request, &client, actor_id, &rate_limiter);
+        match response {
+            JsonRpcResponse::Success(_) => {}
+            JsonRpcResponse::Error(e) => {
+                panic!("Step 2 (evaluate_intent) failed: {:?}", e)
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // Step 3: mint_capability
+        // ------------------------------------------------------------------
+        let request = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            method: "tools/call".to_string(),
+            id: Some(JsonRpcId::Number(3)),
+            params: Some(serde_json::json!({
+                "name": "ferrum_gate_mint_capability",
+                "arguments": {
+                    "intent_id": intent_id_str,
+                    "proposal_id": proposal_id.to_string(),
+                    "tool_name": "fs.read",
+                    "server_name": "fs-server"
+                }
+            })),
+        };
+        let response = dispatch_with_client(request, &client, actor_id, &rate_limiter);
+        let result = match response {
+            JsonRpcResponse::Success(r) => r.result,
+            JsonRpcResponse::Error(e) => {
+                panic!("Step 3 (mint_capability) failed: {:?}", e)
+            }
+        };
+        let mint_json = extract_first_text_json(&result);
+        let capability_id_str = mint_json
+            .get("lease")
+            .unwrap()
+            .get("capability_id")
+            .unwrap()
+            .as_str()
+            .unwrap();
+
+        // ------------------------------------------------------------------
+        // Step 4: authorize_execution
+        // ------------------------------------------------------------------
+        let request = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            method: "tools/call".to_string(),
+            id: Some(JsonRpcId::Number(4)),
+            params: Some(serde_json::json!({
+                "name": "ferrum_gate_authorize_execution",
+                "arguments": {
+                    "proposal_id": proposal_id.to_string(),
+                    "capability_id": capability_id_str
+                }
+            })),
+        };
+        let response = dispatch_with_client(request, &client, actor_id, &rate_limiter);
+        let result = match response {
+            JsonRpcResponse::Success(r) => r.result,
+            JsonRpcResponse::Error(e) => {
+                panic!("Step 4 (authorize_execution) failed: {:?}", e)
+            }
+        };
+        let auth_json = extract_first_text_json(&result);
+        let execution_id_str = auth_json
+            .get("execution")
+            .unwrap()
+            .get("execution_id")
+            .unwrap()
+            .as_str()
+            .unwrap();
+
+        // ------------------------------------------------------------------
+        // Step 5: prepare_execution
+        // ------------------------------------------------------------------
+        let request = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            method: "tools/call".to_string(),
+            id: Some(JsonRpcId::Number(5)),
+            params: Some(serde_json::json!({
+                "name": "ferrum_gate_prepare_execution",
+                "arguments": {
+                    "execution_id": execution_id_str
+                }
+            })),
+        };
+        let response = dispatch_with_client(request, &client, actor_id, &rate_limiter);
+        match response {
+            JsonRpcResponse::Success(_) => {}
+            JsonRpcResponse::Error(e) => {
+                panic!("Step 5 (prepare_execution) failed: {:?}", e)
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // Step 6: execute_prepared
+        // ------------------------------------------------------------------
+        let request = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            method: "tools/call".to_string(),
+            id: Some(JsonRpcId::Number(6)),
+            params: Some(serde_json::json!({
+                "name": "ferrum_gate_execute_prepared",
+                "arguments": {
+                    "execution_id": execution_id_str,
+                    "payload": {}
+                }
+            })),
+        };
+        let response = dispatch_with_client(request, &client, actor_id, &rate_limiter);
+        match response {
+            JsonRpcResponse::Success(_) => {}
+            JsonRpcResponse::Error(e) => {
+                panic!("Step 6 (execute_prepared) failed: {:?}", e)
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // Step 7: verify
+        // ------------------------------------------------------------------
+        let request = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            method: "tools/call".to_string(),
+            id: Some(JsonRpcId::Number(7)),
+            params: Some(serde_json::json!({
+                "name": "ferrum_gate_verify",
+                "arguments": {
+                    "execution_id": execution_id_str
+                }
+            })),
+        };
+        let response = dispatch_with_client(request, &client, actor_id, &rate_limiter);
+        let result = match response {
+            JsonRpcResponse::Success(r) => r.result,
+            JsonRpcResponse::Error(e) => {
+                panic!("Step 7 (verify) failed: {:?}", e)
+            }
+        };
+        let verify_json = extract_first_text_json(&result);
+        assert!(
+            verify_json.get("verified").unwrap().as_bool().unwrap(),
+            "Step 7 should return verified=true"
+        );
+    }
 }
