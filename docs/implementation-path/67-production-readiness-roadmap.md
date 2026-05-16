@@ -204,7 +204,7 @@ Phase 3 PostgreSQL (Path 3) — both are outside the scope of this roadmap.
 
 ### Block A — Real Owned Domain
 
-**Current state**: VM uses DuckDNS (`ferrumgate.duckdns.org`). DuckDNS is acceptable for non-production exploration but is **not** a production-owned domain.
+**Current state**: VM uses DuckDNS (`ferrumgate.duckdns.org`). DuckDNS is acceptable for non-production exploration but is **not** a production-owned domain. Operator confirmed no real owned domain and no DNS configuration are available yet.
 
 **VM evidence**:
 - External IP: `34.158.51.8`
@@ -238,7 +238,7 @@ bash scripts/gcp/phase3g_configure_real_domain.sh --confirm \
 
 ### Block B — Off-VM Alerting
 
-**Current state**: Prometheus + AlertManager active. SendGrid API key secret present on VM. AlertManager config contains SendGrid webhook receiver. Synthetic alert POST returned HTTP 200 and was visible in AlertManager API.
+**Current state**: Prometheus + AlertManager active. SendGrid API key secret present on VM. AlertManager config contains SendGrid webhook receiver. Synthetic alert POST returned HTTP 200 and was visible in AlertManager API. Operator confirmed receipt of inbox-check alert `TEST_ID=fg-inbox-check-20260516-052910` for at least one contact, with email content matching subject `FerrumGate Alert: FerrumGateInboxDeliveryCheck`, status `resolved`, severity `warning`, service `ferrumgate`. Secondary-contact confirmation remains pending unless separately verified.
 
 **Prior evidence**: Direct API test and AlertManager webhook delivered in non-prod (Phase 3H/4A).
 
@@ -254,8 +254,8 @@ bash scripts/gcp/phase3g_configure_real_domain.sh --confirm \
 **Evidence gates**:
 | Gate | Evidence | Status |
 |------|----------|--------|
-| G-B1 | Test alert delivered to `PRIMARY_CONTACT` | ☐ Pending inbox confirmation |
-| G-B2 | Test alert delivered to `SECONDARY_CONTACT` | ☐ Pending inbox confirmation |
+| G-B1 | Test alert delivered to at least one operator contact | 🟡 Partial — operator confirmed inbox receipt of `TEST_ID=fg-inbox-check-20260516-052910`; covers at least one contact |
+| G-B2 | Test alert delivered to `SECONDARY_CONTACT` | ☐ Pending — secondary-contact confirmation remains pending unless separately verified |
 | G-B3 | Key rotation procedure executed at least once in non-prod | ☐ Pending |
 | G-B4 | Escalation matrix documented and acknowledged by operator | ☐ Pending |
 
@@ -270,7 +270,7 @@ bash scripts/gcp/phase3g_configure_real_domain.sh --confirm \
 
 ### Block C — Keyless Backup / VM OAuth Scope Blocker
 
-**Current state (2026-05-16)**: Operator selected **C1**. VM scopes updated via `set-service-account` to include `devstorage.read_write`. Initial restart failed with `ZONE_RESOURCE_POOL_EXHAUSTED` for `e2-medium` and `e2-small`; recovery succeeded with `n2-standard-2`. Static IP `34.158.51.8` preserved. Keyless GCS probe (isolated HOME, no key env) passed: `gsutil ls` PASS, `gsutil cp` PASS. Offsite sync script ran successfully (`OFFSITE_SYNC_RC=0`, 15.3 MiB copied). Residual old key file at `/etc/ferrumgate/gcs-service-account.json` remains as cleanup follow-up. `n2-standard-2` is temporary; revert to `e2-medium` when zone capacity permits.
+**Current state (2026-05-16)**: Operator selected **C1**. VM scopes updated via `set-service-account` to include `devstorage.read_write`. Initial restart failed with `ZONE_RESOURCE_POOL_EXHAUSTED` for `e2-medium` and `e2-small`; recovery succeeded with `n2-standard-2`. Static IP `34.158.51.8` preserved. Keyless GCS probe (isolated HOME, no key env) passed: `gsutil ls` PASS, `gsutil cp` PASS. Offsite sync script ran successfully (`OFFSITE_SYNC_RC=0`, 15.3 MiB copied). Residual old key file at `/etc/ferrumgate/gcs-service-account.json` was removed; post-removal keyless probe and offsite sync both PASS. e2-medium revert was attempted but failed with `ZONE_RESOURCE_POOL_EXHAUSTED`; rolled back to `n2-standard-2` successfully. `n2-standard-2` remains temporary operational type.
 
 **Historical state (pre-2026-05-16)**: VM service account had OAuth scope `devstorage.read_only` but not `devstorage.read_write` or `cloud-platform`. Keyless GCS write was blocked.
 
@@ -304,8 +304,8 @@ bash scripts/gcp/phase3g_configure_real_domain.sh --confirm \
 | G-C4 | If C2: Key rotation procedure documented and schedule acknowledged | N/A — C1 selected |
 
 **Follow-up**:
-- Revert machine type from `n2-standard-2` to `e2-medium` when zone capacity permits
-- Remove residual `/etc/ferrumgate/gcs-service-account.json`
+- Revert machine type from `n2-standard-2` to `e2-medium` when zone capacity permits — attempted 2026-05-16 but failed `ZONE_RESOURCE_POOL_EXHAUSTED`; rolled back to `n2-standard-2` successfully
+- Remove residual `/etc/ferrumgate/gcs-service-account.json` — **completed 2026-05-16**
 
 **Rollback**:
 - C1: Stop VM, revert to original scopes with `set-service-account`, start VM; fallback C1b uses snapshot restore
@@ -375,9 +375,11 @@ bash scripts/gcp/phase3g_configure_real_domain.sh --confirm \
 | 2026-05-15 | Reconciled with latest evidence: P0.2 D1–D6 passed 6/6 on 2026-05-13; P0.3 restore drill passed on 2026-05-15; P0.4 retention pruning verified with run id `20260515T1606Z-b3-retention`; P2.4/P2.5 closed via delegated authority 2026-05-15. Added production blocker review with active blockers (real owned domain, off-VM alerting, keyless backup) and settled decisions (PostgreSQL=NO, HA=NO, CI cost accepted). Local full gate evidence recorded. No production-ready claim preserved. | Engineering |
 | 2026-05-15 | Added Blocks A/B/C detail with exact command sequences, evidence gates, and rollback. Cross-referenced new R1–R4 artifacts: alerting rotation policy (`R1`), key-based backup risk acceptance (`R2`), production blocker execution runbook (`R4`). Updated cross-reference index. No production-ready claim preserved. | Engineering |
 | 2026-05-16 | Updated Block C status: C1 executed with `set-service-account` scope update; zone-capacity recovery via `n2-standard-2`; keyless GCS probe PASS; offsite sync PASS (rc=0, 15.3 MiB). Updated Block B status: SendGrid synthetic alert POST 200, visible in AlertManager API; inbox delivery remains pending. Block A remains blocked (no real domain). Cross-referenced `2026-05-16-c1-keyless-recovery-and-block-b-status.md`. No production-ready claim preserved. | Engineering |
+| 2026-05-16 (follow-up) | Recorded live follow-up execution: residual `/etc/ferrumgate/gcs-service-account.json` removed with post-removal keyless probe PASS and offsite sync PASS; e2-medium revert attempted but failed with `ZONE_RESOURCE_POOL_EXHAUSTED`, rolled back to `n2-standard-2` successfully; SendGrid inbox-check alert dispatched (TEST_ID `fg-inbox-check-20260516-052910`); SSH firewall temporarily opened to `14.239.184.129/32` then restored to `118.69.4.63/32`. Block A and conservative statuses unchanged. | Engineering |
+| 2026-05-16 (inbox confirmation) | Operator confirmed receipt of SendGrid inbox-check alert `TEST_ID=fg-inbox-check-20260516-052910` for at least one contact, with email content matching subject `FerrumGate Alert: FerrumGateInboxDeliveryCheck`, status `resolved`, severity `warning`, service `ferrumgate`. Block B G-B1 marked partial. Block A remains blocked — operator confirmed no real owned domain and no DNS configuration available yet. Block C and conservative statuses unchanged. | Engineering |
 
 ---
 
 *Document created: 2026-05-03. Production-readiness roadmap — no production-ready claim, no G2 complete, no operator signature pre-populated.*
 
-*Next update: Block A remains blocked (real domain required). Block B inbox delivery confirmation pending (G-B1/G-B2). Block C follow-ups: revert VM to `e2-medium` when zone capacity permits; remove residual `/etc/ferrumgate/gcs-service-account.json`. Engineering items tracked in `11-remaining-tasks.md`.*
+*Next update: Block A remains blocked — operator confirmed no real domain and no DNS available yet. Block B: operator confirmed inbox receipt of `TEST_ID=fg-inbox-check-20260516-052910` with subject/content verified (G-B1 partial); secondary-contact confirmation pending (G-B2). Block C: residual key removal completed; e2-medium revert deferred due to `ZONE_RESOURCE_POOL_EXHAUSTED`; `n2-standard-2` remains temporary operational type. Engineering items tracked in `11-remaining-tasks.md`.*
