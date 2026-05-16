@@ -415,6 +415,7 @@ When D-1 design is complete, it will cover:
 | No retry logic in D-0 | 2026-05-06 | Simplicity; errors returned immediately |
 | No auth middleware in D-0 | 2026-05-06 | Auth is D-1; D-0 tools are all read-only and public |
 | Default gateway URL `http://127.0.0.1:8080` | 2026-05-06 | Matches ferrumd default bind address |
+| OpenAPI aligned with policy bundle lifecycle routes | 2026-05-16 | Added all 6 policy bundle routes and schemas to OpenAPI to match gateway implementation |
 
 ---
 

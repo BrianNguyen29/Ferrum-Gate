@@ -656,6 +656,136 @@ paths:
       security:
         - BearerAuth: []
 
+  /v1/policy-bundles:
+    post:
+      summary: Create a policy bundle
+      operationId: createPolicyBundle
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePolicyBundleRequest'
+      responses:
+        '201':
+          description: Policy bundle created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyBundleResponse'
+        '400':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+    get:
+      summary: List policy bundles
+      operationId: listPolicyBundles
+      responses:
+        '200':
+          description: List of policy bundles
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyBundleListResponse'
+      security:
+        - BearerAuth: []
+
+  /v1/policy-bundles/{bundle_id}:
+    get:
+      summary: Get a policy bundle
+      operationId: getPolicyBundle
+      parameters:
+        - $ref: '#/components/parameters/BundleId'
+      responses:
+        '200':
+          description: Policy bundle
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyBundleResponse'
+        '404':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+    put:
+      summary: Update a policy bundle
+      operationId: updatePolicyBundle
+      parameters:
+        - $ref: '#/components/parameters/BundleId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePolicyBundleRequest'
+      responses:
+        '200':
+          description: Policy bundle updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyBundleResponse'
+        '400':
+          $ref: '#/components/responses/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+    delete:
+      summary: Delete a policy bundle
+      operationId: deletePolicyBundle
+      parameters:
+        - $ref: '#/components/parameters/BundleId'
+      responses:
+        '200':
+          description: Policy bundle deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, bundle_id]
+                properties:
+                  ok:
+                    type: boolean
+                  bundle_id:
+                    type: string
+        '404':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/policy-bundles/{bundle_id}/active:
+    put:
+      summary: Set policy bundle active flag
+      operationId: setPolicyBundleActive
+      parameters:
+        - $ref: '#/components/parameters/BundleId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetPolicyBundleActiveRequest'
+      responses:
+        '200':
+          description: Active flag updated
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, bundle_id, active]
+                properties:
+                  ok:
+                    type: boolean
+                  bundle_id:
+                    type: string
+                  active:
+                    type: boolean
+        '404':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
 components:
   securitySchemes:
     BearerAuth:
@@ -713,6 +843,13 @@ components:
       schema:
         type: string
         description: Runtime bridge identifier
+    BundleId:
+      name: bundle_id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Policy bundle identifier
 
   responses:
     ApiError:
@@ -1751,3 +1888,150 @@ components:
           type: array
           items:
             type: string
+
+    CreatePolicyBundleRequest:
+      type: object
+      required: [yaml_content]
+      properties:
+        yaml_content:
+          type: string
+          description: The YAML content of the policy bundle.
+
+    UpdatePolicyBundleRequest:
+      type: object
+      required: [yaml_content]
+      properties:
+        yaml_content:
+          type: string
+          description: The YAML content of the policy bundle.
+
+    SetPolicyBundleActiveRequest:
+      type: object
+      required: [active]
+      properties:
+        active:
+          type: boolean
+
+    PolicyBundleResponse:
+      type: object
+      required: [bundle, content_hash]
+      properties:
+        bundle:
+          $ref: '#/components/schemas/PolicyBundle'
+        content_hash:
+          type: string
+          description: SHA-256 hash of the bundle content.
+
+    PolicyBundleListResponse:
+      type: object
+      required: [bundles, total]
+      properties:
+        bundles:
+          type: array
+          items:
+            $ref: '#/components/schemas/PolicyBundle'
+        total:
+          type: integer
+
+    PolicyBundle:
+      type: object
+      required: [bundle_id, version, rules, active, created_at, updated_at]
+      properties:
+        bundle_id:
+          type: string
+          description: Unique identifier for this policy bundle.
+        version:
+          type: string
+          description: Semantic version of the bundle format.
+        rules:
+          type: array
+          items:
+            $ref: '#/components/schemas/PolicyRule'
+        active:
+          type: boolean
+          description: Whether this bundle is active for evaluation.
+        content_hash:
+          type: string
+          nullable: true
+          description: SHA-256 hash of the canonical JSON representation of this bundle.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    PolicyRule:
+      type: object
+      required: [id, description, decision, priority, matchers]
+      properties:
+        id:
+          type: string
+          description: Unique rule identifier within the bundle.
+        description:
+          type: string
+          description: Human-readable description of what this rule enforces.
+        decision:
+          type: string
+          enum:
+            - Allow
+            - Deny
+            - Quarantine
+            - RequireApproval
+            - AllowDraftOnly
+        priority:
+          type: integer
+          description: Priority for rule evaluation (higher = evaluated first).
+        matchers:
+          type: array
+          items:
+            $ref: '#/components/schemas/Matcher'
+
+    Matcher:
+      oneOf:
+        - type: object
+          required: [type]
+          properties:
+            type:
+              type: string
+              enum: [scope_mismatch]
+        - type: object
+          required: [type, value]
+          properties:
+            type:
+              type: string
+              enum: [taint_at_least]
+            value:
+              type: integer
+              minimum: 0
+              maximum: 255
+        - type: object
+          required: [type]
+          properties:
+            type:
+              type: string
+              enum: [action_is_mutation]
+        - type: object
+          required: [type, value]
+          properties:
+            type:
+              type: string
+              enum: [rollback_class_equals]
+            value:
+              type: string
+        - type: object
+          required: [type, value]
+          properties:
+            type:
+              type: string
+              enum: [action_type_equals]
+            value:
+              type: string
+        - type: object
+          required: [type]
+          properties:
+            type:
+              type: string
+              enum: [unknown]
+            extra:
+              type: object
