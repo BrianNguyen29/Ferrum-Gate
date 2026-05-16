@@ -733,6 +733,76 @@ impl ActorIdentity {
 }
 
 // ---------------------------------------------------------------------------
+// D-1 Slice 5: Per-Actor Rate Limiter
+// ---------------------------------------------------------------------------
+
+use std::collections::HashMap;
+use std::sync::Mutex;
+use std::time::{Duration, SystemTime};
+
+/// Per-actor in-memory token-bucket rate limiter.
+///
+/// Keyed by `ActorIdentity.actor_id`; applies to all MCP `tools/call` requests.
+/// Default policy: 2 req/s with burst 50.
+#[derive(Debug)]
+pub struct RateLimiter {
+    burst: u32,
+    rate_per_sec: f64,
+    state: Mutex<HashMap<String, ActorLimitState>>,
+}
+
+#[derive(Debug)]
+struct ActorLimitState {
+    tokens: f64,
+    last_check: SystemTime,
+}
+
+impl RateLimiter {
+    /// Create a rate limiter with the given burst capacity and refill rate.
+    pub fn new(burst: u32, rate_per_sec: f64) -> Self {
+        Self {
+            burst,
+            rate_per_sec,
+            state: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Default MCP policy: burst 50, rate 2 req/s.
+    pub fn default_mcp() -> Self {
+        Self::new(50, 2.0)
+    }
+
+    /// Check whether `actor_id` is allowed to make a request right now.
+    /// Returns `true` if allowed, `false` if rate limited.
+    pub fn check(&self, actor_id: &str) -> bool {
+        self.check_at(actor_id, SystemTime::now())
+    }
+
+    /// Internal check with an explicit timestamp for testability.
+    fn check_at(&self, actor_id: &str, now: SystemTime) -> bool {
+        let mut map = self.state.lock().unwrap();
+        let entry = map.entry(actor_id.to_string()).or_insert(ActorLimitState {
+            tokens: self.burst as f64,
+            last_check: now,
+        });
+
+        let elapsed = now
+            .duration_since(entry.last_check)
+            .unwrap_or(Duration::from_secs(0));
+        entry.tokens =
+            (entry.tokens + elapsed.as_secs_f64() * self.rate_per_sec).min(self.burst as f64);
+        entry.last_check = now;
+
+        if entry.tokens >= 1.0 {
+            entry.tokens -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // JSON-RPC 2.0 Types (Phase B)
 // ---------------------------------------------------------------------------
 
@@ -826,6 +896,8 @@ pub mod error_codes {
     pub const GATEWAY_UNREACHABLE: i32 = -32003;
     /// Gateway server error - returned when gateway returns 4xx/5xx.
     pub const GATEWAY_SERVER_ERROR: i32 = -32004;
+    /// Rate limit exceeded - returned when per-actor rate limit is hit.
+    pub const RATE_LIMITED: i32 = -32005;
 }
 
 impl JsonRpcError {
@@ -862,6 +934,18 @@ impl JsonRpcError {
             code: error_codes::PARSE_ERROR,
             message: msg.to_string(),
             data: None,
+        }
+    }
+
+    /// Create a rate-limited error.
+    pub fn rate_limited(actor_id: &str) -> Self {
+        Self {
+            code: error_codes::RATE_LIMITED,
+            message: "Rate limit exceeded for this actor".to_string(),
+            data: Some(serde_json::json!({
+                "actor_id": actor_id,
+                "retry_after_ms": 500
+            })),
         }
     }
 }
@@ -1299,9 +1383,14 @@ pub fn dispatch(request: JsonRpcRequest) -> JsonRpcResponse {
 
 /// Dispatch a JSON-RPC request to the appropriate handler with gateway client.
 /// This version supports actual REST calls for tools/call.
+///
+/// D-1 Slice 5: per-actor rate limiting is applied to `tools/call` before
+/// auth or REST dispatch.
 pub fn dispatch_with_client(
     request: JsonRpcRequest,
     client: &http_client::FerrumGatewayClient,
+    actor_id: &str,
+    rate_limiter: &RateLimiter,
 ) -> JsonRpcResponse {
     let id = request.id;
     match request.method.as_str() {
@@ -1312,6 +1401,10 @@ pub fn dispatch_with_client(
         "ping" => handle_ping(id),
         "tools/list" => handle_tools_list(id),
         "tools/call" => {
+            // D-1 Slice 5: per-agent rate limiting (all tools, keyed by actor_id)
+            if !rate_limiter.check(actor_id) {
+                return JsonRpcResponse::error(JsonRpcError::rate_limited(actor_id), id);
+            }
             let params = request.params.unwrap_or(serde_json::Value::Null);
             handle_tools_call_with_client(params, id, client)
         }
@@ -4763,5 +4856,191 @@ mod tests {
         }
 
         _mock.assert();
+    }
+
+    // -------------------------------------------------------------------------
+    // D-1 Slice 5: Per-Actor Rate Limiter Tests
+    // -------------------------------------------------------------------------
+
+    /// D-1 Slice 5: within burst, all requests are allowed.
+    #[test]
+    fn test_rate_limiter_burst_allows_requests() {
+        let limiter = RateLimiter::new(50, 2.0);
+        let actor = "actor-a";
+        for i in 0..50 {
+            assert!(
+                limiter.check(actor),
+                "Request {} within burst should be allowed",
+                i
+            );
+        }
+    }
+
+    /// D-1 Slice 5: one over burst is rejected.
+    #[test]
+    fn test_rate_limiter_burst_rejects_over_limit() {
+        let limiter = RateLimiter::new(50, 2.0);
+        let actor = "actor-b";
+        for _ in 0..50 {
+            assert!(
+                limiter.check(actor),
+                "Requests within burst should be allowed"
+            );
+        }
+        assert!(
+            !limiter.check(actor),
+            "51st request over burst should be rejected"
+        );
+    }
+
+    /// D-1 Slice 5: separate actors are rate-limited independently.
+    #[test]
+    fn test_rate_limiter_isolated_per_actor() {
+        let limiter = RateLimiter::new(50, 2.0);
+        let actor_a = "actor-a";
+        let actor_b = "actor-b";
+
+        // Exhaust actor_a
+        for _ in 0..50 {
+            assert!(limiter.check(actor_a));
+        }
+        assert!(!limiter.check(actor_a), "actor_a should be rate limited");
+
+        // actor_b should still be allowed
+        assert!(
+            limiter.check(actor_b),
+            "actor_b should not be affected by actor_a"
+        );
+    }
+
+    /// D-1 Slice 5: tokens refill over time.
+    #[test]
+    fn test_rate_limiter_refills_over_time() {
+        let limiter = RateLimiter::new(50, 2.0);
+        let actor = "actor-c";
+
+        // Exhaust burst
+        for _ in 0..50 {
+            assert!(limiter.check(actor));
+        }
+        assert!(
+            !limiter.check(actor),
+            "Should be rate limited immediately after burst"
+        );
+
+        // Wait for 1 token to refill at 2 req/s (0.5s per token)
+        std::thread::sleep(std::time::Duration::from_millis(600));
+        assert!(
+            limiter.check(actor),
+            "Should be allowed after refill period"
+        );
+    }
+
+    /// D-1 Slice 5: rate limiting does not break mutating auth gate.
+    /// When not rate limited, mutating tools without auth still return AUTH_FAILED.
+    #[test]
+    fn test_dispatch_rate_limit_does_not_break_auth_gate() {
+        let client =
+            FerrumGatewayClient::new(&ClientConfig::default()).expect("client should create");
+        let limiter = RateLimiter::default_mcp();
+        let actor_id = "test-actor";
+
+        let request = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            method: "tools/call".to_string(),
+            id: Some(JsonRpcId::Number(1)),
+            params: Some(serde_json::json!({
+                "name": "ferrum_gate_submit_intent",
+                "arguments": {}
+            })),
+        };
+
+        let response = dispatch_with_client(request, &client, actor_id, &limiter);
+        match response {
+            JsonRpcResponse::Error(err) => {
+                assert_eq!(
+                    err.error.code,
+                    error_codes::AUTH_FAILED,
+                    "Mutating tool without auth should still return AUTH_FAILED before rate limit"
+                );
+            }
+            JsonRpcResponse::Success(_) => {
+                panic!("Expected AUTH_FAILED for mutating tool without bearer token")
+            }
+        }
+    }
+
+    /// D-1 Slice 5: dispatch_with_client returns RATE_LIMITED when burst exhausted.
+    #[test]
+    fn test_dispatch_rate_limit_returns_correct_error() {
+        let mut server = mockito::Server::new();
+        let _mock = server
+            .mock("GET", "/v1/healthz")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"status": "ok"}"#)
+            .expect_at_least(1)
+            .create();
+
+        let client = FerrumGatewayClient::new(&ClientConfig::new().base_url(&server.url()))
+            .expect("client should create");
+        let limiter = RateLimiter::new(3, 2.0);
+        let actor_id = "actor-d";
+
+        // Consume all 3 tokens
+        for i in 1..=3 {
+            let request = JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                method: "tools/call".to_string(),
+                id: Some(JsonRpcId::Number(i)),
+                params: Some(serde_json::json!({
+                    "name": "ferrum_gate_health",
+                    "arguments": {}
+                })),
+            };
+            let response = dispatch_with_client(request, &client, actor_id, &limiter);
+            match response {
+                JsonRpcResponse::Success(_) => {}
+                JsonRpcResponse::Error(e) => {
+                    panic!("Request {} should succeed, got: {:?}", i, e)
+                }
+            }
+        }
+
+        // 4th request should be rate limited
+        let request = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            method: "tools/call".to_string(),
+            id: Some(JsonRpcId::Number(4)),
+            params: Some(serde_json::json!({
+                "name": "ferrum_gate_health",
+                "arguments": {}
+            })),
+        };
+        let response = dispatch_with_client(request, &client, actor_id, &limiter);
+        match response {
+            JsonRpcResponse::Error(err) => {
+                assert_eq!(
+                    err.error.code,
+                    error_codes::RATE_LIMITED,
+                    "Over-burst request should return RATE_LIMITED"
+                );
+                assert!(
+                    err.error.message.contains("Rate limit exceeded"),
+                    "Message should indicate rate limit: {}",
+                    err.error.message
+                );
+                assert!(
+                    err.error.data.as_ref().unwrap()["actor_id"]
+                        .as_str()
+                        .unwrap()
+                        == actor_id,
+                    "Error data should contain actor_id"
+                );
+            }
+            JsonRpcResponse::Success(_) => {
+                panic!("Expected RATE_LIMITED for over-burst request")
+            }
+        }
     }
 }

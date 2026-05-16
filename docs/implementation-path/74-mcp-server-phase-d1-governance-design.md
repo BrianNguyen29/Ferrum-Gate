@@ -1,6 +1,6 @@
 # 74 — MCP Server Phase D-1 Governance Pipeline Design
 
-> **Status**: Design + partial implementation. D1.3–D1.8 and the D1.9 field-redaction work are implemented/reviewed; D1.9 rate limiting and full D1.10 smoke/load coverage remain open gaps. D-1 Slice 1 (auth gate + token-hash actor fallback) landed in commit `34d00ab`.
+> **Status**: Design + partial implementation. D1.3–D1.8 and the D1.9 field-redaction work are implemented/reviewed; D1.9 rate limiting implemented in Slice 5; full D1.10 smoke/load coverage remains an open gap. D-1 Slice 1 (auth gate + token-hash actor fallback) landed in commit `34d00ab`.
 > **Purpose**: Detailed design for FerrumGate MCP server Phase D-1 — governance pipeline integration including auth, policy evaluation, capability issuance, rollback, and provenance. Also records implementation reality post-Slice 1.
 > **Scope**: Phase D-1 = mutating tool execution through the full governance pipeline. Auth gate (Slice 1) is complete; remaining gaps are listed in §14.
 > **Constraint**: Do not claim MCP server readiness. No production-ready claim. No mutating tool approval until governance smoke evidence is recorded.
@@ -62,7 +62,7 @@ D-1 (this document):
 - Design for governance pipeline integration
 - **D1.3–D1.10 implemented in code** (lifecycle tool dispatch, output sanitization, field-level redaction, full pipeline sequential test)
 - **Slice 1 (auth gate) complete** — commit `34d00ab`: mutating tools require bearer token before REST dispatch; read-only tools preserve D-0 behavior
-- Remaining gaps: per-agent rate limiting, full MCP→gateway governance smoke, out-of-order pipeline negative tests
+- Remaining gaps: full MCP→gateway governance smoke and load testing
 
 ---
 
@@ -497,7 +497,7 @@ D-1 implementation is split into stages to allow safe progression while preservi
 |-------|-------|--------|-------|
 | **Stage 1** | D-1.1 (Auth) + D-1.2 (Tool Registry) | **IMPLEMENTED** | Slice 1 — commit `34d00ab` |
 | **Stage 2** | D-1.3–D-1.7 (Policy/Cap/Rollback/Provenance/Execute) | **IMPLEMENTED** | All lifecycle tools wired; sequential pipeline test passes |
-| **Stage 3** | D-1.8–D-1.9 (Sanitize/RateLimit) | **PARTIAL** | D1.8–D1.8.3 sanitization + D1.9 field-key redaction implemented; rate limiting NOT implemented |
+| **Stage 3** | D-1.8–D-1.9 (Sanitize/RateLimit) | **IMPLEMENTED** | D1.8–D1.8.3 sanitization + D1.9 field-key redaction + Slice 5 per-agent rate limiting (in-memory token bucket, 2 req/s burst 50) implemented |
 | **Stage 4** | D-1.10 (Integration/Load) | **PARTIAL** | Sequential lifecycle integration test passes; load testing and full governance smoke still missing |
 
 **Slice 1 Rationale**: Auth gate validates bearer token presence before REST dispatch for mutating tools. Read-only tools bypass the gate. Token-hash actor fallback provides deterministic identity without exposing secrets.
@@ -585,9 +585,9 @@ D-1 implementation is split into stages to allow safe progression while preservi
 
 | # | Item | Status | Notes |
 |---|------|--------|-------|
-| D1.9.1 | Integrate with `tower_governor` | **Not implemented** | Deferred to future slice |
-| D1.9.2 | Configurable limits | **Not implemented** | Deferred to future slice |
-| D1.9.3 | Add rate limit tests | **Not implemented** | Deferred to future slice |
+| D1.9.1 | Per-actor rate limiter | **Implemented** | Slice 5: in-memory token bucket keyed by `actor_id` in `lib.rs`; default 2 req/s burst 50 |
+| D1.9.2 | Configurable limits | **Implemented** | `RateLimiter::new(burst, rate_per_sec)` constructor; binary uses `RateLimiter::default_mcp()` |
+| D1.9.3 | Add rate limit tests | **Implemented** | Slice 5: 6 tests covering burst allow, burst reject, per-actor isolation, refill, auth-gate non-regression, and `dispatch_with_client` RATE_LIMITED error |
 
 ### Phase D-1.10: Integration and Testing
 
@@ -736,7 +736,6 @@ The following items are explicitly **not yet implemented** and remain tracked:
 
 | Gap | Impact | Owner | Blocker |
 |-----|--------|-------|---------|
-| **Per-agent rate limiting** | Medium | Future slice | tower_governor integration deferred |
 | **Full MCP→gateway governance smoke** | High | Future slice | Requires MCP entrypoint plus local/live gateway with auth enabled |
 | **Load testing** | Medium | Future slice | Performance baseline not yet established |
 | **Token rotation** | Low | Future slice | Not required for v1.4 beta |
@@ -764,7 +763,8 @@ The following items are explicitly **not yet implemented** and remain tracked:
 | **D1.3–D1.10 marked implemented** | **2026-05-16** | **Code reality: lifecycle dispatch, sanitization, redaction, sequential pipeline test all landed and reviewed** |
 | **D-1 Slice 3 negative tests implemented** | **2026-05-16** | **7 mock-based out-of-order pipeline tests added; verify gateway 409/400/404/422 errors map to MCP GATEWAY_SERVER_ERROR; real-gateway state-machine smoke still tracked as gap** |
 | **D-1 Slice 4 gateway negative tests implemented** | **2026-05-16** | **4 local real-gateway router tests added for invalid lifecycle ordering; full MCP→gateway smoke remains tracked separately** |
+| **D-1 Slice 5 per-agent rate limiting implemented** | **2026-05-16** | **In-memory token bucket rate limiter (`RateLimiter`) keyed by `actor_id`; default policy 2 req/s burst 50; applies to all `tools/call` requests; returns JSON-RPC `-32005` (RATE_LIMITED); 6 tests covering burst, isolation, refill, and auth-gate non-regression** |
 
 ---
 
-*Document created: 2026-05-06. Last updated: 2026-05-16. D-1 Slices 1, 3, and 4 implemented; remaining gaps tracked in §14. No production-ready claim. MCP server is post-v1 scope (v1.4 MCP Governance Beta).*
+*Document created: 2026-05-06. Last updated: 2026-05-16. D-1 Slices 1, 3, 4, and 5 implemented; remaining gaps tracked in §14. No production-ready claim. MCP server is post-v1 scope (v1.4 MCP Governance Beta).*

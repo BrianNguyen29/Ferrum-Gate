@@ -30,7 +30,8 @@
 //! - Mutating tool execution
 
 use ferrum_integrations_mcp::{
-    ClientConfig, FerrumGatewayClient, JsonRpcResponse, dispatch_with_client, parse_request,
+    ActorIdentity, ClientConfig, FerrumGatewayClient, JsonRpcResponse, RateLimiter,
+    dispatch_with_client, parse_request,
 };
 #[allow(unused_imports)]
 use ferrum_integrations_mcp::{JsonRpcRequest, dispatch};
@@ -57,7 +58,12 @@ fn setup_signal_handlers() {
 
 /// Process a single line of input and return the response.
 /// Uses the provided gateway client for REST calls.
-fn process_line(line: &str, client: &FerrumGatewayClient) -> Option<JsonRpcResponse> {
+fn process_line(
+    line: &str,
+    client: &FerrumGatewayClient,
+    actor_id: &str,
+    rate_limiter: &RateLimiter,
+) -> Option<JsonRpcResponse> {
     let line = line.trim();
     // Skip empty lines
     if line.is_empty() {
@@ -65,7 +71,12 @@ fn process_line(line: &str, client: &FerrumGatewayClient) -> Option<JsonRpcRespo
     }
 
     match parse_request(line) {
-        Ok(request) => Some(dispatch_with_client(request, client)),
+        Ok(request) => Some(dispatch_with_client(
+            request,
+            client,
+            actor_id,
+            rate_limiter,
+        )),
         Err(response) => Some(response),
     }
 }
@@ -107,6 +118,10 @@ fn main() {
         }
     };
 
+    // D-1 Slice 5: resolve actor identity and create per-agent rate limiter
+    let actor = ActorIdentity::resolve(None);
+    let rate_limiter = RateLimiter::default_mcp();
+
     // Use buffered I/O for efficient line reading/writing
     let stdin = io::stdin();
     let stdout = io::stdout();
@@ -125,7 +140,8 @@ fn main() {
 
         match line_result {
             Ok(line) => {
-                if let Some(response) = process_line(&line, &client) {
+                if let Some(response) = process_line(&line, &client, &actor.actor_id, &rate_limiter)
+                {
                     // Serialize response to JSON
                     match serde_json::to_string(&response) {
                         Ok(json) => {
