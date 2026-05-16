@@ -15,6 +15,8 @@ ferrum-proto = { path = "../ferrum-proto" }
 ferrum-firewall = { path = "../ferrum-firewall" }
 uuid = { version = "1", features = ["v4", "v5", "serde"] }
 chrono = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }

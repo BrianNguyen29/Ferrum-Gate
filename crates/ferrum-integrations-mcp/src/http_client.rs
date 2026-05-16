@@ -196,6 +196,11 @@ impl FerrumGatewayClient {
         &self.base_url
     }
 
+    /// Check if a bearer token is configured for auth.
+    pub fn has_auth(&self) -> bool {
+        self.bearer_token.is_some()
+    }
+
     /// Build a request with optional auth header.
     fn build_request(
         &self,

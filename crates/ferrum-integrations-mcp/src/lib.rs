@@ -91,6 +91,7 @@
 //! - Production/G2 claim (not production-ready)
 use ferrum_firewall::SemanticFirewall;
 use serde::{Deserialize, Serialize};
+use sha2::Digest;
 
 mod http_client;
 mod mapping_helpers;
@@ -598,6 +599,24 @@ pub const LIFECYCLE_TOOLS: &[&str] = &[
     "ferrum_gate_compensate",
 ];
 
+/// Set of tool names that are approval tools (mutating, resolve pending approvals).
+pub const APPROVAL_TOOLS: &[&str] = &["ferrum_gate_approve_intent", "ferrum_gate_reject_intent"];
+
+/// Set of tool names that are mutating (non-read-only) tools.
+/// Includes all lifecycle tools and approval tools.
+pub const MUTATING_TOOLS: &[&str] = &[
+    "ferrum_gate_submit_intent",
+    "ferrum_gate_evaluate_intent",
+    "ferrum_gate_mint_capability",
+    "ferrum_gate_authorize_execution",
+    "ferrum_gate_prepare_execution",
+    "ferrum_gate_execute_prepared",
+    "ferrum_gate_verify",
+    "ferrum_gate_compensate",
+    "ferrum_gate_approve_intent",
+    "ferrum_gate_reject_intent",
+];
+
 /// Set of tool names that are permanently blocked (backend endpoints absent).
 /// This is empty since all tools now have backend endpoints.
 pub const BLOCKED_TOOLS: &[&str] = &[];
@@ -628,6 +647,8 @@ pub enum ActorSource {
     EnvVar,
     /// From MCP init client_info.name.
     ClientInfo,
+    /// Derived from SHA256(FERRUM_GATEWAY_BEARER_TOKEN)[0..12].
+    TokenHash,
     /// Default local actor fallback.
     Local,
 }
@@ -663,6 +684,26 @@ impl ActorIdentity {
         }
     }
 
+    /// Create actor identity from SHA256(FERRUM_GATEWAY_BEARER_TOKEN)[0..12].
+    /// The token itself is never exposed; only the truncated hash is used.
+    fn from_token_hash() -> Option<Self> {
+        std::env::var("FERRUM_GATEWAY_BEARER_TOKEN")
+            .ok()
+            .and_then(|token| {
+                if token.is_empty() {
+                    return None;
+                }
+                let hash = sha2::Sha256::digest(token.as_bytes());
+                let hash_hex = hex::encode(hash);
+                let actor_id = hash_hex[..12.min(hash_hex.len())].to_string();
+                Some(ActorIdentity {
+                    actor_id,
+                    actor_label: "Ferrum MCP Token-Hash Agent".to_string(),
+                    source: ActorSource::TokenHash,
+                })
+            })
+    }
+
     /// Get the fallback local actor identity.
     fn local() -> Self {
         ActorIdentity {
@@ -672,7 +713,12 @@ impl ActorIdentity {
         }
     }
 
-    /// Resolve actor identity with precedence: env var > client_info > local.
+    /// Resolve actor identity with precedence:
+    /// 1. FERRUMD_MCP_AGENT_ID env var
+    /// 2. MCP initialize client_info.name
+    /// 3. SHA256(FERRUM_GATEWAY_BEARER_TOKEN)[0..12]
+    /// 4. ferrum-mcp-local fallback
+    ///
     /// Call this during MCP initialization with the client_info.name if available.
     pub fn resolve(client_name: Option<&str>) -> Self {
         Self::from_env_var()
@@ -681,6 +727,7 @@ impl ActorIdentity {
                     .filter(|n| !n.is_empty())
                     .map(Self::from_client_info)
             })
+            .or_else(Self::from_token_hash)
             .unwrap_or_else(Self::local)
     }
 }
@@ -1025,8 +1072,17 @@ pub fn handle_tools_call(params: serde_json::Value, id: Option<JsonRpcId>) -> Js
     JsonRpcResponse::error(JsonRpcError::not_implemented("tools/call"), id)
 }
 
+/// Check if a tool name is a mutating (non-read-only) tool.
+fn is_mutating_tool(tool_name: &str) -> bool {
+    MUTATING_TOOLS.contains(&tool_name)
+}
+
 /// Handle tools/call request with gateway client.
 /// Maps the tool call to the corresponding REST endpoint and returns the result.
+///
+/// D-1 Slice 1: Mutating tools require a configured bearer token before REST dispatch.
+/// Read-only tools bypass the MCP-server auth gate (gateway REST still enforces auth
+/// where applicable). Fail closed: no auth context → AUTH_FAILED for mutating tools.
 pub fn handle_tools_call_with_client(
     params: serde_json::Value,
     id: Option<JsonRpcId>,
@@ -1049,6 +1105,24 @@ pub fn handle_tools_call_with_client(
             );
         }
     };
+
+    // D-1 Slice 1: Auth gate for mutating tools — fail closed.
+    if is_mutating_tool(&params.name) && !client.has_auth() {
+        return JsonRpcResponse::error(
+            JsonRpcError {
+                code: error_codes::AUTH_FAILED,
+                message: format!(
+                    "Mutating tool '{}' requires configured bearer token",
+                    params.name
+                ),
+                data: Some(serde_json::json!({
+                    "tool": params.name,
+                    "detail": "No FERRUM_GATEWAY_BEARER_TOKEN configured"
+                })),
+            },
+            id,
+        );
+    }
 
     // Call the REST mapper
     match rest_mapper::map_tool_to_rest(&params.name, params.arguments.as_ref(), client) {
@@ -2766,7 +2840,9 @@ mod tests {
             .expect(1)
             .create();
 
-        let config = ClientConfig::new().base_url(&server.url());
+        let config = ClientConfig::new()
+            .base_url(&server.url())
+            .bearer_token("test-token");
         let client = FerrumGatewayClient::new(&config).expect("client should create");
 
         let params = serde_json::json!({
@@ -2846,7 +2922,9 @@ mod tests {
             .expect(1)
             .create();
 
-        let config = ClientConfig::new().base_url(&server.url());
+        let config = ClientConfig::new()
+            .base_url(&server.url())
+            .bearer_token("test-token");
         let client = FerrumGatewayClient::new(&config).expect("client should create");
 
         let params = serde_json::json!({
@@ -2926,7 +3004,9 @@ mod tests {
             .expect(1)
             .create();
 
-        let config = ClientConfig::new().base_url(&server.url());
+        let config = ClientConfig::new()
+            .base_url(&server.url())
+            .bearer_token("test-token");
         let client = FerrumGatewayClient::new(&config).expect("client should create");
 
         let params = serde_json::json!({
@@ -3007,7 +3087,9 @@ mod tests {
             .expect(1)
             .create();
 
-        let config = ClientConfig::new().base_url(&server.url());
+        let config = ClientConfig::new()
+            .base_url(&server.url())
+            .bearer_token("test-token");
         let client = FerrumGatewayClient::new(&config).expect("client should create");
 
         let params = serde_json::json!({
@@ -3090,7 +3172,9 @@ mod tests {
             .expect(1)
             .create();
 
-        let config = ClientConfig::new().base_url(&server.url());
+        let config = ClientConfig::new()
+            .base_url(&server.url())
+            .bearer_token("test-token");
         let client = FerrumGatewayClient::new(&config).expect("client should create");
 
         let params = serde_json::json!({
@@ -3351,7 +3435,9 @@ mod tests {
             .expect(1)
             .create();
 
-        let config = ClientConfig::new().base_url(&server.url());
+        let config = ClientConfig::new()
+            .base_url(&server.url())
+            .bearer_token("test-token");
         let client = FerrumGatewayClient::new(&config).expect("client should create");
 
         // Step 1: submit_intent
@@ -3575,7 +3661,9 @@ mod tests {
             .expect(1)
             .create();
 
-        let config = ClientConfig::new().base_url(&server.url());
+        let config = ClientConfig::new()
+            .base_url(&server.url())
+            .bearer_token("test-token");
         let client = FerrumGatewayClient::new(&config).expect("client should create");
 
         let params = serde_json::json!({
@@ -3664,7 +3752,9 @@ mod tests {
             .expect(1)
             .create();
 
-        let config = ClientConfig::new().base_url(&server.url());
+        let config = ClientConfig::new()
+            .base_url(&server.url())
+            .bearer_token("test-token");
         let client = FerrumGatewayClient::new(&config).expect("client should create");
 
         let params = serde_json::json!({
@@ -3734,7 +3824,9 @@ mod tests {
             .expect(1)
             .create();
 
-        let config = ClientConfig::new().base_url(&server.url());
+        let config = ClientConfig::new()
+            .base_url(&server.url())
+            .bearer_token("test-token");
         let client = FerrumGatewayClient::new(&config).expect("client should create");
 
         let params = serde_json::json!({
@@ -3819,7 +3911,9 @@ mod tests {
             .expect(1)
             .create();
 
-        let config = ClientConfig::new().base_url(&server.url());
+        let config = ClientConfig::new()
+            .base_url(&server.url())
+            .bearer_token("test-token");
         let client = FerrumGatewayClient::new(&config).expect("client should create");
 
         let params = serde_json::json!({
@@ -3909,7 +4003,9 @@ mod tests {
             .expect(1)
             .create();
 
-        let config = ClientConfig::new().base_url(&server.url());
+        let config = ClientConfig::new()
+            .base_url(&server.url())
+            .bearer_token("test-token");
         let client = FerrumGatewayClient::new(&config).expect("client should create");
 
         let params = serde_json::json!({
@@ -3961,5 +4057,356 @@ mod tests {
         );
 
         _mock.assert();
+    }
+
+    // -------------------------------------------------------------------------
+    // D-1 Slice 1 Tests (Mutating-Tool Auth Gate + Token-Hash Actor Fallback)
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_mutating_tools_set_contains_expected_tools() {
+        let expected_mutating = [
+            "ferrum_gate_submit_intent",
+            "ferrum_gate_evaluate_intent",
+            "ferrum_gate_mint_capability",
+            "ferrum_gate_authorize_execution",
+            "ferrum_gate_prepare_execution",
+            "ferrum_gate_execute_prepared",
+            "ferrum_gate_verify",
+            "ferrum_gate_compensate",
+            "ferrum_gate_approve_intent",
+            "ferrum_gate_reject_intent",
+        ];
+        let mutating_set: std::collections::HashSet<_> = MUTATING_TOOLS.iter().copied().collect();
+        for expected in expected_mutating {
+            assert!(
+                mutating_set.contains(expected),
+                "MUTATING_TOOLS should contain '{}'",
+                expected
+            );
+        }
+        assert_eq!(
+            MUTATING_TOOLS.len(),
+            10,
+            "Should have exactly 10 mutating tools (8 lifecycle + 2 approval)"
+        );
+    }
+
+    #[test]
+    fn test_approval_tools_set_contains_expected_tools() {
+        let expected_approval = ["ferrum_gate_approve_intent", "ferrum_gate_reject_intent"];
+        let approval_set: std::collections::HashSet<_> = APPROVAL_TOOLS.iter().copied().collect();
+        for expected in expected_approval {
+            assert!(
+                approval_set.contains(expected),
+                "APPROVAL_TOOLS should contain '{}'",
+                expected
+            );
+        }
+        assert_eq!(
+            APPROVAL_TOOLS.len(),
+            2,
+            "Should have exactly 2 approval tools"
+        );
+    }
+
+    #[test]
+    fn test_approval_tools_are_mutating() {
+        for tool in APPROVAL_TOOLS {
+            assert!(
+                MUTATING_TOOLS.contains(tool),
+                "Approval tool '{}' must also be in MUTATING_TOOLS",
+                tool
+            );
+        }
+    }
+
+    /// D-1 Slice 1: Mutating tool without auth context fails closed with AUTH_FAILED.
+    #[test]
+    fn test_mutating_tool_auth_gate_fails_closed_without_auth() {
+        let config = ClientConfig::new().base_url("http://127.0.0.1:1");
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+        assert!(!client.has_auth(), "Client should have no auth configured");
+
+        let params = serde_json::json!({
+            "name": "ferrum_gate_submit_intent",
+            "arguments": {
+                "principal_id": "550e8400-e29b-41d4-a716-446655440000",
+                "title": "test",
+                "goal": "test goal",
+                "action_type": "Read",
+                "target": "/tmp/test.txt",
+                "scope": "fs:read:/tmp/**"
+            }
+        });
+        let response = handle_tools_call_with_client(params, Some(JsonRpcId::Number(1)), &client);
+
+        match response {
+            JsonRpcResponse::Error(err) => {
+                assert_eq!(
+                    err.error.code,
+                    error_codes::AUTH_FAILED,
+                    "Mutating tool without auth should return AUTH_FAILED"
+                );
+                assert!(
+                    err.error.message.contains("bearer token"),
+                    "Error message should mention bearer token: {}",
+                    err.error.message
+                );
+                assert!(
+                    err.error.data.as_ref().unwrap()["tool"]
+                        .as_str()
+                        .unwrap()
+                        .contains("ferrum_gate_submit_intent"),
+                    "Error data should contain tool name"
+                );
+            }
+            JsonRpcResponse::Success(_) => {
+                panic!("Mutating tool without auth should fail closed")
+            }
+        }
+    }
+
+    /// D-1 Slice 1: Approval tool without auth context fails closed with AUTH_FAILED.
+    #[test]
+    fn test_approval_tool_auth_gate_fails_closed_without_auth() {
+        let config = ClientConfig::new().base_url("http://127.0.0.1:1");
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let params = serde_json::json!({
+            "name": "ferrum_gate_approve_intent",
+            "arguments": {
+                "approval_id": "550e8400-e29b-41d4-a716-446655440000"
+            }
+        });
+        let response = handle_tools_call_with_client(params, Some(JsonRpcId::Number(1)), &client);
+
+        match response {
+            JsonRpcResponse::Error(err) => {
+                assert_eq!(
+                    err.error.code,
+                    error_codes::AUTH_FAILED,
+                    "Approval tool without auth should return AUTH_FAILED"
+                );
+            }
+            JsonRpcResponse::Success(_) => {
+                panic!("Approval tool without auth should fail closed")
+            }
+        }
+    }
+
+    /// D-1 Slice 1: Mutating tool with auth context is dispatched (may fail at gateway).
+    #[test]
+    fn test_mutating_tool_auth_gate_allows_with_auth() {
+        let mut server = mockito::Server::new();
+        let _mock = server
+            .mock("POST", "/v1/intents/compile")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{
+                "envelope": {
+                    "intent_id": "550e8400-e29b-41d4-a716-446655440000",
+                    "principal_id": "550e8400-e29b-41d4-a716-446655440001",
+                    "session_id": null,
+                    "channel_id": null,
+                    "title": "test",
+                    "goal": "test goal",
+                    "normalized_goal": "test goal",
+                    "allowed_outcomes": [],
+                    "forbidden_outcomes": [],
+                    "resource_scope": [],
+                    "risk_tier": "Low",
+                    "approval_mode": "None",
+                    "default_rollback_class": "R0NativeReversible",
+                    "time_budget": {"max_duration_ms": 30000, "max_steps": 8, "max_retries_per_step": 1},
+                    "trust_context": {"input_labels": [], "sensitivity_labels": [], "taint_score": 0, "contains_external_metadata": false, "contains_tool_output": false, "contains_untrusted_text": false},
+                    "derived_from_event_ids": [],
+                    "tags": [],
+                    "metadata": {},
+                    "status": "Active",
+                    "created_at": "2025-01-01T00:00:00Z",
+                    "expires_at": "2025-12-31T23:59:59Z"
+                },
+                "warnings": []
+            }"#)
+            .expect(1)
+            .create();
+
+        let config = ClientConfig::new()
+            .base_url(&server.url())
+            .bearer_token("valid-test-token");
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+        assert!(client.has_auth(), "Client should have auth configured");
+
+        let params = serde_json::json!({
+            "name": "ferrum_gate_submit_intent",
+            "arguments": {
+                "principal_id": "550e8400-e29b-41d4-a716-446655440001",
+                "title": "test",
+                "goal": "test goal",
+                "action_type": "Read",
+                "target": "/tmp/test.txt",
+                "scope": "fs:read:/tmp/**"
+            }
+        });
+        let response = handle_tools_call_with_client(params, Some(JsonRpcId::Number(1)), &client);
+
+        match response {
+            JsonRpcResponse::Success(_) => {
+                // Auth gate passed; request reached mock server
+            }
+            JsonRpcResponse::Error(err) => {
+                panic!(
+                    "Mutating tool with auth should dispatch successfully: {}",
+                    err.error.message
+                );
+            }
+        }
+
+        _mock.assert();
+    }
+
+    /// D-1 Slice 1: Read-only tool bypasses MCP-server auth gate (no token needed).
+    #[test]
+    fn test_read_only_tool_bypasses_auth_gate() {
+        let mut server = mockito::Server::new();
+        let _mock = server
+            .mock("GET", "/v1/healthz")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"status": "ok"}"#)
+            .expect(1)
+            .create();
+
+        // No bearer token configured
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+        assert!(!client.has_auth(), "Client should have no auth configured");
+
+        let params = serde_json::json!({
+            "name": "ferrum_gate_health",
+            "arguments": {}
+        });
+        let response = handle_tools_call_with_client(params, Some(JsonRpcId::Number(1)), &client);
+
+        match response {
+            JsonRpcResponse::Success(_) => {
+                // Read-only tool should bypass auth gate and reach mock
+            }
+            JsonRpcResponse::Error(err) => {
+                panic!(
+                    "Read-only tool should bypass auth gate: {}",
+                    err.error.message
+                );
+            }
+        }
+
+        _mock.assert();
+    }
+
+    /// D-1 Slice 1: ActorIdentity from_token_hash produces truncated SHA256.
+    #[test]
+    fn test_actor_identity_from_token_hash() {
+        let _guard = ENV_TEST_MUTEX.lock().unwrap();
+        let token = "my-secret-bearer-token-123";
+        unsafe { std::env::set_var("FERRUM_GATEWAY_BEARER_TOKEN", token) };
+
+        let identity = ActorIdentity::from_token_hash().unwrap();
+        // SHA256 hash hex, first 12 chars
+        let expected_hash = sha2::Sha256::digest(token.as_bytes());
+        let expected_hex = hex::encode(expected_hash);
+        let expected_id = &expected_hex[..12];
+
+        assert_eq!(identity.actor_id, expected_id);
+        assert_eq!(identity.source, ActorSource::TokenHash);
+        assert!(
+            identity.actor_label.contains("Token-Hash"),
+            "Label should indicate token-hash source"
+        );
+
+        unsafe { std::env::remove_var("FERRUM_GATEWAY_BEARER_TOKEN") };
+    }
+
+    /// D-1 Slice 1: ActorIdentity token hash does not expose the raw token.
+    #[test]
+    fn test_actor_identity_token_hash_does_not_expose_token() {
+        let _guard = ENV_TEST_MUTEX.lock().unwrap();
+        let token = "super-secret-token-value";
+        unsafe { std::env::set_var("FERRUM_GATEWAY_BEARER_TOKEN", token) };
+
+        let identity = ActorIdentity::from_token_hash().unwrap();
+        // actor_id must NOT contain the raw token
+        assert!(
+            !identity.actor_id.contains(token),
+            "actor_id must not contain the raw token"
+        );
+        assert!(
+            !identity.actor_label.contains(token),
+            "actor_label must not contain the raw token"
+        );
+
+        unsafe { std::env::remove_var("FERRUM_GATEWAY_BEARER_TOKEN") };
+    }
+
+    /// D-1 Slice 1: ActorIdentity resolve precedence: env > client_info > token_hash > local.
+    #[test]
+    fn test_actor_identity_resolve_precedence_with_token_hash() {
+        let _guard = ENV_TEST_MUTEX.lock().unwrap();
+
+        // 1. Env var takes highest precedence
+        unsafe { std::env::set_var("FERRUMD_MCP_AGENT_ID", "env-actor:Env Label") };
+        unsafe { std::env::set_var("FERRUM_GATEWAY_BEARER_TOKEN", "token-for-test") };
+        let identity = ActorIdentity::resolve(Some("client-name"));
+        assert_eq!(identity.actor_id, "env-actor");
+        assert_eq!(identity.source, ActorSource::EnvVar);
+        unsafe { std::env::remove_var("FERRUMD_MCP_AGENT_ID") };
+
+        // 2. Client info when no env var
+        let identity = ActorIdentity::resolve(Some("client-name"));
+        assert_eq!(identity.actor_id, "client-name");
+        assert_eq!(identity.source, ActorSource::ClientInfo);
+
+        // 3. Token hash when no env var and no client info
+        let identity = ActorIdentity::resolve(None);
+        assert_eq!(identity.source, ActorSource::TokenHash);
+        assert_eq!(
+            identity.actor_id.len(),
+            12,
+            "Token-hash actor_id should be 12 chars"
+        );
+
+        // 4. Local fallback when nothing is available
+        unsafe { std::env::remove_var("FERRUM_GATEWAY_BEARER_TOKEN") };
+        let identity = ActorIdentity::resolve(None);
+        assert_eq!(identity.actor_id, "ferrum-mcp-local");
+        assert_eq!(identity.source, ActorSource::Local);
+    }
+
+    /// D-1 Slice 1: Empty bearer token falls back to local (not token-hash).
+    #[test]
+    fn test_actor_identity_empty_token_falls_back_to_local() {
+        let _guard = ENV_TEST_MUTEX.lock().unwrap();
+        unsafe { std::env::set_var("FERRUM_GATEWAY_BEARER_TOKEN", "") };
+        let identity = ActorIdentity::resolve(None);
+        assert_eq!(
+            identity.source,
+            ActorSource::Local,
+            "Empty token should fall back to Local"
+        );
+        unsafe { std::env::remove_var("FERRUM_GATEWAY_BEARER_TOKEN") };
+    }
+
+    /// D-1 Slice 1: Client has_auth reflects bearer token presence.
+    #[test]
+    fn test_client_has_auth() {
+        let config_with_auth = ClientConfig::new().bearer_token("test-token");
+        let client_with =
+            FerrumGatewayClient::new(&config_with_auth).expect("client should create");
+        assert!(client_with.has_auth());
+
+        let config_without_auth = ClientConfig::new();
+        let client_without =
+            FerrumGatewayClient::new(&config_without_auth).expect("client should create");
+        assert!(!client_without.has_auth());
     }
 }
