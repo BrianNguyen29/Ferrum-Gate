@@ -275,6 +275,7 @@ and are NOT required for pilot signoff.
 - [x] Local audit commands reviewed (this doc §Group D)
 - [ ] Evidence manifest updated with optional security audit placeholders
 - [ ] SendGrid API key rotation executed (pending operator dashboard workflow)
+- [x] Secondary alert contact delivery confirmed (TEST_ID `fg-secondary-check-20260516-153221`)
 
 ---
 
