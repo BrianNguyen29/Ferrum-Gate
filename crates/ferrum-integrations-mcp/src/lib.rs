@@ -4409,4 +4409,359 @@ mod tests {
             FerrumGatewayClient::new(&config_without_auth).expect("client should create");
         assert!(!client_without.has_auth());
     }
+
+    // -------------------------------------------------------------------------
+    // D-1 Slice 3 Tests (Out-of-Order Pipeline Negative Tests)
+    // -------------------------------------------------------------------------
+
+    /// D-1 Slice 3: execute_prepared before prepare returns gateway error.
+    /// Gateway rejects with 409 Conflict; MCP maps to GATEWAY_SERVER_ERROR.
+    #[test]
+    fn test_execute_before_prepare_rejected() {
+        let mut server = mockito::Server::new();
+        let exec_id = "550e8400-e29b-41d4-a716-446655440004";
+        let _mock = server
+            .mock("POST", &*format!("/v1/executions/{}/execute", exec_id))
+            .with_status(409)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"message": "execution not in prepared state"}"#)
+            .expect(1)
+            .create();
+
+        let config = ClientConfig::new()
+            .base_url(&server.url())
+            .bearer_token("test-token");
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let params = serde_json::json!({
+            "name": "ferrum_gate_execute_prepared",
+            "arguments": {
+                "execution_id": exec_id,
+                "payload": {}
+            }
+        });
+        let response = handle_tools_call_with_client(params, Some(JsonRpcId::Number(1)), &client);
+
+        match response {
+            JsonRpcResponse::Error(err) => {
+                assert_eq!(
+                    err.error.code,
+                    error_codes::GATEWAY_SERVER_ERROR,
+                    "Out-of-order execute should return GATEWAY_SERVER_ERROR"
+                );
+                assert!(
+                    err.error.message.contains("not in prepared state")
+                        || err.error.message.contains("Gateway error")
+                        || err.error.message.contains("409"),
+                    "Error message should indicate state mismatch: {}",
+                    err.error.message
+                );
+            }
+            JsonRpcResponse::Success(_) => {
+                panic!("execute before prepare should be rejected by gateway")
+            }
+        }
+
+        _mock.assert();
+    }
+
+    /// D-1 Slice 3: verify before execute returns gateway error.
+    /// Gateway rejects with 409 Conflict; MCP maps to GATEWAY_SERVER_ERROR.
+    #[test]
+    fn test_verify_before_execute_rejected() {
+        let mut server = mockito::Server::new();
+        let exec_id = "550e8400-e29b-41d4-a716-446655440004";
+        let _mock = server
+            .mock("POST", &*format!("/v1/executions/{}/verify", exec_id))
+            .with_status(409)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"message": "execution not in ExecutedAwaitingVerify state"}"#)
+            .expect(1)
+            .create();
+
+        let config = ClientConfig::new()
+            .base_url(&server.url())
+            .bearer_token("test-token");
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let params = serde_json::json!({
+            "name": "ferrum_gate_verify",
+            "arguments": {
+                "execution_id": exec_id
+            }
+        });
+        let response = handle_tools_call_with_client(params, Some(JsonRpcId::Number(1)), &client);
+
+        match response {
+            JsonRpcResponse::Error(err) => {
+                assert_eq!(
+                    err.error.code,
+                    error_codes::GATEWAY_SERVER_ERROR,
+                    "Out-of-order verify should return GATEWAY_SERVER_ERROR"
+                );
+                assert!(
+                    err.error.message.contains("ExecutedAwaitingVerify")
+                        || err.error.message.contains("Gateway error")
+                        || err.error.message.contains("409"),
+                    "Error message should indicate state mismatch: {}",
+                    err.error.message
+                );
+            }
+            JsonRpcResponse::Success(_) => {
+                panic!("verify before execute should be rejected by gateway")
+            }
+        }
+
+        _mock.assert();
+    }
+
+    /// D-1 Slice 3: prepare_execution without authorization returns gateway error.
+    /// Gateway rejects with 400 Bad Request; MCP maps to GATEWAY_SERVER_ERROR.
+    #[test]
+    fn test_prepare_without_authorization_rejected() {
+        let mut server = mockito::Server::new();
+        let exec_id = "550e8400-e29b-41d4-a716-446655440004";
+        let _mock = server
+            .mock("POST", &*format!("/v1/executions/{}/prepare", exec_id))
+            .with_status(400)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"message": "execution not in authorized state"}"#)
+            .expect(1)
+            .create();
+
+        let config = ClientConfig::new()
+            .base_url(&server.url())
+            .bearer_token("test-token");
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let params = serde_json::json!({
+            "name": "ferrum_gate_prepare_execution",
+            "arguments": {
+                "execution_id": exec_id
+            }
+        });
+        let response = handle_tools_call_with_client(params, Some(JsonRpcId::Number(1)), &client);
+
+        match response {
+            JsonRpcResponse::Error(err) => {
+                assert_eq!(
+                    err.error.code,
+                    error_codes::GATEWAY_SERVER_ERROR,
+                    "Prepare without auth should return GATEWAY_SERVER_ERROR"
+                );
+                assert!(
+                    err.error.message.contains("not in authorized state")
+                        || err.error.message.contains("Gateway error")
+                        || err.error.message.contains("400"),
+                    "Error message should indicate state mismatch: {}",
+                    err.error.message
+                );
+            }
+            JsonRpcResponse::Success(_) => {
+                panic!("prepare without authorization should be rejected by gateway")
+            }
+        }
+
+        _mock.assert();
+    }
+
+    /// D-1 Slice 3: compensate before verify returns gateway error.
+    /// Gateway rejects with 409 Conflict; MCP maps to GATEWAY_SERVER_ERROR.
+    #[test]
+    fn test_compensate_before_verify_rejected() {
+        let mut server = mockito::Server::new();
+        let exec_id = "550e8400-e29b-41d4-a716-446655440004";
+        let _mock = server
+            .mock("POST", &*format!("/v1/executions/{}/compensate", exec_id))
+            .with_status(409)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"message": "execution not in verified state"}"#)
+            .expect(1)
+            .create();
+
+        let config = ClientConfig::new()
+            .base_url(&server.url())
+            .bearer_token("test-token");
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let params = serde_json::json!({
+            "name": "ferrum_gate_compensate",
+            "arguments": {
+                "execution_id": exec_id
+            }
+        });
+        let response = handle_tools_call_with_client(params, Some(JsonRpcId::Number(1)), &client);
+
+        match response {
+            JsonRpcResponse::Error(err) => {
+                assert_eq!(
+                    err.error.code,
+                    error_codes::GATEWAY_SERVER_ERROR,
+                    "Out-of-order compensate should return GATEWAY_SERVER_ERROR"
+                );
+                assert!(
+                    err.error.message.contains("not in verified state")
+                        || err.error.message.contains("Gateway error")
+                        || err.error.message.contains("409"),
+                    "Error message should indicate state mismatch: {}",
+                    err.error.message
+                );
+            }
+            JsonRpcResponse::Success(_) => {
+                panic!("compensate before verify should be rejected by gateway")
+            }
+        }
+
+        _mock.assert();
+    }
+
+    /// D-1 Slice 3: mint_capability on denied/already-minted proposal returns gateway error.
+    /// Gateway rejects with 422 Unprocessable Entity; MCP maps to GATEWAY_SERVER_ERROR.
+    #[test]
+    fn test_mint_capability_denied_proposal_rejected() {
+        let mut server = mockito::Server::new();
+        let _mock = server
+            .mock("POST", "/v1/capabilities/mint")
+            .with_status(422)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"message": "proposal was denied or capability already minted"}"#)
+            .expect(1)
+            .create();
+
+        let config = ClientConfig::new()
+            .base_url(&server.url())
+            .bearer_token("test-token");
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let params = serde_json::json!({
+            "name": "ferrum_gate_mint_capability",
+            "arguments": {
+                "intent_id": "550e8400-e29b-41d4-a716-446655440001",
+                "proposal_id": "550e8400-e29b-41d4-a716-446655440002",
+                "tool_name": "fs.read",
+                "server_name": "fs-server"
+            }
+        });
+        let response = handle_tools_call_with_client(params, Some(JsonRpcId::Number(1)), &client);
+
+        match response {
+            JsonRpcResponse::Error(err) => {
+                assert_eq!(
+                    err.error.code,
+                    error_codes::GATEWAY_SERVER_ERROR,
+                    "Mint on denied proposal should return GATEWAY_SERVER_ERROR"
+                );
+                assert!(
+                    err.error.message.contains("denied")
+                        || err.error.message.contains("already minted")
+                        || err.error.message.contains("Gateway error")
+                        || err.error.message.contains("422"),
+                    "Error message should indicate proposal issue: {}",
+                    err.error.message
+                );
+            }
+            JsonRpcResponse::Success(_) => {
+                panic!("mint_capability on denied proposal should be rejected")
+            }
+        }
+
+        _mock.assert();
+    }
+
+    /// D-1 Slice 3: approve_intent on non-existent approval returns gateway error.
+    /// Gateway rejects with 404 Not Found; MCP maps to GATEWAY_SERVER_ERROR.
+    #[test]
+    fn test_approve_nonexistent_approval_rejected() {
+        let mut server = mockito::Server::new();
+        let approval_id = "550e8400-e29b-41d4-a716-446655440099";
+        let _mock = server
+            .mock("POST", &*format!("/v1/approvals/{}/resolve", approval_id))
+            .with_status(404)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"message": "approval not found"}"#)
+            .expect(1)
+            .create();
+
+        let config = ClientConfig::new()
+            .base_url(&server.url())
+            .bearer_token("test-token");
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let params = serde_json::json!({
+            "name": "ferrum_gate_approve_intent",
+            "arguments": {
+                "approval_id": approval_id
+            }
+        });
+        let response = handle_tools_call_with_client(params, Some(JsonRpcId::Number(1)), &client);
+
+        match response {
+            JsonRpcResponse::Error(err) => {
+                assert_eq!(
+                    err.error.code,
+                    error_codes::GATEWAY_SERVER_ERROR,
+                    "Approve non-existent approval should return GATEWAY_SERVER_ERROR"
+                );
+                assert!(
+                    err.error.message.contains("not found")
+                        || err.error.message.contains("Gateway error")
+                        || err.error.message.contains("404"),
+                    "Error message should indicate missing approval: {}",
+                    err.error.message
+                );
+            }
+            JsonRpcResponse::Success(_) => {
+                panic!("approve on non-existent approval should be rejected")
+            }
+        }
+
+        _mock.assert();
+    }
+
+    /// D-1 Slice 3: Gateway error message propagates through MCP boundary.
+    /// Verifies that the gateway's JSON error body is surfaced in the MCP response.
+    #[test]
+    fn test_gateway_error_message_propagates_to_mcp() {
+        let mut server = mockito::Server::new();
+        let exec_id = "550e8400-e29b-41d4-a716-446655440004";
+        let expected_msg = "execution must be in Prepared state before execution";
+        let _mock = server
+            .mock("POST", &*format!("/v1/executions/{}/execute", exec_id))
+            .with_status(409)
+            .with_header("content-type", "application/json")
+            .with_body(format!(r#"{{"message": "{}"}}"#, expected_msg))
+            .expect(1)
+            .create();
+
+        let config = ClientConfig::new()
+            .base_url(&server.url())
+            .bearer_token("test-token");
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let params = serde_json::json!({
+            "name": "ferrum_gate_execute_prepared",
+            "arguments": {
+                "execution_id": exec_id,
+                "payload": {}
+            }
+        });
+        let response = handle_tools_call_with_client(params, Some(JsonRpcId::Number(1)), &client);
+
+        match response {
+            JsonRpcResponse::Error(err) => {
+                assert_eq!(err.error.code, error_codes::GATEWAY_SERVER_ERROR);
+                // The error message should contain the gateway's message
+                assert!(
+                    err.error.message.contains(expected_msg),
+                    "Gateway error message should propagate to MCP response. Got: {}",
+                    err.error.message
+                );
+            }
+            JsonRpcResponse::Success(_) => {
+                panic!("Expected error response for out-of-order execution")
+            }
+        }
+
+        _mock.assert();
+    }
 }

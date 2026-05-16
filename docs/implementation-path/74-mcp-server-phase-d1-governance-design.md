@@ -730,7 +730,7 @@ The following are explicitly **NOT** in scope for D-1:
 
 ---
 
-## 14. Known Gaps (Post-Slice 1)
+## 14. Known Gaps (Post-Slice 3)
 
 The following items are explicitly **not yet implemented** and remain tracked:
 
@@ -738,10 +738,12 @@ The following items are explicitly **not yet implemented** and remain tracked:
 |-----|--------|-------|---------|
 | **Per-agent rate limiting** | Medium | Future slice | tower_governor integration deferred |
 | **Full MCP→gateway governance smoke** | High | Operator | Requires live gateway with auth enabled |
-| **Out-of-order pipeline negative tests** | Medium | Future slice | e.g., execute before authorize, compensate before verify |
+| **Real-gateway state-machine negative tests** | Medium | Operator | Out-of-order mock tests exist (Slice 3); real gateway state-machine validation still missing |
 | **Load testing** | Medium | Future slice | Performance baseline not yet established |
 | **Token rotation** | Low | Future slice | Not required for v1.4 beta |
 | **OAuth 2.0** | Low | Future slice | Bearer token sufficient for current scope |
+
+**Slice 3 scope clarification**: Mock-level out-of-order pipeline negative tests are now implemented (7 tests covering execute-before-prepare, verify-before-execute, prepare-without-auth, compensate-before-verify, mint-on-denied-proposal, approve-nonexistent, and error-message-propagation). These verify MCP→gateway error mapping but do not validate the actual gateway state machine. Full real-gateway negative smoke remains a gap.
 
 ---
 
@@ -759,6 +761,7 @@ The following items are explicitly **not yet implemented** and remain tracked:
 | Error codes consolidated in lib.rs | 2026-05-06 | Implementation cleanup in D-1.1 |
 | **D-1 Slice 1 auth gate implemented** | **2026-05-16** | **Commit `34d00ab`: mutating tools require bearer token before REST dispatch; read-only bypass; token-hash actor fallback** |
 | **D1.3–D1.10 marked implemented** | **2026-05-16** | **Code reality: lifecycle dispatch, sanitization, redaction, sequential pipeline test all landed and reviewed** |
+| **D-1 Slice 3 negative tests implemented** | **2026-05-16** | **7 mock-based out-of-order pipeline tests added; verify gateway 409/400/404/422 errors map to MCP GATEWAY_SERVER_ERROR; real-gateway state-machine smoke still tracked as gap** |
 
 ---
 
