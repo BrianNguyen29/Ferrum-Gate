@@ -238,7 +238,7 @@ bash scripts/gcp/phase3g_configure_real_domain.sh --confirm \
 
 ### Block B — Off-VM Alerting
 
-**Current state**: Prometheus + AlertManager active. SendGrid API key secret present on VM. AlertManager config contains SendGrid webhook receiver. Synthetic alert POST returned HTTP 200 and was visible in AlertManager API. Operator confirmed receipt of inbox-check alert `TEST_ID=fg-inbox-check-20260516-052910` for at least one contact, with email content matching subject `FerrumGate Alert: FerrumGateInboxDeliveryCheck`, status `resolved`, severity `warning`, service `ferrumgate`. Secondary-contact confirmation remains pending unless separately verified.
+**Current state**: Prometheus + AlertManager active. SendGrid API key secret present on VM. AlertManager config contains SendGrid webhook receiver. Synthetic alert POST returned HTTP 200 and was visible in AlertManager API. Operator confirmed receipt of inbox-check alert `TEST_ID=fg-inbox-check-20260516-052910` for at least one contact, with email content matching subject `FerrumGate Alert: FerrumGateInboxDeliveryCheck`, status `resolved`, severity `warning`, service `ferrumgate`. Bearer token rotation executed on VM (new token 200, old token 401, ROTATION_RESULT=PASS; token generated on VM and never printed). Secondary-contact confirmation remains pending unless separately verified. SendGrid API key rotation remains pending/operator-blocked.
 
 **Prior evidence**: Direct API test and AlertManager webhook delivered in non-prod (Phase 3H/4A).
 
@@ -256,7 +256,7 @@ bash scripts/gcp/phase3g_configure_real_domain.sh --confirm \
 |------|----------|--------|
 | G-B1 | Test alert delivered to at least one operator contact | 🟡 Partial — operator confirmed inbox receipt of `TEST_ID=fg-inbox-check-20260516-052910`; covers at least one contact |
 | G-B2 | Test alert delivered to `SECONDARY_CONTACT` | ☐ Pending — secondary-contact confirmation remains pending unless separately verified |
-| G-B3 | Key rotation procedure executed at least once in non-prod | ☐ Pending |
+| G-B3 | Key rotation procedure executed at least once in non-prod | 🟡 Partial — bearer token rotation executed on VM (new token 200, old token 401, ROTATION_RESULT=PASS); SendGrid API key rotation remains pending/operator-blocked |
 | G-B4 | Escalation matrix documented and acknowledged by operator | ☐ Pending |
 
 **Rollback**: Remove external receivers from AlertManager config; reload AlertManager; delete API key secret.
@@ -365,7 +365,7 @@ bash scripts/gcp/phase3g_configure_real_domain.sh --confirm \
 | CI cost preference | N/A (local/manual-only) | GitHub-hosted CI not triggered for private repo due to Actions minutes cost; local validation/self-hosted/manual-only approach accepted |
 | Layout validation | `bash scripts/validate_repo_layout.sh` | "Repository layout looks OK" |
 | Contract consistency | `python3 scripts/check_contract_consistency.py` | "VALIDATION PASSED" |
-| Local security audit | `make audit` | `cargo-audit` installed (v0.22.1); scans 384 dependencies against 1090 advisories; `RUSTSEC-2023-0071` ignored as uncompiled optional dependency; `[cargo-audit] PASS`; `SECURITY AUDIT GATE: PASS` |
+| Local security audit | `make audit` | `cargo-deny v0.19.6` and `cargo-audit v0.22.1` installed; cargo-deny advisory DB fetched, advisories ok; cargo-audit scans 384 dependencies against 1090 advisories; `RUSTSEC-2023-0071` ignored as uncompiled optional dependency; `[cargo-deny] PASS`; `[cargo-audit] PASS`; `SECURITY AUDIT GATE: PASS` |
 
 ---
 
@@ -382,9 +382,10 @@ bash scripts/gcp/phase3g_configure_real_domain.sh --confirm \
 | 2026-05-16 (tracker) | Created `122-completion-roadmap-and-hardening-tracker.md` with 10-item tracker. Updated `AGENTS.md` stale P0/status text and `01-current-state.md` with May 13–16 Block A/B/C evidence. Cross-referenced tracker. No production-ready claim preserved. | Engineering |
 | 2026-05-16 (hardening) | Added local/manual security audit gate (`scripts/run_security_audit.sh` + `make audit`). Updated tracker items 7–9: ferrum-cap fix verified (atomic `update_status_if_active`, 9 tests), escalation matrix skeleton added to tracker, key rotation and secondary contact marked operator-blocked. No production-ready claim preserved. | Engineering |
 | 2026-05-16 (audit evidence) | `cargo-audit v0.22.1` installed; `make audit` passes (cargo-audit scans 384 dependencies against 1090 advisories, 0 actionable issues; `RUSTSEC-2023-0071` ignored as uncompiled optional dependency via `default-features = false` on `sqlx`). Block A (domain), G-B2 (secondary contact), G-B3 (key rotation) remain operator-blocked. No production-ready claim preserved. | Engineering |
+| 2026-05-16 (operator execution) | `cargo-deny v0.19.6` installed (debug build after release timeout); `make audit` passes with both cargo-deny and cargo-audit. Bearer token rotation executed on VM securely (token generated on VM, never printed; new token 200, old token 401, ROTATION_RESULT=PASS). SSH firewall temporarily opened to `14.239.184.129/32` for live work and restored to `118.69.4.63/32` after. Block A (domain), G-B2 (secondary contact), and SendGrid API key rotation remain operator-blocked. No production-ready claim preserved. | Engineering |
 
 ---
 
 *Document created: 2026-05-03. Production-readiness roadmap — no production-ready claim, no G2 complete, no operator signature pre-populated.*
 
-*Next update: Block A remains blocked — operator confirmed no real domain and no DNS available yet. Block B: operator confirmed inbox receipt of `TEST_ID=fg-inbox-check-20260516-052910` with subject/content verified (G-B1 partial); secondary-contact confirmation (G-B2) and key rotation drill (G-B3) remain pending/operator-blocked; escalation matrix skeleton added to tracker (G-B4 partial). Engineering items 7–9 closed: ferrum-cap fix verified, local audit gate added, and `cargo-audit v0.22.1` installed with `make audit` passing. `RUSTSEC-2023-0071` ignored as uncompiled optional dependency (`rsa` via `sqlx-mysql`, blocked by `default-features = false` on `sqlx`).*
+*Next update: Block A remains blocked — operator confirmed no real domain and no DNS available yet. Block B: operator confirmed inbox receipt of `TEST_ID=fg-inbox-check-20260516-052910` with subject/content verified (G-B1 partial); secondary-contact confirmation (G-B2) remains pending/operator-blocked; bearer token rotation executed on VM (G-B3 partial — new token 200, old token 401, ROTATION_RESULT=PASS); SendGrid API key rotation remains pending/operator-blocked; escalation matrix skeleton added to tracker (G-B4 partial). Engineering items 7–9 closed: ferrum-cap fix verified, local audit gate added, and `cargo-deny v0.19.6` + `cargo-audit v0.22.1` installed with `make audit` passing. `RUSTSEC-2023-0071` ignored as uncompiled optional dependency (`rsa` via `sqlx-mysql`, blocked by `default-features = false` on `sqlx`).*

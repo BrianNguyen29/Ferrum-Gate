@@ -26,7 +26,7 @@ make audit   # local security audit gate (cargo-deny / cargo-audit)
 - `cargo clippy --workspace --all-targets -- -D warnings`: PASSES locally
 - `cargo test --workspace`: PASSES locally (all packages)
 - `bash scripts/run_pre_target_gate.sh --full`: PASSES locally
-- `make audit`: PASSES locally (`cargo-audit v0.22.1` installed; 1090 advisories loaded; 384 dependencies scanned; `RUSTSEC-2023-0071` ignored as uncompiled optional dependency; `SECURITY AUDIT GATE: PASS`)
+- `make audit`: PASSES locally (`cargo-deny v0.19.6` and `cargo-audit v0.22.1` installed; cargo-deny advisory DB ok; 1090 advisories loaded; 384 dependencies scanned; `RUSTSEC-2023-0071` ignored as uncompiled optional dependency; `SECURITY AUDIT GATE: PASS`)
 - Full workspace gate rerun after P5e: PASSED (ALL LOCAL CHECKS PASSED)
 - Summary: layout=0 contract=0 fmt=0 check=0 clippy=0 test=0 pre_target_gate_full=0 audit=0
 
@@ -59,7 +59,7 @@ README.md and CONTRIBUTING.md now correctly reference actual onboarding paths. O
 - P0 blockers: All closed — CI hardened, D1–D6 target-host drills passed (2026-05-13), restore drill passed (2026-05-15), backup automation verified with retention pruning (run id `20260515T1606Z-b3-retention`), G2.1–G2.8 signed, operator signoff obtained
 - Active operator blockers (Blocks A/B/C):
   - Block A: BLOCKED — no real owned domain or DNS available yet
-  - Block B: PARTIAL — inbox delivery confirmed for at least one contact (G-B1 partial); secondary contact (G-B2), key rotation (G-B3), and escalation matrix (G-B4) remain pending
+  - Block B: PARTIAL — inbox delivery confirmed for at least one contact (G-B1 partial); secondary contact (G-B2) and escalation matrix (G-B4) remain pending; bearer token rotation executed on VM (G-B3 partial — new token 200, old token 401, ROTATION_RESULT=PASS); SendGrid API key rotation remains pending/operator-blocked
   - Block C: CLOSED — C1 keyless backup verified, residual key removed, offsite sync confirmed
 - P1 items: readiness semantics, configurable rate limit, structured logging, metrics/observability — all done
 - No production-ready claim; FerrumGate v1 is RC-ready/conditional; G2 requires operator action

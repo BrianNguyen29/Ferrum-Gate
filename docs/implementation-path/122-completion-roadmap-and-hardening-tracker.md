@@ -11,10 +11,10 @@
 
 Following May 13–16 operator execution and evidence collection, plus May 16 engineering updates:
 - **Block C (keyless backup)**: CLOSED — C1 path verified, residual key removed, offsite sync confirmed.
-- **Block B (off-VM alerting)**: PARTIAL — operator confirmed inbox receipt for at least one contact (G-B1 partial); G-B2 secondary contact and G-B3 key rotation remain pending/operator-blocked. G-B4 escalation matrix skeleton added below; full population pending operator contacts.
+- **Block B (off-VM alerting)**: PARTIAL — operator confirmed inbox receipt for at least one contact (G-B1 partial); G-B2 secondary contact remains pending/operator-blocked. G-B3 bearer token rotation executed on VM (new token 200, old token 401, ROTATION_RESULT=PASS); SendGrid API key rotation remains pending/operator-blocked. G-B4 escalation matrix skeleton added below; full population pending operator contacts.
 - **Block A (real domain)**: BLOCKED — operator confirmed no real owned domain and no DNS configuration available yet.
 - **P0 items**: All closed (CI hardened, D1–D6 passed, restore drill passed, backup automation verified, G2 signed, operator signoff obtained).
-- **Engineering items 7–9**: Completed — ferrum-cap fix verified (atomic `update_status_if_active`, gateway durable path wired, 9 tests pass); local/manual security audit gate added (`scripts/run_security_audit.sh` + `make audit`); `cargo-audit v0.22.1` installed and `make audit` passes (cargo-audit scans 384 dependencies against 1090 advisories, PASS; SECURITY AUDIT GATE: PASS).
+- **Engineering items 7–9**: Completed — ferrum-cap fix verified (atomic `update_status_if_active`, gateway durable path wired, 9 tests pass); local/manual security audit gate added (`scripts/run_security_audit.sh` + `make audit`); `cargo-audit v0.22.1` and `cargo-deny v0.19.6` installed; `make audit` passes with both tools (cargo-deny advisories ok, cargo-audit 384 dependencies scanned, PASS; SECURITY AUDIT GATE: PASS).
 - **Production posture**: `production-ready = NO`; PostgreSQL production = `NO`; HA/multi-node = `NO`.
 
 ---
@@ -27,11 +27,11 @@ Following May 13–16 operator execution and evidence collection, plus May 16 en
 | 2 | Update AGENTS.md stale status | Engineering | ✅ Done | — | This tracker and doc updates reflect current state | — |
 | 3 | Refresh `01-current-state.md` per May 13–16 evidence | Engineering | ✅ Done | — | Updated with Block A/B/C statuses and closed P0 items | — |
 | 4 | Create Block B escalation matrix | Operator | 🟡 Skeleton added | Operator must define contacts/channels | Skeleton below; full template in `R1` artifact §4 | Operator populates primary/secondary contacts, channels, and acknowledges matrix |
-| 5 | Run key rotation drill (SendGrid + bearer token) | Operator | ☐ Pending — operator-blocked | Operator must schedule drill; new bearer token requires secure handoff; SendGrid key requires dashboard/API credential workflow | Rotation procedure in `R1` artifact §4.1 and `70-security-hardening-local-only-plan.md` §Token Rotation Procedure | Operator generates new SendGrid key and bearer token via secure workflow, verifies service continuity, revokes old keys |
+| 5 | Run key rotation drill (SendGrid + bearer token) | Operator | 🟡 Partial — bearer token rotated; SendGrid key rotation pending | Bearer token rotation executed on VM (new token 200, old token 401, ROTATION_RESULT=PASS); SendGrid API key rotation requires dashboard/API credential workflow and secure operator channel | Rotation procedure in `R1` artifact §4.1 and `70-security-hardening-local-only-plan.md` §Token Rotation Procedure | Operator generates new SendGrid key via secure dashboard workflow and rotates VM secret at `/etc/ferrumgate/secrets/alert-provider-api-key` |
 | 6 | Confirm secondary alert contact inbox delivery | Operator | ☐ Pending — operator-blocked | Secondary contact not specified; operator must provide contact and confirm reachability | G-B2 gate in `67-production-readiness-roadmap.md` | Operator provides secondary contact, sends test alert, and confirms receipt |
 | 7 | Oracle review ferrum-cap single-use durability/concurrency | Engineering | ✅ Done | — | Fix verified: atomic `update_status_if_active` for SQLite/Postgres; gateway durable path wired; risk documented as accepted for v1 | Post-v1: durable capability persistence (revocation list survives restart) remains deferred to Phase 3 |
 | 8 | Add ferrum-cap tests | Engineering | ✅ Done | — | 9 tests pass (4 TTL boundaries + 5 mark_used paths: success, already_used, concurrent_single_use, revoked, expired) | — |
-| 9 | Add local/manual cargo-audit or cargo-deny gate | Engineering | ✅ Done | — | `cargo-audit v0.22.1` installed; `scripts/run_security_audit.sh` created; `make audit` target added; checks for `cargo-deny` and `cargo-audit`, runs available tools, fails with install instructions if neither present; **cargo-audit PASS** (loaded 1090 advisories, scanned 384 dependencies, 0 actionable issues); `RUSTSEC-2023-0071` ignored because the affected crate path (`rsa` via `sqlx-mysql`) is an uncompiled optional dependency blocked by `default-features = false` on `sqlx` | — |
+| 9 | Add local/manual cargo-audit or cargo-deny gate | Engineering | ✅ Done | — | `cargo-audit v0.22.1` and `cargo-deny v0.19.6` installed; `scripts/run_security_audit.sh` created; `make audit` target added; checks for `cargo-deny` and `cargo-audit`, runs available tools, fails with install instructions if neither present; **dual-tool PASS** (cargo-deny advisory DB fetched, advisories ok; cargo-audit loaded 1090 advisories, scanned 384 dependencies, 0 actionable issues); `RUSTSEC-2023-0071` ignored because the affected crate path (`rsa` via `sqlx-mysql`) is an uncompiled optional dependency blocked by `default-features = false` on `sqlx` | — |
 | 10 | Run Block A domain/TLS path when real domain exists | Operator | ☐ Blocked | No real owned domain or DNS available | `scripts/gcp/phase3g_configure_real_domain.sh` ready; requires `REAL_DOMAIN` + DNS A record → `34.158.51.8` | Operator procures domain, configures DNS A record, then executes Block A runbook (`R4` §A) |
 
 ---
@@ -55,7 +55,7 @@ Following May 13–16 operator execution and evidence collection, plus May 16 en
 |------|--------|----------|
 | G-B1 | 🟡 Partial | Operator confirmed inbox receipt of `TEST_ID=fg-inbox-check-20260516-052910` for at least one contact; email content verified (subject `FerrumGate Alert: FerrumGateInboxDeliveryCheck`, status `resolved`, severity `warning`, service `ferrumgate`) |
 | G-B2 | ☐ Pending | Secondary-contact inbox confirmation not yet verified |
-| G-B3 | ☐ Pending | Key rotation drill not yet executed |
+| G-B3 | 🟡 Partial | Bearer token rotation executed on VM (new token 200, old token 401, ROTATION_RESULT=PASS); SendGrid API key rotation remains pending/operator-blocked |
 | G-B4 | 🟡 Skeleton added | Escalation matrix skeleton added below; full documentation/acknowledgment pending operator-provided contacts |
 
 ### Block C — Keyless Backup
@@ -133,8 +133,8 @@ Following May 13–16 operator execution and evidence collection, plus May 16 en
 - **NOT PostgreSQL production**: Remains deferred; single-node SQLite only.
 - **NOT HA/multi-node**: Out of v1 scope.
 - **NOT both contacts confirmed**: Only at-least-one-contact inbox receipt is confirmed for Block B.
-- **NOT key rotation executed**: Item 5 remains pending/operator-blocked.
-- **NOT full security audit**: `make audit` passes with cargo-audit; cargo-deny is not installed. This is a local/manual gate, not CI.
+- **NOT SendGrid key rotation executed**: Item 5 bearer token rotation done; SendGrid API key rotation remains pending/operator-blocked.
+- **NOT full security audit**: `make audit` passes with both cargo-deny and cargo-audit. This is a local/manual gate, not CI.
 
 ---
 

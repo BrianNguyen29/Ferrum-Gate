@@ -1,6 +1,6 @@
 # 01 — Current state
 
-Last updated: 2026-05-16 — P5a–P5e complete; P6 CONDITIONAL GO; Blocks A/B/C status updated; full workspace gate passed; cargo-audit installed and `make audit` passing
+Last updated: 2026-05-16 — P5a–P5e complete; P6 CONDITIONAL GO; Blocks A/B/C status updated; full workspace gate passed; cargo-deny + cargo-audit installed and `make audit` passing; bearer token rotation executed on VM
 Single-node v1 scope unless noted.
 
 **Repository**: `https://github.com/BrianNguyen29/Ferrum-Gate` (upstream/original — private, accessible with authorized GitHub credentials) | **Default package version**: `0.1.0` | **Status**: P5a–P5e engineering complete within authorized scope; P6 CONDITIONAL GO for operator signoff/pilot; Block C CLOSED; Block B PARTIAL; Block A BLOCKED; production-ready remains NO; HA/multi-node/PostgreSQL production deployment remain NO; single-node SQLite-backed deployment is the only supported runtime
@@ -111,11 +111,12 @@ All P0–P2 items closed. U1–U4 upgrade tracks complete. P5a–P5e engineering
 
 Remaining operator blockers before pilot (as of 2026-05-16):
 - **Block A — Real owned domain**: BLOCKED — operator confirmed no real domain or DNS available yet
-- **Block B — Off-VM alerting**: PARTIAL — operator confirmed inbox receipt for at least one contact (TEST_ID `fg-inbox-check-20260516-052910`); secondary contact confirmation (G-B2), key rotation drill (G-B3), and escalation matrix (G-B4) remain pending
+- **Block B — Off-VM alerting**: PARTIAL — operator confirmed inbox receipt for at least one contact (TEST_ID `fg-inbox-check-20260516-052910`); secondary contact confirmation (G-B2) and escalation matrix (G-B4) remain pending; bearer token rotation executed on VM (G-B3 partial — new token 200, old token 401, ROTATION_RESULT=PASS); SendGrid API key rotation remains pending/operator-blocked
 - **Block C — Keyless backup**: CLOSED — C1 keyless backup verified, residual key removed, offsite sync confirmed; `n2-standard-2` remains temporary operational type
 
-Engineering items completed (May 16):
-- `cargo-audit v0.22.1` installed; `make audit` passes (loaded 1090 advisories, scanned 384 dependencies, 0 actionable issues). `RUSTSEC-2023-0071` (`rsa` via `sqlx-mysql`) ignored as uncompiled optional dependency blocked by `default-features = false` on `sqlx`.
+Engineering/operator items completed (May 16):
+- `cargo-deny v0.19.6` and `cargo-audit v0.22.1` installed; `make audit` passes with both tools (cargo-deny advisory DB fetched, advisories ok; cargo-audit loaded 1090 advisories, scanned 384 dependencies, 0 actionable issues). `RUSTSEC-2023-0071` (`rsa` via `sqlx-mysql`) ignored as uncompiled optional dependency blocked by `default-features = false` on `sqlx`.
+- Bearer token rotation executed on VM securely: token generated on VM and never printed; old token backed up; env updated; ferrumgate.service active; LOCAL_READYZ=200; LOCAL_DEEP=200; new token HTTP=200; old token HTTP=401; ROTATION_RESULT=PASS; PUBLIC_READYZ=200. SSH firewall temporarily opened to `14.239.184.129/32` for live work and restored to `118.69.4.63/32` after.
 
 Historical completed items (May 13–16):
 - ✅ Target-host D1–D6 evidence — passed 6/6 on 2026-05-13

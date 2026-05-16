@@ -73,10 +73,10 @@ CI cost constraints. Local/manual alternatives are provided.
 
 | Check | Command | Purpose |
 |-------|---------|---------|
-| Dependency audit (local) | `cargo deny check advisories` | Scan for known vulnerabilities in dependencies; run manually |
-| License audit (local) | `cargo deny check licenses` | Enforce allowlist/denylist of licenses; run manually |
-| Securing the toolchain | `cargo install --locked cargo-deny` then `cargo deny check` | Ensure reproducible toolchain |
-| Advisory check (local) | `cargo audit` | Scan for crates with security advisories; `cargo-audit v0.22.1` installed and `make audit` passing (1090 advisories, 384 dependencies scanned, 0 actionable issues) |
+| Dependency audit (local) | `cargo deny check advisories` | Scan for known vulnerabilities in dependencies; `cargo-deny v0.19.6` installed and operational |
+| License audit (local) | `cargo deny check licenses` | Enforce allowlist/denylist of licenses; `cargo-deny v0.19.6` installed and operational |
+| Securing the toolchain | `cargo install --locked cargo-deny` then `cargo deny check` | Ensure reproducible toolchain; cargo-deny installed via debug build after release timeout |
+| Advisory check (local) | `cargo audit` | Scan for crates with security advisories; `cargo-audit v0.22.1` installed; `make audit` passes with both tools (cargo-deny advisory DB ok, cargo-audit 1090 advisories / 384 dependencies, 0 actionable issues) |
 | Format/lint check | `cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warnings` | Pre-commit hook candidate |
 
 **Note**: These commands are for local operator use only. They are NOT added to CI.
@@ -181,12 +181,16 @@ After v1 hardening and Phase 3, capability persistence may be extended:
 
 ### Token Rotation Evidence
 
-| Step | Evidence |
-|------|----------|
-| New token generated | Admin host shell history (redacted) |
-| Env file updated | Path documented in operator records |
-| New token works | curl output saved to evidence dir |
-| Old token rejected | curl output saved to evidence dir |
+| Step | Evidence | Status |
+|------|----------|--------|
+| New token generated | VM shell history (redacted); token generated on VM and never printed | ✅ Executed |
+| Env file updated | `/etc/ferrumgate/env` updated on VM | ✅ Executed |
+| ferrumgate.service restarted | Service active; LOCAL_READYZ=200; LOCAL_DEEP=200 | ✅ Executed |
+| New token works | LOCAL_READYZ=200; PUBLIC_READYZ=200 | ✅ Executed |
+| Old token rejected | HTTP 401 with old token | ✅ Executed |
+| Old token securely destroyed | Backup removed after verification | ✅ Executed |
+
+**Execution summary**: Bearer token rotation executed on VM 2026-05-16. ROTATION_RESULT=PASS. SSH firewall temporarily opened to `14.239.184.129/32` for live work and restored to `118.69.4.63/32` after.
 
 ---
 
@@ -196,7 +200,7 @@ After v1 hardening and Phase 3, capability persistence may be extended:
 |-------|-------|-------|----------|
 | **S1** (Immediate) | Token rotation procedure documented; no-CORS-by-default documented; proxy-owned body limit documented; local audit commands documented | Engineering (docs) + Operator (token rotation) | Before first production pilot |
 | **S2** (Pre-pilot) | Optional `deny.toml` local setup documented; evidence manifest updated with security audit placeholder; CORS opt-in guidance added | Engineering (docs) | Before G2 signoff |
-| **S3** (Post-pilot) | Manual cargo-deny/cargo-audit workflow operational; `cargo-audit v0.22.1` installed and `make audit` passing; toolchain securing documented | Operator (manual) | Post-pilot, pre-Phase 3 |
+| **S3** (Post-pilot) | Manual cargo-deny/cargo-audit workflow operational; `cargo-deny v0.19.6` and `cargo-audit v0.22.1` installed; `make audit` passes with both tools; toolchain securing documented | Operator (manual) | Post-pilot, pre-Phase 3 |
 | **S4** (Phase 3) | Durable capability persistence; PostgreSQL; DLP stub | Engineering | Phase 3 scope |
 
 ### S1 Recommended Immediate Actions
@@ -239,8 +243,8 @@ include optional local security audit evidence and token rotation evidence:
 
 | File | Description | Status |
 |------|-------------|--------|
-| `08-security/token_rotation_procedure.txt` | Token rotation commands output | ☐ Optional |
-| `08-security/local_audit_advisories.txt` | `cargo deny check advisories` output | ☐ Optional |
+| `08-security/token_rotation_procedure.txt` | Token rotation commands output | 🟡 Available — rotation executed on VM 2026-05-16; not yet collected |
+| `08-security/local_audit_advisories.txt` | `cargo deny check advisories` output | 🟡 Available — `make audit` generates this; not yet collected |
 | `08-security/local_audit_licenses.txt` | `cargo deny check licenses` output | ☐ Optional |
 | `08-security/local_audit_summary.txt` | Summary of local audit results | 🟡 Available — `make audit` generates this; not yet collected |
 
@@ -263,13 +267,14 @@ and are NOT required for pilot signoff.
 
 ## S1 Quick-Reference Checklist
 
-- [ ] Token rotation procedure reviewed (this doc §Token Rotation Procedure)
-- [ ] Real bearer token generated (`openssl rand -hex 32`)
-- [ ] Token stored securely (env file, chmod 600)
-- [ ] No-CORS-by-default posture understood
-- [ ] Proxy-owned body limit confirmed (proxy config)
-- [ ] Local audit commands reviewed (this doc §Group D)
+- [x] Token rotation procedure reviewed (this doc §Token Rotation Procedure)
+- [x] Real bearer token generated (`openssl rand -hex 32`)
+- [x] Token stored securely (env file, chmod 600)
+- [x] No-CORS-by-default posture understood
+- [x] Proxy-owned body limit confirmed (proxy config)
+- [x] Local audit commands reviewed (this doc §Group D)
 - [ ] Evidence manifest updated with optional security audit placeholders
+- [ ] SendGrid API key rotation executed (pending operator dashboard workflow)
 
 ---
 
