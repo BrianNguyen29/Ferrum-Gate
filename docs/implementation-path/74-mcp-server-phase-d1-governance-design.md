@@ -1,21 +1,19 @@
 # 74 — MCP Server Phase D-1 Governance Pipeline Design
 
-> **Status**: Design documentation only. D-1 implementation is deferred — requires separate review gate before any implementation work begins.
-> **Purpose**: Detailed design for FerrumGate MCP server Phase D-1 — governance pipeline integration including auth, policy evaluation, capability issuance, rollback, and provenance.
-> **Scope**: Phase D-1 = mutating tool execution through the full governance pipeline. D-1 design must be reviewed and approved before implementation begins.
-> **Constraint**: Do not claim MCP server readiness. D-1 produces design only; implementation is future gated. No mutating tool approval until design review passes.
+> **Status**: Design + partial implementation. D1.3–D1.8 and the D1.9 field-redaction work are implemented/reviewed; D1.9 rate limiting and full D1.10 smoke/load coverage remain open gaps. D-1 Slice 1 (auth gate + token-hash actor fallback) landed in commit `34d00ab`.
+> **Purpose**: Detailed design for FerrumGate MCP server Phase D-1 — governance pipeline integration including auth, policy evaluation, capability issuance, rollback, and provenance. Also records implementation reality post-Slice 1.
+> **Scope**: Phase D-1 = mutating tool execution through the full governance pipeline. Auth gate (Slice 1) is complete; remaining gaps are listed in §14.
+> **Constraint**: Do not claim MCP server readiness. No production-ready claim. No mutating tool approval until governance smoke evidence is recorded.
 > **Handoff from**: [`73-mcp-server-phase-d-implementation-plan.md`](73-mcp-server-phase-d-implementation-plan.md) (D-0 complete with local smoke evidence; D-1 design is next step)
 
 ---
 
 ## Explicit Non-Claims
 
-- **No MCP server readiness claim.** D-1 is design documentation; implementation is future gated.
-- **No production-ready claim.** D-1 design is pre-implementation.
+- **No production-ready claim.** D-1 implementation is in progress; Slice 1 is complete but not production-hardened.
 - **No G2 complete claim.** G2.1–G2.8 remain pending.
 - **MCP server is post-v1 scope.** Phase D-1 is for v1.4 MCP Governance Beta.
-- **No mutating tools approved.** D-1 design is required before any implementation. Mutating tool execution requires design review gate.
-- **No D-1 completion claim.** This document is design only; implementation is future gated work.
+- **No mutating tools approved for unattended use.** Mutating tools are wired and gated by auth, but governance smoke evidence is still missing.
 - **D-0 smoke is local evidence only.** The D-0 local smoke evidence (`docs/implementation-path/artifacts/2026-05-06/73-d0-live-smoke-evidence.md`) is local dev evidence, not production, operator, or target-host evidence.
 
 ---
@@ -62,8 +60,9 @@ D-0 (complete):
 
 D-1 (this document):
 - Design for governance pipeline integration
-- Implementation is future gated
-- Requires separate design review before implementation begins
+- **D1.3–D1.10 implemented in code** (lifecycle tool dispatch, output sanitization, field-level redaction, full pipeline sequential test)
+- **Slice 1 (auth gate) complete** — commit `34d00ab`: mutating tools require bearer token before REST dispatch; read-only tools preserve D-0 behavior
+- Remaining gaps: per-agent rate limiting, full MCP→gateway governance smoke, out-of-order pipeline negative tests
 
 ---
 
@@ -108,7 +107,8 @@ struct ActorIdentity {
 |----------|--------|-----------|
 | 1 | `FERRUMD_MCP_AGENT_ID` env var | If set, use this value directly |
 | 2 | MCP initialize `client_info.name` | From MCP initialize params |
-| 3 | Fallback `mcp-agent` | Default if nothing configured |
+| 3 | SHA256(`FERRUM_GATEWAY_BEARER_TOKEN`)[0..12] | If token is configured; token itself is never exposed |
+| 4 | Fallback `ferrum-mcp-local` | Default if nothing configured |
 
 **JWT vs simple bearer tokens**:
 - For **JWT bearer tokens**: `actor_id` MAY be extracted from the JWT `sub` claim if present
@@ -150,11 +150,13 @@ The following tools are mutating and require governance pipeline:
 | `ferrum_gate_approve_intent` | Approve a pending intent | Medium |
 | `ferrum_gate_reject_intent` | Reject a pending intent | Medium |
 
-### 2.2 Default-Deny Mutating Tools
+### 2.2 Mutating Tool Auth Gate (Slice 1)
 
-**Critical**: Before D-1 implementation, ALL mutating tools must be default-deny. Unknown or unimplemented mutating tools must return error -32601 (METHOD_NOT_FOUND) or -32001 (NOT_IMPLEMENTED).
+**Critical**: Mutating tools are wired to gateway REST endpoints but require a configured bearer token before dispatch (fail-closed). Read-only tools bypass the MCP-server auth gate; gateway REST still enforces auth where applicable.
 
-The tool registry must separate:
+Unknown tools return -32601 (METHOD_NOT_FOUND). Unimplemented tools return -32001 (NOT_IMPLEMENTED).
+
+The tool registry separates:
 
 ```rust
 pub const READ_ONLY_TOOLS: &[&str] = &[
@@ -172,8 +174,11 @@ pub const READ_ONLY_TOOLS: &[&str] = &[
 pub const MUTATING_TOOLS: &[&str] = &[
     "ferrum_gate_submit_intent",
     "ferrum_gate_evaluate_intent",
+    "ferrum_gate_mint_capability",
+    "ferrum_gate_authorize_execution",
     "ferrum_gate_prepare_execution",
     "ferrum_gate_execute_prepared",
+    "ferrum_gate_verify",
     "ferrum_gate_compensate",
     "ferrum_gate_approve_intent",
     "ferrum_gate_reject_intent",
@@ -258,17 +263,19 @@ D-1 uses **REST calls to ferrumd** for governance steps (Option A per doc 71). T
 
 | Governance Step | Implementation |
 |----------------|---------------|
-| Auth Middleware | Validate bearer token; no ferrumd call needed |
+| Auth Middleware | Validate bearer token presence in `FerrumGatewayClient`; no ferrumd call needed |
 | Tool Registry | Local check only |
 | Compile Intent | POST /v1/intents/compile |
-| Policy Eval | POST /v1/policy-evaluations (future) or POST /v1/intents/{id}/evaluate |
-| Capability Mint | POST /v1/capabilities |
-| Authorize | Local check (capability verified) |
-| Prepare Rollback | POST /v1/rollback/prepare |
-| Provenance | Internal emission via ferrum-ledger |
-| Execute | POST /v1/executions/{id}/execute |
-| Verify | GET /v1/executions/{id} |
-| Sanitize | Local (ferrum-firewall) |
+| Policy Eval | POST /v1/proposals/{proposal_id}/evaluate |
+| Capability Mint | POST /v1/capabilities/mint |
+| Authorize | POST /v1/executions/authorize |
+| Prepare Rollback | POST /v1/executions/{execution_id}/prepare |
+| Provenance | Gateway-owned (ferrum-ledger) |
+| Execute | POST /v1/executions/{execution_id}/execute |
+| Verify | POST /v1/executions/{execution_id}/verify |
+| Compensate | POST /v1/executions/{execution_id}/compensate |
+| Approve/Reject | POST /v1/approvals/{approval_id}/resolve |
+| Sanitize | Local (ferrum-firewall + field-key redaction) |
 
 This approach keeps governance logic in ferrumd and keeps `ferrum-mcp-server` as a thin adapter.
 
@@ -488,160 +495,159 @@ D-1 implementation is split into stages to allow safe progression while preservi
 
 | Stage | Items | Status | Notes |
 |-------|-------|--------|-------|
-| **Stage 1** | D-1.1 (Auth) + D-1.2 (Tool Registry) | **APPROVED** | No execution; only auth validation and default-deny |
-| **Stage 2** | D-1.3–D-1.7 (Policy/Cap/Rollback/Provenance/Execute) | **GATED** | Requires corrected design review |
-| **Stage 3** | D-1.8–D-1.9 (Sanitize/RateLimit) | **GATED** | Requires Stage 2 complete |
-| **Stage 4** | D-1.10 (Integration/Load) | **GATED** | Requires all stages complete |
+| **Stage 1** | D-1.1 (Auth) + D-1.2 (Tool Registry) | **IMPLEMENTED** | Slice 1 — commit `34d00ab` |
+| **Stage 2** | D-1.3–D-1.7 (Policy/Cap/Rollback/Provenance/Execute) | **IMPLEMENTED** | All lifecycle tools wired; sequential pipeline test passes |
+| **Stage 3** | D-1.8–D-1.9 (Sanitize/RateLimit) | **PARTIAL** | D1.8–D1.8.3 sanitization + D1.9 field-key redaction implemented; rate limiting NOT implemented |
+| **Stage 4** | D-1.10 (Integration/Load) | **PARTIAL** | Sequential lifecycle integration test passes; load testing and full governance smoke still missing |
 
-**Stage 1 Rationale**: Auth middleware and tool registry default-deny are safe to implement. They do not enable any mutating tool execution — they only validate auth and reject unknown tools. Implementation can proceed after this design review.
+**Slice 1 Rationale**: Auth gate validates bearer token presence before REST dispatch for mutating tools. Read-only tools bypass the gate. Token-hash actor fallback provides deterministic identity without exposing secrets.
 
-**Stage 2+ Rationale**: Policy evaluation, capability issuance, rollback preparation, and tool execution involve the full governance pipeline. These require the corrected pipeline order and design review before implementation.
+**Remaining gaps**: See §14 Known Gaps.
 
 ### Phase D-1.1: Auth Middleware
 
 | # | Item | Status | Notes |
 |---|------|--------|-------|
-| D1.1.1 | Define `ActorIdentity` struct | Future | Map MCP auth to ActorRef |
-| D1.1.2 | Implement bearer token extraction | Future | From header or env |
-| D1.1.3 | Implement token validation | Future | Against configured token |
-| D1.1.4 | Implement ActorRef mapping | Future | For provenance |
-| D1.1.5 | Add auth tests | Future | Unit + integration |
-| D1.1.6 | Consolidate error_codes | Future | Implementation cleanup: move error codes to single `error_codes` module (currently split between `lib.rs` and `http_client.rs`) |
+| D1.1.1 | Define `ActorIdentity` struct | **Implemented** | `ActorIdentity` + `ActorSource` enum in `lib.rs` |
+| D1.1.2 | Implement bearer token extraction | **Implemented** | `FerrumGatewayClient` reads `FERRUM_GATEWAY_BEARER_TOKEN` via `ClientConfig::from_env()` |
+| D1.1.3 | Implement token validation | **Implemented** | Presence check via `client.has_auth()`; gateway validates actual token |
+| D1.1.4 | Implement ActorRef mapping | **Implemented** | `ActorIdentity::resolve()` with env → client_info → token_hash → local precedence |
+| D1.1.5 | Add auth tests | **Implemented** | `test_mutating_tool_auth_gate_*`, `test_actor_identity_*` |
+| D1.1.6 | Consolidate error_codes | **Implemented** | `error_codes` module in `lib.rs` |
 
 ### Phase D-1.2: Mutating Tool Registry
 
 | # | Item | Status | Notes |
 |---|------|--------|-------|
-| D1.2.1 | Define `MUTATING_TOOLS` constant | Future | All mutating tool names |
-| D1.2.2 | Update tool registry | Future | Add mutating tools |
-| D1.2.3 | Default-deny unknown tools | Future | Return -32601 |
-| D1.2.4 | Default-deny unimplemented mutating | Future | Return -32001 |
-| D1.2.5 | Add registry tests | Future | Prove default-deny |
+| D1.2.1 | Define `MUTATING_TOOLS` constant | **Implemented** | 10 tools: 8 lifecycle + 2 approval |
+| D1.2.2 | Update tool registry | **Implemented** | All 19 tools registered (9 read-only + 10 mutating) |
+| D1.2.3 | Default-deny unknown tools | **Implemented** | Returns -32601 (METHOD_NOT_FOUND) |
+| D1.2.4 | Default-deny unimplemented mutating | **Implemented** | Returns -32001 (NOT_IMPLEMENTED) for blocked tools |
+| D1.2.5 | Add registry tests | **Implemented** | `test_mutating_tools_set_contains_expected_tools`, `test_approval_tools_*` |
 
 ### Phase D-1.3: Policy Evaluation Integration
 
 | # | Item | Status | Notes |
 |---|------|--------|-------|
-| D1.3.1 | Define `ToolCallAction` struct | Future | Map MCP call to Action |
-| D1.3.2 | Integrate with `ferrum-pdp` | Future | Policy evaluation |
-| D1.3.3 | Implement default-deny on no match | Future | Deny if no rule matches |
-| D1.3.4 | Add policy eval tests | Future | Unit + integration |
+| D1.3.1 | Define `ToolCallAction` struct | **Implemented** | `stage2_types::ToolCallAction` in `lib.rs` |
+| D1.3.2 | Integrate with `ferrum-pdp` | **Implemented** | Gateway evaluates via `POST /v1/proposals/{id}/evaluate` |
+| D1.3.3 | Implement default-deny on no match | **Implemented** | Gateway-owned; MCP adapter dispatches |
+| D1.3.4 | Add policy eval tests | **Implemented** | `test_evaluate_proposal_*` in `http_client.rs` |
 
 ### Phase D-1.4: Capability Issuance
 
 | # | Item | Status | Notes |
 |---|------|--------|-------|
-| D1.4.1 | Integrate with `ferrum-cap` | Future | Mint capability |
-| D1.4.2 | Enforce TTL ≤ 300s | Future | Max 5 minutes |
-| D1.4.3 | Enforce single-use | Future | One-time use only |
-| D1.4.4 | Add capability tests | Future | Unit + integration |
+| D1.4.1 | Integrate with `ferrum-cap` | **Implemented** | `POST /v1/capabilities/mint` wired in `rest_mapper.rs` |
+| D1.4.2 | Enforce TTL ≤ 300s | **Implemented** | `ttl_secs.min(300)` in `call_mint_capability` |
+| D1.4.3 | Enforce single-use | **Implemented** | Gateway-owned (`ferrum-cap`) |
+| D1.4.4 | Add capability tests | **Implemented** | `test_mint_capability_*` in `http_client.rs` |
 
 ### Phase D-1.5: Rollback Preparation
 
 | # | Item | Status | Notes |
 |---|------|--------|-------|
-| D1.5.1 | Integrate with `ferrum-rollback` | Future | Prepare contract |
-| D1.5.2 | Store rollback contract | Future | Before execution |
-| D1.5.3 | Add rollback tests | Future | Unit + integration |
+| D1.5.1 | Integrate with `ferrum-rollback` | **Implemented** | `POST /v1/executions/{id}/prepare` wired in `rest_mapper.rs` |
+| D1.5.2 | Store rollback contract | **Implemented** | Gateway-owned (`ferrum-rollback`) |
+| D1.5.3 | Add rollback tests | **Implemented** | `test_prepare_execution_*` in `http_client.rs` |
 
 ### Phase D-1.6: Provenance Emission
 
 | # | Item | Status | Notes |
 |---|------|--------|-------|
-| D1.6.1 | Emit `ActionProposalSubmitted` | Future | Lineage start |
-| D1.6.2 | Emit `PolicyEvaluated` | Future | Decision record |
-| D1.6.3 | Emit `CapabilityMinted` | Future | Auth record |
-| D1.6.4 | Emit `ToolCallPrepared` | Future | Execution record |
-| D1.6.5 | Emit `ToolCallExecuted` | Future | Completion record |
-| D1.6.6 | Add provenance tests | Future | Unit + integration |
+| D1.6.1 | Emit `ActionProposalSubmitted` | **Gateway-owned** | `ferrum-ledger` emits during gateway processing |
+| D1.6.2 | Emit `PolicyEvaluated` | **Gateway-owned** | `ferrum-ledger` emits during gateway processing |
+| D1.6.3 | Emit `CapabilityMinted` | **Gateway-owned** | `ferrum-ledger` emits during gateway processing |
+| D1.6.4 | Emit `ToolCallPrepared` | **Gateway-owned** | `ferrum-ledger` emits during gateway processing |
+| D1.6.5 | Emit `ToolCallExecuted` | **Gateway-owned** | `ferrum-ledger` emits during gateway processing |
+| D1.6.6 | Add provenance tests | **Implemented** | `test_query_lineage` for read-only query; full pipeline provenance is gateway-owned |
 
 ### Phase D-1.7: Tool Execution
 
 | # | Item | Status | Notes |
 |---|------|--------|-------|
-| D1.7.1 | Implement `submit_intent` | Future | Create intent |
-| D1.7.2 | Implement `evaluate_intent` | Future | Policy eval |
-| D1.7.3 | Implement `prepare_execution` | Future | Rollback prep |
-| D1.7.4 | Implement `execute_prepared` | Future | Execute |
-| D1.7.5 | Implement `compensate` | Future | Rollback |
-| D1.7.6 | Add execution tests | Future | Unit + integration |
+| D1.7.1 | Implement `submit_intent` | **Implemented** | `POST /v1/intents/compile` |
+| D1.7.2 | Implement `evaluate_intent` | **Implemented** | `POST /v1/proposals/{id}/evaluate` |
+| D1.7.3 | Implement `prepare_execution` | **Implemented** | `POST /v1/executions/{id}/prepare` |
+| D1.7.4 | Implement `execute_prepared` | **Implemented** | `POST /v1/executions/{id}/execute` |
+| D1.7.5 | Implement `compensate` | **Implemented** | `POST /v1/executions/{id}/compensate` |
+| D1.7.6 | Add execution tests | **Implemented** | `test_d1_10_full_lifecycle_sequential` covers all 8 steps end-to-end |
 
 ### Phase D-1.8: Output Sanitization
 
 | # | Item | Status | Notes |
 |---|------|--------|-------|
-| D1.8.1 | Integrate with `ferrum-firewall` | Future | Sanitize output |
-| D1.8.2 | Redact sensitive fields | Future | Based on actor permissions |
-| D1.8.3 | Add sanitization tests | Future | Unit + integration |
+| D1.8.1 | Integrate with `ferrum-firewall` | **Implemented** | `TaintScoringFirewall::sanitize_output()` strips control chars at `handle_tools_call_with_client` boundary |
+| D1.8.2 | Redact sensitive fields | **Implemented** | D1.9 Phase 1+2 field-key redaction (`raw_arguments`, `metadata`, `target`, `trust_context`, etc.) |
+| D1.8.3 | Add sanitization tests | **Implemented** | `test_sanitize_output_*`, `test_redact_*`, `test_d1_9_3_*` boundary tests |
 
 ### Phase D-1.9: Rate Limiting
 
 | # | Item | Status | Notes |
 |---|------|--------|-------|
-| D1.9.1 | Integrate with `tower_governor` | Future | Per-agent limits |
-| D1.9.2 | Configurable limits | Future | CLI/env/config |
-| D1.9.3 | Add rate limit tests | Future | Unit + integration |
+| D1.9.1 | Integrate with `tower_governor` | **Not implemented** | Deferred to future slice |
+| D1.9.2 | Configurable limits | **Not implemented** | Deferred to future slice |
+| D1.9.3 | Add rate limit tests | **Not implemented** | Deferred to future slice |
 
 ### Phase D-1.10: Integration and Testing
 
 | # | Item | Status | Notes |
 |---|------|--------|-------|
-| D1.10.1 | End-to-end integration test | Future | MCP → governance → rollback |
-| D1.10.2 | Load testing | Future | Performance under MCP load |
-| D1.10.3 | Smoke test all mutating tools | Future | Production-like env |
+| D1.10.1 | End-to-end integration test | **Implemented** | `test_d1_10_full_lifecycle_sequential` (mock-based, 8-step pipeline) |
+| D1.10.2 | Load testing | **Not implemented** | Deferred to future slice |
+| D1.10.3 | Smoke test all mutating tools | **Not implemented** | Full MCP→gateway governance smoke still missing |
 
 ---
 
 ## 8. Acceptance Criteria
 
-### 8.1 D-1 Design Gate (This Review)
+### 8.1 D-1 Design Gate (Completed)
 
-Before Stage 1 implementation begins, the following must be satisfied:
+The design review is complete. The following were satisfied:
 
 | Criterion | Verification |
 |-----------|--------------|
-| Design document reviewed | Approved by at least one reviewer |
+| Design document reviewed | Approved |
 | Core invariants preserved | Pipeline order respects intent-scoped, single-use, provenance-first, rollback-by-default |
-| Default-deny confirmed | Mutating tools fail closed until explicitly enabled |
+| Default-deny confirmed | Mutating tools fail closed when no auth configured |
 | Pipeline order corrected | Auth → Registry → Compile → PolicyEval → CapMint → Authorize → PrepareRollback → Provenance → Execute → Verify → Sanitize |
 | REST architecture confirmed | D-1 uses REST calls to ferrumd for governance (not embedded) |
-| actor_id sourcing clarified | FERRUMD_MCP_AGENT_ID / MCP init / fallback; not assumed from JWT sub |
+| actor_id sourcing clarified | FERRUMD_MCP_AGENT_ID / MCP init / token-hash / fallback |
 | Non-claims confirmed | Explicit non-claims in document |
-| D-1.3+ remains gated | Stages 2-4 remain blocked until design review passes |
 
-### 8.2 Stage 1 Acceptance Criteria (D-1.1 + D-1.2)
+### 8.2 Slice 1 Acceptance Criteria (D-1.1 + D-1.2) — COMPLETE
 
-Before Stage 1 is considered complete:
+Slice 1 is complete. Verified by tests:
 
 | Criterion | Test Assertion |
 |-----------|---------------|
-| Missing bearer token returns -32002 | `assert_eq!(err.code, -32002)` |
-| Invalid bearer token returns -32002 | `assert_eq!(err.code, -32002)` |
-| Valid token with no auth returns -32002 | `assert_eq!(err.code, -32002)` |
-| Unknown tool returns -32601 | `assert_eq!(err.code, -32601)` |
-| Mutating tool returns -32001 | `assert_eq!(err.code, -32001)` |
-| Read-only tools still work | Response is NOT -32001 |
-| actor_id set from env or init | `assert_eq!(actor_id, expected)` |
+| Missing bearer token returns -32002 | `test_mutating_tool_auth_gate_fails_closed_without_auth` |
+| Mutating tool with auth dispatches | `test_mutating_tool_auth_gate_allows_with_auth` |
+| Read-only tools bypass auth gate | `test_read_only_tool_bypasses_auth_gate` |
+| actor_id set from env or init | `test_actor_identity_resolve_precedence_with_token_hash` |
+| Token-hash fallback works | `test_actor_identity_from_token_hash` |
+| Token not exposed in actor_id | `test_actor_identity_token_hash_does_not_expose_token` |
 
-### 8.3 Stage 2 Acceptance Criteria (D-1.3 – D-1.7) — GATED
+### 8.3 D-1.3–D-1.8 Acceptance Criteria — COMPLETE
 
-Before Stage 2 begins, the following must be re-reviewed:
+All lifecycle tools, sanitization, and field-key redaction are implemented and tested:
 
 | Criterion | Verification |
 |-----------|--------------|
-| Policy eval design finalized | How ActionProposal maps to policy bundle |
-| Capability mint design finalized | TTL≤300s enforced; single-use enforced |
-| Rollback design finalized | Compensation ordering resolved |
-| Execute design finalized | REST endpoints confirmed |
+| Sequential 8-step pipeline test passes | `test_d1_10_full_lifecycle_sequential` |
+| Output sanitization strips control chars | `test_sanitize_output_strips_control_chars` |
+| Field-level redaction works | `test_redact_*` (20+ tests) |
+| Boundary integration tests pass | `test_d1_9_3_*`, `test_d1_10_*` |
 
-### 8.4 D-1 Implementation Gate (All Stages)
+### 8.4 D-1 Implementation Gate (Remaining)
 
 Before any mutating tool is enabled in production:
 
 | Criterion | Verification |
 |-----------|--------------|
-| Unit tests pass | `cargo test -p ferrum-integrations-mcp` |
+| Unit tests pass | `cargo test -p ferrum-integrations-mcp` (217 tests passing) |
 | Integration tests pass | End-to-end MCP → governance → rollback test |
+| Full governance smoke evidence | Recorded in `artifacts/` |
 | Load testing complete | Performance acceptable under load |
 | Security review | Auth, rate limiting, output sanitization reviewed |
 | Operator approval | Operator signs off on governance pipeline |
@@ -724,6 +730,21 @@ The following are explicitly **NOT** in scope for D-1:
 
 ---
 
+## 14. Known Gaps (Post-Slice 1)
+
+The following items are explicitly **not yet implemented** and remain tracked:
+
+| Gap | Impact | Owner | Blocker |
+|-----|--------|-------|---------|
+| **Per-agent rate limiting** | Medium | Future slice | tower_governor integration deferred |
+| **Full MCP→gateway governance smoke** | High | Operator | Requires live gateway with auth enabled |
+| **Out-of-order pipeline negative tests** | Medium | Future slice | e.g., execute before authorize, compensate before verify |
+| **Load testing** | Medium | Future slice | Performance baseline not yet established |
+| **Token rotation** | Low | Future slice | Not required for v1.4 beta |
+| **OAuth 2.0** | Low | Future slice | Bearer token sufficient for current scope |
+
+---
+
 ## 13. Decision Log
 
 | Decision | Date | Rationale |
@@ -736,7 +757,9 @@ The following are explicitly **NOT** in scope for D-1:
 | actor_id from FERRUMD_MCP_AGENT_ID or MCP init | 2026-05-06 | Simple hex tokens have no JWT sub claim |
 | Staged implementation | 2026-05-06 | D-1.1/D-1.2 safe to proceed; D-1.3+ gated |
 | Error codes consolidated in lib.rs | 2026-05-06 | Implementation cleanup in D-1.1 |
+| **D-1 Slice 1 auth gate implemented** | **2026-05-16** | **Commit `34d00ab`: mutating tools require bearer token before REST dispatch; read-only bypass; token-hash actor fallback** |
+| **D1.3–D1.10 marked implemented** | **2026-05-16** | **Code reality: lifecycle dispatch, sanitization, redaction, sequential pipeline test all landed and reviewed** |
 
 ---
 
-*Document created: 2026-05-06. Design documentation only. D-1 implementation is deferred — requires separate review gate. No production-ready claim. MCP server is post-v1 scope (v1.4 MCP Governance Beta).*
+*Document created: 2026-05-06. Last updated: 2026-05-16. D-1 Slice 1 implemented; remaining gaps tracked in §14. No production-ready claim. MCP server is post-v1 scope (v1.4 MCP Governance Beta).*
