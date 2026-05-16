@@ -2203,8 +2203,8 @@ async fn mark_capability_used_durable(
             Ok(lease)
         }
         Err(CapabilityError::NotFound) => {
-            // In-memory miss: load from store, validate, update status, persist
-            let Some(mut lease) = store.capabilities().get(capability_id).await.map_err(|e| {
+            // In-memory miss: load from store, validate, then atomically update
+            let Some(lease) = store.capabilities().get(capability_id).await.map_err(|e| {
                 tracing::error!(error = %e, "failed to load capability from store for mark_used");
                 CapabilityError::NotFound
             })?
@@ -2212,7 +2212,7 @@ async fn mark_capability_used_durable(
                 return Err(CapabilityError::NotFound);
             };
 
-            // Validate status
+            // Validate status before attempting atomic update
             if matches!(lease.status, CapabilityStatus::Used) {
                 return Err(CapabilityError::AlreadyUsed);
             }
@@ -2223,14 +2223,24 @@ async fn mark_capability_used_durable(
                 return Err(CapabilityError::Expired);
             }
 
-            // Update to Used
-            lease.status = CapabilityStatus::Used;
-            store.capabilities().update(&lease).await.map_err(|e| {
-                tracing::error!(error = %e, "failed to persist used capability status");
-                CapabilityError::NotFound
-            })?;
+            // Atomically update only if still Active; if another writer won, fail
+            let updated = store
+                .capabilities()
+                .update_status_if_active(capability_id, CapabilityStatus::Used)
+                .await
+                .map_err(|e| {
+                    tracing::error!(error = %e, "failed to atomically update capability status");
+                    CapabilityError::NotFound
+                })?;
 
-            Ok(lease)
+            if !updated {
+                return Err(CapabilityError::AlreadyUsed);
+            }
+
+            // Reconstruct the used lease for the caller
+            let mut used_lease = lease;
+            used_lease.status = CapabilityStatus::Used;
+            Ok(used_lease)
         }
         Err(e) => Err(e),
     }

@@ -11,6 +11,7 @@ make check   # cargo check --workspace
 make fmt     # cargo fmt --all
 make lint    # cargo clippy --workspace --all-targets -- -D warnings
 make test    # cargo test --workspace
+make audit   # local security audit gate (cargo-deny / cargo-audit)
 ```
 - Check formatting without mutation: `cargo fmt --all -- --check`
 - Feature-gated package check (e.g., ferrum-migrate): `cargo check --package ferrum-migrate --features postgres`
@@ -18,7 +19,7 @@ make test    # cargo test --workspace
 - CI runs: layout validation, contract consistency, fmt check, cargo check, clippy, and cargo test (no `|| true` — failures are not swallowed)
 - Pre-target gate (local only): `bash scripts/run_pre_target_gate.sh` — validates config examples, restore drill, evidence skeleton generator, docs present, bearer-auth smoke
 
-## Current Verification Status (2026-05-12)
+## Current Verification Status (2026-05-16)
 - Layout/contract validation: PASSES locally
 - `cargo fmt --all -- --check`: PASSES locally
 - `cargo check --workspace`: PASSES locally
@@ -53,8 +54,13 @@ README.md and CONTRIBUTING.md now correctly reference actual onboarding paths. O
 
 ## Production Readiness Roadmap
 - Durable todo list with priorities, blockers, owners, evidence: `docs/implementation-path/67-production-readiness-roadmap.md`
-- P0 blockers: CI swallow fixed; target-host evidence, G2 signoff, backup automation, operator signoff remain pending (operator-owned)
-- P1 items: readiness semantics, configurable rate limit, structured logging, metrics/observability
+- Completion tracker: `docs/implementation-path/122-completion-roadmap-and-hardening-tracker.md`
+- P0 blockers: All closed — CI hardened, D1–D6 target-host drills passed (2026-05-13), restore drill passed (2026-05-15), backup automation verified with retention pruning (run id `20260515T1606Z-b3-retention`), G2.1–G2.8 signed, operator signoff obtained
+- Active operator blockers (Blocks A/B/C):
+  - Block A: BLOCKED — no real owned domain or DNS available yet
+  - Block B: PARTIAL — inbox delivery confirmed for at least one contact (G-B1 partial); secondary contact (G-B2), key rotation (G-B3), and escalation matrix (G-B4) remain pending
+  - Block C: CLOSED — C1 keyless backup verified, residual key removed, offsite sync confirmed
+- P1 items: readiness semantics, configurable rate limit, structured logging, metrics/observability — all done
 - No production-ready claim; FerrumGate v1 is RC-ready/conditional; G2 requires operator action
 
 ## Contributing Rules

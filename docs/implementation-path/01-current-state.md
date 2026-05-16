@@ -1,9 +1,9 @@
 # 01 — Current state
 
-Last updated: 2026-05-12 — P5a–P5e complete; P6 CONDITIONAL GO; full workspace gate passed
+Last updated: 2026-05-16 — P5a–P5e complete; P6 CONDITIONAL GO; Blocks A/B/C status updated; full workspace gate passed
 Single-node v1 scope unless noted.
 
-**Repository**: `https://github.com/BrianNguyen29/Ferrum-Gate` (upstream/original — private, accessible with authorized GitHub credentials) | **Default package version**: `0.1.0` | **Status**: P5a–P5e engineering complete within authorized scope; P6 CONDITIONAL GO for operator signoff/pilot; production-ready remains NO; HA/multi-node/PostgreSQL production deployment remain NO; single-node SQLite-backed deployment is the only supported runtime
+**Repository**: `https://github.com/BrianNguyen29/Ferrum-Gate` (upstream/original — private, accessible with authorized GitHub credentials) | **Default package version**: `0.1.0` | **Status**: P5a–P5e engineering complete within authorized scope; P6 CONDITIONAL GO for operator signoff/pilot; Block C CLOSED; Block B PARTIAL; Block A BLOCKED; production-ready remains NO; HA/multi-node/PostgreSQL production deployment remain NO; single-node SQLite-backed deployment is the only supported runtime
 
 **Release support contract**:
 - Supported = SQLite-backed single-node governance core.
@@ -91,7 +91,7 @@ Full workspace check/clippy/test pass locally with 0 failures. Prefer command-le
 | ferrum-adapter-http | 103 | HttpMutation + http.replay_v1 (POST/PUT/PATCH) + pooling/retry |
 | ferrum-adapter-sqlite | 16 | SqlRowCountRange checks + transaction rollback + G-E1 verify fail-closed |
 | ferrum-adapter-maildraft | 16 | create/update/delete lifecycle + rollback idempotency |
-| ferrum-cap | 4 | Capability TTL boundaries |
+| ferrum-cap | 9 | Capability TTL boundaries + mark_used idempotency/concurrent/revoked/expired |
 | ferrum-firewall | 21 | TaintScoringFirewall, taint scoring, contradiction detection, sanitizer |
 | ferrum-graph | 10 | HashMap adjacency indexing, BFS ancestor/descendant traversal |
 | ferrum-ledger | 13 | SHA-256 hash chain with chain integrity verification |
@@ -109,22 +109,27 @@ Full workspace check/clippy/test pass locally with 0 failures. Prefer command-le
 
 All P0–P2 items closed. U1–U4 upgrade tracks complete. P5a–P5e engineering complete within authorized scope. Full workspace gate rerun passed (ALL LOCAL CHECKS PASSED 2026-05-12; repo prepared for Tier 1 target deployment preparation). P6 oracle verdict: CONDITIONAL GO. Production-ready remains NO; HA/multi-node/PostgreSQL production deployment remain NO.
 
-Remaining operator blockers before pilot:
-- Target-host D1–D6 evidence
-- SQLite restore drill
-- Backup automation
-- TLS/reverse proxy configuration
-- Bearer token generation
-- P5c.V1 backup drill
-- P5c.V2 restore drill
-- G3.6 real workload/post-deploy monitoring
+Remaining operator blockers before pilot (as of 2026-05-16):
+- **Block A — Real owned domain**: BLOCKED — operator confirmed no real domain or DNS available yet
+- **Block B — Off-VM alerting**: PARTIAL — operator confirmed inbox receipt for at least one contact (TEST_ID `fg-inbox-check-20260516-052910`); secondary contact confirmation (G-B2), key rotation drill (G-B3), and escalation matrix (G-B4) remain pending
+- **Block C — Keyless backup**: CLOSED — C1 keyless backup verified, residual key removed, offsite sync confirmed; `n2-standard-2` remains temporary operational type
+
+Historical completed items (May 13–16):
+- ✅ Target-host D1–D6 evidence — passed 6/6 on 2026-05-13
+- ✅ SQLite restore drill — passed 2026-05-15 (0.463s restore)
+- ✅ Backup automation — verified with retention pruning (run id `20260515T1606Z-b3-retention`)
+- ✅ TLS/reverse proxy configuration — closed via delegated authority 2026-05-15
+- ✅ Bearer token generation — closed via delegated authority 2026-05-15
+- P5c.V1 backup drill and P5c.V2 restore drill — SQLite path selected; PostgreSQL deferred
+- G3.6 real workload/post-deploy monitoring — fully accepted for P5b engineering review only
 
 Next decision routing:
 1. **Path 1 (RC tag)**: Requires git repo + G1 gates verified. See [`31-release-paths-todo.md`](./31-release-paths-todo.md) §Path 1.
 2. **Path 2 (Operator signoff/pilot)**: Conditional deployment with explicit operator signoff and blockers resolved. See [`54-operator-signoff-packet.md`](./54-operator-signoff-packet.md).
 3. **Path 3 (PostgreSQL/Phase3)**: P3 repository implementations and P4.1–P4.4 MVP/local Docker/runtime complete. Production/HA/multi-node remains deferred. See [`31-release-paths-todo.md`](./31-release-paths-todo.md) §Path 3.
 
-Remaining work is documented in:
+Completion tracker and remaining work:
+- [122-completion-roadmap-and-hardening-tracker.md](./122-completion-roadmap-and-hardening-tracker.md) — 10-item tracker for docs updates, Block B hardening, ferrum-cap tests, cargo-audit gate, and Block A domain path
 - [33-feature-completion-backlog.md](./33-feature-completion-backlog.md) — Must/Should/Production-only backlog for incomplete/partial features
 - [45-current-feature-audit.md](./45-current-feature-audit.md) — Phase 3 D5 bottleneck analysis complete; D6 priority list complete. Full report: [51-d5-bottleneck-analysis-report.md](./51-d5-bottleneck-analysis-report.md); Priority list: [52-d6-priority-expansion-list.md](./52-d6-priority-expansion-list.md)
 - [32-feature-completeness-audit.md](./32-feature-completeness-audit.md) — Route/API reconciliation

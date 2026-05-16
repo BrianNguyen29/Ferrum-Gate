@@ -209,4 +209,90 @@ mod tests {
             result
         );
     }
+
+    #[tokio::test]
+    async fn test_mark_used_success() {
+        let service = InMemoryCapabilityService::default();
+        let request = make_mint_request(300);
+        let minted = service.mint(request).await.unwrap();
+        let used = service.mark_used(minted.lease.capability_id).await.unwrap();
+        assert!(
+            matches!(used.status, CapabilityStatus::Used),
+            "capability should be marked Used"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mark_used_already_used() {
+        let service = InMemoryCapabilityService::default();
+        let request = make_mint_request(300);
+        let minted = service.mint(request).await.unwrap();
+        let _ = service.mark_used(minted.lease.capability_id).await.unwrap();
+        let result = service.mark_used(minted.lease.capability_id).await;
+        assert!(
+            matches!(result, Err(CapabilityError::AlreadyUsed)),
+            "second mark_used should fail with AlreadyUsed, got: {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mark_used_expired() {
+        let service = InMemoryCapabilityService::default();
+        let request = make_mint_request(0);
+        let minted = service.mint(request).await.unwrap();
+        // Wait for expiration (TTL=0 means already expired or expires immediately)
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        let result = service.mark_used(minted.lease.capability_id).await;
+        assert!(
+            matches!(result, Err(CapabilityError::Expired)),
+            "mark_used on expired capability should fail with Expired, got: {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mark_used_revoked() {
+        let service = InMemoryCapabilityService::default();
+        let request = make_mint_request(300);
+        let minted = service.mint(request).await.unwrap();
+        let _ = service.revoke(minted.lease.capability_id).await.unwrap();
+        let result = service.mark_used(minted.lease.capability_id).await;
+        assert!(
+            matches!(result, Err(CapabilityError::Revoked)),
+            "mark_used on revoked capability should fail with Revoked, got: {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mark_used_concurrent_single_use() {
+        let service = Arc::new(InMemoryCapabilityService::default());
+        let request = make_mint_request(300);
+        let minted = service.mint(request).await.unwrap();
+        let cap_id = minted.lease.capability_id;
+
+        let service1 = service.clone();
+        let service2 = service.clone();
+
+        let handle1 = tokio::spawn(async move { service1.mark_used(cap_id).await });
+        let handle2 = tokio::spawn(async move { service2.mark_used(cap_id).await });
+
+        let (r1, r2) = tokio::join!(handle1, handle2);
+        let results = [r1.unwrap(), r2.unwrap()];
+        let successes = results.iter().filter(|r| r.is_ok()).count();
+        let failures = results
+            .iter()
+            .filter(|r| matches!(r, Err(CapabilityError::AlreadyUsed)))
+            .count();
+
+        assert_eq!(
+            successes, 1,
+            "exactly one concurrent mark_used should succeed"
+        );
+        assert_eq!(
+            failures, 1,
+            "exactly one concurrent mark_used should fail with AlreadyUsed"
+        );
+    }
 }

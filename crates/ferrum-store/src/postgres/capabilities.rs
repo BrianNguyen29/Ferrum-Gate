@@ -93,6 +93,27 @@ impl CapabilityRepo for PostgresCapabilityRepo {
         self.update(&capability).await
     }
 
+    async fn update_status_if_active(
+        &self,
+        capability_id: CapabilityId,
+        status: CapabilityStatus,
+    ) -> Result<bool> {
+        let status_text = enum_text(&status)?;
+        let active_text = enum_text(&CapabilityStatus::Active)?;
+        let result = sqlx::query(
+            "UPDATE capabilities
+             SET status = $2,
+                 raw_json = jsonb_set(raw_json, '{status}', to_jsonb($2::text))
+             WHERE capability_id = $1 AND status = $3",
+        )
+        .bind(capability_id.to_string())
+        .bind(status_text)
+        .bind(active_text)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
     async fn list_by_intent(&self, intent_id: IntentId) -> Result<Vec<CapabilityLease>> {
         fetch_entities(
             &self.pool,

@@ -68,6 +68,13 @@ pub trait CapabilityRepo: Send + Sync {
         capability_id: CapabilityId,
         status: CapabilityStatus,
     ) -> Result<()>;
+    /// Atomically update capability status only if current status is Active.
+    /// Returns true if the row was updated (was Active), false otherwise.
+    async fn update_status_if_active(
+        &self,
+        capability_id: CapabilityId,
+        status: CapabilityStatus,
+    ) -> Result<bool>;
     async fn list_by_intent(&self, intent_id: IntentId) -> Result<Vec<CapabilityLease>>;
 }
 
