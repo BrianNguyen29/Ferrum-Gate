@@ -238,11 +238,11 @@ bash scripts/gcp/phase3g_configure_real_domain.sh --confirm \
 
 ### Block B — Off-VM Alerting
 
-**Current state**: Prometheus + AlertManager are VM-local only. No off-VM alert delivery is configured.
+**Current state**: Prometheus + AlertManager active. SendGrid API key secret present on VM. AlertManager config contains SendGrid webhook receiver. Synthetic alert POST returned HTTP 200 and was visible in AlertManager API.
 
 **Prior evidence**: Direct API test and AlertManager webhook delivered in non-prod (Phase 3H/4A).
 
-**SendGrid bridge template**: `configs/monitoring/alertmanager-sendgrid-bridge.example.yaml` (placeholder only; no real API key).
+**SendGrid bridge template**: `configs/monitoring/alertmanager-sendgrid-bridge.example.yaml` (placeholder only; no real API key in repo).
 
 **Operator inputs required**:
 - `ALERT_PROVIDER`: SendGrid, SES, PagerDuty, Slack webhook, or SMTP relay
@@ -252,24 +252,27 @@ bash scripts/gcp/phase3g_configure_real_domain.sh --confirm \
 - `ALERT_SENDER`: verified sender identity
 
 **Evidence gates**:
-| Gate | Evidence |
-|------|----------|
-| G-B1 | Test alert delivered to `PRIMARY_CONTACT` |
-| G-B2 | Test alert delivered to `SECONDARY_CONTACT` |
-| G-B3 | Key rotation procedure executed at least once in non-prod |
-| G-B4 | Escalation matrix documented and acknowledged by operator |
+| Gate | Evidence | Status |
+|------|----------|--------|
+| G-B1 | Test alert delivered to `PRIMARY_CONTACT` | ☐ Pending inbox confirmation |
+| G-B2 | Test alert delivered to `SECONDARY_CONTACT` | ☐ Pending inbox confirmation |
+| G-B3 | Key rotation procedure executed at least once in non-prod | ☐ Pending |
+| G-B4 | Escalation matrix documented and acknowledged by operator | ☐ Pending |
 
 **Rollback**: Remove external receivers from AlertManager config; reload AlertManager; delete API key secret.
 
 **Reference**:
 - [`artifacts/2026-05-15-r1-alerting-rotation-policy.md`](./artifacts/2026-05-15-r1-alerting-rotation-policy.md)
 - [`artifacts/2026-05-15-r4-production-blocker-execution-runbook.md`](./artifacts/2026-05-15-r4-production-blocker-execution-runbook.md) §Block B.
+- [`artifacts/2026-05-16-c1-keyless-recovery-and-block-b-status.md`](./artifacts/2026-05-16-c1-keyless-recovery-and-block-b-status.md) §Block B SendGrid smoke-test state.
 
 ---
 
 ### Block C — Keyless Backup / VM OAuth Scope Blocker
 
-**Current state**: VM service account `905477274418-compute@developer.gserviceaccount.com` has OAuth scope `devstorage.read_only` but **not** `devstorage.read_write` or `cloud-platform`. Keyless GCS write is blocked.
+**Current state (2026-05-16)**: Operator selected **C1**. VM scopes updated via `set-service-account` to include `devstorage.read_write`. Initial restart failed with `ZONE_RESOURCE_POOL_EXHAUSTED` for `e2-medium` and `e2-small`; recovery succeeded with `n2-standard-2`. Static IP `34.158.51.8` preserved. Keyless GCS probe (isolated HOME, no key env) passed: `gsutil ls` PASS, `gsutil cp` PASS. Offsite sync script ran successfully (`OFFSITE_SYNC_RC=0`, 15.3 MiB copied). Residual old key file at `/etc/ferrumgate/gcs-service-account.json` remains as cleanup follow-up. `n2-standard-2` is temporary; revert to `e2-medium` when zone capacity permits.
+
+**Historical state (pre-2026-05-16)**: VM service account had OAuth scope `devstorage.read_only` but not `devstorage.read_write` or `cloud-platform`. Keyless GCS write was blocked.
 
 **Two paths**:
 
@@ -293,12 +296,16 @@ bash scripts/gcp/phase3g_configure_real_domain.sh --confirm \
 - `OPERATOR_BACKUP_SA_EMAIL` (C2 only): full email, e.g., `OPERATOR_BACKUP_SA_ID@fairy-b13f4.iam.gserviceaccount.com`
 
 **Evidence gates**:
-| Gate | Evidence |
-|------|----------|
-| G-C1 | Operator selects C1 or C2 and records decision with rationale |
-| G-C2 | If C1: VM scopes updated via `set-service-account` to include `storage-rw`; `gsutil rsync` from VM succeeds without key file |
-| G-C3 | If C2: Signed risk acceptance statement; key file present at `/etc/ferrumgate/secrets/gcs-service-account.json` with `chmod 600`; `gsutil rsync` succeeds |
-| G-C4 | If C2: Key rotation procedure documented and schedule acknowledged |
+| Gate | Evidence | Status |
+|------|----------|--------|
+| G-C1 | Operator selects C1 or C2 and records decision with rationale | ✅ C1 selected 2026-05-16 |
+| G-C2 | If C1: VM scopes updated via `set-service-account` to include `storage-rw`; `gsutil rsync` from VM succeeds without key file | ✅ Keyless probe PASS; offsite sync PASS (rc=0) |
+| G-C3 | If C2: Signed risk acceptance statement; key file present at `/etc/ferrumgate/secrets/gcs-service-account.json` with `chmod 600`; `gsutil rsync` succeeds | N/A — C1 selected |
+| G-C4 | If C2: Key rotation procedure documented and schedule acknowledged | N/A — C1 selected |
+
+**Follow-up**:
+- Revert machine type from `n2-standard-2` to `e2-medium` when zone capacity permits
+- Remove residual `/etc/ferrumgate/gcs-service-account.json`
 
 **Rollback**:
 - C1: Stop VM, revert to original scopes with `set-service-account`, start VM; fallback C1b uses snapshot restore
@@ -307,6 +314,7 @@ bash scripts/gcp/phase3g_configure_real_domain.sh --confirm \
 **Reference**:
 - [`artifacts/2026-05-15-r2-key-based-backup-risk-acceptance.md`](./artifacts/2026-05-15-r2-key-based-backup-risk-acceptance.md)
 - [`artifacts/2026-05-15-r4-production-blocker-execution-runbook.md`](./artifacts/2026-05-15-r4-production-blocker-execution-runbook.md) §Block C.
+- [`artifacts/2026-05-16-c1-keyless-recovery-and-block-b-status.md`](./artifacts/2026-05-16-c1-keyless-recovery-and-block-b-status.md) §Block C execution evidence.
 
 ---
 
@@ -342,6 +350,7 @@ bash scripts/gcp/phase3g_configure_real_domain.sh --confirm \
 | This doc | [`artifacts/2026-05-15-r1-alerting-rotation-policy.md`](./artifacts/2026-05-15-r1-alerting-rotation-policy.md) | Block B alerting rotation policy |
 | This doc | [`artifacts/2026-05-15-r2-key-based-backup-risk-acceptance.md`](./artifacts/2026-05-15-r2-key-based-backup-risk-acceptance.md) | Block C key-based backup risk acceptance and C1/C2 decision matrix |
 | This doc | [`artifacts/2026-05-15-r4-production-blocker-execution-runbook.md`](./artifacts/2026-05-15-r4-production-blocker-execution-runbook.md) | Exact command sequences and rollback for Blocks A/B/C |
+| This doc | [`artifacts/2026-05-16-c1-keyless-recovery-and-block-b-status.md`](./artifacts/2026-05-16-c1-keyless-recovery-and-block-b-status.md) | C1 keyless backup scope update, zone-capacity recovery, keyless verification, and Block B SendGrid smoke-test state |
 
 ---
 
@@ -365,9 +374,10 @@ bash scripts/gcp/phase3g_configure_real_domain.sh --confirm \
 | 2026-05-03 | Initial production-readiness roadmap | Engineering |
 | 2026-05-15 | Reconciled with latest evidence: P0.2 D1–D6 passed 6/6 on 2026-05-13; P0.3 restore drill passed on 2026-05-15; P0.4 retention pruning verified with run id `20260515T1606Z-b3-retention`; P2.4/P2.5 closed via delegated authority 2026-05-15. Added production blocker review with active blockers (real owned domain, off-VM alerting, keyless backup) and settled decisions (PostgreSQL=NO, HA=NO, CI cost accepted). Local full gate evidence recorded. No production-ready claim preserved. | Engineering |
 | 2026-05-15 | Added Blocks A/B/C detail with exact command sequences, evidence gates, and rollback. Cross-referenced new R1–R4 artifacts: alerting rotation policy (`R1`), key-based backup risk acceptance (`R2`), production blocker execution runbook (`R4`). Updated cross-reference index. No production-ready claim preserved. | Engineering |
+| 2026-05-16 | Updated Block C status: C1 executed with `set-service-account` scope update; zone-capacity recovery via `n2-standard-2`; keyless GCS probe PASS; offsite sync PASS (rc=0, 15.3 MiB). Updated Block B status: SendGrid synthetic alert POST 200, visible in AlertManager API; inbox delivery remains pending. Block A remains blocked (no real domain). Cross-referenced `2026-05-16-c1-keyless-recovery-and-block-b-status.md`. No production-ready claim preserved. | Engineering |
 
 ---
 
 *Document created: 2026-05-03. Production-readiness roadmap — no production-ready claim, no G2 complete, no operator signature pre-populated.*
 
-*Next update: Operator-owned target execution evidence provided for D1–D6 (2026-05-13), restore drill (2026-05-15), and backup automation retention pruning closed (run id 20260515T1606Z-b3-retention). Active production blockers: real owned domain (Block A), off-VM alerting (Block B), keyless backup/VM OAuth scope (Block C). Runbooks and evidence gates documented in R1–R4 artifacts. Engineering items tracked in `11-remaining-tasks.md`.*
+*Next update: Block A remains blocked (real domain required). Block B inbox delivery confirmation pending (G-B1/G-B2). Block C follow-ups: revert VM to `e2-medium` when zone capacity permits; remove residual `/etc/ferrumgate/gcs-service-account.json`. Engineering items tracked in `11-remaining-tasks.md`.*
