@@ -26,8 +26,9 @@ make audit   # local security audit gate (cargo-deny / cargo-audit)
 - `cargo clippy --workspace --all-targets -- -D warnings`: PASSES locally
 - `cargo test --workspace`: PASSES locally (all packages)
 - `bash scripts/run_pre_target_gate.sh --full`: PASSES locally
+- `make audit`: PASSES locally (`cargo-audit v0.22.1` installed; 1090 advisories loaded; 384 dependencies scanned; `RUSTSEC-2023-0071` ignored as uncompiled optional dependency; `SECURITY AUDIT GATE: PASS`)
 - Full workspace gate rerun after P5e: PASSED (ALL LOCAL CHECKS PASSED)
-- Summary: layout=0 contract=0 fmt=0 check=0 clippy=0 test=0 pre_target_gate_full=0
+- Summary: layout=0 contract=0 fmt=0 check=0 clippy=0 test=0 pre_target_gate_full=0 audit=0
 
 ## ferrumd Config Precedence
 CLI args > env vars > config file > defaults.

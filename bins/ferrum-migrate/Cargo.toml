@@ -17,7 +17,7 @@ serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
-sqlx = { workspace = true }
+sqlx = { workspace = true, default-features = false }
 ferrum-store = { path = "../../crates/ferrum-store" }
 ferrum-proto = { path = "../../crates/ferrum-proto" }
 chrono = { workspace = true }

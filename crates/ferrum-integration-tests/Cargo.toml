@@ -24,7 +24,7 @@ http.workspace = true
 rusqlite = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true
-sqlx = { workspace = true }
+sqlx = { workspace = true, default-features = false }
 tempfile.workspace = true
 sha2.workspace = true
 hex.workspace = true

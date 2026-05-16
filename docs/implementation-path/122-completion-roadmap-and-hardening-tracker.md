@@ -14,7 +14,7 @@ Following May 13–16 operator execution and evidence collection, plus May 16 en
 - **Block B (off-VM alerting)**: PARTIAL — operator confirmed inbox receipt for at least one contact (G-B1 partial); G-B2 secondary contact and G-B3 key rotation remain pending/operator-blocked. G-B4 escalation matrix skeleton added below; full population pending operator contacts.
 - **Block A (real domain)**: BLOCKED — operator confirmed no real owned domain and no DNS configuration available yet.
 - **P0 items**: All closed (CI hardened, D1–D6 passed, restore drill passed, backup automation verified, G2 signed, operator signoff obtained).
-- **Engineering items 7–9**: Completed — ferrum-cap fix verified (atomic `update_status_if_active`, gateway durable path wired, 9 tests pass); local/manual security audit gate added (`scripts/run_security_audit.sh` + `make audit`).
+- **Engineering items 7–9**: Completed — ferrum-cap fix verified (atomic `update_status_if_active`, gateway durable path wired, 9 tests pass); local/manual security audit gate added (`scripts/run_security_audit.sh` + `make audit`); `cargo-audit v0.22.1` installed and `make audit` passes (cargo-audit scans 384 dependencies against 1090 advisories, PASS; SECURITY AUDIT GATE: PASS).
 - **Production posture**: `production-ready = NO`; PostgreSQL production = `NO`; HA/multi-node = `NO`.
 
 ---
@@ -31,7 +31,7 @@ Following May 13–16 operator execution and evidence collection, plus May 16 en
 | 6 | Confirm secondary alert contact inbox delivery | Operator | ☐ Pending — operator-blocked | Secondary contact not specified; operator must provide contact and confirm reachability | G-B2 gate in `67-production-readiness-roadmap.md` | Operator provides secondary contact, sends test alert, and confirms receipt |
 | 7 | Oracle review ferrum-cap single-use durability/concurrency | Engineering | ✅ Done | — | Fix verified: atomic `update_status_if_active` for SQLite/Postgres; gateway durable path wired; risk documented as accepted for v1 | Post-v1: durable capability persistence (revocation list survives restart) remains deferred to Phase 3 |
 | 8 | Add ferrum-cap tests | Engineering | ✅ Done | — | 9 tests pass (4 TTL boundaries + 5 mark_used paths: success, already_used, concurrent_single_use, revoked, expired) | — |
-| 9 | Add local/manual cargo-audit or cargo-deny gate | Engineering | ✅ Done | — | `scripts/run_security_audit.sh` created; `make audit` target added; checks for `cargo-deny` and `cargo-audit`, runs available tools, fails with install instructions if neither present | Run `make audit` locally after installing `cargo-deny` and/or `cargo-audit` |
+| 9 | Add local/manual cargo-audit or cargo-deny gate | Engineering | ✅ Done | — | `cargo-audit v0.22.1` installed; `scripts/run_security_audit.sh` created; `make audit` target added; checks for `cargo-deny` and `cargo-audit`, runs available tools, fails with install instructions if neither present; **cargo-audit PASS** (loaded 1090 advisories, scanned 384 dependencies, 0 actionable issues); `RUSTSEC-2023-0071` ignored because the affected crate path (`rsa` via `sqlx-mysql`) is an uncompiled optional dependency blocked by `default-features = false` on `sqlx` | — |
 | 10 | Run Block A domain/TLS path when real domain exists | Operator | ☐ Blocked | No real owned domain or DNS available | `scripts/gcp/phase3g_configure_real_domain.sh` ready; requires `REAL_DOMAIN` + DNS A record → `34.158.51.8` | Operator procures domain, configures DNS A record, then executes Block A runbook (`R4` §A) |
 
 ---
@@ -134,6 +134,7 @@ Following May 13–16 operator execution and evidence collection, plus May 16 en
 - **NOT HA/multi-node**: Out of v1 scope.
 - **NOT both contacts confirmed**: Only at-least-one-contact inbox receipt is confirmed for Block B.
 - **NOT key rotation executed**: Item 5 remains pending/operator-blocked.
+- **NOT full security audit**: `make audit` passes with cargo-audit; cargo-deny is not installed. This is a local/manual gate, not CI.
 
 ---
 

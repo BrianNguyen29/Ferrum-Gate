@@ -16,7 +16,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 async-trait = { workspace = true }
-sqlx = { workspace = true }
+sqlx = { workspace = true, default-features = false }
 ferrum-proto = { path = "../ferrum-proto" }
 ferrum-sync = { path = "../ferrum-sync" }
 tracing = { workspace = true }

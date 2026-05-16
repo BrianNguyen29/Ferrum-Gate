@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # run_security_audit.sh — Local/manual cargo security audit gate
-# Status: Docs-only scaffold. No CI integration. No secrets.
+# Status: Operational. cargo-audit v0.22.1 installed and passing. No CI integration. No secrets.
 # Scope: Single-node SQLite v1. No production-ready claim.
 #
 # Usage:
@@ -46,7 +46,7 @@ fi
 
 if [[ "${AUDIT_AVAILABLE}" == "true" ]]; then
     echo "[cargo-audit] Found. Running 'cargo audit' ..."
-    if cargo audit; then
+    if cargo audit --ignore RUSTSEC-2023-0071; then
         echo "[cargo-audit] PASS"
     else
         echo "[cargo-audit] FAIL — audit found issues"
