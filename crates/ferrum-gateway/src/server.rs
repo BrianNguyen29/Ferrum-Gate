@@ -8236,4 +8236,366 @@ mod tests {
             "same x-real-ip should be limited across different workload routes"
         );
     }
+
+    // -------------------------------------------------------------------------
+    // D-1 Slice 4: Local Gateway State-Machine Negative Smoke Tests
+    // -------------------------------------------------------------------------
+
+    use ferrum_proto::{
+        ActionType, RollbackContract, RollbackContractId, RollbackState, RollbackTarget,
+    };
+
+    /// Helper: create intent + proposal + capability + execution in a specific state.
+    /// Returns (runtime, router, execution_id) with the execution already stored.
+    async fn setup_lifecycle_test_runtime(
+        execution_state: ExecutionState,
+    ) -> (GatewayRuntime, axum::Router, ExecutionId) {
+        let runtime = test_runtime().await;
+        let router = build_router(runtime.clone());
+
+        // Create intent
+        let intent_id = ferrum_proto::IntentId::new();
+        let intent = IntentEnvelope {
+            intent_id,
+            principal_id: ferrum_proto::PrincipalId::new(),
+            session_id: None,
+            channel_id: None,
+            title: "test intent".to_string(),
+            goal: "test goal".to_string(),
+            normalized_goal: "test goal".to_string(),
+            allowed_outcomes: vec![],
+            forbidden_outcomes: vec![],
+            resource_scope: vec![],
+            risk_tier: RiskTier::Low,
+            approval_mode: ferrum_proto::ApprovalMode::None,
+            default_rollback_class: RollbackClass::R0NativeReversible,
+            time_budget: TimeBudget {
+                max_duration_ms: 30_000,
+                max_steps: 8,
+                max_retries_per_step: 1,
+            },
+            trust_context: TrustContextSummary {
+                input_labels: Vec::new(),
+                sensitivity_labels: Vec::new(),
+                taint_score: 0,
+                contains_external_metadata: false,
+                contains_tool_output: false,
+                contains_untrusted_text: false,
+            },
+            derived_from_event_ids: Vec::new(),
+            tags: Vec::new(),
+            metadata: ferrum_proto::JsonMap::new(),
+            status: IntentStatus::Active,
+            created_at: chrono::Utc::now(),
+            expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
+        };
+        runtime.store.intents().insert(&intent).await.unwrap();
+
+        // Create proposal
+        let proposal_id = ferrum_proto::ProposalId::new();
+        let proposal = ferrum_proto::ActionProposal {
+            proposal_id,
+            intent_id,
+            step_index: 0,
+            title: "test proposal".to_string(),
+            tool_name: "test_tool".to_string(),
+            server_name: "test_server".to_string(),
+            raw_arguments: serde_json::json!({}),
+            expected_effect: "test effect".to_string(),
+            estimated_risk: RiskTier::Low,
+            requested_rollback_class: RollbackClass::R0NativeReversible,
+            taint_inputs: Vec::new(),
+            metadata: ferrum_proto::JsonMap::new(),
+            created_at: chrono::Utc::now(),
+        };
+        runtime.store.proposals().insert(&proposal).await.unwrap();
+
+        // Mint capability
+        let mint_request = ferrum_proto::CapabilityMintRequest {
+            intent_id,
+            proposal_id,
+            tool_binding: ferrum_proto::ToolBinding {
+                server_name: "test_server".to_string(),
+                tool_name: "test_tool".to_string(),
+                tool_version: None,
+            },
+            resource_bindings: Vec::new(),
+            argument_constraints: Vec::new(),
+            taint_budget: ferrum_proto::TaintBudget {
+                max_taint_score: 0,
+                allow_external_tool_output: false,
+                allow_external_metadata: false,
+                allow_untrusted_text: false,
+            },
+            approval_binding: None,
+            requested_ttl_secs: 60,
+            metadata: ferrum_proto::JsonMap::new(),
+        };
+        let capability_response = runtime.cap.mint(mint_request).await.unwrap();
+        runtime
+            .store
+            .capabilities()
+            .insert(&capability_response.lease)
+            .await
+            .unwrap();
+
+        // Create execution in the requested state
+        let execution_id = ExecutionId::new();
+        let record = ExecutionRecord {
+            execution_id,
+            proposal_id,
+            intent_id,
+            capability_id: capability_response.lease.capability_id,
+            rollback_contract_id: None,
+            decision: Decision::Allow,
+            state: execution_state,
+            started_at: chrono::Utc::now(),
+            finished_at: None,
+            result_digest: None,
+            metadata: ferrum_proto::JsonMap::new(),
+        };
+        runtime.store.executions().insert(&record).await.unwrap();
+
+        (runtime, router, execution_id)
+    }
+
+    /// Helper: create a rollback contract and link it to an execution.
+    async fn link_rollback_contract(
+        runtime: &GatewayRuntime,
+        execution_id: ExecutionId,
+        intent_id: ferrum_proto::IntentId,
+        proposal_id: ProposalId,
+        state: RollbackState,
+    ) -> RollbackContractId {
+        let contract_id = RollbackContractId::new();
+        let contract = RollbackContract {
+            contract_id,
+            intent_id,
+            proposal_id,
+            execution_id,
+            action_type: ActionType::FileWrite,
+            rollback_class: RollbackClass::R1SnapshotRecoverable,
+            adapter_key: "noop".to_string(),
+            target: RollbackTarget::FilePath {
+                path: "/tmp/test.txt".to_string(),
+                before_hash: None,
+                after_hash: None,
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: ferrum_proto::JsonMap::new(),
+        };
+        runtime
+            .store
+            .rollback_contracts()
+            .insert(&contract)
+            .await
+            .unwrap();
+
+        // Link execution to contract
+        let mut execution = runtime
+            .store
+            .executions()
+            .get(execution_id)
+            .await
+            .unwrap()
+            .unwrap();
+        execution.rollback_contract_id = Some(contract_id);
+        runtime.store.executions().update(&execution).await.unwrap();
+
+        contract_id
+    }
+
+    /// D-1 Slice 4: prepare_execution on Proposed execution returns 409.
+    #[tokio::test]
+    async fn test_prepare_without_authorization_returns_409() {
+        let (_runtime, router, execution_id) =
+            setup_lifecycle_test_runtime(ExecutionState::Proposed).await;
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/executions/{}/prepare", execution_id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::CONFLICT,
+            "prepare on Proposed execution should return 409 Conflict"
+        );
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+        assert!(
+            body_str.contains("cannot be prepared"),
+            "Error should indicate state mismatch: {}",
+            body_str
+        );
+    }
+
+    /// D-1 Slice 4: execute_execution on Authorized execution with PendingPrepare contract returns 409.
+    #[tokio::test]
+    async fn test_execute_before_prepare_returns_409() {
+        let (runtime, router, execution_id) =
+            setup_lifecycle_test_runtime(ExecutionState::Authorized).await;
+
+        // Get the execution to retrieve intent/proposal ids
+        let execution = runtime
+            .store
+            .executions()
+            .get(execution_id)
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Link a rollback contract in PendingPrepare state (not Prepared)
+        link_rollback_contract(
+            &runtime,
+            execution_id,
+            execution.intent_id,
+            execution.proposal_id,
+            RollbackState::PendingPrepare,
+        )
+        .await;
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/executions/{}/execute", execution_id))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"payload": {}}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::CONFLICT,
+            "execute before prepare should return 409 Conflict"
+        );
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+        assert!(
+            body_str.contains("execute not allowed in current state"),
+            "Error should indicate state mismatch: {}",
+            body_str
+        );
+    }
+
+    /// D-1 Slice 4: verify_execution on Prepared execution with Prepared contract returns 409.
+    #[tokio::test]
+    async fn test_verify_before_execute_returns_409() {
+        let (runtime, router, execution_id) =
+            setup_lifecycle_test_runtime(ExecutionState::Prepared).await;
+
+        let execution = runtime
+            .store
+            .executions()
+            .get(execution_id)
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Link a rollback contract in Prepared state (not ExecutedAwaitingVerify)
+        link_rollback_contract(
+            &runtime,
+            execution_id,
+            execution.intent_id,
+            execution.proposal_id,
+            RollbackState::Prepared,
+        )
+        .await;
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/executions/{}/verify", execution_id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::CONFLICT,
+            "verify before execute should return 409 Conflict"
+        );
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+        assert!(
+            body_str.contains("verify not allowed in current state"),
+            "Error should indicate state mismatch: {}",
+            body_str
+        );
+    }
+
+    /// D-1 Slice 4: compensate_execution on Prepared execution with Prepared contract returns 409.
+    #[tokio::test]
+    async fn test_compensate_before_verify_returns_409() {
+        let (runtime, router, execution_id) =
+            setup_lifecycle_test_runtime(ExecutionState::Prepared).await;
+
+        let execution = runtime
+            .store
+            .executions()
+            .get(execution_id)
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Link a rollback contract in Prepared state (not ExecutedAwaitingVerify)
+        link_rollback_contract(
+            &runtime,
+            execution_id,
+            execution.intent_id,
+            execution.proposal_id,
+            RollbackState::Prepared,
+        )
+        .await;
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/executions/{}/compensate", execution_id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::CONFLICT,
+            "compensate before verify should return 409 Conflict"
+        );
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+        assert!(
+            body_str.contains("compensate not allowed in current state"),
+            "Error should indicate state mismatch: {}",
+            body_str
+        );
+    }
 }

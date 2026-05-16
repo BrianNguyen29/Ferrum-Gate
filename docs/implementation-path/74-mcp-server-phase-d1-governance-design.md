@@ -730,20 +730,21 @@ The following are explicitly **NOT** in scope for D-1:
 
 ---
 
-## 14. Known Gaps (Post-Slice 3)
+## 14. Known Gaps (Post-Slice 4)
 
 The following items are explicitly **not yet implemented** and remain tracked:
 
 | Gap | Impact | Owner | Blocker |
 |-----|--------|-------|---------|
 | **Per-agent rate limiting** | Medium | Future slice | tower_governor integration deferred |
-| **Full MCP→gateway governance smoke** | High | Operator | Requires live gateway with auth enabled |
-| **Real-gateway state-machine negative tests** | Medium | Operator | Out-of-order mock tests exist (Slice 3); real gateway state-machine validation still missing |
+| **Full MCP→gateway governance smoke** | High | Future slice | Requires MCP entrypoint plus local/live gateway with auth enabled |
 | **Load testing** | Medium | Future slice | Performance baseline not yet established |
 | **Token rotation** | Low | Future slice | Not required for v1.4 beta |
 | **OAuth 2.0** | Low | Future slice | Bearer token sufficient for current scope |
 
 **Slice 3 scope clarification**: Mock-level out-of-order pipeline negative tests are now implemented (7 tests covering execute-before-prepare, verify-before-execute, prepare-without-auth, compensate-before-verify, mint-on-denied-proposal, approve-nonexistent, and error-message-propagation). These verify MCP→gateway error mapping but do not validate the actual gateway state machine. Full real-gateway negative smoke remains a gap.
+
+**Slice 4 scope clarification**: Local real-gateway router negative state-machine tests are now implemented in `crates/ferrum-gateway/src/server.rs` (4 tests covering prepare-without-authorization, execute-before-prepare, verify-before-execute, and compensate-before-verify). These validate actual gateway router/state-machine rejection for invalid lifecycle ordering. Full MCP→gateway governance smoke remains a separate gap because it must exercise the MCP entrypoint plus gateway path together.
 
 ---
 
@@ -762,7 +763,8 @@ The following items are explicitly **not yet implemented** and remain tracked:
 | **D-1 Slice 1 auth gate implemented** | **2026-05-16** | **Commit `34d00ab`: mutating tools require bearer token before REST dispatch; read-only bypass; token-hash actor fallback** |
 | **D1.3–D1.10 marked implemented** | **2026-05-16** | **Code reality: lifecycle dispatch, sanitization, redaction, sequential pipeline test all landed and reviewed** |
 | **D-1 Slice 3 negative tests implemented** | **2026-05-16** | **7 mock-based out-of-order pipeline tests added; verify gateway 409/400/404/422 errors map to MCP GATEWAY_SERVER_ERROR; real-gateway state-machine smoke still tracked as gap** |
+| **D-1 Slice 4 gateway negative tests implemented** | **2026-05-16** | **4 local real-gateway router tests added for invalid lifecycle ordering; full MCP→gateway smoke remains tracked separately** |
 
 ---
 
-*Document created: 2026-05-06. Last updated: 2026-05-16. D-1 Slice 1 implemented; remaining gaps tracked in §14. No production-ready claim. MCP server is post-v1 scope (v1.4 MCP Governance Beta).*
+*Document created: 2026-05-06. Last updated: 2026-05-16. D-1 Slices 1, 3, and 4 implemented; remaining gaps tracked in §14. No production-ready claim. MCP server is post-v1 scope (v1.4 MCP Governance Beta).*
