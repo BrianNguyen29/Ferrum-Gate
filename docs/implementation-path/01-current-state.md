@@ -141,6 +141,7 @@ Completion tracker and remaining work:
 - [122-completion-roadmap-and-hardening-tracker.md](./122-completion-roadmap-and-hardening-tracker.md) — 10-item tracker for docs updates, Block B hardening, ferrum-cap tests, cargo-audit gate, and Block A domain path
 - [artifacts/2026-05-17-operator-unblock-packet.md](./artifacts/2026-05-17-operator-unblock-packet.md) — Consolidated operator-action checklist for Block A domain, Block B SendGrid rotation, and escalation matrix acknowledgment
 - [artifacts/2026-05-17-bridge-to-live-runbook.md](./artifacts/2026-05-17-bridge-to-live-runbook.md) — Safe-by-default validation toolkit with L1–L5 gates for live target-host transition
+- [artifacts/2026-05-17-bridge-l0-preflight-evidence.md](./artifacts/2026-05-17-bridge-l0-preflight-evidence.md) — Bridge L0 pre-flight evidence packet: local gate results, plan-mode output, blocker summary, and operator handoff statement
 - [33-feature-completion-backlog.md](./33-feature-completion-backlog.md) — Must/Should/Production-only backlog for incomplete/partial features
 - [45-current-feature-audit.md](./45-current-feature-audit.md) — Phase 3 D5 bottleneck analysis complete; D6 priority list complete. Full report: [51-d5-bottleneck-analysis-report.md](./51-d5-bottleneck-analysis-report.md); Priority list: [52-d6-priority-expansion-list.md](./52-d6-priority-expansion-list.md)
 - [32-feature-completeness-audit.md](./32-feature-completeness-audit.md) — Route/API reconciliation
