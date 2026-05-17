@@ -237,7 +237,7 @@ Before D-1.3.2b code changes:
 | D78-5: principal derivation | Accepted for D1.3.2b only | generated draft ID vs stable actor mapping | UUID v5 stable derivation from `actor_id` (draft mapping only; not an auth claim); gateway auth contract required before D1.3.3 |
 | D78-6: raw input mapping | Explicitly deferred | direct parameter conversion vs untrusted draft ref vs blocked | remain blocked unless untrusted draft policy is written |
 | D78-7: provenance timing | Accepted/resolved | gateway-authorize-time vs MCP-side earlier emission | gateway emits at authorize; MCP direct emission forbidden |
-| D78-8: unknown action risk | Accepted | Medium (fail-open) vs High (fail-closed) | High — conservative default; multi-segment git/sql paths noted as TODO |
+| D78-8: unknown action risk | Accepted | Medium (fail-open) vs High (fail-closed) | High — conservative default; multi-segment git/sql parsing tests implemented in commit `c661a15`; stale B-MAP TODO comments cleaned up |
 | D78-9: Medium approval mode | Accepted | DraftOnly vs Required | Required — MCP has no draft workflow; gateway DraftOnly semantics not applicable |
 | D78-10: execution_id origin | Accepted/resolved | compile/evaluate vs authorize | `execution_id` is created during authorize; compile/evaluate must not expose it |
 | D78-11: D1.3.3 side-effect boundary | Accepted/process gate | include REST wiring in D1.3.2b vs separate gate | D1.3.3 remains separate and blocked until stable principal + raw input policy + DTO correction |

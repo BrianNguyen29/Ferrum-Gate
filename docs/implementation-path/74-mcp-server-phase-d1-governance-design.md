@@ -738,6 +738,7 @@ The following items are explicitly **not yet implemented** and remain tracked:
 |-----|--------|-------|---------|
 | **Live target-host MCP→gateway governance smoke** | High | Future slice | Requires deployed MCP entrypoint plus live gateway with auth enabled |
 | **Load testing** | Medium | Future slice | Local concurrent load test implemented (D1.10.2); live target-host performance baseline not yet established |
+| **Direct in-crate MCP real-gateway approval smoke** | Medium | Future slice | Deferred unless `ferrum-store` dev-dependencies added; existing `ferrum-integration-tests` approval resolve E2E covers gateway/store path |
 | **Token rotation** | Low | Future slice | Not required for v1.4 beta |
 | **OAuth 2.0** | Low | Future slice | Bearer token sufficient for current scope |
 
@@ -768,7 +769,8 @@ The following items are explicitly **not yet implemented** and remain tracked:
 | **D-1 Slice 5 per-agent rate limiting implemented** | **2026-05-16** | **In-memory token bucket rate limiter (`RateLimiter`) keyed by `actor_id`; default policy 2 req/s burst 50; applies to all `tools/call` requests; returns JSON-RPC `-32005` (RATE_LIMITED); 6 tests covering burst, isolation, refill, and auth-gate non-regression** |
 | **D-1 Slice 6 full MCP→gateway local smoke implemented** | **2026-05-16** | **`test_d1_slice6_full_lifecycle_real_gateway_smoke` exercises full 7-step lifecycle against in-process real gateway router with in-memory SQLite, bearer auth, and noop adapter; `test_runtime()` exported from `ferrum-gateway` for cross-crate integration testing** |
 | **D1.10.2 local concurrent load test implemented** | **2026-05-16** | **`test_d1_10_2_concurrent_lifecycle_load` spawns 8 concurrent workers each running independent 7-step lifecycles against the same in-process gateway; relaxed rate limiter (burst 1000) to avoid artificial throttling; verifies unique intent IDs per worker; live target-host load test remains a gap** |
+| **MCP approve/reject positive tests and reject error path** | **2026-05-17** | **Commit `c661a15`: `test_approve_intent_success`, `test_reject_intent_success`, and `test_reject_nonexistent_approval_rejected` added to `ferrum-integrations-mcp`; approval E2E no-op assessment confirms existing `ferrum-integration-tests` approval resolve E2E coverage already sufficient (6 focused tests passed, no files changed); direct in-crate real-gateway approval smoke remains deferred/blocked (see §14)** |
 
 ---
 
-*Document created: 2026-05-06. Last updated: 2026-05-16. D-1 Slices 1, 3, 4, 5, and 6 implemented; D1.10.2 local load test implemented. Remaining gaps tracked in §14. No production-ready claim. MCP server is post-v1 scope (v1.4 MCP Governance Beta).
+*Document created: 2026-05-06. Last updated: 2026-05-17. D-1 Slices 1, 3, 4, 5, and 6 implemented; D1.10.2 local load test implemented; commit `c661a15` added approve/reject positive tests and reject error path. Remaining gaps tracked in §14. No production-ready claim. MCP server is post-v1 scope (v1.4 MCP Governance Beta).
