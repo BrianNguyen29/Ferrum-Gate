@@ -1,9 +1,9 @@
 # 53 — RC Tag Checklist
 
-> **Status**: Path 1 complete. v0.1.0-rc.1 published as GitHub prerelease. v0.1.0-rc.2 prepared, not yet tagged.
+> **Status**: Path 1 complete. v0.1.0-rc.1 published as GitHub prerelease. v0.1.0-rc.2 tagged and published as GitHub prerelease.
 > **Purpose**: Standalone fillable pre-tag checklist for FerrumGate v1 RC release (retained for reference).
 > **Scope**: Single-node SQLite only. No production claim.
-> **Repository**: `https://github.com/BrianNguyen29/Ferrum-Gate` (upstream/original — private, accessible with authorized GitHub credentials) | **Default package version**: `0.1.0` | **RC status**: v0.1.0-rc.2 prepared (not yet tagged)
+> **Repository**: `https://github.com/BrianNguyen29/Ferrum-Gate` (upstream/original — private, accessible with authorized GitHub credentials) | **Default package version**: `0.1.0` | **RC status**: v0.1.0-rc.2 published as GitHub prerelease
 
 ---
 
@@ -78,7 +78,7 @@ The following items were completed before publishing `v0.1.0-rc.1`:
 
 ---
 
-## Pre-Tag Todo Checklist (rc.2 — Prepared, Not Yet Tagged)
+## Pre-Tag Todo Checklist (rc.2 — Completed)
 
 The following items are completed for the rc.2 refresh:
 
@@ -90,8 +90,8 @@ The following items are completed for the rc.2 refresh:
 - [x] Do NOT claim production-ready in release notes
 - [x] Do NOT bump Cargo.toml version; `Cargo.toml` remains `0.1.0`
 - [x] Publish CHANGELOG.md and RELEASE.md as release-facing documentation
-- [ ] Create git tag `v0.1.0-rc.2` (deferred to release engineer)
-- [ ] Publish GitHub prerelease for `v0.1.0-rc.2` (deferred to release engineer)
+- [x] Create git tag `v0.1.0-rc.2` (cut at `e229f76`)
+- [x] Publish GitHub prerelease for `v0.1.0-rc.2`
 
 ---
 
@@ -129,4 +129,4 @@ The following items are completed for the rc.2 refresh:
 
 ---
 
-*Document generated: 2026-04-28. Updated: v0.1.0-rc.2 prepared 2026-05-17 (not yet tagged). rc.1 remains published as GitHub prerelease at target commit `5fce844d2850be45268db37544f17dd4dba988a9`.*
+*Document generated: 2026-04-28. Updated: v0.1.0-rc.2 tagged and published 2026-05-17 at commit `e229f76`. rc.1 remains published as GitHub prerelease at target commit `5fce844d2850be45268db37544f17dd4dba988a9`.*

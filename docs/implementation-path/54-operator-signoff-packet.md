@@ -3,7 +3,7 @@
 > **Status**: Documentation-only. No production deployment performed.
 > **Purpose**: Standalone fillable operator signoff form for FerrumGate v1 single-node SQLite production pilot.
 > **Scope**: Single-node SQLite only. No PostgreSQL/multi-node. No production-ready claim.
-> **RC status**: v0.1.0-rc.1 published as GitHub prerelease (Path 1 complete; Path 2 signed by BrianNguyen on 09/05/2026 for conditional single-node SQLite pilot scope)
+> **RC status**: v0.1.0-rc.2 published as GitHub prerelease (Path 1 complete; Path 2 signed by BrianNguyen on 09/05/2026 for conditional single-node SQLite pilot scope)
 
 ---
 

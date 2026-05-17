@@ -125,7 +125,7 @@ Current partial adapter progress already verified in local package-scoped checks
 |---|---|
 | Total workspace tests | ~797 observed (all passing in fresh feature-completeness validation) |
 | Clippy | Clean (`cargo clippy --workspace --all-targets -- -D warnings`) |
-| Crates | 20 workspace members; all current v1 invariant controls verified, with PostgreSQL/multi-node deferred |
+| Crates | 22 workspace members; all current v1 invariant controls verified, with PostgreSQL/multi-node deferred |
 | P0/P1/P2 blockers | All resolved |
 | v1 RC status | P6 CONDITIONAL GO — operator signoff pending; production-ready remains NO |
 | Store abstraction | Phase 0 complete — `StoreFacade` trait (8 methods), `GatewayRuntime.store: Arc<dyn StoreFacade>` |

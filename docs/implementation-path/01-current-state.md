@@ -1,6 +1,6 @@
 # 01 — Current state
 
-Last updated: 2026-05-17 — P5a–P5e complete; Path 1 RC tag `v0.1.0-rc.2` cut; Path 2 safe probes executed (shallow/deep/metrics PASS, no G2 completion); Path 3 local workload plan generated + MCP lifecycle smoke passed (15/15); Blocks A/B/C status updated; full workspace gate passed; cargo-deny + cargo-audit installed and `make audit` passing; bearer token rotation executed on VM; secondary alert contact delivery confirmed; MCP D1 local coverage hardened (c661a15, 239 tests)
+Last updated: 2026-05-17 — P5a–P5e complete; Path 1 RC tag `v0.1.0-rc.2` cut; Path 2 safe probes executed (shallow/deep/metrics PASS, no G2 completion); Path 3 local workload plan generated + MCP lifecycle smoke passed (15/15); Blocks A/B/C status updated; full workspace gate passed (ALL LOCAL CHECKS PASSED); cargo-deny + cargo-audit installed and `make audit` passing; bearer token rotation executed on VM; secondary alert contact delivery confirmed; MCP D1 local coverage hardened (c661a15, 239 tests); bridge-to-live toolkit and operator unblock packet created
 Single-node v1 scope unless noted.
 
 **Repository**: `https://github.com/BrianNguyen29/Ferrum-Gate` (upstream/original — private, accessible with authorized GitHub credentials) | **Default package version**: `0.1.0` | **Status**: P5a–P5e engineering complete within authorized scope; P6 CONDITIONAL GO for operator signoff/pilot; Block C CLOSED; Block B PARTIAL; Block A BLOCKED; production-ready remains NO; HA/multi-node/PostgreSQL production deployment remain NO; single-node SQLite-backed deployment is the only supported runtime
@@ -110,9 +110,9 @@ Full workspace check/clippy/test pass locally with 0 failures. Prefer command-le
 
 ## Next step
 
-All P0–P2 items closed. U1–U4 upgrade tracks complete. P5a–P5e engineering complete within authorized scope. Full workspace gate rerun passed (ALL LOCAL CHECKS PASSED 2026-05-12; repo prepared for Tier 1 target deployment preparation). P6 oracle verdict: CONDITIONAL GO. Production-ready remains NO; HA/multi-node/PostgreSQL production deployment remain NO.
+All P0–P2 items closed. U1–U4 upgrade tracks complete. P5a–P5e engineering complete within authorized scope. Full workspace gate rerun passed (ALL LOCAL CHECKS PASSED 2026-05-17). P6 oracle verdict: CONDITIONAL GO. Production-ready remains NO; HA/multi-node/PostgreSQL production deployment remain NO.
 
-Remaining operator blockers before pilot (as of 2026-05-16):
+Remaining operator blockers before pilot (as of 2026-05-17):
 - **Block A — Real owned domain**: BLOCKED — operator confirmed no real domain or DNS available yet
 - **Block B — Off-VM alerting**: PARTIAL — operator confirmed inbox receipt for primary and secondary contacts (TEST_IDs `fg-inbox-check-20260516-052910` and `fg-secondary-check-20260516-153221`, G-B1/G-B2); escalation matrix populated enough for primary+secondary email path (G-B4); bearer token rotation executed on VM (G-B3 partial — new token 200, old token 401, ROTATION_RESULT=PASS); SendGrid API key rotation remains pending/not VM-verified (`SENDGRID_SECRET_NONEMPTY=YES`, `SENDGRID_BACKUP_COUNT=0`, `SENDGRID_SECRET_MTIME_UTC=2026-05-10 04:58:58.710517174 +0000`)
 - **Block C — Keyless backup**: CLOSED — C1 keyless backup verified, residual key removed, offsite sync confirmed; `n2-standard-2` remains temporary operational type
@@ -139,6 +139,8 @@ Next decision routing:
 
 Completion tracker and remaining work:
 - [122-completion-roadmap-and-hardening-tracker.md](./122-completion-roadmap-and-hardening-tracker.md) — 10-item tracker for docs updates, Block B hardening, ferrum-cap tests, cargo-audit gate, and Block A domain path
+- [artifacts/2026-05-17-operator-unblock-packet.md](./artifacts/2026-05-17-operator-unblock-packet.md) — Consolidated operator-action checklist for Block A domain, Block B SendGrid rotation, and escalation matrix acknowledgment
+- [artifacts/2026-05-17-bridge-to-live-runbook.md](./artifacts/2026-05-17-bridge-to-live-runbook.md) — Safe-by-default validation toolkit with L1–L5 gates for live target-host transition
 - [33-feature-completion-backlog.md](./33-feature-completion-backlog.md) — Must/Should/Production-only backlog for incomplete/partial features
 - [45-current-feature-audit.md](./45-current-feature-audit.md) — Phase 3 D5 bottleneck analysis complete; D6 priority list complete. Full report: [51-d5-bottleneck-analysis-report.md](./51-d5-bottleneck-analysis-report.md); Priority list: [52-d6-priority-expansion-list.md](./52-d6-priority-expansion-list.md)
 - [32-feature-completeness-audit.md](./32-feature-completeness-audit.md) — Route/API reconciliation
