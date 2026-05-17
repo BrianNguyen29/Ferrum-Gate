@@ -1,6 +1,6 @@
 # 74 — MCP Server Phase D-1 Governance Pipeline Design
 
-> **Status**: Design + partial implementation. D1.3–D1.8, D1.9 field-redaction, and D1.9 rate limiting are implemented/reviewed; D1.10 local smoke is implemented in Slice 6; load testing and live target-host smoke remain open gaps. D-1 Slice 1 (auth gate + token-hash actor fallback) landed in commit `34d00ab`.
+> **Status**: Design + partial implementation. D1.3–D1.8, D1.9 field-redaction, and D1.9 rate limiting are implemented/reviewed; D1.10 local smoke is implemented in Slice 6; D1.10.2 local load testing is implemented; live target-host smoke remains an open gap. D-1 Slice 1 (auth gate + token-hash actor fallback) landed in commit `34d00ab`.
 > **Purpose**: Detailed design for FerrumGate MCP server Phase D-1 — governance pipeline integration including auth, policy evaluation, capability issuance, rollback, and provenance. Also records implementation reality post-Slice 1.
 > **Scope**: Phase D-1 = mutating tool execution through the full governance pipeline. Auth gate (Slice 1) is complete; remaining gaps are listed in §14.
 > **Constraint**: Do not claim MCP server readiness. No production-ready claim. No mutating tool approval until governance smoke evidence is recorded.
@@ -62,7 +62,7 @@ D-1 (this document):
 - Design for governance pipeline integration
 - **D1.3–D1.10 implemented in code** (lifecycle tool dispatch, output sanitization, field-level redaction, full pipeline sequential test)
 - **Slice 1 (auth gate) complete** — commit `34d00ab`: mutating tools require bearer token before REST dispatch; read-only tools preserve D-0 behavior
-- Remaining gaps: live target-host MCP→gateway governance smoke and load testing
+- Remaining gaps: live target-host MCP→gateway governance smoke (local load testing implemented in D1.10.2)
 
 ---
 
@@ -498,7 +498,7 @@ D-1 implementation is split into stages to allow safe progression while preservi
 | **Stage 1** | D-1.1 (Auth) + D-1.2 (Tool Registry) | **IMPLEMENTED** | Slice 1 — commit `34d00ab` |
 | **Stage 2** | D-1.3–D-1.7 (Policy/Cap/Rollback/Provenance/Execute) | **IMPLEMENTED** | All lifecycle tools wired; sequential pipeline test passes |
 | **Stage 3** | D-1.8–D-1.9 (Sanitize/RateLimit) | **IMPLEMENTED** | D1.8–D1.8.3 sanitization + D1.9 field-key redaction + Slice 5 per-agent rate limiting (in-memory token bucket, 2 req/s burst 50) implemented |
-| **Stage 4** | D-1.10 (Integration/Load) | **PARTIAL** | Slice 6 local real-gateway lifecycle smoke implemented (7-step compile→verify through in-process gateway with bearer auth); load testing and live target-host smoke still missing |
+| **Stage 4** | D-1.10 (Integration/Load) | **PARTIAL** | Slice 6 local real-gateway lifecycle smoke implemented (7-step compile→verify through in-process gateway with bearer auth); D1.10.2 local concurrent load test implemented (8 workers); live target-host smoke still missing |
 
 **Slice 1 Rationale**: Auth gate validates bearer token presence before REST dispatch for mutating tools. Read-only tools bypass the gate. Token-hash actor fallback provides deterministic identity without exposing secrets.
 
@@ -594,7 +594,7 @@ D-1 implementation is split into stages to allow safe progression while preservi
 | # | Item | Status | Notes |
 |---|------|--------|-------|
 | D1.10.1 | End-to-end integration test | **Implemented** | `test_d1_10_full_lifecycle_sequential` (mock-based, 8-step pipeline) |
-| D1.10.2 | Load testing | **Not implemented** | Deferred to future slice |
+| D1.10.2 | Load testing | **Implemented (local)** | `test_d1_10_2_concurrent_lifecycle_load` — 8 concurrent workers each running independent 7-step lifecycles against in-process gateway with relaxed rate limiter; exercises SQLite concurrency and request isolation; live target-host load test remains an open gap |
 | D1.10.3 | Full MCP→gateway governance smoke | **Implemented** | Slice 6: `test_d1_slice6_full_lifecycle_real_gateway_smoke` — local in-process gateway server with real SQLite store, bearer auth, and 7-step lifecycle (compile→evaluate→mint→authorize→prepare→execute→verify) |
 
 ---
@@ -737,7 +737,7 @@ The following items are explicitly **not yet implemented** and remain tracked:
 | Gap | Impact | Owner | Blocker |
 |-----|--------|-------|---------|
 | **Live target-host MCP→gateway governance smoke** | High | Future slice | Requires deployed MCP entrypoint plus live gateway with auth enabled |
-| **Load testing** | Medium | Future slice | Performance baseline not yet established |
+| **Load testing** | Medium | Future slice | Local concurrent load test implemented (D1.10.2); live target-host performance baseline not yet established |
 | **Token rotation** | Low | Future slice | Not required for v1.4 beta |
 | **OAuth 2.0** | Low | Future slice | Bearer token sufficient for current scope |
 
@@ -767,7 +767,8 @@ The following items are explicitly **not yet implemented** and remain tracked:
 | **D-1 Slice 4 gateway negative tests implemented** | **2026-05-16** | **4 local real-gateway router tests added for invalid lifecycle ordering; full MCP→gateway smoke remains tracked separately** |
 | **D-1 Slice 5 per-agent rate limiting implemented** | **2026-05-16** | **In-memory token bucket rate limiter (`RateLimiter`) keyed by `actor_id`; default policy 2 req/s burst 50; applies to all `tools/call` requests; returns JSON-RPC `-32005` (RATE_LIMITED); 6 tests covering burst, isolation, refill, and auth-gate non-regression** |
 | **D-1 Slice 6 full MCP→gateway local smoke implemented** | **2026-05-16** | **`test_d1_slice6_full_lifecycle_real_gateway_smoke` exercises full 7-step lifecycle against in-process real gateway router with in-memory SQLite, bearer auth, and noop adapter; `test_runtime()` exported from `ferrum-gateway` for cross-crate integration testing** |
+| **D1.10.2 local concurrent load test implemented** | **2026-05-16** | **`test_d1_10_2_concurrent_lifecycle_load` spawns 8 concurrent workers each running independent 7-step lifecycles against the same in-process gateway; relaxed rate limiter (burst 1000) to avoid artificial throttling; verifies unique intent IDs per worker; live target-host load test remains a gap** |
 
 ---
 
-*Document created: 2026-05-06. Last updated: 2026-05-16. D-1 Slices 1, 3, 4, 5, and 6 implemented; remaining gaps tracked in §14. No production-ready claim. MCP server is post-v1 scope (v1.4 MCP Governance Beta).*
+*Document created: 2026-05-06. Last updated: 2026-05-16. D-1 Slices 1, 3, 4, 5, and 6 implemented; D1.10.2 local load test implemented. Remaining gaps tracked in §14. No production-ready claim. MCP server is post-v1 scope (v1.4 MCP Governance Beta).

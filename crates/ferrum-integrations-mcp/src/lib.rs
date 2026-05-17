@@ -42,10 +42,12 @@
 //! - compensate: POST /v1/executions/{id}/compensate
 //!
 //! D1.7 does NOT implement:
-//! - approve/reject: Backend endpoints absent (permanently blocked)
 //! - Direct provenance emission (gateway-owned)
 //! - Direct state management (gateway-owned)
 //! - Atomic full-pipeline tool (separate step tools per oracle verdict)
+//!
+//! Note: approve/reject tools were previously blocked but are now implemented
+//! in D1.9 via POST /v1/approvals/{id}/resolve.
 //!
 //! ## D1.8 Status (Implemented — Option A)
 //!
@@ -4811,6 +4813,178 @@ mod tests {
         _mock.assert();
     }
 
+    /// D1.9: approve_intent returns success when gateway resolves approval.
+    #[test]
+    fn test_approve_intent_success() {
+        let mut server = mockito::Server::new();
+        let approval_id = "550e8400-e29b-41d4-a716-446655440000";
+        let _mock = server
+            .mock("POST", &*format!("/v1/approvals/{}/resolve", approval_id))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                "approval_id": "550e8400-e29b-41d4-a716-446655440000",
+                "intent_id": "550e8400-e29b-41d4-a716-446655440001",
+                "proposal_id": "550e8400-e29b-41d4-a716-446655440002",
+                "execution_id": null,
+                "requested_by": {
+                    "actor_type": "User",
+                    "actor_id": "user-123",
+                    "display_name": "Test User"
+                },
+                "reason": "test approval",
+                "action_digest": "sha256:abc123",
+                "expires_at": "2025-12-31T23:59:59Z",
+                "state": "Granted",
+                "created_at": "2025-01-01T00:00:00Z"
+            }"#,
+            )
+            .expect(1)
+            .create();
+
+        let config = ClientConfig::new()
+            .base_url(&server.url())
+            .bearer_token("test-token");
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let params = serde_json::json!({
+            "name": "ferrum_gate_approve_intent",
+            "arguments": {
+                "approval_id": approval_id,
+                "actor_id": "mcp-agent",
+                "actor_label": "MCP Agent",
+                "reason": "approving test"
+            }
+        });
+        let response = handle_tools_call_with_client(params, Some(JsonRpcId::Number(1)), &client);
+
+        match response {
+            JsonRpcResponse::Success(success) => {
+                let content = success.result.get("content").unwrap().as_array().unwrap();
+                let text = content[0].get("text").unwrap().as_str().unwrap();
+                assert!(text.contains("550e8400-e29b-41d4-a716-446655440000"));
+                assert!(text.contains("Granted"));
+            }
+            JsonRpcResponse::Error(err) => {
+                panic!("Expected success, got error: {}", err.error.message);
+            }
+        }
+
+        _mock.assert();
+    }
+
+    /// D1.9: reject_intent returns success when gateway resolves approval.
+    #[test]
+    fn test_reject_intent_success() {
+        let mut server = mockito::Server::new();
+        let approval_id = "550e8400-e29b-41d4-a716-446655440003";
+        let _mock = server
+            .mock("POST", &*format!("/v1/approvals/{}/resolve", approval_id))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                "approval_id": "550e8400-e29b-41d4-a716-446655440003",
+                "intent_id": "550e8400-e29b-41d4-a716-446655440004",
+                "proposal_id": "550e8400-e29b-41d4-a716-446655440005",
+                "execution_id": null,
+                "requested_by": {
+                    "actor_type": "User",
+                    "actor_id": "user-123",
+                    "display_name": "Test User"
+                },
+                "reason": "test rejection",
+                "action_digest": "sha256:def456",
+                "expires_at": "2025-12-31T23:59:59Z",
+                "state": "Denied",
+                "created_at": "2025-01-01T00:00:00Z"
+            }"#,
+            )
+            .expect(1)
+            .create();
+
+        let config = ClientConfig::new()
+            .base_url(&server.url())
+            .bearer_token("test-token");
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let params = serde_json::json!({
+            "name": "ferrum_gate_reject_intent",
+            "arguments": {
+                "approval_id": approval_id,
+                "actor_id": "mcp-agent",
+                "actor_label": "MCP Agent",
+                "reason": "rejecting test"
+            }
+        });
+        let response = handle_tools_call_with_client(params, Some(JsonRpcId::Number(1)), &client);
+
+        match response {
+            JsonRpcResponse::Success(success) => {
+                let content = success.result.get("content").unwrap().as_array().unwrap();
+                let text = content[0].get("text").unwrap().as_str().unwrap();
+                assert!(text.contains("550e8400-e29b-41d4-a716-446655440003"));
+                assert!(text.contains("Denied"));
+            }
+            JsonRpcResponse::Error(err) => {
+                panic!("Expected success, got error: {}", err.error.message);
+            }
+        }
+
+        _mock.assert();
+    }
+
+    /// D1.9: reject_intent on non-existent approval returns gateway error.
+    /// Gateway rejects with 404 Not Found; MCP maps to GATEWAY_SERVER_ERROR.
+    #[test]
+    fn test_reject_nonexistent_approval_rejected() {
+        let mut server = mockito::Server::new();
+        let approval_id = "550e8400-e29b-41d4-a716-446655440099";
+        let _mock = server
+            .mock("POST", &*format!("/v1/approvals/{}/resolve", approval_id))
+            .with_status(404)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"message": "approval not found"}"#)
+            .expect(1)
+            .create();
+
+        let config = ClientConfig::new()
+            .base_url(&server.url())
+            .bearer_token("test-token");
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let params = serde_json::json!({
+            "name": "ferrum_gate_reject_intent",
+            "arguments": {
+                "approval_id": approval_id
+            }
+        });
+        let response = handle_tools_call_with_client(params, Some(JsonRpcId::Number(1)), &client);
+
+        match response {
+            JsonRpcResponse::Error(err) => {
+                assert_eq!(
+                    err.error.code,
+                    error_codes::GATEWAY_SERVER_ERROR,
+                    "Reject non-existent approval should return GATEWAY_SERVER_ERROR"
+                );
+                assert!(
+                    err.error.message.contains("not found")
+                        || err.error.message.contains("Gateway error")
+                        || err.error.message.contains("404"),
+                    "Error message should indicate missing approval: {}",
+                    err.error.message
+                );
+            }
+            JsonRpcResponse::Success(_) => {
+                panic!("reject on non-existent approval should be rejected")
+            }
+        }
+
+        _mock.assert();
+    }
+
     /// D-1 Slice 3: Gateway error message propagates through MCP boundary.
     /// Verifies that the gateway's JSON error body is surfaced in the MCP response.
     #[test]
@@ -5303,6 +5477,257 @@ mod tests {
         assert!(
             verify_json.get("verified").unwrap().as_bool().unwrap(),
             "Step 7 should return verified=true"
+        );
+    }
+
+    /// D1.10.2: Concurrent local governance pipeline load test.
+    ///
+    /// Spawns 8 independent full lifecycles in parallel against a single
+    /// in-process gateway server to exercise concurrency and request
+    /// isolation. Uses a relaxed rate limiter (burst 1000, 1000 req/s)
+    /// so the test is gated by gateway/SQLite concurrency rather than
+    /// the default MCP policy.
+    #[test]
+    fn test_d1_10_2_concurrent_lifecycle_load() {
+        let (addr, _server_thread) = start_test_gateway_server();
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        let config = ClientConfig::new()
+            .base_url(&format!("http://{}", addr))
+            .bearer_token("test-smoke-token");
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+        let rate_limiter = RateLimiter::new(1000, 1000.0);
+
+        let worker_count = 8;
+        let mut results = Vec::with_capacity(worker_count);
+
+        let client_ref = &client;
+        let rate_limiter_ref = &rate_limiter;
+
+        std::thread::scope(|s| {
+            let mut handles = Vec::with_capacity(worker_count);
+            for worker_id in 0..worker_count {
+                let handle = s.spawn(move || {
+                    let actor_id = format!("load-test-actor-{}", worker_id);
+                    let principal_id = uuid::Uuid::new_v4().to_string();
+                    let proposal_id = uuid::Uuid::new_v4().to_string();
+                    let intent_id: String;
+                    let capability_id: String;
+                    let execution_id: String;
+
+                    // Step 1: submit_intent
+                    let request = JsonRpcRequest {
+                        jsonrpc: "2.0".to_string(),
+                        method: "tools/call".to_string(),
+                        id: Some(JsonRpcId::Number(1)),
+                        params: Some(serde_json::json!({
+                            "name": "ferrum_gate_submit_intent",
+                            "arguments": {
+                                "principal_id": principal_id,
+                                "title": format!("Load Test Worker {}", worker_id),
+                                "goal": "Concurrent lifecycle load test",
+                                "action_type": "fs_write",
+                                "target": "/tmp/load_test.txt",
+                                "scope": "fs:write:/tmp/load_test.txt",
+                                "risk_tier": "Low"
+                            }
+                        })),
+                    };
+                    let response =
+                        dispatch_with_client(request, client_ref, &actor_id, rate_limiter_ref);
+                    let result = match response {
+                        JsonRpcResponse::Success(r) => r.result,
+                        JsonRpcResponse::Error(e) => {
+                            panic!("Worker {} step 1 failed: {:?}", worker_id, e)
+                        }
+                    };
+                    let envelope_json = extract_first_text_json(&result);
+                    intent_id = envelope_json
+                        .get("envelope")
+                        .unwrap()
+                        .get("intent_id")
+                        .unwrap()
+                        .as_str()
+                        .unwrap()
+                        .to_string();
+
+                    // Step 2: evaluate_intent
+                    let request = JsonRpcRequest {
+                        jsonrpc: "2.0".to_string(),
+                        method: "tools/call".to_string(),
+                        id: Some(JsonRpcId::Number(2)),
+                        params: Some(serde_json::json!({
+                            "name": "ferrum_gate_evaluate_intent",
+                            "arguments": {
+                                "proposal_id": proposal_id,
+                                "intent_id": intent_id,
+                                "title": "test proposal",
+                                "tool_name": "fs.read",
+                                "server_name": "fs-server",
+                                "arguments": {},
+                                "expected_effect": "read file",
+                                "estimated_risk": "Low"
+                            }
+                        })),
+                    };
+                    let response =
+                        dispatch_with_client(request, client_ref, &actor_id, rate_limiter_ref);
+                    match response {
+                        JsonRpcResponse::Success(_) => {}
+                        JsonRpcResponse::Error(e) => {
+                            panic!("Worker {} step 2 failed: {:?}", worker_id, e)
+                        }
+                    }
+
+                    // Step 3: mint_capability
+                    let request = JsonRpcRequest {
+                        jsonrpc: "2.0".to_string(),
+                        method: "tools/call".to_string(),
+                        id: Some(JsonRpcId::Number(3)),
+                        params: Some(serde_json::json!({
+                            "name": "ferrum_gate_mint_capability",
+                            "arguments": {
+                                "intent_id": intent_id,
+                                "proposal_id": proposal_id,
+                                "tool_name": "fs.read",
+                                "server_name": "fs-server"
+                            }
+                        })),
+                    };
+                    let response =
+                        dispatch_with_client(request, client_ref, &actor_id, rate_limiter_ref);
+                    let result = match response {
+                        JsonRpcResponse::Success(r) => r.result,
+                        JsonRpcResponse::Error(e) => {
+                            panic!("Worker {} step 3 failed: {:?}", worker_id, e)
+                        }
+                    };
+                    let mint_json = extract_first_text_json(&result);
+                    capability_id = mint_json
+                        .get("lease")
+                        .unwrap()
+                        .get("capability_id")
+                        .unwrap()
+                        .as_str()
+                        .unwrap()
+                        .to_string();
+
+                    // Step 4: authorize_execution
+                    let request = JsonRpcRequest {
+                        jsonrpc: "2.0".to_string(),
+                        method: "tools/call".to_string(),
+                        id: Some(JsonRpcId::Number(4)),
+                        params: Some(serde_json::json!({
+                            "name": "ferrum_gate_authorize_execution",
+                            "arguments": {
+                                "proposal_id": proposal_id,
+                                "capability_id": capability_id
+                            }
+                        })),
+                    };
+                    let response =
+                        dispatch_with_client(request, client_ref, &actor_id, rate_limiter_ref);
+                    let result = match response {
+                        JsonRpcResponse::Success(r) => r.result,
+                        JsonRpcResponse::Error(e) => {
+                            panic!("Worker {} step 4 failed: {:?}", worker_id, e)
+                        }
+                    };
+                    let auth_json = extract_first_text_json(&result);
+                    execution_id = auth_json
+                        .get("execution")
+                        .unwrap()
+                        .get("execution_id")
+                        .unwrap()
+                        .as_str()
+                        .unwrap()
+                        .to_string();
+
+                    // Step 5: prepare_execution
+                    let request = JsonRpcRequest {
+                        jsonrpc: "2.0".to_string(),
+                        method: "tools/call".to_string(),
+                        id: Some(JsonRpcId::Number(5)),
+                        params: Some(serde_json::json!({
+                            "name": "ferrum_gate_prepare_execution",
+                            "arguments": {
+                                "execution_id": execution_id
+                            }
+                        })),
+                    };
+                    let response =
+                        dispatch_with_client(request, client_ref, &actor_id, rate_limiter_ref);
+                    match response {
+                        JsonRpcResponse::Success(_) => {}
+                        JsonRpcResponse::Error(e) => {
+                            panic!("Worker {} step 5 failed: {:?}", worker_id, e)
+                        }
+                    }
+
+                    // Step 6: execute_prepared
+                    let request = JsonRpcRequest {
+                        jsonrpc: "2.0".to_string(),
+                        method: "tools/call".to_string(),
+                        id: Some(JsonRpcId::Number(6)),
+                        params: Some(serde_json::json!({
+                            "name": "ferrum_gate_execute_prepared",
+                            "arguments": {
+                                "execution_id": execution_id,
+                                "payload": {}
+                            }
+                        })),
+                    };
+                    let response =
+                        dispatch_with_client(request, client_ref, &actor_id, rate_limiter_ref);
+                    match response {
+                        JsonRpcResponse::Success(_) => {}
+                        JsonRpcResponse::Error(e) => {
+                            panic!("Worker {} step 6 failed: {:?}", worker_id, e)
+                        }
+                    }
+
+                    // Step 7: verify
+                    let request = JsonRpcRequest {
+                        jsonrpc: "2.0".to_string(),
+                        method: "tools/call".to_string(),
+                        id: Some(JsonRpcId::Number(7)),
+                        params: Some(serde_json::json!({
+                            "name": "ferrum_gate_verify",
+                            "arguments": {
+                                "execution_id": execution_id
+                            }
+                        })),
+                    };
+                    let response =
+                        dispatch_with_client(request, client_ref, &actor_id, rate_limiter_ref);
+                    let result = match response {
+                        JsonRpcResponse::Success(r) => r.result,
+                        JsonRpcResponse::Error(e) => {
+                            panic!("Worker {} step 7 failed: {:?}", worker_id, e)
+                        }
+                    };
+                    let verify_json = extract_first_text_json(&result);
+                    assert!(
+                        verify_json.get("verified").unwrap().as_bool().unwrap(),
+                        "Worker {} step 7 should return verified=true",
+                        worker_id
+                    );
+
+                    intent_id
+                });
+                handles.push(handle);
+            }
+
+            for handle in handles {
+                results.push(handle.join().expect("worker thread panicked"));
+            }
+        });
+
+        let intent_ids: std::collections::HashSet<_> = results.into_iter().collect();
+        assert_eq!(
+            intent_ids.len(),
+            worker_count,
+            "Each worker should produce a unique intent_id"
         );
     }
 }

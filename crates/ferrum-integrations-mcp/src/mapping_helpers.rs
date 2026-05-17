@@ -84,10 +84,11 @@ impl std::error::Error for MappingError {}
 // Draft Parts (Output Types with TODO Markers)
 // ---------------------------------------------------------------------------
 
-/// Draft `IntentCompileRequest` parts with explicit TODO markers for unresolved fields.
+/// Draft `IntentCompileRequest` parts with TODO markers for fields that still
+/// require runtime resolution (e.g. `requested_resource_scope`).
 ///
 /// Per doc 77 §2.1, this struct contains all 12 fields of `IntentCompileRequest`
-/// from ferrum-proto. Fields that cannot be derived from MCP tool call data
+/// from ferrum-proto. Most fields are now derived; remaining unresolved fields
 /// return `Err(MappingError::Todo{...})` to make blockers visible.
 ///
 /// # Example (ignored — internal helpers)
@@ -106,8 +107,8 @@ impl std::error::Error for MappingError {}
 /// ```
 #[derive(Debug, Clone)]
 pub struct DraftIntentCompileRequestParts {
-    /// Principal ID — derived from `actor_id`.
-    /// B-MAP-1: May need mapping to gateway principal ID.
+    /// Principal ID — derived from `actor_id` via UUID v5 (D78-5).
+    /// Stable across sessions for the same actor.
     pub principal_id: Result<PrincipalId, MappingError>,
 
     /// Session ID — optionally auto-generated UUID.
@@ -121,8 +122,8 @@ pub struct DraftIntentCompileRequestParts {
     /// Title — derived from `action_type: target`.
     pub title: String,
 
-    /// Goal — MCP has no goal concept.
-    /// B-MAP-1: TODO — requires plain text description.
+    /// Goal — draft description derived from `action_type` and `target`.
+    /// Formatted as "MCP tool call: {action_type} on {target}".
     pub goal: Result<String, MappingError>,
 
     /// Agent plan summary — MCP has no plan concept.
@@ -134,7 +135,8 @@ pub struct DraftIntentCompileRequestParts {
     pub trusted_context: Option<ferrum_proto::JsonMap>,
 
     /// Raw inputs — converted from MCP tool call parameters.
-    /// C7: `IntentInputRef` TODO — needs proper conversion logic.
+    /// Returns an untrusted `IntentInputRef` (P2) because MCP parameters
+    /// cannot provide trustworthy provenance.
     pub raw_inputs: Result<Vec<IntentInputRef>, MappingError>,
 
     /// Requested resource scope — parsed from MCP scope string.
@@ -163,7 +165,7 @@ pub struct DraftActionProposalParts {
     pub intent_id: String,
 
     /// Step index — default 0 for single-step intents.
-    /// B-MAP-1: TODO if sequential semantics are needed.
+    /// Multi-step sequencing is deferred to future work.
     pub step_index: Result<u32, MappingError>,
 
     /// Title — from `DraftIntentCompileRequestParts.title`.
@@ -180,7 +182,7 @@ pub struct DraftActionProposalParts {
     pub raw_arguments: serde_json::Value,
 
     /// Expected effect — inferred from `action_type`.
-    /// B-MAP-5: TODO — inference rules undefined.
+    /// Best-effort human-readable description for planning.
     pub expected_effect: Result<String, MappingError>,
 
     /// Estimated risk — from `RiskTier` inference.
@@ -190,7 +192,7 @@ pub struct DraftActionProposalParts {
     pub requested_rollback_class: RollbackClass,
 
     /// Taint inputs — default empty.
-    /// B-MAP-1: TODO if taint concept is needed.
+    /// Taint tracking is deferred to future work.
     pub taint_inputs: Vec<String>,
 
     /// Metadata — from `IntentCompileRequest.metadata`.
@@ -274,7 +276,8 @@ fn make_untrusted_intent_input_ref(
 /// # Returns
 ///
 /// `DraftIntentCompileRequestParts` with all 12 fields populated.
-/// Fields without a clear derivation return `Err(MappingError::Todo{...})`.
+/// Most fields are derived; `requested_resource_scope` returns `Err` for
+/// unsupported scope formats (B-MAP-2).
 #[allow(dead_code)]
 pub fn tool_call_action_to_draft_intent_compile_request(
     action: &ToolCallAction,
@@ -472,22 +475,30 @@ pub fn parse_resource_scope(scope: &str) -> Result<Vec<ResourceSelector>, Mappin
             }])
         }
         ("git", "push") | ("git", "fetch") | ("git", "force_push") => {
-            // TODO(D78-8): git paths like "git:push:origin:refs/heads/main" need multi-segment
-            // parsing. Currently only takes first path segment (origin).
-            let repo_path = parts.get(2).unwrap_or(&"origin");
+            let repo_path = parts.get(2).unwrap_or(&"origin").to_string();
+            let allowed_refs = parts
+                .get(3..)
+                .unwrap_or(&[])
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
             Ok(vec![ResourceSelector::GitRepository {
-                repo_path: repo_path.to_string(),
-                allowed_refs: vec![],
+                repo_path,
+                allowed_refs,
                 mode: parse_resource_mode(parts[1]),
             }])
         }
         ("sql", "mutate") | ("sql", "query") => {
-            // TODO(D78-8): sql paths with table qualifiers like "sql:mutate:mydb.db:users"
-            // need multi-segment parsing. Currently only takes first path segment (mydb.db).
-            let db_path = parts.get(2).unwrap_or(&":memory:");
+            let db_path = parts.get(2).unwrap_or(&":memory:").to_string();
+            let tables = parts
+                .get(3..)
+                .unwrap_or(&[])
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
             Ok(vec![ResourceSelector::SqliteDatabase {
-                db_path: db_path.to_string(),
-                tables: vec![],
+                db_path,
+                tables,
                 mode: parse_resource_mode(parts[1]),
             }])
         }
@@ -967,6 +978,89 @@ mod tests {
                 assert_eq!(path, "/tmp/path:with:colons");
             }
             _ => panic!("Expected FilesystemPath"),
+        }
+    }
+
+    #[test]
+    fn test_parse_resource_scope_git_multi_segment() {
+        let result = parse_resource_scope("git:push:origin:refs/heads/main");
+        assert!(result.is_ok());
+        let selectors = result.unwrap();
+        assert_eq!(selectors.len(), 1);
+        match &selectors[0] {
+            ResourceSelector::GitRepository {
+                repo_path,
+                allowed_refs,
+                mode,
+            } => {
+                assert_eq!(repo_path, "origin");
+                assert_eq!(allowed_refs, &vec!["refs/heads/main".to_string()]);
+                assert_eq!(mode, &ResourceMode::Write);
+            }
+            _ => panic!("Expected GitRepository"),
+        }
+    }
+
+    #[test]
+    fn test_parse_resource_scope_git_multi_segment_two_refs() {
+        let result = parse_resource_scope("git:fetch:origin:refs/heads/main:refs/tags/v1");
+        assert!(result.is_ok());
+        let selectors = result.unwrap();
+        assert_eq!(selectors.len(), 1);
+        match &selectors[0] {
+            ResourceSelector::GitRepository {
+                repo_path,
+                allowed_refs,
+                mode,
+            } => {
+                assert_eq!(repo_path, "origin");
+                assert_eq!(
+                    allowed_refs,
+                    &vec!["refs/heads/main".to_string(), "refs/tags/v1".to_string()]
+                );
+                assert_eq!(mode, &ResourceMode::Read);
+            }
+            _ => panic!("Expected GitRepository"),
+        }
+    }
+
+    #[test]
+    fn test_parse_resource_scope_sql_multi_segment() {
+        let result = parse_resource_scope("sql:mutate:mydb.db:users");
+        assert!(result.is_ok());
+        let selectors = result.unwrap();
+        assert_eq!(selectors.len(), 1);
+        match &selectors[0] {
+            ResourceSelector::SqliteDatabase {
+                db_path,
+                tables,
+                mode,
+            } => {
+                assert_eq!(db_path, "mydb.db");
+                assert_eq!(tables, &vec!["users".to_string()]);
+                assert_eq!(mode, &ResourceMode::Write);
+            }
+            _ => panic!("Expected SqliteDatabase"),
+        }
+    }
+
+    #[test]
+    fn test_parse_resource_scope_sql_multi_segment_two_tables() {
+        let result = parse_resource_scope("sql:query:analytics.db:users:orders");
+        assert!(result.is_ok());
+        let selectors = result.unwrap();
+        assert_eq!(selectors.len(), 1);
+        match &selectors[0] {
+            ResourceSelector::SqliteDatabase {
+                db_path,
+                tables,
+                mode,
+            } => {
+                assert_eq!(db_path, "analytics.db");
+                assert_eq!(tables, &vec!["users".to_string(), "orders".to_string()]);
+                assert_eq!(mode, &ResourceMode::Read);
+            }
+            _ => panic!("Expected SqliteDatabase"),
         }
     }
 
