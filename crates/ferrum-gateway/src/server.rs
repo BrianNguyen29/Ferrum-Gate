@@ -5987,7 +5987,7 @@ mod tests {
         ProposalRepo, ProvenanceRepo, RollbackRepo,
     };
     use ferrum_store::{SqliteStore, StoreError, StoreFacade};
-    use ferrum_sync::{BridgeToolInfo, ExternalEventSource, McpBridge, RuntimeBridge};
+    use ferrum_sync::{BridgeToolInfo, ExternalEventSource, McpBridge};
     use std::sync::Arc;
     use tower::ServiceExt;
 

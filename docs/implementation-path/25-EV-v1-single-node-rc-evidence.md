@@ -221,3 +221,42 @@ Remaining gaps are post-v1 backlog (real adapters, multi-node/HA).
 
 All evidence items above are grounded in actual repo content and test files.
 No speculative claims have been made about multi-node, HA, or future upgrade tracks.
+
+---
+
+## Addendum — v0.1.0-rc.2 Evidence (2026-05-17)
+
+This addendum records the delta between rc.1 and rc.2 without rewriting the canonical rc.1 evidence above.
+
+### rc.2 Engineering Delta
+
+- **MCP D1 governance beta preview** — `crates/ferrum-integrations-mcp` local coverage hardened (239 tests); D1 local drill runner present
+- **Auth gate** — bearer-token auth enforced in production config mode (`auth_mode = "bearer"`)
+- **Rate limiting** — configurable per-endpoint rate limiting integrated with gateway
+- **Local lifecycle/load smoke** — `bash scripts/run_pre_target_gate.sh --full` passes; `bins/ferrum-stress` available for bounded local load
+- **D78-8 mapping** — delivery-to-milestone traceability updated
+- **Architecture/status docs** — `67-production-readiness-roadmap.md` and `122-completion-roadmap-and-hardening-tracker.md` added
+- **T3 scaffolds** — Phase 3 PostgreSQL/MCP bridge scaffolds present (no functional Phase 3 claim)
+- **Clippy cleanup** — resolved G1 clippy warnings with behavior-neutral cleanup in `ferrum-gateway/src/server.rs` and `ferrum-integrations-mcp/src/lib.rs`
+
+### rc.2 Fresh G1 Pass (2026-05-17)
+
+| Check | Status |
+|-------|--------|
+| `cargo check --workspace` | PASS |
+| `cargo fmt --all --check` | PASS |
+| `cargo clippy --workspace --all-targets -- -D warnings` | PASS |
+| `cargo test --workspace` | PASS (~797 tests) |
+| `python3 scripts/generate_rc_evidence.py` | PASS ("Overall: ALL PASS") |
+| `bash scripts/validate_repo_layout.sh` | PASS ("Repository layout looks OK") |
+| `python3 scripts/check_contract_consistency.py` | PASS ("VALIDATION PASSED") |
+| `bash scripts/run_pre_target_gate.sh --full` | PASS ("ALL LOCAL CHECKS PASSED") |
+| `git diff --check` | PASS |
+
+### Non-Production Declaration (rc.2)
+
+- **NOT production-ready** — conditional single-node SQLite pilot only
+- **Block A (real domain)**: BLOCKED — no real owned domain or DNS available yet
+- **SendGrid API key rotation**: pending / operator-blocked
+- **Live target-host MCP smoke/load**: still open; local-only validation to date
+- Production deployment requires explicit operator signoff per `31-release-paths-todo.md` Path 2 gates

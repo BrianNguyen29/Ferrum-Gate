@@ -5231,9 +5231,11 @@ mod tests {
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(async {
                 let gateway_runtime = ferrum_gateway::test_runtime().await;
-                let mut server_config = ferrum_gateway::ServerConfig::default();
-                server_config.auth_mode = ferrum_gateway::AuthMode::Bearer;
-                server_config.bearer_token = Some("test-smoke-token".to_string());
+                let server_config = ferrum_gateway::ServerConfig {
+                    auth_mode: ferrum_gateway::AuthMode::Bearer,
+                    bearer_token: Some("test-smoke-token".to_string()),
+                    ..ferrum_gateway::ServerConfig::default()
+                };
 
                 let router = ferrum_gateway::build_router_with_auth(gateway_runtime, server_config);
                 let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -5511,9 +5513,6 @@ mod tests {
                     let actor_id = format!("load-test-actor-{}", worker_id);
                     let principal_id = uuid::Uuid::new_v4().to_string();
                     let proposal_id = uuid::Uuid::new_v4().to_string();
-                    let intent_id: String;
-                    let capability_id: String;
-                    let execution_id: String;
 
                     // Step 1: submit_intent
                     let request = JsonRpcRequest {
@@ -5542,7 +5541,7 @@ mod tests {
                         }
                     };
                     let envelope_json = extract_first_text_json(&result);
-                    intent_id = envelope_json
+                    let intent_id = envelope_json
                         .get("envelope")
                         .unwrap()
                         .get("intent_id")
@@ -5603,7 +5602,7 @@ mod tests {
                         }
                     };
                     let mint_json = extract_first_text_json(&result);
-                    capability_id = mint_json
+                    let capability_id = mint_json
                         .get("lease")
                         .unwrap()
                         .get("capability_id")
@@ -5634,7 +5633,7 @@ mod tests {
                         }
                     };
                     let auth_json = extract_first_text_json(&result);
-                    execution_id = auth_json
+                    let execution_id = auth_json
                         .get("execution")
                         .unwrap()
                         .get("execution_id")

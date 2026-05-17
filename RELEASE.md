@@ -1,11 +1,57 @@
-# FerrumGate v0.1.0-rc.1 Release Notes
+# FerrumGate Release Notes
 
-> **Status**: RC-ready / conditional single-node SQLite
+> **Latest candidate**: `v0.1.0-rc.2` (prepared, not yet tagged)
 >
-> This is a release candidate for v1 single-node SQLite. No production deployment claim is made.
+> This is a release candidate for v1 single-node SQLite. **No production deployment claim is made.**
 > Default package version: `0.1.0`. Repository: `https://github.com/BrianNguyen29/Ferrum-Gate` (upstream/original — private, accessible with authorized GitHub credentials).
 > Full production posture requires evaluation against `docs/implementation-path/27-production-evaluation-plan.md`
 > and explicit operator signoff per `docs/implementation-path/31-release-paths-todo.md` Path 2 gates.
+
+**Scope**: Single-node governance core with SQLite-backed persistence only
+**Phase**: Phase 1 (SQLite write queue; Phase 2 transaction batching deferred/regressed)
+
+---
+
+## v0.1.0-rc.2 Delta
+
+### What's New Since rc.1
+
+- **MCP D1 governance beta preview** — `crates/ferrum-integrations-mcp` local coverage hardened (239 tests); D1 local drill runner available
+- **Auth gate** — bearer-token auth enforced when `auth_mode = "bearer"`; dev config remains `auth_mode = "disabled"` for local development
+- **Rate limiting** — configurable per-endpoint rate limiting integrated with the gateway
+- **Local lifecycle/load smoke** — `bash scripts/run_pre_target_gate.sh --full` passes locally; `bins/ferrum-stress` available for bounded local load validation
+- **D78-8 mapping** — delivery-to-milestone traceability updated
+- **Architecture/status docs** — `docs/implementation-path/67-production-readiness-roadmap.md` and `122-completion-roadmap-and-hardening-tracker.md` added
+- **T3 scaffolds** — Phase 3 PostgreSQL/MCP bridge scaffolds present (no functional Phase 3 claim)
+- **Clippy cleanup** — resolved G1 clippy warnings with behavior-neutral cleanup in `ferrum-gateway/src/server.rs` and `ferrum-integrations-mcp/src/lib.rs`
+
+### What Is Still NOT Supported / Blocked
+
+- **NOT production-ready** — operator signoff and Path 2 gates remain required
+- **Block A (real domain)**: BLOCKED — no real owned domain or DNS available yet
+- **SendGrid API key rotation**: pending / operator-blocked
+- **Live target-host MCP smoke/load**: still open; only local validation performed to date
+- **PostgreSQL / multi-node / HA**: not implemented; `postgres://` DSN support is scaffold-only
+
+### rc.2 G1 Evidence (Fresh Run)
+
+| Check | Status | Evidence |
+|-------|--------|----------|
+| `cargo check --workspace` | PASS | Fresh G1 run 2026-05-17 |
+| `cargo fmt --all --check` | PASS | Fresh G1 run 2026-05-17 |
+| `cargo clippy --workspace --all-targets -- -D warnings` | PASS | Fresh G1 run 2026-05-17 |
+| `cargo test --workspace` | PASS (~797 tests) | Fresh G1 run 2026-05-17 |
+| `scripts/generate_rc_evidence.py` | PASS | "Overall: ALL PASS" |
+| `scripts/validate_repo_layout.sh` | PASS | "Repository layout looks OK" |
+| `scripts/check_contract_consistency.py` | PASS | "VALIDATION PASSED" |
+| `bash scripts/run_pre_target_gate.sh --full` | PASS | "ALL LOCAL CHECKS PASSED" |
+| `git diff --check` | PASS | no trailing whitespace conflicts |
+
+> **Note**: `Cargo.toml` version remains `0.1.0`. No version bump for rc.2.
+
+---
+
+## v0.1.0-rc.1 Release Notes (Historical)
 
 **Candidate name**: `v0.1.0-rc.1`
 **Repository**: `https://github.com/BrianNguyen29/Ferrum-Gate` (upstream/original — private, accessible with authorized GitHub credentials)
@@ -163,9 +209,9 @@ Three mutually exclusive paths are documented in `docs/implementation-path/31-re
 2. **Path 2 — Conditional Production Pilot**: Limited production deployment with operator signoff
 3. **Path 3 — Phase 3 PostgreSQL**: Begin PostgreSQL implementation per ADR-50
 
-**No path claims full production-ready status.** Path 1 is RC candidate only (now published).
+**No path claims full production-ready status.** Path 1 is RC candidate only (rc.1 published; rc.2 prepared, not yet tagged).
 Path 2 is conditional pilot requiring operator signoff. Path 3 requires Phase P1–P4 completion.
 
 ---
 
-*Document generated: 2026-04-28. Updated: v0.1.0-rc.1 published as GitHub prerelease at target commit `5fce844d2850be45268db37544f17dd4dba988a9`.*
+*Document generated: 2026-04-28. Updated: v0.1.0-rc.2 prepared 2026-05-17 (not yet tagged). rc.1 remains published as GitHub prerelease at target commit `5fce844d2850be45268db37544f17dd4dba988a9`.*
