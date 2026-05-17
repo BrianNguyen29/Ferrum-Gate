@@ -153,5 +153,6 @@ Completion tracker and remaining work:
 - [56-adapter-compensation-evidence-matrix.md](./56-adapter-compensation-evidence-matrix.md) — Adapter compensation behavior evidence (post-RC docs-only)
 - [57-workload-compensation-drill-plan.md](./57-workload-compensation-drill-plan.md) — Operator drill plan for compensation verification (post-RC docs-only)
 - [58-workload-compensation-drill-evidence-template.md](./58-workload-compensation-drill-evidence-template.md) — Operator-fillable drill evidence template (post-RC docs-only)
-- [59-pilot-readiness-evidence-packet.md](./59-pilot-readiness-evidence-packet.md) — G2.1–G2.8 evidence packet for Path 2 pilot (post-RC docs-only)
+- [54-operator-signoff-packet.md](./54-operator-signoff-packet.md) — Operator signoff packet: G2.1–G2.8 signed 09/05/2026 for conditional single-node SQLite pilot; 2026-05-17 DuckDNS conditional pilot evidence addendum added (L1–L5 live PASS summary, runbook drift correction, Block A/B/C status)
+- [59-pilot-readiness-evidence-packet.md](./59-pilot-readiness-evidence-packet.md) — G2.1–G2.8 evidence packet for Path 2 pilot; 2026-05-17 addendum added with bridge L1–L5 live evidence summary and non-claims
 - [60-bounded-hardening-examples.md](./60-bounded-hardening-examples.md) — Bounded hardening drill examples (post-RC docs-only)

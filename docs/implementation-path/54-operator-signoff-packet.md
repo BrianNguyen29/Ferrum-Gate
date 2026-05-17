@@ -3,7 +3,7 @@
 > **Status**: Documentation-only. No production deployment performed.
 > **Purpose**: Standalone fillable operator signoff form for FerrumGate v1 single-node SQLite production pilot.
 > **Scope**: Single-node SQLite only. No PostgreSQL/multi-node. No production-ready claim.
-> **RC status**: v0.1.0-rc.2 published as GitHub prerelease (Path 1 complete; Path 2 signed by BrianNguyen on 09/05/2026 for conditional single-node SQLite pilot scope)
+> **RC status**: v0.1.0-rc.2 published as GitHub prerelease (Path 1 complete; Path 2 signed by BrianNguyen on 09/05/2026 for conditional single-node SQLite pilot scope; 2026-05-17 DuckDNS conditional pilot evidence addendum added below)
 
 ---
 
@@ -11,10 +11,10 @@
 
 > **Updated status**: BrianNguyen signed this document on 09/05/2026. Values copied from signed doc 99 worksheet. All G2 gates signed for conditional single-node SQLite pilot scope only.
 >
-> **Current state**: Signed by BrianNguyen for conditional single-node pilot.
+> **Current state**: Signed by BrianNguyen for conditional single-node pilot. 2026-05-17 evidence addendum (L1–L5 live validation) added below for operator review.
 > **Scope**: Conditional single-node SQLite pilot only. NOT full production-ready. PostgreSQL/HA not in scope.
-> **Next action**: None required for Phase 1 conditional pilot. Canonical docs 63/65 may be updated with target values as needed.
-> **Boundary**: This signoff authorizes limited conditional single-node SQLite pilot only. No full production-ready claim.
+> **Next action**: Operator review of 2026-05-17 DuckDNS conditional pilot evidence addendum (§ below). No action required for original 09/05/2026 conditional pilot signoff.
+> **Boundary**: This signoff authorizes limited conditional single-node SQLite pilot only. No full production-ready claim. Block A remains WAIVED/CONDITIONAL.
 
 ---
 
@@ -165,6 +165,41 @@ Before the first production pilot deployment, the following must be all confirme
 
 ---
 
+## Addendum: 2026-05-17 DuckDNS Conditional Pilot Evidence Refresh
+
+> **Scope**: This addendum records live target-host bridge validation evidence collected on 2026-05-17 against `ferrumgate.duckdns.org`. It supplements, and does not replace, the original G2.1–G2.8 signoff dated 09/05/2026.
+>
+> **Constraint**: `production-ready = NO`. `full G2 = NOT COMPLETE`. Block A remains `WAIVED/CONDITIONAL`.
+
+### Evidence Summary
+
+| Bridge Gate | Result | Evidence Artifact |
+|-------------|--------|-------------------|
+| L1 — Reachability & TLS | **PASS** | [`2026-05-17-bridge-l1-l3-live-evidence.md`](./artifacts/2026-05-17-bridge-l1-l3-live-evidence.md) |
+| L2 — Auth (no-token deny) | **PASS** | [`2026-05-17-bridge-l1-l3-live-evidence.md`](./artifacts/2026-05-17-bridge-l1-l3-live-evidence.md) |
+| L2 — Auth (with-token allow) | **PASS after remediation** | [`2026-05-17-bridge-l1-l3-live-evidence.md`](./artifacts/2026-05-17-bridge-l1-l3-live-evidence.md) §L2 Recovery |
+| L3 — Health & Readiness | **PASS** | [`2026-05-17-bridge-l1-l3-live-evidence.md`](./artifacts/2026-05-17-bridge-l1-l3-live-evidence.md) |
+| L4 — Bounded Workload | **PASS** (clean rerun after script artifact bug) | [`2026-05-17-bridge-l4-l5-live-evidence.md`](./artifacts/2026-05-17-bridge-l4-l5-live-evidence.md) |
+| L5 — Backup Verification | **PASS** | [`2026-05-17-bridge-l4-l5-live-evidence.md`](./artifacts/2026-05-17-bridge-l4-l5-live-evidence.md) |
+
+### Key Findings
+
+- **Block A**: `WAIVED/CONDITIONAL` — DuckDNS accepted by operator on 2026-05-17 for single-node SQLite pilot only; real owned domain still required for production-ready or full G2 closure.
+- **Block B**: `CLOSED` — SendGrid API key rotation verified; escalation matrix formally acknowledged.
+- **Block C**: `CLOSED` — Keyless backup verified; residual key removed; offsite sync confirmed.
+- **L2 root cause**: Missing `[server] store_dsn` in `/etc/ferrumgate/ferrumgate.toml` caused `sqlite::memory:` fallback. Remediated on VM with on-disk SQLite path.
+- **L5 runbook drift**: Original runbook used `--store-path` and bare `ferrumctl`; corrected to `--db-path` and `/opt/ferrumgate/ferrumctl`.
+- **SSH firewall**: Temporarily opened to `1.55.106.164/32` for on-VM work; restored to `118.69.4.63/32` and verified.
+
+### Non-Claims
+
+- **Production-ready**: **NO** — Remains unchanged.
+- **Full G2 complete**: **NOT COMPLETE** — Original 09/05/2026 signoff covers conditional pilot scope; 2026-05-17 evidence supports that scope but does not upgrade it.
+- **Block A closed**: **NO** — Block A remains `WAIVED/CONDITIONAL`; real owned domain still required for production-ready or full G2 closure.
+- **HA / multi-node / PostgreSQL**: **NO** — Single-node SQLite is the only supported runtime.
+
+---
+
 ## Cross-References
 
 | Document | Purpose |
@@ -177,6 +212,11 @@ Before the first production pilot deployment, the following must be all confirme
 | `58-workload-compensation-drill-evidence-template.md` | D1–D6 drill evidence capture template |
 | `59-pilot-readiness-evidence-packet.md` | G2.1–G2.8 evidence sections |
 | `60-bounded-hardening-examples.md` | Bounded hardening drill examples |
+| `artifacts/2026-05-17-bridge-l1-l3-live-evidence.md` | Bridge L1–L3 live evidence (L2 PASS after remediation) |
+| `artifacts/2026-05-17-bridge-l4-l5-live-evidence.md` | Bridge L4–L5 live evidence (L4 bounded PASS, L5 backup verify PASS) |
+| `artifacts/2026-05-17-block-a-duckdns-conditional-pilot-waiver.md` | Block A DuckDNS conditional pilot waiver |
+| `artifacts/2026-05-17-sendgrid-rotation-evidence.md` | Block B SendGrid rotation evidence |
+| `artifacts/2026-05-17-escalation-matrix-acknowledgment.md` | Block B escalation matrix acknowledgment |
 
 ---
 

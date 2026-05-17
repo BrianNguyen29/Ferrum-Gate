@@ -1,8 +1,8 @@
 # 59 — Pilot Readiness Evidence Packet
 
-> **Status**: Updated 2026-05-09 — G2.1–G2.8 signed by BrianNguyen for conditional single-node SQLite pilot scope
+> **Status**: Updated 2026-05-09 — G2.1–G2.8 signed by BrianNguyen for conditional single-node SQLite pilot scope. 2026-05-17 DuckDNS conditional pilot evidence addendum added below.
 > **Scope**: Single-node v1 SQLite production pilot readiness
-> **Constraint**: RC-ready/conditional single-node SQLite only. Not production-ready. G2 gates are signed for conditional pilot scope only; do not treat this as full production-ready or PostgreSQL/HA approval.
+> **Constraint**: RC-ready/conditional single-node SQLite only. Not production-ready. G2 gates are signed for conditional pilot scope only; do not treat this as full production-ready or PostgreSQL/HA approval. Block A remains WAIVED/CONDITIONAL.
 > **Purpose**: G2.1–G2.8 evidence sections for Path 2 (Conditional Production Pilot) per `31-release-paths-todo.md`
 
 ---
@@ -28,18 +28,20 @@
 
 ### G2 Status After Local Prefill
 
+> **Historical context**: This table reflects local prefill status from 2026-04-29, before the 09/05/2026 operator signatures. The authoritative signed status is in the G2.1–G2.8 sections below. Bridge L1–L5 live evidence was collected on 2026-05-17 and is recorded in the addendum at the end of this document.
+
 | Gate | Current status | Reason |
 |------|----------------|--------|
-| G2.1 Workload Model | Pending operator signoff | Requires operator workload model for target deployment |
-| G2.2 Auth/TLS Configuration | Pending operator signoff | Local smoke used `auth_mode=disabled`; target bearer/TLS still operator-owned |
-| G2.3 Backup Schedule | Pending operator signoff | External backup scheduling remains operator-owned |
-| G2.4 Restore Drill | Partially prefilled / pending operator signoff | Backup dry-run/local helper exists; real restore drill evidence must be reviewed |
-| G2.5 RPO/RTO Acceptance | Pending operator signoff | Requires target workload SLA acceptance |
-| G2.6 Production Evaluation | Pending operator signoff | Evaluation framework remains operator-owned |
-| G2.7 Accepted-Risk Review | Pending operator signoff | Risks require explicit operator acceptance |
-| G2.8 Compensate Noop Acceptance | Pending operator signoff | D1–D6 prefill requires operator review and signature |
+| G2.1 Workload Model | Signed 09/05/2026 | Operator workload model confirmed for conditional pilot scope |
+| G2.2 Auth/TLS Configuration | Signed 09/05/2026 | Target bearer/TLS confirmed live on 2026-05-17; see L1–L3 evidence |
+| G2.3 Backup Schedule | Signed 09/05/2026 | External backup scheduling confirmed live on 2026-05-17; see L5 evidence |
+| G2.4 Restore Drill | Signed 09/05/2026 | Restore drill passed; live DB integrity verified on 2026-05-17 |
+| G2.5 RPO/RTO Acceptance | Signed 09/05/2026 | Operator accepted 15-minute RPO/RTO |
+| G2.6 Production Evaluation | Signed 09/05/2026 | All dimensions CONDITIONAL accepted for single-node pilot |
+| G2.7 Accepted-Risk Review | Signed 09/05/2026 | All weak spots reviewed and accepted |
+| G2.8 Compensate Noop Acceptance | Signed 09/05/2026 | Noop risk accepted with manual verification procedure |
 
-**No G2 complete claim. No production-ready claim. No pilot authorization is made by this prefill.**
+**No full production-ready claim. Pilot authorization is conditional and scoped to single-node SQLite only. Block A remains WAIVED/CONDITIONAL.**
 
 ---
 
@@ -59,14 +61,14 @@ This packet provides fillable evidence sections for the G2 gates defined in Path
 
 | Gate | Title | Evidence Required | Status |
 |------|-------|-------------------|--------|
-| G2.1 | Workload Model | Write workload modeled against SQLite capacity | [ ] Pending operator signoff |
-| G2.2 | Auth/TLS Configuration | Bearer auth + TLS/reverse proxy confirmed | [ ] Pending operator signoff |
-| G2.3 | Backup Schedule | External backup scheduling implemented | [ ] Pending operator signoff |
-| G2.4 | Restore Drill | Restore drill with `PRAGMA integrity_check` passing | [ ] Pending operator signoff |
-| G2.5 | RPO/RTO Acceptance | Backup/restore objectives formally accepted | [ ] Pending operator signoff |
-| G2.6 | Production Evaluation | Evaluation framework completed (all dimensions SATISFIED or CONDITIONAL) | [ ] Pending operator signoff |
-| G2.7 | Accepted-Risk Review | Weak Spots 1–4 reviewed; risks accepted | [ ] Pending operator signoff |
-| G2.8 | Compensate Noop Acceptance | Compensate noop risk accepted for target adapters | [ ] Pending operator signoff |
+| G2.1 | Workload Model | Write workload modeled against SQLite capacity | Signed 09/05/2026 |
+| G2.2 | Auth/TLS Configuration | Bearer auth + TLS/reverse proxy confirmed | Signed 09/05/2026; L2 live PASS 2026-05-17 |
+| G2.3 | Backup Schedule | External backup scheduling implemented | Signed 09/05/2026; L5 live PASS 2026-05-17 |
+| G2.4 | Restore Drill | Restore drill with `PRAGMA integrity_check` passing | Signed 09/05/2026; L5 integrity verified 2026-05-17 |
+| G2.5 | RPO/RTO Acceptance | Backup/restore objectives formally accepted | Signed 09/05/2026 |
+| G2.6 | Production Evaluation | Evaluation framework completed (all dimensions SATISFIED or CONDITIONAL) | Signed 09/05/2026 |
+| G2.7 | Accepted-Risk Review | Weak Spots 1–4 reviewed; risks accepted | Signed 09/05/2026 |
+| G2.8 | Compensate Noop Acceptance | Compensate noop risk accepted for target adapters | Signed 09/05/2026 |
 
 ---
 
@@ -465,6 +467,9 @@ All G2.1–G2.8 gates above have been signed by BrianNguyen on 09/05/2026. Once 
 | `59-pilot-readiness-evidence-packet.md` | `19-v1-single-node-support-contract.md` | Accepted risks |
 | `59-pilot-readiness-evidence-packet.md` | `26-EV-v1-single-node-invariant-control-test-evidence-matrix.md` | Weak Spots |
 | `59-pilot-readiness-evidence-packet.md` | `23-production-readiness-assessment.md` | RC-ready declaration |
+| `59-pilot-readiness-evidence-packet.md` | `artifacts/2026-05-17-bridge-l1-l3-live-evidence.md` | Bridge L1–L3 live evidence |
+| `59-pilot-readiness-evidence-packet.md` | `artifacts/2026-05-17-bridge-l4-l5-live-evidence.md` | Bridge L4–L5 live evidence |
+| `59-pilot-readiness-evidence-packet.md` | `artifacts/2026-05-17-block-a-duckdns-conditional-pilot-waiver.md` | Block A DuckDNS conditional pilot waiver |
 
 ---
 
@@ -481,6 +486,38 @@ On 2026-05-15, the user authorized the assistant to close evidence-backed B3/B4/
 **Conditional single-node SQLite pilot readiness**: ACCEPTABLE/YES (scoped only). Production-ready remains NO. PostgreSQL/HA/multi-node remain NO.
 
 Original G2.1–G2.8 and pilot acceptance statement signatures by BrianNguyen on 09/05/2026 are preserved unchanged.
+
+---
+
+## Addendum: 2026-05-17 DuckDNS Conditional Pilot Evidence Refresh
+
+> **Scope**: This addendum records live target-host bridge validation evidence collected on 2026-05-17. It supplements the signed G2.1–G2.8 gates dated 09/05/2026 and does not alter them.
+>
+> **Constraint**: `production-ready = NO`. `full G2 = NOT COMPLETE`. Block A remains `WAIVED/CONDITIONAL`.
+
+### Bridge Evidence Summary
+
+| Gate | Result | Evidence Artifact |
+|------|--------|-------------------|
+| L1 — Reachability & TLS | **PASS** | [`2026-05-17-bridge-l1-l3-live-evidence.md`](./artifacts/2026-05-17-bridge-l1-l3-live-evidence.md) |
+| L2 — Auth (no-token deny) | **PASS** | [`2026-05-17-bridge-l1-l3-live-evidence.md`](./artifacts/2026-05-17-bridge-l1-l3-live-evidence.md) |
+| L2 — Auth (with-token allow) | **PASS after remediation** | [`2026-05-17-bridge-l1-l3-live-evidence.md`](./artifacts/2026-05-17-bridge-l1-l3-live-evidence.md) §L2 Recovery |
+| L3 — Health & Readiness | **PASS** | [`2026-05-17-bridge-l1-l3-live-evidence.md`](./artifacts/2026-05-17-bridge-l1-l3-live-evidence.md) |
+| L4 — Bounded Workload | **PASS** (clean rerun after script artifact bug) | [`2026-05-17-bridge-l4-l5-live-evidence.md`](./artifacts/2026-05-17-bridge-l4-l5-live-evidence.md) |
+| L5 — Backup Verification | **PASS** | [`2026-05-17-bridge-l4-l5-live-evidence.md`](./artifacts/2026-05-17-bridge-l4-l5-live-evidence.md) |
+
+### Key Live Findings
+
+- **L2 root cause**: Missing `[server] store_dsn` in `/etc/ferrumgate/ferrumgate.toml` caused `sqlite::memory:` fallback. Remediated on VM.
+- **L5 runbook drift**: Original runbook used `--store-path` and bare `ferrumctl`; corrected to `--db-path` and `/opt/ferrumgate/ferrumctl`.
+- **SSH firewall**: Temporarily opened to `1.55.106.164/32` for on-VM work; restored to `118.69.4.63/32` and verified.
+
+### Non-Claims
+
+- **Production-ready**: **NO**.
+- **Full G2 complete**: **NOT COMPLETE** — Signed for conditional pilot scope only.
+- **Block A closed**: **NO** — Remains `WAIVED/CONDITIONAL`; real owned domain still required for production-ready or full G2 closure.
+- **HA / multi-node / PostgreSQL**: **NO**.
 
 ---
 

@@ -122,8 +122,8 @@
 |---|---|
 | [`31-release-paths-todo.md`](./31-release-paths-todo.md) | Path 1/2/3 decision framework |
 | [`53-rc-tag-checklist.md`](./53-rc-tag-checklist.md) | RC tag checklist |
-| [`54-operator-signoff-packet.md`](./54-operator-signoff-packet.md) | Operator signoff template (G2) |
-| [`59-pilot-readiness-evidence-packet.md`](./59-pilot-readiness-evidence-packet.md) | Pilot readiness evidence template |
+| [`54-operator-signoff-packet.md`](./54-operator-signoff-packet.md) | Operator signoff packet (G2 signed 09/05/2026; 2026-05-17 DuckDNS evidence addendum) |
+| [`59-pilot-readiness-evidence-packet.md`](./59-pilot-readiness-evidence-packet.md) | Pilot readiness evidence packet (G2.1–G2.8 signed; 2026-05-17 bridge evidence addendum) |
 | [`61-path-2-execution-plan.md`](./61-path-2-execution-plan.md) | Path 2 ordered execution checklist |
 | [`2026-05-17-bridge-l1-l3-live-evidence.md`](./2026-05-17-bridge-l1-l3-live-evidence.md) | Bridge L1–L3 live validation evidence (L1/L3 PASS, L2 PASS after root-cause remediation; historical initial state was partial/blocked) |
 | [`2026-05-17-bridge-l4-l5-live-evidence.md`](./2026-05-17-bridge-l4-l5-live-evidence.md) | Bridge L4–L5 live validation evidence (L4 bounded PASS, L5 backup verify PASS) |
