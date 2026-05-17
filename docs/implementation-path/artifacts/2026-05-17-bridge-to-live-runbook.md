@@ -33,8 +33,11 @@ Run these locally before any live transition:
 | 8 | Security audit | `make audit` | `SECURITY AUDIT GATE: PASS` | Engineering |
 | 9 | No secrets in diff | `git diff --check` | No trailing whitespace conflicts | Engineering |
 | 10 | RC evidence | `python3 scripts/generate_rc_evidence.py` | "Overall: ALL PASS" | Engineering |
+| 11 | Config sanity (target-host) | Verify `/etc/ferrumgate/ferrumgate.toml` contains `[server] store_dsn` pointing to on-disk SQLite | `[server] store_dsn = "sqlite:///var/lib/ferrumgate/ferrumgate.db"` (or equivalent) | Operator |
 
-**All 10 must pass before live transition is considered.**
+**Config sanity note**: `ferrumd` config precedence is CLI args > env vars > config file (`[server]`) > defaults. A `[store]` section is not parsed for `store_dsn`. If `[server] store_dsn` is missing and `FERRUMD_STORE_DSN` is unset, the service will fall back to `sqlite::memory:`, which does not survive restarts and will cause missing-table errors (e.g., `no such table: approvals`).
+
+**All 11 must pass before live transition is considered.**
 
 ---
 
@@ -167,11 +170,15 @@ python3 scripts/run_real_workload_generator.py --execute \
 - If executed: all phases complete without abort
 - If executed: `readyz/deep` success rate ≥ 99%
 - If executed: queue depth ≤ 100 sustained
+- If executed: drift checks show rate-limit gauges within expected bounds
 
 **Abort criteria:**
 - Load generator aborts due to config drift
 - `readyz/deep` success rate < 95%
 - Queue backlog > 100 sustained
+- Target returns non-2xx HTTP codes during workload (exclude script output bugs)
+
+**Known script artifact (2026-05-17)**: The workload generator may crash during Markdown serialization of readyz probes with `KeyError: 'probe_number'`. This is a script-side output bug, not a service failure. Verify by checking actual HTTP response codes and `readyz/deep` status independently.
 
 ---
 
@@ -190,8 +197,10 @@ python3 scripts/validate_bridge_readiness.py --plan \
 export VM_NAME="ferrumgate-nonprod"
 export ZONE="asia-southeast1-a"
 gcloud compute ssh "$VM_NAME" --zone="$ZONE" -- \
-  "sudo ferrumctl backup verify --store-path /var/lib/ferrumgate/ferrumgate.db"
+  "sudo -u ferrumgate /opt/ferrumgate/ferrumctl backup verify --db-path /var/lib/ferrumgate/ferrumgate.db"
 ```
+
+> **Runbook drift note (2026-05-17)**: The original runbook used `--store-path` and `ferrumctl` without full path. The actual CLI flag is `--db-path`, and the binary is at `/opt/ferrumgate/ferrumctl`. The command above reflects the corrected form verified live.
 
 **Evidence criteria:**
 - `ferrumctl backup verify` returns exit 0
@@ -213,8 +222,8 @@ gcloud compute ssh "$VM_NAME" --zone="$ZONE" -- \
 | **Block B — SendGrid API key rotation** | Operator | CLOSED | Completed 2026-05-17; see `2026-05-17-sendgrid-rotation-evidence.md` |
 | **Block B — Escalation matrix acknowledgment** | Operator | CLOSED | Acknowledged 2026-05-17; SMS/webhook deferred outside current pilot scope |
 | **Block C — Keyless backup** | Operator + Engineering | CLOSED | No further action |
-| **G3.6 real workload (full acceptance)** | Operator | CONDITIONAL | Requires Block A + live target-host evidence before full G3.6 re-sign |
-| **Path 2 full G2 signoff** | Operator | NOT COMPLETE | Requires Block A closure + target-host evidence |
+| **G3.6 real workload (full acceptance)** | Operator | CONDITIONAL | Bounded L4 passed; full sustained workload acceptance remains deferred |
+| **Path 2 full G2 signoff** | Operator | NOT COMPLETE | Requires Block A closure or conditional waiver + operator signoff |
 
 ---
 
@@ -243,7 +252,8 @@ Local pre-flight (L0) ──► Plan generation (dry-run) ──► Operator rev
 | Document | Purpose |
 |----------|---------|
 | [`2026-05-17-operator-unblock-packet.md`](./2026-05-17-operator-unblock-packet.md) | Detailed Block A/B procedures and evidence gates |
-| [`2026-05-17-bridge-l1-l3-live-evidence.md`](./2026-05-17-bridge-l1-l3-live-evidence.md) | Bridge L1–L3 live validation evidence (L1/L3 PASS, L2 partial/blocked) |
+| [`2026-05-17-bridge-l1-l3-live-evidence.md`](./2026-05-17-bridge-l1-l3-live-evidence.md) | Bridge L1–L3 live validation evidence (L1/L3 PASS, L2 PASS after remediation) |
+| [`2026-05-17-bridge-l4-l5-live-evidence.md`](./2026-05-17-bridge-l4-l5-live-evidence.md) | Bridge L4–L5 live validation evidence (L4 bounded PASS, L5 backup verify PASS) |
 | [`67-production-readiness-roadmap.md`](../67-production-readiness-roadmap.md) | Priority context and blocker ownership |
 | [`122-completion-roadmap-and-hardening-tracker.md`](../122-completion-roadmap-and-hardening-tracker.md) | 10-item completion tracker |
 | [`54-operator-signoff-packet.md`](../54-operator-signoff-packet.md) | Formal G2 signoff form |
