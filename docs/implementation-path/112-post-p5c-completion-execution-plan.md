@@ -220,8 +220,8 @@ Phase 0 (P5c local smoke) ──► Phase 1 (populated local drill)
 | Sub-phase | Task | Owner | Inputs | Outputs | Status |
 |---|---|---|---|---|---|
 | T3-P1 | Define real workload profile | Operator + Engineering | Target use cases, adapter mix (FS/Git/HTTP/SQLite/Maildraft) | Workload profile doc with QPS target, adapter mix % | ☐ Ready to plan |
-| T3-P2 | Engineering provides load generator script | Engineering | `ferrumctl`, API schema, bearer auth pattern | `scripts/run_real_workload_generator.py` or similar | ☐ Ready to start |
-| T3-P3 | Engineering provides Grafana dashboard JSON | Engineering | Metrics schema from `/v1/metrics` | `configs/examples/grafana-ferrumgate.json` | ☐ Ready to start |
+| T3-P2 | Engineering provides load generator script | Engineering | `ferrumctl`, API schema, bearer auth pattern | `scripts/run_real_workload_generator.py` or similar | ✅ Done — scaffold drafted |
+| T3-P3 | Engineering provides Grafana dashboard JSON | Engineering | Metrics schema from `/v1/metrics` | `configs/examples/grafana-ferrumgate.json` | ✅ Done — example drafted |
 | T3-P4 | Operator deploys load generator + monitoring | Operator | Target host, Grafana/Prometheus stack | Running load generator + scraping metrics | ☐ Blocked on target host |
 | T3-P5 | Execute baseline → low → target → spike → cooldown sequence | Operator | Load generator, monitoring stack | 5 metrics snapshots with all required counters | ☐ Blocked on T3-P4 |
 | T3-P6 | Collect sustained write-rate histograms | Operator | Prometheus query API or manual scrape | p50/p95/p99 write rates under real workload | ☐ Blocked on T3-P5 |
@@ -233,12 +233,12 @@ Phase 0 (P5c local smoke) ──► Phase 1 (populated local drill)
 #### Track 3 — Checklist
 
 - [ ] **T3.1** (Eng) Draft workload profile template: adapter mix %, target QPS, duration per phase.
-- [ ] **T3.2** (Eng) Build `scripts/run_real_workload_generator.py` supporting:
+- [x] **T3.2** (Eng) Build `scripts/run_real_workload_generator.py` supporting:
   - Configurable adapter mix (FS write, Git commit, HTTP POST, SQLite mutation, Maildraft create)
   - Configurable QPS ramp: baseline (0) → low (0.1 req/s) → target (1 req/s) → spike (5 req/s) → cooldown (0)
   - Bearer auth injection from env var
   - Structured JSON output of request latencies and outcomes
-- [ ] **T3.3** (Eng) Export Grafana dashboard JSON covering:
+- [x] **T3.3** (Eng) Export Grafana dashboard JSON covering:
   - `rate(ferrumgate_http_requests_total[1m])` by route
   - `ferrumgate_write_queue_depth`
   - `ferrumgate_store_health_up`
@@ -383,8 +383,8 @@ Phase 0 (P5c local smoke) ──► Phase 1 (populated local drill)
 
 ### Phase 4 — G3.6 Real Workload (Full Acceptance for P5b Engineering Review Only)
 
-- [ ] P4.1 Engineering delivers load generator script — not yet delivered
-- [ ] P4.2 Engineering delivers Grafana dashboard JSON — not yet delivered
+- [x] P4.1 Engineering delivers load generator script — **scaffold delivered** (`scripts/run_real_workload_generator.py`); operator deployment and target-host live validation remain pending (T3.4+)
+- [x] P4.2 Engineering delivers Grafana dashboard JSON — **example delivered** (`configs/examples/grafana-ferrumgate.json`); operator deployment and target-host live validation remain pending (T3.4+)
 - [ ] P4.3 Operator deploys load generator + monitoring — not yet done
 - [x] P4.4 Baseline → low → target → spike → cooldown sequence executed — **real workload sequence passed** (P0+P1 full workload; A3/spike confirmatory; all adapters exercised; 1,852/1,852 HTTP 200 target phase; connection counts collected); see [`artifacts/2026-05-14-g36-p0-p1-full-rerun-evidence.md`](./artifacts/2026-05-14-g36-p0-p1-full-rerun-evidence.md) and [`artifacts/2026-05-14-g36-a3-spike-confirmatory-evidence.md`](./artifacts/2026-05-14-g36-a3-spike-confirmatory-evidence.md)
 - [x] P4.5 Sustained write-rate histograms collected — **real workload histograms collected** (p50 ≈2.22ms, p95 ≈3.01ms, p99 ≈8.26ms across all adapters); see [`artifacts/2026-05-14-g36-p0-p1-full-rerun-evidence.md`](./artifacts/2026-05-14-g36-p0-p1-full-rerun-evidence.md)
@@ -410,8 +410,8 @@ These steps are **executable now** (no operator dependency, no target-host acces
 |---|---|---|---|---|
 | 1 | Create populated SQLite fixture or identify existing test fixture with ≥100 rows | Engineering | 1h | ✅ Done — fixture created |
 | 2 | Run Track 2 populated-data local drill (T2.1–T2.10) | Engineering | 2h | ✅ Done — [`artifacts/2026-05-12-p5c-populated-local-drill-evidence.md`](./artifacts/2026-05-12-p5c-populated-local-drill-evidence.md) |
-| 3 | Draft `scripts/run_real_workload_generator.py` scaffold (T3.2) | Engineering | 4h | ☐ Ready to start |
-| 4 | Draft `configs/examples/grafana-ferrumgate.json` (T3.3) | Engineering | 2h | ☐ Ready to start |
+| 3 | Draft `scripts/run_real_workload_generator.py` scaffold (T3.2) | Engineering | 4h | ✅ Done |
+| 4 | Draft `configs/examples/grafana-ferrumgate.json` (T3.3) | Engineering | 2h | ✅ Done |
 | 5 | Update this plan with actual Track 2 execution dates and outcomes | Engineering | 0.5h | ✅ Done — this edit |
 | 6 | Present Track 2 evidence + Phase 2 decision brief to operator | Engineering | 0.5h | ✅ Done — Option A recorded in [`113-operator-path-selection-packet.md`](./113-operator-path-selection-packet.md) (commit `b320f5c`) |
 

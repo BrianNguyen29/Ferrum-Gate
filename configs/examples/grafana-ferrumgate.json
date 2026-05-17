@@ -185,6 +185,24 @@
           }
         },
         "options": {"tooltip": {"mode": "multi"}}
+      },
+      {
+        "id": 7,
+        "title": "Request Duration Heatmap",
+        "type": "heatmap",
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 24},
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "sum by (le) (rate(ferrumgate_request_duration_seconds_bucket{instance=~\"$instance\"}[1m]))",
+            "legendFormat": "{{le}}",
+            "refId": "A",
+            "format": "heatmap"
+          }
+        ],
+        "heatmap": {},
+        "dataFormat": "tsbuckets",
+        "options": {}
       }
     ]
   },
