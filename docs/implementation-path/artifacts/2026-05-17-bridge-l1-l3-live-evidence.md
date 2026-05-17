@@ -3,7 +3,7 @@
 > **Status**: Live validation evidence. No production-ready claim. No full G2 completion claimed.  
 > **Purpose**: Record live target-host validation results after DuckDNS conditional pilot waiver acknowledgment.  
 > **Scope**: Single-node SQLite v1 conditional pilot only.  
-> **Constraint**: `production-ready = NO` throughout. L2 with-token verification blocked by token/SSH access constraints.
+> **Constraint**: `production-ready = NO` throughout. L2 with-token verification initially blocked by token/SSH access constraints, then unblocked via temporary firewall change, and ultimately remediated after root-cause fix on the VM.
 
 ---
 
@@ -11,10 +11,10 @@
 
 | Claim | Status | Rationale |
 |-------|--------|-----------|
-| **Production-ready** | **NO** | Blockers remain open; operator signoff incomplete; L2 with-token auth not fully verified |
-| **G2 / operator signoff** | **NOT complete** | Path 2 pilot requires Block A closure or conditional waiver plus full target-host evidence; L2 with-token gate not closed |
+| **Production-ready** | **NO** | Blockers remain open; operator signoff incomplete |
+| **G2 / operator signoff** | **NOT complete** | Path 2 pilot requires Block A closure or conditional waiver plus full target-host evidence |
 | **Block A — Real owned domain** | **WAIVED/CONDITIONAL** | DuckDNS accepted by operator on 2026-05-17 for single-node SQLite pilot only; real owned domain still required for production-ready or full G2 closure |
-| **L2 full pass** | **NO** | No-token deny PASS; with-token allow NOT verified due to token/SSH access blocker |
+| **L2 full pass** | **PASS (after remediation)** | No-token deny PASS; with-token allow PASS after root-cause fix on VM (see L2 Recovery section below). Historical initial state: blocked by SSH/firewall. |
 | **HA / multi-node / PostgreSQL** | **NO** | Single-node SQLite is the only supported runtime |
 
 ---
@@ -55,7 +55,9 @@ python3 scripts/validate_bridge_readiness.py --execute \
 
 ---
 
-## L2 — Authentication & Authorization (LIVE — PARTIAL)
+## L2 — Authentication & Authorization (LIVE)
+
+### L2 Initial State (Historical)
 
 **No-token denial command executed**:
 ```bash
@@ -66,7 +68,7 @@ python3 scripts/validate_bridge_readiness.py --execute \
   --output-dir /tmp/opencode/ferrum-bridge-l2-auth-no-token-20260517
 ```
 
-**Results**:
+**Initial results**:
 
 | # | Gate | Status | Message |
 |---|------|--------|---------|
@@ -76,12 +78,11 @@ python3 scripts/validate_bridge_readiness.py --execute \
 | 4 | L2_auth_no_token_denies | PASS | No-token GET /v1/approvals returned HTTP 401 |
 | 5 | L2_auth_with_token_allows | FAIL | With-token GET /v1/approvals returned HTTP 401 |
 
-- **No-token deny**: **PASS** — unauthenticated requests are correctly rejected with HTTP 401
+- **No-token deny**: **PASS** — unauthenticated requests correctly rejected with HTTP 401
 - **With-token allow**: **NOT VERIFIED** — no valid bearer token was available in the local execution environment
-- **L2 overall**: **PARTIAL / BLOCKED** (4 passed, 1 failed, 5 total)
-- **Owner**: Engineering / Operator
+- **L2 overall (initial)**: **PARTIAL / BLOCKED** (4 passed, 1 failed, 5 total)
 
-### L2 with-token blocker details
+#### Initial blocker details
 
 A remote attempt to obtain or use a valid bearer token was blocked:
 
@@ -89,7 +90,73 @@ A remote attempt to obtain or use a valid bearer token was blocked:
 - **IAP SSH**: `failed to connect to backend` port 22. IAP tunnel could not establish.
 - **Token handling**: No bearer token value was printed, logged, or stored in this artifact.
 
-**Implication**: The positive-path L2 auth check (valid token → HTTP 200) remains unverified. This does not indicate a service misconfiguration; it indicates an **access constraint** preventing token retrieval from the VM.
+**Implication (initial)**: The positive-path L2 auth check remained unverified due to an **access constraint**, not a service misconfiguration.
+
+---
+
+### L2 Recovery — Unblocking & Remediation
+
+#### Step 1 — Temporary firewall unblocking
+
+- **Operator IP at time of work**: `1.55.106.164`
+- **Firewall rule**: `ferrumgate-nonprod-fw-ssh`
+- **Initial source ranges**: `["118.69.4.63/32"]`
+- **Temporary change**: Added `1.55.106.164/32` to source ranges to enable SSH access for investigation
+- **Restored after work**: Source ranges reverted to `["118.69.4.63/32"]` and verified
+
+#### Step 2 — Safe L2 with-token probe on VM
+
+With temporary SSH access enabled, a safe probe was executed on the VM. Results:
+
+| Signal | Value |
+|--------|-------|
+| `L2_AUTH_NO_TOKEN_HTTP` | `401` |
+| `L2_AUTH_WITH_TOKEN_HTTP` | `500` |
+| `L2_AUTH_WITH_TOKEN_BODY` | `database error ... no such table: approvals` |
+| `READYZ_DEEP_HTTP` | `200` |
+| Service status | active |
+
+**Observation**: The service was running but returned HTTP 500 on authenticated requests because the `approvals` table did not exist.
+
+#### Step 3 — Root-cause analysis
+
+Investigation of `/etc/ferrumgate/ferrumgate.toml` on the VM found:
+
+- `[server] bind_addr = "0.0.0.0:19080"` was present
+- `[server] store_dsn` was **missing**
+- A `[store]` section existed, but `ferrumd` config precedence is: CLI args > env vars > config file (`[server]`) > defaults
+- Environment variable `FERRUMD_STORE_DSN` was **unset**
+- Therefore `ferrumd` fell back to the default: `sqlite::memory:`
+- In-memory SQLite does not survive service restarts and had no pre-created schema, causing the missing `approvals` table
+
+**Root cause**: Missing `store_dsn` in the `[server]` section of `ferrumgate.toml`, with no env override, causing an in-memory SQLite database to be used instead of the intended on-disk database.
+
+#### Step 4 — Remediation on VM
+
+1. **Backup**: `cp /etc/ferrumgate/ferrumgate.toml /etc/ferrumgate/ferrumgate.toml.pre-l2-20260517T172236Z.bak`
+2. **Insert `store_dsn`**: Added `[server] store_dsn = "sqlite:///var/lib/ferrumgate/ferrumgate.db"`
+3. **Create database**: `touch /var/lib/ferrumgate/ferrumgate.db`
+4. **Set ownership**: `chown ferrumgate:ferrumgate /var/lib/ferrumgate/ferrumgate.db`
+5. **Set mode**: `chmod 640 /var/lib/ferrumgate/ferrumgate.db`
+6. **Restart**: `systemctl restart ferrumgate.service`
+
+> **Note**: No bearer token values were printed, logged, or committed during this process.
+
+#### Step 5 — Post-remediation verification
+
+| Signal | Value |
+|--------|-------|
+| Service status | active |
+| `.tables` | includes `approvals` |
+| `PRAGMA integrity_check` | `ok` |
+| `L2_AUTH_NO_TOKEN_HTTP` | `401` |
+| `L2_AUTH_WITH_TOKEN_HTTP` | `200` |
+| `READYZ_DEEP_HTTP` | `200` |
+
+- **No-token deny**: **PASS**
+- **With-token allow**: **PASS**
+- **L2 overall (after remediation)**: **PASS**
+- **Owner**: Engineering / Operator
 
 ---
 
@@ -119,7 +186,7 @@ A remote attempt to obtain or use a valid bearer token was blocked:
 | L3 — Health & Readiness | 4 | 4 | 0 | **PASS** |
 | **L1 + L3 combined** | **7** | **7** | **0** | **PASS** |
 | L2 — Auth (no-token) | 1 | 1 | 0 | **PASS** |
-| L2 — Auth (with-token) | 1 | 0 | 1 | **BLOCKED / NOT VERIFIED** |
+| L2 — Auth (with-token) | 1 | 1 | 0 | **PASS (after remediation)** |
 
 ---
 
@@ -128,8 +195,8 @@ A remote attempt to obtain or use a valid bearer token was blocked:
 | Blocker | Owner | Status | Next Action |
 |---------|-------|--------|-------------|
 | **Block A — Real owned domain** | Operator | WAIVED/CONDITIONAL | DuckDNS accepted by operator on 2026-05-17 for single-node SQLite pilot only; real owned domain still required for production-ready or full G2 closure |
-| **L2 with-token verification** | Operator | BLOCKED | Requires either: (a) local env with valid bearer token, or (b) SSH/IAP access to VM to generate/retrieve token. SSH timeout and IAP backend failure prevent remote token access. |
-| **Path 2 full G2 signoff** | Operator | NOT COMPLETE | Requires Block A closure + target-host evidence + closed L2 auth gate |
+| **L2 with-token verification** | Operator | **CLOSED (remediated)** | Root cause fixed (missing `store_dsn` → in-memory SQLite). No-token deny PASS; with-token allow PASS. Firewall restored after work. |
+| **Path 2 full G2 signoff** | Operator | NOT COMPLETE | Requires Block A closure or conditional waiver + target-host evidence + operator signoff |
 | **Production-ready claim** | — | **NO** | Requires all G2/G3 gates + operator signoff + live validation + real domain |
 
 ---
@@ -149,7 +216,7 @@ A remote attempt to obtain or use a valid bearer token was blocked:
 
 ## Operator / Engineering Review Statement
 
-> This artifact accurately records live validation results as of 2026-05-17. L1 and L3 passed against `ferrumgate.duckdns.org`. L2 no-token denial passed. L2 with-token allow was not verified due to SSH/IAP access blockers, not due to service misconfiguration. No secrets or token values are present in this artifact. Production-ready remains **NO**. Full G2 operator signoff remains **NOT COMPLETE**.
+> This artifact accurately records live validation results as of 2026-05-17. L1 and L3 passed against `ferrumgate.duckdns.org`. L2 no-token denial passed. L2 with-token allow initially failed due to SSH/firewall access constraints, was investigated after temporary firewall unblocking, and ultimately passed after root-cause remediation (missing `store_dsn` in config causing in-memory SQLite). No secrets or token values are present in this artifact. Production-ready remains **NO**. Full G2 operator signoff remains **NOT COMPLETE**.
 
 ---
 

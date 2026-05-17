@@ -11,7 +11,7 @@
 | Path | Status | Evidence | Blockers |
 |---|---|---|---|
 | **Path 1 — RC Tag** | ✅ Executed | `v0.1.0-rc.2` cut at `e229f76`; GitHub prerelease published; G1 gates fresh-pass | None for RC scope |
-| **Path 2 — Safe Probes** | ✅ Safe probes executed | `check_pilot_readiness.py` shallow/deep/metrics PASS against duckdns; bridge L1/L3 live PASS; L2 partial/blocked (no-token deny PASS, with-token not verified); **does NOT complete G2/operator signoff** | Block A WAIVED/CONDITIONAL for single-node SQLite pilot only; SendGrid rotation CLOSED 2026-05-17; escalation acknowledgment CLOSED 2026-05-17 |
+| **Path 2 — Safe Probes** | ✅ Safe probes executed | `check_pilot_readiness.py` shallow/deep/metrics PASS against duckdns; bridge L1/L3 live PASS; L2 PASS after root-cause remediation (missing `store_dsn` → in-memory SQLite, fixed on VM); **does NOT complete G2/operator signoff** | Block A WAIVED/CONDITIONAL for single-node SQLite pilot only; SendGrid rotation CLOSED 2026-05-17; escalation acknowledgment CLOSED 2026-05-17 |
 | **Path 3 — Local Prep** | ✅ Local plan generated; MCP smoke passed | Workload plan 3360 requests (no live traffic); local MCP lifecycle smoke 15 passed | T3.4+ target-host deployment/live validation pending |
 | **Production-ready** | ❌ NO | — | All of the above |
 
@@ -125,7 +125,7 @@
 | [`54-operator-signoff-packet.md`](./54-operator-signoff-packet.md) | Operator signoff template (G2) |
 | [`59-pilot-readiness-evidence-packet.md`](./59-pilot-readiness-evidence-packet.md) | Pilot readiness evidence template |
 | [`61-path-2-execution-plan.md`](./61-path-2-execution-plan.md) | Path 2 ordered execution checklist |
-| [`2026-05-17-bridge-l1-l3-live-evidence.md`](./2026-05-17-bridge-l1-l3-live-evidence.md) | Bridge L1–L3 live validation evidence (L1/L3 PASS, L2 partial/blocked) |
+| [`2026-05-17-bridge-l1-l3-live-evidence.md`](./2026-05-17-bridge-l1-l3-live-evidence.md) | Bridge L1–L3 live validation evidence (L1/L3 PASS, L2 PASS after root-cause remediation; historical initial state was partial/blocked) |
 | [`67-production-readiness-roadmap.md`](./67-production-readiness-roadmap.md) | Production readiness roadmap |
 | [`122-completion-roadmap-and-hardening-tracker.md`](./122-completion-roadmap-and-hardening-tracker.md) | Completion tracker |
 
