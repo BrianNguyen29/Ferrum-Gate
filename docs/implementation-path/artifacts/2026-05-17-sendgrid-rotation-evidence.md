@@ -123,14 +123,14 @@ No key ID, key prefix, or API key value is recorded.
 
 ### Block B — Off-VM Alerting
 
-- **Current status**: **PARTIAL**
+- **Status at time of writing**: **PARTIAL**
   - G-B1 (primary inbox delivery): Confirmed
   - G-B2 (secondary inbox delivery): Confirmed
   - G-B3 (bearer token + SendGrid API key rotation): **Verified / Closed**
   - G-B4 (escalation matrix populated for primary+secondary email path): Populated enough for primary+secondary path
-  - **Remaining blocker**: Formal escalation matrix acknowledgment by the operator is still pending.
+  - **Remaining blocker at time of writing**: Formal escalation matrix acknowledgment by the operator was still pending.
 
-Block B remains **PARTIAL** only because escalation matrix acknowledgment is not yet formally completed.
+> **Update**: Escalation matrix acknowledgment was formally recorded on 2026-05-17 in `docs/implementation-path/artifacts/2026-05-17-escalation-matrix-acknowledgment.md`. Block B is now **CLOSED**.
 
 ---
 
@@ -150,9 +150,9 @@ Block B remains **PARTIAL** only because escalation matrix acknowledgment is not
 | Claim | Status | Rationale |
 |-------|--------|-----------|
 | Production-ready | **NO** | No production-ready claim is made. |
-| Pilot-ready | **NO** | Block A (domain) remains blocked; Block B remains partial. |
-| Escalation matrix formally acknowledged | **NO** | Operator acknowledgment still pending. |
-| Block B complete | **NO** | Block B remains partial pending formal escalation acknowledgment. |
+| Pilot-ready | **NO** | Block A (domain) remains blocked; Block B is now closed but pilot is still blocked by Block A. |
+| Escalation matrix formally acknowledged | **YES** | Recorded in `2026-05-17-escalation-matrix-acknowledgment.md` (2026-05-17). |
+| Block B complete | **YES** | Closed per `2026-05-17-escalation-matrix-acknowledgment.md`. |
 
 ---
 

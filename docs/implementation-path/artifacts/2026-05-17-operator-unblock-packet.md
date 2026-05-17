@@ -12,8 +12,8 @@
 | Blocker | Status | Owner | Unblock Condition |
 |---------|--------|-------|-------------------|
 | **Block A — Real owned domain** | BLOCKED | Operator | Procure domain + configure DNS A record → `34.158.51.8` |
-| **Block B — SendGrid API key rotation** | PENDING | Operator | Generate new SendGrid key via dashboard; rotate VM secret at `/etc/ferrumgate/secrets/alert-provider-api-key` |
-| **Block B — Escalation matrix acknowledgment** | POPULATED (partial) | Operator | Review and acknowledge escalation matrix; add SMS/webhook channels if required |
+| **Block B — SendGrid API key rotation** | DONE | Operator | Completed on 2026-05-17; see `2026-05-17-sendgrid-rotation-evidence.md` |
+| **Block B — Escalation matrix acknowledgment** | ACKNOWLEDGED / CLOSED | Operator | Acknowledged on 2026-05-17; SMS/webhook deferred outside current pilot scope; see `2026-05-17-escalation-matrix-acknowledgment.md` |
 | **Block C — Keyless backup** | CLOSED | Operator + Engineering | C1 verified; no further action required |
 
 ---
@@ -57,14 +57,15 @@ Restore `/etc/caddy/Caddyfile.backup.*` on VM and reload Caddy.
 ## Block B — SendGrid API Key Rotation
 
 ### Current State
-- SendGrid secret file present on VM: `/etc/ferrumgate/secrets/alert-provider-api-key`
-- Secret mtime: `2026-05-10 04:58:58.710517174 +0000` (old)
-- Backup count: `0`
-- Status: **Rotation NOT executed on VM; pending operator dashboard workflow**
+- SendGrid API key rotation was completed on 2026-05-17.
+- Active AlertManager secret path: `/etc/ferrumgate/secrets/sendgrid-api-key`.
+- Active secret permissions verified: `MODE=640 OWNER=root:prometheus`; directory `750 root:prometheus`.
+- Synthetic alert delivery confirmed to primary and secondary inboxes.
+- Old SendGrid key revoked/deleted by operator.
+- Status: **DONE** — see [`2026-05-17-sendgrid-rotation-evidence.md`](./2026-05-17-sendgrid-rotation-evidence.md).
 
 ### Operator Inputs Required
-- Access to SendGrid dashboard/API credentials
-- New API key generated via SendGrid web UI
+- None for current pilot scope. Rotation and delivery verification are complete.
 
 ### Exact Procedure
 1. Log in to SendGrid dashboard (web UI)
@@ -87,7 +88,7 @@ Restore `/etc/caddy/Caddyfile.backup.*` on VM and reload Caddy.
 ### Evidence Gates
 | Gate | Evidence | Status |
 |------|----------|--------|
-| G-B3 | New SendGrid key active on VM; old key revoked in dashboard; test alert delivers | ☐ Pending |
+| G-B3 | New SendGrid key active on VM; old key revoked in dashboard; test alert delivers | ✅ Done |
 
 ### Rollback
 Restore old key from backup file; reload AlertManager; re-enable old key in SendGrid dashboard if not yet revoked.
@@ -100,12 +101,11 @@ Restore old key from backup file; reload AlertManager; re-enable old key in Send
 - Primary and secondary email contacts configured in active AlertManager config (`/etc/prometheus/alertmanager.yml`)
 - `ACTIVE_CONFIG_CHECK=PASS`, `ALERTMANAGER_SERVICE=active`, `ACTIVE_SECONDARY_PRESENT=YES`, `ACTIVE_EMAIL_TO_COUNT=4`
 - G-B1 (primary inbox) and G-B2 (secondary inbox) confirmed
-- **Operator has not yet formally acknowledged the escalation matrix**
+- Operator formally acknowledged the escalation matrix on 2026-05-17 for the current single-node SQLite pilot scope
+- SMS/webhook escalation remains deferred outside current pilot scope
 
 ### Operator Inputs Required
-- Review escalation tiers below
-- Acknowledge or modify timeouts and channels
-- Sign and date acknowledgment
+- None for current pilot scope. Acknowledgment is complete.
 
 ### Escalation Tiers (Skeleton)
 
@@ -119,6 +119,8 @@ Restore old key from backup file; reload AlertManager; re-enable old key in Send
 > "I have reviewed the escalation matrix for FerrumGate v1 single-node SQLite pilot alerting. I confirm primary and secondary email contacts are configured and tested. I acknowledge additional channels (SMS/webhook) may be added later if required."
 >
 > Operator signature: _______________________ Date: ___________
+
+> **Update**: Formal acknowledgment recorded on 2026-05-17 in [`2026-05-17-escalation-matrix-acknowledgment.md`](./2026-05-17-escalation-matrix-acknowledgment.md). Block B is now **CLOSED**.
 
 ---
 

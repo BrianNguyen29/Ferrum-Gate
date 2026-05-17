@@ -210,11 +210,11 @@ gcloud compute ssh "$VM_NAME" --zone="$ZONE" -- \
 | Blocker | Owner | Status | Next Action |
 |---------|-------|--------|-------------|
 | **Block A — Real owned domain** | Operator | BLOCKED | Procure domain; configure DNS A record → `34.158.51.8`; execute Block A runbook |
-| **Block B — SendGrid API key rotation** | Operator | PENDING | Generate new key in SendGrid dashboard; rotate VM secret; confirm test alert delivery |
-| **Block B — Escalation matrix acknowledgment** | Operator | POPULATED | Review and sign escalation matrix; add SMS/webhook if required |
+| **Block B — SendGrid API key rotation** | Operator | CLOSED | Completed 2026-05-17; see `2026-05-17-sendgrid-rotation-evidence.md` |
+| **Block B — Escalation matrix acknowledgment** | Operator | CLOSED | Acknowledged 2026-05-17; SMS/webhook deferred outside current pilot scope |
 | **Block C — Keyless backup** | Operator + Engineering | CLOSED | No further action |
-| **G3.6 real workload (full acceptance)** | Operator | CONDITIONAL | Requires Block A + SendGrid rotation + operator signoff before full G3.6 re-sign |
-| **Path 2 full G2 signoff** | Operator | NOT COMPLETE | Requires all blockers closed + target-host evidence |
+| **G3.6 real workload (full acceptance)** | Operator | CONDITIONAL | Requires Block A + live target-host evidence before full G3.6 re-sign |
+| **Path 2 full G2 signoff** | Operator | NOT COMPLETE | Requires Block A closure + target-host evidence |
 
 ---
 

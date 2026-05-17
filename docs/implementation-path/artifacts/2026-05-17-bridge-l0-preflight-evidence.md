@@ -12,9 +12,9 @@
 | Claim | Status | Rationale |
 |-------|--------|-----------|
 | **Production-ready** | **NO** | Blockers remain open; operator signoff incomplete |
-| **G2 / operator signoff** | **NOT complete** | Path 2 pilot requires Block A + Block B closure + operator acknowledgment |
+| **G2 / operator signoff** | **NOT complete** | Path 2 pilot requires Block A closure; Block B is now closed |
 | **Block A — Real owned domain** | **BLOCKED** | No production domain or DNS available yet |
-| **SendGrid API key rotation** | **PENDING** | Dashboard workflow not executed; VM secret mtime is 2026-05-10 |
+| **SendGrid API key rotation** | **CLOSED (2026-05-17)** | Verified on VM; primary+secondary delivery confirmed; old key revoked |
 | **Live MCP target-host smoke** | **NOT run** | L1–L5 gates remain in plan mode only |
 | **HA / multi-node / PostgreSQL** | **NO** | Single-node SQLite is the only supported runtime |
 
@@ -98,21 +98,21 @@ Plan written:
 | Blocker | Owner | Status | Next Action |
 |---------|-------|--------|-------------|
 | **Block A — Real owned domain** | Operator | BLOCKED | Procure domain; configure DNS A record → `34.158.51.8`; execute Block A runbook |
-| **Block B — SendGrid API key rotation** | Operator | PENDING | Generate new key in SendGrid dashboard; rotate VM secret; confirm test alert delivery |
-| **Block B — Escalation matrix acknowledgment** | Operator | POPULATED | Review and sign escalation matrix; add SMS/webhook if required |
+| **Block B — SendGrid API key rotation** | Operator | CLOSED | Completed 2026-05-17; see `2026-05-17-sendgrid-rotation-evidence.md` |
+| **Block B — Escalation matrix acknowledgment** | Operator | CLOSED | Acknowledged 2026-05-17; SMS/webhook deferred outside current pilot scope |
 | **Block C — Keyless backup** | Operator + Engineering | CLOSED | No further action |
-| **G3.6 real workload (full acceptance)** | Operator | CONDITIONAL | Requires Block A + SendGrid rotation + operator signoff before full G3.6 re-sign |
-| **Path 2 full G2 signoff** | Operator | NOT COMPLETE | Requires all blockers closed + target-host evidence |
+| **G3.6 real workload (full acceptance)** | Operator | CONDITIONAL | Requires Block A + live target-host evidence before full G3.6 re-sign |
+| **Path 2 full G2 signoff** | Operator | NOT COMPLETE | Requires Block A closure + target-host evidence |
 
 ---
 
 ## Next Operator Actions (from Unblock Packet)
 
 1. **Block A**: Procure `REAL_DOMAIN` and configure DNS A record pointing to `34.158.51.8`. Run `bash scripts/gcp/phase3g_configure_real_domain.sh --confirm ...`.
-2. **Block B SendGrid**: Execute dashboard key generation → VM secret rotation → test alert → old key revocation.
-3. **Block B Escalation**: Review tiers, acknowledge or modify timeouts/channels, sign and date.
-4. **Post-unblock evidence**: Produce G-A1/G-A2/G-A3 pass evidence + G-B3 pass evidence + signed escalation matrix.
-5. **Path 2 refresh**: Update `54-operator-signoff-packet.md` with Block A/B closure dates.
+2. **Block B SendGrid**: Closed 2026-05-17 — no further action for current pilot scope.
+3. **Block B Escalation**: Closed 2026-05-17 — SMS/webhook deferred outside current pilot scope.
+4. **Post-unblock evidence**: Produce G-A1/G-A2/G-A3 pass evidence after Block A domain exists.
+5. **Path 2 refresh**: Update `54-operator-signoff-packet.md` with Block A closure date after domain evidence passes.
 
 See [`2026-05-17-operator-unblock-packet.md`](./2026-05-17-operator-unblock-packet.md) for exact procedures.
 

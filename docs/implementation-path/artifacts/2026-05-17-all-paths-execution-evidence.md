@@ -11,7 +11,7 @@
 | Path | Status | Evidence | Blockers |
 |---|---|---|---|
 | **Path 1 — RC Tag** | ✅ Executed | `v0.1.0-rc.2` cut at `e229f76`; GitHub prerelease published; G1 gates fresh-pass | None for RC scope |
-| **Path 2 — Safe Probes** | ✅ Safe probes executed | `check_pilot_readiness.py` shallow/deep/metrics PASS against duckdns; **does NOT complete G2/operator signoff** | Block A domain; SendGrid rotation; operator signoff pending |
+| **Path 2 — Safe Probes** | ✅ Safe probes executed | `check_pilot_readiness.py` shallow/deep/metrics PASS against duckdns; **does NOT complete G2/operator signoff** | Block A domain only; SendGrid rotation CLOSED 2026-05-17; escalation acknowledgment CLOSED 2026-05-17 |
 | **Path 3 — Local Prep** | ✅ Local plan generated; MCP smoke passed | Workload plan 3360 requests (no live traffic); local MCP lifecycle smoke 15 passed | T3.4+ target-host deployment/live validation pending |
 | **Production-ready** | ❌ NO | — | All of the above |
 
@@ -108,8 +108,8 @@
 | Blocker | Status | Owner | Notes |
 |---|---|---|---|
 | **Block A — Real owned domain / DNS** | BLOCKED | Operator | No real domain or DNS available yet; duckdns used for probes only |
-| **SendGrid API key rotation** | Pending / operator-blocked | Operator | Dashboard workflow pending; not VM-verified |
-| **Escalation matrix operator acknowledgment** | Pending | Operator | Primary+secondary paths confirmed; full matrix acknowledgment pending |
+| **SendGrid API key rotation** | CLOSED (2026-05-17) | Operator | Verified on VM; primary+secondary delivery confirmed; old key revoked |
+| **Escalation matrix operator acknowledgment** | CLOSED (2026-05-17) | Operator | Primary+secondary paths formally acknowledged; SMS/webhook deferred outside current pilot scope |
 | **T3.4+ target-host deployment / live validation** | Pending | Engineering | Workload plan generated; live execution blocked by Block A |
 | **Live target-host MCP smoke / load test** | Pending | Engineering | Requires real domain + operator signoff |
 | **Production-ready claim** | **NO** | — | Requires all G2/G3 gates + operator signoff + live validation |
