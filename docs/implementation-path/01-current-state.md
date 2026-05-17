@@ -3,7 +3,7 @@
 Last updated: 2026-05-17 — P5a–P5e complete; Path 1 RC tag `v0.1.0-rc.2` cut; Path 2 safe probes executed (shallow/deep/metrics PASS, no G2 completion); Path 3 local workload plan generated + MCP lifecycle smoke passed (15/15); Blocks A/B/C status updated; full workspace gate passed (ALL LOCAL CHECKS PASSED); cargo-deny + cargo-audit installed and `make audit` passing; bearer token rotation executed on VM; secondary alert contact delivery confirmed; SendGrid API key rotation verified on VM with primary+secondary delivery and old-key revocation; MCP D1 local coverage hardened (c661a15, 239 tests); bridge-to-live toolkit and operator unblock packet created
 Single-node v1 scope unless noted.
 
-**Repository**: `https://github.com/BrianNguyen29/Ferrum-Gate` (upstream/original — private, accessible with authorized GitHub credentials) | **Default package version**: `0.1.0` | **Status**: P5a–P5e engineering complete within authorized scope; P6 CONDITIONAL GO for operator signoff/pilot; Block C CLOSED; Block B CLOSED; Block A BLOCKED; production-ready remains NO; HA/multi-node/PostgreSQL production deployment remain NO; single-node SQLite-backed deployment is the only supported runtime
+**Repository**: `https://github.com/BrianNguyen29/Ferrum-Gate` (upstream/original — private, accessible with authorized GitHub credentials) | **Default package version**: `0.1.0` | **Status**: P5a–P5e engineering complete within authorized scope; P6 CONDITIONAL GO for operator signoff/pilot; Block C CLOSED; Block B CLOSED; Block A WAIVED/CONDITIONAL; production-ready remains NO; HA/multi-node/PostgreSQL production deployment remain NO; single-node SQLite-backed deployment is the only supported runtime
 
 **Paths execution evidence**: [`artifacts/2026-05-17-all-paths-execution-evidence.md`](./artifacts/2026-05-17-all-paths-execution-evidence.md) — concise evidence for Path 1 (RC tag), Path 2 (safe probes), Path 3 (local plan/smoke), and remaining blockers.
 
@@ -110,10 +110,10 @@ Full workspace check/clippy/test pass locally with 0 failures. Prefer command-le
 
 ## Next step
 
-All P0–P2 items closed. U1–U4 upgrade tracks complete. P5a–P5e engineering complete within authorized scope. Full workspace gate rerun passed (ALL LOCAL CHECKS PASSED 2026-05-17). P6 oracle verdict: CONDITIONAL GO. Production-ready remains NO; HA/multi-node/PostgreSQL production deployment remain NO. Remaining explicit operator blocker: Block A domain.
+All P0–P2 items closed. U1–U4 upgrade tracks complete. P5a–P5e engineering complete within authorized scope. Full workspace gate rerun passed (ALL LOCAL CHECKS PASSED 2026-05-17). P6 oracle verdict: CONDITIONAL GO. Production-ready remains NO; HA/multi-node/PostgreSQL production deployment remain NO. Remaining explicit operator blocker: Block A WAIVED/CONDITIONAL (real domain still required for production-ready or full G2 closure).
 
 Remaining operator blockers before pilot (as of 2026-05-17):
-- **Block A — Real owned domain**: BLOCKED — operator confirmed no real domain or DNS available yet
+- **Block A — Real owned domain**: WAIVED/CONDITIONAL — DuckDNS accepted by operator on 2026-05-17 for single-node SQLite pilot only; real owned domain still required for production-ready or full G2 closure
 - **Block B — Off-VM alerting**: CLOSED — operator confirmed inbox receipt for primary and secondary contacts (TEST_IDs `fg-inbox-check-20260516-052910` and `fg-secondary-check-20260516-153221`, G-B1/G-B2); bearer token rotation executed on VM; SendGrid API key rotation verified on VM, synthetic alert `FerrumGateSendGridDirPermFix` delivered to primary+secondary inboxes, old key revoked/deleted (G-B3 verified; see [`artifacts/2026-05-17-sendgrid-rotation-evidence.md`](./artifacts/2026-05-17-sendgrid-rotation-evidence.md)); escalation matrix formally acknowledged on 2026-05-17 (see [`artifacts/2026-05-17-escalation-matrix-acknowledgment.md`](./artifacts/2026-05-17-escalation-matrix-acknowledgment.md))
 - **Block C — Keyless backup**: CLOSED — C1 keyless backup verified, residual key removed, offsite sync confirmed; `n2-standard-2` remains temporary operational type
 
@@ -134,7 +134,7 @@ Historical completed items (May 13–16):
 
 Next decision routing:
 1. **Path 1 (RC tag)**: ✅ Executed — `v0.1.0-rc.2` cut at `e229f76` with fresh G1 gates PASS; GitHub prerelease published. See [`artifacts/2026-05-17-all-paths-execution-evidence.md`](./artifacts/2026-05-17-all-paths-execution-evidence.md) §Path 1.
-2. **Path 2 (Operator signoff/pilot)**: Safe probes executed (shallow/deep/metrics PASS against duckdns); **G2/operator signoff NOT complete**; blocked by Block A domain only. SendGrid rotation and escalation matrix acknowledgment are now verified. See [`54-operator-signoff-packet.md`](./54-operator-signoff-packet.md).
+2. **Path 2 (Operator signoff/pilot)**: Safe probes executed (shallow/deep/metrics PASS against duckdns); **G2/operator signoff NOT complete**; Block A WAIVED/CONDITIONAL for single-node SQLite pilot only with operator acknowledgment recorded on 2026-05-17. SendGrid rotation and escalation matrix acknowledgment are now verified. See [`54-operator-signoff-packet.md`](./54-operator-signoff-packet.md).
 3. **Path 3 (PostgreSQL/Phase3)**: P3 repository implementations and P4.1–P4.4 MVP/local Docker/runtime complete. Local workload plan generated (3360 requests, no live traffic); MCP lifecycle smoke passed (15/15). Production/HA/multi-node remains deferred. See [`31-release-paths-todo.md`](./31-release-paths-todo.md) §Path 3.
 
 Completion tracker and remaining work:
@@ -144,6 +144,7 @@ Completion tracker and remaining work:
 - [artifacts/2026-05-17-bridge-l0-preflight-evidence.md](./artifacts/2026-05-17-bridge-l0-preflight-evidence.md) — Bridge L0 pre-flight evidence packet: local gate results, plan-mode output, blocker summary, and operator handoff statement
 - [artifacts/2026-05-17-sendgrid-rotation-evidence.md](./artifacts/2026-05-17-sendgrid-rotation-evidence.md) — SendGrid API key rotation evidence: active secret path/permission fix, primary+secondary delivery, old-key revocation, and SSH firewall restoration
 - [artifacts/2026-05-17-escalation-matrix-acknowledgment.md](./artifacts/2026-05-17-escalation-matrix-acknowledgment.md) — Formal escalation matrix acknowledgment for FerrumGate v1 conditional single-node SQLite pilot; closes Block B
+- [artifacts/2026-05-17-block-a-duckdns-conditional-pilot-waiver.md](./artifacts/2026-05-17-block-a-duckdns-conditional-pilot-waiver.md) — Block A DuckDNS conditional pilot waiver; operator acknowledgment recorded 2026-05-17; Block A WAIVED/CONDITIONAL for single-node SQLite pilot only
 - [33-feature-completion-backlog.md](./33-feature-completion-backlog.md) — Must/Should/Production-only backlog for incomplete/partial features
 - [45-current-feature-audit.md](./45-current-feature-audit.md) — Phase 3 D5 bottleneck analysis complete; D6 priority list complete. Full report: [51-d5-bottleneck-analysis-report.md](./51-d5-bottleneck-analysis-report.md); Priority list: [52-d6-priority-expansion-list.md](./52-d6-priority-expansion-list.md)
 - [32-feature-completeness-audit.md](./32-feature-completeness-audit.md) — Route/API reconciliation

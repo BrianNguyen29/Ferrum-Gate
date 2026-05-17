@@ -209,7 +209,7 @@ gcloud compute ssh "$VM_NAME" --zone="$ZONE" -- \
 
 | Blocker | Owner | Status | Next Action |
 |---------|-------|--------|-------------|
-| **Block A — Real owned domain** | Operator | BLOCKED | Procure domain; configure DNS A record → `34.158.51.8`; execute Block A runbook |
+| **Block A — Real owned domain** | Operator | WAIVED/CONDITIONAL | DuckDNS accepted by operator on 2026-05-17 for single-node SQLite pilot only; real owned domain still required for production-ready or full G2 closure |
 | **Block B — SendGrid API key rotation** | Operator | CLOSED | Completed 2026-05-17; see `2026-05-17-sendgrid-rotation-evidence.md` |
 | **Block B — Escalation matrix acknowledgment** | Operator | CLOSED | Acknowledged 2026-05-17; SMS/webhook deferred outside current pilot scope |
 | **Block C — Keyless backup** | Operator + Engineering | CLOSED | No further action |

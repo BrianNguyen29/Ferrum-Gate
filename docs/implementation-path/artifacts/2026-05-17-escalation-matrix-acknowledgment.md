@@ -72,7 +72,7 @@ This acknowledgment applies **only** to the FerrumGate v1 conditional single-nod
 
 | Block | Status | Rationale |
 |-------|--------|-----------|
-| Block A — Real owned domain | **BLOCKED** | No real owned domain or DNS available yet |
+| Block A — Real owned domain | **WAIVED/CONDITIONAL** | DuckDNS accepted by operator on 2026-05-17 for single-node SQLite pilot only; real owned domain still required for production-ready or full G2 closure |
 | Block B — Off-VM alerting | **CLOSED** | All G-B1 through G-B4 satisfied and acknowledged |
 | Block C — Keyless backup | **CLOSED** | C1 keyless backup verified, residual key removed, offsite sync confirmed |
 
@@ -92,8 +92,8 @@ This acknowledgment applies **only** to the FerrumGate v1 conditional single-nod
 | Claim | Status | Rationale |
 |-------|--------|-----------|
 | Production-ready | **NO** | No production-ready claim is made. |
-| Pilot-ready | **NO** | Block A (domain) remains blocked. Pilot cannot proceed until Block A closes. |
-| Full G2 complete | **NO** | G2 requires all operator blockers closed; Block A is still BLOCKED. |
+| Pilot-ready | **NO** | Block A is WAIVED/CONDITIONAL (not CLOSED); real owned domain remains required for production-ready or full G2 closure. |
+| Full G2 complete | **NO** | G2 requires all operator blockers closed; Block A is WAIVED/CONDITIONAL (not CLOSED). |
 | Multi-node / PostgreSQL scope | **NO** | Acknowledgment is explicitly scoped to single-node SQLite pilot only. |
 | SMS / webhook escalation | **NO** | Deferred; not part of current acknowledgment. |
 

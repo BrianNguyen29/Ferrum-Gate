@@ -3,7 +3,7 @@
 > **Status**: Audit-trail artifact. Operator-owned evidence. No production-ready claim.
 > **Purpose**: Record the 2026-05-16 C1 keyless backup scope update, zone-capacity recovery, keyless verification, and Block B SendGrid smoke-test state.
 > **Scope**: Single-node SQLite v1 conditional pilot. Non-production VM only.
-> **Constraint**: `production-ready = NO`. Block A remains blocked. No secrets.
+> **Constraint**: `production-ready = NO`. Block A is WAIVED/CONDITIONAL (not CLOSED); real owned domain remains required for production-ready or full G2 closure. No secrets.
 
 ---
 

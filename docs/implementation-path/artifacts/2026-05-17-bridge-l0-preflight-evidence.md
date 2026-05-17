@@ -13,7 +13,7 @@
 |-------|--------|-----------|
 | **Production-ready** | **NO** | Blockers remain open; operator signoff incomplete |
 | **G2 / operator signoff** | **NOT complete** | Path 2 pilot requires Block A closure; Block B is now closed |
-| **Block A — Real owned domain** | **BLOCKED** | No production domain or DNS available yet |
+| **Block A — Real owned domain** | **WAIVED/CONDITIONAL** | DuckDNS accepted by operator on 2026-05-17 for single-node SQLite pilot only; real owned domain still required for production-ready or full G2 closure |
 | **SendGrid API key rotation** | **CLOSED (2026-05-17)** | Verified on VM; primary+secondary delivery confirmed; old key revoked |
 | **Live MCP target-host smoke** | **NOT run** | L1–L5 gates remain in plan mode only |
 | **HA / multi-node / PostgreSQL** | **NO** | Single-node SQLite is the only supported runtime |
@@ -97,7 +97,7 @@ Plan written:
 
 | Blocker | Owner | Status | Next Action |
 |---------|-------|--------|-------------|
-| **Block A — Real owned domain** | Operator | BLOCKED | Procure domain; configure DNS A record → `34.158.51.8`; execute Block A runbook |
+| **Block A — Real owned domain** | Operator | WAIVED/CONDITIONAL | DuckDNS accepted by operator on 2026-05-17 for single-node SQLite pilot only; real owned domain still required for production-ready or full G2 closure |
 | **Block B — SendGrid API key rotation** | Operator | CLOSED | Completed 2026-05-17; see `2026-05-17-sendgrid-rotation-evidence.md` |
 | **Block B — Escalation matrix acknowledgment** | Operator | CLOSED | Acknowledged 2026-05-17; SMS/webhook deferred outside current pilot scope |
 | **Block C — Keyless backup** | Operator + Engineering | CLOSED | No further action |
@@ -108,7 +108,7 @@ Plan written:
 
 ## Next Operator Actions (from Unblock Packet)
 
-1. **Block A**: Procure `REAL_DOMAIN` and configure DNS A record pointing to `34.158.51.8`. Run `bash scripts/gcp/phase3g_configure_real_domain.sh --confirm ...`.
+1. **Block A**: WAIVED/CONDITIONAL — DuckDNS accepted by operator on 2026-05-17 for single-node SQLite pilot only. To move Block A to CLOSED, procure `REAL_DOMAIN` and configure DNS A record pointing to `34.158.51.8`, then run `bash scripts/gcp/phase3g_configure_real_domain.sh --confirm ...`.
 2. **Block B SendGrid**: Closed 2026-05-17 — no further action for current pilot scope.
 3. **Block B Escalation**: Closed 2026-05-17 — SMS/webhook deferred outside current pilot scope.
 4. **Post-unblock evidence**: Produce G-A1/G-A2/G-A3 pass evidence after Block A domain exists.

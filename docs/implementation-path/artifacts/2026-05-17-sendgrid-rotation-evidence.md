@@ -150,7 +150,7 @@ No key ID, key prefix, or API key value is recorded.
 | Claim | Status | Rationale |
 |-------|--------|-----------|
 | Production-ready | **NO** | No production-ready claim is made. |
-| Pilot-ready | **NO** | Block A (domain) remains blocked; Block B is now closed but pilot is still blocked by Block A. |
+| Pilot-ready | **NO** | Block A is WAIVED/CONDITIONAL (not CLOSED); real owned domain remains required for production-ready or full G2 closure. |
 | Escalation matrix formally acknowledged | **YES** | Recorded in `2026-05-17-escalation-matrix-acknowledgment.md` (2026-05-17). |
 | Block B complete | **YES** | Closed per `2026-05-17-escalation-matrix-acknowledgment.md`. |
 

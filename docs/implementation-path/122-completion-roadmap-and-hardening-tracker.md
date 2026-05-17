@@ -3,7 +3,7 @@
 > **Status**: Planning tracker. No execution claimed. No production-ready claim.
 > **Purpose**: Durable todo list for the 10 requested completion items and hardening tasks following May 13–16 evidence.
 > **Scope**: Single-node SQLite v1 conditional pilot. Docs-only tracker.
-> **Constraint**: `production-ready = NO`. Block A remains blocked. No secrets.
+> **Constraint**: `production-ready = NO`. Block A WAIVED/CONDITIONAL for single-node SQLite pilot only. No secrets.
 
 ---
 
@@ -12,7 +12,7 @@
 Following May 13–16 operator execution and evidence collection, plus May 16 engineering updates:
 - **Block C (keyless backup)**: CLOSED — C1 path verified, residual key removed, offsite sync confirmed.
 - **Block B (off-VM alerting)**: CLOSED — operator confirmed primary and secondary inbox delivery (G-B1/G-B2); G-B3 verified/closed (bearer token rotation + SendGrid API key rotation, primary+secondary delivery confirmed, old SendGrid key revoked/deleted); G-B4 formally acknowledged on 2026-05-17.
-- **Block A (real domain)**: BLOCKED — operator confirmed no real owned domain and no DNS configuration available yet.
+- **Block A (real domain)**: WAIVED/CONDITIONAL — DuckDNS accepted by operator on 2026-05-17 for single-node SQLite pilot only; real owned domain still required for production-ready or full G2 closure
 - **P0 items**: All closed (CI hardened, D1–D6 passed, restore drill passed, backup automation verified, G2 signed, operator signoff obtained).
 - **Engineering items 7–9**: Completed — ferrum-cap fix verified (atomic `update_status_if_active`, gateway durable path wired, 9 tests pass); local/manual security audit gate added (`scripts/run_security_audit.sh` + `make audit`); `cargo-audit v0.22.1` and `cargo-deny v0.19.6` installed; `make audit` passes with both tools (cargo-deny advisories ok, cargo-audit 384 dependencies scanned, PASS; SECURITY AUDIT GATE: PASS).
 - **Production posture**: `production-ready = NO`; PostgreSQL production = `NO`; HA/multi-node = `NO`.
@@ -32,7 +32,7 @@ Following May 13–16 operator execution and evidence collection, plus May 16 en
 | 7 | Oracle review ferrum-cap single-use durability/concurrency | Engineering | ✅ Done | — | Fix verified: atomic `update_status_if_active` for SQLite/Postgres; gateway durable path wired; risk documented as accepted for v1 | Post-v1: durable capability persistence (revocation list survives restart) remains deferred to Phase 3 |
 | 8 | Add ferrum-cap tests | Engineering | ✅ Done | — | 9 tests pass (4 TTL boundaries + 5 mark_used paths: success, already_used, concurrent_single_use, revoked, expired) | — |
 | 9 | Add local/manual cargo-audit or cargo-deny gate | Engineering | ✅ Done | — | `cargo-audit v0.22.1` and `cargo-deny v0.19.6` installed; `scripts/run_security_audit.sh` created; `make audit` target added; checks for `cargo-deny` and `cargo-audit`, runs available tools, fails with install instructions if neither present; **dual-tool PASS** (cargo-deny advisory DB fetched, advisories ok; cargo-audit loaded 1090 advisories, scanned 384 dependencies, 0 actionable issues); `RUSTSEC-2023-0071` ignored because the affected crate path (`rsa` via `sqlx-mysql`) is an uncompiled optional dependency blocked by `default-features = false` on `sqlx` | — |
-| 10 | Run Block A domain/TLS path when real domain exists | Operator | ☐ Blocked | No real owned domain or DNS available | `scripts/gcp/phase3g_configure_real_domain.sh` ready; requires `REAL_DOMAIN` + DNS A record → `34.158.51.8` | Operator procures domain, configures DNS A record, then executes Block A runbook (`R4` §A) |
+| 10 | Run Block A domain/TLS path when real domain exists | Operator | ☐ WAIVED/CONDITIONAL — real domain still required for production-ready or full G2 closure | DuckDNS accepted by operator on 2026-05-17 for single-node SQLite pilot only | `scripts/gcp/phase3g_configure_real_domain.sh` ready; requires `REAL_DOMAIN` + DNS A record → `34.158.51.8` | Operator procures domain, configures DNS A record, then executes Block A runbook (`R4` §A) to move Block A from WAIVED to CLOSED |
 
 ---
 
@@ -42,8 +42,8 @@ Following May 13–16 operator execution and evidence collection, plus May 16 en
 
 | Attribute | State |
 |-----------|-------|
-| Status | **BLOCKED** |
-| Blocker | Operator has no real owned domain and no DNS configuration available yet |
+| Status | **WAIVED/CONDITIONAL** |
+| Blocker | DuckDNS accepted by operator on 2026-05-17 for single-node SQLite pilot only; real owned domain still required for production-ready or full G2 closure |
 | VM endpoint | `ferrumgate.duckdns.org` (non-production) |
 | Static IP | `34.158.51.8` |
 | Script ready | `scripts/gcp/phase3g_configure_real_domain.sh` |
@@ -131,11 +131,11 @@ Following May 13–16 operator execution and evidence collection, plus May 16 en
 ## Non-Claims
 
 - **NOT production-ready**: This tracker does not make FerrumGate production-ready.
-- **NOT full production posture**: Block A (real domain) remains blocked. Block B is closed (G-B1/G-B2/G-B3/G-B4 done), but real-domain evidence is still missing.
+- **NOT full production posture**: Block A (real domain) is WAIVED/CONDITIONAL for single-node SQLite pilot only. Block B is closed (G-B1/G-B2/G-B3/G-B4 done). Real-domain evidence is still required for production-ready or full G2 closure.
 - **NOT PostgreSQL production**: Remains deferred; single-node SQLite only.
 - **NOT HA/multi-node**: Out of v1 scope.
-- **NOT full P0/G2 production claim**: Primary and secondary email delivery confirmed; Block B is closed, but Block A domain evidence remains blocked.
-- **NOT production-ready despite Block B closure**: Block B is now CLOSED, but Block A remains BLOCKED and production-ready remains NO.
+- **NOT full P0/G2 production claim**: Primary and secondary email delivery confirmed; Block B is closed, but Block A domain evidence is WAIVED/CONDITIONAL (not CLOSED).
+- **NOT production-ready despite Block B closure**: Block B is now CLOSED, but Block A is WAIVED/CONDITIONAL (not CLOSED) and production-ready remains NO.
 - **NOT full security audit**: `make audit` passes with both cargo-deny and cargo-audit. This is a local/manual gate, not CI.
 
 ---

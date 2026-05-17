@@ -60,7 +60,7 @@ README.md and CONTRIBUTING.md now correctly reference actual onboarding paths. O
 - All-paths execution evidence (2026-05-17): `docs/implementation-path/artifacts/2026-05-17-all-paths-execution-evidence.md`
 - P0 blockers: All closed — CI hardened, D1–D6 target-host drills passed (2026-05-13), restore drill passed (2026-05-15), backup automation verified with retention pruning (run id `20260515T1606Z-b3-retention`), G2.1–G2.8 signed, operator signoff obtained
 - Active operator blockers (Blocks A/B/C):
-  - Block A: BLOCKED — no real owned domain or DNS available yet
+  - Block A: WAIVED/CONDITIONAL — DuckDNS accepted by operator on 2026-05-17 for single-node SQLite pilot only; real owned domain still required for production-ready or full G2 closure
   - Block B: CLOSED — inbox delivery confirmed for primary and secondary email paths (G-B1/G-B2); bearer token rotation executed on VM; SendGrid API key rotation verified on VM, synthetic alert delivered to primary+secondary inboxes, old key revoked/deleted (G-B3 verified; see `docs/implementation-path/artifacts/2026-05-17-sendgrid-rotation-evidence.md`); escalation matrix formally acknowledged on 2026-05-17 (see `docs/implementation-path/artifacts/2026-05-17-escalation-matrix-acknowledgment.md`)
   - Block C: CLOSED — C1 keyless backup verified, residual key removed, offsite sync confirmed
 - P1 items: readiness semantics, configurable rate limit, structured logging, metrics/observability — all done

@@ -11,7 +11,7 @@
 
 | Blocker | Status | Owner | Unblock Condition |
 |---------|--------|-------|-------------------|
-| **Block A — Real owned domain** | BLOCKED | Operator | Procure domain + configure DNS A record → `34.158.51.8` |
+| **Block A — Real owned domain** | WAIVED/CONDITIONAL | Operator | DuckDNS accepted by operator on 2026-05-17 for single-node SQLite pilot only; real owned domain still required for production-ready or full G2 closure |
 | **Block B — SendGrid API key rotation** | DONE | Operator | Completed on 2026-05-17; see `2026-05-17-sendgrid-rotation-evidence.md` |
 | **Block B — Escalation matrix acknowledgment** | ACKNOWLEDGED / CLOSED | Operator | Acknowledged on 2026-05-17; SMS/webhook deferred outside current pilot scope; see `2026-05-17-escalation-matrix-acknowledgment.md` |
 | **Block C — Keyless backup** | CLOSED | Operator + Engineering | C1 verified; no further action required |
@@ -24,7 +24,7 @@
 - VM external IP: `34.158.51.8`
 - VM: `ferrumgate-nonprod` in `asia-southeast1-a`
 - Current DNS: `ferrumgate.duckdns.org` (non-production; acceptable for exploration only)
-- **No production-owned domain or DNS configuration available yet**
+- **DuckDNS accepted by operator on 2026-05-17 for single-node SQLite pilot only; real owned domain still required for production-ready or full G2 closure**
 
 ### Operator Inputs Required
 - `REAL_DOMAIN`: operator-owned domain with DNS A record pointing to `34.158.51.8`
@@ -139,7 +139,7 @@ Before operator begins Block A/B actions, engineering confirms:
 
 ## Post-Unblock Evidence Expected
 
-After Block A and Block B are closed, the operator must produce:
+After Block A is closed (moved from WAIVED/CONDITIONAL to CLOSED) and Block B is closed, the operator must produce:
 
 1. **Block A**: Screenshot or log showing G-A1, G-A2, G-A3 all pass
 2. **Block B SendGrid**: Evidence of G-B3 pass (new key active, test alert delivered, old key revoked)
