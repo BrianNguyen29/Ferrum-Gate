@@ -1,6 +1,6 @@
 # 01 — Current state
 
-Last updated: 2026-05-16 — P5a–P5e complete; P6 CONDITIONAL GO; Blocks A/B/C status updated; full workspace gate passed; cargo-deny + cargo-audit installed and `make audit` passing; bearer token rotation executed on VM; secondary alert contact delivery confirmed
+Last updated: 2026-05-17 — P5a–P5e complete; P6 CONDITIONAL GO; Blocks A/B/C status updated; full workspace gate passed; cargo-deny + cargo-audit installed and `make audit` passing; bearer token rotation executed on VM; secondary alert contact delivery confirmed; MCP D1 local coverage hardened (c661a15, 239 tests)
 Single-node v1 scope unless noted.
 
 **Repository**: `https://github.com/BrianNguyen29/Ferrum-Gate` (upstream/original — private, accessible with authorized GitHub credentials) | **Default package version**: `0.1.0` | **Status**: P5a–P5e engineering complete within authorized scope; P6 CONDITIONAL GO for operator signoff/pilot; Block C CLOSED; Block B PARTIAL; Block A BLOCKED; production-ready remains NO; HA/multi-node/PostgreSQL production deployment remain NO; single-node SQLite-backed deployment is the only supported runtime
@@ -104,6 +104,7 @@ Full workspace check/clippy/test pass locally with 0 failures. Prefer command-le
 | ferrumd | 6 | Daemon config + unsupported DSN guardrails |
 | Integration tests | 87 | contracts(2) + fs-roundtrip(7) + gateway-flow(65) + lineage-chain(13) |
 | ferrum-rollback | 11 | ExecutionPlan + PlannableAdapter + auto-planning in RollbackService |
+| ferrum-integrations-mcp | 239 | MCP D1 local coverage (231 lib + 8 binary) |
 
 ## Next step
 

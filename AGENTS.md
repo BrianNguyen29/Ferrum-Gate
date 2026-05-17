@@ -29,6 +29,7 @@ make audit   # local security audit gate (cargo-deny / cargo-audit)
 - `make audit`: PASSES locally (`cargo-deny v0.19.6` and `cargo-audit v0.22.1` installed; cargo-deny advisory DB ok; 1090 advisories loaded; 384 dependencies scanned; `RUSTSEC-2023-0071` ignored as uncompiled optional dependency; `SECURITY AUDIT GATE: PASS`)
 - Full workspace gate rerun after P5e: PASSED (ALL LOCAL CHECKS PASSED)
 - Summary: layout=0 contract=0 fmt=0 check=0 clippy=0 test=0 pre_target_gate_full=0 audit=0
+- Recent commits (2026-05-17): c661a15 hardens MCP D1 local coverage (239 tests); e543dbf refreshes MCP D1 coverage docs. Full workspace snapshot above not rerun.
 
 ## ferrumd Config Precedence
 CLI args > env vars > config file > defaults.
