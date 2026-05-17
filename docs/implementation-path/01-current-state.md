@@ -1,9 +1,11 @@
 # 01 — Current state
 
-Last updated: 2026-05-17 — P5a–P5e complete; P6 CONDITIONAL GO; Blocks A/B/C status updated; full workspace gate passed; cargo-deny + cargo-audit installed and `make audit` passing; bearer token rotation executed on VM; secondary alert contact delivery confirmed; MCP D1 local coverage hardened (c661a15, 239 tests)
+Last updated: 2026-05-17 — P5a–P5e complete; Path 1 RC tag `v0.1.0-rc.2` cut; Path 2 safe probes executed (shallow/deep/metrics PASS, no G2 completion); Path 3 local workload plan generated + MCP lifecycle smoke passed (15/15); Blocks A/B/C status updated; full workspace gate passed; cargo-deny + cargo-audit installed and `make audit` passing; bearer token rotation executed on VM; secondary alert contact delivery confirmed; MCP D1 local coverage hardened (c661a15, 239 tests)
 Single-node v1 scope unless noted.
 
 **Repository**: `https://github.com/BrianNguyen29/Ferrum-Gate` (upstream/original — private, accessible with authorized GitHub credentials) | **Default package version**: `0.1.0` | **Status**: P5a–P5e engineering complete within authorized scope; P6 CONDITIONAL GO for operator signoff/pilot; Block C CLOSED; Block B PARTIAL; Block A BLOCKED; production-ready remains NO; HA/multi-node/PostgreSQL production deployment remain NO; single-node SQLite-backed deployment is the only supported runtime
+
+**Paths execution evidence**: [`artifacts/2026-05-17-all-paths-execution-evidence.md`](./artifacts/2026-05-17-all-paths-execution-evidence.md) — concise evidence for Path 1 (RC tag), Path 2 (safe probes), Path 3 (local plan/smoke), and remaining blockers.
 
 **Release support contract**:
 - Supported = SQLite-backed single-node governance core.
@@ -131,9 +133,9 @@ Historical completed items (May 13–16):
 - G3.6 real workload/post-deploy monitoring — fully accepted for P5b engineering review only
 
 Next decision routing:
-1. **Path 1 (RC tag)**: Requires git repo + G1 gates verified. See [`31-release-paths-todo.md`](./31-release-paths-todo.md) §Path 1.
-2. **Path 2 (Operator signoff/pilot)**: Conditional deployment with explicit operator signoff and blockers resolved. See [`54-operator-signoff-packet.md`](./54-operator-signoff-packet.md).
-3. **Path 3 (PostgreSQL/Phase3)**: P3 repository implementations and P4.1–P4.4 MVP/local Docker/runtime complete. Production/HA/multi-node remains deferred. See [`31-release-paths-todo.md`](./31-release-paths-todo.md) §Path 3.
+1. **Path 1 (RC tag)**: ✅ Executed — `v0.1.0-rc.2` cut at `e229f76` with fresh G1 gates PASS; GitHub prerelease published. See [`artifacts/2026-05-17-all-paths-execution-evidence.md`](./artifacts/2026-05-17-all-paths-execution-evidence.md) §Path 1.
+2. **Path 2 (Operator signoff/pilot)**: Safe probes executed (shallow/deep/metrics PASS against duckdns); **G2/operator signoff NOT complete**; blocked by Block A domain, SendGrid rotation, operator acknowledgment. See [`54-operator-signoff-packet.md`](./54-operator-signoff-packet.md).
+3. **Path 3 (PostgreSQL/Phase3)**: P3 repository implementations and P4.1–P4.4 MVP/local Docker/runtime complete. Local workload plan generated (3360 requests, no live traffic); MCP lifecycle smoke passed (15/15). Production/HA/multi-node remains deferred. See [`31-release-paths-todo.md`](./31-release-paths-todo.md) §Path 3.
 
 Completion tracker and remaining work:
 - [122-completion-roadmap-and-hardening-tracker.md](./122-completion-roadmap-and-hardening-tracker.md) — 10-item tracker for docs updates, Block B hardening, ferrum-cap tests, cargo-audit gate, and Block A domain path
