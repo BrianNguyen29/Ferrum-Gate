@@ -1,6 +1,6 @@
 # 01 — Current state
 
-Last updated: 2026-05-17 — P5a–P5e complete; Path 1 RC tag `v0.1.0-rc.2` cut; Path 2 safe probes executed (shallow/deep/metrics PASS, no G2 completion); Path 3 local workload plan generated + MCP lifecycle smoke passed (15/15); Blocks A/B/C status updated; full workspace gate passed (ALL LOCAL CHECKS PASSED); cargo-deny + cargo-audit installed and `make audit` passing; bearer token rotation executed on VM; secondary alert contact delivery confirmed; MCP D1 local coverage hardened (c661a15, 239 tests); bridge-to-live toolkit and operator unblock packet created
+Last updated: 2026-05-17 — P5a–P5e complete; Path 1 RC tag `v0.1.0-rc.2` cut; Path 2 safe probes executed (shallow/deep/metrics PASS, no G2 completion); Path 3 local workload plan generated + MCP lifecycle smoke passed (15/15); Blocks A/B/C status updated; full workspace gate passed (ALL LOCAL CHECKS PASSED); cargo-deny + cargo-audit installed and `make audit` passing; bearer token rotation executed on VM; secondary alert contact delivery confirmed; SendGrid API key rotation verified on VM with primary+secondary delivery and old-key revocation; MCP D1 local coverage hardened (c661a15, 239 tests); bridge-to-live toolkit and operator unblock packet created
 Single-node v1 scope unless noted.
 
 **Repository**: `https://github.com/BrianNguyen29/Ferrum-Gate` (upstream/original — private, accessible with authorized GitHub credentials) | **Default package version**: `0.1.0` | **Status**: P5a–P5e engineering complete within authorized scope; P6 CONDITIONAL GO for operator signoff/pilot; Block C CLOSED; Block B PARTIAL; Block A BLOCKED; production-ready remains NO; HA/multi-node/PostgreSQL production deployment remain NO; single-node SQLite-backed deployment is the only supported runtime
@@ -114,14 +114,14 @@ All P0–P2 items closed. U1–U4 upgrade tracks complete. P5a–P5e engineering
 
 Remaining operator blockers before pilot (as of 2026-05-17):
 - **Block A — Real owned domain**: BLOCKED — operator confirmed no real domain or DNS available yet
-- **Block B — Off-VM alerting**: PARTIAL — operator confirmed inbox receipt for primary and secondary contacts (TEST_IDs `fg-inbox-check-20260516-052910` and `fg-secondary-check-20260516-153221`, G-B1/G-B2); escalation matrix populated enough for primary+secondary email path (G-B4); bearer token rotation executed on VM (G-B3 partial — new token 200, old token 401, ROTATION_RESULT=PASS); SendGrid API key rotation remains pending/not VM-verified (`SENDGRID_SECRET_NONEMPTY=YES`, `SENDGRID_BACKUP_COUNT=0`, `SENDGRID_SECRET_MTIME_UTC=2026-05-10 04:58:58.710517174 +0000`)
+- **Block B — Off-VM alerting**: PARTIAL — operator confirmed inbox receipt for primary and secondary contacts (TEST_IDs `fg-inbox-check-20260516-052910` and `fg-secondary-check-20260516-153221`, G-B1/G-B2); escalation matrix populated enough for primary+secondary email path (G-B4); bearer token rotation executed on VM; SendGrid API key rotation verified on VM, synthetic alert `FerrumGateSendGridDirPermFix` delivered to primary+secondary inboxes, old key revoked/deleted (G-B3 verified; see [`artifacts/2026-05-17-sendgrid-rotation-evidence.md`](./artifacts/2026-05-17-sendgrid-rotation-evidence.md)); Block B remains partial pending formal escalation matrix acknowledgment
 - **Block C — Keyless backup**: CLOSED — C1 keyless backup verified, residual key removed, offsite sync confirmed; `n2-standard-2` remains temporary operational type
 
 Engineering/operator items completed (May 16):
 - `cargo-deny v0.19.6` and `cargo-audit v0.22.1` installed; `make audit` passes with both tools (cargo-deny advisory DB fetched, advisories ok; cargo-audit loaded 1090 advisories, scanned 384 dependencies, 0 actionable issues). `RUSTSEC-2023-0071` (`rsa` via `sqlx-mysql`) ignored as uncompiled optional dependency blocked by `default-features = false` on `sqlx`.
 - Bearer token rotation executed on VM securely: token generated on VM and never printed; old token backed up; env updated; ferrumgate.service active; LOCAL_READYZ=200; LOCAL_DEEP=200; new token HTTP=200; old token HTTP=401; ROTATION_RESULT=PASS; PUBLIC_READYZ=200. SSH firewall temporarily opened to `14.239.184.129/32` for live work and restored to `118.69.4.63/32` after.
 - Secondary alert contact delivery confirmed: active AlertManager config (`/etc/prometheus/alertmanager.yml`) validated with `ACTIVE_CONFIG_CHECK=PASS`, `ALERTMANAGER_SERVICE=active`, `ACTIVE_SECONDARY_PRESENT=YES`, `ACTIVE_EMAIL_TO_COUNT=4`; synthetic alert posted successfully (`ALERT_POST_HTTP=200`, `ALERT_VISIBLE=YES`, TEST_ID `fg-secondary-check-20260516-153221`, START_AT_UTC `2026-05-16T15:32:21Z`); operator confirmed secondary inbox receipt.
-- SendGrid API key rotation VM verification: secret file nonempty (`SENDGRID_SECRET_NONEMPTY=YES`), zero backup files (`SENDGRID_BACKUP_COUNT=0`), secret mtime `2026-05-10 04:58:58.710517174 +0000` — rotation not executed on VM; remains pending operator dashboard workflow.
+- SendGrid API key rotation VM verification: active secret path `/etc/ferrumgate/secrets/sendgrid-api-key` verified with `MODE=640 OWNER=root:prometheus`, directory permissions corrected to `750 root:prometheus`, AlertManager active, synthetic alert delivered to primary and secondary inboxes, and old key revoked/deleted. See [`artifacts/2026-05-17-sendgrid-rotation-evidence.md`](./artifacts/2026-05-17-sendgrid-rotation-evidence.md).
 
 Historical completed items (May 13–16):
 - ✅ Target-host D1–D6 evidence — passed 6/6 on 2026-05-13
@@ -134,7 +134,7 @@ Historical completed items (May 13–16):
 
 Next decision routing:
 1. **Path 1 (RC tag)**: ✅ Executed — `v0.1.0-rc.2` cut at `e229f76` with fresh G1 gates PASS; GitHub prerelease published. See [`artifacts/2026-05-17-all-paths-execution-evidence.md`](./artifacts/2026-05-17-all-paths-execution-evidence.md) §Path 1.
-2. **Path 2 (Operator signoff/pilot)**: Safe probes executed (shallow/deep/metrics PASS against duckdns); **G2/operator signoff NOT complete**; blocked by Block A domain, SendGrid rotation, operator acknowledgment. See [`54-operator-signoff-packet.md`](./54-operator-signoff-packet.md).
+2. **Path 2 (Operator signoff/pilot)**: Safe probes executed (shallow/deep/metrics PASS against duckdns); **G2/operator signoff NOT complete**; blocked by Block A domain and formal escalation matrix acknowledgment. SendGrid rotation is now verified. See [`54-operator-signoff-packet.md`](./54-operator-signoff-packet.md).
 3. **Path 3 (PostgreSQL/Phase3)**: P3 repository implementations and P4.1–P4.4 MVP/local Docker/runtime complete. Local workload plan generated (3360 requests, no live traffic); MCP lifecycle smoke passed (15/15). Production/HA/multi-node remains deferred. See [`31-release-paths-todo.md`](./31-release-paths-todo.md) §Path 3.
 
 Completion tracker and remaining work:
@@ -142,6 +142,7 @@ Completion tracker and remaining work:
 - [artifacts/2026-05-17-operator-unblock-packet.md](./artifacts/2026-05-17-operator-unblock-packet.md) — Consolidated operator-action checklist for Block A domain, Block B SendGrid rotation, and escalation matrix acknowledgment
 - [artifacts/2026-05-17-bridge-to-live-runbook.md](./artifacts/2026-05-17-bridge-to-live-runbook.md) — Safe-by-default validation toolkit with L1–L5 gates for live target-host transition
 - [artifacts/2026-05-17-bridge-l0-preflight-evidence.md](./artifacts/2026-05-17-bridge-l0-preflight-evidence.md) — Bridge L0 pre-flight evidence packet: local gate results, plan-mode output, blocker summary, and operator handoff statement
+- [artifacts/2026-05-17-sendgrid-rotation-evidence.md](./artifacts/2026-05-17-sendgrid-rotation-evidence.md) — SendGrid API key rotation evidence: active secret path/permission fix, primary+secondary delivery, old-key revocation, and SSH firewall restoration
 - [33-feature-completion-backlog.md](./33-feature-completion-backlog.md) — Must/Should/Production-only backlog for incomplete/partial features
 - [45-current-feature-audit.md](./45-current-feature-audit.md) — Phase 3 D5 bottleneck analysis complete; D6 priority list complete. Full report: [51-d5-bottleneck-analysis-report.md](./51-d5-bottleneck-analysis-report.md); Priority list: [52-d6-priority-expansion-list.md](./52-d6-priority-expansion-list.md)
 - [32-feature-completeness-audit.md](./32-feature-completeness-audit.md) — Route/API reconciliation

@@ -11,7 +11,7 @@
 
 Following May 13–16 operator execution and evidence collection, plus May 16 engineering updates:
 - **Block C (keyless backup)**: CLOSED — C1 path verified, residual key removed, offsite sync confirmed.
-- **Block B (off-VM alerting)**: PARTIAL — operator confirmed inbox receipt for at least one contact (G-B1 partial); secondary contact delivery confirmed (TEST_ID `fg-secondary-check-20260516-153221`, G-B2); escalation matrix populated enough for primary+secondary email path (G-B4). G-B3 bearer token rotation executed on VM (new token 200, old token 401, ROTATION_RESULT=PASS); SendGrid API key rotation remains pending/operator-blocked.
+- **Block B (off-VM alerting)**: PARTIAL — operator confirmed inbox receipt for primary and secondary contacts (G-B1/G-B2); G-B3 verified/closed (bearer token rotation + SendGrid API key rotation, primary+secondary delivery confirmed, old SendGrid key revoked/deleted); escalation matrix populated enough for primary+secondary email path (G-B4) but formal operator acknowledgment remains pending.
 - **Block A (real domain)**: BLOCKED — operator confirmed no real owned domain and no DNS configuration available yet.
 - **P0 items**: All closed (CI hardened, D1–D6 passed, restore drill passed, backup automation verified, G2 signed, operator signoff obtained).
 - **Engineering items 7–9**: Completed — ferrum-cap fix verified (atomic `update_status_if_active`, gateway durable path wired, 9 tests pass); local/manual security audit gate added (`scripts/run_security_audit.sh` + `make audit`); `cargo-audit v0.22.1` and `cargo-deny v0.19.6` installed; `make audit` passes with both tools (cargo-deny advisories ok, cargo-audit 384 dependencies scanned, PASS; SECURITY AUDIT GATE: PASS).
@@ -27,7 +27,7 @@ Following May 13–16 operator execution and evidence collection, plus May 16 en
 | 2 | Update AGENTS.md stale status | Engineering | ✅ Done | — | This tracker and doc updates reflect current state | — |
 | 3 | Refresh `01-current-state.md` per May 13–16 evidence | Engineering | ✅ Done | — | Updated with Block A/B/C statuses and closed P0 items | — |
 | 4 | Create Block B escalation matrix | Operator | 🟡 Populated for primary+secondary email path | Operator must define contacts/channels | Primary and secondary email contacts configured in active AlertManager config; skeleton below; full template in `R1` artifact §4 | Operator acknowledges matrix and adds additional channels (SMS/webhook) if required |
-| 5 | Run key rotation drill (SendGrid + bearer token) | Operator | 🟡 Partial — bearer token rotated; SendGrid key rotation pending/not VM-verified | Bearer token rotation executed on VM (new token 200, old token 401, ROTATION_RESULT=PASS); SendGrid API key rotation not VM-verified (`SENDGRID_SECRET_NONEMPTY=YES`, `SENDGRID_BACKUP_COUNT=0`, `SENDGRID_SECRET_MTIME_UTC=2026-05-10 04:58:58.710517174 +0000`); requires operator dashboard/API credential workflow | Rotation procedure in `R1` artifact §4.1 and `70-security-hardening-local-only-plan.md` §Token Rotation Procedure | Operator generates new SendGrid key via secure dashboard workflow and rotates VM secret at `/etc/ferrumgate/secrets/alert-provider-api-key` |
+| 5 | Run key rotation drill (SendGrid + bearer token) | Operator | ✅ Done — bearer token rotated; SendGrid key rotation verified | Bearer token rotation executed on VM; SendGrid API key rotation verified on VM with active secret path `/etc/ferrumgate/secrets/sendgrid-api-key`, primary+secondary delivery confirmed, and old key revoked/deleted | Rotation procedure in `R1` artifact §4.1 and `70-security-hardening-local-only-plan.md` §Token Rotation Procedure; evidence in `artifacts/2026-05-17-sendgrid-rotation-evidence.md` | No further action for G-B3 |
 | 6 | Confirm secondary alert contact inbox delivery | Operator | ✅ Done | Secondary contact configured in active AlertManager config (`/etc/prometheus/alertmanager.yml`); `ACTIVE_CONFIG_CHECK=PASS`, `ALERTMANAGER_SERVICE=active`, `ACTIVE_SECONDARY_PRESENT=YES`, `ACTIVE_EMAIL_TO_COUNT=4`; synthetic alert posted (`ALERT_POST_HTTP=200`, `ALERT_VISIBLE=YES`, TEST_ID `fg-secondary-check-20260516-153221`, START_AT_UTC `2026-05-16T15:32:21Z`); operator confirmed secondary inbox receipt | G-B2 gate in `67-production-readiness-roadmap.md` | — |
 | 7 | Oracle review ferrum-cap single-use durability/concurrency | Engineering | ✅ Done | — | Fix verified: atomic `update_status_if_active` for SQLite/Postgres; gateway durable path wired; risk documented as accepted for v1 | Post-v1: durable capability persistence (revocation list survives restart) remains deferred to Phase 3 |
 | 8 | Add ferrum-cap tests | Engineering | ✅ Done | — | 9 tests pass (4 TTL boundaries + 5 mark_used paths: success, already_used, concurrent_single_use, revoked, expired) | — |
@@ -55,7 +55,7 @@ Following May 13–16 operator execution and evidence collection, plus May 16 en
 |------|--------|----------|
 | G-B1 | ✅ Done | Operator confirmed primary inbox receipt of `TEST_ID=fg-inbox-check-20260516-052910`; email content verified (subject `FerrumGate Alert: FerrumGateInboxDeliveryCheck`, status `resolved`, severity `warning`, service `ferrumgate`) |
 | G-B2 | ✅ Done | Secondary contact configured in active AlertManager config; `ACTIVE_CONFIG_CHECK=PASS`, `ALERTMANAGER_SERVICE=active`, `ACTIVE_SECONDARY_PRESENT=YES`, `ACTIVE_EMAIL_TO_COUNT=4`; synthetic alert posted (`ALERT_POST_HTTP=200`, `ALERT_VISIBLE=YES`, TEST_ID `fg-secondary-check-20260516-153221`, START_AT_UTC `2026-05-16T15:32:21Z`); operator confirmed secondary inbox receipt |
-| G-B3 | 🟡 Partial | Bearer token rotation executed on VM (new token 200, old token 401, ROTATION_RESULT=PASS); SendGrid API key rotation pending/not VM-verified (`SENDGRID_SECRET_NONEMPTY=YES`, `SENDGRID_BACKUP_COUNT=0`, `SENDGRID_SECRET_MTIME_UTC=2026-05-10 04:58:58.710517174 +0000`)
+| G-B3 | ✅ Done | Bearer token rotation executed on VM; SendGrid API key rotation verified on VM with active secret path permissions fixed, synthetic alert delivered to primary+secondary inboxes, old key revoked/deleted. See `artifacts/2026-05-17-sendgrid-rotation-evidence.md` |
 | G-B4 | 🟡 Populated for primary+secondary email path | Escalation matrix skeleton exists; primary and secondary email contacts are configured in active AlertManager config; full operator acknowledgment and additional channels (SMS/webhook) remain pending |
 
 ### Block C — Keyless Backup
@@ -118,6 +118,7 @@ Following May 13–16 operator execution and evidence collection, plus May 16 en
 |----------|---------|
 | [`67-production-readiness-roadmap.md`](./67-production-readiness-roadmap.md) | Authoritative blocker status and evidence gates |
 | [`artifacts/2026-05-16-c1-keyless-recovery-and-block-b-status.md`](./artifacts/2026-05-16-c1-keyless-recovery-and-block-b-status.md) | C1 execution evidence and Block B SendGrid smoke-test state |
+| [`artifacts/2026-05-17-sendgrid-rotation-evidence.md`](./artifacts/2026-05-17-sendgrid-rotation-evidence.md) | SendGrid API key rotation, permission root-cause/fix, delivery verification, old-key revocation, and SSH firewall restoration |
 | [`artifacts/2026-05-15-r1-alerting-rotation-policy.md`](./artifacts/2026-05-15-r1-alerting-rotation-policy.md) | Block B rotation policy and escalation matrix template |
 | [`artifacts/2026-05-15-r4-production-blocker-execution-runbook.md`](./artifacts/2026-05-15-r4-production-blocker-execution-runbook.md) | Exact command sequences for Blocks A/B/C |
 | [`70-security-hardening-local-only-plan.md`](./70-security-hardening-local-only-plan.md) | Token rotation procedure and local audit commands |
@@ -129,11 +130,11 @@ Following May 13–16 operator execution and evidence collection, plus May 16 en
 ## Non-Claims
 
 - **NOT production-ready**: This tracker does not make FerrumGate production-ready.
-- **NOT full production posture**: Block A (real domain) remains blocked. Block B G-B1/G-B2 primary and secondary email delivery confirmed; G-B3 bearer token rotation done; SendGrid API key rotation pending/not VM-verified. G-B4 escalation matrix populated for primary+secondary email path but not fully acknowledged.
+- **NOT full production posture**: Block A (real domain) remains blocked. Block B G-B1/G-B2 primary and secondary email delivery confirmed; G-B3 bearer token + SendGrid API key rotation verified. G-B4 escalation matrix populated for primary+secondary email path but not formally acknowledged.
 - **NOT PostgreSQL production**: Remains deferred; single-node SQLite only.
 - **NOT HA/multi-node**: Out of v1 scope.
 - **NOT full P0/G2 production claim**: Primary and secondary email delivery confirmed; additional channels (SMS/webhook) and operator acknowledgment remain pending.
-- **NOT SendGrid key rotation executed**: Item 5 bearer token rotation done; SendGrid API key rotation pending/not VM-verified (`SENDGRID_SECRET_NONEMPTY=YES`, `SENDGRID_BACKUP_COUNT=0`, `SENDGRID_SECRET_MTIME_UTC=2026-05-10 04:58:58.710517174 +0000`).
+- **NOT Block B complete**: Item 5/G-B3 is now done, but Block B remains PARTIAL until formal escalation matrix acknowledgment is completed.
 - **NOT full security audit**: `make audit` passes with both cargo-deny and cargo-audit. This is a local/manual gate, not CI.
 
 ---
