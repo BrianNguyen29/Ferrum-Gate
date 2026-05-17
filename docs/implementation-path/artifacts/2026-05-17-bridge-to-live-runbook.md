@@ -243,6 +243,7 @@ Local pre-flight (L0) ──► Plan generation (dry-run) ──► Operator rev
 | Document | Purpose |
 |----------|---------|
 | [`2026-05-17-operator-unblock-packet.md`](./2026-05-17-operator-unblock-packet.md) | Detailed Block A/B procedures and evidence gates |
+| [`2026-05-17-bridge-l1-l3-live-evidence.md`](./2026-05-17-bridge-l1-l3-live-evidence.md) | Bridge L1–L3 live validation evidence (L1/L3 PASS, L2 partial/blocked) |
 | [`67-production-readiness-roadmap.md`](../67-production-readiness-roadmap.md) | Priority context and blocker ownership |
 | [`122-completion-roadmap-and-hardening-tracker.md`](../122-completion-roadmap-and-hardening-tracker.md) | 10-item completion tracker |
 | [`54-operator-signoff-packet.md`](../54-operator-signoff-packet.md) | Formal G2 signoff form |
