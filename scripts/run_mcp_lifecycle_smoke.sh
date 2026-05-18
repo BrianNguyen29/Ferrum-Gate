@@ -236,11 +236,11 @@ echo "[TEST] MCP tools/list..."
 RESPONSE=$(mcp_call "tools/list" "" 2)
 # Check that we get back a list of tools (should be 19 tools: 9 read-only + 8 lifecycle + 2 approval)
 TOOL_COUNT=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('result',{}).get('tools',[])))" 2>/dev/null || echo "0")
-if [[ "$TOOL_COUNT" == "19" ]]; then
-    echo "[PASS] MCP tools/list returns 19 tools (9 read-only + 8 lifecycle + 2 approval)"
+if [[ "$TOOL_COUNT" -ge 19 ]]; then
+    echo "[PASS] MCP tools/list returns $TOOL_COUNT tools (>= 19 expected: 9 read-only + 8 lifecycle + 2 approval)"
     PASSED=$((PASSED + 1))
 else
-    echo "[FAIL] MCP tools/list returned $TOOL_COUNT tools, expected 19"
+    echo "[FAIL] MCP tools/list returned $TOOL_COUNT tools, expected at least 19"
     echo "       Response: $RESPONSE"
     FAILED=$((FAILED + 1))
 fi

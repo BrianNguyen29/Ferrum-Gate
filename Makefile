@@ -28,7 +28,9 @@ docs:
 	@echo "Docs live in ./docs"
 
 validate:
-	@echo "Validate OpenAPI / JSON Schema / YAML contracts here"
+	@echo "Running local validation (layout + contract consistency)..."
+	@bash scripts/validate_repo_layout.sh
+	@python3 scripts/check_contract_consistency.py
 
 tree:
 	find . -maxdepth 4 | sort

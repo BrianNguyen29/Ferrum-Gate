@@ -2848,6 +2848,44 @@ async fn execute_execution(
         }
     };
 
+    // WS3: Defense-in-depth — enforce draft-only guard at execute checkpoint.
+    // Look up the intent and reject execution if the intent enforces draft-only mode.
+    // This is defense-in-depth; prepare already blocks DraftOnly, but execute also
+    // guards against any path that might bypass prepare.
+    let intent = match state.runtime.store.intents().get(execution.intent_id).await {
+        Ok(Some(intent)) => intent,
+        Ok(None) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsExecute,
+                ApiProblem::new(
+                    StatusCode::NOT_FOUND,
+                    ApiErrorCode::NotFound,
+                    "intent not found",
+                )
+            );
+        }
+        Err(e) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsExecute,
+                ApiProblem::internal(anyhow::Error::from(e))
+            );
+        }
+    };
+
+    if matches!(intent.approval_mode, ApprovalMode::DraftOnly) {
+        return governance_err!(
+            state,
+            GovernanceRoute::ExecutionsExecute,
+            ApiProblem::new(
+                StatusCode::FORBIDDEN,
+                ApiErrorCode::PolicyDenied,
+                "draft-only intent cannot proceed to execute",
+            )
+        );
+    }
+
     // Get the rollback contract ID from the execution
     let rollback_contract_id = match execution.rollback_contract_id {
         Some(id) => id,
@@ -8260,6 +8298,17 @@ mod tests {
     async fn setup_lifecycle_test_runtime(
         execution_state: ExecutionState,
     ) -> (GatewayRuntime, axum::Router, ExecutionId) {
+        setup_lifecycle_test_runtime_with_mode(execution_state, ferrum_proto::ApprovalMode::None)
+            .await
+    }
+
+    /// Helper: create intent + proposal + capability + execution in a specific state
+    /// with a specific approval mode.
+    /// Returns (runtime, router, execution_id) with the execution already stored.
+    async fn setup_lifecycle_test_runtime_with_mode(
+        execution_state: ExecutionState,
+        approval_mode: ferrum_proto::ApprovalMode,
+    ) -> (GatewayRuntime, axum::Router, ExecutionId) {
         let runtime = test_runtime().await;
         let router = build_router(runtime.clone());
 
@@ -8277,7 +8326,7 @@ mod tests {
             forbidden_outcomes: vec![],
             resource_scope: vec![],
             risk_tier: RiskTier::Low,
-            approval_mode: ferrum_proto::ApprovalMode::None,
+            approval_mode,
             default_rollback_class: RollbackClass::R0NativeReversible,
             time_budget: TimeBudget {
                 max_duration_ms: 30_000,
@@ -8503,6 +8552,61 @@ mod tests {
         assert!(
             body_str.contains("execute not allowed in current state"),
             "Error should indicate state mismatch: {}",
+            body_str
+        );
+    }
+
+    /// WS3: execute_execution on DraftOnly intent returns 403 (defense-in-depth).
+    #[tokio::test]
+    async fn test_execute_draft_only_returns_403() {
+        let (runtime, router, execution_id) = setup_lifecycle_test_runtime_with_mode(
+            ExecutionState::Prepared,
+            ferrum_proto::ApprovalMode::DraftOnly,
+        )
+        .await;
+
+        let execution = runtime
+            .store
+            .executions()
+            .get(execution_id)
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Link a rollback contract in Prepared state so state-machine would otherwise allow
+        link_rollback_contract(
+            &runtime,
+            execution_id,
+            execution.intent_id,
+            execution.proposal_id,
+            RollbackState::Prepared,
+        )
+        .await;
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/executions/{}/execute", execution_id))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"payload": {}}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::FORBIDDEN,
+            "execute on DraftOnly intent should return 403 Forbidden"
+        );
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+        assert!(
+            body_str.contains("draft-only intent cannot proceed to execute"),
+            "Error should indicate draft-only guard: {}",
             body_str
         );
     }

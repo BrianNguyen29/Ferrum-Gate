@@ -45,7 +45,7 @@ Dev config `configs/ferrumgate.dev.toml` auto-loads if no `--config` specified a
 - Capabilities: ttl_max=300s, single-use only
 
 ## Minimum Lineage Chain Before Side Effect
-ActionProposalSubmitted → PolicyEvaluated → CapabilityMinted → ToolCallPrepared → ToolCallExecuted → SideEffectPrepared → SideEffectVerified → Terminal (SideEffectCommitted | SideEffectCompensated | SideEffectRolledBack)
+PolicyEvaluated → CapabilityMinted → ActionProposalSubmitted → SideEffectPrepared → ToolCallPrepared → ToolCallExecuted → SideEffectVerified → Terminal (SideEffectCommitted | SideEffectCompensated | SideEffectRolledBack)
 
 ## Stale/Missing Doc Warning
 README.md and CONTRIBUTING.md now correctly reference actual onboarding paths. Older documentation or artifacts may still contain historical stale references to non-existent docs (e.g., `docs/00-repo-map.md`, `docs/01-business-overview.md`). Current actual onboarding: `docs/implementation-path/00-start-here.md`, `docs/implementation-path/01-current-state.md`, `docs/implementation-path/06-guardrails-and-invariants.md`, `docs/PRODUCTION_NOTES.md`.
