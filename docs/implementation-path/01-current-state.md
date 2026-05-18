@@ -143,6 +143,9 @@ Next decision routing:
 
 Completion tracker and remaining work:
 - [122-completion-roadmap-and-hardening-tracker.md](./122-completion-roadmap-and-hardening-tracker.md) — 10-item tracker for docs updates, Block B hardening, ferrum-cap tests, cargo-audit gate, and Block A domain path
+- [docs/ROADMAP.md](../ROADMAP.md) — Post-pilot phased completion roadmap (production-candidate path, deferring real domain)
+- [docs/production-readiness-v2/](../production-readiness-v2/) — P1 planning docs (SLO/SLA, PG hardening, MCP target, security/tenant ADR, evidence checklist)
+- [docs/guides/](../guides/) — P2 product/user guide scaffolds (quickstart, concepts, MCP, policy, operator, deployment)
 - [artifacts/2026-05-17-operator-unblock-packet.md](./artifacts/2026-05-17-operator-unblock-packet.md) — Consolidated operator-action checklist for Block A domain, Block B SendGrid rotation, and escalation matrix acknowledgment
 - [artifacts/2026-05-17-bridge-to-live-runbook.md](./artifacts/2026-05-17-bridge-to-live-runbook.md) — Safe-by-default validation toolkit with L1–L5 gates for live target-host transition
 - [artifacts/2026-05-17-bridge-l0-preflight-evidence.md](./artifacts/2026-05-17-bridge-l0-preflight-evidence.md) — Bridge L0 pre-flight evidence packet: local gate results, plan-mode output, blocker summary, and operator handoff statement

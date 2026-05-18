@@ -345,6 +345,9 @@ bash scripts/gcp/phase3g_configure_real_domain.sh --confirm \
 | This doc | [`PRODUCTION_NOTES.md`](../PRODUCTION_NOTES.md) | SQLite configuration and stress test baseline |
 | This doc | [`70-security-hardening-local-only-plan.md`](./70-security-hardening-local-only-plan.md) | Security hardening proposals, local-only audit commands, token rotation procedure |
 | This doc | [`71-mcp-server-feasibility-and-design.md`](./71-mcp-server-feasibility-and-design.md) | MCP server design and todo-list (post-v1 scope; v1.4 MCP Governance Beta; U4 bridge exists, MCP server is next step) |
+| This doc | [`../ROADMAP.md`](../ROADMAP.md) | Post-pilot phased completion roadmap (production-candidate path, deferring real domain) |
+| This doc | [`../production-readiness-v2/`](../production-readiness-v2/) | P1 planning docs (SLO/SLA, PG hardening, MCP target, security/tenant ADR, evidence checklist) |
+| This doc | [`../guides/`](../guides/) | P2 product/user guide scaffolds (quickstart, concepts, MCP, policy, operator, deployment) |
 | This doc | [`72-mcp-server-phase-a-implementation-plan.md`](./72-mcp-server-phase-a-implementation-plan.md) | Phase A–C implementation plan/tracker: Phases A, B, C complete; D-0 ready to implement; D-1 deferred |
 | This doc | [`73-mcp-server-phase-d-implementation-plan.md`](./73-mcp-server-phase-d-implementation-plan.md) | Phase D-0 read-only REST client plan + D-1 deferred governance pipeline |
 | This doc | [`artifacts/2026-05-13-d1-d6-target-host-evidence.md`](./artifacts/2026-05-13-d1-d6-target-host-evidence.md) | D1–D6 target-host drill pass evidence |

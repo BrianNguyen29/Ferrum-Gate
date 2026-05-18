@@ -57,6 +57,9 @@ README.md and CONTRIBUTING.md now correctly reference actual onboarding paths. O
 
 ## Production Readiness Roadmap
 - Durable todo list with priorities, blockers, owners, evidence: `docs/implementation-path/67-production-readiness-roadmap.md`
+- Post-pilot phased completion roadmap (production-candidate path, deferring real domain): [`docs/ROADMAP.md`](./docs/ROADMAP.md)
+- Production-readiness v2 planning docs (SLO/SLA, PG hardening, MCP target, security ADR): `docs/production-readiness-v2/`
+- Product/user guide scaffolds: `docs/guides/`
 - Completion tracker: `docs/implementation-path/122-completion-roadmap-and-hardening-tracker.md`
 - All-paths execution evidence (2026-05-17): `docs/implementation-path/artifacts/2026-05-17-all-paths-execution-evidence.md`
 - P0 blockers: All closed — CI hardened, D1–D6 target-host drills passed (2026-05-13), restore drill passed (2026-05-15), backup automation verified with retention pruning (run id `20260515T1606Z-b3-retention`), G2.1–G2.8 signed, operator signoff obtained

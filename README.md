@@ -96,6 +96,7 @@ Full G1 evidence: [`53-rc-tag-checklist.md`](./docs/implementation-path/53-rc-ta
 - Feature completion backlog: `docs/implementation-path/33-feature-completion-backlog.md`
 - Production evaluation: `docs/implementation-path/27-production-evaluation-plan.md`
 - Production-readiness roadmap (prioritized blockers/non-claims): `docs/implementation-path/67-production-readiness-roadmap.md`
+- Post-pilot completion roadmap (phased plan for production-candidate path): [`docs/ROADMAP.md`](./docs/ROADMAP.md)
 - Adapter compensation evidence: `docs/implementation-path/56-adapter-compensation-evidence-matrix.md`
 - Workload compensation drill plan: `docs/implementation-path/57-workload-compensation-drill-plan.md`
 - Workload compensation drill evidence template: `docs/implementation-path/58-workload-compensation-drill-evidence-template.md`

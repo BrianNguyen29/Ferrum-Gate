@@ -165,3 +165,30 @@ Text format includes: `timestamp`, `level`, `target`, `message`.
 - Maximum TTL: **300 seconds** (5 minutes, hardcoded in `ferrum-cap` service)
 - Default TTL: Configured per-request via `requested_ttl_secs`
 - Expired capabilities return `CapabilityExpired` error
+
+## Post-Pilot Posture Refresh (2026-05-18)
+
+### Deferred domain
+- **Real owned domain is deferred** by operator decision (Path A conditional pilot closure, 2026-05-18).
+- DuckDNS (`ferrumgate.duckdns.org`) is accepted for single-node SQLite pilot only.
+- Block A remains **WAIVED/CONDITIONAL**; it is **not closed**.
+- Real domain + DNS A record → `34.158.51.8` is still required for production-ready or full G2 closure.
+
+### SLO posture
+- No formal SLO/SLA is ratified yet.
+- Local stress baselines exist (see tables above) but are **not target-host validated**.
+- Draft SLOs are in [`docs/production-readiness-v2/01-slo-sla.md`](./production-readiness-v2/01-slo-sla.md).
+- Do not cite local baselines as committed production targets.
+
+### HA posture
+- **HA/multi-node is NOT implemented**.
+- Single-node SQLite is the only supported runtime.
+- PostgreSQL local runtime exists; production PG deployment is deferred.
+- HA roadmap is design-only in [`docs/production-readiness-v2/09-ha-roadmap.md`](./production-readiness-v2/09-ha-roadmap.md).
+
+## Related docs
+
+- [`docs/ROADMAP.md`](./ROADMAP.md) — Post-pilot phased completion roadmap (production-candidate path).
+- [`docs/production-readiness-v2/`](./production-readiness-v2/) — P1 planning docs (SLO/SLA, PG hardening, MCP target, security/tenant ADR).
+- [`docs/guides/`](./guides/) — P2 product/user guide scaffolds.
+- [`docs/implementation-path/67-production-readiness-roadmap.md`](./implementation-path/67-production-readiness-roadmap.md) — Prior v1 production-readiness tracker.
