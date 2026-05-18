@@ -157,3 +157,8 @@ CREATE TABLE IF NOT EXISTS ledger_entries (
 CREATE INDEX IF NOT EXISTS idx_ledger_entries_occurred_at ON ledger_entries(occurred_at);
 CREATE INDEX IF NOT EXISTS idx_ledger_entries_intent_id ON ledger_entries(intent_id);
 CREATE INDEX IF NOT EXISTS idx_ledger_entries_execution_id ON ledger_entries(execution_id);
+
+CREATE TABLE IF NOT EXISTS _schema_version (
+    version INTEGER PRIMARY KEY,
+    applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+);

@@ -217,8 +217,34 @@ impl SqliteStore {
         &self.pool
     }
 
+    /// Apply embedded schema migrations within a transaction.
+    ///
+    /// Idempotent: checks `_schema_version` before running SQL. If the recorded
+    /// version is >= [`migrations::CURRENT_SCHEMA_VERSION`], the call is a no-op.
     pub async fn apply_embedded_migrations(&self) -> Result<()> {
         let mut tx = self.pool.begin().await?;
+
+        // Bootstrap: ensure version tracking table exists before querying it.
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS _schema_version (
+                version INTEGER PRIMARY KEY,
+                applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        let current_version: i64 =
+            sqlx::query_scalar("SELECT version FROM _schema_version ORDER BY version DESC LIMIT 1")
+                .fetch_optional(&mut *tx)
+                .await?
+                .unwrap_or(0);
+
+        if current_version >= migrations::CURRENT_SCHEMA_VERSION {
+            tx.commit().await?;
+            return Ok(());
+        }
+
         let mut statement = String::new();
 
         for line in migrations::INIT_MIGRATION.lines() {
@@ -238,6 +264,21 @@ impl SqliteStore {
                 statement.clear();
             }
         }
+
+        let sql = statement.trim();
+        if !sql.is_empty() {
+            sqlx::query(sql).execute(&mut *tx).await?;
+        }
+
+        let now = chrono::Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO _schema_version (version, applied_at) VALUES (?1, ?2)
+             ON CONFLICT (version) DO UPDATE SET applied_at = excluded.applied_at",
+        )
+        .bind(migrations::CURRENT_SCHEMA_VERSION)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
 
         tx.commit().await?;
         Ok(())
@@ -897,5 +938,36 @@ mod tests {
             .health_check()
             .await
             .expect("facade health_check should succeed");
+    }
+
+    #[tokio::test]
+    async fn test_migration_records_schema_version() {
+        let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+
+        let version: i64 =
+            sqlx::query_scalar("SELECT version FROM _schema_version ORDER BY version DESC LIMIT 1")
+                .fetch_one(store.pool())
+                .await
+                .unwrap();
+        assert_eq!(version, super::migrations::CURRENT_SCHEMA_VERSION);
+    }
+
+    #[tokio::test]
+    async fn test_migration_is_idempotent() {
+        let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+
+        // First run
+        store.apply_embedded_migrations().await.unwrap();
+
+        // Second run should be a no-op
+        store.apply_embedded_migrations().await.unwrap();
+
+        let version: i64 =
+            sqlx::query_scalar("SELECT version FROM _schema_version ORDER BY version DESC LIMIT 1")
+                .fetch_one(store.pool())
+                .await
+                .unwrap();
+        assert_eq!(version, super::migrations::CURRENT_SCHEMA_VERSION);
     }
 }

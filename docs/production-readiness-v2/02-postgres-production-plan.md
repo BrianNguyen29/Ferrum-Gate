@@ -150,11 +150,18 @@ PostgreSQL local/runtime foundation is strong:
 
 ### Phase PG-4 — Schema migration discipline
 
-- [ ] Add migration version table.
-- [ ] Convert to incremental migration files.
-- [ ] Make migration runner idempotent.
-- [ ] Document rollback/forward strategy.
+#### PG-4a — Version table + idempotent runner (COMPLETE)
+
+- [x] Add `_schema_version` table to both PG and SQLite.
+- [x] Enhance `apply_embedded_migrations()` to check version before applying and skip when current >= target.
+- [x] Handle bootstrap safely (create version table before querying).
+- [x] Add tests for version tracking and idempotency.
+
+#### PG-4b — Incremental migration files + CI drift check (DEFERRED / NOT STARTED)
+
+- [ ] Convert to incremental per-migration up/down files.
 - [ ] Add schema drift check to CI.
+- [ ] Document rollback/forward strategy.
 
 ### Phase PG-5 — HA design (ADR first)
 

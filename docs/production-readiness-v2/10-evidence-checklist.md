@@ -80,7 +80,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 | 1.11 | PG-2.3a: Acquire timeout counter + pool saturation readiness | Engineering | `02-postgres-production-plan.md` §PG-2.3a | ✅ COMPLETE — code + tests |
 | 1.12 | PG-2.3b: Reconnect/retry and circuit breaker | Engineering | `pg-target-evidence.md` §PG-2.3 | ☐ NOT STARTED — deferred to PG-5/later |
 | 1.13 | PG-3: Local backup/restore drill passes (scheduled backup/retention NOT STARTED) | Engineering | `docs/implementation-path/artifacts/2026-05-18-pg-restore-drill-evidence.md` | ✅ COMPLETE — local Docker drill only; scheduled backup/retention deferred |
-| 1.14 | PG-4: Schema migration discipline (idempotent, version table, CI drift check) | Engineering | `pg-migration-evidence.md` | ☐ NOT STARTED |
+| 1.14 | PG-4a: Schema version table + idempotent runner (PG-4b incremental/CI drift deferred) | Engineering | `pg-migration-evidence.md` | ✅ COMPLETE — PG-4a done; PG-4b deferred |
 | 1.15 | PG-5: HA ADR approved; primary failure drill documented; RPO/RTO measured | Engineering + Operator | HA ADR + failure drill evidence | ☐ NOT STARTED |
 
 ## Phase 2 — SLO/SLA and workload evidence

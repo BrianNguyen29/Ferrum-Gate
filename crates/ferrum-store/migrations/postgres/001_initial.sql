@@ -142,3 +142,8 @@ CREATE TABLE IF NOT EXISTS policy_bundles (
 
 CREATE INDEX IF NOT EXISTS idx_policy_bundles_content_hash ON policy_bundles(content_hash);
 CREATE INDEX IF NOT EXISTS idx_policy_bundles_active ON policy_bundles(active);
+
+CREATE TABLE IF NOT EXISTS _schema_version (
+    version INTEGER PRIMARY KEY,
+    applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

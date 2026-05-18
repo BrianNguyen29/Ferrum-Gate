@@ -183,8 +183,33 @@ impl PostgresStore {
     }
 
     /// Apply embedded schema migrations for all P3 repos within a transaction.
+    ///
+    /// Idempotent: checks `_schema_version` before running SQL. If the recorded
+    /// version is >= [`migrations::CURRENT_SCHEMA_VERSION`], the call is a no-op.
     pub async fn apply_embedded_migrations(&self) -> Result<()> {
         let mut tx = self.pool.begin().await?;
+
+        // Bootstrap: ensure version tracking table exists before querying it.
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS _schema_version (
+                version INTEGER PRIMARY KEY,
+                applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        let current_version: i32 =
+            sqlx::query_scalar("SELECT version FROM _schema_version ORDER BY version DESC LIMIT 1")
+                .fetch_optional(&mut *tx)
+                .await?
+                .unwrap_or(0);
+
+        if (current_version as i64) >= migrations::CURRENT_SCHEMA_VERSION {
+            tx.commit().await?;
+            return Ok(());
+        }
+
         let mut statement = String::new();
 
         for line in migrations::INIT_MIGRATION.lines() {
@@ -209,6 +234,16 @@ impl PostgresStore {
         if !sql.is_empty() {
             sqlx::query(sql).execute(&mut *tx).await?;
         }
+
+        let now = chrono::Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO _schema_version (version, applied_at) VALUES ($1, $2)
+             ON CONFLICT (version) DO UPDATE SET applied_at = $2",
+        )
+        .bind(migrations::CURRENT_SCHEMA_VERSION)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
 
         tx.commit().await?;
         Ok(())
@@ -428,5 +463,31 @@ mod tests {
         assert_eq!(status.idle_connections, 3);
         assert_eq!(status.max_connections, 42);
         assert_eq!(status.acquire_timeouts, 1);
+    }
+
+    #[test]
+    fn postgres_current_schema_version_is_set() {
+        assert_eq!(super::migrations::CURRENT_SCHEMA_VERSION, 1);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires running PostgreSQL instance"]
+    async fn postgres_migration_records_schema_version_and_is_idempotent() {
+        let store = PostgresStore::connect(
+            "postgres://ferrumgate_dev:ferrumgate_dev_password@localhost:5432/ferrumgate_p2_test",
+        )
+        .await
+        .unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+
+        let version: i32 =
+            sqlx::query_scalar("SELECT version FROM _schema_version ORDER BY version DESC LIMIT 1")
+                .fetch_one(store.pool())
+                .await
+                .unwrap();
+        assert_eq!(version as i64, super::migrations::CURRENT_SCHEMA_VERSION);
+
+        // Second run should be a no-op
+        store.apply_embedded_migrations().await.unwrap();
     }
 }

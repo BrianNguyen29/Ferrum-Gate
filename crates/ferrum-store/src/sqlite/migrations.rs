@@ -24,3 +24,6 @@ pub const INIT_MIGRATION: &str = concat!(
         "/migrations/005_add_policy_bundles.sql"
     ))
 );
+
+/// Current schema version for the SQLite embedded migration.
+pub const CURRENT_SCHEMA_VERSION: i64 = 5;
