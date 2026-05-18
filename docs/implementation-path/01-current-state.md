@@ -7,6 +7,8 @@ Single-node v1 scope unless noted.
 
 **Paths execution evidence**: [`artifacts/2026-05-17-all-paths-execution-evidence.md`](./artifacts/2026-05-17-all-paths-execution-evidence.md) — concise evidence for Path 1 (RC tag), Path 2 (safe probes), Path 3 (local plan/smoke), and remaining blockers.
 
+**May 18 local drill evidence**: [`artifacts/2026-05-18-local-extended-drill-evidence.md`](./artifacts/2026-05-18-local-extended-drill-evidence.md) — local extended operational drills (G2.1-local, B3 retention, D1–D6, API lifecycle plan, G3.6 workload plan, pre-target gate, WAL sanity); [`artifacts/2026-05-18-wal-crash-recovery-evidence.md`](./artifacts/2026-05-18-wal-crash-recovery-evidence.md) — structured SQLite WAL crash-recovery drill and script-hygiene fixes.
+
 **Release support contract**:
 - Supported = SQLite-backed single-node governance core.
 - Partial = adapter crates and extended runtime integrations (uneven implementation slices exist, not production-verified).

@@ -164,7 +164,15 @@ All checks passed:
 
 ### Supplemental WAL Sanity Check
 
-There is **no standalone WAL crash-recovery script** in the repository. A bounded supplemental sanity check was run manually under `/tmp/opencode`:
+> **Update**: The statement below that "there is no standalone WAL crash-recovery
+> script" was accurate when this artifact was first generated, but is now stale.
+> Commit `4f86a17` added `scripts/run_wal_crash_recovery_drill.sh`, and
+> structured evidence is available in
+> `docs/implementation-path/artifacts/2026-05-18-wal-crash-recovery-evidence.md`.
+> The original bounded supplemental sanity check remains recorded here for
+> completeness.
+
+A bounded supplemental sanity check was run manually under `/tmp/opencode`:
 
 ```bash
 sqlite3 "$DB" "PRAGMA journal_mode=WAL; CREATE TABLE t (id INTEGER PRIMARY KEY); INSERT INTO t VALUES (1),(2),(3);"
@@ -174,7 +182,11 @@ sqlite3 "$DB" "PRAGMA integrity_check;"
 
 Result: `ok`; data intact (`1, 2, 3`).
 
-**Gap note**: This is supplemental local sanity only, not a structured crash-recovery drill. No production claim is attached. A full WAL crash-recovery test (e.g., SIGKILL mid-transaction, journal replay) is not covered here and remains a future operator-owned drill if desired.
+**Gap note**: This was supplemental local sanity only. The structured WAL
+crash-recovery drill (`scripts/run_wal_crash_recovery_drill.sh`) now covers
+SIGKILL mid-transaction, journal replay, and checkpoint truncation. No
+production claim is attached to either check. Target-host WAL validation remains
+operator-owned if desired.
 
 ---
 
