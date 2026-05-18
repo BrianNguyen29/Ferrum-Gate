@@ -65,6 +65,12 @@ pub struct PostgresPoolConfig {
     pub min_idle: u32,
     /// Timeout in seconds when acquiring a connection from the pool.
     pub acquire_timeout_secs: u64,
+    /// Statement timeout in milliseconds per session (`0` disables).
+    /// Conservative default: 5000 ms.
+    pub statement_timeout_ms: u64,
+    /// Idle-in-transaction timeout in milliseconds per session (`0` disables).
+    /// Conservative default: 10000 ms.
+    pub idle_in_transaction_timeout_ms: u64,
 }
 
 impl Default for PostgresPoolConfig {
@@ -73,6 +79,8 @@ impl Default for PostgresPoolConfig {
             max_connections: 10,
             min_idle: 2,
             acquire_timeout_secs: 5,
+            statement_timeout_ms: 5000,
+            idle_in_transaction_timeout_ms: 10000,
         }
     }
 }
@@ -104,10 +112,28 @@ impl PostgresStore {
         database_url: &str,
         config: PostgresPoolConfig,
     ) -> Result<Self> {
+        let statement_timeout_ms = config.statement_timeout_ms;
+        let idle_in_transaction_timeout_ms = config.idle_in_transaction_timeout_ms;
         let pool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(config.max_connections)
             .min_connections(config.min_idle)
             .acquire_timeout(std::time::Duration::from_secs(config.acquire_timeout_secs))
+            .after_connect(move |conn, _meta| {
+                Box::pin(async move {
+                    if statement_timeout_ms > 0 {
+                        let sql = format!("SET statement_timeout = {}", statement_timeout_ms);
+                        sqlx::query(&sql).execute(&mut *conn).await?;
+                    }
+                    if idle_in_transaction_timeout_ms > 0 {
+                        let sql = format!(
+                            "SET idle_in_transaction_session_timeout = {}",
+                            idle_in_transaction_timeout_ms
+                        );
+                        sqlx::query(&sql).execute(&mut *conn).await?;
+                    }
+                    Ok(())
+                })
+            })
             .connect(database_url)
             .await?;
         Ok(Self { pool })
@@ -326,5 +352,7 @@ mod tests {
         assert_eq!(config.max_connections, 10);
         assert_eq!(config.min_idle, 2);
         assert_eq!(config.acquire_timeout_secs, 5);
+        assert_eq!(config.statement_timeout_ms, 5000);
+        assert_eq!(config.idle_in_transaction_timeout_ms, 10000);
     }
 }

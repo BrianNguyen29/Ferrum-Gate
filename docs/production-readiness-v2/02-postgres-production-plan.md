@@ -98,8 +98,18 @@ PostgreSQL local/runtime foundation is strong:
 
 ### Phase PG-2 — Connection hardening
 
-- [ ] Add `statement_timeout` to PG connection config.
-- [ ] Add `idle_in_transaction_session_timeout`.
+#### PG-2.1 — Session timeout configuration (COMPLETE)
+
+- [x] Add `statement_timeout` to PG connection config (default 5000 ms, `0` disables).
+- [x] Add `idle_in_transaction_session_timeout` (default 10000 ms, `0` disables).
+- [x] Apply both via `PgPoolOptions::after_connect` with session-level `SET` commands.
+- [x] Add CLI flags (`--pg-statement-timeout-ms`, `--pg-idle-in-transaction-timeout-ms`).
+- [x] Add env vars (`FERRUMD_PG_STATEMENT_TIMEOUT_MS`, `FERRUMD_PG_IDLE_IN_TRANSACTION_TIMEOUT_MS`).
+- [x] Add config file fields and validation (defaults documented; `0` = disabled).
+- [x] Unit tests for defaults, precedence, and disabled behavior.
+
+#### PG-2.2 — Metrics, reconnect, circuit breaker (NOT STARTED)
+
 - [ ] Add pool acquire timeout metrics.
 - [ ] Implement reconnect/retry policy.
 - [ ] Add DB health circuit breaker.

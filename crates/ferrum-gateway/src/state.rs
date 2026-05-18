@@ -137,6 +137,12 @@ pub struct ServerConfig {
     /// PostgreSQL pool acquire_timeout in seconds.
     /// Conservative default: 5.
     pub pg_acquire_timeout_secs: u64,
+    /// PostgreSQL session statement timeout in milliseconds (`0` disables).
+    /// Conservative default: 5000.
+    pub pg_statement_timeout_ms: u64,
+    /// PostgreSQL session idle-in-transaction timeout in milliseconds (`0` disables).
+    /// Conservative default: 10000.
+    pub pg_idle_in_transaction_timeout_ms: u64,
 }
 
 impl Default for ServerConfig {
@@ -157,6 +163,8 @@ impl Default for ServerConfig {
             pg_max_connections: 10,
             pg_min_idle: 2,
             pg_acquire_timeout_secs: 5,
+            pg_statement_timeout_ms: 5000,
+            pg_idle_in_transaction_timeout_ms: 10000,
         }
     }
 }

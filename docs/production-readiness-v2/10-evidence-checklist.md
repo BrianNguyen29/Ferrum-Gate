@@ -75,10 +75,11 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 | 1.6 | PG-1.6: Content hash validation passes | Engineering | `docs/implementation-path/artifacts/2026-05-18-pg-target-deployment-evidence.md` §PG-1.6 | ✅ COMPLETE — local Docker fallback |
 | 1.7 | PG-1.7: Evidence artifact created from template | Engineering | `docs/implementation-path/artifacts/2026-05-18-pg-target-deployment-evidence.md` | ✅ COMPLETE — local Docker fallback |
 | 1.8 | PG-1.8: Docs/evidence checklist updated | Engineering | This doc + `PRODUCTION_NOTES.md` | ✅ COMPLETE — local Docker fallback |
-| 1.9 | PG-2: Connection hardening (`statement_timeout`, reconnect, circuit breaker) | Engineering | `pg-target-evidence.md` §PG-2 | ☐ NOT STARTED |
-| 1.10 | PG-3: Backup/restore drill passes | Engineering | `pg-restore-drill-evidence.md` | ☐ NOT STARTED |
-| 1.11 | PG-4: Schema migration discipline (idempotent, version table, CI drift check) | Engineering | `pg-migration-evidence.md` | ☐ NOT STARTED |
-| 1.12 | PG-5: PG metrics visible in `/v1/metrics` | Engineering | Metrics scrape diff | ☐ NOT STARTED |
+| 1.9 | PG-2.1: Session timeout config (`statement_timeout`, `idle_in_transaction_session_timeout`) | Engineering | `02-postgres-production-plan.md` §PG-2.1 | ✅ COMPLETE — code + tests |
+| 1.10 | PG-2.2: Metrics, reconnect, circuit breaker | Engineering | `pg-target-evidence.md` §PG-2.2 | ☐ NOT STARTED |
+| 1.11 | PG-3: Backup/restore drill passes | Engineering | `pg-restore-drill-evidence.md` | ☐ NOT STARTED |
+| 1.12 | PG-4: Schema migration discipline (idempotent, version table, CI drift check) | Engineering | `pg-migration-evidence.md` | ☐ NOT STARTED |
+| 1.13 | PG-5: PG metrics visible in `/v1/metrics` | Engineering | Metrics scrape diff | ☐ NOT STARTED |
 
 ## Phase 2 — SLO/SLA and workload evidence
 

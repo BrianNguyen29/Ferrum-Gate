@@ -89,6 +89,14 @@ struct Args {
     /// PostgreSQL pool acquire_timeout in seconds (conservative default: 5).
     #[arg(long)]
     pg_acquire_timeout_secs: Option<u64>,
+
+    /// PostgreSQL session statement timeout in milliseconds (0 disables, default: 5000).
+    #[arg(long)]
+    pg_statement_timeout_ms: Option<u64>,
+
+    /// PostgreSQL session idle-in-transaction timeout in milliseconds (0 disables, default: 10000).
+    #[arg(long)]
+    pg_idle_in_transaction_timeout_ms: Option<u64>,
 }
 
 fn get_env<T: std::str::FromStr>(key: &str) -> Option<T> {
@@ -133,6 +141,10 @@ struct ServerSection {
     pg_min_idle: Option<u32>,
     #[serde(default)]
     pg_acquire_timeout_secs: Option<u64>,
+    #[serde(default)]
+    pg_statement_timeout_ms: Option<u64>,
+    #[serde(default)]
+    pg_idle_in_transaction_timeout_ms: Option<u64>,
 }
 
 fn load_config_file(path: &PathBuf) -> Result<ConfigFile> {
@@ -265,6 +277,22 @@ fn resolve_config(args: &Args) -> Result<ServerConfig> {
         .or_else(|| server.as_ref().and_then(|s| s.pg_acquire_timeout_secs))
         .unwrap_or(5);
 
+    let pg_statement_timeout_ms = args
+        .pg_statement_timeout_ms
+        .or_else(|| get_env("FERRUMD_PG_STATEMENT_TIMEOUT_MS"))
+        .or_else(|| server.as_ref().and_then(|s| s.pg_statement_timeout_ms))
+        .unwrap_or(5000);
+
+    let pg_idle_in_transaction_timeout_ms = args
+        .pg_idle_in_transaction_timeout_ms
+        .or_else(|| get_env("FERRUMD_PG_IDLE_IN_TRANSACTION_TIMEOUT_MS"))
+        .or_else(|| {
+            server
+                .as_ref()
+                .and_then(|s| s.pg_idle_in_transaction_timeout_ms)
+        })
+        .unwrap_or(10000);
+
     let bind_addr_parsed: SocketAddr = bind_addr
         .parse()
         .with_context(|| format!("failed to parse bind address: {}", bind_addr))?;
@@ -289,6 +317,8 @@ fn resolve_config(args: &Args) -> Result<ServerConfig> {
         pg_max_connections,
         pg_min_idle,
         pg_acquire_timeout_secs,
+        pg_statement_timeout_ms,
+        pg_idle_in_transaction_timeout_ms,
     };
 
     // Validate configuration
@@ -360,6 +390,8 @@ async fn main() -> Result<()> {
                 max_connections: config.pg_max_connections,
                 min_idle: config.pg_min_idle,
                 acquire_timeout_secs: config.pg_acquire_timeout_secs,
+                statement_timeout_ms: config.pg_statement_timeout_ms,
+                idle_in_transaction_timeout_ms: config.pg_idle_in_transaction_timeout_ms,
             };
             let pg_store = PostgresStore::connect_with_config(&config.store_dsn, pg_pool_config)
                 .await
@@ -425,6 +457,8 @@ mod tests {
             "FERRUMD_PG_MAX_CONNECTIONS",
             "FERRUMD_PG_MIN_IDLE",
             "FERRUMD_PG_ACQUIRE_TIMEOUT_SECS",
+            "FERRUMD_PG_STATEMENT_TIMEOUT_MS",
+            "FERRUMD_PG_IDLE_IN_TRANSACTION_TIMEOUT_MS",
         ] {
             unsafe { std::env::remove_var(key) };
         }
@@ -477,6 +511,8 @@ log_filter = "warn"
             pg_max_connections: None,
             pg_min_idle: None,
             pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -523,6 +559,8 @@ allow_insecure_nonlocal_bind = false
             pg_max_connections: None,
             pg_min_idle: None,
             pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -563,6 +601,8 @@ auth_mode = "bearer"
             pg_max_connections: None,
             pg_min_idle: None,
             pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -602,6 +642,8 @@ auth_mode = "disabled"
             pg_max_connections: None,
             pg_min_idle: None,
             pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -647,6 +689,8 @@ auth_mode = "disabled"
             pg_max_connections: None,
             pg_min_idle: None,
             pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -692,6 +736,8 @@ auth_mode = "disabled"
             pg_max_connections: None,
             pg_min_idle: None,
             pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
         };
 
         let config = resolve_config(&args).expect("expected config to be accepted");
@@ -731,6 +777,8 @@ auth_mode = "disabled"
             pg_max_connections: None,
             pg_min_idle: None,
             pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
         };
 
         let config = resolve_config(&args).expect("expected config to be accepted");
@@ -769,6 +817,8 @@ auth_mode = "disabled"
             pg_max_connections: None,
             pg_min_idle: None,
             pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -810,6 +860,8 @@ auth_mode = "disabled"
             pg_max_connections: None,
             pg_min_idle: None,
             pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -851,6 +903,8 @@ rate_limit_burst = 100
             pg_max_connections: None,
             pg_min_idle: None,
             pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -892,6 +946,8 @@ rate_limit_burst = 100
             pg_max_connections: None,
             pg_min_idle: None,
             pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -938,6 +994,8 @@ rate_limit_burst = 100
             pg_max_connections: None,
             pg_min_idle: None,
             pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -979,6 +1037,8 @@ rate_limit_per_second = 0
             pg_max_connections: None,
             pg_min_idle: None,
             pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -1021,6 +1081,8 @@ rate_limit_burst = 0
             pg_max_connections: None,
             pg_min_idle: None,
             pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -1063,6 +1125,8 @@ rate_limit_burst = 20000
             pg_max_connections: None,
             pg_min_idle: None,
             pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -1104,6 +1168,8 @@ auth_mode = "disabled"
             pg_max_connections: None,
             pg_min_idle: None,
             pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -1142,6 +1208,8 @@ log_format = "json"
             pg_max_connections: None,
             pg_min_idle: None,
             pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -1180,6 +1248,8 @@ log_format = "text"
             pg_max_connections: None,
             pg_min_idle: None,
             pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -1222,6 +1292,8 @@ log_format = "text"
             pg_max_connections: None,
             pg_min_idle: None,
             pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -1261,6 +1333,8 @@ log_format = "invalid"
             pg_max_connections: None,
             pg_min_idle: None,
             pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -1299,6 +1373,8 @@ log_format = "compact"
             pg_max_connections: None,
             pg_min_idle: None,
             pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -1339,6 +1415,8 @@ auth_mode = "disabled"
             pg_max_connections: None,
             pg_min_idle: None,
             pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -1378,6 +1456,8 @@ write_queue_threshold = 500
             pg_max_connections: None,
             pg_min_idle: None,
             pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -1417,6 +1497,8 @@ write_queue_threshold = 500
             pg_max_connections: None,
             pg_min_idle: None,
             pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -1460,6 +1542,8 @@ write_queue_threshold = 500
             pg_max_connections: None,
             pg_min_idle: None,
             pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -1499,6 +1583,8 @@ write_queue_threshold = 0
             pg_max_connections: None,
             pg_min_idle: None,
             pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -1541,6 +1627,8 @@ write_queue_threshold = 10001
             pg_max_connections: None,
             pg_min_idle: None,
             pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -1584,6 +1672,8 @@ auth_mode = "disabled"
             pg_max_connections: None,
             pg_min_idle: None,
             pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -1626,6 +1716,8 @@ pg_acquire_timeout_secs = 10
             pg_max_connections: None,
             pg_min_idle: None,
             pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -1674,6 +1766,8 @@ pg_acquire_timeout_secs = 10
             pg_max_connections: None,
             pg_min_idle: None,
             pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -1718,6 +1812,8 @@ auth_mode = "disabled"
             pg_max_connections: Some(50),
             pg_min_idle: None,
             pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -1757,6 +1853,8 @@ pg_max_connections = 0
             pg_max_connections: None,
             pg_min_idle: None,
             pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -1799,6 +1897,8 @@ pg_acquire_timeout_secs = 0
             pg_max_connections: None,
             pg_min_idle: None,
             pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -1807,6 +1907,222 @@ pg_acquire_timeout_secs = 0
                 .to_string()
                 .contains("pg_acquire_timeout_secs must be at least 1")
         );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_resolve_config_pg_timeout_defaults() {
+        let _guard = env_lock().lock().unwrap();
+        clear_test_env();
+
+        let path = write_temp_config(
+            r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+"#,
+        );
+
+        let args = Args {
+            config: Some(path.clone()),
+            bind_addr: None,
+            store_dsn: None,
+            auth_mode: None,
+            bearer_token: None,
+            allow_insecure_nonlocal_bind: false,
+            log_filter: None,
+            store_synchronous: None,
+            store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
+            write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
+        };
+
+        let config = resolve_config(&args).unwrap();
+        assert_eq!(config.pg_statement_timeout_ms, 5000);
+        assert_eq!(config.pg_idle_in_transaction_timeout_ms, 10000);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_resolve_config_pg_timeout_from_config_file() {
+        let _guard = env_lock().lock().unwrap();
+        clear_test_env();
+
+        let path = write_temp_config(
+            r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+pg_statement_timeout_ms = 3000
+pg_idle_in_transaction_timeout_ms = 7000
+"#,
+        );
+
+        let args = Args {
+            config: Some(path.clone()),
+            bind_addr: None,
+            store_dsn: None,
+            auth_mode: None,
+            bearer_token: None,
+            allow_insecure_nonlocal_bind: false,
+            log_filter: None,
+            store_synchronous: None,
+            store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
+            write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
+        };
+
+        let config = resolve_config(&args).unwrap();
+        assert_eq!(config.pg_statement_timeout_ms, 3000);
+        assert_eq!(config.pg_idle_in_transaction_timeout_ms, 7000);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_resolve_config_pg_timeout_env_overrides_config_file() {
+        let _guard = env_lock().lock().unwrap();
+        clear_test_env();
+
+        let path = write_temp_config(
+            r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+pg_statement_timeout_ms = 3000
+pg_idle_in_transaction_timeout_ms = 7000
+"#,
+        );
+
+        unsafe {
+            std::env::set_var("FERRUMD_PG_STATEMENT_TIMEOUT_MS", "8000");
+            std::env::set_var("FERRUMD_PG_IDLE_IN_TRANSACTION_TIMEOUT_MS", "15000");
+        }
+
+        let args = Args {
+            config: Some(path.clone()),
+            bind_addr: None,
+            store_dsn: None,
+            auth_mode: None,
+            bearer_token: None,
+            allow_insecure_nonlocal_bind: false,
+            log_filter: None,
+            store_synchronous: None,
+            store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
+            write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
+        };
+
+        let config = resolve_config(&args).unwrap();
+        assert_eq!(config.pg_statement_timeout_ms, 8000);
+        assert_eq!(config.pg_idle_in_transaction_timeout_ms, 15000);
+
+        let _ = fs::remove_file(path);
+        clear_test_env();
+    }
+
+    #[test]
+    fn test_resolve_config_pg_timeout_cli_overrides_env() {
+        let _guard = env_lock().lock().unwrap();
+        clear_test_env();
+
+        let path = write_temp_config(
+            r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+"#,
+        );
+
+        unsafe {
+            std::env::set_var("FERRUMD_PG_STATEMENT_TIMEOUT_MS", "8000");
+        }
+
+        let args = Args {
+            config: Some(path.clone()),
+            bind_addr: None,
+            store_dsn: None,
+            auth_mode: None,
+            bearer_token: None,
+            allow_insecure_nonlocal_bind: false,
+            log_filter: None,
+            store_synchronous: None,
+            store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
+            write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: Some(2000),
+            pg_idle_in_transaction_timeout_ms: None,
+        };
+
+        let config = resolve_config(&args).unwrap();
+        assert_eq!(config.pg_statement_timeout_ms, 2000);
+
+        let _ = fs::remove_file(path);
+        clear_test_env();
+    }
+
+    #[test]
+    fn test_resolve_config_accepts_zero_pg_timeout_as_disabled() {
+        let _guard = env_lock().lock().unwrap();
+        clear_test_env();
+
+        let path = write_temp_config(
+            r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+pg_statement_timeout_ms = 0
+pg_idle_in_transaction_timeout_ms = 0
+"#,
+        );
+
+        let args = Args {
+            config: Some(path.clone()),
+            bind_addr: None,
+            store_dsn: None,
+            auth_mode: None,
+            bearer_token: None,
+            allow_insecure_nonlocal_bind: false,
+            log_filter: None,
+            store_synchronous: None,
+            store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
+            write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
+        };
+
+        let config = resolve_config(&args).unwrap();
+        assert_eq!(config.pg_statement_timeout_ms, 0);
+        assert_eq!(config.pg_idle_in_transaction_timeout_ms, 0);
 
         let _ = fs::remove_file(path);
     }
