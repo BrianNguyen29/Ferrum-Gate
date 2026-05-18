@@ -65,6 +65,7 @@ Formalize "production acceptable" as measurable SLO targets and create a repeata
    - Define alert thresholds (e.g., 2% budget burn in 1 hour).
 
 2. **Create validation runbook**
+   - See [`slo-validation-runbook.md`](slo-validation-runbook.md) for the repeatable procedure.
    - Prechecks: hardware, config, store backend, auth mode.
    - Workload phases: baseline → low → target → spike → cooldown.
    - Expected outputs: latency histograms, error counts, queue depth, memory/CPU.
@@ -110,6 +111,7 @@ Formalize "production acceptable" as measurable SLO targets and create a repeata
 
 ## Related docs
 
+- [`slo-validation-runbook.md`](slo-validation-runbook.md) — Repeatable validation procedure
 - [`docs/ROADMAP.md`](../../ROADMAP.md) §3.1, §4 Phase 2
 - [`docs/PRODUCTION_NOTES.md`](../../PRODUCTION_NOTES.md) — Stress baselines
 - [`docs/implementation-path/57-workload-compensation-drill-plan.md`](../../implementation-path/57-workload-compensation-drill-plan.md)

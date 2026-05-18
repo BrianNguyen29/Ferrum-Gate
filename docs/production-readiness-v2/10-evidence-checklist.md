@@ -88,7 +88,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 | # | Item | Owner | Evidence | Status |
 |---|------|-------|----------|--------|
 | 2.1 | SLO-1: SLO/SLA doc exists | Engineering + Operator | `slo-sla-draft.md` ratified | ☐ |
-| 2.2 | SLO-2: Runbook maps scripts to pass/fail | Engineering | `slo-validation-runbook.md` | ☐ |
+| 2.2 | SLO-2: Runbook maps scripts to pass/fail | Engineering | `slo-validation-runbook.md` | ✅ COMPLETE — runbook created, targets marked draft/conditional |
 | 2.3 | SLO-3: Target workload run completed | Engineering | `slo-target-evidence-{date}.md` | ☐ |
 | 2.4 | SLO-4: p95/p99 latency under threshold | Engineering | Latency histograms | ☐ |
 | 2.5 | SLO-5: Readiness success meets target | Engineering | `/v1/readyz/deep` scrape | ☐ |
