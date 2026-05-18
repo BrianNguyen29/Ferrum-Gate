@@ -1,4 +1,4 @@
-.PHONY: help check fmt lint test docs validate tree pretarget audit
+.PHONY: help check fmt lint test docs validate tree pretarget audit wal-drill
 
 help:
 	@echo "make check     - cargo check workspace"
@@ -10,6 +10,7 @@ help:
 	@echo "make tree      - print repository tree"
 	@echo "make pretarget - local pre-target gate (config validation, restore drill, doc presence)"
 	@echo "make audit     - local security audit gate (cargo-deny / cargo-audit)"
+	@echo "make wal-drill - local SQLite WAL crash-recovery drill"
 
 check:
 	cargo check --workspace
@@ -38,3 +39,7 @@ pretarget:
 
 audit:
 	@bash scripts/run_security_audit.sh
+
+wal-drill:
+	@echo "Running local SQLite WAL crash-recovery drill..."
+	@bash scripts/run_wal_crash_recovery_drill.sh

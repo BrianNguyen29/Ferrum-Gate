@@ -116,7 +116,16 @@ WRITER_PID=""
 
 # --- Step 4: Reopen DB and run integrity check ---
 echo "[INFO] Reopening DB after crash..."
-INTEGRITY=$(sqlite3 "$DB" "PRAGMA integrity_check;")
+# Brief sleep to allow any transient locks from the killed writer to clear
+sleep 0.5
+INTEGRITY=""
+for attempt in 1 2 3; do
+    INTEGRITY=$(sqlite3 "$DB" "PRAGMA integrity_check;" 2>/dev/null || true)
+    if [[ "$INTEGRITY" == "ok" ]]; then
+        break
+    fi
+    sleep 0.5
+done
 if [[ "$INTEGRITY" == "ok" ]]; then
     pass "PRAGMA integrity_check after crash = ok"
 else

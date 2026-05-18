@@ -44,8 +44,10 @@ Operator signoff per docs/implementation-path/59-pilot-readiness-evidence-packet
 """
 
 import argparse
+import copy
 import json
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -356,6 +358,58 @@ def _maybe_start_echo_server(api_mode, plan_mode, selected_drills):
     server = _start_echo_server()
     time.sleep(0.3)  # brief warmup
     return server
+
+
+def _create_local_fixtures():
+    """Create temp git repos and sqlite DB for local D2/D3/D5 drills.
+
+    Returns (fixture_dir, path_map) where path_map maps production VM paths
+    to local temp paths so the drill templates can be patched for local runs.
+    """
+    fixture_dir = os.path.join("/tmp", "opencode", f"ferrum-d1d6-fixtures-{os.getpid()}")
+    os.makedirs(fixture_dir, exist_ok=True)
+
+    # D2: git repo with an initial commit on main
+    d2_repo = os.path.join(fixture_dir, "ferrum_d2_repo")
+    os.makedirs(d2_repo, exist_ok=True)
+    subprocess.run(["git", "init"], cwd=d2_repo, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "drill@example.com"], cwd=d2_repo, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Drill Runner"], cwd=d2_repo, check=True, capture_output=True)
+    subprocess.run(["git", "checkout", "-b", "main"], cwd=d2_repo, check=True, capture_output=True)
+    with open(os.path.join(d2_repo, "README.md"), "w", encoding="utf-8") as f:
+        f.write("# D2 drill repo\n")
+    subprocess.run(["git", "add", "."], cwd=d2_repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=d2_repo, check=True, capture_output=True)
+
+    # D3: git repo with bare remote
+    d3_repo = os.path.join(fixture_dir, "ferrum_d3_repo")
+    d3_remote = os.path.join(fixture_dir, "ferrum_d3_remote.git")
+    os.makedirs(d3_repo, exist_ok=True)
+    subprocess.run(["git", "init", "--bare", d3_remote], check=True, capture_output=True)
+    subprocess.run(["git", "init"], cwd=d3_repo, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "drill@example.com"], cwd=d3_repo, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Drill Runner"], cwd=d3_repo, check=True, capture_output=True)
+    subprocess.run(["git", "checkout", "-b", "main"], cwd=d3_repo, check=True, capture_output=True)
+    with open(os.path.join(d3_repo, "README.md"), "w", encoding="utf-8") as f:
+        f.write("# D3 drill repo\n")
+    subprocess.run(["git", "add", "."], cwd=d3_repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=d3_repo, check=True, capture_output=True)
+    subprocess.run(["git", "remote", "add", "origin", d3_remote], cwd=d3_repo, check=True, capture_output=True)
+
+    # D5: sqlite DB with drill_table
+    d5_db = os.path.join(fixture_dir, "ferrum_d5.db")
+    subprocess.run(
+        ["sqlite3", d5_db, "CREATE TABLE drill_table (id INTEGER PRIMARY KEY, value TEXT);"],
+        check=True,
+        capture_output=True,
+    )
+
+    path_map = {
+        "/var/lib/ferrumgate/drill/ferrum_d2_repo": d2_repo,
+        "/var/lib/ferrumgate/drill/ferrum_d3_repo": d3_repo,
+        "/var/lib/ferrumgate/drill/ferrum_d5.db": d5_db,
+    }
+    return fixture_dir, path_map
 
 
 def _make_api_request(method, url, headers, payload=None, timeout=30):
@@ -809,7 +863,7 @@ def _curl_block(method, url, headers, payload, placeholder_token):
     return lines
 
 
-def run_api_drills(server_url, bearer_token, plan_mode, output_dir, rate_limit_delay, selected_drills=None):
+def run_api_drills(server_url, bearer_token, plan_mode, output_dir, rate_limit_delay, selected_drills=None, fixture_paths=None):
     """Run or plan API-level D1-D6 drills against a live FerrumGate server."""
     token = bearer_token or os.environ.get("FERRUM_BEARER_TOKEN", "")
     headers = {"Content-Type": "application/json"}
@@ -820,7 +874,15 @@ def run_api_drills(server_url, bearer_token, plan_mode, output_dir, rate_limit_d
     drills_to_run = {}
     for drill_name, template in API_DRILL_TEMPLATES.items():
         key = drill_name.split()[0]  # e.g., "D1"
-        if selected_drills is None or key in selected_drills:
+        if selected_drills is not None and key not in selected_drills:
+            continue
+        if fixture_paths and not plan_mode:
+            # Patch production VM paths to local temp fixture paths
+            json_str = json.dumps(template)
+            for old, new in fixture_paths.items():
+                json_str = json_str.replace(old, new)
+            drills_to_run[drill_name] = json.loads(json_str)
+        else:
             drills_to_run[drill_name] = template
 
     results = {}
@@ -1503,6 +1565,8 @@ def main():
     # API mode (legacy --api-drills or new --api-live)
     api_mode = args.api_drills or args.api_live
     echo_server = None
+    fixture_dir = None
+    fixture_paths = None
     if api_mode:
         if not args.server_url:
             print("ERROR: --api-drills/--api-live requires --server-url")
@@ -1512,6 +1576,15 @@ def main():
             plan_mode=args.plan,
             selected_drills=selected_drills,
         )
+        # Create local temp fixtures for D2/D3/D5 when running live locally
+        if not args.plan:
+            try:
+                fixture_dir, fixture_paths = _create_local_fixtures()
+                print(f"[LIVE MODE] Local fixtures created in: {fixture_dir}")
+            except Exception as e:
+                print(f"[WARN] Could not create local fixtures: {e}")
+                fixture_dir = None
+                fixture_paths = None
         print("=" * 60)
         print("RUNNING API-LEVEL DRILLS")
         print("=" * 60)
@@ -1523,6 +1596,7 @@ def main():
                 output_dir,
                 args.rate_limit_delay,
                 selected_drills=selected_drills,
+                fixture_paths=fixture_paths,
             )
             results.update(api_results)
             print(f"\nAPI drill output: {api_file}")
@@ -1532,6 +1606,9 @@ def main():
             if echo_server:
                 print("[LIVE MODE] Stopping local echo server...")
                 _stop_echo_server(echo_server)
+            if fixture_dir:
+                shutil.rmtree(fixture_dir, ignore_errors=True)
+                print(f"[LIVE MODE] Cleaned up local fixtures: {fixture_dir}")
         # Skip cargo tests in API mode unless explicitly skipped
         args.skip_cargo = True
 

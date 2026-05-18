@@ -185,6 +185,11 @@ $ALL_EXAMPLES_PRESENT && echo "[PASS] All required config examples present"
 run_check "Local bearer-auth smoke" \
     "bash '$SCRIPT_DIR/run_local_auth_smoke.sh'"
 
+# --- 7. WAL crash-recovery drill ---
+
+run_check "WAL crash-recovery drill" \
+    "bash '$SCRIPT_DIR/run_wal_crash_recovery_drill.sh'"
+
 # --- OPTIONAL FULL MODE CHECKS ---
 if [[ "$FULL_MODE" == true ]]; then
     echo ""
@@ -218,10 +223,10 @@ if [[ $FAILED -eq 0 ]]; then
     echo "  3. Adapt configs/examples to target environment"
     echo "  4. Deploy ferrumd.service and backup service to target host"
     echo "  5. Run Phase 2 probes and D1-D6 drills on target"
-    echo "  6. Address active production blockers (operator-owned, per doc67): real owned domain, off-VM alerting, keyless backup/VM OAuth scope"
+    echo "  6. Address remaining production blocker (operator-owned, per doc67): real owned domain / Block A"
     echo ""
     echo "Doc 59 G2.1-G2.8 and doc 54 are signed for conditional single-node SQLite pilot scope only."
-    echo "G2 remains CONDITIONAL. B3/B4/B5 are CLOSED via delegated authority on 2026-05-15."
+    echo "G2 remains CONDITIONAL. Block A remains WAIVED/CONDITIONAL; Blocks B/C and B3/B4/B5 are CLOSED."
     echo "No production-ready claim. FerrumGate v1 remains RC-ready/conditional."
     echo ""
     exit 0
