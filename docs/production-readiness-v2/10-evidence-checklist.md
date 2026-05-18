@@ -76,10 +76,12 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 | 1.7 | PG-1.7: Evidence artifact created from template | Engineering | `docs/implementation-path/artifacts/2026-05-18-pg-target-deployment-evidence.md` | ✅ COMPLETE — local Docker fallback |
 | 1.8 | PG-1.8: Docs/evidence checklist updated | Engineering | This doc + `PRODUCTION_NOTES.md` | ✅ COMPLETE — local Docker fallback |
 | 1.9 | PG-2.1: Session timeout config (`statement_timeout`, `idle_in_transaction_session_timeout`) | Engineering | `02-postgres-production-plan.md` §PG-2.1 | ✅ COMPLETE — code + tests |
-| 1.10 | PG-2.2: Metrics, reconnect, circuit breaker | Engineering | `pg-target-evidence.md` §PG-2.2 | ☐ NOT STARTED |
-| 1.11 | PG-3: Backup/restore drill passes | Engineering | `pg-restore-drill-evidence.md` | ☐ NOT STARTED |
-| 1.12 | PG-4: Schema migration discipline (idempotent, version table, CI drift check) | Engineering | `pg-migration-evidence.md` | ☐ NOT STARTED |
-| 1.13 | PG-5: PG metrics visible in `/v1/metrics` | Engineering | Metrics scrape diff | ☐ NOT STARTED |
+| 1.10 | PG-2.2: Pool metrics (`pool_size`, `pool_idle`, `pool_max`) | Engineering | `pg-target-evidence.md` §PG-2.2 | ✅ COMPLETE — code + tests |
+| 1.11 | PG-2.3a: Acquire timeout counter + pool saturation readiness | Engineering | `02-postgres-production-plan.md` §PG-2.3a | ✅ COMPLETE — code + tests |
+| 1.12 | PG-2.3b: Reconnect/retry and circuit breaker | Engineering | `pg-target-evidence.md` §PG-2.3 | ☐ NOT STARTED — deferred to PG-5/later |
+| 1.13 | PG-3: Backup/restore drill passes | Engineering | `pg-restore-drill-evidence.md` | ☐ NOT STARTED |
+| 1.14 | PG-4: Schema migration discipline (idempotent, version table, CI drift check) | Engineering | `pg-migration-evidence.md` | ☐ NOT STARTED |
+| 1.15 | PG-5: HA ADR approved; primary failure drill documented; RPO/RTO measured | Engineering + Operator | HA ADR + failure drill evidence | ☐ NOT STARTED |
 
 ## Phase 2 — SLO/SLA and workload evidence
 

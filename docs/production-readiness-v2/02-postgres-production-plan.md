@@ -108,12 +108,28 @@ PostgreSQL local/runtime foundation is strong:
 - [x] Add config file fields and validation (defaults documented; `0` = disabled).
 - [x] Unit tests for defaults, precedence, and disabled behavior.
 
-#### PG-2.2 — Metrics, reconnect, circuit breaker (NOT STARTED)
+#### PG-2.2 — Pool metrics (COMPLETE)
 
-- [ ] Add pool acquire timeout metrics.
+- [x] Expose pool size, idle connections, and max connections via `StoreFacade::pool_status()`.
+- [x] Emit `ferrumgate_store_pg_pool_size`, `ferrumgate_store_pg_pool_idle`, `ferrumgate_store_pg_pool_max` in `/v1/metrics`.
+- [x] SQLite/non-PG stores return `None` and do not emit misleading PG metrics.
+- [x] Unit tests for metrics presence (when `Some`) and omission (when `None`).
+
+#### PG-2.3 — Acquire timeout metrics, pool saturation readiness, reconnect, circuit breaker
+
+##### PG-2.3a — Acquire timeout counter + pool saturation readiness (COMPLETE)
+
+- [x] Add `acquire_timeouts` counter to `PoolStatus` and `PostgresStore`.
+- [x] Detect `sqlx::Error::PoolTimedOut` in `health_check()` and increment counter.
+- [x] Emit `ferrumgate_store_pg_acquire_timeouts_total` in `/v1/metrics` when `pool_status` is `Some`.
+- [x] Add pool saturation component to `/v1/readyz/deep`: reports degraded when `idle_connections == 0 && total_connections >= max_connections` for `max > 0`.
+- [x] Tests for metric emission/omission and saturation behavior.
+
+##### PG-2.3b — Reconnect/retry and circuit breaker (DEFERRED / NOT STARTED)
+
 - [ ] Implement reconnect/retry policy.
 - [ ] Add DB health circuit breaker.
-- [ ] Implement graceful degraded readiness.
+- [ ] Implement graceful degraded readiness beyond pool saturation.
 
 ### Phase PG-3 — Backup/restore evidence
 

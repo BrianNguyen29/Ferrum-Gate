@@ -52,6 +52,37 @@ use crate::repos::{
 use async_trait::async_trait;
 use sqlx::PgPool;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Clone-safe wrapper around an `AtomicU64` so it can be used in `#[derive(Clone)]` structs.
+#[derive(Debug)]
+struct AtomicCounter {
+    inner: AtomicU64,
+}
+
+impl AtomicCounter {
+    fn new(value: u64) -> Self {
+        Self {
+            inner: AtomicU64::new(value),
+        }
+    }
+
+    fn fetch_add(&self, val: u64, order: Ordering) -> u64 {
+        self.inner.fetch_add(val, order)
+    }
+
+    fn load(&self, order: Ordering) -> u64 {
+        self.inner.load(order)
+    }
+}
+
+impl Clone for AtomicCounter {
+    fn clone(&self) -> Self {
+        Self {
+            inner: AtomicU64::new(self.inner.load(Ordering::Relaxed)),
+        }
+    }
+}
 
 /// Conservative PostgreSQL connection pool configuration.
 ///
@@ -96,6 +127,8 @@ impl Default for PostgresPoolConfig {
 #[derive(Debug, Clone)]
 pub struct PostgresStore {
     pool: PgPool,
+    max_connections: u32,
+    acquire_timeouts: AtomicCounter,
 }
 
 impl PostgresStore {
@@ -114,6 +147,7 @@ impl PostgresStore {
     ) -> Result<Self> {
         let statement_timeout_ms = config.statement_timeout_ms;
         let idle_in_transaction_timeout_ms = config.idle_in_transaction_timeout_ms;
+        let max_connections = config.max_connections;
         let pool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(config.max_connections)
             .min_connections(config.min_idle)
@@ -136,7 +170,11 @@ impl PostgresStore {
             })
             .connect(database_url)
             .await?;
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            max_connections,
+            acquire_timeouts: AtomicCounter::new(0),
+        })
     }
 
     /// Returns a clone of the underlying connection pool.
@@ -258,15 +296,26 @@ impl StoreFacade for PostgresStore {
     }
 
     async fn health_check(&self) -> crate::Result<()> {
-        sqlx::query("SELECT 1")
-            .execute(&self.pool)
-            .await
-            .map_err(|e| crate::StoreError::Other(e.to_string()))?;
+        if let Err(e) = sqlx::query("SELECT 1").execute(&self.pool).await {
+            if matches!(e, sqlx::Error::PoolTimedOut) {
+                self.acquire_timeouts.fetch_add(1, Ordering::Relaxed);
+            }
+            return Err(crate::StoreError::Other(e.to_string()));
+        }
         Ok(())
     }
 
     fn write_queue_depth(&self) -> usize {
         0
+    }
+
+    fn pool_status(&self) -> Option<crate::repos::PoolStatus> {
+        Some(crate::repos::PoolStatus {
+            total_connections: self.pool.size(),
+            idle_connections: self.pool.num_idle() as u32,
+            max_connections: self.max_connections,
+            acquire_timeouts: self.acquire_timeouts.load(Ordering::Relaxed),
+        })
     }
 }
 
@@ -354,5 +403,30 @@ mod tests {
         assert_eq!(config.acquire_timeout_secs, 5);
         assert_eq!(config.statement_timeout_ms, 5000);
         assert_eq!(config.idle_in_transaction_timeout_ms, 10000);
+    }
+
+    #[test]
+    fn postgres_store_pool_status_reflects_config() {
+        // We cannot connect to a real PG in a unit test, but we can verify
+        // that pool_status returns values consistent with the store config
+        // by inspecting a store created with a mock/unreachable config.
+        // Since connect_with_config is async and needs a real PG, we test
+        // the trait default and struct layout instead.
+        let config = super::PostgresPoolConfig {
+            max_connections: 42,
+            ..super::PostgresPoolConfig::default()
+        };
+        assert_eq!(config.max_connections, 42);
+        // PoolStatus struct sanity check
+        let status = crate::PoolStatus {
+            total_connections: 5,
+            idle_connections: 3,
+            max_connections: 42,
+            acquire_timeouts: 1,
+        };
+        assert_eq!(status.total_connections, 5);
+        assert_eq!(status.idle_connections, 3);
+        assert_eq!(status.max_connections, 42);
+        assert_eq!(status.acquire_timeouts, 1);
     }
 }

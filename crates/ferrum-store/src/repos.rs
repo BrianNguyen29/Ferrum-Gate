@@ -22,6 +22,22 @@ pub struct LedgerEntry {
     pub raw_json: serde_json::Value,
 }
 
+/// Snapshot of a connection pool's current state.
+///
+/// Emitted by stores that maintain a connection pool (e.g. PostgreSQL).
+/// Non-pool stores return `None` from `StoreFacade::pool_status`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PoolStatus {
+    /// Current number of connections in the pool (active + idle).
+    pub total_connections: u32,
+    /// Current number of idle connections available for use.
+    pub idle_connections: u32,
+    /// Maximum number of connections the pool is configured to hold.
+    pub max_connections: u32,
+    /// Cumulative count of pool acquire timeouts since process start.
+    pub acquire_timeouts: u64,
+}
+
 #[async_trait]
 pub trait IntentRepo: Send + Sync {
     async fn insert(&self, intent: &IntentEnvelope) -> Result<()>;
@@ -218,4 +234,12 @@ pub trait StoreFacade: Send + Sync {
     /// Returns Ok(()) if the store is reachable and functional.
     /// Returns Err if the store is unavailable or not functional.
     async fn health_check(&self) -> crate::Result<()>;
+
+    /// Returns the current connection pool status, if applicable.
+    ///
+    /// Returns `Some(PoolStatus)` for stores that manage a connection pool
+    /// (e.g. PostgreSQL), and `None` for stores without a pool (e.g. SQLite).
+    fn pool_status(&self) -> Option<PoolStatus> {
+        None
+    }
 }

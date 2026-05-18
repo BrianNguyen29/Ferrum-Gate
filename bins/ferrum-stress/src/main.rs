@@ -254,6 +254,8 @@ impl StressServer {
                 pg_max_connections: 10,
                 pg_min_idle: 2,
                 pg_acquire_timeout_secs: 5,
+                pg_statement_timeout_ms: 5000,
+                pg_idle_in_transaction_timeout_ms: 10000,
             };
             ferrum_gateway::build_router_with_auth(runtime, config)
         } else {
@@ -275,6 +277,8 @@ impl StressServer {
                 pg_max_connections: 10,
                 pg_min_idle: 2,
                 pg_acquire_timeout_secs: 5,
+                pg_statement_timeout_ms: 5000,
+                pg_idle_in_transaction_timeout_ms: 10000,
             };
             ferrum_gateway::build_router_with_auth(runtime, config)
         };

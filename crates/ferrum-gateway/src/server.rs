@@ -929,13 +929,17 @@ async fn readyz(State(state): State<Arc<AppState>>) -> Json<HealthResponse> {
     response
 }
 
-/// Deep readiness probe that checks the store health and write queue backpressure.
+/// Deep readiness probe that checks the store health, write queue backpressure, and
+/// connection pool saturation.
 ///
-/// Returns HTTP 200 with "ok" status when store is healthy and queue depth is within threshold.
-/// Returns HTTP 503 with "degraded" status when store is unhealthy or queue depth exceeds threshold.
+/// Returns HTTP 200 with "ok" status when store is healthy, queue depth is within threshold,
+/// and the connection pool is not saturated.
+/// Returns HTTP 503 with "degraded" status when store is unhealthy, queue depth exceeds
+/// threshold, or the pool is saturated (no idle connections and total connections at or above
+/// the configured maximum).
 /// The `write_queue` component provides bounded backpressure detection only; it does not
 /// indicate full dependency health, ledger scan status, adapter health, rollback health,
-/// connection pool saturation, or schema integrity.
+/// or schema integrity.
 async fn readyz_deep(State(state): State<Arc<AppState>>) -> (StatusCode, Json<DeepHealthResponse>) {
     let start = Instant::now();
     let threshold = state.server_config.write_queue_threshold;
@@ -979,13 +983,49 @@ async fn readyz_deep(State(state): State<Arc<AppState>>) -> (StatusCode, Json<De
         }
     };
 
-    let healthy = store_status.healthy && queue_healthy;
+    // Pool saturation check: report degraded when no idle connections remain
+    // and the pool is at or above its configured maximum.
+    let pool_status = state.runtime.store.pool_status();
+    let pool_healthy = match pool_status {
+        Some(ps) if ps.max_connections > 0 => {
+            !(ps.idle_connections == 0 && ps.total_connections >= ps.max_connections)
+        }
+        _ => true,
+    };
+    let pool_status_component = match pool_status {
+        Some(ps) if ps.max_connections > 0 && !pool_healthy => ComponentStatus {
+            component: "pool".to_string(),
+            status: format!(
+                "degraded: saturated (idle={}/total={}/max={})",
+                ps.idle_connections, ps.total_connections, ps.max_connections
+            ),
+            healthy: false,
+            error: Some("pool saturated: no idle connections available".to_string()),
+        },
+        Some(ps) => ComponentStatus {
+            component: "pool".to_string(),
+            status: format!(
+                "ok: idle={}/total={}/max={}",
+                ps.idle_connections, ps.total_connections, ps.max_connections
+            ),
+            healthy: true,
+            error: None,
+        },
+        None => ComponentStatus {
+            component: "pool".to_string(),
+            status: "not applicable".to_string(),
+            healthy: true,
+            error: None,
+        },
+    };
+
+    let healthy = store_status.healthy && queue_healthy && pool_healthy;
     let status = if healthy { "ok" } else { "degraded" };
 
     let response = DeepHealthResponse {
         status: status.to_string(),
         healthy,
-        components: vec![store_status, queue_status],
+        components: vec![store_status, queue_status, pool_status_component],
     };
 
     let elapsed_ns = start.elapsed().as_nanos() as u64;
@@ -1043,6 +1083,7 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
     let metrics_count = state.metrics.metrics_scrapes.load(Ordering::Relaxed);
     let store_up = state.metrics.store_health_up.load(Ordering::Relaxed);
     let write_queue_depth = state.runtime.store.write_queue_depth();
+    let pool_status = state.runtime.store.pool_status();
 
     // Load governance error counters
     let gov_err_intents_compile = state
@@ -1549,6 +1590,34 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
     body.push_str(&readyz_deep_histogram_200);
     body.push_str(&readyz_deep_histogram_503);
     body.push_str(&metrics_histogram);
+
+    // Append PostgreSQL pool metrics when available
+    if let Some(ps) = pool_status {
+        body.push_str("# HELP ferrumgate_store_pg_pool_size Current number of connections in the PostgreSQL pool\n");
+        body.push_str("# TYPE ferrumgate_store_pg_pool_size gauge\n");
+        body.push_str(&format!(
+            "ferrumgate_store_pg_pool_size {}\n",
+            ps.total_connections
+        ));
+        body.push_str("# HELP ferrumgate_store_pg_pool_idle Current number of idle connections in the PostgreSQL pool\n");
+        body.push_str("# TYPE ferrumgate_store_pg_pool_idle gauge\n");
+        body.push_str(&format!(
+            "ferrumgate_store_pg_pool_idle {}\n",
+            ps.idle_connections
+        ));
+        body.push_str("# HELP ferrumgate_store_pg_pool_max Maximum number of connections configured for the PostgreSQL pool\n");
+        body.push_str("# TYPE ferrumgate_store_pg_pool_max gauge\n");
+        body.push_str(&format!(
+            "ferrumgate_store_pg_pool_max {}\n",
+            ps.max_connections
+        ));
+        body.push_str("# HELP ferrumgate_store_pg_acquire_timeouts_total Cumulative count of PostgreSQL pool acquire timeouts\n");
+        body.push_str("# TYPE ferrumgate_store_pg_acquire_timeouts_total counter\n");
+        body.push_str(&format!(
+            "ferrumgate_store_pg_acquire_timeouts_total {}\n",
+            ps.acquire_timeouts
+        ));
+    }
 
     // Record metrics handler's own latency
     state
@@ -6261,7 +6330,7 @@ mod tests {
         // Verify the response indicates degraded status
         assert_eq!(deep.status, "degraded");
         assert!(!deep.healthy);
-        assert_eq!(deep.components.len(), 2);
+        assert_eq!(deep.components.len(), 3);
         // First component: store (unhealthy)
         assert_eq!(deep.components[0].component, "store");
         assert!(!deep.components[0].healthy);
@@ -6277,6 +6346,10 @@ mod tests {
         assert_eq!(deep.components[1].component, "write_queue");
         assert!(deep.components[1].healthy);
         assert!(deep.components[1].error.is_none());
+        // Third component: pool (not applicable for non-PG stores)
+        assert_eq!(deep.components[2].component, "pool");
+        assert!(deep.components[2].healthy);
+        assert!(deep.components[2].error.is_none());
     }
 
     #[tokio::test]
@@ -6300,10 +6373,10 @@ mod tests {
             .unwrap();
         let deep: DeepHealthResponse = serde_json::from_slice(&body).unwrap();
 
-        // Verify both components are present
+        // Verify all components are present
         assert_eq!(deep.status, "ok");
         assert!(deep.healthy);
-        assert_eq!(deep.components.len(), 2);
+        assert_eq!(deep.components.len(), 3);
 
         // First component: store
         assert_eq!(deep.components[0].component, "store");
@@ -6317,6 +6390,11 @@ mod tests {
         // Status text should include depth and threshold
         assert!(deep.components[1].status.contains("depth="));
         assert!(deep.components[1].status.contains("threshold="));
+
+        // Third component: pool (not applicable for non-PG stores)
+        assert_eq!(deep.components[2].component, "pool");
+        assert!(deep.components[2].healthy);
+        assert!(deep.components[2].error.is_none());
     }
 
     /// A test-only StoreFacade that wraps a real store but allows controlling queue depth.
@@ -6411,7 +6489,7 @@ mod tests {
 
         assert_eq!(deep.status, "degraded");
         assert!(!deep.healthy);
-        assert_eq!(deep.components.len(), 2);
+        assert_eq!(deep.components.len(), 3);
 
         // First component: store (healthy)
         assert_eq!(deep.components[0].component, "store");
@@ -6428,6 +6506,248 @@ mod tests {
                 .unwrap()
                 .contains("exceeds threshold")
         );
+
+        // Third component: pool (not applicable for non-PG stores)
+        assert_eq!(deep.components[2].component, "pool");
+        assert!(deep.components[2].healthy);
+        assert!(deep.components[2].error.is_none());
+    }
+
+    /// A test-only StoreFacade that wraps a real store and reports a fixed pool_status.
+    struct MockPgPoolStoreFacade {
+        inner: Arc<dyn StoreFacade>,
+        pool_status: Option<ferrum_store::PoolStatus>,
+    }
+
+    impl MockPgPoolStoreFacade {
+        fn new(inner: Arc<dyn StoreFacade>, pool_status: Option<ferrum_store::PoolStatus>) -> Self {
+            Self { inner, pool_status }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl StoreFacade for MockPgPoolStoreFacade {
+        fn capabilities(&self) -> Arc<dyn CapabilityRepo> {
+            self.inner.capabilities()
+        }
+        fn executions(&self) -> Arc<dyn ExecutionRepo> {
+            self.inner.executions()
+        }
+        fn rollback_contracts(&self) -> Arc<dyn RollbackRepo> {
+            self.inner.rollback_contracts()
+        }
+        fn approvals(&self) -> Arc<dyn ApprovalRepo> {
+            self.inner.approvals()
+        }
+        fn provenance(&self) -> Arc<dyn ProvenanceRepo> {
+            self.inner.provenance()
+        }
+        fn ledger(&self) -> Arc<dyn LedgerRepo> {
+            self.inner.ledger()
+        }
+        fn intents(&self) -> Arc<dyn IntentRepo> {
+            self.inner.intents()
+        }
+        fn proposals(&self) -> Arc<dyn ProposalRepo> {
+            self.inner.proposals()
+        }
+        fn policy_bundles(&self) -> Arc<dyn PolicyBundleRepo> {
+            self.inner.policy_bundles()
+        }
+        fn write_queue_depth(&self) -> usize {
+            self.inner.write_queue_depth()
+        }
+        async fn health_check(&self) -> Result<(), StoreError> {
+            self.inner.health_check().await
+        }
+        fn pool_status(&self) -> Option<ferrum_store::PoolStatus> {
+            self.pool_status
+        }
+    }
+
+    async fn test_runtime_with_pool_status(
+        pool_status: Option<ferrum_store::PoolStatus>,
+    ) -> GatewayRuntime {
+        let pdp = Arc::new(StaticPdpEngine);
+        let cap = Arc::new(InMemoryCapabilityService::default());
+
+        let mut registry = AdapterRegistry::default();
+        registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
+        let rollback = Arc::new(RollbackService::new(Arc::new(registry)));
+
+        let store = Arc::new(SqliteStore::connect("sqlite::memory:").await.unwrap());
+        store.apply_embedded_migrations().await.unwrap();
+
+        let mock_store =
+            Arc::new(MockPgPoolStoreFacade::new(store, pool_status)) as Arc<dyn StoreFacade>;
+
+        GatewayRuntime::new(pdp, cap, rollback, mock_store, vec![])
+    }
+
+    #[tokio::test]
+    async fn test_metrics_includes_pg_pool_status_when_present() {
+        let runtime = test_runtime_with_pool_status(Some(ferrum_store::PoolStatus {
+            total_connections: 7,
+            idle_connections: 3,
+            max_connections: 20,
+            acquire_timeouts: 0,
+        }))
+        .await;
+
+        let response = build_router(runtime)
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+
+        assert!(body_str.contains("# HELP ferrumgate_store_pg_pool_size"));
+        assert!(body_str.contains("# TYPE ferrumgate_store_pg_pool_size gauge"));
+        assert!(body_str.contains("ferrumgate_store_pg_pool_size 7"));
+        assert!(body_str.contains("ferrumgate_store_pg_pool_idle 3"));
+        assert!(body_str.contains("ferrumgate_store_pg_pool_max 20"));
+    }
+
+    #[tokio::test]
+    async fn test_metrics_omits_pg_pool_status_when_absent() {
+        let runtime = test_runtime_with_pool_status(None).await;
+
+        let response = build_router(runtime)
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+
+        assert!(!body_str.contains("ferrumgate_store_pg_pool_size"));
+        assert!(!body_str.contains("ferrumgate_store_pg_pool_idle"));
+        assert!(!body_str.contains("ferrumgate_store_pg_pool_max"));
+    }
+
+    #[tokio::test]
+    async fn test_metrics_includes_pg_acquire_timeouts_when_present() {
+        let runtime = test_runtime_with_pool_status(Some(ferrum_store::PoolStatus {
+            total_connections: 5,
+            idle_connections: 1,
+            max_connections: 10,
+            acquire_timeouts: 3,
+        }))
+        .await;
+
+        let response = build_router(runtime)
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+
+        assert!(body_str.contains("# HELP ferrumgate_store_pg_acquire_timeouts_total"));
+        assert!(body_str.contains("# TYPE ferrumgate_store_pg_acquire_timeouts_total counter"));
+        assert!(body_str.contains("ferrumgate_store_pg_acquire_timeouts_total 3"));
+    }
+
+    #[tokio::test]
+    async fn test_readyz_deep_returns_503_when_pool_saturated() {
+        let runtime = test_runtime_with_pool_status(Some(ferrum_store::PoolStatus {
+            total_connections: 10,
+            idle_connections: 0,
+            max_connections: 10,
+            acquire_timeouts: 0,
+        }))
+        .await;
+
+        let response = build_router(runtime)
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/readyz/deep")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["status"], "degraded");
+        assert_eq!(json["healthy"], false);
+        let components = json["components"].as_array().unwrap();
+        let pool_component = components
+            .iter()
+            .find(|c| c["component"] == "pool")
+            .unwrap();
+        assert_eq!(pool_component["healthy"], false);
+        assert!(
+            pool_component["status"]
+                .as_str()
+                .unwrap()
+                .contains("saturated")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_readyz_deep_returns_200_when_pool_not_saturated() {
+        let runtime = test_runtime_with_pool_status(Some(ferrum_store::PoolStatus {
+            total_connections: 8,
+            idle_connections: 2,
+            max_connections: 10,
+            acquire_timeouts: 0,
+        }))
+        .await;
+
+        let response = build_router(runtime)
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/readyz/deep")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["status"], "ok");
+        assert_eq!(json["healthy"], true);
+        let components = json["components"].as_array().unwrap();
+        let pool_component = components
+            .iter()
+            .find(|c| c["component"] == "pool")
+            .unwrap();
+        assert_eq!(pool_component["healthy"], true);
+        assert!(pool_component["status"].as_str().unwrap().contains("ok"));
     }
 
     #[test]
