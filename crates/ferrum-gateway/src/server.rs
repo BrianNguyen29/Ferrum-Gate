@@ -690,6 +690,11 @@ pub async fn run_http_server(config: ServerConfig, runtime: GatewayRuntime) -> a
 }
 
 /// Build a router without auth middleware for tests/backward compatibility.
+///
+/// ⚠️ TEST-ONLY: This router skips authentication. Production must always use
+/// `build_router_with_auth` with `AuthMode::Bearer` and a strong bearer token.
+/// Using `build_router` in production bypasses the auth layer and exposes all
+/// governance endpoints without credential checks.
 pub fn build_router(runtime: GatewayRuntime) -> Router {
     let state = Arc::new(AppState {
         runtime,
@@ -1819,6 +1824,10 @@ async fn evaluate_proposal(
     };
 
     // Check active policy bundles before falling back to PDP.
+    // Design: static PDP is the baseline evaluator. Active policy bundles add supplemental
+    // constraints on top of PDP. Zero active bundles is an intentional fallback for dev
+    // and conditional pilot scenarios. Production operators may later choose a required-bundle
+    // policy that rejects when no bundle matches, but the current default is permissive.
     // Use firewall-derived trust context for bundle evaluation to properly assess taint and other trust attributes.
     let out = if let Some(bundle_response) =
         evaluate_active_policy_bundles(&state.runtime.store, &intent, &proposal, &trust).await
@@ -3260,10 +3269,12 @@ async fn verify_execution(
         );
     }
 
-    // D1.6 auto_commit fix: Only set execution to Committed (and emit SideEffectCommitted)
+    // D1.6 / R3 enforcement: Only set execution to Committed (and emit SideEffectCommitted)
     // when verified=true AND contract.auto_commit=true. When auto_commit=false, the execution
     // remains in Running/AwaitingVerification state to await explicit commit.
     // This preserves the verified result in contract state while respecting rollback semantics.
+    // R3 (irreversible-high-consequence) always sets auto_commit=false at prepare time;
+    // verify honors that by suppressing automatic commit. Explicit commit is required for R3.
     let mut updated_execution = execution;
     if verified {
         if updated_contract.auto_commit {

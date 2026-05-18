@@ -18,6 +18,7 @@ make audit   # local security audit gate (cargo-deny / cargo-audit)
 - Layout/contract validation: `bash scripts/validate_repo_layout.sh && python3 scripts/check_contract_consistency.py`
 - CI runs: layout validation, contract consistency, fmt check, cargo check, clippy, and cargo test (no `|| true` — failures are not swallowed)
 - Pre-target gate (local only): `bash scripts/run_pre_target_gate.sh` — validates config examples, restore drill, evidence skeleton generator, docs present, bearer-auth smoke
+- Manual gates (workflow_dispatch only): `.github/workflows/manual-gates.yml` — audit, pretarget, wal-drill, mcp-smoke. Triggered manually; may incur GitHub Actions minutes when run. No automatic push/PR triggers.
 
 ## Current Verification Status (2026-05-17)
 - Layout/contract validation: PASSES locally

@@ -1079,7 +1079,7 @@ echo "Decision log: ${DECISION_LOG}"
 - **No G2 complete claim**: G2 gates remain pending until operator signs doc 59
 - **No production-ready claim**: FerrumGate v1 remains RC-ready/conditional
 - **No PostgreSQL**: PostgreSQL is blocked until Phase 3 decision gates are satisfied
-- **No operator signature pre-populated**: All signature fields remain blank for operator
+- **Operator signatures filled for conditional pilot only**: BrianNguyen signed G2.1–G2.8 and doc 54 on 09/05/2026 for conditional single-node SQLite pilot scope. Signature fields are NOT blank for that scoped acceptance. Full production-ready signoff remains pending.
 
 ---
 

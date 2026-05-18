@@ -228,6 +228,9 @@ impl RollbackService {
             requested_rollback_class,
             ferrum_proto::RollbackClass::R3IrreversibleHighConsequence
         );
+        // R3 enforcement: irreversible-high-consequence actions must NEVER auto-commit.
+        // auto_commit=false ensures verify will not silently commit; an explicit
+        // commit flow is required. This is a hard invariant — do not override.
         RollbackPrepareRequest {
             intent_id,
             proposal_id,
@@ -526,11 +529,12 @@ mod tests {
         let mut request = make_request_with_empty_plan();
         request.rollback_class = ferrum_proto::RollbackClass::R3IrreversibleHighConsequence;
         request.compensation_plan = Vec::new(); // empty, R3 doesn't use compensation
-        request.auto_commit = false; // R3 should not auto-commit
+        request.auto_commit = false; // R3 must not auto-commit (enforced at prepare)
 
         let response = service.prepare(request).await.unwrap();
         // R3 should succeed even with empty compensation plan (Invariant 9 applies to R2 only)
         assert!(response.contract.compensation_plan.is_empty());
-        assert!(!response.contract.auto_commit); // R3 should preserve auto_commit=false
+        // R3 prepare sets auto_commit=false; verify must honor it and suppress SideEffectCommitted.
+        assert!(!response.contract.auto_commit);
     }
 }

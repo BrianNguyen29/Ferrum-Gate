@@ -204,7 +204,7 @@ cat /tmp/d*_drill_output.txt \
 - **No pilot authorized**: Pilot not authorized until doc 54 signed
 - **No production-ready**: FerrumGate v1 remains RC-ready/conditional
 - **No PostgreSQL**: PostgreSQL/multi-node/HA not in Phase 1 scope
-- **No operator signature pre-populated**: All signature fields remain blank
+- **Operator signatures filled for conditional pilot only**: BrianNguyen signed G2.1–G2.8 and doc 54 on 09/05/2026 for conditional single-node SQLite pilot scope. Signature fields are NOT blank for that scoped acceptance. Full production-ready signoff remains pending.
 - **Phase 3 blocked**: Until G2/operator evidence complete
 
 ---

@@ -162,7 +162,7 @@ Phase B is complete when:
 - **No pilot authorized**: Pilot is not authorized until doc 54 is signed
 - **No production-ready**: FerrumGate v1 remains RC-ready/conditional
 - **No PostgreSQL**: PostgreSQL/multi-node/HA not in scope for Phase 1
-- **No operator signature pre-populated**: All signature fields remain blank
+- **Operator signatures filled for conditional pilot only**: BrianNguyen signed G2.1–G2.8 and doc 54 on 09/05/2026 for conditional single-node SQLite pilot scope. Signature fields are NOT blank for that scoped acceptance. Full production-ready signoff remains pending.
 
 ---
 

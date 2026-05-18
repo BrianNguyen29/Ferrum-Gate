@@ -194,6 +194,31 @@ export FERRUM_GATEWAY_BEARER_TOKEN=""
 PASSED=0
 FAILED=0
 
+# Required tools that must be present in the registry.
+# Primary check: every named tool must be present.
+# Secondary check: total count >= 19 as a sanity bound.
+REQUIRED_TOOLS=(
+    "ferrum_gate_health"
+    "ferrum_gate_list_intents"
+    "ferrum_gate_get_execution"
+    "ferrum_gate_get_proposal"
+    "ferrum_gate_get_capability"
+    "ferrum_gate_get_approval"
+    "ferrum_gate_list_approvals"
+    "ferrum_gate_query_provenance"
+    "ferrum_gate_get_lineage"
+    "ferrum_gate_submit_intent"
+    "ferrum_gate_evaluate_intent"
+    "ferrum_gate_mint_capability"
+    "ferrum_gate_authorize_execution"
+    "ferrum_gate_prepare_execution"
+    "ferrum_gate_execute_prepared"
+    "ferrum_gate_verify"
+    "ferrum_gate_compensate"
+    "ferrum_gate_approve_intent"
+    "ferrum_gate_reject_intent"
+)
+
 echo ""
 echo "========================================"
 echo "MCP LIFECYCLE SMOKE TESTS (D1.7 + D1.11)"
@@ -234,13 +259,26 @@ fi
 echo ""
 echo "[TEST] MCP tools/list..."
 RESPONSE=$(mcp_call "tools/list" "" 2)
-# Check that we get back a list of tools (should be 19 tools: 9 read-only + 8 lifecycle + 2 approval)
+# Robust check: every REQUIRED_TOOLS name must be present.
+# Count >= 19 is a secondary sanity bound, not the primary gate.
+MISSING_TOOLS=0
+for tool in "${REQUIRED_TOOLS[@]}"; do
+    if ! echo "$RESPONSE" | grep -q "$tool"; then
+        echo "       [FAIL] Missing required tool: $tool"
+        MISSING_TOOLS=$((MISSING_TOOLS + 1))
+    fi
+done
 TOOL_COUNT=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('result',{}).get('tools',[])))" 2>/dev/null || echo "0")
-if [[ "$TOOL_COUNT" -ge 19 ]]; then
-    echo "[PASS] MCP tools/list returns $TOOL_COUNT tools (>= 19 expected: 9 read-only + 8 lifecycle + 2 approval)"
+if [[ "$MISSING_TOOLS" -eq 0 ]] && [[ "$TOOL_COUNT" -ge 19 ]]; then
+    echo "[PASS] MCP tools/list: all $TOOL_COUNT required tools present (>= 19)"
     PASSED=$((PASSED + 1))
 else
-    echo "[FAIL] MCP tools/list returned $TOOL_COUNT tools, expected at least 19"
+    if [[ "$MISSING_TOOLS" -gt 0 ]]; then
+        echo "[FAIL] MCP tools/list: $MISSING_TOOLS required tool(s) missing"
+    fi
+    if [[ "$TOOL_COUNT" -lt 19 ]]; then
+        echo "[FAIL] MCP tools/list returned $TOOL_COUNT tools, expected at least 19"
+    fi
     echo "       Response: $RESPONSE"
     FAILED=$((FAILED + 1))
 fi
