@@ -24,11 +24,32 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FERRUMCTL = os.environ.get("FERRUMCTL", "ferrumctl")
 
 
+def _redact_cmd(cmd_list):
+    """Redact sensitive tokens from a command list for safe printing."""
+    redacted = []
+    skip_next = False
+    for i, token in enumerate(cmd_list):
+        if skip_next:
+            redacted.append("<REDACTED>")
+            skip_next = False
+            continue
+        if token == "--bearer-token":
+            redacted.append(token)
+            skip_next = True
+            continue
+        # Redact Authorization: Bearer ... headers inline
+        if token.startswith("Authorization: Bearer "):
+            redacted.append("Authorization: Bearer <REDACTED>")
+            continue
+        redacted.append(token)
+    return redacted
+
+
 def run_command(cmd, description, timeout=30, capture_json=False):
     """Run a command and return (success, output)."""
     print(f"\n{'=' * 60}")
     print(f"Probe: {description}")
-    print(f"Command: {' '.join(cmd)}")
+    print(f"Command: {' '.join(_redact_cmd(cmd))}")
     print(f"{'=' * 60}")
     try:
         result = subprocess.run(

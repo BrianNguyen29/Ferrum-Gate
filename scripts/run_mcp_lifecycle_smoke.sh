@@ -9,6 +9,22 @@
 
 set -euo pipefail
 
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+    cat <<'EOF'
+Usage: bash scripts/run_mcp_lifecycle_smoke.sh [options]
+
+Local MCP lifecycle smoke/evidence path for D1.7 + D1.11 tool-dispatch.
+Validates MCP stdio transport, lifecycle tool wiring, blocked tool behavior.
+
+Options:
+  -h, --help    Show this help message and exit
+
+This script does NOT require a target host, SSH, domain, or TLS.
+It does NOT claim G2, production-ready, or D1.8 (output sanitization).
+EOF
+    exit 0
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
