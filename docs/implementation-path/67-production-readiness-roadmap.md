@@ -356,6 +356,7 @@ bash scripts/gcp/phase3g_configure_real_domain.sh --confirm \
 | This doc | [`122-completion-roadmap-and-hardening-tracker.md`](./122-completion-roadmap-and-hardening-tracker.md) | 10-item completion tracker and hardening tasks for May 13–16 follow-up |
 | This doc | [`artifacts/2026-05-18-path-a-conditional-pilot-closure-acknowledgment.md`](./artifacts/2026-05-18-path-a-conditional-pilot-closure-acknowledgment.md) | Path A conditional pilot closure acknowledgment (2026-05-18) |
 | This doc | [`artifacts/2026-05-18-local-confidence-polish-evidence.md`](./artifacts/2026-05-18-local-confidence-polish-evidence.md) | D1–D6 API live local, G3.6 bounded local execute, MCP lifecycle smoke, WAL drill, pre-target gate (2026-05-18) |
+| This doc | [`125-manual-gates-runbook.md`](./125-manual-gates-runbook.md) | Manual-only on-demand CI gates (audit, pretarget, wal-drill, mcp-smoke); opt-in, cost-conscious, does not change production-ready/full-G2/Block-A status |
 
 ---
 

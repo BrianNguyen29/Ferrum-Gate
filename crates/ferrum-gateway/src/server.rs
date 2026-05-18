@@ -738,9 +738,7 @@ pub fn build_router_with_auth(runtime: GatewayRuntime, server_config: ServerConf
 ///
 /// Uses SmartIpKeyExtractor which supports x-real-ip header for client IP identification,
 /// allowing tests to set the IP via header without needing MockConnectInfo.
-///
-/// Monitoring endpoints (`/v1/metrics`, `/v1/readyz`, `/v1/readyz/deep`) are exempt
-/// from rate limiting to match production behavior.
+#[cfg(any(test, feature = "test-utils"))]
 pub fn build_router_with_governor(
     runtime: GatewayRuntime,
     per_second: u64,

@@ -47,8 +47,10 @@ Single-node v1 scope unless noted.
 
 ### Infrastructure
 - `.github/workflows/ci.yml` — cargo check, repo layout validation, contract consistency check
+- `.github/workflows/manual-gates.yml` — manual-only on-demand gates (audit, pretarget, wal-drill, mcp-smoke); `workflow_dispatch` only; does not change production-ready/full-G2/Block-A status. See [`125-manual-gates-runbook.md`](./125-manual-gates-runbook.md) for usage and cost warning.
 - `scripts/check_contract_consistency.py` — validates contracts against schemas
 - `scripts/validate_repo_layout.sh` — validates directory structure
+- `scripts/validate_mcp_required_tools.sh` — static regression check for MCP required tool names (no live services needed)
 
 ## What is missing
 

@@ -28,9 +28,10 @@ docs:
 	@echo "Docs live in ./docs"
 
 validate:
-	@echo "Running local validation (layout + contract consistency)..."
+	@echo "Running local validation (layout + contract consistency + MCP required-tools)..."
 	@bash scripts/validate_repo_layout.sh
 	@python3 scripts/check_contract_consistency.py
+	@bash scripts/validate_mcp_required_tools.sh
 
 tree:
 	find . -maxdepth 4 | sort
