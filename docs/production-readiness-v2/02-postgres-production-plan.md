@@ -133,11 +133,20 @@ PostgreSQL local/runtime foundation is strong:
 
 ### Phase PG-3 — Backup/restore evidence
 
-- [ ] Implement scheduled `pg_dump` or WAL backup.
-- [ ] Implement retention pruning.
-- [ ] Execute restore drill to clean DB.
-- [ ] Verify row counts and content hashes.
-- [ ] Create evidence artifact.
+#### PG-3 local backup/restore drill — COMPLETE (local Docker only)
+
+- [x] Execute restore drill to clean DB — ✅ COMPLETE on 2026-05-18 (local Docker).
+- [x] Verify row counts and content hashes — ✅ COMPLETE on 2026-05-18 (all counts matched; empty baseline).
+- [x] Create evidence artifact — ✅ COMPLETE: `docs/implementation-path/artifacts/2026-05-18-pg-restore-drill-evidence.md`.
+- [x] Verify `/v1/readyz/deep` against restored DB — ✅ COMPLETE (HTTP 200, healthy true).
+
+#### PG-3 scheduled backup/retention — NOT STARTED / DEFERRED
+
+- [ ] Implement scheduled `pg_dump` or WAL backup — ☐ NOT STARTED.
+- [ ] Implement retention pruning — ☐ NOT STARTED.
+- [ ] Offsite or production backup target validation — ☐ NOT STARTED.
+
+> **Non-claim**: PG-3 local drill evidence is complete, but scheduled backup, retention pruning, and production backup targets remain NOT STARTED. Do not cite this artifact as evidence of production backup automation.
 
 ### Phase PG-4 — Schema migration discipline
 

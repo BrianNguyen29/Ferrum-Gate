@@ -117,11 +117,13 @@ PostgreSQL is recommended/planned for production deployments requiring materiall
 | `/v1/metrics` | Prometheus-compatible metrics | Yes | Yes | Yes |
 
 ### `/v1/readyz/deep` Components
-The deep readiness probe returns two components:
+The deep readiness probe returns three components:
 1. **store**: Database connectivity and health
 2. **write_queue**: SQLite write queue backpressure (healthy when depth ≤ 100, unhealthy when depth > 100)
+3. **pool**: Connection pool status. PostgreSQL stores report pool saturation and return `degraded` when `idle_connections == 0 && total_connections >= max_connections` for `max > 0`; non-pool stores report `not applicable` and remain healthy.
 
-The `write_queue` component provides bounded backpressure detection only; it does not indicate full dependency health, ledger scan status, adapter health, rollback health, connection pool saturation, or schema integrity.
+The `write_queue` component provides bounded backpressure detection only; it does not indicate full dependency health, ledger scan status, adapter health, rollback health, or schema integrity.
+The `pool` component is emitted for all stores; SQLite/non-pool stores report `not applicable`.
 
 **Load balancer / Kubernetes guidance**:
 - Use **`/v1/readyz/deep`** for load balancer health checks and Kubernetes readiness probes.
@@ -137,8 +139,11 @@ The `write_queue` component provides bounded backpressure detection only; it doe
 **Metrics** (`/v1/metrics`) include **bounded latency histograms** (`ferrumgate_request_duration_seconds`)
 for public endpoints (`/v1/healthz`, `/v1/readyz`, `/v1/readyz/deep`, `/v1/metrics`) with labels
 `route`, `method`, `status`, `le` (bucket boundary), emitting `_bucket`, `_sum`, `_count` lines.
-Governance route latency histograms, WAL/page gauges, and connection-pool saturation metrics remain
-future/deferred work. See [`67-production-readiness-roadmap.md`](./docs/implementation-path/67-production-readiness-roadmap.md) P1.4.
+For PostgreSQL stores, pool metrics (`ferrumgate_store_pg_pool_size`, `ferrumgate_store_pg_pool_idle`,
+`ferrumgate_store_pg_pool_max`) and acquire-timeout counters (`ferrumgate_store_pg_acquire_timeouts_total`)
+are also emitted. SQLite stores omit these metrics.
+Governance route latency histograms and WAL/page gauges remain future/deferred work.
+See [`67-production-readiness-roadmap.md`](./docs/implementation-path/67-production-readiness-roadmap.md) P1.4.
 
 ## Logging
 
