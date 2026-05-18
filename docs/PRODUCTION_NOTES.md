@@ -93,6 +93,15 @@ Three-phase approach to resolve write bottleneck:
 
 PostgreSQL is recommended/planned for production deployments requiring materially higher sustained write throughput, cross-process or multi-node deployment, or stronger transactional flexibility (not currently implemented in `ferrum-store`).
 
+### PostgreSQL Target/Staging Baseline (PG-1) — Local Docker Evidence
+
+- **Status**: ✅ COMPLETE for local Docker staging fallback on 2026-05-18.
+- **Scope**: Local Docker PostgreSQL (`postgres_p2`) baseline only. ferrumd started with a sanitized local PostgreSQL DSN, `/v1/readyz/deep` returned healthy, `ferrum-migrate` dry-run/apply succeeded, row counts matched, and content hash validation passed.
+- **Evidence**: `docs/implementation-path/artifacts/2026-05-18-pg-target-deployment-evidence.md`.
+- **Template retained**: `docs/implementation-path/artifacts/TEMPLATE-pg-target-deployment-evidence.md`.
+- **Tracking**: See [`docs/production-readiness-v2/02-postgres-production-plan.md`](./production-readiness-v2/02-postgres-production-plan.md) Phase PG-1 and [`docs/production-readiness-v2/10-evidence-checklist.md`](./production-readiness-v2/10-evidence-checklist.md) Phase 1.
+- **Non-claim**: This local Docker PG-1 pass does **not** imply PostgreSQL is production-ready, HA is available, production data volume is validated, or Block A is closed. It is a staging fallback baseline only.
+
 ## Authentication
 - **Bearer token mode**: Set `auth_mode = "Bearer"` and `bearer_token` in config
 - Tokens are validated with constant-time comparison (timing-attack resistant)

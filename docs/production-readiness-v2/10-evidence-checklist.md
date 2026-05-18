@@ -63,14 +63,22 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 
 ## Phase 1 — PostgreSQL production foundation
 
+> **PG-1 scope**: PostgreSQL target/staging baseline only. Local Docker fallback evidence passed on 2026-05-18. No production-ready claim. Block A remains WAIVED/CONDITIONAL.
+
 | # | Item | Owner | Evidence | Status |
-|---|------|-------|----------|--------|
-| 1.1 | PG-1: ferrumd starts with postgres DSN | Engineering | `pg-target-evidence.md` §PG-1 | ☐ |
-| 1.2 | PG-2: `/v1/readyz/deep` reports PG health | Engineering | `pg-target-evidence.md` §PG-2 | ☐ |
-| 1.3 | PG-3: Migration succeeds with hash/count validation | Engineering | `pg-migration-evidence.md` | ☐ |
-| 1.4 | PG-4: Backup/restore drill passes | Engineering | `pg-restore-drill-evidence.md` | ☐ |
-| 1.5 | PG-5: PG metrics visible in `/v1/metrics` | Engineering | Metrics scrape diff | ☐ |
-| 1.6 | PG-6: PG target evidence artifact created | Engineering | `pg-target-evidence.md` | ☐ |
+|---|---|------|-------|----------|--------|
+| 1.1 | PG-1.1: PostgreSQL target/staging provisioned | Engineering | `docs/implementation-path/artifacts/2026-05-18-pg-target-deployment-evidence.md` §PG-1.1 | ✅ COMPLETE — local Docker fallback |
+| 1.2 | PG-1.2: ferrumd starts with postgres DSN | Engineering | `docs/implementation-path/artifacts/2026-05-18-pg-target-deployment-evidence.md` §PG-1.2 | ✅ COMPLETE — local Docker fallback |
+| 1.3 | PG-1.3: `/v1/readyz/deep` reports PG health (200) | Engineering | `docs/implementation-path/artifacts/2026-05-18-pg-target-deployment-evidence.md` §PG-1.3 | ✅ COMPLETE — local Docker fallback |
+| 1.4 | PG-1.4: `ferrum-migrate` completes | Engineering | `docs/implementation-path/artifacts/2026-05-18-pg-target-deployment-evidence.md` §PG-1.4 | ✅ COMPLETE — local Docker fallback |
+| 1.5 | PG-1.5: Row counts match post-migration | Engineering | `docs/implementation-path/artifacts/2026-05-18-pg-target-deployment-evidence.md` §PG-1.5 | ✅ COMPLETE — local Docker fallback |
+| 1.6 | PG-1.6: Content hash validation passes | Engineering | `docs/implementation-path/artifacts/2026-05-18-pg-target-deployment-evidence.md` §PG-1.6 | ✅ COMPLETE — local Docker fallback |
+| 1.7 | PG-1.7: Evidence artifact created from template | Engineering | `docs/implementation-path/artifacts/2026-05-18-pg-target-deployment-evidence.md` | ✅ COMPLETE — local Docker fallback |
+| 1.8 | PG-1.8: Docs/evidence checklist updated | Engineering | This doc + `PRODUCTION_NOTES.md` | ✅ COMPLETE — local Docker fallback |
+| 1.9 | PG-2: Connection hardening (`statement_timeout`, reconnect, circuit breaker) | Engineering | `pg-target-evidence.md` §PG-2 | ☐ NOT STARTED |
+| 1.10 | PG-3: Backup/restore drill passes | Engineering | `pg-restore-drill-evidence.md` | ☐ NOT STARTED |
+| 1.11 | PG-4: Schema migration discipline (idempotent, version table, CI drift check) | Engineering | `pg-migration-evidence.md` | ☐ NOT STARTED |
+| 1.12 | PG-5: PG metrics visible in `/v1/metrics` | Engineering | Metrics scrape diff | ☐ NOT STARTED |
 
 ## Phase 2 — SLO/SLA and workload evidence
 

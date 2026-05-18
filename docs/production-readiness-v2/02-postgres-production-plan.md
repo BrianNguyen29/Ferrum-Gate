@@ -51,16 +51,50 @@ PostgreSQL local/runtime foundation is strong:
 
 ## Implementation tasks
 
-### Phase PG-1 — Production PG baseline
+### Phase PG-1 — PostgreSQL Target/Staging Baseline
 
-- [ ] Deploy ferrumd with `postgres://...` on target/staging environment.
-- [ ] Verify `/v1/readyz/deep` returns 200.
-- [ ] Migrate SQLite snapshot to PG staging.
-- [ ] Run full tests or targeted integration on PG.
-- [ ] Create PG target env doc.
-- [ ] Create PG deployment runbook.
-- [ ] Create PG migration evidence artifact.
-- [ ] Create PG readyz evidence artifact.
+**Objective**: Provision a PostgreSQL-backed target/staging environment, confirm ferrumd starts and reports healthy, migrate a SQLite snapshot, validate data integrity, and capture evidence without claiming production readiness.
+
+**Prerequisites**:
+- [x] PostgreSQL instance accessible from target/staging host (local Docker Compose fallback used on 2026-05-18).
+- [x] Sanitized `FERRUMD_STORE_DSN` prepared (no secrets committed).
+- [x] SQLite snapshot file available for `ferrum-migrate` source.
+- [x] `ferrumd` binary built with `postgres` feature.
+
+**Execution todo-list**:
+
+| # | Task | Owner | Evidence | Status |
+|---|------|-------|----------|--------|
+| PG-1.1 | Provision PostgreSQL target/staging instance and create application database/user. | Engineering | `docs/implementation-path/artifacts/2026-05-18-pg-target-deployment-evidence.md` §PG-1.1 | ✅ COMPLETE — local Docker fallback |
+| PG-1.2 | Start ferrumd with `FERRUMD_STORE_DSN=postgres://...` and confirm process stays up. | Engineering | `docs/implementation-path/artifacts/2026-05-18-pg-target-deployment-evidence.md` §PG-1.2 | ✅ COMPLETE — local Docker fallback |
+| PG-1.3 | Verify `/v1/readyz/deep` returns HTTP 200 with `store: healthy`. | Engineering | `docs/implementation-path/artifacts/2026-05-18-pg-target-deployment-evidence.md` §PG-1.3 | ✅ COMPLETE — local Docker fallback |
+| PG-1.4 | Run `ferrum-migrate` from SQLite snapshot to PostgreSQL target. | Engineering | `docs/implementation-path/artifacts/2026-05-18-pg-target-deployment-evidence.md` §PG-1.4 | ✅ COMPLETE — local Docker fallback |
+| PG-1.5 | Validate row counts match between SQLite source and PostgreSQL target. | Engineering | `docs/implementation-path/artifacts/2026-05-18-pg-target-deployment-evidence.md` §PG-1.5 | ✅ COMPLETE — local Docker fallback |
+| PG-1.6 | Validate content hash (e.g., `SHA-256` of ordered key columns or `pg_dump --data-only` hash) matches. | Engineering | `docs/implementation-path/artifacts/2026-05-18-pg-target-deployment-evidence.md` §PG-1.6 | ✅ COMPLETE — local Docker fallback |
+| PG-1.7 | Create evidence artifact from template (`docs/implementation-path/artifacts/TEMPLATE-pg-target-deployment-evidence.md`). | Engineering | `docs/implementation-path/artifacts/2026-05-18-pg-target-deployment-evidence.md` | ✅ COMPLETE — local Docker fallback |
+| PG-1.8 | Update tracking docs (`10-evidence-checklist.md`, `PRODUCTION_NOTES.md`) with PG-1 status. | Engineering | This doc + `10-evidence-checklist.md` + `PRODUCTION_NOTES.md` | ✅ COMPLETE — local Docker fallback |
+
+**Acceptance gates**:
+
+| Gate | Criteria | Verification Method |
+|------|----------|---------------------|
+| PG-1.1 | PostgreSQL target/staging provisioned and reachable from ferrumd host. | `psql "${FERRUMD_STORE_DSN}" -c "SELECT 1"` returns 1 row. |
+| PG-1.2 | ferrumd starts with postgres DSN and does not panic or exit within 60s. | Process log shows `Server running` and no `store error` at startup. |
+| PG-1.3 | `/v1/readyz/deep` returns HTTP 200 with `store: healthy`. | `curl -sf http://<bind>/v1/readyz/deep` exit 0 and JSON contains `"store": "healthy"`. |
+| PG-1.4 | `ferrum-migrate` completes with exit code 0 and reports migrated tables. | Command stdout contains `Migration complete` or equivalent. |
+| PG-1.5 | Row counts match per table between SQLite source and PostgreSQL target. | `SELECT COUNT(*)` diff shows zero differences for all tables. |
+| PG-1.6 | Content hash validation passes (deterministic hash over ordered data). | Hash strings are identical for source and target. |
+| PG-1.7 | Evidence artifact created from template, dated, and stored in `docs/implementation-path/artifacts/`. | File exists and follows template format. |
+| PG-1.8 | Docs and checklists reference PG-1 as complete (evidence-linked), not as claimed. | `10-evidence-checklist.md` and `PRODUCTION_NOTES.md` updated. |
+
+**Evidence required**:
+- `docs/implementation-path/artifacts/YYYY-MM-DD-pg-target-deployment-evidence.md` (from `TEMPLATE-pg-target-deployment-evidence.md`).
+- `pg-migration-evidence.md` (row counts + hash validation).
+- `pg-readyz-evidence.md` (deep readiness output).
+
+**Current PG-1 evidence**:
+- `docs/implementation-path/artifacts/2026-05-18-pg-target-deployment-evidence.md` — ✅ local Docker staging fallback baseline PASS.
+- Limitation: source SQLite snapshot was empty; target-host PostgreSQL, production data volume, backup/restore, PG hardening, and HA remain pending.
 
 ### Phase PG-2 — Connection hardening
 
