@@ -9,10 +9,10 @@
 
 ## Executive Summary
 
-Following May 13–16 operator execution and evidence collection, plus May 16 engineering updates:
+Following May 13–16 operator execution and evidence collection, plus May 16–18 engineering updates:
 - **Block C (keyless backup)**: CLOSED — C1 path verified, residual key removed, offsite sync confirmed.
 - **Block B (off-VM alerting)**: CLOSED — operator confirmed primary and secondary inbox delivery (G-B1/G-B2); G-B3 verified/closed (bearer token rotation + SendGrid API key rotation, primary+secondary delivery confirmed, old SendGrid key revoked/deleted); G-B4 formally acknowledged on 2026-05-17.
-- **Block A (real domain)**: WAIVED/CONDITIONAL — DuckDNS accepted by operator on 2026-05-17 for single-node SQLite pilot only; real owned domain still required for production-ready or full G2 closure
+- **Block A (real domain)**: WAIVED/CONDITIONAL — DuckDNS accepted by operator on 2026-05-17 for single-node SQLite pilot only; operator acknowledged Path A conditional pilot closure on 2026-05-18 with no real domain available; real owned domain still required for production-ready or full G2 closure. See `artifacts/2026-05-18-path-a-conditional-pilot-closure-acknowledgment.md`
 - **P0 items**: All closed (CI hardened, D1–D6 passed, restore drill passed, backup automation verified, G2 signed, operator signoff obtained).
 - **Engineering items 7–9**: Completed — ferrum-cap fix verified (atomic `update_status_if_active`, gateway durable path wired, 9 tests pass); local/manual security audit gate added (`scripts/run_security_audit.sh` + `make audit`); `cargo-audit v0.22.1` and `cargo-deny v0.19.6` installed; `make audit` passes with both tools (cargo-deny advisories ok, cargo-audit 384 dependencies scanned, PASS; SECURITY AUDIT GATE: PASS).
 - **Production posture**: `production-ready = NO`; PostgreSQL production = `NO`; HA/multi-node = `NO`.
@@ -32,7 +32,7 @@ Following May 13–16 operator execution and evidence collection, plus May 16 en
 | 7 | Oracle review ferrum-cap single-use durability/concurrency | Engineering | ✅ Done | — | Fix verified: atomic `update_status_if_active` for SQLite/Postgres; gateway durable path wired; risk documented as accepted for v1 | Post-v1: durable capability persistence (revocation list survives restart) remains deferred to Phase 3 |
 | 8 | Add ferrum-cap tests | Engineering | ✅ Done | — | 9 tests pass (4 TTL boundaries + 5 mark_used paths: success, already_used, concurrent_single_use, revoked, expired) | — |
 | 9 | Add local/manual cargo-audit or cargo-deny gate | Engineering | ✅ Done | — | `cargo-audit v0.22.1` and `cargo-deny v0.19.6` installed; `scripts/run_security_audit.sh` created; `make audit` target added; checks for `cargo-deny` and `cargo-audit`, runs available tools, fails with install instructions if neither present; **dual-tool PASS** (cargo-deny advisory DB fetched, advisories ok; cargo-audit loaded 1090 advisories, scanned 384 dependencies, 0 actionable issues); `RUSTSEC-2023-0071` ignored because the affected crate path (`rsa` via `sqlx-mysql`) is an uncompiled optional dependency blocked by `default-features = false` on `sqlx` | — |
-| 10 | Run Block A domain/TLS path when real domain exists | Operator | ☐ WAIVED/CONDITIONAL — real domain still required for production-ready or full G2 closure | DuckDNS accepted by operator on 2026-05-17 for single-node SQLite pilot only | `scripts/gcp/phase3g_configure_real_domain.sh` ready; requires `REAL_DOMAIN` + DNS A record → `34.158.51.8` | Operator procures domain, configures DNS A record, then executes Block A runbook (`R4` §A) to move Block A from WAIVED to CLOSED |
+| 10 | Run Block A domain/TLS path when real domain exists | Operator | ☐ WAIVED/CONDITIONAL — real domain still required for production-ready or full G2 closure | DuckDNS accepted by operator on 2026-05-17 for single-node SQLite pilot only; Path A conditional pilot closure acknowledged on 2026-05-18 with no real domain available. See `artifacts/2026-05-18-path-a-conditional-pilot-closure-acknowledgment.md` | `scripts/gcp/phase3g_configure_real_domain.sh` ready; requires `REAL_DOMAIN` + DNS A record → `34.158.51.8` | Operator procures domain, configures DNS A record, then executes Block A runbook (`R4` §A) to move Block A from WAIVED to CLOSED |
 
 ---
 
@@ -125,6 +125,7 @@ Following May 13–16 operator execution and evidence collection, plus May 16 en
 | [`70-security-hardening-local-only-plan.md`](./70-security-hardening-local-only-plan.md) | Token rotation procedure and local audit commands |
 | [`01-current-state.md`](./01-current-state.md) | Current engineering and operator status |
 | [`AGENTS.md`](../../AGENTS.md) | Repo toolchain, invariants, and verification status |
+| [`artifacts/2026-05-18-path-a-conditional-pilot-closure-acknowledgment.md`](./artifacts/2026-05-18-path-a-conditional-pilot-closure-acknowledgment.md) | Path A conditional pilot closure acknowledgment (2026-05-18) |
 
 ---
 

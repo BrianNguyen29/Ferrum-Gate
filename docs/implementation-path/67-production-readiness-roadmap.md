@@ -354,6 +354,7 @@ bash scripts/gcp/phase3g_configure_real_domain.sh --confirm \
 | This doc | [`artifacts/2026-05-15-r4-production-blocker-execution-runbook.md`](./artifacts/2026-05-15-r4-production-blocker-execution-runbook.md) | Exact command sequences and rollback for Blocks A/B/C |
 | This doc | [`artifacts/2026-05-16-c1-keyless-recovery-and-block-b-status.md`](./artifacts/2026-05-16-c1-keyless-recovery-and-block-b-status.md) | C1 keyless backup scope update, zone-capacity recovery, keyless verification, and Block B SendGrid smoke-test state |
 | This doc | [`122-completion-roadmap-and-hardening-tracker.md`](./122-completion-roadmap-and-hardening-tracker.md) | 10-item completion tracker and hardening tasks for May 13–16 follow-up |
+| This doc | [`artifacts/2026-05-18-path-a-conditional-pilot-closure-acknowledgment.md`](./artifacts/2026-05-18-path-a-conditional-pilot-closure-acknowledgment.md) | Path A conditional pilot closure acknowledgment (2026-05-18) |
 
 ---
 
@@ -390,6 +391,7 @@ bash scripts/gcp/phase3g_configure_real_domain.sh --confirm \
 | 2026-05-17 (SendGrid rotation verified) | Operator created a new SendGrid API key via hidden prompt; active AlertManager path `/etc/ferrumgate/secrets/sendgrid-api-key` fixed to `MODE=640 OWNER=root:prometheus`, directory `750 root:prometheus`; synthetic alert `FerrumGateSendGridDirPermFix` delivered to primary and secondary inboxes; old key revoked/deleted; SSH firewall restored to `118.69.4.63/32`. G-B3 marked done; Block B remains PARTIAL pending formal escalation matrix acknowledgment. No production-ready claim preserved. | Engineering |
 | 2026-05-17 (escalation acknowledgment) | Operator formally acknowledged primary/secondary contact paths and timeout targets for FerrumGate v1 conditional single-node SQLite pilot; SMS/webhook deferred. G-B4 marked done and Block B marked CLOSED. Block A remains blocked; no production-ready claim preserved. | Engineering |
 | 2026-05-17 (Block A waiver) | Created DuckDNS conditional pilot waiver artifact (`artifacts/2026-05-17-block-a-duckdns-conditional-pilot-waiver.md`) and recorded operator acknowledgment. Block A moved from BLOCKED to **WAIVED/CONDITIONAL** for single-node SQLite pilot only. Real owned domain still required for production-ready or full G2 closure. Updated `01-current-state.md`, `122-completion-roadmap-and-hardening-tracker.md`, and all 2026-05-17 artifacts to reflect WAIVED/CONDITIONAL status. No production-ready claim preserved. | Engineering |
+| 2026-05-18 (Path A acknowledgment) | Recorded operator Path A selection: acknowledge conditional pilot closure with no real domain available. Created `artifacts/2026-05-18-path-a-conditional-pilot-closure-acknowledgment.md`. Cross-referenced in `01-current-state.md`, `54-operator-signoff-packet.md`, `59-pilot-readiness-evidence-packet.md`, `122-completion-roadmap-and-hardening-tracker.md`. Block A remains **WAIVED/CONDITIONAL**; `production-ready = NO`; `full G2 = NOT COMPLETE`. No production-ready claim preserved. | Engineering |
 
 ---
 

@@ -470,6 +470,7 @@ All G2.1–G2.8 gates above have been signed by BrianNguyen on 09/05/2026. Once 
 | `59-pilot-readiness-evidence-packet.md` | `artifacts/2026-05-17-bridge-l1-l3-live-evidence.md` | Bridge L1–L3 live evidence |
 | `59-pilot-readiness-evidence-packet.md` | `artifacts/2026-05-17-bridge-l4-l5-live-evidence.md` | Bridge L4–L5 live evidence |
 | `59-pilot-readiness-evidence-packet.md` | `artifacts/2026-05-17-block-a-duckdns-conditional-pilot-waiver.md` | Block A DuckDNS conditional pilot waiver |
+| `59-pilot-readiness-evidence-packet.md` | `artifacts/2026-05-18-path-a-conditional-pilot-closure-acknowledgment.md` | Path A conditional pilot closure acknowledgment (2026-05-18) |
 
 ---
 

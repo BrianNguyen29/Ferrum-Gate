@@ -217,6 +217,7 @@ Before the first production pilot deployment, the following must be all confirme
 | `artifacts/2026-05-17-block-a-duckdns-conditional-pilot-waiver.md` | Block A DuckDNS conditional pilot waiver |
 | `artifacts/2026-05-17-sendgrid-rotation-evidence.md` | Block B SendGrid rotation evidence |
 | `artifacts/2026-05-17-escalation-matrix-acknowledgment.md` | Block B escalation matrix acknowledgment |
+| `artifacts/2026-05-18-path-a-conditional-pilot-closure-acknowledgment.md` | Path A conditional pilot closure acknowledgment (2026-05-18) |
 
 ---
 
