@@ -32,7 +32,7 @@ Phase 3 PostgreSQL (Path 3) — both are outside the scope of this roadmap.
 - **No PostgreSQL**: PostgreSQL/multi-node/HA is Path 3 — not in scope for Phase 1.
 - **No target-host evidence**: All target-host execution evidence (D1–D6 drills, restore drill,
   probe evidence) requires operator action on target environment.
-- **Do not sign doc59/doc54 on behalf of operator**: All signature fields remain blank.
+- **doc59/doc54 signed for conditional pilot only**: BrianNguyen signed on 09/05/2026 for conditional single-node SQLite pilot. Not full production signoff. Do not treat as PostgreSQL/HA authorization.
 
 ---
 
@@ -62,7 +62,7 @@ Phase 3 PostgreSQL (Path 3) — both are outside the scope of this roadmap.
 ### P0 Notes
 
 - P0.1 is a repo-side blocker fixed by CI hardening (2026-05-03).
-- P0.2–P0.3 remain **operator-owned** target-host blockers.
+- P0.2–P0.3 **passed** on target host (D1–D6: 2026-05-13; restore drill: 2026-05-15). The remaining production blocker is Block A (real owned domain), which remains WAIVED/CONDITIONAL for single-node SQLite pilot only.
 - P0.4 is **closed** via delegated authority with evidence run id `20260515T1606Z-b3-retention`.
 - P0.5–P0.6 are signed for **conditional single-node SQLite pilot only** (BrianNguyen, 09/05/2026).
   They do **not** constitute full production signoff or PostgreSQL authorization.
@@ -342,7 +342,7 @@ bash scripts/gcp/phase3g_configure_real_domain.sh --confirm \
 | This doc | [`27-production-evaluation-plan.md`](./27-production-evaluation-plan.md) | Production evaluation framework |
 | This doc | [`19-v1-single-node-support-contract.md`](../ferrumgate-roadmap-v1/19-v1-single-node-support-contract.md) | v1 support boundaries and constraints |
 | This doc | [`30-production-roadmap.md`](./30-production-roadmap.md) | Phase 1/2/3 production roadmap |
-| This doc | [`PRODUCTION_NOTES.md`](../../PRODUCTION_NOTES.md) | SQLite configuration and stress test baseline |
+| This doc | [`PRODUCTION_NOTES.md`](../PRODUCTION_NOTES.md) | SQLite configuration and stress test baseline |
 | This doc | [`70-security-hardening-local-only-plan.md`](./70-security-hardening-local-only-plan.md) | Security hardening proposals, local-only audit commands, token rotation procedure |
 | This doc | [`71-mcp-server-feasibility-and-design.md`](./71-mcp-server-feasibility-and-design.md) | MCP server design and todo-list (post-v1 scope; v1.4 MCP Governance Beta; U4 bridge exists, MCP server is next step) |
 | This doc | [`72-mcp-server-phase-a-implementation-plan.md`](./72-mcp-server-phase-a-implementation-plan.md) | Phase A–C implementation plan/tracker: Phases A, B, C complete; D-0 ready to implement; D-1 deferred |
@@ -355,6 +355,7 @@ bash scripts/gcp/phase3g_configure_real_domain.sh --confirm \
 | This doc | [`artifacts/2026-05-16-c1-keyless-recovery-and-block-b-status.md`](./artifacts/2026-05-16-c1-keyless-recovery-and-block-b-status.md) | C1 keyless backup scope update, zone-capacity recovery, keyless verification, and Block B SendGrid smoke-test state |
 | This doc | [`122-completion-roadmap-and-hardening-tracker.md`](./122-completion-roadmap-and-hardening-tracker.md) | 10-item completion tracker and hardening tasks for May 13–16 follow-up |
 | This doc | [`artifacts/2026-05-18-path-a-conditional-pilot-closure-acknowledgment.md`](./artifacts/2026-05-18-path-a-conditional-pilot-closure-acknowledgment.md) | Path A conditional pilot closure acknowledgment (2026-05-18) |
+| This doc | [`artifacts/2026-05-18-local-confidence-polish-evidence.md`](./artifacts/2026-05-18-local-confidence-polish-evidence.md) | D1–D6 API live local, G3.6 bounded local execute, MCP lifecycle smoke, WAL drill, pre-target gate (2026-05-18) |
 
 ---
 
@@ -392,6 +393,7 @@ bash scripts/gcp/phase3g_configure_real_domain.sh --confirm \
 | 2026-05-17 (escalation acknowledgment) | Operator formally acknowledged primary/secondary contact paths and timeout targets for FerrumGate v1 conditional single-node SQLite pilot; SMS/webhook deferred. G-B4 marked done and Block B marked CLOSED. Block A remains blocked; no production-ready claim preserved. | Engineering |
 | 2026-05-17 (Block A waiver) | Created DuckDNS conditional pilot waiver artifact (`artifacts/2026-05-17-block-a-duckdns-conditional-pilot-waiver.md`) and recorded operator acknowledgment. Block A moved from BLOCKED to **WAIVED/CONDITIONAL** for single-node SQLite pilot only. Real owned domain still required for production-ready or full G2 closure. Updated `01-current-state.md`, `122-completion-roadmap-and-hardening-tracker.md`, and all 2026-05-17 artifacts to reflect WAIVED/CONDITIONAL status. No production-ready claim preserved. | Engineering |
 | 2026-05-18 (Path A acknowledgment) | Recorded operator Path A selection: acknowledge conditional pilot closure with no real domain available. Created `artifacts/2026-05-18-path-a-conditional-pilot-closure-acknowledgment.md`. Cross-referenced in `01-current-state.md`, `54-operator-signoff-packet.md`, `59-pilot-readiness-evidence-packet.md`, `122-completion-roadmap-and-hardening-tracker.md`. Block A remains **WAIVED/CONDITIONAL**; `production-ready = NO`; `full G2 = NOT COMPLETE`. No production-ready claim preserved. | Engineering |
+| 2026-05-18 (docs cleanup) | Reconciled stale contradictions: updated doc59/doc54 signature note from "unsigned" to "signed for conditional pilot only"; corrected P0.2–P0.3 from "remain blockers" to "passed"; fixed broken `PRODUCTION_NOTES.md` link; added local confidence polish evidence cross-reference. No production-ready claim preserved. | Engineering |
 
 ---
 

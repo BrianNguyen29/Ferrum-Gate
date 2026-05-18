@@ -126,6 +126,7 @@ Following May 13–16 operator execution and evidence collection, plus May 16–
 | [`01-current-state.md`](./01-current-state.md) | Current engineering and operator status |
 | [`AGENTS.md`](../../AGENTS.md) | Repo toolchain, invariants, and verification status |
 | [`artifacts/2026-05-18-path-a-conditional-pilot-closure-acknowledgment.md`](./artifacts/2026-05-18-path-a-conditional-pilot-closure-acknowledgment.md) | Path A conditional pilot closure acknowledgment (2026-05-18) |
+| [`artifacts/2026-05-18-local-confidence-polish-evidence.md`](./artifacts/2026-05-18-local-confidence-polish-evidence.md) | D1–D6 API live local, G3.6 bounded local execute, MCP lifecycle smoke, WAL drill, pre-target gate (2026-05-18) |
 
 ---
 

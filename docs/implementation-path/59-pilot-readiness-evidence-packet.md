@@ -1,6 +1,6 @@
 # 59 — Pilot Readiness Evidence Packet
 
-> **Status**: Updated 2026-05-09 — G2.1–G2.8 signed by BrianNguyen for conditional single-node SQLite pilot scope. 2026-05-17 DuckDNS conditional pilot evidence addendum added below.
+> **Status**: Updated 2026-05-18 — G2.1–G2.8 signed by BrianNguyen for conditional single-node SQLite pilot scope. Path A conditional pilot closure acknowledged on 2026-05-18. DuckDNS conditional pilot evidence addendum and local confidence polish evidence referenced below.
 > **Scope**: Single-node v1 SQLite production pilot readiness
 > **Constraint**: RC-ready/conditional single-node SQLite only. Not production-ready. G2 gates are signed for conditional pilot scope only; do not treat this as full production-ready or PostgreSQL/HA approval. Block A remains WAIVED/CONDITIONAL.
 > **Purpose**: G2.1–G2.8 evidence sections for Path 2 (Conditional Production Pilot) per `31-release-paths-todo.md`
@@ -522,4 +522,4 @@ Original G2.1–G2.8 and pilot acceptance statement signatures by BrianNguyen on
 
 ---
 
-*Document generated: 2026-04-29. Documentation-only — no production deployment performed. G2 gates require explicit operator signoff.*
+*Document generated: 2026-04-29. Updated 2026-05-18 to reflect Path A conditional pilot closure and local confidence polish evidence. Documentation-only — no production deployment performed. G2 gates require explicit operator signoff.*
