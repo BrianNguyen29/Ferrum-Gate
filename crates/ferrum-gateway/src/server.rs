@@ -695,6 +695,7 @@ pub async fn run_http_server(config: ServerConfig, runtime: GatewayRuntime) -> a
 /// `build_router_with_auth` with `AuthMode::Bearer` and a strong bearer token.
 /// Using `build_router` in production bypasses the auth layer and exposes all
 /// governance endpoints without credential checks.
+#[cfg(any(test, feature = "test-utils"))]
 pub fn build_router(runtime: GatewayRuntime) -> Router {
     let state = Arc::new(AppState {
         runtime,

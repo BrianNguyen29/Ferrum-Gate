@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use clap::Parser;
 use ferrum_cap::InMemoryCapabilityService;
-use ferrum_gateway::{AuthMode, GatewayRuntime, ServerConfig, build_router};
+use ferrum_gateway::{AuthMode, GatewayRuntime, ServerConfig};
 use ferrum_pdp::StaticPdpEngine;
 use ferrum_proto::{
     ActionProposal, AuthorizeExecutionRequest, AuthorizeExecutionResponse, CapabilityMintRequest,
@@ -257,7 +257,26 @@ impl StressServer {
             };
             ferrum_gateway::build_router_with_auth(runtime, config)
         } else {
-            build_router(runtime)
+            // Use build_router_with_auth with auth disabled instead of build_router.
+            // build_router is test-only and gated behind cfg(test) or test-utils feature.
+            let config = ServerConfig {
+                auth_mode: AuthMode::Disabled,
+                bearer_token: None,
+                allow_insecure_nonlocal_bind: true,
+                bind_addr: "127.0.0.1:0".parse().unwrap(),
+                store_dsn: dsn,
+                log_filter: "warn".to_string(),
+                log_format: ferrum_gateway::LogFormat::Text,
+                store_synchronous: None,
+                store_wal_autocheckpoint: None,
+                rate_limit_per_second: 2,
+                rate_limit_burst: 50,
+                write_queue_threshold: 100,
+                pg_max_connections: 10,
+                pg_min_idle: 2,
+                pg_acquire_timeout_secs: 5,
+            };
+            ferrum_gateway::build_router_with_auth(runtime, config)
         };
 
         // Bind to random port

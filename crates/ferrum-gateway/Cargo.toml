@@ -8,6 +8,9 @@ license.workspace = true
 default = []
 # PostgreSQL runtime support — feature-gated and local/bounded, NOT production-ready/HA
 postgres = ["ferrum-store/postgres"]
+# Expose test-only helpers (e.g., build_router without auth) for integration tests and local tools.
+# NOT for production use.
+test-utils = []
 
 [dependencies]
 anyhow.workspace = true
