@@ -76,13 +76,9 @@ Observed results:
 | s8-rate-limit | 2480 | 248.00 | 0% |
 
 **Caveats**:
-- s2-auth internal raw error count is high due to disabled-auth/expected-status
-  handling (expected 401/403 responses are counted as errors in raw output but
-  the run-all summary correctly reports 0% errors).
-- s4-intent-compile internal raw error count is high for similar expected-status
-  reasons.
-- s7-sqlite-contention internal raw error count is high because validation-status
-  responses are expected and not true errors.
+- s2-auth, s4-intent-compile, and s7-sqlite-contention track expected HTTP
+  statuses separately from unexpected errors; per-script error lines now count
+  only unexpected responses.
 - s8-rate-limit reported 0% errors and no 429 responses were detected. Rate
   limiting may not be fully effective in this local in-memory configuration.
 
@@ -243,8 +239,8 @@ SQLite) and is out of scope for this local baseline.
 4. **Short phases**: Durations were shortened (2–10 s) for local iteration speed.
    Canonical runbook calls for 300–1800 s phases.
 5. **Stress script caveats**: s2-auth, s4-intent-compile, and s7-sqlite-contention
-   show high internal raw error counts due to expected-status handling, but the
-   run-all summary correctly reports 0% errors.
+   now count expected statuses separately; only unexpected responses contribute
+   to the per-script error count and run-all summary.
 6. **NOT target-host validated**: This run was executed on a local workstation
    against an in-memory store. It does not predict performance on target hardware,
    with PostgreSQL, or under sustained load.

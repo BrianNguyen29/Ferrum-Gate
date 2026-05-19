@@ -125,11 +125,27 @@ PostgreSQL local/runtime foundation is strong:
 - [x] Add pool saturation component to `/v1/readyz/deep`: reports degraded when `idle_connections == 0 && total_connections >= max_connections` for `max > 0`.
 - [x] Tests for metric emission/omission and saturation behavior.
 
-##### PG-2.3b — Reconnect/retry and circuit breaker (DEFERRED / NOT STARTED)
+##### PG-2.3b — Reconnect/retry and circuit breaker (DEFERRED — docs-only rationale)
 
-- [ ] Implement reconnect/retry policy.
-- [ ] Add DB health circuit breaker.
-- [ ] Implement graceful degraded readiness beyond pool saturation.
+> **Oracle verdict**: PG-2.3b code implementation is **deferred entirely**.
+> No custom reconnect/retry policy or circuit breaker will be built for the
+> single-node pilot.
+
+**Rationale**:
+- `sqlx::PgPool` already performs transparent reconnect with exponential backoff.
+  The pool recovers automatically after a PostgreSQL restart without requiring
+  a ferrumd restart.
+- PG-2.3a provides acquire-timeout metrics and pool-saturation readiness
+  (`/v1/readyz/deep`), which gives fail-closed behavior when the pool is
+  exhausted. This is sufficient for the current single-node pilot scope.
+- A circuit breaker is only meaningful when there is a load-balancer or
+  multi-node topology that can route around an unhealthy instance. That
+  requirement belongs to PG-5 (HA/multi-node).
+
+**Trigger for revisit**:
+- PG-5 HA design (managed PG, Patroni, or load-balanced topology) where
+  per-instance health state matters and concrete retry semantics / RTO need
+  to be defined.
 
 ### Phase PG-3 — Backup/restore evidence
 

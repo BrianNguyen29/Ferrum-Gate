@@ -78,7 +78,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 | 1.9 | PG-2.1: Session timeout config (`statement_timeout`, `idle_in_transaction_session_timeout`) | Engineering | `02-postgres-production-plan.md` §PG-2.1 | ✅ COMPLETE — code + tests |
 | 1.10 | PG-2.2: Pool metrics (`pool_size`, `pool_idle`, `pool_max`) | Engineering | `pg-target-evidence.md` §PG-2.2 | ✅ COMPLETE — code + tests |
 | 1.11 | PG-2.3a: Acquire timeout counter + pool saturation readiness | Engineering | `02-postgres-production-plan.md` §PG-2.3a | ✅ COMPLETE — code + tests |
-| 1.12 | PG-2.3b: Reconnect/retry and circuit breaker | Engineering | `pg-target-evidence.md` §PG-2.3 | ☐ NOT STARTED — deferred to PG-5/later |
+| 1.12 | PG-2.3b: Reconnect/retry and circuit breaker | Engineering | `02-postgres-production-plan.md` §PG-2.3b | 📝 DEFERRED — docs-only rationale recorded; revisit at PG-5 HA/load balancer |
 | 1.13 | PG-3: Local backup/restore drill passes (scheduled backup/retention NOT STARTED) | Engineering | `docs/implementation-path/artifacts/2026-05-18-pg-restore-drill-evidence.md` | ✅ COMPLETE — local Docker drill only; scheduled backup/retention deferred |
 | 1.14 | PG-4a: Schema version table + idempotent runner (PG-4b.1 docs+runner cleanup done, PG-4b.3 rollback strategy doc done; PG-4b.2 incremental engine + CI drift deferred) | Engineering | `pg-migration-evidence.md` + `02-postgres-production-plan.md` §PG-4b | ✅ COMPLETE — PG-4a done; PG-4b.1/4b.3 done; PG-4b.2/CI drift deferred |
 | 1.15 | PG-5: HA ADR approved; primary failure drill documented; RPO/RTO measured | Engineering + Operator | HA ADR + failure drill evidence | ☐ NOT STARTED |
@@ -94,6 +94,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 | 2.5 | SLO-5: Readiness success measured locally | Engineering | `2026-05-19-slo-local-baseline-evidence.md` §Post-run checks | ✅ LOCAL BASELINE MEASURED — local in-memory only; NOT target-host ratified |
 | 2.6 | SLO-6: Error rate measured locally | Engineering | `2026-05-19-slo-local-baseline-evidence.md` §SLO comparison | ✅ LOCAL BASELINE MEASURED — local in-memory only; NOT target-host ratified |
 | 2.7 | SLO-7: Evidence artifact reviewed by operator | Operator | Review signoff | ☐ NOT STARTED — operator review not requested; artifact is local baseline only |
+| 2.8 | SLO-target-host: Target preflight attempted and blocked (valid bearer token required) | Engineering | `docs/implementation-path/artifacts/2026-05-19-slo-target-preflight-blocked-evidence.md` | 🚫 BLOCKED — functional readiness 401 with placeholder token; no workload executed |
 
 ## Phase 3 — Target-host MCP/live workload
 

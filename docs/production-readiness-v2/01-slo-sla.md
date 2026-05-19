@@ -17,6 +17,7 @@ Formalize "production acceptable" as measurable SLO targets and create a repeata
 - Stress test baselines exist for SQLite (see [`docs/PRODUCTION_NOTES.md`](../../PRODUCTION_NOTES.md)).
 - No formal SLO/SLA document exists.
 - Local workload baseline evidence generated on 2026-05-19 (see `docs/implementation-path/artifacts/2026-05-19-slo-local-baseline-evidence.md`). This is a local SQLite in-memory baseline only; it is **not** target-host validated and **not** a production-ready claim.
+- Target-host preflight attempted on 2026-05-19 and **blocked** due to missing valid bearer token (see `docs/implementation-path/artifacts/2026-05-19-slo-target-preflight-blocked-evidence.md`). No workload executed.
 - No target-host sustained workload evidence exists.
 - Existing scripts:
   - `scripts/stress/run-all.sh`

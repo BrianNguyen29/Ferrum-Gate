@@ -100,6 +100,10 @@ fi
 total=$(wc -l < "$TMPFILE")
 errors=$(grep -v -E " (200|201|400|422)$" "$TMPFILE" | wc -l || true)
 errors=${errors:-0}
+expected=$(grep -c -E " (400|422)$" "$TMPFILE" || true)
+expected=${expected:-0}
+conn=$(grep -c " 000$" "$TMPFILE" || true)
+conn=${conn:-0}
 rps=$(echo "scale=2; $total / $DURATION" | bc)
 
 # Calculate latency stats
@@ -151,10 +155,15 @@ max_ms=$(echo "scale=3; $max / 1000000" | bc)
 mean_ms=$(echo "scale=3; $sum / $count / 1000000" | bc)
 
 error_pct=$(echo "scale=2; $errors * 100 / $total" | bc)
+expected_pct=$(echo "scale=2; $expected * 100 / $total" | bc)
 
 echo ""
 echo "  Requests:     $total total"
-echo "  Errors:       $errors ($error_pct%)"
+echo "  Errors:       $errors unexpected ($error_pct%)"
+echo "  Expected:     $expected (400/422 validation, ${expected_pct}%)"
+if [[ "$conn" -gt 0 ]]; then
+    echo "  Conn/000:     $conn"
+fi
 echo "  Throughput:   $rps req/s"
 echo ""
 echo "  Latency:"
@@ -176,3 +185,6 @@ for code in 200 201 400 422 500; do
     fi
 done
 echo "───────────────────────────────────────────────────────────────"
+if [[ "$errors" -gt 0 ]]; then
+    exit 1
+fi

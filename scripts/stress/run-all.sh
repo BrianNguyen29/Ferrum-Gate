@@ -53,7 +53,7 @@ run_scenario() {
     
     total_req=$(echo "$output" | grep -E "^  Requests:" | head -1 | awk '{print $2}' | tr -d ',')
     req_per_sec=$(echo "$output" | grep -E "^  Throughput:" | awk '{print $2}')
-    error_pct=$(echo "$output" | grep -E "^  Errors:" | head -1 | awk '{print $4}' | tr -d '()%')
+    error_pct=$(echo "$output" | grep -E "^  Errors:" | head -1 | awk '{print $3}' | tr -d '()%')
     
     RESULTS["$name"]="$exit_code"
     REPORTS["$name"]="req=${total_req:-0}, rps=${req_per_sec:-0}, errors=${error_pct:-0}% (${elapsed}s)"
