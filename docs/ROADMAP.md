@@ -1376,7 +1376,7 @@ MVP screens:
 - DEP-1 docker compose demo starts ferrumd.
 - DEP-2 healthz passes after compose up.
 - DEP-3 Postgres deployment mode documented and tested.
-- DEP-4 systemd unit works with env file.
+- DEP-4 systemd unit works with env file. Local preflight evidence exists; real `systemctl status ferrumd` evidence still required.
 - DEP-5 Helm install produces ready pod.
 - DEP-6 backup/restore procedure works in hosted mode.
 

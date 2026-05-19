@@ -1,6 +1,6 @@
 [Unit]
 Description=FerrumGate daemon
-Documentation=./docs/implementation-path/62-path-2-operator-runbook.md
+Documentation=https://github.com/BrianNguyen29/Ferrum-Gate/blob/main/docs/implementation-path/62-path-2-operator-runbook.md
 After=network-online.target
 Wants=network-online.target
 

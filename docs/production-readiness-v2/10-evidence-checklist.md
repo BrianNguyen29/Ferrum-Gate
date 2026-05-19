@@ -159,7 +159,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 | 8.1 | DEP-1: Docker Compose demo starts ferrumd | Engineering | `docs/implementation-path/artifacts/2026-05-19-compose-demo-evidence.md` | ✅ COMPLETE — local demo only |
 | 8.2 | DEP-2: Healthz passes after compose up | Engineering | `docs/implementation-path/artifacts/2026-05-19-compose-demo-evidence.md` | ✅ COMPLETE — local demo only |
 | 8.3 | DEP-3: Postgres deployment mode documented and tested locally | Engineering | `docs/implementation-path/artifacts/2026-05-19-compose-demo-pg-evidence.md` | ✅ COMPLETE — local demo only |
-| 8.4 | DEP-4: Systemd unit works with env file | Engineering | `systemctl status` output | ☐ |
+| 8.4 | DEP-4: Systemd unit works with env file | Engineering | `docs/implementation-path/artifacts/2026-05-19-systemd-validation-evidence.md` + future `systemctl status` output | 📝 LOCAL PREFLIGHT COMPLETE — target-host `systemctl` runtime pending |
 | 8.5 | DEP-5: Helm install produces ready pod | Engineering | `kubectl get pods` output | ☐ |
 | 8.6 | DEP-6: Backup/restore procedure works in hosted mode | Engineering | Restore drill log | ☐ |
 

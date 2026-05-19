@@ -17,7 +17,7 @@ Package FerrumGate into reproducible deployment modes so operators can deploy co
 - Config templates exist.
 - Docker Compose PG local demo (`docker-compose.postgres-demo.yml`) exists and was runtime-validated locally for DEP-3.
 - Local demo compose (`docker-compose.demo.yml`) + Dockerfile validated for DEP-1/DEP-2.
-- Systemd service example exists (`configs/examples/ferrumd.service`); runtime validation pending.
+- Systemd service example exists (`configs/examples/ferrumd.service`); local preflight validation completed, real target-host `systemctl` runtime validation pending.
 - Env var reference example exists (`configs/examples/ferrumd.env.example`).
 - Deployment guide scaffold exists (`docs/guides/hosted-deployment.md`); full validation pending.
 - Helm chart is not implemented.
@@ -36,7 +36,7 @@ Package FerrumGate into reproducible deployment modes so operators can deploy co
 
 - [x] `docker-compose.demo.yml` — SQLite in-memory, auth disabled, loopback only. Config + Dockerfile present; DEP-1/DEP-2 validated locally.
 - [x] `docker-compose.postgres-demo.yml` — ferrumd + PostgreSQL. Config + Dockerfile build-arg present; runtime validated locally for DEP-3.
-- [x] `configs/examples/ferrumd.service` — systemd unit example. Exists; runtime validation pending.
+- [x] `configs/examples/ferrumd.service` — systemd unit example. Exists; local preflight evidence recorded; target-host `systemctl` runtime validation pending.
 - [x] `configs/examples/ferrumd.env.example` — env var reference. Exists.
 - [x] `docs/guides/hosted-deployment.md` — deployment guide (scaffold exists).
 
@@ -59,7 +59,7 @@ Package FerrumGate into reproducible deployment modes so operators can deploy co
 - [x] DEP-1: Docker Compose demo starts ferrumd locally (`docker-compose.demo.yml` + `Dockerfile`). Evidence: `docs/implementation-path/artifacts/2026-05-19-compose-demo-evidence.md`.
 - [x] DEP-2: Healthz passes after compose up locally. Evidence: same artifact.
 - [x] DEP-3: Postgres deployment mode documented and tested locally (`docker-compose.postgres-demo.yml` + Dockerfile). Evidence: `docs/implementation-path/artifacts/2026-05-19-compose-demo-pg-evidence.md`.
-- [ ] DEP-4: Systemd unit works with env file. `configs/examples/ferrumd.service` exists; runtime validation pending.
+- [ ] DEP-4: Systemd unit works with env file. Local preflight evidence recorded at `docs/implementation-path/artifacts/2026-05-19-systemd-validation-evidence.md`; real `systemctl status ferrumd` evidence pending.
 - [ ] DEP-5: Helm install produces ready pod. Not implemented.
 - [ ] DEP-6: Backup/restore procedure works in hosted mode. Backup examples exist in `configs/examples/`; hosted-mode drill not yet validated.
 
