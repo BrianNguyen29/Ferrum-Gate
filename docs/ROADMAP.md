@@ -999,8 +999,8 @@ Purpose:
 | Terraform/Pulumi | P2 |
 | managed PostgreSQL guide | P1 |
 | backup/restore hosted guide | P0 |
-| DEP-4 target-host systemd runbook | P0 — prepared, gate open |
-| DEP-6 hosted backup preflight checklist | P0 — prepared, gate open |
+| DEP-4 target-host systemd runbook | P0 — prepared, gate open; target execution blocked 2026-05-19 by SSH access |
+| DEP-6 hosted backup preflight checklist | P0 — prepared, gate open; target execution blocked 2026-05-19 by SSH access |
 
 ## 4. Phase-based implementation plan
 
@@ -1378,9 +1378,9 @@ MVP screens:
 - DEP-1 docker compose demo starts ferrumd.
 - DEP-2 healthz passes after compose up.
 - DEP-3 Postgres deployment mode documented and tested.
-- DEP-4 systemd unit works with env file. Local preflight evidence exists. Target-host runbook prepared at `docs/implementation-path/artifacts/2026-05-19-dep4-target-host-systemd-runbook.md`. Real `systemctl status ferrumd` evidence still required; DEP-4 open.
+- DEP-4 systemd unit works with env file. Local preflight evidence exists. Target-host runbook prepared at `docs/implementation-path/artifacts/2026-05-19-dep4-target-host-systemd-runbook.md`. Target execution attempted 2026-05-19 and blocked by SSH access; evidence at `docs/implementation-path/artifacts/2026-05-19-dep4-dep6-target-execution-blocked.md`. DEP-4 open.
 - DEP-5 Helm install produces ready pod.
-- DEP-6 backup/restore procedure works in hosted mode. Local PG-3 restore drill passed. Hosted backup-mode preflight prepared at `docs/implementation-path/artifacts/2026-05-19-dep6-hosted-backup-preflight.md`. Hosted-mode drill still required; DEP-6 open.
+- DEP-6 backup/restore procedure works in hosted mode. Local PG-3 restore drill passed. Hosted backup-mode preflight prepared at `docs/implementation-path/artifacts/2026-05-19-dep6-hosted-backup-preflight.md`. Target execution attempted 2026-05-19 and blocked by SSH access; evidence at `docs/implementation-path/artifacts/2026-05-19-dep4-dep6-target-execution-blocked.md`. DEP-6 open.
 
 ### Phase 9 — HA/multi-node
 
