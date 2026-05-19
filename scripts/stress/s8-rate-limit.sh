@@ -30,26 +30,26 @@ trap "rm -f $TMPFILE" EXIT
 PIDS=()
 for ((i=0; i<WORKERS; i++)); do
     (
-        local worker_id=$i
-        local end_time=$((SECONDS + DURATION))
+        worker_id=$i
+        end_time=$((SECONDS + DURATION))
         while ((SECONDS < end_time)); do
-            local start_time=$(date +%s%3N)
-            
-            local curl_args=(-s -w "\n%{http_code}" -o /dev/null)
-            
+            start_time=$(date +%s%3N)
+
+            curl_args=(-s -w "\n%{http_code}" -o /dev/null)
+
             if [[ -n "$TOKEN" ]]; then
                 curl_args+=(-H "Authorization: Bearer $TOKEN")
             fi
-            
+
             curl_args+=("${BASE_URL}/v1/healthz")
-            
-            local response
+
+            response=""
             response=$(curl "${curl_args[@]}" 2>/dev/null || echo "000")
-            
-            local end_time_ns=$(date +%s%3N)
-            local latency_ns=$(( (end_time_ns - start_time) * 1000000 ))
-            local http_code="${response##*$'\n'}"
-            
+
+            end_time_ns=$(date +%s%3N)
+            latency_ns=$(( (end_time_ns - start_time) * 1000000 ))
+            http_code="${response##*$'\n'}"
+
             echo "$latency_ns $http_code" >> "$TMPFILE"
         done
     ) &
@@ -108,10 +108,10 @@ END {
         p50 = mean; p90 = mean * 1.5; p95 = mean * 2; p99 = mean * 3
     }
     
-    printf "%.0f %.0f %.0f %.0f %.0f %.0f", min, p50, p90, p95, p99, max
+    printf "%.0f %.0f %.0f %.0f %.0f %.0f %.0f %.0f", min, p50, p90, p95, p99, max, sum, count
 }' "$TMPFILE")
 
-read min p50 p90 p95 p99 max <<< "$stats"
+read min p50 p90 p95 p99 max sum count <<< "$stats"
 
 min_ms=$(echo "scale=3; $min / 1000000" | bc)
 p50_ms=$(echo "scale=3; $p50 / 1000000" | bc)
@@ -141,14 +141,14 @@ echo ""
 # Status histogram
 echo "  Status Codes:"
 for code in 200 429 500 503; do
-    count=$(grep -c " $code$" "$TMPFILE" 2>/dev/null || echo "0")
+    count=$(grep -c " $code$" "$TMPFILE" 2>/dev/null; true)
     if [[ "$count" -gt 0 ]]; then
         echo "    $code:  $count"
     fi
 done
 
 # Special message about 429
-count_429=$(grep -c " 429$" "$TMPFILE" 2>/dev/null || echo "0")
+count_429=$(grep -c " 429$" "$TMPFILE" 2>/dev/null; true)
 if [[ "$count_429" -gt 0 ]]; then
     echo ""
     echo "  Rate limit detected: $count_429 requests got 429 (Too Many Requests)"

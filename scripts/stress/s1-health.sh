@@ -29,13 +29,13 @@ trap "rm -f $TMPFILE" EXIT
 PIDS=()
 for ((i=0; i<WORKERS; i++)); do
     (
-        local worker_id=$i
-        local end_time=$((SECONDS + DURATION))
+        worker_id=$i
+        end_time=$((SECONDS + DURATION))
         while ((SECONDS < end_time)); do
-            local start_time=$(date +%s%3N)
-            local response
-            local http_code
-            
+            start_time=$(date +%s%3N)
+            response=""
+            http_code=""
+
             if [[ -n "$TOKEN" ]]; then
                 response=$(curl -s -w "\n%{http_code}" -o /dev/null \
                     -H "Authorization: Bearer $TOKEN" \
@@ -44,11 +44,11 @@ for ((i=0; i<WORKERS; i++)); do
                 response=$(curl -s -w "\n%{http_code}" -o /dev/null \
                     "${BASE_URL}/v1/healthz" 2>/dev/null || echo "000")
             fi
-            
-            local end_time_ns=$(date +%s%3N)
-            local latency_ns=$(( (end_time_ns - start_time) * 1000000 ))
-            local http_code="${response##*$'\n'}"
-            
+
+            end_time_ns=$(date +%s%3N)
+            latency_ns=$(( (end_time_ns - start_time) * 1000000 ))
+            http_code="${response##*$'\n'}"
+
             echo "$latency_ns $http_code" >> "$TMPFILE"
         done
     ) &
@@ -126,10 +126,10 @@ END {
         p99 = mean * 3
     }
     
-    printf "%.0f %.0f %.0f %.0f %.0f %.0f", min, p50, p90, p95, p99, max
+    printf "%.0f %.0f %.0f %.0f %.0f %.0f %.0f %.0f", min, p50, p90, p95, p99, max, sum, count
 }' "$TMPFILE")
 
-read min p50 p90 p95 p99 max <<< "$stats"
+read min p50 p90 p95 p99 max sum count <<< "$stats"
 min_ns=$min; p50_ns=$p50; p90_ns=$p90; p95_ns=$p95; p99_ns=$p99; max_ns=$max
 
 # Convert to milliseconds
@@ -161,8 +161,8 @@ echo ""
 
 # Status histogram
 echo "  Status Codes:"
-grep " 200$" "$TMPFILE" | wc -l | xargs -I {} echo "    200:  {}"
-grep -v " 200$" "$TMPFILE" | while read lat code; do
+{ grep -c " 200$" "$TMPFILE" || true; } | xargs -I {} echo "    200:  {}"
+{ grep -v " 200$" "$TMPFILE" || true; } | while read lat code; do
     echo "    $code"
 done | sort | uniq -c | while read count code; do
     echo "    $code:  $count"

@@ -28,30 +28,30 @@ trap "rm -f $TMPFILE" EXIT
 PIDS=()
 for ((i=0; i<WORKERS; i++)); do
     (
-        local worker_id=$i
-        local end_time=$((SECONDS + DURATION))
+        worker_id=$i
+        end_time=$((SECONDS + DURATION))
         while ((SECONDS < end_time)); do
-            local start_time=$(date +%s%3N)
-            
+            start_time=$(date +%s%3N)
+
             # Alternate: 90% valid tokens, 10% invalid
-            local use_valid=$((worker_id % 10 != 0))
-            local auth_header
-            
+            use_valid=$((worker_id % 10 != 0))
+            auth_header=""
+
             if [[ "$use_valid" -eq 1 && -n "$TOKEN" ]]; then
                 auth_header="Authorization: Bearer $TOKEN"
             else
                 auth_header="Authorization: Bearer invalid-token-$$"
             fi
-            
-            local response
+
+            response=""
             response=$(curl -s -w "\n%{http_code}" -o /dev/null \
                 -H "$auth_header" \
                 "${BASE_URL}/v1/approvals" 2>/dev/null || echo "000")
-            
-            local end_time_ns=$(date +%s%3N)
-            local latency_ns=$(( (end_time_ns - start_time) * 1000000 ))
-            local http_code="${response##*$'\n'}"
-            
+
+            end_time_ns=$(date +%s%3N)
+            latency_ns=$(( (end_time_ns - start_time) * 1000000 ))
+            http_code="${response##*$'\n'}"
+
             echo "$latency_ns $http_code" >> "$TMPFILE"
         done
     ) &
@@ -111,10 +111,10 @@ END {
         p50 = mean; p90 = mean * 1.5; p95 = mean * 2; p99 = mean * 3
     }
     
-    printf "%.0f %.0f %.0f %.0f %.0f %.0f", min, p50, p90, p95, p99, max
+    printf "%.0f %.0f %.0f %.0f %.0f %.0f %.0f %.0f", min, p50, p90, p95, p99, max, sum, count
 }' "$TMPFILE")
 
-read min p50 p90 p95 p99 max <<< "$stats"
+read min p50 p90 p95 p99 max sum count <<< "$stats"
 
 # Convert to ms
 min_ms=$(echo "scale=3; $min / 1000000" | bc)
@@ -145,7 +145,7 @@ echo ""
 # Status histogram
 echo "  Status Codes:"
 for code in 200 401 403; do
-    count=$(grep -c " $code$" "$TMPFILE" 2>/dev/null || echo "0")
+    count=$(grep -c " $code$" "$TMPFILE" 2>/dev/null; true)
     if [[ "$count" -gt 0 ]]; then
         echo "    $code:  $count"
     fi

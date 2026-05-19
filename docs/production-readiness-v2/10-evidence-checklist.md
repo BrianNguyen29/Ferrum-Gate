@@ -2,7 +2,7 @@
 
 > **Status**: Planning artifact. Checklist template; not yet filled.
 > **Owner**: Engineering + Operator
-> **Last updated**: 2026-05-18
+> **Last updated**: 2026-05-19
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
 
 ---
@@ -89,11 +89,11 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 |---|------|-------|----------|--------|
 | 2.1 | SLO-1: SLO/SLA doc exists | Engineering + Operator | `slo-sla-draft.md` ratified | ☐ |
 | 2.2 | SLO-2: Runbook maps scripts to pass/fail | Engineering | `slo-validation-runbook.md` | ✅ COMPLETE — runbook created, targets marked draft/conditional |
-| 2.3 | SLO-3: Target workload run completed | Engineering | `slo-target-evidence-{date}.md` | ☐ |
-| 2.4 | SLO-4: p95/p99 latency under threshold | Engineering | Latency histograms | ☐ |
-| 2.5 | SLO-5: Readiness success meets target | Engineering | `/v1/readyz/deep` scrape | ☐ |
-| 2.6 | SLO-6: Error rate under threshold | Engineering | Error counters | ☐ |
-| 2.7 | SLO-7: Evidence artifact reviewed | Operator | Review signoff | ☐ |
+| 2.3 | SLO-3: Local workload baseline run completed | Engineering | `docs/implementation-path/artifacts/2026-05-19-slo-local-baseline-evidence.md` | ✅ COMPLETE — local SQLite in-memory baseline only; NOT target-host validated |
+| 2.4 | SLO-4: p95/p99 latency measured locally | Engineering | `2026-05-19-slo-local-baseline-evidence.md` §Latency | ✅ LOCAL BASELINE MEASURED — local in-memory only; NOT target-host ratified |
+| 2.5 | SLO-5: Readiness success measured locally | Engineering | `2026-05-19-slo-local-baseline-evidence.md` §Post-run checks | ✅ LOCAL BASELINE MEASURED — local in-memory only; NOT target-host ratified |
+| 2.6 | SLO-6: Error rate measured locally | Engineering | `2026-05-19-slo-local-baseline-evidence.md` §SLO comparison | ✅ LOCAL BASELINE MEASURED — local in-memory only; NOT target-host ratified |
+| 2.7 | SLO-7: Evidence artifact reviewed by operator | Operator | Review signoff | ☐ NOT STARTED — operator review not requested; artifact is local baseline only |
 
 ## Phase 3 — Target-host MCP/live workload
 

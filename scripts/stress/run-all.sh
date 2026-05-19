@@ -82,8 +82,8 @@ echo "════════════════════════�
 printf "%-30s %-10s %s\n" "SCENARIO" "STATUS" "METRICS"
 echo "───────────────────────────────────────────────────────────────"
 for name in s1-health s2-auth s4-intent-compile s7-sqlite-contention s8-rate-limit; do
-    local status="${RESULTS[$name]:-99}"
-    local report="${REPORTS[$name]:-}"
+    status="${RESULTS[$name]:-99}"
+    report="${REPORTS[$name]:-}"
     if [[ "$status" -eq 0 ]]; then
         printf "%-30s ${GREEN}%-10s${NC} %s\n" "$name" "PASS" "$report"
     else
