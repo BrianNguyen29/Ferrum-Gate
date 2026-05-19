@@ -225,7 +225,7 @@ pub fn tool_registry() -> &'static [Tool] {
                             "default": 100
                         }
                     },
-                    "required": []
+                    "required": ["execution_id"]
                 }),
                 read_only: true,
             },

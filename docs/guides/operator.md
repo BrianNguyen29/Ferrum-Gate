@@ -1,6 +1,6 @@
 # Operator Guide
 
-> **Status**: Scaffold. ferrumctl exists; admin CLI expansion is planned.
+> **Status**: Expanded. Covers config, health, backup/restore, token rotation, monitoring, incident response, and local-vs-hosted caveats.
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
 
 ---
@@ -26,6 +26,7 @@ CLI args > env vars > config file > defaults
 | `FERRUMD_LOG_FORMAT` | Log format | `json` |
 | `FERRUMD_RATE_LIMIT_PER_SECOND` | Rate limit | `2` |
 | `FERRUMD_RATE_LIMIT_BURST` | Rate limit burst | `50` |
+| `FERRUMD_ALLOW_INSECURE_NONLOCAL_BIND` | Allow non-local bind without TLS | `false` (default) |
 
 ### Config file example
 
@@ -42,6 +43,18 @@ rate_limit_burst = 50
 dsn = "sqlite:/var/lib/ferrumgate/ferrumgate.db"
 ```
 
+### Local development config
+
+The repository includes `configs/ferrumgate.dev.toml`:
+
+- `auth_mode = "Disabled"`
+- In-memory SQLite
+- Loopback binding (`127.0.0.1:18080`)
+
+This config auto-loads if no `--config` is specified and the file exists. **Never use dev config for production or exposed interfaces.**
+
+---
+
 ## Deployment checklist
 
 - [ ] Choose store backend (SQLite for pilot; PostgreSQL for production foundation).
@@ -51,6 +64,54 @@ dsn = "sqlite:/var/lib/ferrumgate/ferrumgate.db"
 - [ ] Enable backup timer/cron.
 - [ ] Configure AlertManager for off-VM alerting.
 - [ ] Verify `/v1/readyz/deep` returns 200 before taking traffic.
+
+### Local-vs-hosted caveats
+
+| Concern | Local dev | Hosted / staging | Production |
+|---------|-----------|------------------|------------|
+| Store | In-memory SQLite | File-backed SQLite or PostgreSQL | PostgreSQL |
+| Auth | Disabled | Bearer | Bearer |
+| TLS | None | Reverse proxy TLS | Reverse proxy TLS + cert rotation |
+| Backup | None | Manual or cron | Automated with retention |
+| Monitoring | Logs only | Metrics endpoint + alerting | Metrics + alerting + SLO dashboards |
+| Domain | `localhost` | DuckDNS / temporary | Real owned domain + DNS |
+
+> **Block A**: Real owned domain and DNS are required for full G2 closure. DuckDNS is accepted for single-node SQLite pilot only. See [`docs/PRODUCTION_NOTES.md`](../../PRODUCTION_NOTES.md).
+
+---
+
+## Health checks
+
+### Liveness
+
+```bash
+curl http://127.0.0.1:18080/v1/healthz
+```
+
+Expected: `{"status":"ok"}` (HTTP 200).
+
+### Readiness
+
+```bash
+curl http://127.0.0.1:18080/v1/readyz
+```
+
+Expected: `{"status":"ready"}` (HTTP 200).
+
+### Deep readiness
+
+```bash
+curl http://127.0.0.1:18080/v1/readyz/deep
+```
+
+Checks:
+- Store health (can execute a test query)
+- Write queue depth within threshold
+- Connection pool not saturated
+
+Expected: HTTP 200 with `ok` status. A non-200 here means the gateway should not receive traffic.
+
+---
 
 ## Backup and restore
 
@@ -84,6 +145,21 @@ ferrumctl health
 
 > **Warning**: Restore overwrites the current database. Always verify backup integrity first. Never restore without explicit confirmation in production.
 
+### SQLite WAL considerations
+
+For file-backed SQLite, FerrumGate uses WAL mode with:
+- `synchronous=NORMAL`
+- `wal_autocheckpoint=1000`
+- `busy_timeout=5000ms`
+
+Backups should include both the `.db` and `-wal`/`-shm` files if taken while the process is running, or use `ferrumctl backup` which handles consistency.
+
+### PostgreSQL backup
+
+Use `pg_dump` or your hosting provider's backup mechanism. FerrumGate does not manage PostgreSQL backups internally.
+
+---
+
 ## Token rotation
 
 1. Generate new token on the target host (never print to logs):
@@ -95,9 +171,17 @@ ferrumctl health
 
 3. Restart ferrumd.
 
-4. Verify new token works (200) and old token fails (401).
+4. Verify new token works (200) and old token fails (401):
+   ```bash
+   curl -H "Authorization: Bearer NEW_TOKEN" http://127.0.0.1:8080/v1/intents
+   curl -H "Authorization: Bearer OLD_TOKEN" http://127.0.0.1:8080/v1/intents
+   ```
 
 5. Record rotation in audit log.
+
+> **Note**: Token rotation has been validated on target host. See [`docs/implementation-path/artifacts/2026-05-17-sendgrid-rotation-evidence.md`](../../implementation-path/artifacts/2026-05-17-sendgrid-rotation-evidence.md) for related secret-rotation evidence.
+
+---
 
 ## Incident response
 
@@ -107,6 +191,17 @@ ferrumctl health
 4. **Check backup age**: verify latest backup is within RPO
 5. **If store unhealthy**: fail closed; do not bypass gateway
 6. **If capability issue**: check provenance chain, do not reuse capabilities
+
+### Common incident patterns
+
+| Symptom | Likely cause | Action |
+|---------|--------------|--------|
+| `readyz/deep` 503 | Store unhealthy or queue backpressure | Check store connectivity and load |
+| `metrics` shows high `write_queue_depth` | Write saturation | Scale to PostgreSQL or reduce burst |
+| 401 on all workload endpoints | Token mismatch or auth mode changed | Verify `FERRUMD_AUTH_MODE` and token |
+| 429 rate limited | Governor burst exceeded | Review `rate_limit_per_second` and `rate_limit_burst` |
+
+---
 
 ## Monitoring
 
@@ -123,6 +218,8 @@ ferrumctl health
 
 See [`slo-sla.md`](./slo-sla.md) for draft targets. Not yet ratified.
 
+---
+
 ## Status caveat
 
 > **production-ready = NO**. This guide describes intended operator procedures. Some CLI expansions (admin status, approval queue, token management) are planned but not yet implemented. See [`docs/ROADMAP.md`](../../ROADMAP.md) §4 Phase 6.
@@ -133,3 +230,4 @@ See [`slo-sla.md`](./slo-sla.md) for draft targets. Not yet ratified.
 - [`slo-sla.md`](./slo-sla.md) — Draft SLO targets.
 - [`troubleshooting.md`](./troubleshooting.md) — Common issues and fixes.
 - [`docs/PRODUCTION_NOTES.md`](../../PRODUCTION_NOTES.md) — Runtime config and stress baselines.
+- [`api.md`](./api.md) — Endpoint reference.

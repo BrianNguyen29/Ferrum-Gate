@@ -146,11 +146,16 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 
 | # | Item | Owner | Evidence | Status |
 |---|------|-------|----------|--------|
-| 7.1 | DOC-1: API/curl flow completes in <30 min | Engineering | `docs/implementation-path/artifacts/2026-05-19-quickstart-validation-evidence.md` §DOC-1 | ✅ PARTIAL — API/curl flow validated locally in 0.384 s; ferrumctl and MCP paths not validated; fresh-user test not performed |
-| 7.2 | DOC-2: Validated API/curl demo runs without secrets | Engineering | `docs/implementation-path/artifacts/2026-05-19-quickstart-validation-evidence.md` §DOC-2 | ✅ LOCAL VALIDATION — auth=disabled, no secrets for API/curl flow; ferrumctl and MCP paths not validated |
-| 7.3 | DOC-3: Docs state production-ready limitations correctly | Engineering | Doc review | ☐ |
-| 7.4 | DOC-4: MCP client config example exists | Engineering | `docs/guides/mcp-integration.md` | ☐ |
-| 7.5 | DOC-5: Policy guide has at least 5 templates/examples | Engineering | `docs/guides/policy-authoring.md` | ☐ |
+| 7.1 | DOC-1: API/curl + ferrumctl + MCP complete in <30 min | Engineering | `docs/implementation-path/artifacts/2026-05-19-quickstart-validation-evidence.md` §DOC-1 + `2026-05-19-doc3-ferrumctl-mcp-usability-evidence.md` | ✅ PARTIAL — API/curl 0.384 s, ferrumctl 0.367 s, MCP 0.33 s validated locally after bugfix; fresh-user test NOT performed; acceptance criterion OPEN |
+| 7.2 | DOC-2: Validated API/curl + ferrumctl + MCP demos run without live secrets | Engineering | `docs/implementation-path/artifacts/2026-05-19-quickstart-validation-evidence.md` §DOC-2 + `2026-05-19-doc3-ferrumctl-mcp-usability-evidence.md` | ✅ LOCAL COMPLETE — all local demo paths pass; API/curl and ferrumctl need no live secrets (`auth=disabled`); MCP used documented dummy placeholder token; target-host validation NOT claimed |
+| 7.3 | DOC-3: Docs state production-ready limitations correctly | Engineering | `docs/implementation-path/artifacts/2026-05-19-doc3-ferrumctl-mcp-usability-evidence.md` §DOC-3 | ✅ COMPLETE — hosted-deployment.md DEP-4 corrected; Block A/DuckDNS context added; no overclaims |
+| 7.4 | DOC-4: MCP client config example exists | Engineering | `docs/guides/mcp-integration.md` | ✅ COMPLETE — sample Claude Desktop config present |
+| 7.5 | DOC-5: Policy guide has at least 5 templates/examples | Engineering | `docs/guides/policy-authoring.md` + `docs/implementation-path/artifacts/2026-05-19-doc5-policy-templates-evidence.md` | ✅ COMPLETE — 7 templates added with purpose, when-to-use, caveats, and YAML scaffolds; validation/simulation remains pending |
+| 7.6 | DOC-6: Concepts guide explains intent, proposal, policy, capability, approval, rollback, provenance, lineage, adapter, R0–R3 | Engineering | `docs/guides/concepts.md` | ✅ COMPLETE — expanded with architecture overview, lineage chain, and risk-tier vs rollback-class distinction |
+| 7.7 | DOC-7: API guide documents endpoints, auth, errors, lifecycle, examples | Engineering | `docs/guides/api.md` | ✅ COMPLETE — endpoint inventory, auth modes, error format, curl example, rate limiting documented; OpenAPI spec deferred |
+| 7.8 | DOC-8: Operator guide covers config, health, backup/restore, token rotation, monitoring, incident response, local-vs-hosted caveats | Engineering | `docs/guides/operator.md` | ✅ COMPLETE — expanded with local-vs-hosted table, SQLite WAL notes, common incident patterns, token rotation verification note |
+| 7.9 | DOC-9: Adapter reference covers fs, git, http, sqlite, maildraft with rollback and risk caveats | Engineering | `docs/guides/adapter-reference.md` | ✅ COMPLETE — expanded with JSON examples, rollback/risk summary table, and when-rollback-fails section |
+| 7.10 | DOC-10: Landing page scaffold exists with status banner, Block A disclaimer, and guide links | Engineering | `site/` Zola scaffold | ✅ COMPLETE — Zola scaffold created with professional structure; no deployment or domain configured |
 
 ## Phase 8 — Hosted deployment story
 

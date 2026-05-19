@@ -1449,6 +1449,57 @@ rules: []
         assert_eq!(resp.status, "ok");
     }
 
+    #[test]
+    fn test_execution_detail_response_deserializes_wrapper() {
+        let json = r#"{
+            "execution": {
+                "execution_id": "550e8400-e29b-41d4-a716-446655440000",
+                "proposal_id": "550e8400-e29b-41d4-a716-446655440001",
+                "intent_id": "550e8400-e29b-41d4-a716-446655440002",
+                "capability_id": "550e8400-e29b-41d4-a716-446655440003",
+                "rollback_contract_id": null,
+                "decision": "Allow",
+                "state": "Completed",
+                "started_at": "2025-01-01T00:00:00Z",
+                "finished_at": "2025-01-01T00:01:00Z",
+                "result_digest": "sha256:abc123"
+            },
+            "rollback_contract": null
+        }"#;
+        let detail: client::ExecutionDetailResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            detail.execution.execution_id,
+            "550e8400-e29b-41d4-a716-446655440000"
+        );
+        assert_eq!(detail.execution.decision, "Allow");
+        assert!(detail.rollback_contract.is_none());
+    }
+
+    #[test]
+    fn test_execution_detail_response_with_rollback_contract() {
+        let json = r#"{
+            "execution": {
+                "execution_id": "550e8400-e29b-41d4-a716-446655440000",
+                "proposal_id": "550e8400-e29b-41d4-a716-446655440001",
+                "intent_id": "550e8400-e29b-41d4-a716-446655440002",
+                "capability_id": "550e8400-e29b-41d4-a716-446655440003",
+                "rollback_contract_id": "550e8400-e29b-41d4-a716-446655440010",
+                "decision": "Allow",
+                "state": "Prepared",
+                "started_at": "2025-01-01T00:00:00Z",
+                "finished_at": null,
+                "result_digest": null
+            },
+            "rollback_contract": {
+                "contract_id": "550e8400-e29b-41d4-a716-446655440010",
+                "state": "Prepared"
+            }
+        }"#;
+        let detail: client::ExecutionDetailResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(detail.execution.state, "Prepared");
+        assert!(detail.rollback_contract.is_some());
+    }
+
     // -------------------------------------------------------------------------
     // ServerCommand::Metrics parsing tests
     // -------------------------------------------------------------------------

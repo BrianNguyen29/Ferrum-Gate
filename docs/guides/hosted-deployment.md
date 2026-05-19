@@ -72,7 +72,9 @@ systemctl daemon-reload
 systemctl enable --now ferrumgate
 ```
 
-> **DEP-4 status**: The systemd unit example above is validated locally only. A target-host runbook with exact operator steps, evidence capture, and rollback procedures is prepared at [`docs/implementation-path/artifacts/2026-05-19-dep4-target-host-systemd-runbook.md`](../../implementation-path/artifacts/2026-05-19-dep4-target-host-systemd-runbook.md). DEP-4 remains open until real `systemctl status ferrumd` evidence is captured.
+> **DEP-4 status**: Target-host systemd runtime validated on `ferrumgate-nonprod` with evidence at [`docs/implementation-path/artifacts/2026-05-19-dep4-target-host-systemd-evidence.md`](../../implementation-path/artifacts/2026-05-19-dep4-target-host-systemd-evidence.md). Service name: `ferrumgate.service`. This is **not** a production-ready claim.
+>
+> **Block A / DuckDNS context**: DuckDNS was accepted by the operator on 2026-05-17 for single-node SQLite pilot only. A real owned domain and DNS configuration are still required for production-ready status or full G2 closure. Block A remains **WAIVED/CONDITIONAL**.
 
 ### Mode C — PostgreSQL self-hosted (production foundation)
 
@@ -176,7 +178,7 @@ Use `ferrumctl backup` and `ferrumctl restore`. See [`operator.md`](./operator.m
 
 Use `pg_dump` / `pg_restore` with retention pruning. See [`docs/production-readiness-v2/02-postgres-production-plan.md`](../../production-readiness-v2/02-postgres-production-plan.md) §Phase PG-3.
 
-> **DEP-6 status**: Backup examples exist (`configs/examples/postgres-backup.service`, `configs/examples/postgres-backup.timer`), and a local PG-3 restore drill has passed. A hosted backup-mode planning/preflight checklist with dry-run steps, required evidence, and rollback procedures is prepared at [`docs/implementation-path/artifacts/2026-05-19-dep6-hosted-backup-preflight.md`](../../implementation-path/artifacts/2026-05-19-dep6-hosted-backup-preflight.md). DEP-6 remains open until a hosted backup/restore drill is executed and evidence is captured.
+> **DEP-6 status**: Hosted single-node SQLite temp-copy restore drill passed with evidence at [`docs/implementation-path/artifacts/2026-05-19-dep6-hosted-backup-restore-evidence.md`](../../implementation-path/artifacts/2026-05-19-dep6-hosted-backup-restore-evidence.md). This is **not** production-ready. PostgreSQL production backup/restore is **not** claimed. A hosted backup-mode planning/preflight checklist is prepared at [`docs/implementation-path/artifacts/2026-05-19-dep6-hosted-backup-preflight.md`](../../implementation-path/artifacts/2026-05-19-dep6-hosted-backup-preflight.md).
 
 ## Status caveat
 
@@ -187,5 +189,7 @@ Use `pg_dump` / `pg_restore` with retention pruning. See [`docs/production-readi
 - [`operator.md`](./operator.md) — Config, backup, incident response.
 - [`docs/production-readiness-v2/02-postgres-production-plan.md`](../../production-readiness-v2/02-postgres-production-plan.md) — PG hardening plan.
 - [`docs/PRODUCTION_NOTES.md`](../../PRODUCTION_NOTES.md) — Runtime configuration.
-- [`docs/implementation-path/artifacts/2026-05-19-dep4-target-host-systemd-runbook.md`](../../implementation-path/artifacts/2026-05-19-dep4-target-host-systemd-runbook.md) — DEP-4 target-host systemd runbook (prepared, gate open).
-- [`docs/implementation-path/artifacts/2026-05-19-dep6-hosted-backup-preflight.md`](../../implementation-path/artifacts/2026-05-19-dep6-hosted-backup-preflight.md) — DEP-6 hosted backup preflight (prepared, gate open).
+- [`docs/implementation-path/artifacts/2026-05-19-dep4-target-host-systemd-runbook.md`](../../implementation-path/artifacts/2026-05-19-dep4-target-host-systemd-runbook.md) — DEP-4 target-host systemd runbook (prepared).
+- [`docs/implementation-path/artifacts/2026-05-19-dep4-target-host-systemd-evidence.md`](../../implementation-path/artifacts/2026-05-19-dep4-target-host-systemd-evidence.md) — DEP-4 target-host systemd evidence (captured; not production-ready).
+- [`docs/implementation-path/artifacts/2026-05-19-dep6-hosted-backup-restore-evidence.md`](../../implementation-path/artifacts/2026-05-19-dep6-hosted-backup-restore-evidence.md) — DEP-6 hosted single-node SQLite temp-copy restore evidence (captured; not production-ready).
+- [`docs/implementation-path/artifacts/2026-05-19-dep6-hosted-backup-preflight.md`](../../implementation-path/artifacts/2026-05-19-dep6-hosted-backup-preflight.md) — DEP-6 hosted backup preflight checklist (prepared).

@@ -331,30 +331,13 @@ impl FerrumGatewayClient {
         self.execute(request)
     }
 
-    /// Query lineage: GET /v1/provenance/query
+    /// Query lineage: GET /v1/provenance/lineage/{execution_id}
     /// Auth required.
-    pub fn query_lineage(
-        &self,
-        execution_id: Option<&str>,
-        cursor: Option<&str>,
-        limit: Option<u32>,
-    ) -> Result<serde_json::Value, GatewayError> {
-        let path = "/v1/provenance/query".to_string();
-        let mut query_params: Vec<(String, String)> = Vec::new();
-
-        if let Some(id) = execution_id {
-            query_params.push(("execution_id".to_string(), id.to_string()));
-        }
-        if let Some(c) = cursor {
-            query_params.push(("cursor".to_string(), c.to_string()));
-        }
-        if let Some(l) = limit {
-            query_params.push(("limit".to_string(), l.to_string()));
-        }
+    pub fn query_lineage(&self, execution_id: &str) -> Result<serde_json::Value, GatewayError> {
+        let path = format!("/v1/provenance/lineage/{}", execution_id);
 
         let request = self
             .build_request(reqwest::Method::GET, &path)
-            .query(&query_params)
             .build()
             .map_err(|_e| GatewayError::unreachable("Failed to build request"))?;
 
@@ -3881,5 +3864,97 @@ mod tests {
         );
 
         _mock_compensate.assert();
+    }
+
+    // -------------------------------------------------------------------------
+    // Query lineage tests (GET /v1/provenance/lineage/{execution_id})
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_query_lineage_uses_correct_path_and_method() {
+        let mut server = mockito::Server::new();
+        let execution_id = "550e8400-e29b-41d4-a716-446655440099";
+        let mock = server
+            .mock(
+                "GET",
+                format!("/v1/provenance/lineage/{}", execution_id).as_str(),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                "execution_id": "550e8400-e29b-41d4-a716-446655440099",
+                "events": []
+            }"#,
+            )
+            .expect_at_least(1)
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let result = client.query_lineage(execution_id);
+        assert!(
+            result.is_ok(),
+            "query_lineage should succeed: {:?}",
+            result.err()
+        );
+
+        let response = result.unwrap();
+        assert_eq!(
+            response.get("execution_id").and_then(|v| v.as_str()),
+            Some(execution_id)
+        );
+
+        mock.assert();
+    }
+
+    #[test]
+    fn test_query_lineage_wrong_path_fails() {
+        let mut server = mockito::Server::new();
+        let execution_id = "550e8400-e29b-41d4-a716-446655440099";
+
+        // Mock on WRONG path - should NOT be called
+        let _mock_wrong_path = server
+            .mock("GET", "/v1/provenance/query")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{}"#)
+            .expect(0)
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let result = client.query_lineage(execution_id);
+        assert!(
+            result.is_err(),
+            "query_lineage should fail when path doesn't match"
+        );
+    }
+
+    #[test]
+    fn test_query_lineage_wrong_method_fails() {
+        let mut server = mockito::Server::new();
+        let execution_id = "550e8400-e29b-41d4-a716-446655440099";
+        let path = format!("/v1/provenance/lineage/{}", execution_id);
+
+        // Mock on POST instead of GET - should NOT be called
+        let _mock_wrong_method = server
+            .mock("POST", path.as_str())
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{}"#)
+            .expect(0)
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let result = client.query_lineage(execution_id);
+        assert!(
+            result.is_err(),
+            "query_lineage should fail when method doesn't match"
+        );
     }
 }

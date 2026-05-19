@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="{{ lang }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}{{ config.title }}{% endblock title %}</title>
+  <meta name="description" content="{{ config.description }}">
+  <link rel="stylesheet" href="{{ get_url(path='css/main.css') }}">
+</head>
+<body>
+  <header class="site-header">
+    <div class="container">
+      <a class="brand" href="{{ config.base_url }}">{{ config.title }}</a>
+      <nav class="nav">
+        <a href="#what">What</a>
+        <a href="#when-to-use">When to use</a>
+        <a href="#when-not-to-use">When NOT to use</a>
+        <a href="#architecture">Architecture</a>
+        <a href="#quickstart">Quickstart</a>
+        <a href="#docs">Docs</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    {% block content %}{% endblock content %}
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <p>
+        {{ config.extra.status_banner }}
+      </p>
+      <p>
+        {{ config.extra.block_a_notice }}
+      </p>
+      <p class="small">
+        Source available in repository docs/ folder. No public deployment is configured.
+      </p>
+    </div>
+  </footer>
+</body>
+</html>

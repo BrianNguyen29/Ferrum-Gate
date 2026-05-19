@@ -1,6 +1,6 @@
 # Adapter Reference
 
-> **Status**: Scaffold. Adapter slices are implemented; not all surfaces are production-verified.
+> **Status**: Expanded. Adapter slices are implemented; not all surfaces are production-verified.
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
 
 ---
@@ -19,6 +19,20 @@
 | DirDelete | Validate empty | rmdir empty | Directory gone | Recreate directory |
 | FileAppend | Capture original hash + length | Append data | File grew correctly | Truncate to original length |
 | FileChmod | Capture current permissions | Change mode bits | Permissions match | Restore original permissions |
+
+### Example: FileWrite with rollback
+
+```json
+{
+  "action": "fs.FileWrite",
+  "target": "/tmp/config.yaml",
+  "parameters": {
+    "content": "key: value\n"
+  }
+}
+```
+
+If the file already exists, prepare captures a snapshot. If verification fails or compensation is triggered, the snapshot is restored.
 
 ### Rollback behavior
 
@@ -59,6 +73,20 @@
 | GitTagCreate | Validate tag name | Create lightweight tag | Tag exists | Delete tag |
 | GitTagDelete | Capture tag SHA | Delete tag | Tag gone | Recreate tag at SHA |
 
+### Example: GitCommit with rollback
+
+```json
+{
+  "action": "git.GitCommit",
+  "target": "/repo/path",
+  "parameters": {
+    "message": "Update configuration"
+  }
+}
+```
+
+If verification fails, the adapter resets hard to the captured HEAD. This fails closed if the worktree is dirty.
+
 ### Rollback behavior
 
 - **GitCommit**: `git reset --hard` to captured HEAD. Fails closed if dirty worktree.
@@ -90,6 +118,20 @@
 |-----------|---------|---------|--------|----------|
 | HttpMutation | Validate target/method/URL | Send request | Status/code matches | Replay with idempotency key (POST/PUT/PATCH only) |
 
+### Example: HttpMutation
+
+```json
+{
+  "action": "http.HttpMutation",
+  "target": "https://api.example.com/v1/items",
+  "parameters": {
+    "method": "POST",
+    "headers": {"Content-Type": "application/json"},
+    "body": "{\"name\":\"test\"}"
+  }
+}
+```
+
 ### Rollback behavior
 
 - Rollback/compensate succeeds only for strict one-step `http.replay_v1` POST/PUT/PATCH with exact URL/digest binding and strict `expected_statuses`.
@@ -99,6 +141,7 @@
 
 - Broader replay/idempotency is post-v1 scope.
 - DELETE is not replay-backed.
+- External API availability is outside FerrumGate control; verify step may fail due to transient errors.
 
 ### Risk class mapping
 
@@ -116,6 +159,19 @@
 |-----------|---------|---------|--------|----------|
 | SQL mutation | Validate SQL shape | Execute in transaction | Row counts match | ROLLBACK transaction |
 
+### Example: SQL mutation
+
+```json
+{
+  "action": "sqlite.SQL",
+  "target": "/data/app.db",
+  "parameters": {
+    "sql": "INSERT INTO events (type, payload) VALUES (?, ?)",
+    "params": ["login", "{\"user\":\"alice\"}"]
+  }
+}
+```
+
 ### Rollback behavior
 
 - Uses SQL transaction rollback. If transaction already committed, manual restore may be required.
@@ -124,6 +180,7 @@
 
 - Not production-verified beyond local tests.
 - Complex schema changes may require manual recovery.
+- Concurrent write access to the same database file may cause `SQLITE_BUSY` errors.
 
 ### Risk class mapping
 
@@ -143,6 +200,20 @@
 | Update draft | Capture previous content | Update draft | Content matches | Restore previous content |
 | Delete draft | Capture draft content | Delete draft | Draft gone | Recreate draft |
 
+### Example: Create draft
+
+```json
+{
+  "action": "maildraft.CreateDraft",
+  "target": "primary",
+  "parameters": {
+    "to": "team@example.com",
+    "subject": "Status update",
+    "body": "All systems nominal."
+  }
+}
+```
+
 ### Rollback behavior
 
 - Create: deletes the draft.
@@ -152,12 +223,38 @@
 ### Limitations
 
 - Actual email sending is not supported by design (draft-only).
+- Integration with external mail providers (Gmail API, Outlook, etc.) is not implemented.
 
 ### Risk class mapping
 
 | Operation | Default class |
 |-----------|---------------|
 | maildraft.* | R1 |
+
+---
+
+## Rollback and risk summary
+
+| Adapter | Automatic rollback | Manual recovery possible | External dependency |
+|---------|-------------------|-------------------------|---------------------|
+| fs | Yes (snapshot/restore) | Yes | None |
+| git | Yes (reset/delete/recreate) | Yes | None |
+| http | Limited (replay only for POST/PUT/PATCH) | No | Target API must support replay |
+| sqlite | Yes (transaction rollback) | Yes | None |
+| maildraft | Yes (delete/restore/recreate) | Yes | None |
+
+### When rollback fails
+
+Rollback is not guaranteed in all cases:
+
+- **Competing writers**: Another process modifying the same file/database while FerrumGate operates may leave the system in an inconsistent state.
+- **External APIs**: HTTP replay depends on the target API maintaining consistent state.
+- **Resource exhaustion**: Disk full or memory pressure may prevent snapshot creation or restoration.
+- **Permission changes**: If file permissions change between prepare and compensate, restore may fail.
+
+In all cases, the gateway **fails closed**: if rollback cannot be verified, the execution is marked `SideEffectCompensated` or `SideEffectRolledBack` with an error annotation in provenance.
+
+---
 
 ## Status caveat
 

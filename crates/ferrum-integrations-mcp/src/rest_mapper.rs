@@ -10,7 +10,7 @@
 //! | `ferrum_gate_readyz_deep` | GET /v1/readyz/deep | No |
 //! | `ferrum_gate_list_intents` | GET /v1/intents | Yes |
 //! | `ferrum_gate_get_execution` | GET /v1/executions/{id} | Yes |
-//! | `ferrum_gate_query_lineage` | GET /v1/provenance/query | Yes |
+//! | `ferrum_gate_query_lineage` | GET /v1/provenance/lineage/{execution_id} | Yes |
 //! | `ferrum_gate_list_approvals` | GET /v1/approvals | Yes |
 //! | `ferrum_gate_list_policy_bundles` | GET /v1/policy-bundles | Yes |
 //! | `ferrum_gate_list_bridges` | GET /v1/bridges | Yes |
@@ -274,11 +274,12 @@ fn call_query_lineage(
     client: &FerrumGatewayClient,
     args: &serde_json::Value,
 ) -> Result<ToolsCallResult, McpToolError> {
-    let execution_id = args.get("execution_id").and_then(|v| v.as_str());
-    let cursor = args.get("cursor").and_then(|v| v.as_str());
-    let limit = args.get("limit").and_then(|v| v.as_u64()).map(|v| v as u32);
+    let execution_id = args
+        .get("execution_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| McpToolError::missing_arg("execution_id"))?;
 
-    match client.query_lineage(execution_id, cursor, limit) {
+    match client.query_lineage(execution_id) {
         Ok(result) => Ok(ToolsCallResult {
             content: vec![crate::ToolContent {
                 r#type: "text".to_string(),
@@ -1045,6 +1046,64 @@ mod tests {
         let err = result.unwrap_err();
         assert_eq!(err.code, -32004); // SERVER_ERROR
         assert!(err.message.contains("compile failed"));
+
+        mock.assert();
+    }
+
+    #[test]
+    fn test_call_query_lineage_missing_execution_id() {
+        let args = serde_json::json!({});
+        let config = ClientConfig::new().base_url("http://127.0.0.1:1");
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let result = call_query_lineage(&client, &args);
+        assert!(
+            result.is_err(),
+            "call_query_lineage should fail without execution_id"
+        );
+
+        let err = result.unwrap_err();
+        assert_eq!(err.code, -32602); // INVALID_PARAMS
+        assert!(err.message.contains("execution_id"));
+    }
+
+    #[test]
+    fn test_call_query_lineage_uses_correct_path() {
+        let mut server = mockito::Server::new();
+        let execution_id = "550e8400-e29b-41d4-a716-446655440099";
+        let mock = server
+            .mock(
+                "GET",
+                format!("/v1/provenance/lineage/{}", execution_id).as_str(),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                "execution_id": "550e8400-e29b-41d4-a716-446655440099",
+                "events": []
+            }"#,
+            )
+            .expect_at_least(1)
+            .create();
+
+        let config = ClientConfig::new().base_url(&server.url());
+        let client = FerrumGatewayClient::new(&config).expect("client should create");
+
+        let args = serde_json::json!({
+            "execution_id": execution_id
+        });
+        let result = call_query_lineage(&client, &args);
+        assert!(
+            result.is_ok(),
+            "call_query_lineage should succeed: {:?}",
+            result.err()
+        );
+
+        let tools_result = result.unwrap();
+        assert!(!tools_result.is_error);
+        let text = tools_result.content[0].text.as_ref().unwrap();
+        assert!(text.contains(execution_id));
 
         mock.assert();
     }

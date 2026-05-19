@@ -1,6 +1,6 @@
 # FerrumGate in 10 Minutes
 
-> **Status**: Local API/curl flow validated through lineage endpoint (12 steps). ferrumctl and MCP remain scaffold. This is NOT a fully validated quickstart and NOT a fresh-user test.
+> **Status**: Local API/curl flow validated through lineage endpoint (12 steps). ferrumctl and MCP locally validated after bugfix. This is NOT a fully validated quickstart and NOT a fresh-user test.
 > **Scope**: Local demo only. Not for production deployment.
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
 > **Evidence**: [`docs/implementation-path/artifacts/2026-05-19-quickstart-validation-evidence.md`](../../implementation-path/artifacts/2026-05-19-quickstart-validation-evidence.md)
@@ -173,24 +173,34 @@ curl http://127.0.0.1:18080/v1/provenance/lineage/0b85c3ad-79dd-441e-9423-1141cc
 
 ## ferrumctl version
 
-> **Status**: Scaffold. Not yet validated end-to-end.
+> **Status**: Locally validated. All 7 tested commands pass after bugfix. Target-host validation NOT claimed.
 
 ```bash
-# Health
-ferrumctl health
+# Health (validated)
+ferrumctl --server-url http://127.0.0.1:18080 server health
 
-# List intents
-ferrumctl list-intents
+# Readiness shallow + deep (validated)
+ferrumctl --server-url http://127.0.0.1:18080 server readiness
+ferrumctl --server-url http://127.0.0.1:18080 server readiness --deep
 
-# Inspect execution
-ferrumctl inspect-execution --execution-id <ID>
+# List intents (validated)
+ferrumctl --server-url http://127.0.0.1:18080 server list-intents --limit 5 --format json
+
+# Inspect lineage (validated)
+ferrumctl --server-url http://127.0.0.1:18080 server inspect-lineage <EXECUTION_ID> --format json
+
+# Metrics (validated)
+ferrumctl --server-url http://127.0.0.1:18080 server metrics
+
+# Inspect execution (validated after bugfix)
+ferrumctl --server-url http://127.0.0.1:18080 server inspect-execution <EXECUTION_ID>
 ```
 
 ## MCP version
 
-> **Status**: Scaffold. Not yet validated end-to-end.
+> **Status**: Locally validated. Connection, auth, lifecycle, read queries, and query_lineage pass after bugfix. Target-host validation NOT claimed.
 
-See [`mcp-integration.md`](./mcp-integration.md) for MCP client setup.
+See [`mcp-integration.md`](./mcp-integration.md) for MCP client setup and detailed validation results.
 
 ## Status caveat
 
@@ -198,7 +208,7 @@ See [`mcp-integration.md`](./mcp-integration.md) for MCP client setup.
 >
 > **Block A remains WAIVED/CONDITIONAL**: No real owned domain or DNS is available. Local loopback only.
 >
-> **Validated scope**: The local API/curl flow through all 12 steps (build → lineage) was validated locally. ferrumctl and MCP paths are documented but NOT validated by this evidence.
+> **Validated scope**: The local API/curl flow through all 12 steps (build → lineage) was validated locally. ferrumctl (all tested commands) and MCP (all tested tools) were locally validated after bugfix. Target-host validation and fresh-user testing are NOT claimed.
 
 ## Related docs
 

@@ -1,6 +1,6 @@
 # MCP Integration Guide
 
-> **Status**: Scaffold. MCP local smoke passes; target-host guide is pending validation.
+> **Status**: Locally validated. Connection, auth, lifecycle, read queries, and query_lineage pass after bugfix. Target-host guide is pending validation.
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
 
 ---
@@ -118,7 +118,7 @@ submit_intent
 
 ## Status caveat
 
-> **production-ready = NO**. MCP target-host smoke is planned but not yet executed. Local smoke passes. See [`docs/production-readiness-v2/03-target-mcp-live-workload-plan.md`](../../production-readiness-v2/03-target-mcp-live-workload-plan.md).
+> **production-ready = NO**. MCP target-host smoke is planned but not yet executed. Local validation is complete for tested paths: connection (`ping`, `initialize`, `tools/list`), auth (mutating tools fail closed without token), lifecycle (`submit_intent` → `verify_execution`), read queries (`get_execution`, `list_intents`), and `query_lineage` pass locally after bugfix. See [`docs/implementation-path/artifacts/2026-05-19-doc3-ferrumctl-mcp-usability-evidence.md`](../../implementation-path/artifacts/2026-05-19-doc3-ferrumctl-mcp-usability-evidence.md) §MCP bugfix regression.
 
 ## Related docs
 

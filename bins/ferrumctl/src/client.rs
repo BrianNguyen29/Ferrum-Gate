@@ -43,6 +43,15 @@ pub struct ExecutionRecord {
     pub result_digest: Option<String>,
 }
 
+/// Server wrapper for GET /v1/executions/{id}.
+/// The response contains the execution record plus an optional rollback contract.
+#[derive(Debug, Deserialize)]
+pub struct ExecutionDetailResponse {
+    pub execution: ExecutionRecord,
+    #[allow(dead_code)]
+    pub rollback_contract: Option<serde_json::Value>,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ApprovalRequest {
     pub approval_id: String,
@@ -241,7 +250,8 @@ impl Client {
         let url = format!("{}/v1/executions/{}", self.base_url, execution_id);
         let resp = self.add_auth(self.http.get(&url)).send().await?;
         resp.error_for_status_ref()?;
-        Ok(resp.json().await?)
+        let detail: ExecutionDetailResponse = resp.json().await?;
+        Ok(detail.execution)
     }
 
     pub async fn list_approvals(&self) -> Result<Vec<ApprovalRequest>> {

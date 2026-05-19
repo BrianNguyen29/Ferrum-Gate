@@ -17,9 +17,9 @@ Package FerrumGate into reproducible deployment modes so operators can deploy co
 - Config templates exist.
 - Docker Compose PG local demo (`docker-compose.postgres-demo.yml`) exists and was runtime-validated locally for DEP-3.
 - Local demo compose (`docker-compose.demo.yml`) + Dockerfile validated for DEP-1/DEP-2.
-- Systemd service example exists (`configs/examples/ferrumd.service`); local preflight validation completed, real target-host `systemctl` runtime validation pending.
+- Systemd service example exists (`configs/examples/ferrumd.service`); target-host `systemctl` runtime validated on `ferrumgate-nonprod` with evidence. **Not production-ready.**
 - Env var reference example exists (`configs/examples/ferrumd.env.example`).
-- Deployment guide scaffold exists (`docs/guides/hosted-deployment.md`); full validation pending.
+- Deployment guide exists (`docs/guides/hosted-deployment.md`); DEP-4/DEP-6 limited target-host evidence captured. Full production-ready validation pending.
 - Helm chart is not implemented.
 
 ## Gaps
@@ -28,7 +28,7 @@ Package FerrumGate into reproducible deployment modes so operators can deploy co
 |-----|-----|
 | Deployment guide validation | Scaffold exists; step-by-step runtime validation for each mode not yet done |
 | Helm chart | K8s deployment is not packaged |
-| Backup/restore hosted validation | Backup examples exist in `configs/examples/`; operational drill in hosted mode not yet validated |
+| Backup/restore production validation | Hosted single-node SQLite temp-copy drill passed with limited evidence. PostgreSQL production backup/restore **not** claimed. |
 
 ## Implementation tasks
 
@@ -36,7 +36,7 @@ Package FerrumGate into reproducible deployment modes so operators can deploy co
 
 - [x] `docker-compose.demo.yml` — SQLite in-memory, auth disabled, loopback only. Config + Dockerfile present; DEP-1/DEP-2 validated locally.
 - [x] `docker-compose.postgres-demo.yml` — ferrumd + PostgreSQL. Config + Dockerfile build-arg present; runtime validated locally for DEP-3.
-- [x] `configs/examples/ferrumd.service` — systemd unit example. Exists; local preflight evidence recorded; target-host `systemctl` runtime validation pending.
+- [x] `configs/examples/ferrumd.service` — systemd unit example. Target-host `systemctl` runtime validated on `ferrumgate-nonprod`; evidence captured. **Not production-ready.**
 - [x] `configs/examples/ferrumd.env.example` — env var reference. Exists.
 - [x] `docs/guides/hosted-deployment.md` — deployment guide (scaffold exists).
 
@@ -79,8 +79,8 @@ Package FerrumGate into reproducible deployment modes so operators can deploy co
 - [`docs/ROADMAP.md`](../../ROADMAP.md) §3.10, §4 Phase 8
 - [`docs/guides/hosted-deployment.md`](../../guides/hosted-deployment.md) — User-facing guide scaffold.
 - [`docs/production-readiness-v2/02-postgres-production-plan.md`](./02-postgres-production-plan.md) — PG hardening prerequisites.
-- [`docs/implementation-path/artifacts/2026-05-19-dep4-target-host-systemd-runbook.md`](../../implementation-path/artifacts/2026-05-19-dep4-target-host-systemd-runbook.md) — DEP-4 target-host runbook (prepared, gate open).
-- [`docs/implementation-path/artifacts/2026-05-19-dep6-hosted-backup-preflight.md`](../../implementation-path/artifacts/2026-05-19-dep6-hosted-backup-preflight.md) — DEP-6 hosted backup preflight (prepared, gate open).
-- [`docs/implementation-path/artifacts/2026-05-19-dep4-dep6-target-execution-blocked.md`](../../implementation-path/artifacts/2026-05-19-dep4-dep6-target-execution-blocked.md) — DEP-4/DEP-6 target execution blocked evidence (SSH unreachable, gate open).
-- [`docs/implementation-path/artifacts/2026-05-19-dep4-target-host-systemd-evidence.md`](../../implementation-path/artifacts/2026-05-19-dep4-target-host-systemd-evidence.md) — DEP-4 target-host systemd runtime evidence.
-- [`docs/implementation-path/artifacts/2026-05-19-dep6-hosted-backup-restore-evidence.md`](../../implementation-path/artifacts/2026-05-19-dep6-hosted-backup-restore-evidence.md) — DEP-6 hosted SQLite temp-copy backup/restore evidence.
+- [`docs/implementation-path/artifacts/2026-05-19-dep4-target-host-systemd-runbook.md`](../../implementation-path/artifacts/2026-05-19-dep4-target-host-systemd-runbook.md) — DEP-4 target-host runbook (prepared).
+- [`docs/implementation-path/artifacts/2026-05-19-dep4-target-host-systemd-evidence.md`](../../implementation-path/artifacts/2026-05-19-dep4-target-host-systemd-evidence.md) — DEP-4 target-host systemd runtime evidence (captured; **not production-ready**).
+- [`docs/implementation-path/artifacts/2026-05-19-dep6-hosted-backup-preflight.md`](../../implementation-path/artifacts/2026-05-19-dep6-hosted-backup-preflight.md) — DEP-6 hosted backup preflight checklist (prepared).
+- [`docs/implementation-path/artifacts/2026-05-19-dep6-hosted-backup-restore-evidence.md`](../../implementation-path/artifacts/2026-05-19-dep6-hosted-backup-restore-evidence.md) — DEP-6 hosted SQLite temp-copy backup/restore evidence (captured; **not production-ready**).
+- [`docs/implementation-path/artifacts/2026-05-19-dep4-dep6-target-execution-blocked.md`](../../implementation-path/artifacts/2026-05-19-dep4-dep6-target-execution-blocked.md) — DEP-4/DEP-6 target execution blocked evidence (SSH unreachable; historical, not edited).
