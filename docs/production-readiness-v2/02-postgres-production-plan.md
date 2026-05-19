@@ -39,7 +39,7 @@ PostgreSQL local/runtime foundation is strong:
 | No PG pool metrics | Medium | Cannot observe pool saturation |
 | No PG-specific alert rules | Medium | Hard to operate without alerts |
 | No TLS/SSL DSN guidance | Medium | Production PG connection not hardened |
-| No schema versioning standard | Medium/High | Migrations are currently one-shot |
+| No incremental up/down migration engine | Medium/High | Versioned runner exists; full incremental engine not built |
 | No target-host PG drills | High | No evidence of production PG behavior |
 | No PG restore drill evidence | High | Backup docs exist; evidence does not |
 | No CI for postgres feature | Medium | Drift risk |
@@ -157,11 +157,76 @@ PostgreSQL local/runtime foundation is strong:
 - [x] Handle bootstrap safely (create version table before querying).
 - [x] Add tests for version tracking and idempotency.
 
-#### PG-4b — Incremental migration files + CI drift check (DEFERRED / NOT STARTED)
+#### PG-4b — Incremental migration files + CI drift check (DECOMPOSED)
 
-- [ ] Convert to incremental per-migration up/down files.
-- [ ] Add schema drift check to CI.
-- [ ] Document rollback/forward strategy.
+> **Oracle design review conclusion**: PG-4b is decomposed. Do **not** implement a
+> full incremental up/down engine or add `sqlx`/`refinery`-style dependencies.
+> The bounded follow-up is docs + runner cleanup only.
+
+##### PG-4b.1 — Migration parity decision + runner cleanup (COMPLETE)
+
+- [x] Inspected PostgreSQL connect / bootstrap / `apply_embedded_migrations` path.
+- [x] Confirmed the versioned runner (`apply_embedded_migrations`) is the **single**
+  runtime path; no duplicate unversioned `bootstrap_schema` exists.
+- [x] Documented that SQLite-only migrations are **not** ported to PostgreSQL:
+  - `002_add_leader_tips.sql` → `leader_tips` (sync-only, SQLite)
+  - `003_add_sync_state.sql` → `sync_state` (sync-only, SQLite)
+  - `004_add_leader_allowlist.sql` → `leader_allowlist` (sync-only, SQLite)
+  - `005_add_policy_bundles.sql` → `policy_bundles` **already present** in PG `001_initial.sql`
+- [x] `CURRENT_SCHEMA_VERSION` remains `1` for PostgreSQL.
+- [x] Added module-level docs in `crates/ferrum-store/src/postgres/migrations.rs` and
+  doc comments in `mod.rs` recording the parity matrix.
+
+##### PG-4b.2 — Incremental up/down engine + per-version SQL files (DEFERRED)
+
+- [ ] Add per-migration up/down SQL files for future PG schema changes.
+- [ ] Extend the runner to loop over versioned files when `CURRENT_SCHEMA_VERSION > 1`.
+- [ ] Deferred until a real schema change requires it; no overengineering now.
+
+##### PG-4b.3 — Rollback / forward strategy doc (COMPLETE)
+
+- [x] Documented strategy in this plan (see below).
+- [ ] CI schema-drift check remains **deferred** (no CI pipeline for PG feature).
+
+##### PostgreSQL rollback / forward strategy
+
+> **Scope**: This strategy applies to the embedded migration runner and the
+> `migrations/postgres/` SQL files. It is **not** a general production DB ops
+> runbook (see `109-p5c-postgresql-backup-restore-runbook.md` for backups).
+
+1. **Forward-only by default**
+   The runner only applies migrations when `current_version < target_version`.
+   There is no automatic down-migration. If a deployment needs to revert schema,
+   restore from a `pg_dump` snapshot taken before the migration.
+
+2. **Idempotent baseline**
+   `apply_embedded_migrations` creates `_schema_version` with `IF NOT EXISTS`
+   and skips when the recorded version is already current. Re-running the same
+   version is always safe.
+
+3. **Adding a future migration**
+   When a new schema change is required:
+   - Add `migrations/postgres/002_<name>.sql` containing the new DDL.
+   - Append the same DDL to `INIT_MIGRATION` (or refactor the runner to loop
+     over files) so fresh databases receive the full schema in one transaction.
+   - Increment `CURRENT_SCHEMA_VERSION` in `migrations.rs`.
+   - The runner will then apply `002_*.sql` on the next startup.
+   - Keep the migration within a single `BEGIN ... COMMIT` block if possible;
+     the runner wraps everything in its own transaction, so individual files
+     should avoid explicit `BEGIN`/`COMMIT`.
+
+4. **Rollback procedure (manual)**
+   - Stop `ferrumd`.
+   - Restore the database from the most recent `pg_dump` (or snapshot) that
+     predates the bad migration.
+   - If the migration was partially applied, manually `DROP` any objects it
+     created and delete its row from `_schema_version`.
+   - Restart `ferrumd`; the runner will re-apply the correct baseline.
+
+5. **SQLite-only tables stay SQLite-only**
+   `leader_tips`, `sync_state`, and `leader_allowlist` are part of the SQLite
+   sync subsystem and will not be added to PostgreSQL unless the sync design
+   is later extended to PG. This is an intentional parity boundary, not a gap.
 
 ### Phase PG-5 — HA design (ADR first)
 
@@ -177,7 +242,7 @@ PostgreSQL local/runtime foundation is strong:
 | PG-1 | `FERRUMD_STORE_DSN=postgres://...` and `/v1/readyz/deep = 200` |
 | PG-2 | Restart PG during test → ferrumd recovers or fails closed cleanly |
 | PG-3 | `pg_dump exit 0`, `pg_restore exit 0`, restored row count matches, readiness after restore pass |
-| PG-4 | Migration can run twice safely; version recorded; CI checks schema drift |
+| PG-4 | Migration can run twice safely; version recorded; parity/rollback strategy documented; CI drift check deferred |
 | PG-5 | HA ADR approved; primary failure drill documented; RPO/RTO measured for manual failover |
 
 ## Evidence required

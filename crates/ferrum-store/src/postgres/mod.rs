@@ -184,12 +184,28 @@ impl PostgresStore {
 
     /// Apply embedded schema migrations for all P3 repos within a transaction.
     ///
+    /// This is the **single** PostgreSQL migration path. There is no separate
+    /// unversioned `bootstrap_schema` routine; the version-tracking table is
+    /// created inline below so the runner can query `_schema_version` on a
+    /// completely empty database. The same `CREATE TABLE IF NOT EXISTS` also
+    /// appears in `001_initial.sql` for completeness when the file is run
+    /// manually, but the authoritative versioned flow is this method.
+    ///
     /// Idempotent: checks `_schema_version` before running SQL. If the recorded
     /// version is >= [`migrations::CURRENT_SCHEMA_VERSION`], the call is a no-op.
+    ///
+    /// SQLite-only migrations (`leader_tips`, `sync_state`, `leader_allowlist`)
+    /// are intentionally **not** ported to PostgreSQL. `policy_bundles` is already
+    /// included in the PG `001_initial.sql`. See [`migrations`](super::migrations)
+    /// for the parity matrix.
     pub async fn apply_embedded_migrations(&self) -> Result<()> {
         let mut tx = self.pool.begin().await?;
 
         // Bootstrap: ensure version tracking table exists before querying it.
+        // This is idempotent (`IF NOT EXISTS`) and required so the runner works
+        // on a brand-new database. The same DDL is also present in
+        // `001_initial.sql` for manual/psql usage, but that does not create a
+        // duplicate path because this method is the only runtime entry-point.
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS _schema_version (
                 version INTEGER PRIMARY KEY,
