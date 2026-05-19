@@ -4,6 +4,7 @@
 > **Owner**: Engineering + Operator
 > **Last updated**: 2026-05-18
 > **Parent**: [`01-slo-sla.md`](01-slo-sla.md)
+> **Scope**: [`00-scope-and-nonclaims.md`](00-scope-and-nonclaims.md)
 
 ---
 

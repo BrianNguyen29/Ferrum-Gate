@@ -2,7 +2,7 @@
 
 > **Status**: Planning artifact. Not a claim of readiness.
 > **Owner**: Engineering
-> **Last updated**: 2026-05-18
+> **Last updated**: 2026-05-19
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
 
 ---
@@ -30,10 +30,10 @@ Lock the scope of the post-conditional-pilot production path and make all non-cl
 
 ## Implementation tasks
 
-- [ ] Review every doc in `docs/production-readiness-v2/` for overclaim.
-- [ ] Ensure every doc links back to this scope doc.
-- [ ] Ensure every doc repeats the non-claims table.
-- [ ] Engineering signoff that no doc uses "production-ready" without `= NO` qualifier.
+- [x] Review every doc in `docs/production-readiness-v2/` for overclaim.
+- [x] Ensure every doc links back to this scope doc.
+- [x] Ensure every doc repeats the non-claims table.
+- [x] Engineering signoff that no doc uses "production-ready" without `= NO` qualifier.
 
 ## Non-claims
 
@@ -75,9 +75,9 @@ Lock the scope of the post-conditional-pilot production path and make all non-cl
 
 ## Acceptance criteria
 
-- [ ] Every doc in `docs/production-readiness-v2/` links back to this scope doc.
-- [ ] Every doc in `docs/production-readiness-v2/` repeats the non-claims table.
-- [ ] No doc uses the phrase "production-ready" without the `= NO` qualifier.
+- [x] Every doc in `docs/production-readiness-v2/` links back to this scope doc.
+- [x] Every doc in `docs/production-readiness-v2/` repeats the non-claims table.
+- [x] No doc uses the phrase "production-ready" without the `= NO` qualifier.
 
 ## Evidence required
 

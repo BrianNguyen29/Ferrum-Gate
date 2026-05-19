@@ -4,6 +4,7 @@
 > **Owner**: Engineering
 > **Last updated**: 2026-05-18
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
+> **Scope**: [`00-scope-and-nonclaims.md`](00-scope-and-nonclaims.md)
 
 ---
 

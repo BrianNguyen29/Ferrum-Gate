@@ -4,6 +4,7 @@
 > **Owner**: Engineering + Operator
 > **Last updated**: 2026-05-19
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
+> **Scope**: [`00-scope-and-nonclaims.md`](00-scope-and-nonclaims.md)
 
 ---
 
@@ -52,14 +53,14 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 
 | # | Item | Owner | Evidence | Status |
 |---|------|-------|----------|--------|
-| 0.1 | `production-scope.md` exists and reviewed | Engineering | `docs/production-readiness-v2/00-scope-and-nonclaims.md` | ☐ |
-| 0.2 | `slo-sla-draft.md` exists and reviewed | Engineering + Operator | `docs/production-readiness-v2/01-slo-sla.md` | ☐ |
-| 0.3 | `postgres-production-gap-adr.md` exists and reviewed | Engineering | `docs/production-readiness-v2/02-postgres-production-plan.md` | ☐ |
-| 0.4 | `mcp-target-host-validation-plan.md` exists and reviewed | Engineering | `docs/production-readiness-v2/03-target-mcp-live-workload-plan.md` | ☐ |
-| 0.5 | `tenant-security-model-adr.md` exists and reviewed | Engineering + Operator | `docs/production-readiness-v2/04-security-tenant-model-adr.md` | ☐ |
-| 0.6 | `product-docs-information-architecture.md` exists | Engineering | `docs/guides/README.md` or equivalent | ☐ |
-| 0.7 | Every checklist has evidence requirements | Engineering | This doc | ☐ |
-| 0.8 | No doc overclaims production-ready | Engineering | Review signoff | ☐ |
+| 0.1 | `production-scope.md` exists and reviewed | Engineering | `docs/production-readiness-v2/00-scope-and-nonclaims.md` | ✅ COMPLETE — reviewed in Phase 0 sweep |
+| 0.2 | `slo-sla-draft.md` exists and reviewed | Engineering + Operator | `docs/production-readiness-v2/01-slo-sla.md` | ✅ COMPLETE — reviewed in Phase 0 sweep |
+| 0.3 | `postgres-production-gap-adr.md` exists and reviewed | Engineering | `docs/production-readiness-v2/02-postgres-production-plan.md` | ✅ COMPLETE — reviewed in Phase 0 sweep |
+| 0.4 | `mcp-target-host-validation-plan.md` exists and reviewed | Engineering | `docs/production-readiness-v2/03-target-mcp-live-workload-plan.md` | ✅ COMPLETE — reviewed in Phase 0 sweep |
+| 0.5 | `tenant-security-model-adr.md` exists and reviewed | Engineering + Operator | `docs/production-readiness-v2/04-security-tenant-model-adr.md` | ✅ COMPLETE — reviewed in Phase 0 sweep |
+| 0.6 | `product-docs-information-architecture.md` exists | Engineering | `docs/guides/README.md` | ✅ COMPLETE — guide index links all 10 scaffolds with status and non-claims |
+| 0.7 | Every checklist has evidence requirements | Engineering | This doc | ✅ COMPLETE — every phase item has Owner and Evidence columns |
+| 0.8 | No doc overclaims production-ready | Engineering | Review signoff | ✅ COMPLETE — Phase 0 sweep found no unqualified overclaim |
 
 ## Phase 1 — PostgreSQL production foundation
 
