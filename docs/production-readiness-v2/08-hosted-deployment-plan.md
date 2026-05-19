@@ -59,9 +59,9 @@ Package FerrumGate into reproducible deployment modes so operators can deploy co
 - [x] DEP-1: Docker Compose demo starts ferrumd locally (`docker-compose.demo.yml` + `Dockerfile`). Evidence: `docs/implementation-path/artifacts/2026-05-19-compose-demo-evidence.md`.
 - [x] DEP-2: Healthz passes after compose up locally. Evidence: same artifact.
 - [x] DEP-3: Postgres deployment mode documented and tested locally (`docker-compose.postgres-demo.yml` + Dockerfile). Evidence: `docs/implementation-path/artifacts/2026-05-19-compose-demo-pg-evidence.md`.
-- [ ] DEP-4: Systemd unit works with env file. Local preflight evidence recorded at `docs/implementation-path/artifacts/2026-05-19-systemd-validation-evidence.md`. Target-host runbook prepared at `docs/implementation-path/artifacts/2026-05-19-dep4-target-host-systemd-runbook.md`. Target execution attempted 2026-05-19 and blocked by SSH access; evidence at `docs/implementation-path/artifacts/2026-05-19-dep4-dep6-target-execution-blocked.md`. DEP-4 remains open.
+- [x] DEP-4: Systemd unit works with env file. Target-host systemd runtime validated on `ferrumgate-nonprod`; evidence: `docs/implementation-path/artifacts/2026-05-19-dep4-target-host-systemd-evidence.md`. Not a production-ready claim.
 - [ ] DEP-5: Helm install produces ready pod. Not implemented.
-- [ ] DEP-6: Backup/restore procedure works in hosted mode. Backup examples exist in `configs/examples/`; local PG-3 restore drill passed. Hosted backup-mode preflight prepared at `docs/implementation-path/artifacts/2026-05-19-dep6-hosted-backup-preflight.md`. Target execution attempted 2026-05-19 and blocked by SSH access; evidence at `docs/implementation-path/artifacts/2026-05-19-dep4-dep6-target-execution-blocked.md`. DEP-6 remains open.
+- [x] DEP-6: Backup/restore procedure works in hosted mode. Hosted single-node SQLite backup/restore temp-copy drill passed on `ferrumgate-nonprod`; evidence: `docs/implementation-path/artifacts/2026-05-19-dep6-hosted-backup-restore-evidence.md`. Not a production-ready claim.
 
 ## Evidence required
 
@@ -82,3 +82,5 @@ Package FerrumGate into reproducible deployment modes so operators can deploy co
 - [`docs/implementation-path/artifacts/2026-05-19-dep4-target-host-systemd-runbook.md`](../../implementation-path/artifacts/2026-05-19-dep4-target-host-systemd-runbook.md) — DEP-4 target-host runbook (prepared, gate open).
 - [`docs/implementation-path/artifacts/2026-05-19-dep6-hosted-backup-preflight.md`](../../implementation-path/artifacts/2026-05-19-dep6-hosted-backup-preflight.md) — DEP-6 hosted backup preflight (prepared, gate open).
 - [`docs/implementation-path/artifacts/2026-05-19-dep4-dep6-target-execution-blocked.md`](../../implementation-path/artifacts/2026-05-19-dep4-dep6-target-execution-blocked.md) — DEP-4/DEP-6 target execution blocked evidence (SSH unreachable, gate open).
+- [`docs/implementation-path/artifacts/2026-05-19-dep4-target-host-systemd-evidence.md`](../../implementation-path/artifacts/2026-05-19-dep4-target-host-systemd-evidence.md) — DEP-4 target-host systemd runtime evidence.
+- [`docs/implementation-path/artifacts/2026-05-19-dep6-hosted-backup-restore-evidence.md`](../../implementation-path/artifacts/2026-05-19-dep6-hosted-backup-restore-evidence.md) — DEP-6 hosted SQLite temp-copy backup/restore evidence.
