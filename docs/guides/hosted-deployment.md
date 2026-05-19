@@ -111,7 +111,7 @@ volumes:
   pgdata:
 ```
 
-> **Note**: PostgreSQL production hardening is planned. See [`docs/production-readiness-v2/02-postgres-production-plan.md`](../../production-readiness-v2/02-postgres-production-plan.md).
+> **Note**: A local demo compose file (`docker-compose.postgres-demo.yml`) exists for development only. It is NOT production-ready. PostgreSQL production hardening is planned. See [`docs/production-readiness-v2/02-postgres-production-plan.md`](../../production-readiness-v2/02-postgres-production-plan.md).
 
 ### Mode D — Kubernetes (future)
 

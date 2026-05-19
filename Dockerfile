@@ -6,12 +6,13 @@
 #
 
 # --- Build stage ---
-FROM rust:1.85-bookworm AS builder
+FROM rust:1.95-bookworm AS builder
 
 WORKDIR /app
 COPY . .
 
-RUN cargo build --release --bin ferrumd
+ARG FEATURES=""
+RUN cargo build --release --bin ferrumd ${FEATURES:+--features "$FEATURES"}
 
 # --- Runtime stage ---
 FROM debian:bookworm-slim

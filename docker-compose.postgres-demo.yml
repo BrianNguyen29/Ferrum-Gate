@@ -1,0 +1,73 @@
+# Docker Compose for FerrumGate PostgreSQL Local Demo
+#
+# ⚠️  DISCLAIMER: This is a LOCAL DEMO ONLY.
+#     - PostgreSQL container with placeholder credentials
+#     - Authentication is DISABLED
+#     - ferrumd bound to loopback on the host (127.0.0.1:19081)
+#     - NO production-ready claim
+#     DO NOT use this for production workloads or expose to the internet.
+#
+# Usage:
+#   docker compose -f docker-compose.postgres-demo.yml up -d --build
+#   curl http://127.0.0.1:19081/v1/healthz
+#   docker compose -f docker-compose.postgres-demo.yml down -v
+#
+# Prerequisites:
+#   ferrumd is built with the `postgres` feature via Dockerfile build arg.
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: ferrumgate_postgres_demo
+    environment:
+      POSTGRES_USER: ferrumgate_dev
+      POSTGRES_PASSWORD: ferrumgate_dev_password  # placeholder - not for production
+      POSTGRES_DB: ferrumgate_demo
+    volumes:
+      - postgres_demo_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ferrumgate_dev -d ferrumgate_demo"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: "no"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  ferrumd:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        FEATURES: postgres
+    container_name: ferrumgate_demo_pg
+    environment:
+      FERRUMD_BIND_ADDR: "0.0.0.0:8080"
+      FERRUMD_STORE_DSN: "postgres://ferrumgate_dev:ferrumgate_dev_password@postgres:5432/ferrumgate_demo"
+      FERRUMD_AUTH_MODE: "disabled"
+      # Required inside the container because ferrumd must listen on 0.0.0.0
+      # for Docker port publishing. The host port remains loopback-only below.
+      FERRUMD_ALLOW_INSECURE_NONLOCAL_BIND: "true"
+      FERRUMD_LOG_FILTER: "info"
+    ports:
+      - "127.0.0.1:19081:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/v1/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: "no"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+volumes:
+  postgres_demo_data:
+    driver: local
