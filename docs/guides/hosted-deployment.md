@@ -14,6 +14,12 @@
 cargo run --bin ferrumd
 ```
 
+Or use Docker Compose:
+
+```bash
+docker compose -f docker-compose.demo.yml up -d --build
+```
+
 Purpose: quickstart, demos, development.
 
 > **Not for production. Do not expose to the internet.**

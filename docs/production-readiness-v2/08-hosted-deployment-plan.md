@@ -24,7 +24,6 @@ Package FerrumGate into reproducible deployment modes so operators can deploy co
 
 | Gap | Why |
 |-----|-----|
-| No docker-compose.demo.yml | Cannot start a local demo in one command |
 | No docker-compose.postgres-demo.yml | Cannot demo PG mode easily |
 | No systemd service example | Self-hosted operators must write their own |
 | No env var reference doc | Operators do not know all config options |
@@ -36,7 +35,7 @@ Package FerrumGate into reproducible deployment modes so operators can deploy co
 
 ### P0 deliverables
 
-- [x] `docker-compose.demo.yml` — SQLite in-memory, auth disabled, loopback only. Config present; runtime validation pending image availability.
+- [x] `docker-compose.demo.yml` — SQLite in-memory, auth disabled, loopback only. Config + Dockerfile present; runtime validation pending build.
 - [ ] `docker-compose.postgres-demo.yml` — ferrumd + PostgreSQL.
 - [ ] `configs/examples/ferrumd.service` — systemd unit example.
 - [ ] `configs/examples/ferrumd.env.example` — env var reference.
@@ -58,8 +57,8 @@ Package FerrumGate into reproducible deployment modes so operators can deploy co
 
 ## Acceptance criteria
 
-- [x] DEP-1: Docker Compose demo config present (`docker-compose.demo.yml`). Runtime start pending image availability.
-- [ ] DEP-2: Healthz passes after compose up — open until DEP-1 runtime validated.
+- [x] DEP-1: Docker Compose demo starts ferrumd locally (`docker-compose.demo.yml` + `Dockerfile`). Evidence: `docs/implementation-path/artifacts/2026-05-19-compose-demo-evidence.md`.
+- [x] DEP-2: Healthz passes after compose up locally. Evidence: same artifact.
 - [ ] DEP-3: Postgres deployment mode documented and tested.
 - [ ] DEP-4: Systemd unit works with env file.
 - [ ] DEP-5: Helm install produces ready pod.

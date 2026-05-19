@@ -8,23 +8,21 @@
 #     DO NOT use this for production workloads or expose to the internet.
 #
 # Usage:
-#   docker compose -f docker-compose.demo.yml up -d
+#   docker compose -f docker-compose.demo.yml up -d --build
 #   curl http://127.0.0.1:8080/v1/healthz
 #   docker compose -f docker-compose.demo.yml down
-#
-# Prerequisites:
-#   A ferrumd container image must be available as `ferrumgate:latest`.
-#   Build or pull an image before running this compose file.
-#   No Dockerfile is provided in this repository.
 
 services:
   ferrumd:
-    image: ferrumgate:latest
+    build: .
     container_name: ferrumgate_demo
     environment:
       FERRUMD_BIND_ADDR: "0.0.0.0:8080"
       FERRUMD_STORE_DSN: "sqlite::memory:"
       FERRUMD_AUTH_MODE: "disabled"
+      # Required inside the container because ferrumd must listen on 0.0.0.0
+      # for Docker port publishing. The host port remains loopback-only below.
+      FERRUMD_ALLOW_INSECURE_NONLOCAL_BIND: "true"
       FERRUMD_LOG_FILTER: "info"
     ports:
       - "127.0.0.1:8080:8080"
