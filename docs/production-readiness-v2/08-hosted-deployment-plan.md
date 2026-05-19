@@ -59,9 +59,9 @@ Package FerrumGate into reproducible deployment modes so operators can deploy co
 - [x] DEP-1: Docker Compose demo starts ferrumd locally (`docker-compose.demo.yml` + `Dockerfile`). Evidence: `docs/implementation-path/artifacts/2026-05-19-compose-demo-evidence.md`.
 - [x] DEP-2: Healthz passes after compose up locally. Evidence: same artifact.
 - [x] DEP-3: Postgres deployment mode documented and tested locally (`docker-compose.postgres-demo.yml` + Dockerfile). Evidence: `docs/implementation-path/artifacts/2026-05-19-compose-demo-pg-evidence.md`.
-- [ ] DEP-4: Systemd unit works with env file. Local preflight evidence recorded at `docs/implementation-path/artifacts/2026-05-19-systemd-validation-evidence.md`; real `systemctl status ferrumd` evidence pending.
+- [ ] DEP-4: Systemd unit works with env file. Local preflight evidence recorded at `docs/implementation-path/artifacts/2026-05-19-systemd-validation-evidence.md`. Target-host runbook prepared at `docs/implementation-path/artifacts/2026-05-19-dep4-target-host-systemd-runbook.md`. Real `systemctl status ferrumd` evidence pending; DEP-4 remains open.
 - [ ] DEP-5: Helm install produces ready pod. Not implemented.
-- [ ] DEP-6: Backup/restore procedure works in hosted mode. Backup examples exist in `configs/examples/`; hosted-mode drill not yet validated.
+- [ ] DEP-6: Backup/restore procedure works in hosted mode. Backup examples exist in `configs/examples/`; local PG-3 restore drill passed. Hosted backup-mode preflight prepared at `docs/implementation-path/artifacts/2026-05-19-dep6-hosted-backup-preflight.md`. Hosted-mode drill not yet validated; DEP-6 remains open.
 
 ## Evidence required
 
@@ -79,3 +79,5 @@ Package FerrumGate into reproducible deployment modes so operators can deploy co
 - [`docs/ROADMAP.md`](../../ROADMAP.md) §3.10, §4 Phase 8
 - [`docs/guides/hosted-deployment.md`](../../guides/hosted-deployment.md) — User-facing guide scaffold.
 - [`docs/production-readiness-v2/02-postgres-production-plan.md`](./02-postgres-production-plan.md) — PG hardening prerequisites.
+- [`docs/implementation-path/artifacts/2026-05-19-dep4-target-host-systemd-runbook.md`](../../implementation-path/artifacts/2026-05-19-dep4-target-host-systemd-runbook.md) — DEP-4 target-host runbook (prepared, gate open).
+- [`docs/implementation-path/artifacts/2026-05-19-dep6-hosted-backup-preflight.md`](../../implementation-path/artifacts/2026-05-19-dep6-hosted-backup-preflight.md) — DEP-6 hosted backup preflight (prepared, gate open).

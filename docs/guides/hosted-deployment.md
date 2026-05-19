@@ -59,7 +59,7 @@ WantedBy=multi-user.target
 Create `/etc/ferrumgate/ferrumgate.env`:
 
 ```bash
-FERRUMD_STORE_DSN=sqlite:/var/lib/ferrumgate/ferrumgate.db
+FERRUMD_STORE_DSN=sqlite:///var/lib/ferrumgate/ferrumgate.db
 FERRUMD_AUTH_MODE=Bearer
 FERRUMD_BEARER_TOKEN=<generate-with-openssl-rand-hex-32>
 FERRUMD_LOG_FORMAT=json
@@ -71,6 +71,8 @@ Enable:
 systemctl daemon-reload
 systemctl enable --now ferrumgate
 ```
+
+> **DEP-4 status**: The systemd unit example above is validated locally only. A target-host runbook with exact operator steps, evidence capture, and rollback procedures is prepared at [`docs/implementation-path/artifacts/2026-05-19-dep4-target-host-systemd-runbook.md`](../../implementation-path/artifacts/2026-05-19-dep4-target-host-systemd-runbook.md). DEP-4 remains open until real `systemctl status ferrumd` evidence is captured.
 
 ### Mode C — PostgreSQL self-hosted (production foundation)
 
@@ -174,6 +176,8 @@ Use `ferrumctl backup` and `ferrumctl restore`. See [`operator.md`](./operator.m
 
 Use `pg_dump` / `pg_restore` with retention pruning. See [`docs/production-readiness-v2/02-postgres-production-plan.md`](../../production-readiness-v2/02-postgres-production-plan.md) §Phase PG-3.
 
+> **DEP-6 status**: Backup examples exist (`configs/examples/postgres-backup.service`, `configs/examples/postgres-backup.timer`), and a local PG-3 restore drill has passed. A hosted backup-mode planning/preflight checklist with dry-run steps, required evidence, and rollback procedures is prepared at [`docs/implementation-path/artifacts/2026-05-19-dep6-hosted-backup-preflight.md`](../../implementation-path/artifacts/2026-05-19-dep6-hosted-backup-preflight.md). DEP-6 remains open until a hosted backup/restore drill is executed and evidence is captured.
+
 ## Status caveat
 
 > **production-ready = NO**. Mode B is the only validated deployment for conditional pilot. Mode C requires PG hardening before production claim. Mode D is not implemented. See [`docs/ROADMAP.md`](../../ROADMAP.md) §4 Phase 8.
@@ -183,3 +187,5 @@ Use `pg_dump` / `pg_restore` with retention pruning. See [`docs/production-readi
 - [`operator.md`](./operator.md) — Config, backup, incident response.
 - [`docs/production-readiness-v2/02-postgres-production-plan.md`](../../production-readiness-v2/02-postgres-production-plan.md) — PG hardening plan.
 - [`docs/PRODUCTION_NOTES.md`](../../PRODUCTION_NOTES.md) — Runtime configuration.
+- [`docs/implementation-path/artifacts/2026-05-19-dep4-target-host-systemd-runbook.md`](../../implementation-path/artifacts/2026-05-19-dep4-target-host-systemd-runbook.md) — DEP-4 target-host systemd runbook (prepared, gate open).
+- [`docs/implementation-path/artifacts/2026-05-19-dep6-hosted-backup-preflight.md`](../../implementation-path/artifacts/2026-05-19-dep6-hosted-backup-preflight.md) — DEP-6 hosted backup preflight (prepared, gate open).
