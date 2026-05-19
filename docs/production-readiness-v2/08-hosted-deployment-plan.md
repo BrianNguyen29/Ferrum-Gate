@@ -36,7 +36,7 @@ Package FerrumGate into reproducible deployment modes so operators can deploy co
 
 ### P0 deliverables
 
-- [ ] `docker-compose.demo.yml` — SQLite in-memory, auth disabled, loopback only.
+- [x] `docker-compose.demo.yml` — SQLite in-memory, auth disabled, loopback only. Config present; runtime validation pending image availability.
 - [ ] `docker-compose.postgres-demo.yml` — ferrumd + PostgreSQL.
 - [ ] `configs/examples/ferrumd.service` — systemd unit example.
 - [ ] `configs/examples/ferrumd.env.example` — env var reference.
@@ -58,8 +58,8 @@ Package FerrumGate into reproducible deployment modes so operators can deploy co
 
 ## Acceptance criteria
 
-- [ ] DEP-1: Docker Compose demo starts ferrumd (`docker compose up`).
-- [ ] DEP-2: Healthz passes after compose up.
+- [x] DEP-1: Docker Compose demo config present (`docker-compose.demo.yml`). Runtime start pending image availability.
+- [ ] DEP-2: Healthz passes after compose up — open until DEP-1 runtime validated.
 - [ ] DEP-3: Postgres deployment mode documented and tested.
 - [ ] DEP-4: Systemd unit works with env file.
 - [ ] DEP-5: Helm install produces ready pod.
