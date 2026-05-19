@@ -146,8 +146,8 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 
 | # | Item | Owner | Evidence | Status |
 |---|------|-------|----------|--------|
-| 7.1 | DOC-1: Core 4-step curl sequence completes in <30 min | Engineering | `docs/implementation-path/artifacts/2026-05-19-quickstart-validation-evidence.md` §DOC-1 | ✅ PARTIAL — core sequence validated locally in 0.27 s; full quickstart end-to-end not yet validated |
-| 7.2 | DOC-2: Validated demo runs without secrets | Engineering | `docs/implementation-path/artifacts/2026-05-19-quickstart-validation-evidence.md` §DOC-2 | ✅ LOCAL VALIDATION — auth=disabled, no secrets for core 4-step sequence; ferrumctl and MCP paths not yet validated |
+| 7.1 | DOC-1: API/curl flow completes in <30 min | Engineering | `docs/implementation-path/artifacts/2026-05-19-quickstart-validation-evidence.md` §DOC-1 | ✅ PARTIAL — API/curl flow validated locally in 0.384 s; ferrumctl and MCP paths not validated; fresh-user test not performed |
+| 7.2 | DOC-2: Validated API/curl demo runs without secrets | Engineering | `docs/implementation-path/artifacts/2026-05-19-quickstart-validation-evidence.md` §DOC-2 | ✅ LOCAL VALIDATION — auth=disabled, no secrets for API/curl flow; ferrumctl and MCP paths not validated |
 | 7.3 | DOC-3: Docs state production-ready limitations correctly | Engineering | Doc review | ☐ |
 | 7.4 | DOC-4: MCP client config example exists | Engineering | `docs/guides/mcp-integration.md` | ☐ |
 | 7.5 | DOC-5: Policy guide has at least 5 templates/examples | Engineering | `docs/guides/policy-authoring.md` | ☐ |

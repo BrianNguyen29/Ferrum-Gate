@@ -16,8 +16,8 @@ Make FerrumGate understandable and usable by someone outside the project team. C
 
 - Implementation/evidence/runbook docs are extensive.
 - No product-facing landing doc.
-- No quickstart validated end-to-end. Core 4-step curl sequence validated locally ONLY; extended flow remains scaffold.
-- Guide scaffolds created in `docs/guides/`; only quickstart core sequence has local validation evidence.
+- No quickstart validated end-to-end. API/curl flow validated locally through lineage endpoint; ferrumctl and MCP remain scaffold.
+- Guide scaffolds created in `docs/guides/`; quickstart API/curl path has local validation evidence.
 
 ## Gaps
 
@@ -39,10 +39,10 @@ Make FerrumGate understandable and usable by someone outside the project team. C
    - [ ] Include: problem solved, when to use, when NOT to use, architecture diagram.
 
 2. **Quickstart 10 minutes**
-   - [x] Validate curl version — core 4-step sequence validated locally (`healthz`, `compile`, `evaluate`, `mint`).
+   - [x] Validate curl/API version — full API/curl flow validated locally (`healthz` through `lineage`, including `authorize`, `prepare`, `execute`, `verify`, `evaluate-outcome`).
    - [ ] Validate ferrumctl version end-to-end.
    - [ ] Validate MCP version end-to-end.
-   - [x] Time the flow — core 4-step sequence elapsed 0.27 s locally; supports <30 min target for validated portion. Full end-to-end timing remains open.
+   - [x] Time the flow — API/curl flow elapsed 0.384 s locally; supports <30 min target for validated API/curl path. ferrumctl and MCP timing remain open.
 
 3. **Concepts guide**
    - [ ] Explain: Intent, Proposal, Policy decision, Capability, Approval, Rollback class, Provenance, Lineage, Adapter, R0/R1/R2/R3.
@@ -71,8 +71,8 @@ Make FerrumGate understandable and usable by someone outside the project team. C
 
 ## Acceptance criteria
 
-- [-] DOC-1 (PARTIAL / NOT CLOSED): Core 4-step curl sequence completes in <30 min — validated locally (0.27 s elapsed). Full quickstart end-to-end (11 steps + ferrumctl + MCP) NOT validated. Fresh-user test NOT performed. Acceptance criterion remains OPEN.
-- [-] DOC-2 (PARTIAL / NOT CLOSED): Validated demo runs without secrets — `auth_mode=disabled`, no bearer token required for core 4-step sequence ONLY. ferrumctl and MCP paths NOT validated. Acceptance criterion remains OPEN.
+- [-] DOC-1 (PARTIAL / NOT CLOSED): API/curl flow completes in <30 min — validated locally (0.384 s elapsed). Full quickstart end-to-end (including ferrumctl + MCP) NOT validated. Fresh-user test NOT performed. Acceptance criterion remains OPEN.
+- [-] DOC-2 (PARTIAL / NOT CLOSED): Validated API/curl demo runs without secrets — `auth_mode=disabled`, no bearer token required for API/curl flow. ferrumctl and MCP paths NOT validated. Acceptance criterion remains OPEN.
 - [ ] DOC-3: Docs state production-ready limitations correctly.
 - [ ] DOC-4: MCP client config example exists.
 - [ ] DOC-5: Policy guide has at least 5 templates/examples.

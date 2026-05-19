@@ -10,7 +10,7 @@
 
 | Guide | Status | Description |
 |-------|--------|-------------|
-| [Quickstart](quickstart.md) | Core validated locally | FerrumGate in 10 minutes — local demo only; 4-step curl sequence confirmed; extended flow remains scaffold |
+| [Quickstart](quickstart.md) | API/curl flow validated locally | FerrumGate in 10 minutes — local demo only; full API/curl sequence confirmed through lineage; ferrumctl and MCP remain scaffold |
 | [Concepts](concepts.md) | Scaffold | Core concepts: intent, proposal, capability, provenance, lineage |
 | [Operator Guide](operator.md) | Scaffold | Configuration, health, backup/restore, token rotation |
 | [Policy Authoring](policy-authoring.md) | Scaffold | Policy bundles, validation, simulation, templates |
@@ -23,7 +23,7 @@
 
 ## Non-claims
 
-- **Partially validated**: Quickstart core 4-step curl sequence validated locally (2026-05-19). Extended execution pipeline, ferrumctl, and MCP paths remain scaffold. Quickstart timing, command accuracy, and end-to-end flows beyond the core sequence are not yet validated.
+- **Partially validated**: Quickstart API/curl flow validated locally through lineage endpoint (2026-05-19). ferrumctl and MCP paths remain scaffold. Quickstart timing is validated for the API/curl path only. Fresh-user test has not been performed.
 - **NOT production-ready**: These guides do not change the production-ready posture of FerrumGate.
 - **NOT a marketing site**: These are repository docs for operators and integrators.
 - **NOT complete**: Several guides reference planned features (simulation, templates, Helm, RBAC) that are not yet implemented.
