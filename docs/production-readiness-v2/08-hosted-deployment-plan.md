@@ -1,8 +1,8 @@
 # 08 — Hosted Deployment Plan
 
-> **Status**: Planning artifact. Docker Compose local exists; target-host packaging is planned.
+> **Status**: Planning artifact. Local demo compose validated (DEP-1/DEP-2). Target-host packaging remains planned.
 > **Owner**: Engineering
-> **Last updated**: 2026-05-18
+> **Last updated**: 2026-05-19
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
 > **Scope**: [`00-scope-and-nonclaims.md`](00-scope-and-nonclaims.md)
 
@@ -16,30 +16,30 @@ Package FerrumGate into reproducible deployment modes so operators can deploy co
 
 - Config templates exist.
 - Docker Compose PG local exists.
-- Systemd service example does not exist yet.
-- No coherent hosted deployment story.
+- Local demo compose (`docker-compose.demo.yml`) + Dockerfile validated for DEP-1/DEP-2.
+- Systemd service example exists (`configs/examples/ferrumd.service`); runtime validation pending.
+- Env var reference example exists (`configs/examples/ferrumd.env.example`).
+- Deployment guide scaffold exists (`docs/guides/hosted-deployment.md`); full validation pending.
 - Helm chart is not implemented.
 
 ## Gaps
 
 | Gap | Why |
 |-----|-----|
-| No docker-compose.postgres-demo.yml | Cannot demo PG mode easily |
-| No systemd service example | Self-hosted operators must write their own |
-| No env var reference doc | Operators do not know all config options |
-| No deployment guide | No step-by-step for any mode |
-| No Helm chart | K8s deployment is not packaged |
-| No backup/restore hosted guide | Operators do not know how to back up in hosted mode |
+| No docker-compose.postgres-demo.yml | Cannot demo PG mode easily (note: `docker-compose.postgres.yml` exists for local PG only) |
+| Deployment guide validation | Scaffold exists; step-by-step runtime validation for each mode not yet done |
+| Helm chart | K8s deployment is not packaged |
+| Backup/restore hosted validation | Backup examples exist in `configs/examples/`; operational drill in hosted mode not yet validated |
 
 ## Implementation tasks
 
 ### P0 deliverables
 
-- [x] `docker-compose.demo.yml` — SQLite in-memory, auth disabled, loopback only. Config + Dockerfile present; runtime validation pending build.
+- [x] `docker-compose.demo.yml` — SQLite in-memory, auth disabled, loopback only. Config + Dockerfile present; DEP-1/DEP-2 validated locally.
 - [ ] `docker-compose.postgres-demo.yml` — ferrumd + PostgreSQL.
-- [ ] `configs/examples/ferrumd.service` — systemd unit example.
-- [ ] `configs/examples/ferrumd.env.example` — env var reference.
-- [ ] `docs/guides/hosted-deployment.md` — deployment guide (scaffold exists).
+- [x] `configs/examples/ferrumd.service` — systemd unit example. Exists; runtime validation pending.
+- [x] `configs/examples/ferrumd.env.example` — env var reference. Exists.
+- [x] `docs/guides/hosted-deployment.md` — deployment guide (scaffold exists).
 
 ### P1 deliverables
 
@@ -59,10 +59,10 @@ Package FerrumGate into reproducible deployment modes so operators can deploy co
 
 - [x] DEP-1: Docker Compose demo starts ferrumd locally (`docker-compose.demo.yml` + `Dockerfile`). Evidence: `docs/implementation-path/artifacts/2026-05-19-compose-demo-evidence.md`.
 - [x] DEP-2: Healthz passes after compose up locally. Evidence: same artifact.
-- [ ] DEP-3: Postgres deployment mode documented and tested.
-- [ ] DEP-4: Systemd unit works with env file.
-- [ ] DEP-5: Helm install produces ready pod.
-- [ ] DEP-6: Backup/restore procedure works in hosted mode.
+- [ ] DEP-3: Postgres deployment mode documented and tested. `docker-compose.postgres.yml` exists for local PG only; full ferrumd+PG compose demo not yet packaged.
+- [ ] DEP-4: Systemd unit works with env file. `configs/examples/ferrumd.service` exists; runtime validation pending.
+- [ ] DEP-5: Helm install produces ready pod. Not implemented.
+- [ ] DEP-6: Backup/restore procedure works in hosted mode. Backup examples exist in `configs/examples/`; hosted-mode drill not yet validated.
 
 ## Evidence required
 
