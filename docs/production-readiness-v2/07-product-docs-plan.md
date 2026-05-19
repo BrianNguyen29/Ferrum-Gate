@@ -16,8 +16,8 @@ Make FerrumGate understandable and usable by someone outside the project team. C
 
 - Implementation/evidence/runbook docs are extensive.
 - No product-facing landing doc.
-- No quickstart validated end-to-end.
-- Guide scaffolds created in `docs/guides/` but not yet populated with validated content.
+- No quickstart validated end-to-end. Core 4-step curl sequence validated locally ONLY; extended flow remains scaffold.
+- Guide scaffolds created in `docs/guides/`; only quickstart core sequence has local validation evidence.
 
 ## Gaps
 
@@ -39,10 +39,10 @@ Make FerrumGate understandable and usable by someone outside the project team. C
    - [ ] Include: problem solved, when to use, when NOT to use, architecture diagram.
 
 2. **Quickstart 10 minutes**
-   - [ ] Validate curl version end-to-end.
+   - [x] Validate curl version — core 4-step sequence validated locally (`healthz`, `compile`, `evaluate`, `mint`).
    - [ ] Validate ferrumctl version end-to-end.
    - [ ] Validate MCP version end-to-end.
-   - [ ] Time the flow; target <30 min for new users.
+   - [x] Time the flow — core 4-step sequence elapsed 0.27 s locally; supports <30 min target for validated portion. Full end-to-end timing remains open.
 
 3. **Concepts guide**
    - [ ] Explain: Intent, Proposal, Policy decision, Capability, Approval, Rollback class, Provenance, Lineage, Adapter, R0/R1/R2/R3.
@@ -71,15 +71,15 @@ Make FerrumGate understandable and usable by someone outside the project team. C
 
 ## Acceptance criteria
 
-- [ ] DOC-1: New user can complete quickstart in <30 min.
-- [ ] DOC-2: Every demo runs without secrets.
+- [-] DOC-1 (PARTIAL / NOT CLOSED): Core 4-step curl sequence completes in <30 min — validated locally (0.27 s elapsed). Full quickstart end-to-end (11 steps + ferrumctl + MCP) NOT validated. Fresh-user test NOT performed. Acceptance criterion remains OPEN.
+- [-] DOC-2 (PARTIAL / NOT CLOSED): Validated demo runs without secrets — `auth_mode=disabled`, no bearer token required for core 4-step sequence ONLY. ferrumctl and MCP paths NOT validated. Acceptance criterion remains OPEN.
 - [ ] DOC-3: Docs state production-ready limitations correctly.
 - [ ] DOC-4: MCP client config example exists.
 - [ ] DOC-5: Policy guide has at least 5 templates/examples.
 
 ## Evidence required
 
-- `docs-validation-evidence.md`
+- `docs/implementation-path/artifacts/2026-05-19-quickstart-validation-evidence.md`
 - Timer logs for quickstart validation
 - Review signoff that no doc overclaims readiness
 
