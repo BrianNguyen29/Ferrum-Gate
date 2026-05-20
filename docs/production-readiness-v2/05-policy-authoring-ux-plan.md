@@ -1,6 +1,6 @@
 # 05 — Policy Authoring UX Plan
 
-> **Status**: POL-1 local CLI complete; POL-2 simulate complete; POL-5 design complete; templates deferred.
+> **Status**: POL-1 local CLI complete; POL-2 simulate complete; POL-3 templates validated; POL-5 design and implementation complete.
 > **Owner**: Engineering
 > **Last updated**: 2026-05-20
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
@@ -16,10 +16,14 @@ Make policy authoring usable without reading Rust code or internal implementatio
 
 - Policy bundles have YAML/JSON model and CRUD API.
 - `ferrumctl` has policy bundle CRUD: create, get, list, update, delete, set-active.
-- Validation function exists but UX is insufficient.
-- No simulate/dry-run capability.
-- No template library.
-- No policy diff/versioning.
+- `ferrumctl policy validate` works locally offline.
+- `ferrumctl policy simulate` works online against a running server.
+- `ferrumctl policy apply` creates inactive bundles (opt-in `--activate`).
+- `ferrumctl policy diff` compares bundle versions.
+- `ferrumctl policy rollback` reverts to a previous active bundle.
+- `ferrumctl policy versions` lists bundle version history.
+- 7 validated templates exist in `docs/guides/policy-authoring.md`.
+- Policy authoring guide exists with schema reference, examples, and common patterns.
 
 ## Gaps
 
@@ -27,11 +31,11 @@ Make policy authoring usable without reading Rust code or internal implementatio
 |-----|----------|-----|
 | ~~No `ferrumctl policy validate`~~ | P0 | Done — local offline validation via `ferrumctl policy validate --file` |
 | ~~No `ferrumctl policy simulate`~~ | P0 | Done — online simulation via `ferrumctl policy simulate --file --proposal [--intent]`; server required |
-| No policy templates | P0/P1 | Authors must write from scratch |
-| No policy authoring guide | P0 | No external-facing how-to doc |
-| No policy diff | P1 | Design complete; see [`05a-policy-version-history-design.md`](05a-policy-version-history-design.md) |
-| No policy version history | P1 | Design complete; see [`05a-policy-version-history-design.md`](05a-policy-version-history-design.md) |
-| No policy rollback/revert | P1 | Design complete; see [`05a-policy-version-history-design.md`](05a-policy-version-history-design.md) |
+| ~~No policy templates~~ | P0/P1 | Done — 7 validated templates in `docs/guides/policy-authoring.md` |
+| ~~No policy authoring guide~~ | P0 | Done — `docs/guides/policy-authoring.md` with schema, 7 examples, common patterns |
+| ~~No policy diff~~ | P1 | Done — `ferrumctl policy diff --bundle-id` implemented |
+| ~~No policy version history~~ | P1 | Done — version history stored in DB; `ferrumctl policy versions` implemented |
+| ~~No policy rollback/revert~~ | P1 | Done — `ferrumctl policy rollback --bundle-id` implemented |
 
 ## Implementation tasks
 
@@ -39,8 +43,9 @@ Make policy authoring usable without reading Rust code or internal implementatio
    - [x] `ferrumctl policy validate --file my-policy.yaml`
    - [x] `ferrumctl policy simulate --file my-policy.yaml --proposal proposal.json [--intent intent.json]` (online; server required)
    - [x] `ferrumctl policy apply --file my-policy.yaml` (creates inactive by default; `--activate` opt-in; no server changes)
-   - [x] `ferrumctl policy diff --bundle-id my-policy` (design complete; implementation NOT STARTED)
-   - [x] `ferrumctl policy rollback --bundle-id my-policy` (design complete; implementation NOT STARTED)
+   - [x] `ferrumctl policy diff --bundle-id my-policy` (implemented)
+   - [x] `ferrumctl policy rollback --bundle-id my-policy` (implemented)
+   - [x] `ferrumctl policy versions --bundle-id my-policy` (implemented)
 
 2. **Simulation API**
    - [x] `POST /v1/policy-bundles/simulate`
@@ -48,35 +53,37 @@ Make policy authoring usable without reading Rust code or internal implementatio
    - Returns: decision (Allow/Deny/RequireApproval/Quarantine/DraftOnly), matched rule, reason
 
 3. **Policy templates**
-   - [ ] read-only safe baseline
-   - [ ] require approval for R3
-   - [ ] deny external HTTP except allowlist
-   - [ ] draft-only email
-   - [ ] tenant-scoped policy (later)
+   - [x] scope-safe baseline
+   - [x] require approval for R3
+   - [x] draft-only external communication
+   - [x] deny mutations baseline
+   - [x] scope-restricted baseline
+   - [x] high-taint quarantine
+   - [x] external API call approval
 
 4. **Policy authoring guide**
-   - [ ] Write `docs/guides/policy-authoring.md` (scaffold exists)
-   - [ ] Include schema reference, 5+ examples, common patterns
+   - [x] `docs/guides/policy-authoring.md` with schema reference, 7 examples, common patterns
 
 5. **Policy version history**
    - [x] Design version table, rollback semantics, diff strategy, migration/backfill plan, provenance event — see [`05a-policy-version-history-design.md`](05a-policy-version-history-design.md)
-   - [ ] Store previous versions in DB
-   - [ ] Active bundle switch audit event
-   - [ ] Rollback to previous active bundle
+   - [x] Store previous versions in DB
+   - [x] Active bundle switch audit event
+   - [x] Rollback to previous active bundle
 
 ## Acceptance criteria
 
 - [x] POL-1: Invalid policy returns a useful error with line/rule reference. (local CLI only; no server simulation)
-- [x] POL-2: Simulation returns decision and matched rule without side effect. (`POST /v1/policy-bundles/simulate` + `ferrumctl policy simulate`; test-backed; POL-5 remains open)
-- [ ] POL-3: Template produces a valid policy that passes validate.
+- [x] POL-2: Simulation returns decision and matched rule without side effect. (`POST /v1/policy-bundles/simulate` + `ferrumctl policy simulate`; test-backed)
+- [x] POL-3: Template produces a valid policy that passes validate. (`docs/guides/policy-authoring.md` 7 templates validated offline; evidence: `docs/implementation-path/artifacts/2026-05-20-pol3-policy-template-validation-evidence.md`)
 - [x] POL-4: Policy switch is auditable (provenance event).
 - [x] POL-5 design: Version history, diff, and rollback design documented and accepted. — [`05a-policy-version-history-design.md`](05a-policy-version-history-design.md)
-- [ ] POL-5 implementation: Rollback to previous policy works and restores prior active bundle.
+- [x] POL-5 implementation: Rollback to previous policy works and restores prior active bundle.
 
 ## Evidence required
 
 - `policy-ux-test-evidence.md`
 - `policy-simulation-evidence.md`
+- `docs/implementation-path/artifacts/2026-05-20-pol3-policy-template-validation-evidence.md`
 - Demo recording or test output for each POL gate
 
 ## Non-claims
@@ -84,9 +91,10 @@ Make policy authoring usable without reading Rust code or internal implementatio
 - **NOT a visual builder**: Web editor/rule builder is P2/out of scope.
 - **NOT production-ready**: Policy UX improvements do not change the production-ready posture.
 - **NOT validated externally**: Acceptance criteria require execution; this doc is the plan.
+- **NOT full matcher set**: Advanced conditionals (`action_in`, `target_not_in`, `tenant_id`, `rollback_prepared`) are not yet implemented.
 
 ## Related docs
 
 - [`docs/ROADMAP.md`](../../ROADMAP.md) §3.7, §4 Phase 5
 - [`05a-policy-version-history-design.md`](05a-policy-version-history-design.md) — POL-5 design artifact
-- [`docs/guides/policy-authoring.md`](../../guides/policy-authoring.md) — User-facing guide scaffold.
+- [`docs/guides/policy-authoring.md`](../../guides/policy-authoring.md) — User-facing guide with validated templates.

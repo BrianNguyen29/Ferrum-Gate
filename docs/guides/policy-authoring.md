@@ -1,39 +1,56 @@
 # Policy Authoring Guide
 
-> **Status**: Templates added. 7 copy-pasteable policy examples. Validation and simulation remain planned.
+> **Status**: Templates validated. 7 copy-pasteable policy examples. `validate`, `simulate`, `apply`, `diff`, `rollback`, and `versions` are implemented.
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
 
 ---
 
 ## Policy schema
 
-Policy bundles are YAML or JSON documents containing a list of rules.
+Policy bundles are YAML documents containing a list of rules. Each rule has a decision, a priority, and one or more matchers.
 
 ```yaml
-name: safe-baseline
 version: "1.0.0"
+bundle_id: safe-baseline
 rules:
-  - id: allow-read-only
-    decision: Allow
-    condition:
-      action_in: ["fs.read", "git.log", "sqlite.query"]
-
-  - id: require-approval-for-r3
-    decision: RequireApproval
-    condition:
-      risk_class: "R3"
-
-  - id: deny-external-http
+  - id: deny-scope-mismatch
+    description: "Deny when requested resources are outside intent scope"
     decision: Deny
-    condition:
-      action: "http.mutation"
-      target_not_in: ["https://api.internal.example.com"]
+    priority: 100
+    matchers:
+      - type: scope_mismatch
 
   - id: quarantine-high-taint
+    description: "Quarantine mutating actions with high taint"
     decision: Quarantine
-    condition:
-      taint_score_gt: 0.8
+    priority: 90
+    matchers:
+      - type: taint_at_least
+        value: 70
+      - type: action_is_mutation
+
+  - id: require-approval-r3
+    description: "Require approval for irreversible actions"
+    decision: RequireApproval
+    priority: 80
+    matchers:
+      - type: rollback_class_equals
+        value: "R3IrreversibleHighConsequence"
 ```
+
+### Matcher reference
+
+| Matcher | Fields | Meaning |
+|---------|--------|---------|
+| `scope_mismatch` | none | True when intent has no resource scope and the action is not R0 |
+| `taint_at_least` | `value: <u8>` | True when the computed taint score is >= the value |
+| `action_is_mutation` | none | True when the action is not R0 native reversible |
+| `rollback_class_equals` | `value: <string>` | True when the proposal's rollback class matches the value exactly |
+| `action_type_equals` | `value: <string>` | True when the inferred effect type matches the value exactly |
+
+Rollback class values: `R0NativeReversible`, `R1SnapshotRecoverable`, `R2Compensatable`, `R3IrreversibleHighConsequence`.
+
+Effect type values: `ReadOnlyAnalysis`, `DraftCreation`, `FileMutation`, `GitMutation`, `DatabaseMutation`, `ExternalApiCall`, `ExternalCommunication`, `Scheduling`, `AdministrativeChange`.
 
 ## Policy authoring flow
 
@@ -48,200 +65,201 @@ Create policy from template
 → rollback if needed
 ```
 
-## CLI commands (planned)
+## CLI commands
 
 ```bash
-# Validate a policy file
+# Validate a policy file (local; no server required)
 ferrumctl policy validate --file my-policy.yaml
 
-# Simulate against a sample intent
-ferrumctl policy simulate --file my-policy.yaml --intent sample-intent.json
+# Simulate against a sample proposal (requires running server)
+ferrumctl policy simulate --file my-policy.yaml --proposal proposal.json
 
-# Apply as inactive
-ferrumctl policy apply --file my-policy.yaml --inactive
+# Apply as inactive (requires running server)
+ferrumctl policy apply --file my-policy.yaml
 
-# Diff against active
-ferrumctl policy diff --bundle-id my-policy
+# Activate on apply
+ferrumctl policy apply --file my-policy.yaml --activate
 
-# Rollback to previous
+# List versions (requires running server)
+ferrumctl policy versions --bundle-id my-policy
+
+# Diff between versions (requires running server)
+ferrumctl policy diff --bundle-id my-policy --from 1 --to 2
+
+# Rollback to previous active (requires running server)
 ferrumctl policy rollback --bundle-id my-policy
 ```
 
 ## Templates
 
-> **Caveat**: These are documentation scaffolds. They illustrate common policy patterns using the bundle schema. Runtime schema validation and simulation are planned features; apply templates with care and test in a non-production environment first.
+> **Caveat**: These templates use the implemented matcher set. They have been validated offline with `ferrumctl policy validate`. Simulation and apply require a running server. The runtime returns `Allow` when no rule matches, so conservative templates should place restrictive rules at higher priority.
 
-### 1. Read-only safe baseline
+### 1. Scope-safe baseline
 
-**Purpose**: Allow only read and health-check operations; deny everything else by default.
+**Purpose**: Deny scope-mismatched requests and quarantine high-taint mutations.
 
 **When to use**: Initial deployment, demo environments, or as a conservative starting point before widening the permission surface.
 
-**Caveats**: Does not allow any mutation (including `maildraft.create`). Add explicit allow rules before enabling write operations. The `default-deny` catch-all must remain last.
+**Caveats**: Does not block all mutations — only those with high taint or scope mismatch. Add explicit deny rules for additional restrictions. The runtime defaults to `Allow` when no rule matches.
 
 ```yaml
-name: read-only-safe
 version: "1.0.0"
+bundle_id: scope-safe-baseline
 rules:
-  - id: allow-reads
-    decision: Allow
-    condition:
-      action_in: ["fs.read", "git.log", "sqlite.query", "health.check"]
-  - id: default-deny
+  - id: deny-scope-mismatch
+    description: "Deny when requested resources are outside intent scope"
     decision: Deny
-    condition: {}
+    priority: 100
+    matchers:
+      - type: scope_mismatch
+  - id: quarantine-high-taint-mutation
+    description: "Quarantine mutating actions with high taint"
+    decision: Quarantine
+    priority: 90
+    matchers:
+      - type: taint_at_least
+        value: 70
+      - type: action_is_mutation
 ```
 
 ### 2. Require approval for R3
 
-**Purpose**: Automatically escalate any R3 (high-risk, mutating, irreversible) action to a human approval gate.
+**Purpose**: Automatically escalate any R3 (irreversible, high-consequence) action to a human approval gate.
 
-**When to use**: Production workloads where R0–R2 operations are trusted but R3 operations (e.g., `fs.write`, `mail.send`, external HTTP mutations) must not execute without sign-off.
+**When to use**: Production workloads where lower-risk operations are trusted but R3 actions must not execute without sign-off.
 
 **Caveats**: Requires an active approval workflow and operator presence. R3 actions will block until approved or rejected. Do not use if the system must run unattended.
 
 ```yaml
-name: r3-approval-required
 version: "1.0.0"
+bundle_id: r3-approval-required
 rules:
   - id: r3-approval
+    description: "Require approval for R3 irreversible actions"
     decision: RequireApproval
-    condition:
-      risk_class: "R3"
-  - id: allow-r1-r2
-    decision: Allow
-    condition:
-      risk_class_in: ["R0", "R1", "R2"]
+    priority: 100
+    matchers:
+      - type: rollback_class_equals
+        value: "R3IrreversibleHighConsequence"
 ```
 
-### 3. Deny external HTTP except allowlist
+### 3. Draft-only external communication
 
-**Purpose**: Permit HTTP mutations only to an explicit internal allowlist; block all other external targets.
+**Purpose**: Allow composing and editing drafts while prohibiting actual external delivery.
 
-**When to use**: Environments with strict egress control, or when integrating with a single known internal API. Prevents accidental or malicious calls to untrusted endpoints.
+**When to use**: Review or staging environments where you want to preview content without risking accidental sends to real inboxes or external systems.
 
-**Caveats**: Update `target_in` whenever the internal API endpoint changes. Wildcards are not supported; each hostname/path must be listed explicitly. HTTPS is strongly recommended for all allowed targets.
+**Caveats**: `ExternalCommunication` is inferred from the proposal effect type. If the runtime cannot infer the effect type, the rule may not match. Combine with other restrictive rules for defense in depth.
 
 ```yaml
-name: http-allowlist
 version: "1.0.0"
+bundle_id: draft-only-external
 rules:
-  - id: allow-internal
-    decision: Allow
-    condition:
-      action: "http.mutation"
-      target_in: ["https://api.internal.example.com"]
-  - id: deny-external
-    decision: Deny
-    condition:
-      action: "http.mutation"
+  - id: draft-only-external-comm
+    description: "Force draft-only for external communication"
+    decision: AllowDraftOnly
+    priority: 100
+    matchers:
+      - type: action_type_equals
+        value: "ExternalCommunication"
 ```
 
-### 4. Draft-only email
+### 4. Deny mutations baseline
 
-**Purpose**: Allow composing and editing email drafts while prohibiting actual delivery.
+**Purpose**: Deny all mutating actions outright.
 
-**When to use**: Review or staging environments where you want to preview email content without risking accidental sends to real inboxes.
+**When to use**: Highly conservative environments, read-only analysis pipelines, or audit modes where no state change is permitted.
 
-**Caveats**: `mail.send` is denied entirely. If you need to allow sending to a test inbox, add a separate `target_in` rule above the deny line. This template does not validate draft content.
+**Caveats**: R0 native-reversible actions are not considered mutations by this matcher. If you need to deny those too, add a separate `scope_mismatch` or explicit rule. The runtime defaults to `Allow` for non-matching proposals.
 
 ```yaml
-name: draft-only-email
 version: "1.0.0"
+bundle_id: deny-mutations
 rules:
-  - id: allow-maildraft
-    decision: Allow
-    condition:
-      action_in: ["maildraft.create", "maildraft.update", "maildraft.delete"]
-  - id: deny-send
+  - id: deny-all-mutations
+    description: "Deny all mutating actions"
     decision: Deny
-    condition:
-      action: "mail.send"
+    priority: 100
+    matchers:
+      - type: action_is_mutation
 ```
 
-### 5. Tenant-scoped policy
+### 5. Scope-restricted baseline
 
-**Purpose**: Restrict all operations to a specific tenant identifier, preventing cross-tenant access.
+**Purpose**: Restrict operations by requiring a declared resource scope. Actions without a scope that are not R0 are denied.
 
-**When to use**: Multi-tenant deployments where each policy bundle must be bound to exactly one tenant. Combine with per-tenant bundle activation.
+**When to use**: Environments where every intent must declare its resource scope. Prevents open-ended operations.
 
-**Caveats**: The `tenant_id` field must match the tenant claim in the capability or auth context. This scaffold assumes a single-tenant bundle; multi-tenant wildcard or regex matching is not shown here. Operator must ensure the correct bundle is activated for the correct tenant.
+**Caveats**: R0 native-reversible actions bypass this check. Operators must ensure intents declare scopes correctly. This is the closest available equivalent to tenant scoping; true multi-tenant filtering requires Phase 4 tenant model work.
 
 ```yaml
-name: tenant-scoped-policy
 version: "1.0.0"
+bundle_id: scope-restricted-baseline
 rules:
-  - id: allow-tenant-actions
-    decision: Allow
-    condition:
-      tenant_id: "tenant-alpha"
-  - id: deny-other-tenants
+  - id: deny-no-scope
+    description: "Deny non-R0 actions without a declared resource scope"
     decision: Deny
-    condition: {}
+    priority: 100
+    matchers:
+      - type: scope_mismatch
 ```
 
-### 6. Quarantine high taint
+### 6. High-taint quarantine
 
 **Purpose**: Automatically quarantine actions that exceed a taint-score threshold for additional review.
 
 **When to use**: Workflows with content-scoring or data-classification pipelines where high-risk inputs should not proceed without inspection.
 
-**Caveats**: `taint_score_gt` requires an upstream taint-scoring mechanism. The threshold (0.8) is arbitrary; calibrate it against your data. Quarantined actions remain in a pending state and require manual disposition.
+**Caveats**: `taint_at_least` requires an upstream taint-scoring mechanism. The threshold (80) is arbitrary; calibrate it against your data. Quarantined actions remain in a pending state and require manual disposition. This template also requires the action to be a mutation; remove `action_is_mutation` if you want to quarantine reads too.
 
 ```yaml
-name: taint-quarantine
 version: "1.0.0"
+bundle_id: high-taint-quarantine
 rules:
-  - id: quarantine-high
+  - id: quarantine-high-taint
+    description: "Quarantine mutating actions with high taint score"
     decision: Quarantine
-    condition:
-      taint_score_gt: 0.8
-  - id: allow-low
-    decision: Allow
-    condition:
-      taint_score_lte: 0.8
+    priority: 100
+    matchers:
+      - type: taint_at_least
+        value: 80
+      - type: action_is_mutation
 ```
 
-### 7. Rollback-required baseline
+### 7. External API call approval
 
-**Purpose**: Require explicit rollback preparation for every R3 action, ensuring a compensating path exists before execution.
+**Purpose**: Require explicit approval for any external API call.
 
-**When to use**: Critical production environments where every high-risk change must be reversible. Pairs with the rollback-by-default invariant documented in [`docs/implementation-path/06-guardrails-and-invariants.md`](../implementation-path/06-guardrails-and-invariants.md).
+**When to use**: Environments with strict egress control, or when integrating with external services where every call must be operator-approved.
 
-**Caveats**: This policy assumes the runtime supports a `rollback_prepared` condition check. If the runtime cannot verify rollback readiness, the action may be denied or require approval depending on fallback behavior. Not a substitute for tested backup/restore procedures.
+**Caveats**: The effect type is inferred from the proposal; if inference fails, the rule may not match. There is no URL-level allowlist matcher yet; this rule applies to all `ExternalApiCall` actions.
 
 ```yaml
-name: rollback-required-baseline
 version: "1.0.0"
+bundle_id: external-api-approval
 rules:
-  - id: allow-r3-with-rollback
-    decision: Allow
-    condition:
-      risk_class: "R3"
-      rollback_prepared: true
-  - id: require-approval-r3-no-rollback
+  - id: require-approval-external-api
+    description: "Require approval for external API calls"
     decision: RequireApproval
-    condition:
-      risk_class: "R3"
-  - id: allow-lower-risk
-    decision: Allow
-    condition:
-      risk_class_in: ["R0", "R1", "R2"]
+    priority: 100
+    matchers:
+      - type: action_type_equals
+        value: "ExternalApiCall"
 ```
 
 ## Common patterns
 
-- **Allow read-only**: Use `action_in` with read operations; end with a default-deny catch-all.
-- **Require approval for R3**: Match `risk_class: "R3"`. Keep an allow rule for R0–R2 above it.
-- **Deny out-of-scope fs**: Match `action: "fs.write"` with `target_not_in` safe paths.
-- **Quarantine high taint**: Match `taint_score_gt` threshold. Calibrate the threshold to your data.
-- **Allow draft-only email**: Allow `maildraft.*`, deny `mail.send`.
-- **Tenant-scoped access**: Match `tenant_id` exactly. Activate the correct bundle per tenant.
-- **Rollback-required baseline**: Check `rollback_prepared: true` for R3; fall back to `RequireApproval` if not prepared.
+- **Deny scope mismatch**: Use `scope_mismatch` matcher at high priority. Catches missing resource scopes on non-R0 actions.
+- **Require approval for R3**: Match `rollback_class_equals` with `R3IrreversibleHighConsequence`. Keep priority high.
+- **Quarantine high taint**: Combine `taint_at_least` with `action_is_mutation`. Calibrate the threshold to your data.
+- **Draft-only external**: Match `action_type_equals` with `ExternalCommunication`. Decision: `AllowDraftOnly`.
+- **Deny mutations**: Match `action_is_mutation` with decision `Deny`. R0 actions bypass this matcher.
+- **Scope-restricted access**: Use `scope_mismatch` to enforce declared scopes. R0 actions bypass.
+- **External API approval**: Match `action_type_equals` with `ExternalApiCall`. Decision: `RequireApproval`.
 
 ## Status caveat
 
-> **production-ready = NO**. Policy validation and simulation are planned features. The CLI commands above are the target interface; some may not be fully implemented yet. See [`docs/ROADMAP.md`](../../ROADMAP.md) §4 Phase 5.
+> **production-ready = NO**. Policy validation is implemented locally. Simulation, apply, diff, rollback, and versions require a running server. The matcher set is limited to the types listed above; advanced conditionals (`action_in`, `target_not_in`, `tenant_id`, `rollback_prepared`) are not yet implemented. See [`docs/ROADMAP.md`](../../ROADMAP.md) §4 Phase 5.
 
 ## Related docs
 

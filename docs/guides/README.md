@@ -14,7 +14,7 @@
 | [Concepts](concepts.md) | Expanded | Core concepts: intent, proposal, capability, provenance, lineage, adapters, R0–R3, architecture overview |
 | [API](api.md) | Expanded scaffold | Endpoint inventory, auth, errors, execution lifecycle example, rate limiting |
 | [Operator Guide](operator.md) | Expanded | Configuration, health, backup/restore, token rotation, monitoring, incident response, local-vs-hosted caveats |
-| [Policy Authoring](policy-authoring.md) | Templates added; validation/simulation pending | Policy bundles, 7 examples, common patterns; validation and simulation are planned |
+| [Policy Authoring](policy-authoring.md) | Templates validated; implemented locally | Policy bundles, 7 validated examples, common patterns; validate/simulate/apply/diff/rollback/versions implemented |
 | [MCP Integration](mcp-integration.md) | Locally validated | MCP server setup, client config, tools list, auth; local lifecycle and query_lineage validated after bugfix |
 | [Hosted Deployment](hosted-deployment.md) | Scaffold | Docker Compose, systemd, PostgreSQL, future Helm |
 | [Security Model](security-model.md) | Scaffold | Bearer auth, scoped tokens, RBAC design, tenant model |
