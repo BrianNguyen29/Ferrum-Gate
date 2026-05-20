@@ -93,7 +93,8 @@ Formalize "production acceptable" as measurable SLO targets and create a repeata
 
 ## Acceptance criteria
 
-- [ ] SLO/SLA doc exists and is ratified by operator.
+- [x] SLO/SLA doc exists as a draft and was reviewed in the Phase 0 sweep.
+- [ ] SLO/SLA doc is ratified by operator.
 - [ ] Runbook maps each script to a pass/fail gate.
 - [ ] At least one target workload run completed with evidence artifact.
 - [ ] p95/p99 latency recorded for evaluate, mint, authorize, prepare, execute, verify.

@@ -88,7 +88,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 
 | # | Item | Owner | Evidence | Status |
 |---|------|-------|----------|--------|
-| 2.1 | SLO-1: SLO/SLA doc exists | Engineering + Operator | `slo-sla-draft.md` ratified | ☐ |
+| 2.1 | SLO-1: SLO/SLA draft doc exists and reviewed | Engineering | `docs/production-readiness-v2/01-slo-sla.md` | ✅ DRAFT EXISTS — reviewed in Phase 0 sweep (see 0.2); NOT YET RATIFIED — operator signoff pending |
 | 2.2 | SLO-2: Runbook maps scripts to pass/fail | Engineering | `slo-validation-runbook.md` | ✅ COMPLETE — runbook created, targets marked draft/conditional |
 | 2.3 | SLO-3: Local workload baseline run completed | Engineering | `docs/implementation-path/artifacts/2026-05-19-slo-local-baseline-evidence.md` | ✅ COMPLETE — local SQLite in-memory baseline only; NOT target-host validated |
 | 2.4 | SLO-4: p95/p99 latency measured locally | Engineering | `2026-05-19-slo-local-baseline-evidence.md` §Latency | ✅ LOCAL BASELINE MEASURED — local in-memory only; NOT target-host ratified |
