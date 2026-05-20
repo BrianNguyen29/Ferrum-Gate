@@ -17,6 +17,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 - No unified per-phase evidence checklist exists.
 - Evidence artifacts are scattered across `docs/implementation-path/artifacts/`.
 - No systematic pass/fail tracking for production-path gates.
+- **Seven active blockers** are tracked in [`11-blockers-and-unblock-plan.md`](./11-blockers-and-unblock-plan.md): `BLK-SLO-RAT`, `BLK-SLO-TGT`, `BLK-SEC-PH4`, `BLK-UX-4`, `BLK-MCP-TGT`, `BLK-DEP-5`, `BLK-A-DOM`.
 
 ## Gaps
 
@@ -86,6 +87,8 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 
 ## Phase 2 — SLO/SLA and workload evidence
 
+> **Active blockers**: `BLK-SLO-RAT` (operator ratification pending) and `BLK-SLO-TGT` (target bearer token required). See [`11-blockers-and-unblock-plan.md`](./11-blockers-and-unblock-plan.md).
+
 | # | Item | Owner | Evidence | Status |
 |---|------|-------|----------|--------|
 | 2.1 | SLO-1: SLO/SLA draft doc exists and reviewed | Engineering | `docs/production-readiness-v2/01-slo-sla.md` | ✅ DRAFT EXISTS — reviewed in Phase 0 sweep (see 0.2); NOT YET RATIFIED — operator signoff pending |
@@ -99,7 +102,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 
 ## Phase 3 — Target-host MCP/live workload
 
-> **Blocker**: Target-host MCP operations are blocked operationally by target bearer token/access. The target gateway requires a valid bearer token; no workload can be executed until token access is resolved.
+> **Active blocker**: `BLK-MCP-TGT` — target-host MCP operations are blocked operationally by target bearer token/access. The target gateway requires a valid bearer token; no workload can be executed until token access is resolved. See [`11-blockers-and-unblock-plan.md`](./11-blockers-and-unblock-plan.md).
 
 | # | Item | Owner | Evidence | Status |
 |---|------|-------|----------|--------|
@@ -113,7 +116,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 
 ## Phase 4 — Security and tenant model
 
-> **Blocker**: The security/tenant model ADR exists and is reviewed (Phase 0.5), but implementation is blocked pending operator decisions on tenant model, OIDC, and scoped token model. No implementation work can proceed until these decisions are made and the ADR is approved for implementation.
+> **Active blocker**: `BLK-SEC-PH4` — the security/tenant model ADR exists and is reviewed (Phase 0.5), but implementation is blocked pending operator decisions on tenant model, OIDC, and scoped token model. No implementation work can proceed until these decisions are made and the ADR is approved for implementation. See [`11-blockers-and-unblock-plan.md`](./11-blockers-and-unblock-plan.md).
 
 | # | Item | Owner | Evidence | Status |
 |---|------|-------|----------|--------|
@@ -144,7 +147,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 | 6.1 | UX-1: Operator can view current health/status | Engineering | Demo recording or test | ✅ LOCAL CLI COMPLETE — `ferrumctl admin status` aggregates existing endpoints; no new `/v1/admin/status` |
 | 6.2 | UX-2: Operator can approve/reject without curl | Engineering | Demo recording or test | ✅ LOCAL CLI COMPLETE — `ferrumctl admin approvals list/get/resolve` wired to existing endpoints; no new admin API |
 | 6.3 | UX-3: Operator can inspect execution lineage | Engineering | Demo recording or test | ✅ LOCAL CLI COMPLETE — `ferrumctl admin executions list/get/cancel` wired to existing endpoints; list uses intents API; no new admin API |
-| 6.4 | UX-4: Operator can rotate/revoke token | Engineering | Demo recording or test | 🚫 BLOCKED — requires scoped token endpoints (Phase 4 token model); blocked until Phase 4 implementation unblocked |
+| 6.4 | UX-4: Operator can rotate/revoke token | Engineering | Demo recording or test | 🚫 BLOCKED (`BLK-UX-4`) — requires scoped token endpoints (Phase 4 token model); blocked until Phase 4 implementation unblocked |
 | 6.5 | UX-5: Operator can validate/apply policy | Engineering | Demo recording or test | ✅ LOCAL CLI COMPLETE — `ferrumctl policy validate/apply` uses existing policy bundle endpoints; no new admin API; POL-4 audit switch remains open |
 | 6.6 | UX-6: Operator can run/verify backup | Engineering | Demo recording or test | ✅ LOCAL CLI COMPLETE — `ferrumctl admin backup create/verify/restore` delegates to existing offline helpers; no scheduler/remote backup |
 
@@ -171,7 +174,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 | 8.2 | DEP-2: Healthz passes after compose up | Engineering | `docs/implementation-path/artifacts/2026-05-19-compose-demo-evidence.md` | ✅ COMPLETE — local demo only |
 | 8.3 | DEP-3: Postgres deployment mode documented and tested locally | Engineering | `docs/implementation-path/artifacts/2026-05-19-compose-demo-pg-evidence.md` | ✅ COMPLETE — local demo only |
 | 8.4 | DEP-4: Systemd unit works with env file | Engineering | `docs/implementation-path/artifacts/2026-05-19-dep4-target-host-systemd-evidence.md` | ✅ COMPLETE — target-host systemd runtime validated; not production-ready |
-| 8.5 | DEP-5: Helm install produces ready pod | Engineering | `kubectl get pods` output | ☐ |
+| 8.5 | DEP-5: Helm install produces ready pod | Engineering | `kubectl get pods` output | ☐ NOT STARTED (`BLK-DEP-5`) — local-safe scaffold can begin now; live cluster install deferred. See [`11-blockers-and-unblock-plan.md`](./11-blockers-and-unblock-plan.md) |
 | 8.6 | DEP-6: Backup/restore procedure works in hosted mode | Engineering | `docs/implementation-path/artifacts/2026-05-19-dep6-hosted-backup-restore-evidence.md` | ✅ COMPLETE — hosted single-node SQLite temp-copy restore drill; not production-ready |
 
 ## Phase 9 — HA/multi-node
@@ -185,6 +188,8 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 | 9.5 | RPO/RTO measured for HA scenario | Engineering | Measurement log | ☐ |
 
 ## Final production-ready claim prerequisites
+
+> **Active blocker**: `BLK-A-DOM` — real owned domain is still required for any production-ready or full G2 closure. DuckDNS remains WAIVED/CONDITIONAL only. See [`11-blockers-and-unblock-plan.md`](./11-blockers-and-unblock-plan.md).
 
 | # | Item | Owner | Evidence | Status |
 |---|------|-------|----------|--------|

@@ -1873,6 +1873,7 @@ Before creating new documents, reconcile this roadmap with existing planning pac
 | `docs/production-readiness-v2/08-hosted-deployment-plan.md` | Hosted deployment packaging plan | P1 |
 | `docs/production-readiness-v2/09-ha-roadmap.md` | HA roadmap and ADR | P2 |
 | `docs/production-readiness-v2/10-evidence-checklist.md` | Evidence checklist per phase | P1 |
+| `docs/production-readiness-v2/11-blockers-and-unblock-plan.md` | Active blockers, unblock plan, and operator decision packet | P0 |
 | `docs/guides/quickstart.md` | 10-minute quickstart | P0 |
 | `docs/guides/concepts.md` | Concepts guide | P0 |
 | `docs/guides/mcp-integration.md` | MCP integration guide | P0 |
