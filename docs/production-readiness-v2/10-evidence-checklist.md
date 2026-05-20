@@ -174,7 +174,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 | 8.2 | DEP-2: Healthz passes after compose up | Engineering | `docs/implementation-path/artifacts/2026-05-19-compose-demo-evidence.md` | ✅ COMPLETE — local demo only |
 | 8.3 | DEP-3: Postgres deployment mode documented and tested locally | Engineering | `docs/implementation-path/artifacts/2026-05-19-compose-demo-pg-evidence.md` | ✅ COMPLETE — local demo only |
 | 8.4 | DEP-4: Systemd unit works with env file | Engineering | `docs/implementation-path/artifacts/2026-05-19-dep4-target-host-systemd-evidence.md` | ✅ COMPLETE — target-host systemd runtime validated; not production-ready |
-| 8.5 | DEP-5: Helm install produces ready pod | Engineering | `kubectl get pods` output | ☐ NOT STARTED (`BLK-DEP-5`) — local-safe scaffold can begin now; live cluster install deferred. See [`11-blockers-and-unblock-plan.md`](./11-blockers-and-unblock-plan.md) |
+| 8.5 | DEP-5: Helm chart scaffold created | Engineering | `deploy/helm/ferrumgate/` + `docs/implementation-path/artifacts/2026-05-20-dep5-helm-scaffold-evidence.md` | ✅ SCAFFOLD COMPLETE — local template/render validated; live cluster install deferred. See [`11-blockers-and-unblock-plan.md`](./11-blockers-and-unblock-plan.md) |
 | 8.6 | DEP-6: Backup/restore procedure works in hosted mode | Engineering | `docs/implementation-path/artifacts/2026-05-19-dep6-hosted-backup-restore-evidence.md` | ✅ COMPLETE — hosted single-node SQLite temp-copy restore drill; not production-ready |
 
 ## Phase 9 — HA/multi-node

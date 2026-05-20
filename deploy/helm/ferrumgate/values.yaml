@@ -1,0 +1,110 @@
+# Default values for ferrumgate.
+# This is a YAML-formatted file.
+#
+# ⚠️  DISCLAIMER: Placeholder values only.
+#     Operator must replace all CHANGE_ME placeholders before any real deploy.
+#     No secrets should be committed to version control.
+
+replicaCount: 1
+
+image:
+  repository: ferrumgate/ferrumd
+  pullPolicy: IfNotPresent
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: false
+  seccompProfile:
+    type: RuntimeDefault
+
+service:
+  type: ClusterIP
+  port: 8080
+  targetPort: 8080
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: ferrumgate.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+livenessProbe:
+  httpGet:
+    path: /v1/healthz
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /v1/readyz
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 80
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+# FerrumGate application configuration
+# These values map to environment variables consumed by ferrumd.
+# See configs/ferrumgate.prod.toml for field descriptions.
+config:
+  bindAddr: "0.0.0.0:8080"
+  storeDsn: "sqlite::memory:"
+  authMode: "disabled"
+  allowInsecureNonlocalBind: "true"
+  logFilter: "info"
+  pgMaxConnections: "10"
+  pgMinIdle: "2"
+  pgAcquireTimeoutSecs: "5"
+
+# Secrets — operator must supply real values via external secret management.
+# NEVER commit real tokens to version control.
+secrets:
+  bearerToken: "CHANGE_ME_TO_A_SECURE_TOKEN"

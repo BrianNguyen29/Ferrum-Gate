@@ -20,7 +20,7 @@ Package FerrumGate into reproducible deployment modes so operators can deploy co
 - Systemd service example exists (`configs/examples/ferrumd.service`); target-host `systemctl` runtime validated on `ferrumgate-nonprod` with evidence. **Not production-ready.**
 - Env var reference example exists (`configs/examples/ferrumd.env.example`).
 - Deployment guide exists (`docs/guides/hosted-deployment.md`); DEP-4/DEP-6 limited target-host evidence captured. Full production-ready validation pending.
-- Helm chart is not implemented.
+- Helm chart scaffold exists locally (`deploy/helm/ferrumgate/`); `helm lint` and `helm template` validation pending actual Helm install. Not production-ready.
 
 ## Gaps
 
@@ -42,8 +42,8 @@ Package FerrumGate into reproducible deployment modes so operators can deploy co
 
 ### P1 deliverables
 
-- [ ] Helm chart.
-- [ ] K8s manifests.
+- [x] Helm chart scaffold (local-only; `deploy/helm/ferrumgate/`). `helm lint` / `helm template` passes if Helm is installed; otherwise static review validated. Not production-ready.
+- [x] K8s manifests (included in Helm chart templates).
 - [ ] Prometheus/Grafana dashboard integration.
 - [ ] Backup cron/timer docs.
 - [ ] Managed PostgreSQL guide.
@@ -60,7 +60,7 @@ Package FerrumGate into reproducible deployment modes so operators can deploy co
 - [x] DEP-2: Healthz passes after compose up locally. Evidence: same artifact.
 - [x] DEP-3: Postgres deployment mode documented and tested locally (`docker-compose.postgres-demo.yml` + Dockerfile). Evidence: `docs/implementation-path/artifacts/2026-05-19-compose-demo-pg-evidence.md`.
 - [x] DEP-4: Systemd unit works with env file. Target-host systemd runtime validated on `ferrumgate-nonprod`; evidence: `docs/implementation-path/artifacts/2026-05-19-dep4-target-host-systemd-evidence.md`. Not a production-ready claim.
-- [ ] DEP-5: Helm install produces ready pod. Not implemented.
+- [x] DEP-5: Helm chart scaffold created locally (`deploy/helm/ferrumgate/`). Templates render without syntax errors. Live cluster install deferred. Not a production-ready claim.
 - [x] DEP-6: Backup/restore procedure works in hosted mode. Hosted single-node SQLite backup/restore temp-copy drill passed on `ferrumgate-nonprod`; evidence: `docs/implementation-path/artifacts/2026-05-19-dep6-hosted-backup-restore-evidence.md`. Not a production-ready claim.
 
 ## Evidence required

@@ -1,0 +1,20 @@
+apiVersion: v2
+name: ferrumgate
+description: A Helm chart for FerrumGate (local-safe scaffold only)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/ferrumgate/ferrum-gate
+sources:
+  - https://github.com/ferrumgate/ferrum-gate
+maintainers:
+  - name: Engineering
+    email: engineering@example.com
+annotations:
+  category: Infrastructure
+  disclaimer: |
+    This chart is a LOCAL-SAFE SCAFFOLD ONLY.
+    - No production-ready claim.
+    - No HA, no managed PostgreSQL, no real domain config.
+    - Secrets are placeholder-only; operator must supply real values.
+    - DuckDNS remains conditional-only; real domain required for production-ready.
