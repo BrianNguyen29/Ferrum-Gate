@@ -42,8 +42,8 @@ The seven blockers:
 
 | # | Todo | Blocker ID | Owner | Prerequisites | Acceptance Criteria | Evidence Required |
 |---|------|------------|-------|---------------|---------------------|-------------------|
-| N.1 | Scaffold Helm chart directory and `Chart.yaml` | BLK-DEP-5 | Engineering | None | `helm lint` passes on scaffold; no live cluster required | `docs/implementation-path/artifacts/2026-05-20-dep5-helm-scaffold-evidence.md` |
-| N.2 | Define K8s manifest set (Deployment, Service, ConfigMap, Secret, Ingress) in `helm/ferrumgate/templates/` | BLK-DEP-5 | Engineering | N.1 | Templates render with `helm template`; no syntax errors | Same artifact §N.2 |
+| N.1 | Scaffold Helm chart directory and `Chart.yaml` | BLK-DEP-5 | Engineering | None | ✅ `helm lint` passes on scaffold; no live cluster required | `docs/implementation-path/artifacts/2026-05-20-dep5-helm-scaffold-evidence.md` |
+| N.2 | Define K8s manifest set (Deployment, Service, Secret, optional Ingress/HPA) in `helm/ferrumgate/templates/` | BLK-DEP-5 | Engineering | N.1 | ✅ Templates render with `helm template`; no syntax errors | Same artifact §N.2 |
 | N.3 | Add local `kind` or `minikube` smoke test script (dry-run; no live cluster required) | BLK-DEP-5 | Engineering | N.2 | `helm template` + `kubeconform` or equivalent passes | Same artifact §N.3 |
 | N.4 | Document DEP-5 non-claims and prerequisites in `08-hosted-deployment-plan.md` | BLK-DEP-5 | Engineering | N.1 | Doc updated with Helm scope, P1 priority, and Block A conditional disclaimer | `08-hosted-deployment-plan.md` diff |
 
@@ -152,16 +152,21 @@ The following questions must be answered by the operator to unblock BLK-SEC-PH4 
 
 - **Blocker ID**: `BLK-SEC-PH4`
 - **Owner**: Engineering + Operator
-- **Status**: 🚫 BLOCKED
-- **Prerequisites**: `04-security-tenant-model-adr.md` reviewed by operator.
-- **Blocked on**: Operator answers Q1–Q6 in §Operator Decision Packet.
+- **Status**: 🚫 BLOCKED — **prep complete; awaiting operator decisions**
+- **Prerequisites**: `04-security-tenant-model-adr.md` reviewed by operator. **Prep artifacts created 2026-05-20:**
+  - `12-endpoint-to-scope-mapping.md` — endpoint-to-scope mapping
+  - `13-token-api-contract.md` — token API contract
+  - `14-ferrumctl-admin-tokens-cli-spec.md` — ferrumctl CLI surface spec
+  - `15-revocation-durability-tradeoff.md` — revocation durability tradeoff note
+  - `16-operator-shortcut-decision-packet.md` — condensed operator decision packet
+- **Blocked on**: Operator answers Q1–Q6 in §Operator Decision Packet (see `16-operator-shortcut-decision-packet.md`).
 - **Acceptance criteria**:
   - Operator decision artifact signed.
   - Scoped token store schema implemented.
   - RBAC middleware denies by default.
   - SEC-1 through SEC-6 automated tests pass.
 - **Evidence required**: `artifacts/YYYY-MM-DD-security-model-operator-decisions.md` + `artifacts/YYYY-MM-DD-scoped-token-implementation-evidence.md`
-- **Exact next action**: Operator answers decision packet Q1–Q6.
+- **Exact next action**: Operator reviews `16-operator-shortcut-decision-packet.md` and answers Q1–Q6.
 - **Downstream impact**: Unblocks BLK-UX-4 (token CLI).
 
 ### BLK-UX-4 — UX-4 token rotate / revoke CLI
@@ -202,16 +207,16 @@ The following questions must be answered by the operator to unblock BLK-SEC-PH4 
 
 - **Blocker ID**: `BLK-DEP-5`
 - **Owner**: Engineering
-- **Status**: ✅ SCAFFOLD COMPLETE — local-safe only; live cluster install deferred
+- **Status**: ✅ SCAFFOLD COMPLETE — local-safe; `helm lint` and `helm template` passed; live cluster install deferred
 - **Prerequisites**: None for local scaffold; live cluster optional.
 - **Blocked on**: Nothing for scaffold. Live cluster install requires operator cluster availability.
 - **Acceptance criteria**:
-  - `helm lint` passes (if Helm installed; otherwise static review).
-  - `helm template` renders valid K8s manifests (if Helm installed; otherwise static review).
+  - `helm lint` passes locally.
+  - `helm template` renders valid K8s manifests locally.
   - Local dry-run validation passes (`kubeconform` or equivalent) — deferred until Helm available.
   - Optional: live cluster install produces ready pod — NOT STARTED.
 - **Evidence required**: `artifacts/2026-05-20-dep5-helm-scaffold-evidence.md` (+ optional live install artifact)
-- **Exact next action**: Install Helm and run `helm lint` / `helm template` locally; or defer to operator cluster availability.
+- **Exact next action**: Defer live `helm install`/ready-pod evidence until an operator cluster is available.
 - **Downstream impact**: Enables K8s deployment mode documentation and eventual live cluster testing.
 
 ### BLK-A-DOM — Real owned domain / Block A full closure

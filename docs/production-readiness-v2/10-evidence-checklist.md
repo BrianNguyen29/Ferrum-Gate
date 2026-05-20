@@ -117,10 +117,17 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 ## Phase 4 — Security and tenant model
 
 > **Active blocker**: `BLK-SEC-PH4` — the security/tenant model ADR exists and is reviewed (Phase 0.5), but implementation is blocked pending operator decisions on tenant model, OIDC, and scoped token model. No implementation work can proceed until these decisions are made and the ADR is approved for implementation. See [`11-blockers-and-unblock-plan.md`](./11-blockers-and-unblock-plan.md).
+>
+> **Prep complete**: Phase 4 prep artifacts (endpoint mapping, token API contract, CLI spec, revocation tradeoff note, operator decision packet) were created on 2026-05-20. These are design/spec only; implementation remains blocked.
 
 | # | Item | Owner | Evidence | Status |
 |---|------|-------|----------|--------|
 | 4.0 | SEC-0: Security/tenant model ADR exists and reviewed | Engineering + Operator | `04-security-tenant-model-adr.md` | ✅ COMPLETE — design artifact reviewed in Phase 0 sweep; implementation NOT STARTED |
+| 4.p1 | SEC-P1: Endpoint-to-scope mapping created and reviewed | Engineering | `12-endpoint-to-scope-mapping.md` | ✅ PREP COMPLETE — covers public, lifecycle, approvals, policy, provenance, bridge, and planned admin/token endpoints |
+| 4.p2 | SEC-P2: Token API contract created and reviewed | Engineering | `13-token-api-contract.md` | ✅ PREP COMPLETE — POST/GET/DELETE/rotate contracts defined; clearly marked proposed/pending signoff |
+| 4.p3 | SEC-P3: ferrumctl admin tokens CLI surface spec created | Engineering | `14-ferrumctl-admin-tokens-cli-spec.md` | ✅ PREP COMPLETE — list/create/revoke/rotate spec with flags, output formats, and wiring table |
+| 4.p4 | SEC-P4: Revocation durability tradeoff note created | Engineering | `15-revocation-durability-tradeoff.md` | ✅ PREP COMPLETE — immediate vs durable vs hybrid; supports Q4 decision without choosing for operator |
+| 4.p5 | SEC-P5: Operator shortcut decision packet created | Engineering | `16-operator-shortcut-decision-packet.md` | ✅ PREP COMPLETE — condensed Q1–Q6 with context, recommendations, and signoff block |
 | 4.1 | SEC-1: Read-only token cannot mutate | Engineering | Test output | 🚫 BLOCKED — implementation pending operator tenant/OIDC/token model decisions |
 | 4.2 | SEC-2: Agent token cannot approve | Engineering | Test output | 🚫 BLOCKED — implementation pending operator tenant/OIDC/token model decisions |
 | 4.3 | SEC-3: Auditor token cannot execute | Engineering | Test output | 🚫 BLOCKED — implementation pending operator tenant/OIDC/token model decisions |

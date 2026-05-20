@@ -20,7 +20,7 @@ Package FerrumGate into reproducible deployment modes so operators can deploy co
 - Systemd service example exists (`configs/examples/ferrumd.service`); target-host `systemctl` runtime validated on `ferrumgate-nonprod` with evidence. **Not production-ready.**
 - Env var reference example exists (`configs/examples/ferrumd.env.example`).
 - Deployment guide exists (`docs/guides/hosted-deployment.md`); DEP-4/DEP-6 limited target-host evidence captured. Full production-ready validation pending.
-- Helm chart scaffold exists locally (`deploy/helm/ferrumgate/`); `helm lint` and `helm template` validation pending actual Helm install. Not production-ready.
+- Helm chart scaffold exists locally (`deploy/helm/ferrumgate/`); local `helm lint` and `helm template` passed with Helm 3.15.4. Live cluster install remains deferred. Not production-ready.
 
 ## Gaps
 
@@ -42,7 +42,7 @@ Package FerrumGate into reproducible deployment modes so operators can deploy co
 
 ### P1 deliverables
 
-- [x] Helm chart scaffold (local-only; `deploy/helm/ferrumgate/`). `helm lint` / `helm template` passes if Helm is installed; otherwise static review validated. Not production-ready.
+- [x] Helm chart scaffold (local-only; `deploy/helm/ferrumgate/`). `helm lint` / `helm template` passed locally with Helm 3.15.4. Not production-ready.
 - [x] K8s manifests (included in Helm chart templates).
 - [ ] Prometheus/Grafana dashboard integration.
 - [ ] Backup cron/timer docs.

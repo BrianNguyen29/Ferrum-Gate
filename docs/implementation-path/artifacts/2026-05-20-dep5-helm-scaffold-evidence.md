@@ -40,17 +40,41 @@ This artifact records the files produced, the validation steps taken, and the ex
 
 ### 2. `helm lint`
 
-> **Status**: SKIPPED — Helm is not installed in the current environment.
-> **Reason**: The local workspace does not have Helm available (`which helm` returned nothing).
-> **Mitigation**: Static review was performed. The chart follows standard Helm 3 conventions.
-> **Recommended follow-up**: Run `helm lint deploy/helm/ferrumgate` on a machine with Helm 3.x installed.
+> **Status**: PASSED — Helm 3.15.4 was installed locally under `/tmp/opencode/helm-download/` for validation.
+
+Command:
+
+```bash
+/tmp/opencode/helm-download/linux-amd64/helm lint deploy/helm/ferrumgate
+```
+
+Output:
+
+```text
+==> Linting deploy/helm/ferrumgate
+[INFO] Chart.yaml: icon is recommended
+
+1 chart(s) linted, 0 chart(s) failed
+```
 
 ### 3. `helm template`
 
-> **Status**: SKIPPED — Helm is not installed in the current environment.
-> **Reason**: Same as above.
-> **Mitigation**: Template syntax was validated by inspection against Helm 3 documentation.
-> **Recommended follow-up**: Run `helm template ferrumgate deploy/helm/ferrumgate` on a machine with Helm 3.x installed.
+> **Status**: PASSED — Helm rendered the chart locally without syntax errors.
+
+Command:
+
+```bash
+/tmp/opencode/helm-download/linux-amd64/helm template ferrumgate deploy/helm/ferrumgate
+```
+
+Observed rendered resources:
+
+- `ServiceAccount`
+- `Secret` with placeholder `CHANGE_ME_TO_A_SECURE_TOKEN`
+- `Service`
+- `Deployment`
+
+Ingress and HPA are disabled by default and therefore do not render in the default values path.
 
 ### 4. `git diff --check`
 
@@ -60,9 +84,13 @@ This artifact records the files produced, the validation steps taken, and the ex
 
 > **Status**: PASSED — no contract/schema changes were made; script exits cleanly.
 
-### 6. `bash scripts/validate_config_examples.sh`
+### 6. `bash scripts/validate_repo_layout.sh`
 
-> **Status**: SKIPPED — no config examples were modified.
+> **Status**: PASSED — repository layout validation passed after adding `deploy/helm/ferrumgate/`.
+
+### 7. `bash scripts/validate_config_examples.sh`
+
+> **Status**: PASSED — config example validation returned `=== ALL CHECKS PASSED ===`.
 
 ## Non-claims
 
@@ -83,7 +111,7 @@ This artifact records the files produced, the validation steps taken, and the ex
 
 ## Signoff
 
-- **Engineering**: Scaffold created and static-reviewed.
+- **Engineering**: Scaffold created and locally validated with `helm lint` and `helm template`.
 - **Operator**: N/A — no operator action required for scaffold.
 
 ---
