@@ -41,8 +41,10 @@ pub enum AuthMode {
     /// No authentication required.
     #[default]
     Disabled,
-    /// Bearer token authentication required.
+    /// Global bearer token authentication required.
     Bearer,
+    /// Scoped opaque bearer token authentication required.
+    Scoped,
 }
 
 impl std::fmt::Display for AuthMode {
@@ -50,6 +52,7 @@ impl std::fmt::Display for AuthMode {
         match self {
             AuthMode::Disabled => write!(f, "disabled"),
             AuthMode::Bearer => write!(f, "bearer"),
+            AuthMode::Scoped => write!(f, "scoped"),
         }
     }
 }
@@ -61,6 +64,7 @@ impl std::str::FromStr for AuthMode {
         match s.to_ascii_lowercase().as_str() {
             "disabled" => Ok(AuthMode::Disabled),
             "bearer" => Ok(AuthMode::Bearer),
+            "scoped" => Ok(AuthMode::Scoped),
             _ => Err(format!("invalid auth mode: {}", s)),
         }
     }
@@ -179,6 +183,9 @@ impl ServerConfig {
                 return Err("bearer token cannot be empty when auth mode is bearer".to_string());
             }
         }
+
+        // Scoped mode does not require a global bearer token; tokens are stored in the database.
+        // However, we still validate that the store DSN is valid.
 
         // Check that non-loopback bind is allowed when auth is disabled
         if !self.allow_insecure_nonlocal_bind

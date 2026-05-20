@@ -12,6 +12,7 @@ mod proposals;
 mod provenance;
 mod rollback;
 mod sync_preflight;
+pub mod tokens;
 pub mod write_queue;
 
 pub use approvals::SqliteApprovalRepo;
@@ -26,11 +27,12 @@ pub use proposals::SqliteProposalRepo;
 pub use provenance::SqliteProvenanceRepo;
 pub use rollback::SqliteRollbackRepo;
 pub use sync_preflight::SqliteSyncPreflightRepo;
+pub use tokens::SqliteTokenRepo;
 
 use crate::Result;
 use crate::repos::{
     ApprovalRepo, CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo, PolicyBundleRepo,
-    ProposalRepo, ProvenanceRepo, RollbackRepo, StoreFacade,
+    ProposalRepo, ProvenanceRepo, RollbackRepo, StoreFacade, TokenRepo,
 };
 use crate::sqlite::write_queue::{WriteQueue, WriterState, spawn_writer_task};
 use async_trait::async_trait;
@@ -320,6 +322,10 @@ impl SqliteStore {
         SqlitePolicyBundleRepo::new(self.pool.clone())
     }
 
+    pub fn tokens(&self) -> SqliteTokenRepo {
+        SqliteTokenRepo::new(self.pool.clone())
+    }
+
     /// Verify the local ledger chain integrity.
     ///
     /// Delegates to `SqliteLedgerRepo::verify_chain()` which validates:
@@ -399,6 +405,10 @@ impl StoreFacade for SqliteStore {
         )
     }
 
+    fn tokens(&self) -> Arc<dyn TokenRepo> {
+        Arc::new(SqliteTokenRepo::new(self.pool.clone()))
+    }
+
     fn write_queue_depth(&self) -> usize {
         self.write_queue.pending_depth()
     }
@@ -438,6 +448,7 @@ mod tests {
         let _ = facade.ledger();
         let _ = facade.intents();
         let _ = facade.proposals();
+        let _ = facade.tokens();
     }
 
     #[tokio::test]

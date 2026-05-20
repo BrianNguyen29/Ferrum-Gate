@@ -8,6 +8,7 @@ pub mod intent;
 pub mod policy_bundle;
 pub mod provenance;
 pub mod rollback;
+pub mod token;
 
 pub use api::*;
 pub use approval::*;
@@ -19,3 +20,4 @@ pub use intent::*;
 pub use policy_bundle::*;
 pub use provenance::*;
 pub use rollback::*;
+pub use token::*;

@@ -91,13 +91,13 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 
 | # | Item | Owner | Evidence | Status |
 |---|------|-------|----------|--------|
-| 2.1 | SLO-1: SLO/SLA draft doc exists and reviewed | Engineering | `docs/production-readiness-v2/01-slo-sla.md` | ✅ DRAFT EXISTS — reviewed in Phase 0 sweep (see 0.2); NOT YET RATIFIED — operator signoff pending |
+| 2.1 | SLO-1: SLO/SLA draft doc exists and reviewed | Engineering + Operator | `docs/production-readiness-v2/01-slo-sla.md` + `docs/implementation-path/artifacts/2026-05-20-slo-ratification-signoff.md` | ✅ RATIFIED FOR VALIDATION BASELINE — pilot targets approved for target-host validation; NOT a committed SLA |
 | 2.2 | SLO-2: Runbook maps scripts to pass/fail | Engineering | `slo-validation-runbook.md` | ✅ COMPLETE — runbook created, targets marked draft/conditional |
 | 2.3 | SLO-3: Local workload baseline run completed | Engineering | `docs/implementation-path/artifacts/2026-05-19-slo-local-baseline-evidence.md` | ✅ COMPLETE — local SQLite in-memory baseline only; NOT target-host validated |
 | 2.4 | SLO-4: p95/p99 latency measured locally | Engineering | `2026-05-19-slo-local-baseline-evidence.md` §Latency | ✅ LOCAL BASELINE MEASURED — local in-memory only; NOT target-host ratified |
 | 2.5 | SLO-5: Readiness success measured locally | Engineering | `2026-05-19-slo-local-baseline-evidence.md` §Post-run checks | ✅ LOCAL BASELINE MEASURED — local in-memory only; NOT target-host ratified |
 | 2.6 | SLO-6: Error rate measured locally | Engineering | `2026-05-19-slo-local-baseline-evidence.md` §SLO comparison | ✅ LOCAL BASELINE MEASURED — local in-memory only; NOT target-host ratified |
-| 2.7 | SLO-7: Evidence artifact reviewed by operator | Operator | Review signoff | ☐ NOT STARTED — operator review not requested; artifact is local baseline only |
+| 2.7 | SLO-7: Evidence artifact reviewed by operator | Operator | `docs/implementation-path/artifacts/2026-05-20-slo-ratification-signoff.md` | ✅ BASELINE RATIFIED — target-host evidence review still pending after run |
 | 2.8 | SLO-target-host: Target preflight attempted and blocked (valid bearer token required) | Engineering | `docs/implementation-path/artifacts/2026-05-19-slo-target-preflight-blocked-evidence.md` | 🚫 BLOCKED — functional readiness 401 with placeholder token; no workload executed |
 
 ## Phase 3 — Target-host MCP/live workload
@@ -116,9 +116,9 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 
 ## Phase 4 — Security and tenant model
 
-> **Active blocker**: `BLK-SEC-PH4` — the security/tenant model ADR exists and is reviewed (Phase 0.5), but implementation is blocked pending operator decisions on tenant model, OIDC, and scoped token model. No implementation work can proceed until these decisions are made and the ADR is approved for implementation. See [`11-blockers-and-unblock-plan.md`](./11-blockers-and-unblock-plan.md).
+> **Status**: Operator decisions approved on 2026-05-20. Implementation of scoped tokens, RBAC middleware, admin token APIs, and ferrumctl CLI completed on 2026-05-20. BLK-SEC-PH4 unblocked for implementation; remaining open items are SEC-6 (audit log) and Phase 4 full signoff. See [`11-blockers-and-unblock-plan.md`](./11-blockers-and-unblock-plan.md).
 >
-> **Prep complete**: Phase 4 prep artifacts (endpoint mapping, token API contract, CLI spec, revocation tradeoff note, operator decision packet) were created on 2026-05-20. These are design/spec only; implementation remains blocked.
+> **Prep complete**: Phase 4 prep artifacts created 2026-05-20. **Implementation complete** for: SQLite token store + migration, scoped auth middleware (`Disabled`/`Bearer`/`Scoped`), admin token lifecycle endpoints (`POST/GET/DELETE/rotate`), ferrumctl `admin tokens` CLI, SEC-1 through SEC-5 tests.
 
 | # | Item | Owner | Evidence | Status |
 |---|------|-------|----------|--------|
@@ -128,13 +128,15 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 | 4.p3 | SEC-P3: ferrumctl admin tokens CLI surface spec created | Engineering | `14-ferrumctl-admin-tokens-cli-spec.md` | ✅ PREP COMPLETE — list/create/revoke/rotate spec with flags, output formats, and wiring table |
 | 4.p4 | SEC-P4: Revocation durability tradeoff note created | Engineering | `15-revocation-durability-tradeoff.md` | ✅ PREP COMPLETE — immediate vs durable vs hybrid; supports Q4 decision without choosing for operator |
 | 4.p5 | SEC-P5: Operator shortcut decision packet created | Engineering | `16-operator-shortcut-decision-packet.md` | ✅ PREP COMPLETE — condensed Q1–Q6 with context, recommendations, and signoff block |
-| 4.1 | SEC-1: Read-only token cannot mutate | Engineering | Test output | 🚫 BLOCKED — implementation pending operator tenant/OIDC/token model decisions |
-| 4.2 | SEC-2: Agent token cannot approve | Engineering | Test output | 🚫 BLOCKED — implementation pending operator tenant/OIDC/token model decisions |
-| 4.3 | SEC-3: Auditor token cannot execute | Engineering | Test output | 🚫 BLOCKED — implementation pending operator tenant/OIDC/token model decisions |
-| 4.4 | SEC-4: Revoked token fails | Engineering | Test output | 🚫 BLOCKED — implementation pending operator tenant/OIDC/token model decisions |
-| 4.5 | SEC-5: Expired token fails | Engineering | Test output | 🚫 BLOCKED — implementation pending operator tenant/OIDC/token model decisions |
-| 4.6 | SEC-6: Audit log records admin/policy/approval/token actions | Engineering | Audit log sample | 🚫 BLOCKED — implementation pending operator tenant/OIDC/token model decisions |
-| 4.7 | SEC-7: Tenant ADR approved for implementation | Operator | ADR signoff | ☐ NOT STARTED — operator signoff pending; blocks all SEC implementation items |
+| 4.1 | SEC-1: Read-only token cannot mutate | Engineering | `test_sec1_read_only_token_cannot_mutate` in `crates/ferrum-gateway/src/server.rs` | ✅ IMPLEMENTED — `policy:write` endpoint returns 403 for read_only scoped token |
+| 4.2 | SEC-2: Agent token cannot approve | Engineering | `test_sec2_agent_token_cannot_approve` in `crates/ferrum-gateway/src/server.rs` | ✅ IMPLEMENTED — `approval:resolve` endpoint returns 403 for agent scoped token |
+| 4.3 | SEC-3: Auditor token cannot execute | Engineering | `test_sec3_auditor_token_cannot_execute` in `crates/ferrum-gateway/src/server.rs` | ✅ IMPLEMENTED — `execution:authorize` endpoint returns 403 for auditor scoped token |
+| 4.4 | SEC-4: Revoked token fails | Engineering | `test_sec4_revoked_token_returns_401` in `crates/ferrum-gateway/src/server.rs` | ✅ IMPLEMENTED — revoked token returns 401 via `auth_middleware` |
+| 4.5 | SEC-5: Expired token fails | Engineering | `test_sec5_expired_token_returns_401` in `crates/ferrum-gateway/src/server.rs` | ✅ IMPLEMENTED — expired token returns 401 via `auth_middleware` |
+| 4.6 | SEC-6: Audit log records admin/policy/approval/token actions | Engineering | Audit log sample | 📝 DEFERRED — scoped token auth records actor via token; dedicated audit log schema deferred to later phase |
+| 4.7 | SEC-7: Tenant ADR approved for implementation | Operator | `docs/implementation-path/artifacts/2026-05-20-security-model-operator-decisions.md` | ✅ APPROVED FOR IMPLEMENTATION — single-tenant, opaque scoped tokens, durable revocation, 90d max TTL, approved scope list |
+| 4.8 | TTL enforcement: create/rotate reject expiry beyond 90 days | Engineering | `test_create_token_rejects_excessive_ttl`, `test_rotate_token_rejects_excessive_ttl` in `crates/ferrum-gateway/src/server.rs` | ✅ IMPLEMENTED — server-side 400 Bad Request for >90d; client-side validation in ferrumctl |
+| 4.9 | Phase 4 implementation evidence artifact | Engineering | `docs/implementation-path/artifacts/2026-05-20-scoped-token-implementation-evidence.md` | ✅ COMPLETE — records all implemented items, test evidence, and deferred items |
 
 ## Phase 5 — Policy authoring UX
 

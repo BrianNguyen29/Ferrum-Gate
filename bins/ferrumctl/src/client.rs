@@ -529,4 +529,90 @@ impl Client {
         resp.error_for_status_ref()?;
         Ok(resp.json().await?)
     }
+
+    // ── Token Admin Methods ──
+
+    pub async fn list_tokens(
+        &self,
+        actor_id: Option<&str>,
+        role: Option<&str>,
+        active_only: bool,
+        limit: u32,
+    ) -> Result<ferrum_proto::TokenListResponse> {
+        let mut url = format!("{}/v1/admin/tokens?", self.base_url);
+        if let Some(actor_id) = actor_id {
+            url.push_str(&format!("actor_id={}&", actor_id));
+        }
+        if let Some(role) = role {
+            url.push_str(&format!("role={}&", role));
+        }
+        if active_only {
+            url.push_str("active_only=true&");
+        }
+        url.push_str(&format!("limit={}", limit));
+        let resp = self.add_auth(self.http.get(&url)).send().await?;
+        resp.error_for_status_ref()?;
+        Ok(resp.json().await?)
+    }
+
+    pub async fn create_token(
+        &self,
+        request: &ferrum_proto::CreateTokenRequest,
+    ) -> Result<ferrum_proto::CreateTokenResponse> {
+        let url = format!("{}/v1/admin/tokens", self.base_url);
+        let resp = self
+            .add_auth(self.http.post(&url).json(request))
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            if body.is_empty() {
+                bail!("HTTP {}: (empty body)", status);
+            }
+            bail!("HTTP {}: {}", status, body);
+        }
+        Ok(resp.json().await?)
+    }
+
+    pub async fn revoke_token(&self, token_id: &str, reason: Option<&str>) -> Result<()> {
+        let url = format!("{}/v1/admin/tokens/{}", self.base_url, token_id);
+        let request = ferrum_proto::RevokeTokenRequest {
+            reason: reason.map(String::from),
+        };
+        let resp = self
+            .add_auth(self.http.delete(&url).json(&request))
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            if body.is_empty() {
+                bail!("HTTP {}: (empty body)", status);
+            }
+            bail!("HTTP {}: {}", status, body);
+        }
+        Ok(())
+    }
+
+    pub async fn rotate_token(
+        &self,
+        token_id: &str,
+        request: &ferrum_proto::RotateTokenRequest,
+    ) -> Result<ferrum_proto::CreateTokenResponse> {
+        let url = format!("{}/v1/admin/tokens/{}/rotate", self.base_url, token_id);
+        let resp = self
+            .add_auth(self.http.post(&url).json(request))
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            if body.is_empty() {
+                bail!("HTTP {}: (empty body)", status);
+            }
+            bail!("HTTP {}: {}", status, body);
+        }
+        Ok(resp.json().await?)
+    }
 }

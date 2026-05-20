@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow.workspace = true
+chrono.workspace = true
 tokio.workspace = true
 clap = { version = "4", features = ["derive"] }
 serde.workspace = true

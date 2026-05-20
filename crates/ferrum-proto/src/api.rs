@@ -135,6 +135,7 @@ pub enum ApiErrorCode {
     Conflict,
     Internal,
     Unauthorized,
+    Forbidden,
 }
 
 /// Response envelope for paginated approval lists.

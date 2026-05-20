@@ -33,6 +33,7 @@ mod policy_bundles;
 mod proposals;
 mod provenance;
 mod rollback;
+mod tokens;
 
 pub use approvals::PostgresApprovalRepo;
 pub use capabilities::PostgresCapabilityRepo;
@@ -43,6 +44,7 @@ pub use policy_bundles::PostgresPolicyBundleRepo;
 pub use proposals::PostgresProposalRepo;
 pub use provenance::PostgresProvenanceRepo;
 pub use rollback::PostgresRollbackRepo;
+pub use tokens::PostgresTokenRepo;
 
 use crate::Result;
 use crate::repos::{
@@ -306,6 +308,10 @@ impl PostgresStore {
     pub fn policy_bundles(&self) -> PostgresPolicyBundleRepo {
         PostgresPolicyBundleRepo::new(self.pool.clone())
     }
+
+    pub fn tokens(&self) -> PostgresTokenRepo {
+        PostgresTokenRepo::new(self.pool.clone())
+    }
 }
 
 #[async_trait]
@@ -344,6 +350,10 @@ impl StoreFacade for PostgresStore {
 
     fn policy_bundles(&self) -> Arc<dyn PolicyBundleRepo> {
         Arc::new(self.policy_bundles())
+    }
+
+    fn tokens(&self) -> Arc<dyn TokenRepo> {
+        Arc::new(self.tokens())
     }
 
     async fn health_check(&self) -> crate::Result<()> {

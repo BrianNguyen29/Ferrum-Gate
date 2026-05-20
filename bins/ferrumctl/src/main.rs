@@ -380,6 +380,11 @@ enum AdminCommand {
         #[command(subcommand)]
         sub: AdminBackupCommand,
     },
+    /// Manage scoped tokens (list, create, revoke, rotate).
+    Tokens {
+        #[command(subcommand)]
+        sub: AdminTokensCommand,
+    },
 }
 
 /// Approvals subcommands under `admin approvals`.
@@ -519,6 +524,105 @@ enum AdminBackupCommand {
         /// When set, --confirm is not required.
         #[arg(long)]
         dry_run: bool,
+    },
+}
+
+/// Tokens subcommands under `admin tokens`.
+#[derive(Debug, Subcommand)]
+enum AdminTokensCommand {
+    /// List scoped tokens (metadata only; no secret values).
+    List {
+        /// Filter by actor ID (exact match).
+        #[arg(long, value_name = "ID")]
+        actor_id: Option<String>,
+
+        /// Filter by role.
+        #[arg(long, value_name = "ROLE")]
+        role: Option<String>,
+
+        /// Show only active tokens (exclude revoked and expired).
+        #[arg(long)]
+        active_only: bool,
+
+        /// Number of items per page (default 50, max 200).
+        #[arg(long, value_name = "N", default_value = "50")]
+        limit: u32,
+
+        /// Output format: text (default) or json.
+        #[arg(long, value_name = "FORMAT", default_value = "text")]
+        format: OutputFormat,
+    },
+
+    /// Create a new scoped token.
+    /// The token value is printed exactly once and never retrievable again.
+    Create {
+        /// Actor ID (username, service name, etc.).
+        #[arg(long, value_name = "ID")]
+        actor_id: String,
+
+        /// Role to assign.
+        #[arg(long, value_name = "ROLE")]
+        role: String,
+
+        /// Explicit scope list (repeatable). If omitted, uses role defaults.
+        #[arg(long, value_name = "SCOPE")]
+        scope: Vec<String>,
+
+        /// Token description.
+        #[arg(long, value_name = "TEXT")]
+        description: Option<String>,
+
+        /// Expiration in days from now. Alternative to --expires-at.
+        #[arg(long, value_name = "N", group = "expiry")]
+        expires_in_days: Option<u32>,
+
+        /// Absolute expiration timestamp (ISO 8601). Alternative to --expires-in-days.
+        #[arg(long, value_name = "TIMESTAMP", group = "expiry")]
+        expires_at: Option<String>,
+
+        /// Output the created token as JSON (includes the secret token_value).
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Revoke a scoped token.
+    Revoke {
+        /// Token ID to revoke.
+        token_id: String,
+
+        /// Reason for revocation.
+        #[arg(long, value_name = "TEXT")]
+        reason: Option<String>,
+
+        /// Skip interactive confirmation.
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// Rotate a scoped token (revoke old, create new with same actor/role/scopes).
+    Rotate {
+        /// Token ID to rotate.
+        token_id: String,
+
+        /// New expiration in days from now.
+        #[arg(long, value_name = "N", group = "expiry")]
+        expires_in_days: Option<u32>,
+
+        /// New absolute expiration timestamp (ISO 8601).
+        #[arg(long, value_name = "TIMESTAMP", group = "expiry")]
+        expires_at: Option<String>,
+
+        /// Reason for rotation.
+        #[arg(long, value_name = "TEXT")]
+        reason: Option<String>,
+
+        /// Output the new token as JSON (includes the secret token_value).
+        #[arg(long)]
+        json: bool,
+
+        /// Skip interactive confirmation.
+        #[arg(long)]
+        force: bool,
     },
 }
 
@@ -1242,6 +1346,177 @@ async fn main() -> Result<()> {
                     }
                     println!("{}", serde_json::to_string_pretty(&status)?);
                 }
+                AdminCommand::Tokens { sub } => match sub {
+                    AdminTokensCommand::List {
+                        actor_id,
+                        role,
+                        active_only,
+                        limit,
+                        format,
+                    } => {
+                        let response = client
+                            .list_tokens(actor_id.as_deref(), role.as_deref(), active_only, limit)
+                            .await?;
+                        match format {
+                            OutputFormat::Json => {
+                                println!("{}", serde_json::to_string_pretty(&response)?);
+                            }
+                            _ => {
+                                println!(
+                                    "{:<24} {:<20} {:<15} {:<24} {:<10}",
+                                    "TOKEN_ID", "ACTOR_ID", "ROLE", "EXPIRES_AT", "STATUS"
+                                );
+                                for item in &response.items {
+                                    let status = if item.revoked_at.is_some() {
+                                        "revoked"
+                                    } else if item.expires_at < chrono::Utc::now() {
+                                        "expired"
+                                    } else {
+                                        "active"
+                                    };
+                                    println!(
+                                        "{:<24} {:<20} {:<15} {:<24} {:<10}",
+                                        item.token_id,
+                                        item.actor_id,
+                                        item.role.to_string(),
+                                        item.expires_at.to_rfc3339(),
+                                        status
+                                    );
+                                }
+                                if let Some(cursor) = response.next_cursor {
+                                    println!("Next cursor: {}", cursor);
+                                }
+                            }
+                        }
+                    }
+                    AdminTokensCommand::Create {
+                        actor_id,
+                        role,
+                        scope,
+                        description,
+                        expires_in_days,
+                        expires_at,
+                        json,
+                    } => {
+                        let role = role
+                            .parse::<ferrum_proto::TokenRole>()
+                            .map_err(|e| anyhow::anyhow!(e))?;
+                        let expires_at = if let Some(days) = expires_in_days {
+                            chrono::Utc::now() + chrono::Duration::days(days as i64)
+                        } else if let Some(ts) = expires_at {
+                            chrono::DateTime::parse_from_rfc3339(&ts)?.with_timezone(&chrono::Utc)
+                        } else {
+                            chrono::Utc::now() + chrono::Duration::days(30)
+                        };
+                        let max_ttl = chrono::Duration::days(90);
+                        if expires_at > chrono::Utc::now() + max_ttl {
+                            return Err(anyhow::anyhow!(
+                                "expires_at exceeds maximum TTL of 90 days"
+                            ));
+                        }
+                        let scopes = if scope.is_empty() {
+                            None
+                        } else {
+                            Some(scope.clone())
+                        };
+                        let request = ferrum_proto::CreateTokenRequest {
+                            actor_id: actor_id.clone(),
+                            role,
+                            scopes,
+                            description: description.clone(),
+                            expires_at,
+                        };
+                        let response = client.create_token(&request).await?;
+                        if json {
+                            println!("{}", serde_json::to_string_pretty(&response)?);
+                        } else {
+                            println!("Token created successfully.\n");
+                            println!("Token ID:    {}", response.token.token_id);
+                            println!("Token Value: {}", response.token_value);
+                            println!("Actor ID:    {}", response.token.actor_id);
+                            println!("Role:        {}", response.token.role);
+                            println!("Scopes:      {}", response.token.scopes.join(", "));
+                            println!("Expires At:  {}", response.token.expires_at.to_rfc3339());
+                            println!(
+                                "\nIMPORTANT: Save the token value now. It will never be shown again."
+                            );
+                        }
+                    }
+                    AdminTokensCommand::Revoke {
+                        token_id,
+                        reason,
+                        force,
+                    } => {
+                        if !force {
+                            print!("Revoke token {}? [y/N] ", token_id);
+                            std::io::Write::flush(&mut std::io::stdout())?;
+                            let mut input = String::new();
+                            std::io::stdin().read_line(&mut input)?;
+                            if !input.trim().eq_ignore_ascii_case("y") {
+                                println!("Cancelled.");
+                                return Ok(());
+                            }
+                        }
+                        client.revoke_token(&token_id, reason.as_deref()).await?;
+                        println!("Token {} revoked successfully.", token_id);
+                        if let Some(reason) = reason {
+                            println!("Reason: {}", reason);
+                        }
+                    }
+                    AdminTokensCommand::Rotate {
+                        token_id,
+                        expires_in_days,
+                        expires_at,
+                        reason,
+                        json,
+                        force,
+                    } => {
+                        if !force {
+                            print!("Rotate token {}? [y/N] ", token_id);
+                            std::io::Write::flush(&mut std::io::stdout())?;
+                            let mut input = String::new();
+                            std::io::stdin().read_line(&mut input)?;
+                            if !input.trim().eq_ignore_ascii_case("y") {
+                                println!("Cancelled.");
+                                return Ok(());
+                            }
+                        }
+                        let expires_at = if let Some(days) = expires_in_days {
+                            Some(chrono::Utc::now() + chrono::Duration::days(days as i64))
+                        } else if let Some(ts) = expires_at {
+                            Some(
+                                chrono::DateTime::parse_from_rfc3339(&ts)?
+                                    .with_timezone(&chrono::Utc),
+                            )
+                        } else {
+                            None
+                        };
+                        if let Some(ref et) = expires_at {
+                            let max_ttl = chrono::Duration::days(90);
+                            if *et > chrono::Utc::now() + max_ttl {
+                                return Err(anyhow::anyhow!(
+                                    "expires_at exceeds maximum TTL of 90 days"
+                                ));
+                            }
+                        }
+                        let request = ferrum_proto::RotateTokenRequest {
+                            expires_at,
+                            reason: reason.clone(),
+                        };
+                        let response = client.rotate_token(&token_id, &request).await?;
+                        if json {
+                            println!("{}", serde_json::to_string_pretty(&response)?);
+                        } else {
+                            println!("Token rotated successfully.\n");
+                            println!("Old Token ID: {} (revoked)", token_id);
+                            println!("New Token ID: {}", response.token.token_id);
+                            println!("New Token Value: {}", response.token_value);
+                            println!(
+                                "\nIMPORTANT: Save the new token value now. It will never be shown again."
+                            );
+                        }
+                    }
+                },
             }
         }
         Command::Author { sub } => match sub {

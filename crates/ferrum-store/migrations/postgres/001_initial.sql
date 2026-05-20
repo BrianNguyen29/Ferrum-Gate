@@ -143,6 +143,28 @@ CREATE TABLE IF NOT EXISTS policy_bundles (
 CREATE INDEX IF NOT EXISTS idx_policy_bundles_content_hash ON policy_bundles(content_hash);
 CREATE INDEX IF NOT EXISTS idx_policy_bundles_active ON policy_bundles(active);
 
+CREATE TABLE IF NOT EXISTS scoped_tokens (
+    token_id TEXT PRIMARY KEY,
+    actor_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    scopes TEXT NOT NULL,
+    description TEXT,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    last_used_at TEXT,
+    revoked_at TEXT,
+    revoked_reason TEXT,
+    rotated_from TEXT,
+    token_lookup_hash TEXT NOT NULL,
+    token_hash TEXT NOT NULL,
+    token_salt TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_scoped_tokens_actor_id ON scoped_tokens(actor_id);
+CREATE INDEX IF NOT EXISTS idx_scoped_tokens_role ON scoped_tokens(role);
+CREATE INDEX IF NOT EXISTS idx_scoped_tokens_revoked_at ON scoped_tokens(revoked_at);
+CREATE INDEX IF NOT EXISTS idx_scoped_tokens_token_lookup_hash ON scoped_tokens(token_lookup_hash);
+
 CREATE TABLE IF NOT EXISTS _schema_version (
     version INTEGER PRIMARY KEY,
     applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP

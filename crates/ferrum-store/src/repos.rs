@@ -176,6 +176,42 @@ pub trait LedgerRepo: Send + Sync {
     async fn verify_chain(&self) -> Result<()>;
 }
 
+/// Repository for scoped tokens.
+///
+/// Provides CRUD operations for opaque scoped bearer tokens with
+/// hashed token values and durable revocation.
+#[async_trait]
+pub trait TokenRepo: Send + Sync {
+    /// Insert a new scoped token.
+    async fn insert(&self, token: &ferrum_proto::ScopedToken) -> Result<()>;
+
+    /// Get a token by its token_id (metadata only).
+    async fn get(&self, token_id: &str) -> Result<Option<ferrum_proto::ScopedToken>>;
+
+    /// Get a token by its deterministic lookup hash (blake3 of raw token value).
+    /// Returns the full token record including the secure verification hash and salt.
+    async fn get_by_lookup_hash(
+        &self,
+        lookup_hash: &str,
+    ) -> Result<Option<ferrum_proto::ScopedToken>>;
+
+    /// List tokens with optional filters.
+    async fn list(
+        &self,
+        actor_id: Option<&str>,
+        role: Option<&str>,
+        active_only: bool,
+        limit: u32,
+        cursor: Option<&str>,
+    ) -> Result<(Vec<ferrum_proto::ScopedToken>, Option<String>)>;
+
+    /// Revoke a token by setting revoked_at.
+    async fn revoke(&self, token_id: &str, reason: Option<&str>) -> Result<bool>;
+
+    /// Update last_used_at timestamp.
+    async fn touch(&self, token_id: &str) -> Result<()>;
+}
+
 /// Repository for policy bundles.
 ///
 /// Provides CRUD operations for policy bundles with content-hash based
@@ -246,6 +282,7 @@ pub trait StoreFacade: Send + Sync {
     fn intents(&self) -> Arc<dyn IntentRepo>;
     fn proposals(&self) -> Arc<dyn ProposalRepo>;
     fn policy_bundles(&self) -> Arc<dyn PolicyBundleRepo>;
+    fn tokens(&self) -> Arc<dyn TokenRepo>;
 
     /// Returns the current number of pending write operations in the queue.
     /// This represents operations that have been sent but not yet completed processing.

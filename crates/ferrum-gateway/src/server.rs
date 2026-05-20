@@ -694,7 +694,7 @@ pub async fn run_http_server(config: ServerConfig, runtime: GatewayRuntime) -> a
     });
 
     let monitoring_router = build_monitoring_router(state.clone());
-    let workload_router = build_workload_router(state);
+    let workload_router = build_workload_router(state.clone());
 
     // Rate limiting: configurable per IP via config
     // P1: Use SmartIpKeyExtractor to align production with test helper.
@@ -721,12 +721,12 @@ pub async fn run_http_server(config: ServerConfig, runtime: GatewayRuntime) -> a
 
     let mut app = monitoring_router.merge(workload_router);
 
-    // Add auth layer if auth mode is Bearer
-    if config.auth_mode == AuthMode::Bearer {
+    // Add auth layer if auth mode is Bearer or Scoped
+    if config.auth_mode == AuthMode::Bearer || config.auth_mode == AuthMode::Scoped {
         let auth_layer = ServiceBuilder::new()
             .layer(axum::middleware::from_fn_with_state(
-                config.clone(),
-                bearer_auth_middleware,
+                state.clone(),
+                auth_middleware,
             ))
             .into_inner();
         app = app.layer(auth_layer);
@@ -769,15 +769,15 @@ pub fn build_router_with_auth(runtime: GatewayRuntime, server_config: ServerConf
         metrics: Arc::new(Metrics::new()),
     });
     let monitoring_router = build_monitoring_router(state.clone());
-    let workload_router = build_workload_router(state);
+    let workload_router = build_workload_router(state.clone());
     let mut router = monitoring_router.merge(workload_router);
 
-    // Add auth layer if auth mode is Bearer
-    if server_config.auth_mode == AuthMode::Bearer {
+    // Add auth layer if auth mode is Bearer or Scoped
+    if server_config.auth_mode == AuthMode::Bearer || server_config.auth_mode == AuthMode::Scoped {
         let auth_layer = ServiceBuilder::new()
             .layer(axum::middleware::from_fn_with_state(
-                server_config.clone(),
-                bearer_auth_middleware,
+                state.clone(),
+                auth_middleware,
             ))
             .into_inner();
         router = router.layer(auth_layer);
@@ -917,18 +917,25 @@ fn build_workload_router(state: Arc<AppState>) -> Router {
             "/v1/policy-bundles/{bundle_id}/rollback",
             post(rollback_policy_bundle),
         )
+        // Admin token endpoints
+        .route("/v1/admin/tokens", post(create_token))
+        .route("/v1/admin/tokens", get(list_tokens))
+        .route("/v1/admin/tokens/{token_id}", delete(revoke_token))
+        .route("/v1/admin/tokens/{token_id}/rotate", post(rotate_token))
         .with_state(state)
         .layer(TraceLayer::new_for_http())
 }
 
-/// Middleware to enforce bearer token authentication.
-async fn bearer_auth_middleware(
-    State(config): State<ServerConfig>,
+/// Authentication middleware supporting Bearer and Scoped modes.
+async fn auth_middleware(
+    State(state): State<Arc<AppState>>,
     request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
-    // Skip auth for health and metrics endpoints
     let path = request.uri().path();
+    let method = request.method().as_str();
+
+    // Skip auth for health and metrics endpoints
     if path == "/v1/healthz"
         || path == "/v1/readyz"
         || path == "/v1/readyz/deep"
@@ -937,33 +944,226 @@ async fn bearer_auth_middleware(
         return next.run(request).await;
     }
 
+    let config = &state.server_config;
+
     // Check for Authorization header
     let auth_header = request
         .headers()
         .get("Authorization")
         .and_then(|v| v.to_str().ok());
 
-    let token = config.bearer_token.as_deref().unwrap_or("");
+    let Some(header) = auth_header else {
+        return auth_error("missing authorization header");
+    };
 
-    match auth_header {
-        Some(header) if header.starts_with("Bearer ") => {
-            let provided = &header[7..];
-            if constant_time_eq::constant_time_eq(provided.as_bytes(), token.as_bytes()) {
-                return next.run(request).await;
-            }
-        }
-        _ => {}
+    if !header.starts_with("Bearer ") {
+        return auth_error("invalid authorization header format");
     }
 
-    // Return 401 Unauthorized
+    let provided = &header[7..];
+
+    match config.auth_mode {
+        AuthMode::Disabled => next.run(request).await,
+        AuthMode::Bearer => {
+            let token = config.bearer_token.as_deref().unwrap_or("");
+            if constant_time_eq::constant_time_eq(provided.as_bytes(), token.as_bytes()) {
+                next.run(request).await
+            } else {
+                auth_error("invalid bearer token")
+            }
+        }
+        AuthMode::Scoped => {
+            // Step 1: deterministic lookup hash (fast DB lookup)
+            let lookup_hash = hash_token_value(provided);
+            let token_repo = state.runtime.store.tokens();
+            let token = match token_repo.get_by_lookup_hash(&lookup_hash).await {
+                Ok(Some(t)) => t,
+                Ok(None) => return auth_error("invalid scoped token"),
+                Err(e) => {
+                    tracing::error!(error = %e, "token lookup failed");
+                    return auth_error("token lookup failed");
+                }
+            };
+
+            // Step 2: verify presented token against secure salted hash
+            let expected_hash = hash_token_with_salt(provided, &token.token_salt);
+            if !constant_time_eq::constant_time_eq(
+                expected_hash.as_bytes(),
+                token.token_hash.as_bytes(),
+            ) {
+                return auth_error("invalid scoped token");
+            }
+
+            // Check revocation
+            if token.revoked_at.is_some() {
+                return auth_error("token revoked");
+            }
+
+            // Check expiration
+            if token.expires_at < chrono::Utc::now() {
+                return auth_error("token expired");
+            }
+
+            // Check scope
+            let required_scope = required_scope_for_path(method, path);
+            if let Some(scope) = required_scope {
+                if !token_has_scope(&token, scope) {
+                    return forbidden_error(&format!("required scope {}", scope));
+                }
+            }
+
+            // Update last_used_at (best-effort, fire-and-forget)
+            let token_id = token.token_id.clone();
+            tokio::spawn(async move {
+                let _ = token_repo.touch(&token_id).await;
+            });
+
+            next.run(request).await
+        }
+    }
+}
+
+fn auth_error(message: &str) -> Response {
     let error = ApiError {
         code: ApiErrorCode::Unauthorized,
-        message: "missing or invalid bearer token".to_string(),
+        message: message.to_string(),
         correlation_id: uuid::Uuid::new_v4().to_string(),
         retriable: false,
         details: serde_json::json!({}),
     };
     (StatusCode::UNAUTHORIZED, Json(error)).into_response()
+}
+
+fn forbidden_error(message: &str) -> Response {
+    let error = ApiError {
+        code: ApiErrorCode::Forbidden,
+        message: message.to_string(),
+        correlation_id: uuid::Uuid::new_v4().to_string(),
+        retriable: false,
+        details: serde_json::json!({}),
+    };
+    (StatusCode::FORBIDDEN, Json(error)).into_response()
+}
+
+/// Deterministic lookup hash: blake3(raw_token_value).
+/// Used for fast DB lookup — NOT for authentication.
+fn hash_token_value(token_value: &str) -> String {
+    blake3::hash(token_value.as_bytes()).to_hex().to_string()
+}
+
+/// Secure verification hash: blake3(salt || token_value).
+fn hash_token_with_salt(token_value: &str, salt: &str) -> String {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(salt.as_bytes());
+    hasher.update(token_value.as_bytes());
+    hasher.finalize().to_hex().to_string()
+}
+
+/// Generate a new opaque token value.
+fn generate_token_value() -> String {
+    let mut bytes = [0u8; 48];
+    let u1 = uuid::Uuid::new_v4();
+    let u2 = uuid::Uuid::new_v4();
+    let u3 = uuid::Uuid::new_v4();
+    bytes[0..16].copy_from_slice(u1.as_bytes());
+    bytes[16..32].copy_from_slice(u2.as_bytes());
+    bytes[32..48].copy_from_slice(u3.as_bytes());
+    let encoded = base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, bytes);
+    format!("fgt_{}", encoded)
+}
+
+/// Generate a random 16-byte salt (hex-encoded, 32 chars).
+fn generate_token_salt() -> String {
+    uuid::Uuid::new_v4().to_string().replace('-', "")
+}
+
+/// Check if a token has a given scope (or wildcard).
+fn token_has_scope(token: &ferrum_proto::ScopedToken, scope: &str) -> bool {
+    token.scopes.iter().any(|s| s == "*" || s == scope)
+}
+
+/// Map HTTP method + path to required scope.
+fn required_scope_for_path(method: &str, path: &str) -> Option<&'static str> {
+    // Public endpoints (no scope required) are handled before this is called
+    match (method, path) {
+        // Intent and proposal
+        ("POST", "/v1/intents/compile") => Some("intent:submit"),
+        ("GET", "/v1/intents") => Some("intent:submit"),
+        ("POST", p) if p.starts_with("/v1/proposals/") && p.ends_with("/evaluate") => {
+            Some("proposal:evaluate")
+        }
+        // Capability
+        ("POST", "/v1/capabilities/mint") => Some("capability:mint"),
+        ("POST", p) if p.starts_with("/v1/capabilities/") && p.ends_with("/revoke") => {
+            Some("capability:mint")
+        }
+        // Execution
+        ("POST", "/v1/executions/authorize") => Some("execution:authorize"),
+        ("POST", p) if p.starts_with("/v1/executions/") && p.ends_with("/prepare") => {
+            Some("execution:prepare")
+        }
+        ("POST", p) if p.starts_with("/v1/executions/") && p.ends_with("/execute") => {
+            Some("execution:execute")
+        }
+        ("POST", p) if p.starts_with("/v1/executions/") && p.ends_with("/verify") => {
+            Some("execution:verify")
+        }
+        ("POST", p) if p.starts_with("/v1/executions/") && p.ends_with("/compensate") => {
+            Some("execution:compensate")
+        }
+        ("POST", p) if p.starts_with("/v1/executions/") && p.ends_with("/cancel") => {
+            Some("execution:execute")
+        }
+        ("POST", p) if p.starts_with("/v1/executions/") && p.ends_with("/evaluate-outcome") => {
+            Some("execution:verify")
+        }
+        ("GET", p) if p.starts_with("/v1/executions/") => Some("provenance:read"),
+        // Approvals
+        ("GET", "/v1/approvals") => Some("approval:resolve"),
+        ("GET", p) if p.starts_with("/v1/approvals/") && !p.ends_with("/resolve") => {
+            Some("approval:resolve")
+        }
+        ("POST", p) if p.starts_with("/v1/approvals/") && p.ends_with("/resolve") => {
+            Some("approval:resolve")
+        }
+        // Policy bundles
+        ("POST", "/v1/policy-bundles") => Some("policy:write"),
+        ("GET", "/v1/policy-bundles") => Some("policy:read"),
+        ("GET", p) if p.starts_with("/v1/policy-bundles/") && p.ends_with("/versions") => {
+            Some("policy:read")
+        }
+        ("GET", p) if p.starts_with("/v1/policy-bundles/") && p.ends_with("/diff") => {
+            Some("policy:read")
+        }
+        ("POST", p) if p.starts_with("/v1/policy-bundles/") && p.ends_with("/rollback") => {
+            Some("policy:write")
+        }
+        ("POST", "/v1/policy-bundles/simulate") => Some("policy:read"),
+        ("GET", p) if p.starts_with("/v1/policy-bundles/") => Some("policy:read"),
+        ("PUT", p) if p.starts_with("/v1/policy-bundles/") && p.ends_with("/active") => {
+            Some("policy:write")
+        }
+        ("PUT", p) if p.starts_with("/v1/policy-bundles/") => Some("policy:write"),
+        ("DELETE", p) if p.starts_with("/v1/policy-bundles/") => Some("policy:write"),
+        // Provenance
+        ("POST", "/v1/provenance/query") => Some("provenance:read"),
+        ("POST", "/v1/provenance/lineage") => Some("provenance:read"),
+        ("GET", p) if p.starts_with("/v1/provenance/lineage/") => Some("provenance:read"),
+        ("POST", "/v1/provenance/ingest") => Some("provenance:read"),
+        // Bridge
+        ("GET", "/v1/bridges") => Some("provenance:read"),
+        ("GET", p) if p.starts_with("/v1/bridges/") && p.ends_with("/tools") => {
+            Some("provenance:read")
+        }
+        // Admin tokens
+        ("POST", "/v1/admin/tokens") => Some("admin:tokens"),
+        ("GET", "/v1/admin/tokens") => Some("admin:tokens"),
+        ("DELETE", p) if p.starts_with("/v1/admin/tokens/") => Some("admin:tokens"),
+        ("POST", p) if p.starts_with("/v1/admin/tokens/") && p.ends_with("/rotate") => {
+            Some("admin:tokens")
+        }
+        _ => Some("admin:tokens"), // Deny-by-default for unknown paths
+    }
 }
 
 async fn healthz(State(state): State<Arc<AppState>>) -> Json<HealthResponse> {
@@ -6384,6 +6584,273 @@ async fn rollback_policy_bundle(
     )
 }
 
+// ── Admin Token Handlers ──
+
+async fn create_token(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<ferrum_proto::CreateTokenRequest>,
+) -> Response {
+    // Validate TTL <= 90 days
+    let max_ttl = chrono::Duration::days(90);
+    if req.expires_at > chrono::Utc::now() + max_ttl {
+        let error = ApiError {
+            code: ApiErrorCode::ValidationError,
+            message: "expires_at exceeds maximum TTL of 90 days".to_string(),
+            correlation_id: uuid::Uuid::new_v4().to_string(),
+            retriable: false,
+            details: serde_json::json!({}),
+        };
+        return (StatusCode::BAD_REQUEST, Json(error)).into_response();
+    }
+
+    let scopes = req.scopes.unwrap_or_else(|| req.role.default_scopes());
+    let token_value = generate_token_value();
+    let token_salt = generate_token_salt();
+    let token_lookup_hash = hash_token_value(&token_value);
+    let token_hash = hash_token_with_salt(&token_value, &token_salt);
+    let token_id = format!("tok_{}", uuid::Uuid::new_v4().to_string().replace('-', ""));
+
+    let token = ferrum_proto::ScopedToken {
+        token_id: token_id.clone(),
+        actor_id: req.actor_id,
+        role: req.role,
+        scopes,
+        description: req.description,
+        expires_at: req.expires_at,
+        created_at: chrono::Utc::now(),
+        last_used_at: None,
+        revoked_at: None,
+        revoked_reason: None,
+        rotated_from: None,
+        token_lookup_hash,
+        token_hash,
+        token_salt,
+    };
+
+    match state.runtime.store.tokens().insert(&token).await {
+        Ok(()) => {
+            let meta: ferrum_proto::ScopedTokenMeta = token.into();
+            let response = ferrum_proto::CreateTokenResponse {
+                token: meta,
+                token_value,
+            };
+            (StatusCode::CREATED, Json(response)).into_response()
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "token insert failed");
+            let error = ApiError {
+                code: ApiErrorCode::Internal,
+                message: "failed to create token".to_string(),
+                correlation_id: uuid::Uuid::new_v4().to_string(),
+                retriable: false,
+                details: serde_json::json!({}),
+            };
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response()
+        }
+    }
+}
+
+async fn list_tokens(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ListTokensQuery>,
+) -> Response {
+    let (tokens, next_cursor) = match state
+        .runtime
+        .store
+        .tokens()
+        .list(
+            params.actor_id.as_deref(),
+            params.role.as_deref(),
+            params.active_only.unwrap_or(false),
+            params.limit.unwrap_or(50).min(200),
+            params.cursor.as_deref(),
+        )
+        .await
+    {
+        Ok(result) => result,
+        Err(e) => {
+            tracing::error!(error = %e, "token list failed");
+            let error = ApiError {
+                code: ApiErrorCode::Internal,
+                message: "failed to list tokens".to_string(),
+                correlation_id: uuid::Uuid::new_v4().to_string(),
+                retriable: false,
+                details: serde_json::json!({}),
+            };
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response();
+        }
+    };
+
+    let items: Vec<ferrum_proto::ScopedTokenMeta> = tokens.into_iter().map(|t| t.into()).collect();
+    let response = ferrum_proto::TokenListResponse {
+        items,
+        next_cursor,
+        total: 0, // Not computed for performance; clients can infer from items + next_cursor
+    };
+    (StatusCode::OK, Json(response)).into_response()
+}
+
+#[derive(Debug, Deserialize)]
+struct ListTokensQuery {
+    actor_id: Option<String>,
+    role: Option<String>,
+    active_only: Option<bool>,
+    limit: Option<u32>,
+    cursor: Option<String>,
+}
+
+async fn revoke_token(
+    State(state): State<Arc<AppState>>,
+    Path(token_id): Path<String>,
+    Json(req): Json<ferrum_proto::RevokeTokenRequest>,
+) -> Response {
+    match state
+        .runtime
+        .store
+        .tokens()
+        .revoke(&token_id, req.reason.as_deref())
+        .await
+    {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => {
+            let error = ApiError {
+                code: ApiErrorCode::NotFound,
+                message: "token not found or already revoked".to_string(),
+                correlation_id: uuid::Uuid::new_v4().to_string(),
+                retriable: false,
+                details: serde_json::json!({}),
+            };
+            (StatusCode::NOT_FOUND, Json(error)).into_response()
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "token revoke failed");
+            let error = ApiError {
+                code: ApiErrorCode::Internal,
+                message: "failed to revoke token".to_string(),
+                correlation_id: uuid::Uuid::new_v4().to_string(),
+                retriable: false,
+                details: serde_json::json!({}),
+            };
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response()
+        }
+    }
+}
+
+async fn rotate_token(
+    State(state): State<Arc<AppState>>,
+    Path(token_id): Path<String>,
+    Json(req): Json<ferrum_proto::RotateTokenRequest>,
+) -> Response {
+    // Get the old token
+    let old_token = match state.runtime.store.tokens().get(&token_id).await {
+        Ok(Some(t)) => t,
+        Ok(None) => {
+            let error = ApiError {
+                code: ApiErrorCode::NotFound,
+                message: "token not found".to_string(),
+                correlation_id: uuid::Uuid::new_v4().to_string(),
+                retriable: false,
+                details: serde_json::json!({}),
+            };
+            return (StatusCode::NOT_FOUND, Json(error)).into_response();
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "token get failed");
+            let error = ApiError {
+                code: ApiErrorCode::Internal,
+                message: "failed to rotate token".to_string(),
+                correlation_id: uuid::Uuid::new_v4().to_string(),
+                retriable: false,
+                details: serde_json::json!({}),
+            };
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response();
+        }
+    };
+
+    if old_token.revoked_at.is_some() || old_token.expires_at < chrono::Utc::now() {
+        let error = ApiError {
+            code: ApiErrorCode::ValidationError,
+            message: "token is already revoked or expired".to_string(),
+            correlation_id: uuid::Uuid::new_v4().to_string(),
+            retriable: false,
+            details: serde_json::json!({}),
+        };
+        return (StatusCode::CONFLICT, Json(error)).into_response();
+    }
+
+    // Validate TTL <= 90 days when an explicit expiry is requested
+    let max_ttl = chrono::Duration::days(90);
+    let expires_at = req
+        .expires_at
+        .unwrap_or_else(|| chrono::Utc::now() + max_ttl);
+    if let Some(requested_expires) = req.expires_at {
+        if requested_expires > chrono::Utc::now() + max_ttl {
+            let error = ApiError {
+                code: ApiErrorCode::ValidationError,
+                message: "expires_at exceeds maximum TTL of 90 days".to_string(),
+                correlation_id: uuid::Uuid::new_v4().to_string(),
+                retriable: false,
+                details: serde_json::json!({}),
+            };
+            return (StatusCode::BAD_REQUEST, Json(error)).into_response();
+        }
+    }
+
+    // Revoke the old token
+    let _ = state
+        .runtime
+        .store
+        .tokens()
+        .revoke(&token_id, req.reason.as_deref())
+        .await;
+
+    // Create new token with same actor/role/scopes
+    let new_token_value = generate_token_value();
+    let new_token_salt = generate_token_salt();
+    let new_token_lookup_hash = hash_token_value(&new_token_value);
+    let new_token_hash = hash_token_with_salt(&new_token_value, &new_token_salt);
+    let new_token_id = format!("tok_{}", uuid::Uuid::new_v4().to_string().replace('-', ""));
+
+    let new_token = ferrum_proto::ScopedToken {
+        token_id: new_token_id.clone(),
+        actor_id: old_token.actor_id,
+        role: old_token.role,
+        scopes: old_token.scopes,
+        description: old_token.description,
+        expires_at,
+        created_at: chrono::Utc::now(),
+        last_used_at: None,
+        revoked_at: None,
+        revoked_reason: None,
+        rotated_from: Some(token_id),
+        token_lookup_hash: new_token_lookup_hash,
+        token_hash: new_token_hash,
+        token_salt: new_token_salt,
+    };
+
+    match state.runtime.store.tokens().insert(&new_token).await {
+        Ok(()) => {
+            let meta: ferrum_proto::ScopedTokenMeta = new_token.into();
+            let response = ferrum_proto::CreateTokenResponse {
+                token: meta,
+                token_value: new_token_value,
+            };
+            (StatusCode::CREATED, Json(response)).into_response()
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "token rotate insert failed");
+            let error = ApiError {
+                code: ApiErrorCode::Internal,
+                message: "failed to rotate token".to_string(),
+                correlation_id: uuid::Uuid::new_v4().to_string(),
+                retriable: false,
+                details: serde_json::json!({}),
+            };
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response()
+        }
+    }
+}
+
 #[derive(Debug)]
 struct ApiProblem(ApiError, StatusCode);
 
@@ -6589,7 +7056,7 @@ mod tests {
     use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
     use ferrum_store::repos::{
         ApprovalRepo, CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo, PolicyBundleRepo,
-        ProposalRepo, ProvenanceRepo, RollbackRepo,
+        ProposalRepo, ProvenanceRepo, RollbackRepo, TokenRepo,
     };
     use ferrum_store::{SqliteStore, StoreError, StoreFacade};
     use ferrum_sync::{BridgeToolInfo, ExternalEventSource, McpBridge};
@@ -6636,6 +7103,9 @@ mod tests {
         }
         fn policy_bundles(&self) -> Arc<dyn PolicyBundleRepo> {
             self.inner.policy_bundles()
+        }
+        fn tokens(&self) -> Arc<dyn TokenRepo> {
+            self.inner.tokens()
         }
         fn write_queue_depth(&self) -> usize {
             self.inner.write_queue_depth()
@@ -6927,6 +7397,9 @@ mod tests {
         fn policy_bundles(&self) -> Arc<dyn PolicyBundleRepo> {
             self.inner.policy_bundles()
         }
+        fn tokens(&self) -> Arc<dyn TokenRepo> {
+            self.inner.tokens()
+        }
         fn write_queue_depth(&self) -> usize {
             self.queue_depth
         }
@@ -7041,6 +7514,9 @@ mod tests {
         }
         fn policy_bundles(&self) -> Arc<dyn PolicyBundleRepo> {
             self.inner.policy_bundles()
+        }
+        fn tokens(&self) -> Arc<dyn TokenRepo> {
+            self.inner.tokens()
         }
         fn write_queue_depth(&self) -> usize {
             self.inner.write_queue_depth()
@@ -10024,5 +10500,578 @@ rules:
                 .any(|e| matches!(e.kind, ProvenanceEventKind::PolicyBundleRolledBack)),
             "rollback should emit PolicyBundleRolledBack provenance event"
         );
+    }
+
+    // ── Scoped Token Tests ──
+
+    async fn test_runtime_with_scoped_auth() -> (GatewayRuntime, ServerConfig) {
+        let runtime = test_runtime().await;
+        let config = ServerConfig {
+            auth_mode: AuthMode::Scoped,
+            ..Default::default()
+        };
+        (runtime, config)
+    }
+
+    #[tokio::test]
+    async fn test_scoped_token_create_and_list() {
+        let (runtime, config) = test_runtime_with_scoped_auth().await;
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        // Create a token with global bearer fallback not available in Scoped mode;
+        // we need an admin token first. In Scoped mode, the first token creation
+        // requires a bootstrap mechanism. For testing, we insert directly via store.
+        let token_value = generate_token_value();
+        let token_salt = generate_token_salt();
+        let token_lookup_hash = hash_token_value(&token_value);
+        let token_hash = hash_token_with_salt(&token_value, &token_salt);
+        let token = ferrum_proto::ScopedToken {
+            token_id: "tok_admin_1".to_string(),
+            actor_id: "admin".to_string(),
+            role: ferrum_proto::TokenRole::Admin,
+            scopes: vec!["*".to_string()],
+            description: None,
+            expires_at: chrono::Utc::now() + chrono::Duration::days(1),
+            created_at: chrono::Utc::now(),
+            last_used_at: None,
+            revoked_at: None,
+            revoked_reason: None,
+            rotated_from: None,
+            token_lookup_hash,
+            token_hash,
+            token_salt,
+        };
+        runtime.store.tokens().insert(&token).await.unwrap();
+
+        // List tokens via API
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/v1/admin/tokens")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_scoped_token_revoked_fails() {
+        let (runtime, config) = test_runtime_with_scoped_auth().await;
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let token_value = generate_token_value();
+        let token_salt = generate_token_salt();
+        let token_lookup_hash = hash_token_value(&token_value);
+        let token_hash = hash_token_with_salt(&token_value, &token_salt);
+        let token = ferrum_proto::ScopedToken {
+            token_id: "tok_revoke_test".to_string(),
+            actor_id: "operator".to_string(),
+            role: ferrum_proto::TokenRole::Operator,
+            scopes: vec!["approval:resolve".to_string()],
+            description: None,
+            expires_at: chrono::Utc::now() + chrono::Duration::days(1),
+            created_at: chrono::Utc::now(),
+            last_used_at: None,
+            revoked_at: Some(chrono::Utc::now()),
+            revoked_reason: Some("test".to_string()),
+            rotated_from: None,
+            token_lookup_hash,
+            token_hash,
+            token_salt,
+        };
+        runtime.store.tokens().insert(&token).await.unwrap();
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/v1/approvals")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_scoped_token_expired_fails() {
+        let (runtime, config) = test_runtime_with_scoped_auth().await;
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let token_value = generate_token_value();
+        let token_salt = generate_token_salt();
+        let token_lookup_hash = hash_token_value(&token_value);
+        let token_hash = hash_token_with_salt(&token_value, &token_salt);
+        let token = ferrum_proto::ScopedToken {
+            token_id: "tok_expired_test".to_string(),
+            actor_id: "operator".to_string(),
+            role: ferrum_proto::TokenRole::Operator,
+            scopes: vec!["approval:resolve".to_string()],
+            description: None,
+            expires_at: chrono::Utc::now() - chrono::Duration::hours(1),
+            created_at: chrono::Utc::now() - chrono::Duration::days(2),
+            last_used_at: None,
+            revoked_at: None,
+            revoked_reason: None,
+            rotated_from: None,
+            token_lookup_hash,
+            token_hash,
+            token_salt,
+        };
+        runtime.store.tokens().insert(&token).await.unwrap();
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/v1/approvals")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_sec1_read_only_token_cannot_mutate() {
+        let (runtime, config) = test_runtime_with_scoped_auth().await;
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let token_value = generate_token_value();
+        let token_salt = generate_token_salt();
+        let token_lookup_hash = hash_token_value(&token_value);
+        let token_hash = hash_token_with_salt(&token_value, &token_salt);
+        let token = ferrum_proto::ScopedToken {
+            token_id: "tok_readonly_test".to_string(),
+            actor_id: "auditor".to_string(),
+            role: ferrum_proto::TokenRole::ReadOnly,
+            scopes: vec!["policy:read".to_string(), "provenance:read".to_string()],
+            description: None,
+            expires_at: chrono::Utc::now() + chrono::Duration::days(1),
+            created_at: chrono::Utc::now(),
+            last_used_at: None,
+            revoked_at: None,
+            revoked_reason: None,
+            rotated_from: None,
+            token_lookup_hash,
+            token_hash,
+            token_salt,
+        };
+        runtime.store.tokens().insert(&token).await.unwrap();
+
+        // Attempt to create a policy bundle (requires policy:write)
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/policy-bundles")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_sec2_agent_token_cannot_approve() {
+        let (runtime, config) = test_runtime_with_scoped_auth().await;
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let token_value = generate_token_value();
+        let token_salt = generate_token_salt();
+        let token_lookup_hash = hash_token_value(&token_value);
+        let token_hash = hash_token_with_salt(&token_value, &token_salt);
+        let token = ferrum_proto::ScopedToken {
+            token_id: "tok_agent_test".to_string(),
+            actor_id: "agent".to_string(),
+            role: ferrum_proto::TokenRole::Agent,
+            scopes: vec![
+                "intent:submit".to_string(),
+                "proposal:evaluate".to_string(),
+                "capability:mint".to_string(),
+            ],
+            description: None,
+            expires_at: chrono::Utc::now() + chrono::Duration::days(1),
+            created_at: chrono::Utc::now(),
+            last_used_at: None,
+            revoked_at: None,
+            revoked_reason: None,
+            rotated_from: None,
+            token_lookup_hash,
+            token_hash,
+            token_salt,
+        };
+        runtime.store.tokens().insert(&token).await.unwrap();
+
+        // Attempt to resolve an approval (requires approval:resolve)
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/approvals/test-approval/resolve")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_sec3_auditor_token_cannot_execute() {
+        let (runtime, config) = test_runtime_with_scoped_auth().await;
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let token_value = generate_token_value();
+        let token_salt = generate_token_salt();
+        let token_lookup_hash = hash_token_value(&token_value);
+        let token_hash = hash_token_with_salt(&token_value, &token_salt);
+        let token = ferrum_proto::ScopedToken {
+            token_id: "tok_auditor_test".to_string(),
+            actor_id: "auditor".to_string(),
+            role: ferrum_proto::TokenRole::Auditor,
+            scopes: vec!["provenance:read".to_string()],
+            description: None,
+            expires_at: chrono::Utc::now() + chrono::Duration::days(1),
+            created_at: chrono::Utc::now(),
+            last_used_at: None,
+            revoked_at: None,
+            revoked_reason: None,
+            rotated_from: None,
+            token_lookup_hash,
+            token_hash,
+            token_salt,
+        };
+        runtime.store.tokens().insert(&token).await.unwrap();
+
+        // Attempt to authorize an execution (requires execution:authorize)
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/executions/authorize")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_sec4_revoked_token_returns_401() {
+        let (runtime, config) = test_runtime_with_scoped_auth().await;
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let token_value = generate_token_value();
+        let token_salt = generate_token_salt();
+        let token_lookup_hash = hash_token_value(&token_value);
+        let token_hash = hash_token_with_salt(&token_value, &token_salt);
+        let token = ferrum_proto::ScopedToken {
+            token_id: "tok_sec4_test".to_string(),
+            actor_id: "operator".to_string(),
+            role: ferrum_proto::TokenRole::Operator,
+            scopes: vec!["approval:resolve".to_string()],
+            description: None,
+            expires_at: chrono::Utc::now() + chrono::Duration::days(1),
+            created_at: chrono::Utc::now(),
+            last_used_at: None,
+            revoked_at: Some(chrono::Utc::now()),
+            revoked_reason: Some("test".to_string()),
+            rotated_from: None,
+            token_lookup_hash,
+            token_hash,
+            token_salt,
+        };
+        runtime.store.tokens().insert(&token).await.unwrap();
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/v1/approvals")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_sec5_expired_token_returns_401() {
+        let (runtime, config) = test_runtime_with_scoped_auth().await;
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let token_value = generate_token_value();
+        let token_salt = generate_token_salt();
+        let token_lookup_hash = hash_token_value(&token_value);
+        let token_hash = hash_token_with_salt(&token_value, &token_salt);
+        let token = ferrum_proto::ScopedToken {
+            token_id: "tok_sec5_test".to_string(),
+            actor_id: "operator".to_string(),
+            role: ferrum_proto::TokenRole::Operator,
+            scopes: vec!["approval:resolve".to_string()],
+            description: None,
+            expires_at: chrono::Utc::now() - chrono::Duration::hours(1),
+            created_at: chrono::Utc::now() - chrono::Duration::days(2),
+            last_used_at: None,
+            revoked_at: None,
+            revoked_reason: None,
+            rotated_from: None,
+            token_lookup_hash,
+            token_hash,
+            token_salt,
+        };
+        runtime.store.tokens().insert(&token).await.unwrap();
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/v1/approvals")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_token_admin_api_create_and_revoke() {
+        let (runtime, config) = test_runtime_with_scoped_auth().await;
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        // Bootstrap an admin token directly in the store
+        let admin_token_value = generate_token_value();
+        let admin_token_salt = generate_token_salt();
+        let admin_token_lookup_hash = hash_token_value(&admin_token_value);
+        let admin_token_hash = hash_token_with_salt(&admin_token_value, &admin_token_salt);
+        let admin_token = ferrum_proto::ScopedToken {
+            token_id: "tok_admin_bootstrap".to_string(),
+            actor_id: "admin".to_string(),
+            role: ferrum_proto::TokenRole::Admin,
+            scopes: vec!["*".to_string()],
+            description: None,
+            expires_at: chrono::Utc::now() + chrono::Duration::days(1),
+            created_at: chrono::Utc::now(),
+            last_used_at: None,
+            revoked_at: None,
+            revoked_reason: None,
+            rotated_from: None,
+            token_lookup_hash: admin_token_lookup_hash,
+            token_hash: admin_token_hash,
+            token_salt: admin_token_salt,
+        };
+        runtime.store.tokens().insert(&admin_token).await.unwrap();
+
+        // Create a new token via API
+        let create_req = ferrum_proto::CreateTokenRequest {
+            actor_id: "operator-alice".to_string(),
+            role: ferrum_proto::TokenRole::Operator,
+            scopes: None,
+            description: Some("Test token".to_string()),
+            expires_at: chrono::Utc::now() + chrono::Duration::days(7),
+        };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/tokens")
+                    .header("Authorization", format!("Bearer {}", admin_token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&create_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let create_resp: ferrum_proto::CreateTokenResponse = serde_json::from_slice(&body).unwrap();
+        assert!(
+            create_resp.token_value.starts_with("fgt_"),
+            "token value should start with fgt_ prefix"
+        );
+
+        // Revoke the newly created token
+        let revoke_req = ferrum_proto::RevokeTokenRequest {
+            reason: Some("test cleanup".to_string()),
+        };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!("/v1/admin/tokens/{}", create_resp.token.token_id))
+                    .header("Authorization", format!("Bearer {}", admin_token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&revoke_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        // Verify the revoked token cannot be used
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/v1/approvals")
+                    .header(
+                        "Authorization",
+                        format!("Bearer {}", create_resp.token_value),
+                    )
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_create_token_rejects_excessive_ttl() {
+        let (runtime, config) = test_runtime_with_scoped_auth().await;
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        // Bootstrap an admin token
+        let admin_token_value = generate_token_value();
+        let admin_token_salt = generate_token_salt();
+        let admin_token_lookup_hash = hash_token_value(&admin_token_value);
+        let admin_token_hash = hash_token_with_salt(&admin_token_value, &admin_token_salt);
+        let admin_token = ferrum_proto::ScopedToken {
+            token_id: "tok_admin_ttl".to_string(),
+            actor_id: "admin".to_string(),
+            role: ferrum_proto::TokenRole::Admin,
+            scopes: vec!["*".to_string()],
+            description: None,
+            expires_at: chrono::Utc::now() + chrono::Duration::days(1),
+            created_at: chrono::Utc::now(),
+            last_used_at: None,
+            revoked_at: None,
+            revoked_reason: None,
+            rotated_from: None,
+            token_lookup_hash: admin_token_lookup_hash,
+            token_hash: admin_token_hash,
+            token_salt: admin_token_salt,
+        };
+        runtime.store.tokens().insert(&admin_token).await.unwrap();
+
+        // Request a token with 91-day expiry
+        let create_req = ferrum_proto::CreateTokenRequest {
+            actor_id: "operator-alice".to_string(),
+            role: ferrum_proto::TokenRole::Operator,
+            scopes: None,
+            description: Some("Excessive TTL test".to_string()),
+            expires_at: chrono::Utc::now() + chrono::Duration::days(91),
+        };
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/tokens")
+                    .header("Authorization", format!("Bearer {}", admin_token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&create_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_rotate_token_rejects_excessive_ttl() {
+        let (runtime, config) = test_runtime_with_scoped_auth().await;
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        // Bootstrap an admin token
+        let admin_token_value = generate_token_value();
+        let admin_token_salt = generate_token_salt();
+        let admin_token_lookup_hash = hash_token_value(&admin_token_value);
+        let admin_token_hash = hash_token_with_salt(&admin_token_value, &admin_token_salt);
+        let admin_token = ferrum_proto::ScopedToken {
+            token_id: "tok_admin_rot".to_string(),
+            actor_id: "admin".to_string(),
+            role: ferrum_proto::TokenRole::Admin,
+            scopes: vec!["*".to_string()],
+            description: None,
+            expires_at: chrono::Utc::now() + chrono::Duration::days(1),
+            created_at: chrono::Utc::now(),
+            last_used_at: None,
+            revoked_at: None,
+            revoked_reason: None,
+            rotated_from: None,
+            token_lookup_hash: admin_token_lookup_hash,
+            token_hash: admin_token_hash,
+            token_salt: admin_token_salt,
+        };
+        runtime.store.tokens().insert(&admin_token).await.unwrap();
+
+        // Create a token to rotate
+        let target_token_value = generate_token_value();
+        let target_token_salt = generate_token_salt();
+        let target_token_lookup_hash = hash_token_value(&target_token_value);
+        let target_token_hash = hash_token_with_salt(&target_token_value, &target_token_salt);
+        let target_token = ferrum_proto::ScopedToken {
+            token_id: "tok_to_rotate".to_string(),
+            actor_id: "operator".to_string(),
+            role: ferrum_proto::TokenRole::Operator,
+            scopes: vec!["approval:resolve".to_string()],
+            description: None,
+            expires_at: chrono::Utc::now() + chrono::Duration::days(1),
+            created_at: chrono::Utc::now(),
+            last_used_at: None,
+            revoked_at: None,
+            revoked_reason: None,
+            rotated_from: None,
+            token_lookup_hash: target_token_lookup_hash,
+            token_hash: target_token_hash,
+            token_salt: target_token_salt,
+        };
+        runtime.store.tokens().insert(&target_token).await.unwrap();
+
+        // Rotate with 91-day expiry
+        let rotate_req = ferrum_proto::RotateTokenRequest {
+            expires_at: Some(chrono::Utc::now() + chrono::Duration::days(91)),
+            reason: Some("test rotation".to_string()),
+        };
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/tokens/tok_to_rotate/rotate")
+                    .header("Authorization", format!("Bearer {}", admin_token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&rotate_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 }
