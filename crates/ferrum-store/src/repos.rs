@@ -2,8 +2,9 @@ use async_trait::async_trait;
 use ferrum_proto::{
     ActionProposal, ApprovalId, ApprovalRequest, ApprovalState, CapabilityId, CapabilityLease,
     CapabilityStatus, EventId, ExecutionId, ExecutionRecord, ExecutionState, IntentEnvelope,
-    IntentId, IntentStatus, PolicyBundle, ProposalId, ProvenanceEdge, ProvenanceEvent,
-    ProvenanceQueryRequest, RollbackContract, RollbackContractId, RollbackState, Timestamp,
+    IntentId, IntentStatus, PolicyBundle, PolicyBundleVersion, ProposalId, ProvenanceEdge,
+    ProvenanceEvent, ProvenanceQueryRequest, RollbackContract, RollbackContractId, RollbackState,
+    Timestamp,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -208,6 +209,26 @@ pub trait PolicyBundleRepo: Send + Sync {
 
     /// Set the active flag for a policy bundle.
     async fn set_active(&self, bundle_id: &str, active: bool) -> Result<()>;
+
+    /// List version history for a policy bundle.
+    async fn list_versions(&self, bundle_id: &str) -> Result<Vec<PolicyBundleVersion>>;
+
+    /// Get a specific version of a policy bundle.
+    async fn get_version(
+        &self,
+        bundle_id: &str,
+        version: i64,
+    ) -> Result<Option<PolicyBundleVersion>>;
+
+    /// Rollback a policy bundle to a previous version.
+    /// Creates a new version row copied from the target version, increments
+    /// the version number, sets it active, and returns the new version number.
+    async fn rollback(
+        &self,
+        bundle_id: &str,
+        target_version: i64,
+        actor: Option<&str>,
+    ) -> Result<i64>;
 }
 
 /// Facade trait that bundles all repository accessors.

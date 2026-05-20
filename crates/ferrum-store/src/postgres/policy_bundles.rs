@@ -1,7 +1,7 @@
 //! PostgreSQL PolicyBundleRepo implementation (P3 runtime slice).
 
 use async_trait::async_trait;
-use ferrum_proto::PolicyBundle;
+use ferrum_proto::{PolicyBundle, PolicyBundleVersion};
 use sqlx::{PgPool, Row};
 
 use crate::{PolicyBundleRepo, Result};
@@ -16,6 +16,55 @@ pub struct PostgresPolicyBundleRepo {
 impl PostgresPolicyBundleRepo {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
+    }
+
+    /// Insert a version row for the given bundle with the next monotonic version number.
+    async fn insert_version(
+        &self,
+        bundle: &PolicyBundle,
+        note: Option<&str>,
+        created_by: Option<&str>,
+    ) -> Result<i64> {
+        let raw_json = to_json(bundle)?;
+        let new_version: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(version), 0) + 1 FROM policy_bundle_version WHERE bundle_id = $1",
+        )
+        .bind(&bundle.bundle_id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        sqlx::query(
+            "INSERT INTO policy_bundle_version (
+                id, bundle_id, version, content, active, created_at, created_by, note
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&bundle.bundle_id)
+        .bind(new_version)
+        .bind(raw_json)
+        .bind(bundle.active)
+        .bind(bundle.created_at.to_rfc3339())
+        .bind(created_by)
+        .bind(note)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(new_version)
+    }
+
+    /// Update the active flag on the latest version row for a bundle.
+    async fn update_version_active(&self, bundle_id: &str, active: bool) -> Result<()> {
+        sqlx::query(
+            "UPDATE policy_bundle_version
+             SET active = $2
+             WHERE bundle_id = $1
+               AND version = (SELECT MAX(version) FROM policy_bundle_version WHERE bundle_id = $1)",
+        )
+        .bind(bundle_id)
+        .bind(active)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
     }
 }
 
@@ -37,6 +86,8 @@ impl PolicyBundleRepo for PostgresPolicyBundleRepo {
         .bind(raw_json)
         .execute(&self.pool)
         .await?;
+
+        self.insert_version(bundle, Some("Created"), None).await?;
         Ok(())
     }
 
@@ -77,6 +128,8 @@ impl PolicyBundleRepo for PostgresPolicyBundleRepo {
         .bind(raw_json)
         .execute(&self.pool)
         .await?;
+
+        self.insert_version(bundle, Some("Updated"), None).await?;
         Ok(())
     }
 
@@ -127,6 +180,114 @@ impl PolicyBundleRepo for PostgresPolicyBundleRepo {
         .bind(raw_json)
         .execute(&self.pool)
         .await?;
+
+        self.update_version_active(bundle_id, active).await?;
         Ok(())
+    }
+
+    async fn list_versions(&self, bundle_id: &str) -> Result<Vec<PolicyBundleVersion>> {
+        let rows = sqlx::query(
+            "SELECT id, bundle_id, version, content, active, created_at, created_by, note
+             FROM policy_bundle_version
+             WHERE bundle_id = $1
+             ORDER BY version DESC",
+        )
+        .bind(bundle_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut versions = Vec::with_capacity(rows.len());
+        for row in rows {
+            let content_raw: String = row.try_get("content")?;
+            let content: PolicyBundle = from_json(&content_raw)?;
+            versions.push(PolicyBundleVersion {
+                id: row.try_get("id")?,
+                bundle_id: row.try_get("bundle_id")?,
+                version: row.try_get("version")?,
+                content,
+                active: row.try_get::<bool, _>("active")?,
+                created_at: row.try_get("created_at")?,
+                created_by: row.try_get("created_by")?,
+                note: row.try_get("note")?,
+            });
+        }
+        Ok(versions)
+    }
+
+    async fn get_version(
+        &self,
+        bundle_id: &str,
+        version: i64,
+    ) -> Result<Option<PolicyBundleVersion>> {
+        let row = sqlx::query(
+            "SELECT id, bundle_id, version, content, active, created_at, created_by, note
+             FROM policy_bundle_version
+             WHERE bundle_id = $1 AND version = $2",
+        )
+        .bind(bundle_id)
+        .bind(version)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        match row {
+            Some(row) => {
+                let content_raw: String = row.try_get("content")?;
+                let content: PolicyBundle = from_json(&content_raw)?;
+                Ok(Some(PolicyBundleVersion {
+                    id: row.try_get("id")?,
+                    bundle_id: row.try_get("bundle_id")?,
+                    version: row.try_get("version")?,
+                    content,
+                    active: row.try_get::<bool, _>("active")?,
+                    created_at: row.try_get("created_at")?,
+                    created_by: row.try_get("created_by")?,
+                    note: row.try_get("note")?,
+                }))
+            }
+            None => Ok(None),
+        }
+    }
+
+    async fn rollback(
+        &self,
+        bundle_id: &str,
+        target_version: i64,
+        actor: Option<&str>,
+    ) -> Result<i64> {
+        let target = self
+            .get_version(bundle_id, target_version)
+            .await?
+            .ok_or_else(|| {
+                crate::StoreError::not_found("policy_bundle_version", target_version.to_string())
+            })?;
+
+        let mut new_bundle = target.content;
+        new_bundle.active = true;
+        new_bundle.updated_at = chrono::Utc::now();
+        let raw_json = to_json(&new_bundle)?;
+
+        sqlx::query(
+            "UPDATE policy_bundles
+             SET version = $2,
+                 active = $3,
+                 content_hash = $4,
+                 updated_at = $5,
+                 raw_json = $6
+             WHERE bundle_id = $1",
+        )
+        .bind(&new_bundle.bundle_id)
+        .bind(&new_bundle.version)
+        .bind(new_bundle.active)
+        .bind(new_bundle.content_hash.as_deref().unwrap_or(""))
+        .bind(new_bundle.updated_at.to_rfc3339())
+        .bind(raw_json)
+        .execute(&self.pool)
+        .await?;
+
+        let note = format!("Rollback to v{}", target_version);
+        let new_version = self.insert_version(&new_bundle, Some(&note), actor).await?;
+        self.update_version_active(bundle_id, true).await?;
+
+        Ok(new_version)
     }
 }

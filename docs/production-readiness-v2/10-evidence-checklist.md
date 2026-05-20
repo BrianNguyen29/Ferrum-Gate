@@ -134,8 +134,8 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 | 5.2 | POL-2: Simulate returns decision without side effect | Engineering | `crates/ferrum-gateway/src/server.rs` `test_simulate_policy_bundle_*` + `bins/ferrumctl/src/main.rs` CLI parse tests | ✅ COMPLETE — online-only; server required; no store mutation or provenance emission; POL-5 remains open |
 | 5.3 | POL-3: Template produces valid policy | Engineering | Test output | ☐ |
 | 5.4 | POL-4: Policy switch is auditable | Engineering | `integration_gateway_flow.rs` `test_policy_bundle_active_switch_emits_provenance` | ✅ COMPLETE — provenance events emitted for activation and deactivation |
-| 5.5 | POL-5 design: Version history, diff, and rollback design documented and accepted | Engineering | `05a-policy-version-history-design.md` | ✅ DESIGN COMPLETE — implementation NOT STARTED |
-| 5.6 | POL-5 implementation: Rollback to previous policy works | Engineering | Test output | ☐ NOT STARTED — blocked until engineering picks up POL-5 implementation; no dependency on operator decisions |
+| 5.5 | POL-5 design: Version history, diff, and rollback design documented and accepted | Engineering | `05a-policy-version-history-design.md` | ✅ DESIGN COMPLETE — implementation done |
+| 5.6 | POL-5 implementation: Rollback to previous policy works | Engineering | `test_list_policy_bundle_versions`, `test_diff_policy_bundle_versions`, `test_rollback_policy_bundle` in `crates/ferrum-gateway/src/server.rs` | ✅ IMPLEMENTED — version history, diff, and rollback endpoints + CLI; rollback emits `PolicyBundleRolledBack` provenance event; history immutable |
 
 ## Phase 6 — Admin/operator UX
 

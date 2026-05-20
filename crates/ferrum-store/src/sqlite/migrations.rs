@@ -22,8 +22,13 @@ pub const INIT_MIGRATION: &str = concat!(
     include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/migrations/005_add_policy_bundles.sql"
+    )),
+    "\n",
+    include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/migrations/006_add_policy_bundle_versions.sql"
     ))
 );
 
 /// Current schema version for the SQLite embedded migration.
-pub const CURRENT_SCHEMA_VERSION: i64 = 5;
+pub const CURRENT_SCHEMA_VERSION: i64 = 6;

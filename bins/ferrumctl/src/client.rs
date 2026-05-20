@@ -485,4 +485,48 @@ impl Client {
         }
         Ok(resp.json().await?)
     }
+
+    pub async fn list_policy_bundle_versions(
+        &self,
+        bundle_id: &str,
+    ) -> Result<ferrum_proto::ListPolicyBundleVersionsResponse> {
+        let url = format!("{}/v1/policy-bundles/{}/versions", self.base_url, bundle_id);
+        let resp = self.add_auth(self.http.get(&url)).send().await?;
+        resp.error_for_status_ref()?;
+        Ok(resp.json().await?)
+    }
+
+    pub async fn diff_policy_bundle_versions(
+        &self,
+        bundle_id: &str,
+        from: i64,
+        to: i64,
+    ) -> Result<ferrum_proto::DiffPolicyBundleVersionsResponse> {
+        let url = format!(
+            "{}/v1/policy-bundles/{}/diff?from={}&to={}",
+            self.base_url, bundle_id, from, to
+        );
+        let resp = self.add_auth(self.http.get(&url)).send().await?;
+        resp.error_for_status_ref()?;
+        Ok(resp.json().await?)
+    }
+
+    pub async fn rollback_policy_bundle(
+        &self,
+        bundle_id: &str,
+        target_version: i64,
+        actor: Option<&str>,
+    ) -> Result<ferrum_proto::RollbackPolicyBundleResponse> {
+        let url = format!("{}/v1/policy-bundles/{}/rollback", self.base_url, bundle_id);
+        let request = ferrum_proto::RollbackPolicyBundleRequest {
+            target_version,
+            actor: actor.map(String::from),
+        };
+        let resp = self
+            .add_auth(self.http.post(&url).json(&request))
+            .send()
+            .await?;
+        resp.error_for_status_ref()?;
+        Ok(resp.json().await?)
+    }
 }

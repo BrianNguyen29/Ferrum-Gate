@@ -29,6 +29,29 @@ pub struct PolicyBundle {
     pub updated_at: crate::Timestamp,
 }
 
+/// Immutable snapshot of a policy bundle at a specific version in its history.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct PolicyBundleVersion {
+    /// Unique identifier for this version row.
+    pub id: String,
+    /// The policy bundle this version belongs to.
+    pub bundle_id: String,
+    /// Monotonic integer version number (per bundle).
+    pub version: i64,
+    /// The full bundle content at this version.
+    pub content: PolicyBundle,
+    /// Whether this version was the active one when recorded.
+    pub active: bool,
+    /// When this version was recorded.
+    pub created_at: crate::Timestamp,
+    /// Actor that created this version (nullable until auth model lands).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_by: Option<String>,
+    /// Optional human-readable note.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
 /// A single rule within a policy bundle.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PolicyRule {

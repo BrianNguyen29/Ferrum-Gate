@@ -222,3 +222,38 @@ pub struct PolicyBundleSimulateResponse {
     /// Advisory warnings (e.g. unknown matchers encountered).
     pub warnings: Vec<String>,
 }
+
+/// Response for listing policy bundle versions.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ListPolicyBundleVersionsResponse {
+    pub versions: Vec<crate::PolicyBundleVersion>,
+    pub total: usize,
+}
+
+/// Response for a structural diff between two policy bundle versions.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct DiffPolicyBundleVersionsResponse {
+    pub bundle_id: String,
+    pub from_version: i64,
+    pub to_version: i64,
+    pub diff: serde_json::Value,
+}
+
+/// Request to rollback a policy bundle to a previous version.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct RollbackPolicyBundleRequest {
+    /// The target historical version number to rollback to.
+    pub target_version: i64,
+    /// Optional actor identifier for the rollback.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actor: Option<String>,
+}
+
+/// Response after rolling back a policy bundle.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct RollbackPolicyBundleResponse {
+    pub bundle_id: String,
+    pub new_version: i64,
+    pub previous_version: i64,
+    pub rolled_back_to_version: i64,
+}

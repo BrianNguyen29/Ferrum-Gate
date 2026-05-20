@@ -311,6 +311,52 @@ enum PolicyCommand {
         #[arg(long)]
         json: bool,
     },
+    /// List version history for a policy bundle.
+    Versions {
+        /// The bundle ID to list versions for.
+        #[arg(long, value_name = "ID")]
+        bundle_id: String,
+
+        /// Output as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show a structural diff between two policy bundle versions.
+    Diff {
+        /// The bundle ID to diff.
+        #[arg(long, value_name = "ID")]
+        bundle_id: String,
+
+        /// Source version number.
+        #[arg(long, value_name = "VERSION")]
+        from: i64,
+
+        /// Target version number.
+        #[arg(long, value_name = "VERSION")]
+        to: i64,
+
+        /// Output as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Rollback a policy bundle to a previous version.
+    Rollback {
+        /// The bundle ID to rollback.
+        #[arg(long, value_name = "ID")]
+        bundle_id: String,
+
+        /// Target version number to rollback to.
+        #[arg(long, value_name = "VERSION")]
+        target_version: i64,
+
+        /// Optional actor identifier.
+        #[arg(long, value_name = "ACTOR")]
+        actor: Option<String>,
+
+        /// Output as JSON.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 /// Admin subcommands for operator status and management.
@@ -923,6 +969,59 @@ async fn main() -> Result<()> {
                     if !result.warnings.is_empty() {
                         println!("Warnings: {}", result.warnings.join(", "));
                     }
+                }
+            }
+            PolicyCommand::Versions { bundle_id, json } => {
+                let client = client::Client::new(server_url, bearer_token)?;
+                let result = client.list_policy_bundle_versions(&bundle_id).await?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("Bundle {} has {} version(s):", bundle_id, result.total);
+                    for v in result.versions {
+                        println!(
+                            "  v{} (active={}) — {}",
+                            v.version,
+                            v.active,
+                            v.note.as_deref().unwrap_or("no note")
+                        );
+                    }
+                }
+            }
+            PolicyCommand::Diff {
+                bundle_id,
+                from,
+                to,
+                json,
+            } => {
+                let client = client::Client::new(server_url, bearer_token)?;
+                let result = client
+                    .diff_policy_bundle_versions(&bundle_id, from, to)
+                    .await?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("Diff for bundle {} from v{} to v{}:", bundle_id, from, to);
+                    println!("{}", serde_json::to_string_pretty(&result.diff)?);
+                }
+            }
+            PolicyCommand::Rollback {
+                bundle_id,
+                target_version,
+                actor,
+                json,
+            } => {
+                let client = client::Client::new(server_url, bearer_token)?;
+                let result = client
+                    .rollback_policy_bundle(&bundle_id, target_version, actor.as_deref())
+                    .await?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!(
+                        "Rolled back bundle {} to v{} (new version v{})",
+                        bundle_id, target_version, result.new_version
+                    );
                 }
             }
         },

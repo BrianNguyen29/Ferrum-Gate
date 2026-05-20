@@ -16,14 +16,15 @@ use ferrum_proto::{
     ApprovalMode, ApprovalResolveRequest, ApprovalState, AuthorizeExecutionRequest,
     AuthorizeExecutionResponse, CapabilityId, CapabilityLease, CapabilityMintRequest,
     CapabilityMintResponse, CapabilityStatus, ComponentStatus, Decision, DeepHealthResponse,
-    EvaluateOutcomeResponse, EvaluateProposalResponse, EventId, ExecutionDetailResponse,
-    ExecutionId, ExecutionRecord, ExecutionState, HashChainRef, HealthResponse,
-    IntentCompileRequest, IntentCompileResponse, IntentEnvelope, IntentStatus, LineageDirection,
-    LineageQueryRequest, LineageQueryResponse, Matcher, ObjectRef, ObjectType, OutcomeClause,
-    OutcomeReport, PolicyBundle, PolicyBundleId, PolicyBundleSimulateRequest,
-    PolicyBundleSimulateResponse, PolicyRule, ProposalId, ProvenanceEvent, ProvenanceEventKind,
-    ProvenanceIngestRequest, ProvenanceIngestResponse, ProvenanceQueryRequest,
-    ProvenanceQueryResponse, ResourceSelector, RiskTier, RollbackClass, RollbackTarget, TimeBudget,
+    DiffPolicyBundleVersionsResponse, EvaluateOutcomeResponse, EvaluateProposalResponse, EventId,
+    ExecutionDetailResponse, ExecutionId, ExecutionRecord, ExecutionState, HashChainRef,
+    HealthResponse, IntentCompileRequest, IntentCompileResponse, IntentEnvelope, IntentStatus,
+    LineageDirection, LineageQueryRequest, LineageQueryResponse, ListPolicyBundleVersionsResponse,
+    Matcher, ObjectRef, ObjectType, OutcomeClause, OutcomeReport, PolicyBundle, PolicyBundleId,
+    PolicyBundleSimulateRequest, PolicyBundleSimulateResponse, PolicyRule, ProposalId,
+    ProvenanceEvent, ProvenanceEventKind, ProvenanceIngestRequest, ProvenanceIngestResponse,
+    ProvenanceQueryRequest, ProvenanceQueryResponse, ResourceSelector, RiskTier, RollbackClass,
+    RollbackPolicyBundleRequest, RollbackPolicyBundleResponse, RollbackTarget, TimeBudget,
     TrustContextSummary, TrustLabel as ProtoTrustLabel,
 };
 use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
@@ -93,6 +94,9 @@ struct Metrics {
     governance_errors_v1_policy_bundles_delete: AtomicU64,
     governance_errors_v1_policy_bundles_set_active: AtomicU64,
     governance_errors_v1_policy_bundles_simulate: AtomicU64,
+    governance_errors_v1_policy_bundles_versions: AtomicU64,
+    governance_errors_v1_policy_bundles_diff: AtomicU64,
+    governance_errors_v1_policy_bundles_rollback: AtomicU64,
     governance_errors_v1_provenance_query: AtomicU64,
     governance_errors_v1_provenance_lineage: AtomicU64,
     governance_errors_v1_provenance_lineage_execution_id: AtomicU64,
@@ -122,6 +126,9 @@ struct Metrics {
     governance_success_v1_policy_bundles_delete: AtomicU64,
     governance_success_v1_policy_bundles_set_active: AtomicU64,
     governance_success_v1_policy_bundles_simulate: AtomicU64,
+    governance_success_v1_policy_bundles_versions: AtomicU64,
+    governance_success_v1_policy_bundles_diff: AtomicU64,
+    governance_success_v1_policy_bundles_rollback: AtomicU64,
     governance_success_v1_provenance_query: AtomicU64,
     governance_success_v1_provenance_lineage: AtomicU64,
     governance_success_v1_provenance_lineage_execution_id: AtomicU64,
@@ -181,6 +188,9 @@ impl Metrics {
             governance_errors_v1_policy_bundles_delete: AtomicU64::new(0),
             governance_errors_v1_policy_bundles_set_active: AtomicU64::new(0),
             governance_errors_v1_policy_bundles_simulate: AtomicU64::new(0),
+            governance_errors_v1_policy_bundles_versions: AtomicU64::new(0),
+            governance_errors_v1_policy_bundles_diff: AtomicU64::new(0),
+            governance_errors_v1_policy_bundles_rollback: AtomicU64::new(0),
             governance_errors_v1_provenance_query: AtomicU64::new(0),
             governance_errors_v1_provenance_lineage: AtomicU64::new(0),
             governance_errors_v1_provenance_lineage_execution_id: AtomicU64::new(0),
@@ -209,6 +219,9 @@ impl Metrics {
             governance_success_v1_policy_bundles_delete: AtomicU64::new(0),
             governance_success_v1_policy_bundles_set_active: AtomicU64::new(0),
             governance_success_v1_policy_bundles_simulate: AtomicU64::new(0),
+            governance_success_v1_policy_bundles_versions: AtomicU64::new(0),
+            governance_success_v1_policy_bundles_diff: AtomicU64::new(0),
+            governance_success_v1_policy_bundles_rollback: AtomicU64::new(0),
             governance_success_v1_provenance_query: AtomicU64::new(0),
             governance_success_v1_provenance_lineage: AtomicU64::new(0),
             governance_success_v1_provenance_lineage_execution_id: AtomicU64::new(0),
@@ -305,6 +318,15 @@ impl Metrics {
             GovernanceRoute::PolicyBundlesSimulate => self
                 .governance_errors_v1_policy_bundles_simulate
                 .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::PolicyBundlesVersions => self
+                .governance_errors_v1_policy_bundles_versions
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::PolicyBundlesDiff => self
+                .governance_errors_v1_policy_bundles_diff
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::PolicyBundlesRollback => self
+                .governance_errors_v1_policy_bundles_rollback
+                .fetch_add(1, Ordering::Relaxed),
             GovernanceRoute::ProvenanceQuery => self
                 .governance_errors_v1_provenance_query
                 .fetch_add(1, Ordering::Relaxed),
@@ -394,6 +416,15 @@ impl Metrics {
                 .fetch_add(1, Ordering::Relaxed),
             GovernanceRoute::PolicyBundlesSimulate => self
                 .governance_success_v1_policy_bundles_simulate
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::PolicyBundlesVersions => self
+                .governance_success_v1_policy_bundles_versions
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::PolicyBundlesDiff => self
+                .governance_success_v1_policy_bundles_diff
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::PolicyBundlesRollback => self
+                .governance_success_v1_policy_bundles_rollback
                 .fetch_add(1, Ordering::Relaxed),
             GovernanceRoute::ProvenanceQuery => self
                 .governance_success_v1_provenance_query
@@ -497,6 +528,9 @@ enum GovernanceRoute {
     PolicyBundlesDelete,
     PolicyBundlesSetActive,
     PolicyBundlesSimulate,
+    PolicyBundlesVersions,
+    PolicyBundlesDiff,
+    PolicyBundlesRollback,
     ProvenanceQuery,
     ProvenanceLineage,
     ProvenanceLineageExecutionId,
@@ -533,6 +567,9 @@ impl GovernanceRoute {
             GovernanceRoute::PolicyBundlesDelete => "/v1/policy-bundles/{bundle_id}",
             GovernanceRoute::PolicyBundlesSetActive => "/v1/policy-bundles/{bundle_id}/active",
             GovernanceRoute::PolicyBundlesSimulate => "/v1/policy-bundles/simulate",
+            GovernanceRoute::PolicyBundlesVersions => "/v1/policy-bundles/{bundle_id}/versions",
+            GovernanceRoute::PolicyBundlesDiff => "/v1/policy-bundles/{bundle_id}/diff",
+            GovernanceRoute::PolicyBundlesRollback => "/v1/policy-bundles/{bundle_id}/rollback",
             GovernanceRoute::ProvenanceQuery => "/v1/provenance/query",
             GovernanceRoute::ProvenanceLineage => "/v1/provenance/lineage",
             GovernanceRoute::ProvenanceLineageExecutionId => {
@@ -570,6 +607,9 @@ impl GovernanceRoute {
             GovernanceRoute::PolicyBundlesDelete => "DELETE",
             GovernanceRoute::PolicyBundlesSetActive => "PUT",
             GovernanceRoute::PolicyBundlesSimulate => "POST",
+            GovernanceRoute::PolicyBundlesVersions => "GET",
+            GovernanceRoute::PolicyBundlesDiff => "GET",
+            GovernanceRoute::PolicyBundlesRollback => "POST",
             GovernanceRoute::ProvenanceQuery => "POST",
             GovernanceRoute::ProvenanceLineage => "POST",
             GovernanceRoute::ProvenanceLineageExecutionId => "GET",
@@ -865,6 +905,18 @@ fn build_workload_router(state: Arc<AppState>) -> Router {
             put(set_policy_bundle_active),
         )
         .route("/v1/policy-bundles/simulate", post(simulate_policy_bundle))
+        .route(
+            "/v1/policy-bundles/{bundle_id}/versions",
+            get(list_policy_bundle_versions),
+        )
+        .route(
+            "/v1/policy-bundles/{bundle_id}/diff",
+            get(diff_policy_bundle_versions),
+        )
+        .route(
+            "/v1/policy-bundles/{bundle_id}/rollback",
+            post(rollback_policy_bundle),
+        )
         .with_state(state)
         .layer(TraceLayer::new_for_http())
 }
@@ -1189,6 +1241,18 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
         .metrics
         .governance_errors_v1_policy_bundles_simulate
         .load(Ordering::Relaxed);
+    let gov_err_policy_bundles_versions = state
+        .metrics
+        .governance_errors_v1_policy_bundles_versions
+        .load(Ordering::Relaxed);
+    let gov_err_policy_bundles_diff = state
+        .metrics
+        .governance_errors_v1_policy_bundles_diff
+        .load(Ordering::Relaxed);
+    let gov_err_policy_bundles_rollback = state
+        .metrics
+        .governance_errors_v1_policy_bundles_rollback
+        .load(Ordering::Relaxed);
     let gov_err_intents_list = state
         .metrics
         .governance_errors_v1_intents_list
@@ -1302,6 +1366,18 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
     let gov_ok_policy_bundles_simulate = state
         .metrics
         .governance_success_v1_policy_bundles_simulate
+        .load(Ordering::Relaxed);
+    let gov_ok_policy_bundles_versions = state
+        .metrics
+        .governance_success_v1_policy_bundles_versions
+        .load(Ordering::Relaxed);
+    let gov_ok_policy_bundles_diff = state
+        .metrics
+        .governance_success_v1_policy_bundles_diff
+        .load(Ordering::Relaxed);
+    let gov_ok_policy_bundles_rollback = state
+        .metrics
+        .governance_success_v1_policy_bundles_rollback
         .load(Ordering::Relaxed);
     let gov_ok_intents_list = state
         .metrics
@@ -1506,6 +1582,9 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
          ferrumgate_governance_errors_total{{route=\"/v1/policy-bundles/{{bundle_id}}\",method=\"DELETE\"}} {}\n\
          ferrumgate_governance_errors_total{{route=\"/v1/policy-bundles/{{bundle_id}}/active\",method=\"PUT\"}} {}\n\
          ferrumgate_governance_errors_total{{route=\"/v1/policy-bundles/simulate\",method=\"POST\"}} {}\n\
+         ferrumgate_governance_errors_total{{route=\"/v1/policy-bundles/{{bundle_id}}/versions\",method=\"GET\"}} {}\n\
+         ferrumgate_governance_errors_total{{route=\"/v1/policy-bundles/{{bundle_id}}/diff\",method=\"GET\"}} {}\n\
+         ferrumgate_governance_errors_total{{route=\"/v1/policy-bundles/{{bundle_id}}/rollback\",method=\"POST\"}} {}\n\
          ferrumgate_governance_errors_total{{route=\"/v1/provenance/query\",method=\"POST\"}} {}\n\
          ferrumgate_governance_errors_total{{route=\"/v1/provenance/lineage\",method=\"POST\"}} {}\n\
          ferrumgate_governance_errors_total{{route=\"/v1/provenance/lineage/{{execution_id}}\",method=\"GET\"}} {}\n\
@@ -1536,6 +1615,9 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
          ferrumgate_governance_success_total{{route=\"/v1/policy-bundles/{{bundle_id}}\",method=\"DELETE\"}} {}\n\
          ferrumgate_governance_success_total{{route=\"/v1/policy-bundles/{{bundle_id}}/active\",method=\"PUT\"}} {}\n\
          ferrumgate_governance_success_total{{route=\"/v1/policy-bundles/simulate\",method=\"POST\"}} {}\n\
+         ferrumgate_governance_success_total{{route=\"/v1/policy-bundles/{{bundle_id}}/versions\",method=\"GET\"}} {}\n\
+         ferrumgate_governance_success_total{{route=\"/v1/policy-bundles/{{bundle_id}}/diff\",method=\"GET\"}} {}\n\
+         ferrumgate_governance_success_total{{route=\"/v1/policy-bundles/{{bundle_id}}/rollback\",method=\"POST\"}} {}\n\
          ferrumgate_governance_success_total{{route=\"/v1/provenance/query\",method=\"POST\"}} {}\n\
          ferrumgate_governance_success_total{{route=\"/v1/provenance/lineage\",method=\"POST\"}} {}\n\
          ferrumgate_governance_success_total{{route=\"/v1/provenance/lineage/{{execution_id}}\",method=\"GET\"}} {}\n\
@@ -1574,6 +1656,9 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
         gov_err_policy_bundles_delete,
         gov_err_policy_bundles_set_active,
         gov_err_policy_bundles_simulate,
+        gov_err_policy_bundles_versions,
+        gov_err_policy_bundles_diff,
+        gov_err_policy_bundles_rollback,
         gov_err_provenance_query,
         gov_err_provenance_lineage,
         gov_err_provenance_lineage_execution_id,
@@ -1602,6 +1687,9 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
         gov_ok_policy_bundles_delete,
         gov_ok_policy_bundles_set_active,
         gov_ok_policy_bundles_simulate,
+        gov_ok_policy_bundles_versions,
+        gov_ok_policy_bundles_diff,
+        gov_ok_policy_bundles_rollback,
         gov_ok_provenance_query,
         gov_ok_provenance_lineage,
         gov_ok_provenance_lineage_execution_id,
@@ -6049,6 +6137,253 @@ async fn simulate_policy_bundle(
     )
 }
 
+async fn list_policy_bundle_versions(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(bundle_id): axum::extract::Path<String>,
+) -> Result<Json<ListPolicyBundleVersionsResponse>, ApiProblem> {
+    let versions = state
+        .runtime
+        .store
+        .policy_bundles()
+        .list_versions(&bundle_id)
+        .await
+        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+
+    let total = versions.len();
+    governance_ok!(
+        state,
+        GovernanceRoute::PolicyBundlesVersions,
+        Ok(Json(ListPolicyBundleVersionsResponse { versions, total }))
+    )
+}
+
+/// Compute a structural JSON diff between two serde_json::Value trees.
+/// Returns a JSON object with keys "added", "removed", "changed".
+fn json_diff(left: &serde_json::Value, right: &serde_json::Value) -> serde_json::Value {
+    let mut added = serde_json::Map::new();
+    let mut removed = serde_json::Map::new();
+    let mut changed = serde_json::Map::new();
+
+    match (left, right) {
+        (serde_json::Value::Object(lm), serde_json::Value::Object(rm)) => {
+            for (k, lv) in lm {
+                match rm.get(k) {
+                    Some(rv) if lv != rv => {
+                        let child = json_diff(lv, rv);
+                        if !child.as_object().map(|o| o.is_empty()).unwrap_or(false) {
+                            changed.insert(k.clone(), child);
+                        }
+                    }
+                    None => {
+                        removed.insert(k.clone(), lv.clone());
+                    }
+                    _ => {}
+                }
+            }
+            for (k, rv) in rm {
+                if !lm.contains_key(k) {
+                    added.insert(k.clone(), rv.clone());
+                }
+            }
+        }
+        (serde_json::Value::Array(la), serde_json::Value::Array(ra)) => {
+            let max_len = la.len().max(ra.len());
+            for i in 0..max_len {
+                match (la.get(i), ra.get(i)) {
+                    (Some(lv), Some(rv)) if lv != rv => {
+                        let child = json_diff(lv, rv);
+                        changed.insert(i.to_string(), child);
+                    }
+                    (Some(lv), None) => {
+                        removed.insert(i.to_string(), lv.clone());
+                    }
+                    (None, Some(rv)) => {
+                        added.insert(i.to_string(), rv.clone());
+                    }
+                    _ => {}
+                }
+            }
+        }
+        _ if left != right => {
+            changed.insert("_old".to_string(), left.clone());
+            changed.insert("_new".to_string(), right.clone());
+        }
+        _ => {}
+    }
+
+    let mut result = serde_json::Map::new();
+    if !added.is_empty() {
+        result.insert("added".to_string(), serde_json::Value::Object(added));
+    }
+    if !removed.is_empty() {
+        result.insert("removed".to_string(), serde_json::Value::Object(removed));
+    }
+    if !changed.is_empty() {
+        result.insert("changed".to_string(), serde_json::Value::Object(changed));
+    }
+    serde_json::Value::Object(result)
+}
+
+async fn diff_policy_bundle_versions(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(bundle_id): axum::extract::Path<String>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<DiffPolicyBundleVersionsResponse>, ApiProblem> {
+    let from_version: i64 = params
+        .get("from")
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| {
+            ApiProblem::new(
+                StatusCode::BAD_REQUEST,
+                ApiErrorCode::ValidationError,
+                "missing or invalid 'from' query parameter",
+            )
+        })?;
+    let to_version: i64 = params
+        .get("to")
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| {
+            ApiProblem::new(
+                StatusCode::BAD_REQUEST,
+                ApiErrorCode::ValidationError,
+                "missing or invalid 'to' query parameter",
+            )
+        })?;
+
+    let repo = state.runtime.store.policy_bundles();
+    let from_v = repo
+        .get_version(&bundle_id, from_version)
+        .await
+        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?
+        .ok_or_else(|| {
+            ApiProblem::new(
+                StatusCode::NOT_FOUND,
+                ApiErrorCode::NotFound,
+                format!(
+                    "version {} not found for bundle {}",
+                    from_version, bundle_id
+                ),
+            )
+        })?;
+    let to_v = repo
+        .get_version(&bundle_id, to_version)
+        .await
+        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?
+        .ok_or_else(|| {
+            ApiProblem::new(
+                StatusCode::NOT_FOUND,
+                ApiErrorCode::NotFound,
+                format!("version {} not found for bundle {}", to_version, bundle_id),
+            )
+        })?;
+
+    let left = serde_json::to_value(&from_v.content).unwrap_or_default();
+    let right = serde_json::to_value(&to_v.content).unwrap_or_default();
+    let diff = json_diff(&left, &right);
+
+    governance_ok!(
+        state,
+        GovernanceRoute::PolicyBundlesDiff,
+        Ok(Json(DiffPolicyBundleVersionsResponse {
+            bundle_id,
+            from_version,
+            to_version,
+            diff,
+        }))
+    )
+}
+
+async fn rollback_policy_bundle(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(bundle_id): axum::extract::Path<String>,
+    Json(request): Json<RollbackPolicyBundleRequest>,
+) -> Result<Json<RollbackPolicyBundleResponse>, ApiProblem> {
+    let repo = state.runtime.store.policy_bundles();
+
+    // Get current version number before rollback
+    let versions = repo
+        .list_versions(&bundle_id)
+        .await
+        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+    let previous_version = versions.iter().map(|v| v.version).max().unwrap_or(0);
+
+    let new_version = repo
+        .rollback(&bundle_id, request.target_version, request.actor.as_deref())
+        .await
+        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+
+    // Emit provenance event
+    let event = ProvenanceEvent {
+        event_id: EventId::new(),
+        kind: ProvenanceEventKind::PolicyBundleRolledBack,
+        occurred_at: chrono::Utc::now(),
+        actor: ActorRef {
+            actor_type: ActorType::Operator,
+            actor_id: request
+                .actor
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string()),
+            display_name: request.actor.clone(),
+        },
+        object: ObjectRef {
+            object_type: ObjectType::PolicyBundle,
+            object_id: bundle_id.clone(),
+            summary: Some(format!(
+                "Rollback from v{} to v{}",
+                previous_version, new_version
+            )),
+        },
+        intent_id: None,
+        proposal_id: None,
+        execution_id: None,
+        capability_id: None,
+        rollback_contract_id: None,
+        policy_bundle_id: uuid::Uuid::parse_str(&bundle_id).ok().map(PolicyBundleId),
+        trust_labels: Vec::new(),
+        sensitivity_labels: Vec::new(),
+        parent_edges: Vec::new(),
+        hash_chain: HashChainRef {
+            content_hash: None,
+            manifest_hash: None,
+            policy_bundle_hash: None,
+            previous_ledger_hash: None,
+        },
+        metadata: {
+            let mut m = ferrum_proto::JsonMap::new();
+            m.insert(
+                "from_version".to_string(),
+                serde_json::json!(previous_version),
+            );
+            m.insert("to_version".to_string(), serde_json::json!(new_version));
+            m.insert(
+                "rolled_back_to_version".to_string(),
+                serde_json::json!(request.target_version),
+            );
+            m
+        },
+        source_runtime_id: None,
+    };
+
+    state
+        .runtime
+        .store
+        .provenance()
+        .append_event(&event)
+        .await
+        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+
+    governance_ok!(
+        state,
+        GovernanceRoute::PolicyBundlesRollback,
+        Ok(Json(RollbackPolicyBundleResponse {
+            bundle_id,
+            new_version,
+            previous_version,
+            rolled_back_to_version: request.target_version,
+        }))
+    )
+}
+
 #[derive(Debug)]
 struct ApiProblem(ApiError, StatusCode);
 
@@ -8444,6 +8779,9 @@ mod tests {
                 GovernanceRoute::PolicyBundlesDelete,
                 GovernanceRoute::PolicyBundlesSetActive,
                 GovernanceRoute::PolicyBundlesSimulate,
+                GovernanceRoute::PolicyBundlesVersions,
+                GovernanceRoute::PolicyBundlesDiff,
+                GovernanceRoute::PolicyBundlesRollback,
                 GovernanceRoute::ProvenanceQuery,
                 GovernanceRoute::ProvenanceLineage,
                 GovernanceRoute::ProvenanceLineageExecutionId,
@@ -8478,6 +8816,9 @@ mod tests {
                 GovernanceRoute::PolicyBundlesDelete => (),
                 GovernanceRoute::PolicyBundlesSetActive => (),
                 GovernanceRoute::PolicyBundlesSimulate => (),
+                GovernanceRoute::PolicyBundlesVersions => (),
+                GovernanceRoute::PolicyBundlesDiff => (),
+                GovernanceRoute::PolicyBundlesRollback => (),
                 GovernanceRoute::ProvenanceQuery => (),
                 GovernanceRoute::ProvenanceLineage => (),
                 GovernanceRoute::ProvenanceLineageExecutionId => (),
@@ -9396,5 +9737,292 @@ rules:
         // Verify the bundle was NOT persisted
         let bundle_list = runtime.store.policy_bundles().list().await.unwrap();
         assert!(bundle_list.is_empty(), "simulate must not persist bundles");
+    }
+
+    #[tokio::test]
+    async fn test_list_policy_bundle_versions() {
+        let runtime = test_runtime().await;
+        let router = build_router(runtime.clone());
+
+        // Create a bundle
+        let yaml = r#"version: "0.1.0"
+bundle_id: "version-test-bundle"
+rules:
+  - id: "rule1"
+    description: "Test rule"
+    decision: "Allow"
+    priority: 100
+    matchers:
+      - type: "action_is_mutation"
+"#;
+        let create_req = ferrum_proto::CreatePolicyBundleRequest {
+            yaml_content: yaml.to_string(),
+        };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/policy-bundles")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&create_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Update the bundle
+        let yaml2 = r#"version: "0.1.0"
+bundle_id: "version-test-bundle"
+rules:
+  - id: "rule1"
+    description: "Test rule updated"
+    decision: "Deny"
+    priority: 100
+    matchers:
+      - type: "action_is_mutation"
+"#;
+        let update_req = ferrum_proto::UpdatePolicyBundleRequest {
+            yaml_content: yaml2.to_string(),
+        };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/v1/policy-bundles/version-test-bundle")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&update_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // List versions
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/v1/policy-bundles/version-test-bundle/versions")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let resp: ListPolicyBundleVersionsResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(resp.total, 2);
+        assert_eq!(resp.versions[0].version, 2);
+        assert_eq!(resp.versions[1].version, 1);
+    }
+
+    #[tokio::test]
+    async fn test_diff_policy_bundle_versions() {
+        let runtime = test_runtime().await;
+        let router = build_router(runtime.clone());
+
+        // Create a bundle
+        let yaml = r#"version: "0.1.0"
+bundle_id: "diff-test-bundle"
+rules:
+  - id: "rule1"
+    description: "Test rule"
+    decision: "Allow"
+    priority: 100
+    matchers:
+      - type: "action_is_mutation"
+"#;
+        let create_req = ferrum_proto::CreatePolicyBundleRequest {
+            yaml_content: yaml.to_string(),
+        };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/policy-bundles")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&create_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Update the bundle
+        let yaml2 = r#"version: "0.1.0"
+bundle_id: "diff-test-bundle"
+rules:
+  - id: "rule1"
+    description: "Test rule updated"
+    decision: "Deny"
+    priority: 100
+    matchers:
+      - type: "action_is_mutation"
+"#;
+        let update_req = ferrum_proto::UpdatePolicyBundleRequest {
+            yaml_content: yaml2.to_string(),
+        };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/v1/policy-bundles/diff-test-bundle")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&update_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Diff versions
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/v1/policy-bundles/diff-test-bundle/diff?from=1&to=2")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let resp: DiffPolicyBundleVersionsResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(resp.bundle_id, "diff-test-bundle");
+        assert_eq!(resp.from_version, 1);
+        assert_eq!(resp.to_version, 2);
+        // The diff should contain changes to the rule description/decision
+        assert!(resp.diff.get("changed").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_rollback_policy_bundle() {
+        let runtime = test_runtime().await;
+        let router = build_router(runtime.clone());
+
+        // Create a bundle
+        let yaml = r#"version: "0.1.0"
+bundle_id: "rollback-test-bundle"
+rules:
+  - id: "rule1"
+    description: "Test rule"
+    decision: "Allow"
+    priority: 100
+    matchers:
+      - type: "action_is_mutation"
+"#;
+        let create_req = ferrum_proto::CreatePolicyBundleRequest {
+            yaml_content: yaml.to_string(),
+        };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/policy-bundles")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&create_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Update the bundle
+        let yaml2 = r#"version: "0.1.0"
+bundle_id: "rollback-test-bundle"
+rules:
+  - id: "rule1"
+    description: "Test rule updated"
+    decision: "Deny"
+    priority: 100
+    matchers:
+      - type: "action_is_mutation"
+"#;
+        let update_req = ferrum_proto::UpdatePolicyBundleRequest {
+            yaml_content: yaml2.to_string(),
+        };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/v1/policy-bundles/rollback-test-bundle")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&update_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Rollback to v1
+        let rollback_req = RollbackPolicyBundleRequest {
+            target_version: 1,
+            actor: Some("test-operator".to_string()),
+        };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/policy-bundles/rollback-test-bundle/rollback")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&rollback_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let resp: RollbackPolicyBundleResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(resp.rolled_back_to_version, 1);
+        assert_eq!(resp.new_version, 3);
+
+        // Verify the bundle content is back to v1
+        let bundle = runtime
+            .store
+            .policy_bundles()
+            .get("rollback-test-bundle")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(bundle.rules[0].decision, ferrum_proto::Decision::Allow);
+
+        // Verify provenance event was emitted
+        let events = runtime
+            .store
+            .provenance()
+            .query(&ProvenanceQueryRequest {
+                intent_id: None,
+                execution_id: None,
+                capability_id: None,
+                event_kind: Some(ProvenanceEventKind::PolicyBundleRolledBack),
+                since: None,
+                until: None,
+                edge_types: Vec::new(),
+            })
+            .await
+            .unwrap();
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e.kind, ProvenanceEventKind::PolicyBundleRolledBack)),
+            "rollback should emit PolicyBundleRolledBack provenance event"
+        );
     }
 }
