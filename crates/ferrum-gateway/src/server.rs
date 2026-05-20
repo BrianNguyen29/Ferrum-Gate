@@ -20,7 +20,8 @@ use ferrum_proto::{
     ExecutionId, ExecutionRecord, ExecutionState, HashChainRef, HealthResponse,
     IntentCompileRequest, IntentCompileResponse, IntentEnvelope, IntentStatus, LineageDirection,
     LineageQueryRequest, LineageQueryResponse, Matcher, ObjectRef, ObjectType, OutcomeClause,
-    OutcomeReport, PolicyBundle, PolicyRule, ProposalId, ProvenanceEvent, ProvenanceEventKind,
+    OutcomeReport, PolicyBundle, PolicyBundleId, PolicyBundleSimulateRequest,
+    PolicyBundleSimulateResponse, PolicyRule, ProposalId, ProvenanceEvent, ProvenanceEventKind,
     ProvenanceIngestRequest, ProvenanceIngestResponse, ProvenanceQueryRequest,
     ProvenanceQueryResponse, ResourceSelector, RiskTier, RollbackClass, RollbackTarget, TimeBudget,
     TrustContextSummary, TrustLabel as ProtoTrustLabel,
@@ -91,6 +92,7 @@ struct Metrics {
     governance_errors_v1_policy_bundles_update: AtomicU64,
     governance_errors_v1_policy_bundles_delete: AtomicU64,
     governance_errors_v1_policy_bundles_set_active: AtomicU64,
+    governance_errors_v1_policy_bundles_simulate: AtomicU64,
     governance_errors_v1_provenance_query: AtomicU64,
     governance_errors_v1_provenance_lineage: AtomicU64,
     governance_errors_v1_provenance_lineage_execution_id: AtomicU64,
@@ -119,6 +121,7 @@ struct Metrics {
     governance_success_v1_policy_bundles_update: AtomicU64,
     governance_success_v1_policy_bundles_delete: AtomicU64,
     governance_success_v1_policy_bundles_set_active: AtomicU64,
+    governance_success_v1_policy_bundles_simulate: AtomicU64,
     governance_success_v1_provenance_query: AtomicU64,
     governance_success_v1_provenance_lineage: AtomicU64,
     governance_success_v1_provenance_lineage_execution_id: AtomicU64,
@@ -177,6 +180,7 @@ impl Metrics {
             governance_errors_v1_policy_bundles_update: AtomicU64::new(0),
             governance_errors_v1_policy_bundles_delete: AtomicU64::new(0),
             governance_errors_v1_policy_bundles_set_active: AtomicU64::new(0),
+            governance_errors_v1_policy_bundles_simulate: AtomicU64::new(0),
             governance_errors_v1_provenance_query: AtomicU64::new(0),
             governance_errors_v1_provenance_lineage: AtomicU64::new(0),
             governance_errors_v1_provenance_lineage_execution_id: AtomicU64::new(0),
@@ -204,6 +208,7 @@ impl Metrics {
             governance_success_v1_policy_bundles_update: AtomicU64::new(0),
             governance_success_v1_policy_bundles_delete: AtomicU64::new(0),
             governance_success_v1_policy_bundles_set_active: AtomicU64::new(0),
+            governance_success_v1_policy_bundles_simulate: AtomicU64::new(0),
             governance_success_v1_provenance_query: AtomicU64::new(0),
             governance_success_v1_provenance_lineage: AtomicU64::new(0),
             governance_success_v1_provenance_lineage_execution_id: AtomicU64::new(0),
@@ -297,6 +302,9 @@ impl Metrics {
             GovernanceRoute::PolicyBundlesSetActive => self
                 .governance_errors_v1_policy_bundles_set_active
                 .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::PolicyBundlesSimulate => self
+                .governance_errors_v1_policy_bundles_simulate
+                .fetch_add(1, Ordering::Relaxed),
             GovernanceRoute::ProvenanceQuery => self
                 .governance_errors_v1_provenance_query
                 .fetch_add(1, Ordering::Relaxed),
@@ -383,6 +391,9 @@ impl Metrics {
                 .fetch_add(1, Ordering::Relaxed),
             GovernanceRoute::PolicyBundlesSetActive => self
                 .governance_success_v1_policy_bundles_set_active
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::PolicyBundlesSimulate => self
+                .governance_success_v1_policy_bundles_simulate
                 .fetch_add(1, Ordering::Relaxed),
             GovernanceRoute::ProvenanceQuery => self
                 .governance_success_v1_provenance_query
@@ -485,6 +496,7 @@ enum GovernanceRoute {
     PolicyBundlesUpdate,
     PolicyBundlesDelete,
     PolicyBundlesSetActive,
+    PolicyBundlesSimulate,
     ProvenanceQuery,
     ProvenanceLineage,
     ProvenanceLineageExecutionId,
@@ -520,6 +532,7 @@ impl GovernanceRoute {
             GovernanceRoute::PolicyBundlesUpdate => "/v1/policy-bundles/{bundle_id}",
             GovernanceRoute::PolicyBundlesDelete => "/v1/policy-bundles/{bundle_id}",
             GovernanceRoute::PolicyBundlesSetActive => "/v1/policy-bundles/{bundle_id}/active",
+            GovernanceRoute::PolicyBundlesSimulate => "/v1/policy-bundles/simulate",
             GovernanceRoute::ProvenanceQuery => "/v1/provenance/query",
             GovernanceRoute::ProvenanceLineage => "/v1/provenance/lineage",
             GovernanceRoute::ProvenanceLineageExecutionId => {
@@ -556,6 +569,7 @@ impl GovernanceRoute {
             GovernanceRoute::PolicyBundlesUpdate => "PUT",
             GovernanceRoute::PolicyBundlesDelete => "DELETE",
             GovernanceRoute::PolicyBundlesSetActive => "PUT",
+            GovernanceRoute::PolicyBundlesSimulate => "POST",
             GovernanceRoute::ProvenanceQuery => "POST",
             GovernanceRoute::ProvenanceLineage => "POST",
             GovernanceRoute::ProvenanceLineageExecutionId => "GET",
@@ -850,6 +864,7 @@ fn build_workload_router(state: Arc<AppState>) -> Router {
             "/v1/policy-bundles/{bundle_id}/active",
             put(set_policy_bundle_active),
         )
+        .route("/v1/policy-bundles/simulate", post(simulate_policy_bundle))
         .with_state(state)
         .layer(TraceLayer::new_for_http())
 }
@@ -1170,6 +1185,10 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
         .metrics
         .governance_errors_v1_policy_bundles_set_active
         .load(Ordering::Relaxed);
+    let gov_err_policy_bundles_simulate = state
+        .metrics
+        .governance_errors_v1_policy_bundles_simulate
+        .load(Ordering::Relaxed);
     let gov_err_intents_list = state
         .metrics
         .governance_errors_v1_intents_list
@@ -1279,6 +1298,10 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
     let gov_ok_policy_bundles_set_active = state
         .metrics
         .governance_success_v1_policy_bundles_set_active
+        .load(Ordering::Relaxed);
+    let gov_ok_policy_bundles_simulate = state
+        .metrics
+        .governance_success_v1_policy_bundles_simulate
         .load(Ordering::Relaxed);
     let gov_ok_intents_list = state
         .metrics
@@ -1482,6 +1505,7 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
          ferrumgate_governance_errors_total{{route=\"/v1/policy-bundles/{{bundle_id}}\",method=\"PUT\"}} {}\n\
          ferrumgate_governance_errors_total{{route=\"/v1/policy-bundles/{{bundle_id}}\",method=\"DELETE\"}} {}\n\
          ferrumgate_governance_errors_total{{route=\"/v1/policy-bundles/{{bundle_id}}/active\",method=\"PUT\"}} {}\n\
+         ferrumgate_governance_errors_total{{route=\"/v1/policy-bundles/simulate\",method=\"POST\"}} {}\n\
          ferrumgate_governance_errors_total{{route=\"/v1/provenance/query\",method=\"POST\"}} {}\n\
          ferrumgate_governance_errors_total{{route=\"/v1/provenance/lineage\",method=\"POST\"}} {}\n\
          ferrumgate_governance_errors_total{{route=\"/v1/provenance/lineage/{{execution_id}}\",method=\"GET\"}} {}\n\
@@ -1511,6 +1535,7 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
          ferrumgate_governance_success_total{{route=\"/v1/policy-bundles/{{bundle_id}}\",method=\"PUT\"}} {}\n\
          ferrumgate_governance_success_total{{route=\"/v1/policy-bundles/{{bundle_id}}\",method=\"DELETE\"}} {}\n\
          ferrumgate_governance_success_total{{route=\"/v1/policy-bundles/{{bundle_id}}/active\",method=\"PUT\"}} {}\n\
+         ferrumgate_governance_success_total{{route=\"/v1/policy-bundles/simulate\",method=\"POST\"}} {}\n\
          ferrumgate_governance_success_total{{route=\"/v1/provenance/query\",method=\"POST\"}} {}\n\
          ferrumgate_governance_success_total{{route=\"/v1/provenance/lineage\",method=\"POST\"}} {}\n\
          ferrumgate_governance_success_total{{route=\"/v1/provenance/lineage/{{execution_id}}\",method=\"GET\"}} {}\n\
@@ -1548,6 +1573,7 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
         gov_err_policy_bundles_update,
         gov_err_policy_bundles_delete,
         gov_err_policy_bundles_set_active,
+        gov_err_policy_bundles_simulate,
         gov_err_provenance_query,
         gov_err_provenance_lineage,
         gov_err_provenance_lineage_execution_id,
@@ -1575,6 +1601,7 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
         gov_ok_policy_bundles_update,
         gov_ok_policy_bundles_delete,
         gov_ok_policy_bundles_set_active,
+        gov_ok_policy_bundles_simulate,
         gov_ok_provenance_query,
         gov_ok_provenance_lineage,
         gov_ok_provenance_lineage_execution_id,
@@ -5883,6 +5910,60 @@ async fn set_policy_bundle_active(
             )
         })?;
 
+    // Emit provenance event for policy bundle activation/deactivation (POL-4)
+    let policy_bundle_id = uuid::Uuid::parse_str(&bundle_id).ok().map(PolicyBundleId);
+    let mut metadata = ferrum_proto::JsonMap::new();
+    metadata.insert("active".to_string(), serde_json::json!(request.active));
+    let provenance_event = ProvenanceEvent {
+        event_id: EventId::new(),
+        kind: if request.active {
+            ProvenanceEventKind::PolicyBundleActivated
+        } else {
+            ProvenanceEventKind::PolicyBundleDeactivated
+        },
+        occurred_at: Utc::now(),
+        actor: ActorRef {
+            actor_type: ActorType::Gateway,
+            actor_id: "gateway".to_string(),
+            display_name: None,
+        },
+        object: ObjectRef {
+            object_type: ObjectType::PolicyBundle,
+            object_id: bundle_id.clone(),
+            summary: None,
+        },
+        intent_id: None,
+        proposal_id: None,
+        execution_id: None,
+        capability_id: None,
+        rollback_contract_id: None,
+        policy_bundle_id,
+        trust_labels: Vec::new(),
+        sensitivity_labels: Vec::new(),
+        parent_edges: Vec::new(),
+        hash_chain: HashChainRef {
+            content_hash: None,
+            manifest_hash: None,
+            policy_bundle_hash: None,
+            previous_ledger_hash: None,
+        },
+        metadata,
+        source_runtime_id: None,
+    };
+    if let Err(e) = state
+        .runtime
+        .store
+        .provenance()
+        .append_event(&provenance_event)
+        .await
+    {
+        return governance_err!(
+            state,
+            GovernanceRoute::PolicyBundlesSetActive,
+            ApiProblem::internal(anyhow::Error::from(e))
+        );
+    }
+
     let response = serde_json::json!({
         "ok": true,
         "bundle_id": bundle_id,
@@ -5893,6 +5974,78 @@ async fn set_policy_bundle_active(
         state,
         GovernanceRoute::PolicyBundlesSetActive,
         Ok(Json(sanitized))
+    )
+}
+
+/// Simulate a policy bundle against a sample proposal without side effects.
+/// No proposal, bundle, or provenance is persisted.
+async fn simulate_policy_bundle(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<PolicyBundleSimulateRequest>,
+) -> Result<Json<PolicyBundleSimulateResponse>, ApiProblem> {
+    // Parse the bundle YAML
+    let bundle = parse_policy_bundle_yaml(&request.bundle_yaml).map_err(|e| {
+        state.metrics.record_governance_error(
+            GovernanceRoute::PolicyBundlesSimulate,
+            ApiProblem::new(
+                StatusCode::BAD_REQUEST,
+                ApiErrorCode::ValidationError,
+                format!("invalid policy bundle YAML: {}", e),
+            ),
+        )
+    })?;
+
+    // Build or use provided intent
+    let intent = request.intent.unwrap_or_else(|| {
+        minimal_intent_for(
+            request.proposal.intent_id,
+            request.proposal.requested_rollback_class.clone(),
+        )
+    });
+
+    // Determine if proposal is external based on intent trust labels and proposal attributes.
+    let is_external = intent_has_external_label(&intent)
+        || !request.proposal.taint_inputs.is_empty()
+        || proposal_has_external_metadata(&request.proposal);
+
+    // Build firewall context from proposal and intent.
+    let firewall_ctx = build_firewall_context(&intent, &request.proposal, is_external);
+
+    // Compute taint score via firewall.
+    let firewall_taint = state.runtime.firewall.compute_taint_score(&firewall_ctx);
+
+    // Preserve intent's trust labels and sensitivity labels; override taint_score with firewall-derived value.
+    let trust = TrustContextSummary {
+        input_labels: intent.trust_context.input_labels.clone(),
+        sensitivity_labels: intent.trust_context.sensitivity_labels.clone(),
+        taint_score: firewall_taint,
+        contains_external_metadata: intent.trust_context.contains_external_metadata
+            || proposal_has_external_metadata(&request.proposal),
+        contains_tool_output: intent.trust_context.contains_tool_output
+            || has_tool_output_label(&intent),
+        contains_untrusted_text: intent.trust_context.contains_untrusted_text
+            || has_untrusted_text_label(&intent),
+    };
+
+    // Evaluate the provided bundle rules against the sample context.
+    let response = evaluate_bundle_rules(&bundle, &intent, &request.proposal, &trust)
+        .map(|eval| PolicyBundleSimulateResponse {
+            decision: eval.decision,
+            reason: eval.reason,
+            matched_rule_ids: eval.matched_rule_ids,
+            warnings: eval.warnings,
+        })
+        .unwrap_or_else(|| PolicyBundleSimulateResponse {
+            decision: Decision::Allow,
+            reason: "no rules matched in the provided bundle".to_string(),
+            matched_rule_ids: Vec::new(),
+            warnings: Vec::new(),
+        });
+
+    governance_ok!(
+        state,
+        GovernanceRoute::PolicyBundlesSimulate,
+        Ok(Json(response))
     )
 }
 
@@ -8290,6 +8443,7 @@ mod tests {
                 GovernanceRoute::PolicyBundlesUpdate,
                 GovernanceRoute::PolicyBundlesDelete,
                 GovernanceRoute::PolicyBundlesSetActive,
+                GovernanceRoute::PolicyBundlesSimulate,
                 GovernanceRoute::ProvenanceQuery,
                 GovernanceRoute::ProvenanceLineage,
                 GovernanceRoute::ProvenanceLineageExecutionId,
@@ -8323,6 +8477,7 @@ mod tests {
                 GovernanceRoute::PolicyBundlesUpdate => (),
                 GovernanceRoute::PolicyBundlesDelete => (),
                 GovernanceRoute::PolicyBundlesSetActive => (),
+                GovernanceRoute::PolicyBundlesSimulate => (),
                 GovernanceRoute::ProvenanceQuery => (),
                 GovernanceRoute::ProvenanceLineage => (),
                 GovernanceRoute::ProvenanceLineageExecutionId => (),
@@ -9041,5 +9196,205 @@ mod tests {
             "Error should indicate state mismatch: {}",
             body_str
         );
+    }
+
+    // ---------------------------------------------------------------------------
+    // POL-2: Policy bundle simulate endpoint tests (side-effect free)
+    // ---------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_simulate_policy_bundle_returns_matched_decision() {
+        let runtime = test_runtime().await;
+        let router = build_router(runtime);
+
+        let bundle_yaml = r#"version: "0.1.0"
+bundle_id: "test-simulate-bundle"
+rules:
+  - id: "deny.mutation"
+    description: "Deny mutating actions"
+    decision: "Deny"
+    priority: 100
+    matchers:
+      - type: "action_is_mutation"
+"#;
+
+        let proposal = ferrum_proto::ActionProposal {
+            proposal_id: ferrum_proto::ProposalId::new(),
+            intent_id: ferrum_proto::IntentId::new(),
+            step_index: 1,
+            title: "Test Proposal".to_string(),
+            tool_name: "filesystem.write".to_string(),
+            server_name: "fs-server".to_string(),
+            raw_arguments: serde_json::json!({"path": "/tmp/test.txt"}),
+            expected_effect: "write file".to_string(),
+            estimated_risk: ferrum_proto::RiskTier::Medium,
+            requested_rollback_class: ferrum_proto::RollbackClass::R1SnapshotRecoverable,
+            taint_inputs: Vec::new(),
+            metadata: ferrum_proto::JsonMap::new(),
+            created_at: chrono::Utc::now(),
+        };
+
+        let request = PolicyBundleSimulateRequest {
+            bundle_yaml: bundle_yaml.to_string(),
+            proposal,
+            intent: None,
+        };
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/policy-bundles/simulate")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let result: PolicyBundleSimulateResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(result.decision, ferrum_proto::Decision::Deny);
+        assert!(
+            result.reason.contains("deny.mutation"),
+            "reason should mention matched rule: {}",
+            result.reason
+        );
+        assert_eq!(result.matched_rule_ids.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_simulate_policy_bundle_no_match_returns_allow() {
+        let runtime = test_runtime().await;
+        let router = build_router(runtime);
+
+        let bundle_yaml = r#"version: "0.1.0"
+bundle_id: "test-simulate-bundle"
+rules:
+  - id: "deny.scope.mismatch"
+    description: "Deny scope mismatch"
+    decision: "Deny"
+    priority: 100
+    matchers:
+      - type: "scope_mismatch"
+"#;
+
+        let proposal = ferrum_proto::ActionProposal {
+            proposal_id: ferrum_proto::ProposalId::new(),
+            intent_id: ferrum_proto::IntentId::new(),
+            step_index: 1,
+            title: "Test Proposal".to_string(),
+            tool_name: "filesystem.read".to_string(),
+            server_name: "fs-server".to_string(),
+            raw_arguments: serde_json::json!({"path": "/tmp/test.txt"}),
+            expected_effect: "read file".to_string(),
+            estimated_risk: ferrum_proto::RiskTier::Low,
+            requested_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+            taint_inputs: Vec::new(),
+            metadata: ferrum_proto::JsonMap::new(),
+            created_at: chrono::Utc::now(),
+        };
+
+        let request = PolicyBundleSimulateRequest {
+            bundle_yaml: bundle_yaml.to_string(),
+            proposal,
+            intent: None,
+        };
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/policy-bundles/simulate")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let result: PolicyBundleSimulateResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(result.decision, ferrum_proto::Decision::Allow);
+        assert!(result.reason.contains("no rules matched"));
+        assert!(result.matched_rule_ids.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_simulate_policy_bundle_does_not_persist() {
+        let runtime = test_runtime().await;
+        let router = build_router(runtime.clone());
+
+        let bundle_yaml = r#"version: "0.1.0"
+bundle_id: "test-simulate-bundle"
+rules:
+  - id: "quarantine.high.taint"
+    description: "Quarantine high taint"
+    decision: "Quarantine"
+    priority: 100
+    matchers:
+      - type: "taint_at_least"
+        value: 50
+"#;
+
+        let proposal = ferrum_proto::ActionProposal {
+            proposal_id: ferrum_proto::ProposalId::new(),
+            intent_id: ferrum_proto::IntentId::new(),
+            step_index: 1,
+            title: "Test Proposal".to_string(),
+            tool_name: "filesystem.read".to_string(),
+            server_name: "fs-server".to_string(),
+            raw_arguments: serde_json::json!({"path": "/tmp/test.txt"}),
+            expected_effect: "read file".to_string(),
+            estimated_risk: ferrum_proto::RiskTier::Low,
+            requested_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+            taint_inputs: vec!["external".to_string()],
+            metadata: ferrum_proto::JsonMap::new(),
+            created_at: chrono::Utc::now(),
+        };
+
+        let request = PolicyBundleSimulateRequest {
+            bundle_yaml: bundle_yaml.to_string(),
+            proposal: proposal.clone(),
+            intent: None,
+        };
+
+        // Call simulate
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/policy-bundles/simulate")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Verify the proposal was NOT persisted
+        let persisted_proposal = runtime
+            .store
+            .proposals()
+            .get(proposal.proposal_id)
+            .await
+            .unwrap();
+        assert!(
+            persisted_proposal.is_none(),
+            "simulate must not persist proposals"
+        );
+
+        // Verify the bundle was NOT persisted
+        let bundle_list = runtime.store.policy_bundles().list().await.unwrap();
+        assert!(bundle_list.is_empty(), "simulate must not persist bundles");
     }
 }

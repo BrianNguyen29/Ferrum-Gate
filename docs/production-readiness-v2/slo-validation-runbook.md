@@ -260,3 +260,4 @@ Template sections:
 - [`docs/PRODUCTION_NOTES.md`](../PRODUCTION_NOTES.md) — Stress baselines
 - [`docs/implementation-path/57-workload-compensation-drill-plan.md`](../../docs/implementation-path/57-workload-compensation-drill-plan.md) — Workload drill context
 - [`docs/implementation-path/116-g36-monitoring-execution-plan.md`](../../docs/implementation-path/116-g36-monitoring-execution-plan.md) — G3.6 execution plan
+- [`docs/ROADMAP.md`](../ROADMAP.md) — Parent roadmap with full phase plan.

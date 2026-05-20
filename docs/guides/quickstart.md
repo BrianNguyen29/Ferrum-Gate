@@ -1,6 +1,6 @@
 # FerrumGate in 10 Minutes
 
-> **Status**: Local API/curl flow validated through lineage endpoint (12 steps). ferrumctl and MCP locally validated after bugfix. This is NOT a fully validated quickstart and NOT a fresh-user test.
+> **Status**: Local API/curl flow validated through lineage endpoint (12 steps). ferrumctl and MCP locally validated after bugfix. Engineering-run local validation is complete; independent external fresh-user validation is not claimed.
 > **Scope**: Local demo only. Not for production deployment.
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
 > **Evidence**: [`docs/implementation-path/artifacts/2026-05-19-quickstart-validation-evidence.md`](../../implementation-path/artifacts/2026-05-19-quickstart-validation-evidence.md)
@@ -16,7 +16,7 @@
 
 ## Validated endpoint sequence
 
-The following endpoints have been validated locally with `auth=disabled` and in-memory SQLite. ferrumctl and MCP paths are NOT validated.
+The following endpoints have been validated locally with `auth=disabled` and in-memory SQLite. ferrumctl and MCP paths are also locally validated; target-host validation is NOT claimed.
 
 | Step | Endpoint | Method | Expected status |
 |------|----------|--------|-----------------|
@@ -77,7 +77,7 @@ curl -X POST http://127.0.0.1:18080/v1/intents/compile \
   -d '{"principal_id":"d228bf73-c4f5-467a-b47b-53110dca7270","title":"demo-write","goal":"write a demo file","agent_plan_summary":"write /tmp/ferrum-demo-extended.txt","trusted_context":{},"raw_inputs":[],"requested_resource_scope":[{"kind":"FilesystemPath","path":"/tmp/ferrum-demo-extended.txt","mode":"Write"}],"metadata":{}}'
 ```
 
-> In dev mode any UUID-shaped `principal_id` is accepted. Capture the `intent_id` from the response as `<INTENT_ID>`.
+> In dev mode any UUID-shaped `principal_id` is accepted. Capture `envelope.intent_id` from the response as `<INTENT_ID>`.
 >
 > **Docs correction**: `requested_resource_scope` must match the capability's resource bindings. An empty array will cause `authorize` to return HTTP 403 `PolicyDenied` with `resource scope is empty but capability has resource bindings`.
 >
@@ -93,7 +93,7 @@ curl -X POST http://127.0.0.1:18080/v1/proposals/5af85ef6-5d79-4da4-9866-299797e
   -d '{"proposal_id":"5af85ef6-5d79-4da4-9866-299797ed4f15","intent_id":"<INTENT_ID>","step_index":1,"title":"demo proposal","tool_name":"fs.write","server_name":"fs","raw_arguments":{"path":"/tmp/ferrum-demo-extended.txt","content":"hello extended"},"expected_effect":"write file","estimated_risk":"Low","requested_rollback_class":"R0NativeReversible","taint_inputs":[],"metadata":{},"created_at":"2026-05-19T00:00:00Z"}'
 ```
 
-Note the `<PROPOSAL_ID>` you used in the URL; you will need it for the next step.
+Note the `<PROPOSAL_ID>` you used in the URL; you will need it for the next step. Use a unique UUID per server instance if you re-run this example, because proposal IDs are unique.
 
 > Validated example response: decision `Allow`, reason `proposal passed default scaffold policy`, with advisory warning `advisory mismatch: inferred effect FileMutation is not in allowed outcomes`.
 
@@ -105,7 +105,7 @@ curl -X POST http://127.0.0.1:18080/v1/capabilities/mint \
   -d '{"intent_id":"<INTENT_ID>","proposal_id":"<PROPOSAL_ID>","tool_binding":{"server_name":"fs","tool_name":"fs.write"},"resource_bindings":[{"kind":"File","path":"/tmp/ferrum-demo-extended.txt","mode":"Write"}],"argument_constraints":[],"taint_budget":{"max_taint_score":10,"allow_external_tool_output":true,"allow_external_metadata":true,"allow_untrusted_text":true},"approval_binding":null,"requested_ttl_secs":60,"metadata":{}}'
 ```
 
-Capture `<CAPABILITY_ID>` from the response.
+Capture `lease.capability_id` from the response as `<CAPABILITY_ID>`.
 
 > Validated example response: HTTP 200 with capability id `85c9cdbb-1f3d-4a22-b1e9-c60b9cef9309`.
 
@@ -208,7 +208,7 @@ See [`mcp-integration.md`](./mcp-integration.md) for MCP client setup and detail
 >
 > **Block A remains WAIVED/CONDITIONAL**: No real owned domain or DNS is available. Local loopback only.
 >
-> **Validated scope**: The local API/curl flow through all 12 steps (build → lineage) was validated locally. ferrumctl (all tested commands) and MCP (all tested tools) were locally validated after bugfix. Target-host validation and fresh-user testing are NOT claimed.
+> **Validated scope**: The local API/curl flow through all 12 steps (build → lineage) was validated locally. ferrumctl (all tested commands) and MCP (all tested tools) were locally validated after bugfix. Engineering-run local validation is complete; independent external fresh-user and target-host validation are NOT claimed.
 
 ## Related docs
 

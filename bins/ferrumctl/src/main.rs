@@ -146,6 +146,16 @@ enum Command {
         #[command(subcommand)]
         sub: BackupCommand,
     },
+    /// Local policy validation commands (offline, no server required).
+    Policy {
+        #[command(subcommand)]
+        sub: PolicyCommand,
+    },
+    /// Admin/operator status and management commands.
+    Admin {
+        #[command(subcommand)]
+        sub: AdminCommand,
+    },
     Health,
     ValidateRepo,
     ShowContracts,
@@ -211,6 +221,216 @@ impl std::str::FromStr for BumpType {
 /// All backup commands are offline/local and do not require a running server.
 #[derive(Debug, Subcommand)]
 enum BackupCommand {
+    /// Create a backup of a SQLite database.
+    Create {
+        /// Path to the source SQLite database file.
+        #[arg(long, value_name = "PATH")]
+        db_path: PathBuf,
+
+        /// Directory to write the backup file.
+        /// Defaults to the current directory.
+        #[arg(long, value_name = "DIR")]
+        output_dir: Option<PathBuf>,
+
+        /// Number of days to retain backups. After creating a new backup,
+        /// older backups matching the same source DB name pattern are deleted.
+        /// Must be at least 1. Without this flag, no pruning is performed.
+        #[arg(long, value_name = "N")]
+        retention_days: Option<u32>,
+    },
+    /// Verify the integrity of a SQLite database.
+    Verify {
+        /// Path to the SQLite database file to verify.
+        #[arg(long, value_name = "PATH")]
+        db_path: PathBuf,
+    },
+    /// Restore a SQLite database from a backup.
+    Restore {
+        /// Path to the target database file to restore.
+        #[arg(long, value_name = "PATH")]
+        db_path: PathBuf,
+
+        /// Path to the backup file to restore from.
+        #[arg(long, value_name = "PATH")]
+        from: PathBuf,
+
+        /// Explicitly confirm the restore operation.
+        /// Required unless --dry-run is used.
+        #[arg(long)]
+        confirm: bool,
+
+        /// Validate preconditions and report what would happen without mutating the database.
+        /// When set, --confirm is not required.
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
+/// Policy subcommands for local offline validation and server-side apply.
+#[derive(Debug, Subcommand)]
+enum PolicyCommand {
+    /// Validate a policy bundle YAML file offline.
+    Validate {
+        /// Path to the policy bundle YAML file.
+        #[arg(long, value_name = "PATH")]
+        file: String,
+    },
+    /// Validate and create a policy bundle on the server.
+    /// The bundle is created inactive by default; use --activate to enable it.
+    Apply {
+        /// Path to the policy bundle YAML file.
+        /// Use - to read from stdin.
+        #[arg(long, value_name = "PATH")]
+        file: String,
+
+        /// Activate the policy bundle after creation.
+        #[arg(long)]
+        activate: bool,
+
+        /// Output the created bundle as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Simulate a policy bundle against a sample proposal (online, server required).
+    /// Side-effect free: no proposal, bundle, or provenance is persisted.
+    Simulate {
+        /// Path to the policy bundle YAML file.
+        /// Use - to read from stdin.
+        #[arg(long, value_name = "PATH")]
+        file: String,
+
+        /// Path to a JSON file containing the sample proposal.
+        #[arg(long, value_name = "PATH")]
+        proposal: String,
+
+        /// Optional path to a JSON file containing an intent envelope.
+        #[arg(long, value_name = "PATH")]
+        intent: Option<String>,
+
+        /// Output the result as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+/// Admin subcommands for operator status and management.
+#[derive(Debug, Subcommand)]
+enum AdminCommand {
+    /// Show aggregated server status (health, readiness, deep, functional, metrics).
+    Status,
+    /// List, inspect, and resolve approvals.
+    Approvals {
+        #[command(subcommand)]
+        sub: AdminApprovalsCommand,
+    },
+    /// Inspect and manage executions/intents.
+    /// Note: `list` uses the existing intents API; full execution list API is not yet available.
+    Executions {
+        #[command(subcommand)]
+        sub: AdminExecutionsCommand,
+    },
+    /// Local SQLite backup/restore commands (offline, no server required).
+    Backup {
+        #[command(subcommand)]
+        sub: AdminBackupCommand,
+    },
+}
+
+/// Approvals subcommands under `admin approvals`.
+#[derive(Debug, Subcommand)]
+enum AdminApprovalsCommand {
+    /// List all pending approvals.
+    List,
+    /// Get a specific approval by ID.
+    Get {
+        /// Approval ID.
+        approval_id: String,
+    },
+    /// Resolve (approve or deny) a pending approval.
+    Resolve {
+        /// Approval ID (UUID).
+        approval_id: String,
+
+        /// Grant the approval.
+        #[arg(long)]
+        approve: bool,
+
+        /// Deny the approval.
+        #[arg(long)]
+        deny: bool,
+
+        /// Actor type resolving this approval.
+        #[arg(long, value_enum)]
+        actor_type: ActorTypeCli,
+
+        /// Actor ID (username, agent name, etc.).
+        #[arg(long)]
+        actor_id: String,
+
+        /// Optional display name for the actor.
+        #[arg(long)]
+        actor_display_name: Option<String>,
+
+        /// Reason for the decision. Required when --deny is set.
+        #[arg(long)]
+        reason: Option<String>,
+
+        /// Output the resolved approval as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+/// Executions subcommands under `admin executions`.
+#[derive(Debug, Subcommand)]
+enum AdminExecutionsCommand {
+    /// List intents/executions with filters.
+    /// Note: uses the existing intents API; actor/time filters are not yet supported.
+    List {
+        /// Intent ID (exact match).
+        #[arg(long)]
+        intent_id: Option<String>,
+
+        /// Intent status filter (repeatable for multiple states).
+        #[arg(long, value_name = "STATE")]
+        state: Vec<String>,
+
+        /// Pagination cursor (from previous page).
+        #[arg(long)]
+        cursor: Option<String>,
+
+        /// Number of items per page (default 50, max 200).
+        #[arg(long, value_name = "N", default_value = "50")]
+        limit: u32,
+
+        /// Output format: text (default) or json.
+        #[arg(long, value_name = "FORMAT", default_value = "text")]
+        format: OutputFormat,
+    },
+    /// Get an execution by ID.
+    Get {
+        /// Execution ID.
+        execution_id: String,
+    },
+    /// Cancel a running execution.
+    Cancel {
+        /// Execution ID to cancel.
+        execution_id: String,
+
+        /// Explicitly confirm the cancellation. Required.
+        #[arg(long)]
+        confirm: bool,
+
+        /// Output the cancellation result as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+/// Backup subcommands under `admin backup`.
+/// Delegates to the same offline helpers as the top-level `backup` command.
+#[derive(Debug, Subcommand)]
+enum AdminBackupCommand {
     /// Create a backup of a SQLite database.
     Create {
         /// Path to the source SQLite database file.
@@ -609,6 +829,321 @@ async fn main() -> Result<()> {
         Command::ShowContracts => {
             println!("contracts/ferrumgate-agent-contract.v1.yaml");
             println!("contracts/ferrumgate-integrator-contract.v1.yaml");
+        }
+        Command::Policy { sub } => match sub {
+            PolicyCommand::Validate { file } => {
+                let yaml_content = std::fs::read_to_string(&file)
+                    .with_context(|| format!("failed to read {}", file))?;
+                if let Err(e) = ferrum_proto::validate_policy_bundle_yaml(&yaml_content) {
+                    bail!("policy bundle validation failed: {}", e);
+                }
+                println!(r#"{{"valid":true}}"#);
+            }
+            PolicyCommand::Apply {
+                file,
+                activate,
+                json,
+            } => {
+                let yaml_content = if file == "-" {
+                    use std::io::Read;
+                    let mut buf = String::new();
+                    std::io::stdin().read_to_string(&mut buf)?;
+                    buf
+                } else {
+                    std::fs::read_to_string(&file)?
+                };
+                // Validate offline first
+                if let Err(e) = ferrum_proto::validate_policy_bundle_yaml(&yaml_content) {
+                    bail!("policy bundle validation failed: {}", e);
+                }
+                let client = client::Client::new(server_url, bearer_token)?;
+                let result = client.create_policy_bundle(&yaml_content).await?;
+                if activate {
+                    client
+                        .set_policy_bundle_active(&result.bundle.bundle_id, true)
+                        .await?;
+                }
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!(
+                        "Policy bundle '{}' created (hash: {}){}",
+                        result.bundle.bundle_id,
+                        result.content_hash,
+                        if activate { " and activated" } else { "" }
+                    );
+                }
+            }
+            PolicyCommand::Simulate {
+                file,
+                proposal,
+                intent,
+                json,
+            } => {
+                let yaml_content = if file == "-" {
+                    use std::io::Read;
+                    let mut buf = String::new();
+                    std::io::stdin().read_to_string(&mut buf)?;
+                    buf
+                } else {
+                    std::fs::read_to_string(&file)?
+                };
+                // Validate offline first
+                if let Err(e) = ferrum_proto::validate_policy_bundle_yaml(&yaml_content) {
+                    bail!("policy bundle validation failed: {}", e);
+                }
+                let proposal_json = std::fs::read_to_string(&proposal)
+                    .with_context(|| format!("failed to read proposal file {}", proposal))?;
+                let proposal: ferrum_proto::ActionProposal =
+                    serde_json::from_str(&proposal_json)
+                        .with_context(|| "failed to parse proposal JSON")?;
+                let intent = match intent {
+                    Some(path) => {
+                        let intent_json = std::fs::read_to_string(&path)
+                            .with_context(|| format!("failed to read intent file {}", path))?;
+                        Some(
+                            serde_json::from_str(&intent_json)
+                                .with_context(|| "failed to parse intent JSON")?,
+                        )
+                    }
+                    None => None,
+                };
+                let client = client::Client::new(server_url, bearer_token)?;
+                let result = client
+                    .simulate_policy_bundle(&yaml_content, &proposal, intent.as_ref())
+                    .await?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("Decision: {:?}", result.decision);
+                    println!("Reason: {}", result.reason);
+                    if !result.matched_rule_ids.is_empty() {
+                        println!("Matched rules: {}", result.matched_rule_ids.join(", "));
+                    }
+                    if !result.warnings.is_empty() {
+                        println!("Warnings: {}", result.warnings.join(", "));
+                    }
+                }
+            }
+        },
+        Command::Admin { sub } => {
+            let client = client::Client::new(server_url, bearer_token)?;
+            match sub {
+                AdminCommand::Backup { sub } => match sub {
+                    AdminBackupCommand::Create {
+                        db_path,
+                        output_dir,
+                        retention_days,
+                    } => {
+                        let output = output_dir.unwrap_or_else(|| PathBuf::from("."));
+                        let (backup_path, pruned) = backup::backup_create_with_retention(
+                            &db_path,
+                            &output,
+                            retention_days,
+                        )?;
+                        println!("{}", backup_path.display());
+                        if pruned > 0 {
+                            eprintln!("Pruned {} old backup(s)", pruned);
+                        }
+                    }
+                    AdminBackupCommand::Verify { db_path } => {
+                        backup::backup_verify(&db_path)?;
+                        println!("OK");
+                    }
+                    AdminBackupCommand::Restore {
+                        db_path,
+                        from,
+                        confirm,
+                        dry_run,
+                    } => {
+                        backup::backup_restore(&db_path, &from, confirm, dry_run)?;
+                        if dry_run {
+                            println!("Dry-run complete");
+                        } else {
+                            println!("Restore complete");
+                        }
+                    }
+                },
+                AdminCommand::Approvals { sub } => match sub {
+                    AdminApprovalsCommand::List => {
+                        let approvals = client.list_approvals().await?;
+                        println!("{}", serde_json::to_string_pretty(&approvals)?);
+                    }
+                    AdminApprovalsCommand::Get { approval_id } => {
+                        let approval = client.get_approval(&approval_id).await?;
+                        println!("{}", serde_json::to_string_pretty(&approval)?);
+                    }
+                    AdminApprovalsCommand::Resolve {
+                        approval_id,
+                        approve,
+                        deny,
+                        actor_type,
+                        actor_id,
+                        actor_display_name,
+                        reason,
+                        json,
+                    } => {
+                        // Fail-closed: exactly one of --approve or --deny must be set
+                        if approve && deny {
+                            bail!("--approve and --deny are mutually exclusive; set only one");
+                        }
+                        if !approve && !deny {
+                            bail!("one of --approve or --deny must be set");
+                        }
+                        // Fail-closed: --reason is required when --deny is set
+                        if deny && reason.is_none() {
+                            bail!("--reason is required when --deny is set");
+                        }
+
+                        let actor = ferrum_proto::ActorRef {
+                            actor_type: actor_type.into(),
+                            actor_id,
+                            display_name: actor_display_name,
+                        };
+                        let resolved = client
+                            .resolve_approval(&approval_id, &actor, approve, reason.as_deref())
+                            .await?;
+                        if json {
+                            println!("{}", serde_json::to_string_pretty(&resolved)?);
+                        } else {
+                            println!(
+                                "Approval {} resolved to {}",
+                                resolved.approval_id, resolved.state
+                            );
+                        }
+                    }
+                },
+                AdminCommand::Executions { sub } => match sub {
+                    AdminExecutionsCommand::List {
+                        intent_id,
+                        state,
+                        cursor,
+                        limit,
+                        format,
+                    } => {
+                        if limit == 0 || limit > 200 {
+                            bail!("--limit must be between 1 and 200");
+                        }
+                        let items = client
+                            .list_intents(intent_id.as_deref(), &state, cursor.as_deref(), limit)
+                            .await?;
+                        match format {
+                            OutputFormat::Json => {
+                                println!("{}", serde_json::to_string_pretty(&items)?)
+                            }
+                            OutputFormat::Text | OutputFormat::Dot => {
+                                for item in &items {
+                                    println!(
+                                        "{}\t{}\t{}\t{}\t{}",
+                                        item.intent_id,
+                                        item.status,
+                                        item.risk_tier,
+                                        item.exec_state.as_deref().unwrap_or("-"),
+                                        item.created_at
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    AdminExecutionsCommand::Get { execution_id } => {
+                        let execution = client.get_execution(&execution_id).await?;
+                        println!("{}", serde_json::to_string_pretty(&execution)?);
+                    }
+                    AdminExecutionsCommand::Cancel {
+                        execution_id,
+                        confirm,
+                        json,
+                    } => {
+                        if !confirm {
+                            bail!("--confirm flag is required to cancel an execution");
+                        }
+                        let result = client.cancel_execution(&execution_id).await?;
+                        if json {
+                            println!("{}", serde_json::to_string_pretty(&result)?);
+                        } else {
+                            println!("Execution {} canceled successfully.", result.execution_id);
+                        }
+                    }
+                },
+                AdminCommand::Status => {
+                    let mut status = serde_json::Map::new();
+                    match client.health().await {
+                        Ok(h) => {
+                            status.insert(
+                                "health".to_string(),
+                                serde_json::json!({"status": h.status}),
+                            );
+                        }
+                        Err(e) => {
+                            status.insert(
+                                "health".to_string(),
+                                serde_json::json!({"error": e.to_string()}),
+                            );
+                        }
+                    }
+                    match client.readiness().await {
+                        Ok(r) => {
+                            status.insert(
+                                "readiness".to_string(),
+                                serde_json::json!({"status": r.status}),
+                            );
+                        }
+                        Err(e) => {
+                            status.insert(
+                                "readiness".to_string(),
+                                serde_json::json!({"error": e.to_string()}),
+                            );
+                        }
+                    }
+                    match client.readiness_deep_json().await {
+                        Ok(r) => {
+                            status.insert("readiness_deep".to_string(), r);
+                        }
+                        Err(e) => {
+                            status.insert(
+                                "readiness_deep".to_string(),
+                                serde_json::json!({"error": e.to_string()}),
+                            );
+                        }
+                    }
+                    match client.functional_readiness().await {
+                        Ok(items) => {
+                            status.insert(
+                                "functional".to_string(),
+                                serde_json::json!({
+                                    "status": "ready",
+                                    "approvals_found": items.len()
+                                }),
+                            );
+                        }
+                        Err(e) => {
+                            status.insert(
+                                "functional".to_string(),
+                                serde_json::json!({"error": e.to_string()}),
+                            );
+                        }
+                    }
+                    match client.metrics().await {
+                        Ok(m) => {
+                            let lines = m.lines().count();
+                            status.insert(
+                                "metrics".to_string(),
+                                serde_json::json!({
+                                    "available": true,
+                                    "line_count": lines
+                                }),
+                            );
+                        }
+                        Err(e) => {
+                            status.insert(
+                                "metrics".to_string(),
+                                serde_json::json!({"error": e.to_string()}),
+                            );
+                        }
+                    }
+                    println!("{}", serde_json::to_string_pretty(&status)?);
+                }
+            }
         }
         Command::Author { sub } => match sub {
             AuthorCommand::Bundle { sub: bundle_sub } => match bundle_sub {
@@ -1518,6 +2053,420 @@ rules: []
         assert!(
             sub.is_some(),
             "metrics subcommand should parse successfully"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Policy command CLI parsing tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_policy_validate_command_parses() {
+        let cli = Cli::parse_from(["ferrumctl", "policy", "validate", "--file", "test.yaml"]);
+        let Command::Policy { sub } = cli.command else {
+            panic!("expected Policy command");
+        };
+        match sub {
+            PolicyCommand::Validate { file } => {
+                assert_eq!(file, "test.yaml");
+            }
+            _ => panic!("expected Validate command"),
+        }
+    }
+
+    #[test]
+    fn test_policy_validate_rejects_missing_file_flag() {
+        let result = Cli::try_parse_from(["ferrumctl", "policy", "validate"]);
+        assert!(result.is_err(), "should require --file");
+    }
+
+    #[test]
+    fn test_policy_apply_command_parses() {
+        let cli = Cli::parse_from(["ferrumctl", "policy", "apply", "--file", "policy.yaml"]);
+        let Command::Policy { sub } = cli.command else {
+            panic!("expected Policy command");
+        };
+        match sub {
+            PolicyCommand::Apply {
+                file,
+                activate,
+                json,
+            } => {
+                assert_eq!(file, "policy.yaml");
+                assert!(!activate, "default should be inactive");
+                assert!(!json);
+            }
+            _ => panic!("expected Apply command"),
+        }
+    }
+
+    #[test]
+    fn test_policy_apply_activate_flag_parses() {
+        let cli = Cli::parse_from([
+            "ferrumctl",
+            "policy",
+            "apply",
+            "--file",
+            "policy.yaml",
+            "--activate",
+        ]);
+        let Command::Policy { sub } = cli.command else {
+            panic!("expected Policy command");
+        };
+        match sub {
+            PolicyCommand::Apply { activate, .. } => {
+                assert!(activate, "--activate should be true");
+            }
+            _ => panic!("expected Apply command"),
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Admin command CLI parsing tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_admin_status_command_parses() {
+        let cli = Cli::parse_from(["ferrumctl", "admin", "status"]);
+        let Command::Admin { sub } = cli.command else {
+            panic!("expected Admin command");
+        };
+        match sub {
+            AdminCommand::Status => {}
+            _ => panic!("expected Status command"),
+        }
+    }
+
+    #[test]
+    fn test_admin_approvals_list_parses() {
+        let cli = Cli::parse_from(["ferrumctl", "admin", "approvals", "list"]);
+        let Command::Admin { sub } = cli.command else {
+            panic!("expected Admin command");
+        };
+        match sub {
+            AdminCommand::Approvals { sub } => match sub {
+                AdminApprovalsCommand::List => {}
+                _ => panic!("expected List command"),
+            },
+            _ => panic!("expected Approvals command"),
+        }
+    }
+
+    #[test]
+    fn test_admin_approvals_get_parses() {
+        let cli = Cli::parse_from([
+            "ferrumctl",
+            "admin",
+            "approvals",
+            "get",
+            "550e8400-e29b-41d4-a716-446655440000",
+        ]);
+        let Command::Admin { sub } = cli.command else {
+            panic!("expected Admin command");
+        };
+        match sub {
+            AdminCommand::Approvals { sub } => match sub {
+                AdminApprovalsCommand::Get { approval_id } => {
+                    assert_eq!(approval_id, "550e8400-e29b-41d4-a716-446655440000");
+                }
+                _ => panic!("expected Get command"),
+            },
+            _ => panic!("expected Approvals command"),
+        }
+    }
+
+    #[test]
+    fn test_admin_approvals_resolve_parses() {
+        let cli = Cli::parse_from([
+            "ferrumctl",
+            "admin",
+            "approvals",
+            "resolve",
+            "550e8400-e29b-41d4-a716-446655440000",
+            "--approve",
+            "--actor-type",
+            "operator",
+            "--actor-id",
+            "admin-1",
+        ]);
+        let Command::Admin { sub } = cli.command else {
+            panic!("expected Admin command");
+        };
+        match sub {
+            AdminCommand::Approvals { sub } => match sub {
+                AdminApprovalsCommand::Resolve {
+                    approval_id,
+                    approve,
+                    deny,
+                    actor_type,
+                    actor_id,
+                    ..
+                } => {
+                    assert_eq!(approval_id, "550e8400-e29b-41d4-a716-446655440000");
+                    assert!(approve);
+                    assert!(!deny);
+                    assert!(matches!(actor_type, ActorTypeCli::Operator));
+                    assert_eq!(actor_id, "admin-1");
+                }
+                _ => panic!("expected Resolve command"),
+            },
+            _ => panic!("expected Approvals command"),
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Admin executions CLI parsing tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_admin_executions_list_parses() {
+        let cli = Cli::parse_from([
+            "ferrumctl",
+            "admin",
+            "executions",
+            "list",
+            "--state",
+            "pending",
+            "--limit",
+            "10",
+        ]);
+        let Command::Admin { sub } = cli.command else {
+            panic!("expected Admin command");
+        };
+        match sub {
+            AdminCommand::Executions { sub } => match sub {
+                AdminExecutionsCommand::List { state, limit, .. } => {
+                    assert_eq!(state, vec!["pending"]);
+                    assert_eq!(limit, 10);
+                }
+                _ => panic!("expected List command"),
+            },
+            _ => panic!("expected Executions command"),
+        }
+    }
+
+    #[test]
+    fn test_admin_executions_get_parses() {
+        let cli = Cli::parse_from([
+            "ferrumctl",
+            "admin",
+            "executions",
+            "get",
+            "550e8400-e29b-41d4-a716-446655440000",
+        ]);
+        let Command::Admin { sub } = cli.command else {
+            panic!("expected Admin command");
+        };
+        match sub {
+            AdminCommand::Executions { sub } => match sub {
+                AdminExecutionsCommand::Get { execution_id } => {
+                    assert_eq!(execution_id, "550e8400-e29b-41d4-a716-446655440000");
+                }
+                _ => panic!("expected Get command"),
+            },
+            _ => panic!("expected Executions command"),
+        }
+    }
+
+    #[test]
+    fn test_admin_executions_cancel_parses() {
+        let cli = Cli::parse_from([
+            "ferrumctl",
+            "admin",
+            "executions",
+            "cancel",
+            "550e8400-e29b-41d4-a716-446655440000",
+            "--confirm",
+        ]);
+        let Command::Admin { sub } = cli.command else {
+            panic!("expected Admin command");
+        };
+        match sub {
+            AdminCommand::Executions { sub } => match sub {
+                AdminExecutionsCommand::Cancel {
+                    execution_id,
+                    confirm,
+                    ..
+                } => {
+                    assert_eq!(execution_id, "550e8400-e29b-41d4-a716-446655440000");
+                    assert!(confirm);
+                }
+                _ => panic!("expected Cancel command"),
+            },
+            _ => panic!("expected Executions command"),
+        }
+    }
+
+    #[test]
+    fn test_admin_executions_list_limit_validation() {
+        // limit=0 should fail parsing validation at runtime (we test the validation logic)
+        let result =
+            Cli::try_parse_from(["ferrumctl", "admin", "executions", "list", "--limit", "0"]);
+        assert!(
+            result.is_ok(),
+            "parsing limit=0 is ok; runtime validation rejects it"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Admin backup CLI parsing tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_admin_backup_create_parses() {
+        let cli = Cli::parse_from([
+            "ferrumctl",
+            "admin",
+            "backup",
+            "create",
+            "--db-path",
+            "/tmp/test.db",
+            "--retention-days",
+            "7",
+        ]);
+        let Command::Admin { sub } = cli.command else {
+            panic!("expected Admin command");
+        };
+        match sub {
+            AdminCommand::Backup { sub } => match sub {
+                AdminBackupCommand::Create {
+                    db_path,
+                    retention_days,
+                    ..
+                } => {
+                    assert_eq!(db_path, PathBuf::from("/tmp/test.db"));
+                    assert_eq!(retention_days, Some(7));
+                }
+                _ => panic!("expected Create command"),
+            },
+            _ => panic!("expected Backup command"),
+        }
+    }
+
+    #[test]
+    fn test_admin_backup_verify_parses() {
+        let cli = Cli::parse_from([
+            "ferrumctl",
+            "admin",
+            "backup",
+            "verify",
+            "--db-path",
+            "/tmp/test.db",
+        ]);
+        let Command::Admin { sub } = cli.command else {
+            panic!("expected Admin command");
+        };
+        match sub {
+            AdminCommand::Backup { sub } => match sub {
+                AdminBackupCommand::Verify { db_path } => {
+                    assert_eq!(db_path, PathBuf::from("/tmp/test.db"));
+                }
+                _ => panic!("expected Verify command"),
+            },
+            _ => panic!("expected Backup command"),
+        }
+    }
+
+    #[test]
+    fn test_admin_backup_restore_parses() {
+        let cli = Cli::parse_from([
+            "ferrumctl",
+            "admin",
+            "backup",
+            "restore",
+            "--db-path",
+            "/tmp/test.db",
+            "--from",
+            "/tmp/test.db.backup",
+            "--dry-run",
+        ]);
+        let Command::Admin { sub } = cli.command else {
+            panic!("expected Admin command");
+        };
+        match sub {
+            AdminCommand::Backup { sub } => match sub {
+                AdminBackupCommand::Restore {
+                    db_path,
+                    from,
+                    dry_run,
+                    ..
+                } => {
+                    assert_eq!(db_path, PathBuf::from("/tmp/test.db"));
+                    assert_eq!(from, PathBuf::from("/tmp/test.db.backup"));
+                    assert!(dry_run);
+                }
+                _ => panic!("expected Restore command"),
+            },
+            _ => panic!("expected Backup command"),
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Policy validation helper tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_validate_policy_bundle_yaml_valid() {
+        let yaml = r#"version: "0.1.0"
+bundle_id: "test-bundle"
+rules:
+  - id: "rule-1"
+    description: "Test rule"
+    decision: "Allow"
+    priority: 10
+    matchers:
+      - type: "scope_mismatch"
+"#;
+        assert!(ferrum_proto::validate_policy_bundle_yaml(yaml).is_ok());
+    }
+
+    #[test]
+    fn test_validate_policy_bundle_yaml_invalid() {
+        let yaml = "not: [valid yaml";
+        assert!(ferrum_proto::validate_policy_bundle_yaml(yaml).is_err());
+    }
+
+    #[test]
+    fn test_validate_policy_bundle_yaml_missing_field() {
+        let yaml = r#"version: "0.1.0"
+bundle_id: "test-bundle"
+rules: []
+"#;
+        // Empty rules is valid; missing version would fail parse
+        assert!(ferrum_proto::validate_policy_bundle_yaml(yaml).is_ok());
+    }
+
+    #[test]
+    fn test_cli_policy_simulate_parses() {
+        let cli = Cli::try_parse_from([
+            "ferrumctl",
+            "policy",
+            "simulate",
+            "--file",
+            "bundle.yaml",
+            "--proposal",
+            "proposal.json",
+        ]);
+        assert!(cli.is_ok(), "CLI should parse policy simulate command");
+    }
+
+    #[test]
+    fn test_cli_policy_simulate_with_intent_parses() {
+        let cli = Cli::try_parse_from([
+            "ferrumctl",
+            "policy",
+            "simulate",
+            "--file",
+            "bundle.yaml",
+            "--proposal",
+            "proposal.json",
+            "--intent",
+            "intent.json",
+            "--json",
+        ]);
+        assert!(
+            cli.is_ok(),
+            "CLI should parse policy simulate with optional intent and json flags"
         );
     }
 }

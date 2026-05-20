@@ -107,7 +107,7 @@ ls -ld /backups
 **Cause**: MCP server connected to wrong gateway or gateway is unhealthy.
 
 **Fix**:
-1. Verify `FERRUMGATE_GATEWAY_URL` points to the correct gateway.
+1. Verify `FERRUM_GATEWAY_URL` points to the correct gateway.
 2. Check gateway health: `curl <gateway>/v1/healthz`.
 3. Check MCP server logs for connection errors.
 

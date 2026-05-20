@@ -2,7 +2,7 @@
 
 > **Status**: Planning artifact. Checklist template; not yet filled.
 > **Owner**: Engineering + Operator
-> **Last updated**: 2026-05-19
+> **Last updated**: 2026-05-20
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
 > **Scope**: [`00-scope-and-nonclaims.md`](00-scope-and-nonclaims.md)
 
@@ -99,54 +99,60 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 
 ## Phase 3 — Target-host MCP/live workload
 
+> **Blocker**: Target-host MCP operations are blocked operationally by target bearer token/access. The target gateway requires a valid bearer token; no workload can be executed until token access is resolved.
+
 | # | Item | Owner | Evidence | Status |
 |---|------|-------|----------|--------|
-| 3.1 | MCP-1: Target `tools/list` returns 19 tools | Engineering | `mcp-target-smoke-evidence.md` | ☐ |
-| 3.2 | MCP-2: Read-only tools pass against target | Engineering | `mcp-target-smoke-evidence.md` | ☐ |
-| 3.3 | MCP-3: Mutating tools fail closed without auth | Engineering | `mcp-target-smoke-evidence.md` | ☐ |
-| 3.4 | MCP-4: Lifecycle flow passes with auth | Engineering | `mcp-lifecycle-evidence.md` | ☐ |
-| 3.5 | MCP-5: Provenance chain exists | Engineering | `mcp-lifecycle-evidence.md` | ☐ |
-| 3.6 | MCP-6: Redaction/sanitization verified | Engineering | `mcp-lifecycle-evidence.md` | ☐ |
-| 3.7 | MCP-7: Target evidence artifact created | Engineering | `mcp-live-workload-evidence.md` | ☐ |
+| 3.1 | MCP-1: Target `tools/list` returns 19 tools | Engineering | `mcp-target-smoke-evidence.md` | 🚫 BLOCKED — target bearer token/access required |
+| 3.2 | MCP-2: Read-only tools pass against target | Engineering | `mcp-target-smoke-evidence.md` | 🚫 BLOCKED — target bearer token/access required |
+| 3.3 | MCP-3: Mutating tools fail closed without auth | Engineering | `mcp-target-smoke-evidence.md` | 🚫 BLOCKED — target bearer token/access required |
+| 3.4 | MCP-4: Lifecycle flow passes with auth | Engineering | `mcp-lifecycle-evidence.md` | 🚫 BLOCKED — target bearer token/access required |
+| 3.5 | MCP-5: Provenance chain exists | Engineering | `mcp-lifecycle-evidence.md` | 🚫 BLOCKED — target bearer token/access required |
+| 3.6 | MCP-6: Redaction/sanitization verified | Engineering | `mcp-lifecycle-evidence.md` | 🚫 BLOCKED — target bearer token/access required |
+| 3.7 | MCP-7: Target evidence artifact created | Engineering | `mcp-live-workload-evidence.md` | 🚫 BLOCKED — target bearer token/access required |
 
 ## Phase 4 — Security and tenant model
 
+> **Blocker**: The security/tenant model ADR exists and is reviewed (Phase 0.5), but implementation is blocked pending operator decisions on tenant model, OIDC, and scoped token model. No implementation work can proceed until these decisions are made and the ADR is approved for implementation.
+
 | # | Item | Owner | Evidence | Status |
 |---|------|-------|----------|--------|
-| 4.1 | SEC-1: Read-only token cannot mutate | Engineering | Test output | ☐ |
-| 4.2 | SEC-2: Agent token cannot approve | Engineering | Test output | ☐ |
-| 4.3 | SEC-3: Auditor token cannot execute | Engineering | Test output | ☐ |
-| 4.4 | SEC-4: Revoked token fails | Engineering | Test output | ☐ |
-| 4.5 | SEC-5: Expired token fails | Engineering | Test output | ☐ |
-| 4.6 | SEC-6: Audit log records admin/policy/approval/token actions | Engineering | Audit log sample | ☐ |
-| 4.7 | SEC-7: Tenant ADR approved before implementation | Operator | ADR signoff | ☐ |
+| 4.0 | SEC-0: Security/tenant model ADR exists and reviewed | Engineering + Operator | `04-security-tenant-model-adr.md` | ✅ COMPLETE — design artifact reviewed in Phase 0 sweep; implementation NOT STARTED |
+| 4.1 | SEC-1: Read-only token cannot mutate | Engineering | Test output | 🚫 BLOCKED — implementation pending operator tenant/OIDC/token model decisions |
+| 4.2 | SEC-2: Agent token cannot approve | Engineering | Test output | 🚫 BLOCKED — implementation pending operator tenant/OIDC/token model decisions |
+| 4.3 | SEC-3: Auditor token cannot execute | Engineering | Test output | 🚫 BLOCKED — implementation pending operator tenant/OIDC/token model decisions |
+| 4.4 | SEC-4: Revoked token fails | Engineering | Test output | 🚫 BLOCKED — implementation pending operator tenant/OIDC/token model decisions |
+| 4.5 | SEC-5: Expired token fails | Engineering | Test output | 🚫 BLOCKED — implementation pending operator tenant/OIDC/token model decisions |
+| 4.6 | SEC-6: Audit log records admin/policy/approval/token actions | Engineering | Audit log sample | 🚫 BLOCKED — implementation pending operator tenant/OIDC/token model decisions |
+| 4.7 | SEC-7: Tenant ADR approved for implementation | Operator | ADR signoff | ☐ NOT STARTED — operator signoff pending; blocks all SEC implementation items |
 
 ## Phase 5 — Policy authoring UX
 
 | # | Item | Owner | Evidence | Status |
 |---|------|-------|----------|--------|
-| 5.1 | POL-1: Invalid policy returns useful error | Engineering | Test output | ☐ |
-| 5.2 | POL-2: Simulate returns decision without side effect | Engineering | Test output | ☐ |
+| 5.1 | POL-1: Invalid policy returns useful error | Engineering | Test output | ✅ LOCAL CLI COMPLETE — `ferrumctl policy validate` implemented with tests; simulation deferred |
+| 5.2 | POL-2: Simulate returns decision without side effect | Engineering | `crates/ferrum-gateway/src/server.rs` `test_simulate_policy_bundle_*` + `bins/ferrumctl/src/main.rs` CLI parse tests | ✅ COMPLETE — online-only; server required; no store mutation or provenance emission; POL-5 remains open |
 | 5.3 | POL-3: Template produces valid policy | Engineering | Test output | ☐ |
-| 5.4 | POL-4: Policy switch is auditable | Engineering | Audit log sample | ☐ |
-| 5.5 | POL-5: Rollback to previous policy works | Engineering | Test output | ☐ |
+| 5.4 | POL-4: Policy switch is auditable | Engineering | `integration_gateway_flow.rs` `test_policy_bundle_active_switch_emits_provenance` | ✅ COMPLETE — provenance events emitted for activation and deactivation |
+| 5.5 | POL-5 design: Version history, diff, and rollback design documented and accepted | Engineering | `05a-policy-version-history-design.md` | ✅ DESIGN COMPLETE — implementation NOT STARTED |
+| 5.6 | POL-5 implementation: Rollback to previous policy works | Engineering | Test output | ☐ NOT STARTED — blocked until engineering picks up POL-5 implementation; no dependency on operator decisions |
 
 ## Phase 6 — Admin/operator UX
 
 | # | Item | Owner | Evidence | Status |
 |---|------|-------|----------|--------|
-| 6.1 | UX-1: Operator can view current health/status | Engineering | Demo recording or test | ☐ |
-| 6.2 | UX-2: Operator can approve/reject without curl | Engineering | Demo recording or test | ☐ |
-| 6.3 | UX-3: Operator can inspect execution lineage | Engineering | Demo recording or test | ☐ |
-| 6.4 | UX-4: Operator can rotate/revoke token | Engineering | Demo recording or test | ☐ |
-| 6.5 | UX-5: Operator can validate/apply policy | Engineering | Demo recording or test | ☐ |
-| 6.6 | UX-6: Operator can run/verify backup | Engineering | Demo recording or test | ☐ |
+| 6.1 | UX-1: Operator can view current health/status | Engineering | Demo recording or test | ✅ LOCAL CLI COMPLETE — `ferrumctl admin status` aggregates existing endpoints; no new `/v1/admin/status` |
+| 6.2 | UX-2: Operator can approve/reject without curl | Engineering | Demo recording or test | ✅ LOCAL CLI COMPLETE — `ferrumctl admin approvals list/get/resolve` wired to existing endpoints; no new admin API |
+| 6.3 | UX-3: Operator can inspect execution lineage | Engineering | Demo recording or test | ✅ LOCAL CLI COMPLETE — `ferrumctl admin executions list/get/cancel` wired to existing endpoints; list uses intents API; no new admin API |
+| 6.4 | UX-4: Operator can rotate/revoke token | Engineering | Demo recording or test | 🚫 BLOCKED — requires scoped token endpoints (Phase 4 token model); blocked until Phase 4 implementation unblocked |
+| 6.5 | UX-5: Operator can validate/apply policy | Engineering | Demo recording or test | ✅ LOCAL CLI COMPLETE — `ferrumctl policy validate/apply` uses existing policy bundle endpoints; no new admin API; POL-4 audit switch remains open |
+| 6.6 | UX-6: Operator can run/verify backup | Engineering | Demo recording or test | ✅ LOCAL CLI COMPLETE — `ferrumctl admin backup create/verify/restore` delegates to existing offline helpers; no scheduler/remote backup |
 
 ## Phase 7 — Product-facing docs and demo flows
 
 | # | Item | Owner | Evidence | Status |
 |---|------|-------|----------|--------|
-| 7.1 | DOC-1: API/curl + ferrumctl + MCP complete in <30 min | Engineering | `docs/implementation-path/artifacts/2026-05-19-quickstart-validation-evidence.md` §DOC-1 + `2026-05-19-doc3-ferrumctl-mcp-usability-evidence.md` | ✅ PARTIAL — API/curl 0.384 s, ferrumctl 0.367 s, MCP 0.33 s validated locally after bugfix; fresh-user test NOT performed; acceptance criterion OPEN |
+| 7.1 | DOC-1: API/curl + ferrumctl + MCP complete in <30 min | Engineering | `docs/implementation-path/artifacts/2026-05-19-quickstart-validation-evidence.md` §DOC-1 + `2026-05-19-doc3-ferrumctl-mcp-usability-evidence.md` | ✅ LOCAL COMPLETE — engineering local re-run passed API/curl, ferrumctl, and MCP after docs corrections; runtime ~5 min excluding pre-existing build; independent external fresh-user and target-host/cloud NOT claimed |
 | 7.2 | DOC-2: Validated API/curl + ferrumctl + MCP demos run without live secrets | Engineering | `docs/implementation-path/artifacts/2026-05-19-quickstart-validation-evidence.md` §DOC-2 + `2026-05-19-doc3-ferrumctl-mcp-usability-evidence.md` | ✅ LOCAL COMPLETE — all local demo paths pass; API/curl and ferrumctl need no live secrets (`auth=disabled`); MCP used documented dummy placeholder token; target-host validation NOT claimed |
 | 7.3 | DOC-3: Docs state production-ready limitations correctly | Engineering | `docs/implementation-path/artifacts/2026-05-19-doc3-ferrumctl-mcp-usability-evidence.md` §DOC-3 | ✅ COMPLETE — hosted-deployment.md DEP-4 corrected; Block A/DuckDNS context added; no overclaims |
 | 7.4 | DOC-4: MCP client config example exists | Engineering | `docs/guides/mcp-integration.md` | ✅ COMPLETE — sample Claude Desktop config present |
@@ -155,7 +161,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 | 7.7 | DOC-7: API guide documents endpoints, auth, errors, lifecycle, examples | Engineering | `docs/guides/api.md` | ✅ COMPLETE — endpoint inventory, auth modes, error format, curl example, rate limiting documented; OpenAPI spec deferred |
 | 7.8 | DOC-8: Operator guide covers config, health, backup/restore, token rotation, monitoring, incident response, local-vs-hosted caveats | Engineering | `docs/guides/operator.md` | ✅ COMPLETE — expanded with local-vs-hosted table, SQLite WAL notes, common incident patterns, token rotation verification note |
 | 7.9 | DOC-9: Adapter reference covers fs, git, http, sqlite, maildraft with rollback and risk caveats | Engineering | `docs/guides/adapter-reference.md` | ✅ COMPLETE — expanded with JSON examples, rollback/risk summary table, and when-rollback-fails section |
-| 7.10 | DOC-10: Landing page scaffold exists with status banner, Block A disclaimer, and guide links | Engineering | `site/` Zola scaffold | ✅ COMPLETE — Zola scaffold created with professional structure; no deployment or domain configured |
+| 7.10 | DOC-10: Landing page scaffold exists with status banner, Block A disclaimer, and guide links | Engineering | `site/` Zola scaffold | ✅ COMPLETE — Zola scaffold created with professional structure; official Zola 0.22.1 local build passed; no deployment or domain configured |
 
 ## Phase 8 — Hosted deployment story
 

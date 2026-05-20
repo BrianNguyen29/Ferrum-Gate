@@ -55,6 +55,8 @@ pub enum ProvenanceEventKind {
     Quarantined,
     ErrorRaised,
     ExternalEventReceived,
+    PolicyBundleActivated,
+    PolicyBundleDeactivated,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

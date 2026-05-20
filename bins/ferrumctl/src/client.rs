@@ -236,6 +236,14 @@ impl Client {
         Ok(resp.json().await?)
     }
 
+    /// Deep readiness probe returning raw JSON to preserve all server fields.
+    pub async fn readiness_deep_json(&self) -> Result<serde_json::Value> {
+        let url = format!("{}/v1/readyz/deep", self.base_url);
+        let resp = self.add_auth(self.http.get(&url)).send().await?;
+        resp.error_for_status_ref()?;
+        Ok(resp.json().await?)
+    }
+
     /// Functional readiness probe: GET /v1/approvals?limit=1
     /// Requires bearer auth; confirms store, auth, and governance loop are functional.
     pub async fn functional_readiness(&self) -> Result<Vec<ApprovalRequest>> {
@@ -447,5 +455,34 @@ impl Client {
         let resp = self.add_auth(self.http.get(&url)).send().await?;
         resp.error_for_status_ref()?;
         Ok(resp.text().await?)
+    }
+
+    /// Simulate a policy bundle against a sample proposal.
+    /// Side-effect free: no proposal, bundle, or provenance is persisted.
+    pub async fn simulate_policy_bundle(
+        &self,
+        bundle_yaml: &str,
+        proposal: &ferrum_proto::ActionProposal,
+        intent: Option<&ferrum_proto::IntentEnvelope>,
+    ) -> Result<ferrum_proto::PolicyBundleSimulateResponse> {
+        let url = format!("{}/v1/policy-bundles/simulate", self.base_url);
+        let request = ferrum_proto::PolicyBundleSimulateRequest {
+            bundle_yaml: bundle_yaml.to_string(),
+            proposal: proposal.clone(),
+            intent: intent.cloned(),
+        };
+        let resp = self
+            .add_auth(self.http.post(&url).json(&request))
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            if body.is_empty() {
+                bail!("HTTP {}: (empty body)", status);
+            }
+            bail!("HTTP {}: {}", status, body);
+        }
+        Ok(resp.json().await?)
     }
 }

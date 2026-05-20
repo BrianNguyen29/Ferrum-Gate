@@ -10,7 +10,7 @@
 
 | Guide | Status | Description |
 |-------|--------|-------------|
-| [Quickstart](quickstart.md) | API/curl flow validated locally | FerrumGate in 10 minutes — local demo only; full API/curl sequence confirmed; ferrumctl and MCP locally validated after bugfix |
+| [Quickstart](quickstart.md) | Local engineering validated | FerrumGate in 10 minutes — local demo only; API/curl, ferrumctl, and MCP paths confirmed after docs corrections |
 | [Concepts](concepts.md) | Expanded | Core concepts: intent, proposal, capability, provenance, lineage, adapters, R0–R3, architecture overview |
 | [API](api.md) | Expanded scaffold | Endpoint inventory, auth, errors, execution lifecycle example, rate limiting |
 | [Operator Guide](operator.md) | Expanded | Configuration, health, backup/restore, token rotation, monitoring, incident response, local-vs-hosted caveats |
@@ -26,16 +26,16 @@
 
 A Zola-based static site scaffold is available in `site/`:
 
-- `site/config.toml` — Zola configuration
+- `site/config.toml` — Zola configuration (`base_url` set to local-only `http://127.0.0.1:1111`; no real domain)
 - `site/templates/` — HTML templates (base + index)
 - `site/static/css/main.css` — Stylesheet
-- `site/content/_index.md` — Root page content
+- `site/content/_index.md` — Root page content with summary, status, blockers, and quick links
 
-The landing page includes a prominent status banner, Block A disclaimer, architecture explanation, and links to all guides. It is designed for local build only; no deployment or domain is configured.
+The landing page includes a prominent status banner, Block A disclaimer, architecture explanation, and links to all guides. It is designed for local build only; no deployment or domain is configured. Build with `make site-build` (validated with Zola `0.22.1`).
 
 ## Non-claims
 
-- **Partially validated**: Quickstart API/curl flow validated locally through lineage endpoint (2026-05-19). ferrumctl and MCP locally validated after bugfix (2026-05-19). Quickstart timing is validated for the API/curl path only. Fresh-user test has not been performed.
+- **Local validation only**: Quickstart API/curl, ferrumctl, and MCP paths were engineering-validated locally after docs corrections (2026-05-19). Independent external fresh-user and target-host/cloud validation are not claimed.
 - **NOT production-ready**: These guides do not change the production-ready posture of FerrumGate.
 - **NOT a marketing site**: These are repository docs for operators and integrators.
 - **NOT complete**: Several guides reference planned features (simulation, templates, Helm, RBAC) that are not yet implemented.

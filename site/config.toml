@@ -1,8 +1,9 @@
 # The URL the site will be built for
-base_url = "https://ferrumgate.example.com"
+# Local-only scaffold — no real domain or deployment is configured.
+# This value is set to the Zola default local serve address.
+base_url = "http://127.0.0.1:1111"
 
 # Whether to automatically compile all Sass files in the sass directory
-theme = ""
 compile_sass = true
 
 # Whether to build a search index from each page and section content
@@ -24,9 +25,7 @@ generate_feeds = false
 taxonomies = []
 
 [markdown]
-# Whether to do syntax highlighting
-# Not needed for minimal landing
-highlight_code = false
+# Minimal landing content does not use fenced-code highlighting.
 
 [extra]
 # Custom extra variables for templates

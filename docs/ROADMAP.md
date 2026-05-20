@@ -35,6 +35,20 @@ Roadmap này là tài liệu lập kế hoạch bổ sung, không thay thế cá
 - `docs/ferrumgate-roadmap-v2/ferrumgate-roadmap-pack/00-roadmap-charter.md` — roadmap v2 hiện có; cần reconcile trước khi tạo cây `docs/production-readiness-v2/`.
 - `docs/PRODUCTION_NOTES.md` — production notes, SQLite/operational baseline.
 
+## Naming crosswalk
+
+To avoid ambiguity, the following axes are used in this and related docs. They are **not interchangeable**.
+
+| Axis | Meaning | Values | Used in |
+|------|---------|--------|---------|
+| **ROADMAP Phase** | Execution phase on the post-pilot production path | Phase 0–9 | `docs/ROADMAP.md`, `docs/production-readiness-v2/` |
+| **Priority label** | Relative urgency of a task *within* a phase | P0, P1, P2, P3 | Tables inside `docs/ROADMAP.md` and `docs/production-readiness-v2/` |
+| **Legacy quarter** | Historical quarterly work package from the baseline roadmap-v2 pack | Q1, Q2, Q3, Q4 | `docs/ferrumgate-roadmap-v2/ferrumgate-roadmap-pack/` |
+
+- **Phases 0–9** are the current post-pilot execution sequence. They are not quarters and do not map 1:1 to calendar quarters.
+- **P0–P3** are priority labels applied to individual tasks or deliverables. They are not phases.
+- **Q1–Q4** are legacy quarterly planning buckets from the historical/baseline roadmap-v2 pack. They remain relevant as historical reference but do not govern the current post-pilot phase sequence.
+
 ## 1. Nhận định tổng quan
 
 FerrumGate hiện đã có nền tảng tốt:
@@ -1838,10 +1852,10 @@ Before creating new documents, reconcile this roadmap with existing planning pac
 
 | Task | Reason | Priority |
 |------|--------|----------|
-| Decide whether `docs/production-readiness-v2/` supplements or supersedes `docs/ferrumgate-roadmap-v2/ferrumgate-roadmap-pack/` | Prevent forked roadmap hierarchies | P0 |
-| Add backlinks from `README.md`, `AGENTS.md`, `docs/implementation-path/00-start-here.md`, `01-current-state.md`, and `67-production-readiness-roadmap.md` to this roadmap | Make the new roadmap discoverable | P0 |
-| Add forward links from each new v2 planning doc back to `docs/ROADMAP.md` and the canonical status docs | Preserve traceability | P0 |
-| Align naming between ROADMAP phases, existing P0–P3 items, and roadmap-v2 Q1–Q4 work packages | Avoid phase-number ambiguity | P1 |
+| ✅ **Decided**: `docs/production-readiness-v2/` supplements (does not supersede) `docs/ferrumgate-roadmap-v2/ferrumgate-roadmap-pack/`. The legacy pack remains historical/baseline reference; production-readiness-v2 is the active post-pilot execution/evidence planning layer. | Prevent forked roadmap hierarchies | P0 |
+| ✅ **Done**: Backlinks confirmed in `README.md`, `AGENTS.md`, `01-current-state.md`, and `67-production-readiness-roadmap.md`; `00-start-here.md` link fixed to clickable markdown. | Make the new roadmap discoverable | P0 |
+| ✅ **Done**: All v2 planning docs (00–10, runbook) link back to `docs/ROADMAP.md` and `00-scope-and-nonclaims.md`. | Preserve traceability | P0 |
+| ✅ **Done**: Naming crosswalk added in §"Naming crosswalk" above; distinguishes ROADMAP Phase 0–9, priority labels P0–P3, and legacy Q1–Q4 quarters | Avoid phase-number ambiguity | P1 |
 | Keep `production-ready = NO`, `full G2 = NOT COMPLETE`, and `Block A = WAIVED/CONDITIONAL` in all updated docs until domain/revalidation/signoff are complete | Prevent readiness overclaim | P0 |
 
 ### New docs to create

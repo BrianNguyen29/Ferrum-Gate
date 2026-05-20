@@ -12087,3 +12087,222 @@ async fn test_resolve_approval_provenance_event_emitted() {
         event.kind
     );
 }
+
+// ---------------------------------------------------------------------------
+// POL-4: Policy bundle activation provenance audit test
+// ---------------------------------------------------------------------------
+
+/// Verify that activating and deactivating a policy bundle emits provenance
+/// events (PolicyBundleActivated / PolicyBundleDeactivated).
+#[tokio::test]
+async fn test_policy_bundle_active_switch_emits_provenance() {
+    let pdp = Arc::new(StaticPdpEngine);
+    let cap: Arc<dyn CapabilityService> = Arc::new(InMemoryCapabilityService::default());
+
+    let mut registry = AdapterRegistry::default();
+    registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
+    let rollback = Arc::new(RollbackService::new(Arc::new(registry)));
+
+    let store = Arc::new(
+        SqliteStore::connect("sqlite::memory:")
+            .await
+            .expect("connect to sqlite"),
+    );
+    store
+        .apply_embedded_migrations()
+        .await
+        .expect("apply migrations");
+
+    let runtime = GatewayRuntime::new(
+        pdp,
+        cap.clone(),
+        rollback,
+        store.clone() as Arc<dyn StoreFacade>,
+        vec![],
+    );
+    let router = build_router(runtime);
+
+    // Use a UUID string so policy_bundle_id parsing succeeds
+    let bundle_uuid = uuid::Uuid::new_v4();
+    let bundle_id = bundle_uuid.to_string();
+    let bundle = make_test_policy_bundle(&bundle_id, vec![], false);
+    store
+        .policy_bundles()
+        .insert(&bundle)
+        .await
+        .expect("bundle insert should succeed");
+
+    // Activate the bundle
+    let activate_request = ferrum_proto::SetPolicyBundleActiveRequest { active: true };
+    let response = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method(axum::http::Method::PUT)
+                .uri(format!("/v1/policy-bundles/{}/active", bundle_id))
+                .header("Content-Type", "application/json")
+                .body(axum::body::Body::from(
+                    serde_json::to_vec(&activate_request).unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .expect("activate request should succeed");
+    assert_eq!(
+        response.status(),
+        axum::http::StatusCode::OK,
+        "activate should return 200 OK, got: {:?}",
+        response.status()
+    );
+
+    // Query provenance for PolicyBundleActivated
+    let query_request = ferrum_proto::ProvenanceQueryRequest {
+        intent_id: None,
+        execution_id: None,
+        capability_id: None,
+        event_kind: Some(ferrum_proto::ProvenanceEventKind::PolicyBundleActivated),
+        since: None,
+        until: None,
+        edge_types: Vec::new(),
+    };
+    let query_response = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method(axum::http::Method::POST)
+                .uri("/v1/provenance/query")
+                .header("Content-Type", "application/json")
+                .body(axum::body::Body::from(
+                    serde_json::to_vec(&query_request).unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .expect("provenance query should succeed");
+    assert_eq!(
+        query_response.status(),
+        axum::http::StatusCode::OK,
+        "provenance query should return 200 OK, got: {:?}",
+        query_response.status()
+    );
+
+    let body = axum::body::to_bytes(query_response.into_body(), 1024 * 1024)
+        .await
+        .expect("read body");
+    let provenance_result: ferrum_proto::ProvenanceQueryResponse =
+        serde_json::from_slice(&body).expect("valid ProvenanceQueryResponse JSON");
+    assert!(
+        !provenance_result.events.is_empty(),
+        "Expected at least one PolicyBundleActivated provenance event, got empty"
+    );
+
+    let activated_event = &provenance_result.events[0];
+    assert!(
+        matches!(
+            activated_event.kind,
+            ferrum_proto::ProvenanceEventKind::PolicyBundleActivated
+        ),
+        "Expected PolicyBundleActivated provenance event, got: {:?}",
+        activated_event.kind
+    );
+    assert_eq!(
+        activated_event.object.object_id, bundle_id,
+        "object_id should match bundle_id"
+    );
+    assert!(
+        matches!(
+            activated_event.object.object_type,
+            ferrum_proto::ObjectType::PolicyBundle
+        ),
+        "object_type should be PolicyBundle"
+    );
+    assert_eq!(
+        activated_event.policy_bundle_id,
+        Some(ferrum_proto::PolicyBundleId(bundle_uuid)),
+        "policy_bundle_id should be parsed from UUID bundle_id"
+    );
+    assert_eq!(
+        activated_event.metadata.get("active"),
+        Some(&serde_json::json!(true)),
+        "metadata should contain active=true"
+    );
+
+    // Deactivate the bundle
+    let deactivate_request = ferrum_proto::SetPolicyBundleActiveRequest { active: false };
+    let response = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method(axum::http::Method::PUT)
+                .uri(format!("/v1/policy-bundles/{}/active", bundle_id))
+                .header("Content-Type", "application/json")
+                .body(axum::body::Body::from(
+                    serde_json::to_vec(&deactivate_request).unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .expect("deactivate request should succeed");
+    assert_eq!(
+        response.status(),
+        axum::http::StatusCode::OK,
+        "deactivate should return 200 OK, got: {:?}",
+        response.status()
+    );
+
+    // Query provenance for PolicyBundleDeactivated
+    let query_request = ferrum_proto::ProvenanceQueryRequest {
+        intent_id: None,
+        execution_id: None,
+        capability_id: None,
+        event_kind: Some(ferrum_proto::ProvenanceEventKind::PolicyBundleDeactivated),
+        since: None,
+        until: None,
+        edge_types: Vec::new(),
+    };
+    let query_response = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method(axum::http::Method::POST)
+                .uri("/v1/provenance/query")
+                .header("Content-Type", "application/json")
+                .body(axum::body::Body::from(
+                    serde_json::to_vec(&query_request).unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .expect("provenance query should succeed");
+    assert_eq!(
+        query_response.status(),
+        axum::http::StatusCode::OK,
+        "provenance query should return 200 OK, got: {:?}",
+        query_response.status()
+    );
+
+    let body = axum::body::to_bytes(query_response.into_body(), 1024 * 1024)
+        .await
+        .expect("read body");
+    let provenance_result: ferrum_proto::ProvenanceQueryResponse =
+        serde_json::from_slice(&body).expect("valid ProvenanceQueryResponse JSON");
+    assert!(
+        !provenance_result.events.is_empty(),
+        "Expected at least one PolicyBundleDeactivated provenance event, got empty"
+    );
+
+    let deactivated_event = &provenance_result.events[0];
+    assert!(
+        matches!(
+            deactivated_event.kind,
+            ferrum_proto::ProvenanceEventKind::PolicyBundleDeactivated
+        ),
+        "Expected PolicyBundleDeactivated provenance event, got: {:?}",
+        deactivated_event.kind
+    );
+    assert_eq!(
+        deactivated_event.metadata.get("active"),
+        Some(&serde_json::json!(false)),
+        "metadata should contain active=false"
+    );
+}

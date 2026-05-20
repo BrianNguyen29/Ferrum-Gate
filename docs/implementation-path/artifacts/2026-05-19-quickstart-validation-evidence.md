@@ -3,14 +3,14 @@
 ## Status
 
 - **Scope**: DOC-1 / DOC-2 local quickstart validation — extended API/curl flow.
-- **Verdict**: ✅ PASS for local API/curl flow through lineage endpoint.
+- **Verdict**: ✅ LOCAL PASS for API/curl, ferrumctl, and MCP quickstart paths after engineering local re-run and docs corrections.
 - **Production-ready**: NO.
-- **Full quickstart end-to-end**: PARTIAL — curl/API path validated; ferrumctl and MCP remain scaffold.
-- **Fresh-user test**: NOT PERFORMED.
+- **Full quickstart end-to-end**: LOCAL COMPLETE — API/curl, ferrumctl, and MCP paths validated on loopback with no live secrets.
+- **Independent external fresh-user test**: NOT CLAIMED. Engineering local re-run passed; target-host/cloud not tested.
 - **Target-host / cloud**: NOT CLAIMED.
 - **Block A**: WAIVED/CONDITIONAL — no real owned domain or DNS available.
 
-This artifact records a local validation run of the FerrumGate quickstart curl sequence against `target/release/ferrumd` with in-memory SQLite, disabled authentication, and loopback-only binding.
+This artifact records local validation runs of the FerrumGate quickstart against `target/release/ferrumd` with in-memory SQLite, disabled authentication, and loopback-only binding. It now includes the original API/curl run plus an engineering local re-run covering API/curl, ferrumctl, and MCP after documentation corrections.
 
 ## Environment
 
@@ -261,7 +261,26 @@ Result: ✅ PASS.
 
 Total elapsed time for the corrected extended flow (steps 1–10, excluding build/start): **0.384 s**.
 
-This is consistent with the DOC-1 "<30 min" target for the API/curl flow. It does NOT validate ferrumctl or MCP paths. It does NOT constitute a fresh-user test. DOC-1 acceptance criterion remains OPEN.
+This is consistent with the DOC-1 "<30 min" target for the API/curl flow. Later engineering local re-runs validated ferrumctl and MCP as described below.
+
+## Engineering local re-run — API/curl + ferrumctl + MCP
+
+After MCP documentation corrections, an engineering local re-run validated the documented paths without live secrets:
+
+| Path | Result | Timing / scope |
+|------|--------|----------------|
+| API/curl | ✅ PASS | 12-step local flow from health through lineage; `auth=disabled`, in-memory SQLite |
+| ferrumctl | ✅ PASS | 7/7 documented commands passed |
+| MCP | ✅ PASS | `initialize`, `tools/list` returned 19 tools, and representative `ferrum_gate_*` calls passed using documented `FERRUM_GATEWAY_URL` and `FERRUM_GATEWAY_BEARER_TOKEN` placeholder |
+
+Key local re-run findings:
+
+- Runtime elapsed time was approximately **5 minutes** excluding cold `cargo build --release` because binaries already existed.
+- No live secrets were used; MCP used only the documented dummy placeholder token in local mode.
+- Documentation now tells users to extract `envelope.intent_id` and `lease.capability_id`, and to use a unique proposal UUID on re-runs.
+- A mini re-check after the docs update confirmed `envelope.intent_id` and `lease.capability_id` are the correct response paths.
+
+DOC-1 local-scope verdict: ✅ **LOCAL COMPLETE** for API/curl + ferrumctl + MCP under 30 minutes, with target-host/cloud and production readiness explicitly not claimed.
 
 ## DOC-2 — No secrets required
 
@@ -271,7 +290,7 @@ All validated steps ran with `auth_mode=disabled`. No bearer token, API key, or 
 - `curl` commands: no `-H "Authorization: ..."` header used
 - Response bodies: no secrets or live tokens present
 
-Result: ✅ PASS for the validated API/curl flow ONLY. DOC-2 acceptance criterion remains OPEN because ferrumctl and MCP paths are not validated.
+Result: ✅ LOCAL PASS for API/curl, ferrumctl, and MCP demo paths without live secrets. Target-host validation is NOT claimed.
 
 ## Cleanup
 
@@ -280,8 +299,8 @@ After capturing evidence, the local server was stopped.
 ## Non-claims
 
 - **NOT production-ready**: This is a local demo with auth disabled and in-memory storage.
-- **NOT a full quickstart validation**: The API/curl flow is validated. ferrumctl and MCP paths remain scaffold.
-- **NOT tested by a new user**: This was an engineering validation run, not a fresh-user usability test.
+- **NOT a production quickstart validation**: The local API/curl, ferrumctl, and MCP paths are validated only on loopback with disabled auth/in-memory SQLite.
+- **NOT an independent external fresh-user or target-host test**: Validation was engineering-run and local only.
 - **NOT target-host validated**: Ran on a local workstation against loopback only.
 - **NOT a Block A closure**: No real domain or DNS was used. Block A remains WAIVED/CONDITIONAL.
 - **NOT a G2 claim**: This evidence does not assert full G2 completion.

@@ -1,6 +1,6 @@
 # 07 — Product Docs Plan
 
-> **Status**: Planning artifact. Docs scaffolds exist; content is not validated.
+> **Status**: Local docs validation complete; production/target-host validation not claimed.
 > **Owner**: Engineering
 > **Last updated**: 2026-05-18
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
@@ -16,15 +16,15 @@ Make FerrumGate understandable and usable by someone outside the project team. C
 
 - Implementation/evidence/runbook docs are extensive.
 - No product-facing landing doc.
-- No quickstart validated end-to-end. API/curl flow validated locally through lineage endpoint; ferrumctl and MCP locally validated after bugfix.
-- Guide scaffolds created in `docs/guides/`; quickstart API/curl path has local validation evidence; ferrumctl and MCP have local validation evidence.
+- Quickstart validated locally end-to-end for API/curl, ferrumctl, and MCP after docs corrections; target-host/cloud validation is not claimed.
+- Guide scaffolds created in `docs/guides/`; quickstart, ferrumctl, MCP, and Zola landing scaffold have local validation evidence.
 
 ## Gaps
 
 | Gap | Why |
 |-----|-----|
 | No "What is FerrumGate?" landing | External users cannot understand the product |
-| No validated quickstart | Cannot prove a new user can get running in <30 min |
+| No target-host or external-user validated quickstart | Local engineering-run path is validated; target-host/cloud and independent external-user quickstart still need operator/user validation |
 | No concepts guide | Users do not understand intent/capability/provenance |
 | No MCP client integration guide | MCP users cannot configure the server |
 | No policy authoring guide | Policy authors must read code |
@@ -42,7 +42,7 @@ Make FerrumGate understandable and usable by someone outside the project team. C
    - [x] Validate curl/API version — full API/curl flow validated locally (`healthz` through `lineage`).
    - [x] Validate ferrumctl version — all 7 tested commands pass locally after bugfix.
    - [x] Validate MCP version — all tested tools pass locally after bugfix (connection, auth, lifecycle, read queries, query_lineage).
-   - [x] Time the flow — API/curl flow elapsed 0.384 s locally; ferrumctl test execution 0.367 s; supports <30 min target for validated paths.
+   - [x] Time the flow — engineering local re-run completed API/curl + ferrumctl + MCP in approximately 5 minutes excluding pre-existing build; supports <30 min target for local scope.
 
 3. **Concepts guide**
    - [x] Explain: Intent, Proposal, Policy decision, Capability, Approval, Rollback class, Provenance, Lineage, Adapter, R0/R1/R2/R3 — `docs/guides/concepts.md` expanded with architecture overview and lineage chain.
@@ -52,9 +52,9 @@ Make FerrumGate understandable and usable by someone outside the project team. C
    - [ ] Generate/link OpenAPI spec (post-v1).
 
 5. **MCP integration guide**
-   - [ ] How to run MCP server.
-   - [ ] Sample client config.
-   - [ ] Tools list, auth setup, security warnings.
+   - [x] How to run MCP server.
+   - [x] Sample client config.
+   - [x] Tools list, auth setup, security warnings.
 
 6. **Policy authoring guide**
    - [ ] Schema, examples, templates, common patterns.
@@ -71,7 +71,7 @@ Make FerrumGate understandable and usable by someone outside the project team. C
 
 ## Acceptance criteria
 
-- [-] DOC-1 (PARTIAL / NOT CLOSED): API/curl flow + ferrumctl + MCP complete in <30 min — validated locally (API/curl 0.384 s, ferrumctl 0.367 s, MCP regression 0.33 s). Fresh-user test NOT performed. Acceptance criterion remains OPEN.
+- [x] DOC-1 (LOCAL COMPLETE): API/curl flow + ferrumctl + MCP complete in <30 min for local engineering scope — engineering local re-run passed after docs corrections. Independent external fresh-user, target-host/cloud validation, and production readiness are NOT claimed.
 - [x] DOC-2 (LOCAL COMPLETE): All local demo paths (API/curl, ferrumctl, MCP) run without live secrets — `auth_mode=disabled` for API/curl/ferrumctl; MCP used documented dummy placeholder token because MCP has its own auth gate. Target-host validation NOT claimed.
 - [x] DOC-3 (COMPLETE): Docs state production-ready limitations correctly — hosted-deployment.md DEP-4 corrected to target-host validated; Block A/DuckDNS context added; no overclaims found.
 - [x] DOC-4 (COMPLETE): MCP client config example exists in `docs/guides/mcp-integration.md`.

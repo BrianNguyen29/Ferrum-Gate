@@ -23,11 +23,11 @@
 
 | File | Purpose |
 |------|---------|
-| `site/config.toml` | Zola site configuration with status banner and Block A notice in extra vars |
+| `site/config.toml` | Zola site configuration with status banner and Block A notice in extra vars; `base_url` set to local-only `http://127.0.0.1:1111` |
 | `site/templates/base.html` | Base HTML template with header, footer, and status banner |
 | `site/templates/index.html` | Landing page content: problem solved, when to use, when NOT to use, architecture, quickstart CTA, doc grid, status table |
 | `site/static/css/main.css` | Professional dark-theme stylesheet |
-| `site/content/_index.md` | Root page front matter |
+| `site/content/_index.md` | Landing page front matter plus summary content, status, blockers, and quick links |
 
 The landing page includes:
 - Prominent `production-ready = NO` banner
@@ -48,16 +48,17 @@ The landing page includes:
 
 | Item | Reason |
 |------|--------|
-| Zola build | `zola` binary is not installed in this environment. The scaffold uses standard Zola conventions and is expected to build when `zola build` is run. `make site-build` target is optional and documented as such. |
-| Fresh-user test (DOC-1) | Still not performed. Independent fresh-user test remains required to close DOC-1. |
+| Zola build | Validated with official Zola `0.22.1` Linux x86_64 release binary; SHA-256 matched `0ca09aa40376aaa9ddfb512ff9ad963262ef95edb0d0f2d5ec6961b6f5cf22ef`; installed to `~/.local/bin/zola`; `make site-build` passed. |
+| Engineering local quickstart re-run (DOC-1) | Performed for local scope only. API/curl, ferrumctl, and MCP local paths passed after docs corrections. Independent external fresh-user usability testing is not claimed. |
 | Target-host guide validation | Guides were expanded from local code and existing evidence; no new target-host actions were taken. |
 | OpenAPI spec | Not generated; API guide links to source code instead. |
+| Deployed domain | None. `site/config.toml` `base_url` is set to `http://127.0.0.1:1111` (local-only). No real domain or DNS is configured. |
 
 ## Blockers that remain
 
 | Blocker | Status | Impact |
 |---------|--------|--------|
-| DOC-1 fresh-user test | NOT performed | Cannot claim quickstart is fully validated for new users |
+| DOC-1 engineering local validation | LOCAL COMPLETE | Local quickstart is validated for API/curl + ferrumctl + MCP; independent external fresh-user and target-host/cloud validation are not claimed |
 | Block A (real owned domain/DNS) | WAIVED/CONDITIONAL | Cannot claim full G2 closure; DuckDNS accepted for pilot only |
 | HA / multi-node | Not implemented | Production deployment at scale requires Phase 9 work |
 | OpenAPI spec generation | Deferred | API guide is manual; machine-readable spec is future work |
@@ -69,12 +70,16 @@ The landing page includes:
 - [x] Operator guide includes backup/restore, token rotation, monitoring, incident response
 - [x] Adapter reference includes all 5 adapters with rollback and risk caveats
 - [x] Zola scaffold files exist (config.toml, templates, CSS, content)
+- [x] `site/config.toml` `base_url` is local-only (`http://127.0.0.1:1111`) and does not imply a real deployed domain
+- [x] `site/content/_index.md` includes meaningful summary content, status, blockers, and quick links
+- [x] Official Zola `0.22.1` Linux x86_64 archive checksum matched and `make site-build` produced `site/public/` output
+- [x] Engineering local quickstart re-run passed for API/curl, ferrumctl, and MCP after docs corrections
 - [x] No production-ready/full-G2/Block-A-closed claims in any new or updated file
 - [x] Grep check for "production-ready" confirms all occurrences are in caveat banners or status tables
 
 ## Non-claims
 
 - **NOT a public website**: The `site/` scaffold is local-only. No deployment, domain, or hosting is configured.
-- **NOT validated by build**: Zola build was not run locally due to missing binary.
+- **NOT deployed**: Zola build was validated locally, but no public hosting, real domain, or DNS was configured.
 - **NOT a substitute for OpenAPI**: The API guide is human-readable reference; a machine-readable spec is planned.
 - **NOT changing production posture**: These are documentation-only changes.

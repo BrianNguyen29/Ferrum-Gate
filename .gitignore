@@ -16,5 +16,6 @@ Cargo.lock
 *.bak
 coverage/
 dist/
+/site/public/
 __pycache__/
 *.pyc

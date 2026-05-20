@@ -195,3 +195,30 @@ pub struct UpdatePolicyBundleRequest {
 pub struct SetPolicyBundleActiveRequest {
     pub active: bool,
 }
+
+/// Request to simulate a policy bundle against a sample proposal.
+/// Side-effect free: no proposal, bundle, or provenance is persisted.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct PolicyBundleSimulateRequest {
+    /// The YAML content of the policy bundle to evaluate.
+    pub bundle_yaml: String,
+    /// The sample proposal to evaluate against.
+    pub proposal: crate::ActionProposal,
+    /// Optional intent envelope. If omitted, a minimal intent is scaffolded
+    /// from the proposal.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub intent: Option<crate::IntentEnvelope>,
+}
+
+/// Response for the policy bundle simulate endpoint.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct PolicyBundleSimulateResponse {
+    /// The decision produced by the bundle (or Allow if no rule matched).
+    pub decision: crate::Decision,
+    /// Human-readable explanation of the decision.
+    pub reason: String,
+    /// IDs of matched rules, if any.
+    pub matched_rule_ids: Vec<String>,
+    /// Advisory warnings (e.g. unknown matchers encountered).
+    pub warnings: Vec<String>,
+}

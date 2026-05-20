@@ -2,10 +2,10 @@
 
 ## Status
 
-- **Scope**: DOC-3 doc review + local ferrumctl validation + local MCP validation + fresh-user usability status.
-- **Verdict**: DOC-3 ✅ COMPLETE (after edits). ferrumctl ✅ LOCALLY VALIDATED (7/7 commands pass after bugfix). MCP ✅ LOCALLY VALIDATED (all tested tools pass after bugfix). Fresh-user ❌ BLOCKED.
+- **Scope**: DOC-3 doc review + local ferrumctl validation + local MCP validation + usability status.
+- **Verdict**: DOC-3 ✅ COMPLETE (after edits). ferrumctl ✅ LOCALLY VALIDATED (7/7 commands pass after bugfix). MCP ✅ LOCALLY VALIDATED (all tested tools pass after bugfix). Engineering local quickstart validation ✅ COMPLETE after docs corrections.
 - **Production-ready**: NO.
-- **Full quickstart end-to-end**: LOCALLY VALIDATED — API/curl, ferrumctl, and MCP locally validated; fresh-user test NOT performed.
+- **Full quickstart end-to-end**: LOCALLY VALIDATED — API/curl, ferrumctl, and MCP locally validated by engineering; independent external fresh-user validation is not claimed.
 - **Target-host / cloud**: NOT CLAIMED.
 - **Block A**: WAIVED/CONDITIONAL — DuckDNS accepted for single-node SQLite pilot only; real owned domain required for production-ready/full G2.
 
@@ -144,7 +144,7 @@ Rust fixes were applied and package tests passed:
 cargo test --package ferrumctl
 ```
 
-Result: 53 passed.
+Original bugfix regression result: 53 passed. Later POL-1, UX-1/UX-2/UX-3/UX-6, and UX-5 CLI additions increased the ferrumctl package test count to 71 passed; the original regression remains valid.
 
 #### Regression execution
 

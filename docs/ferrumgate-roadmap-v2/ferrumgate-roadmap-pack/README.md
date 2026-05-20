@@ -69,3 +69,15 @@ For canonical v1 implementation status and release/pilot routing, see
 [`../../ferrumgate-roadmap-v1/09-implementation-path.md`](../../ferrumgate-roadmap-v1/09-implementation-path.md)
 and `../../implementation-path/01-current-state.md`. This roadmap-v2 pack remains a planning
 reference and does not override the v1 support contract.
+
+## Relationship to `docs/production-readiness-v2/`
+
+The `docs/production-readiness-v2/` doc pack is the **current active post-pilot
+execution and evidence planning layer**. It supplements—but does not
+supersede—this roadmap-v2 pack.
+
+- This roadmap-v2 pack remains a **historical/baseline planning reference**.
+- `docs/production-readiness-v2/` contains the scoped post-pilot production path
+  (SLO/SLA, PostgreSQL hardening, target-host MCP validation, security/tenant
+  ADR) and is anchored to the canonical [`docs/ROADMAP.md`](../../ROADMAP.md).
+- No doc in either pack claims production-ready status.

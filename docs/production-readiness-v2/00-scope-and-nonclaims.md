@@ -65,6 +65,13 @@ Lock the scope of the post-conditional-pilot production path and make all non-cl
 - SOC2/enterprise compliance evidence pack.
 - Visual policy builder or web admin dashboard.
 
+## Naming crosswalk
+
+See [`docs/ROADMAP.md` §"Naming crosswalk"](../../ROADMAP.md#naming-crosswalk) for the canonical distinction between:
+- **ROADMAP Phase 0–9** (current post-pilot execution sequence)
+- **Priority labels P0–P3** (task urgency within a phase)
+- **Legacy quarters Q1–Q4** (historical baseline roadmap-v2 work packages)
+
 ## Glossary
 
 | Term | Definition |
@@ -82,6 +89,14 @@ Lock the scope of the post-conditional-pilot production path and make all non-cl
 ## Evidence required
 
 - Review signoff: engineering confirms no doc overclaims readiness.
+
+## Relationship to legacy roadmap docs
+
+This doc pack **supplements**—it does not supersede—the
+[`docs/ferrumgate-roadmap-v2/ferrumgate-roadmap-pack/`](../ferrumgate-roadmap-v2/ferrumgate-roadmap-pack/README.md).
+The legacy roadmap-v2 pack remains the historical/baseline planning reference.
+`docs/production-readiness-v2/` is the current active post-pilot execution and
+evidence planning layer.
 
 ## Related docs
 

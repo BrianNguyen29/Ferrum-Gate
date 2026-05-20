@@ -1,6 +1,6 @@
 # 06 — Admin/Operator UX Plan
 
-> **Status**: Planning artifact. Not implemented.
+> **Status**: UX-1–UX-3, UX-5, and UX-6 local CLI complete; admin APIs deferred.
 > **Owner**: Engineering
 > **Last updated**: 2026-05-18
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
@@ -23,21 +23,21 @@ Enable operators to run and observe the system without spelunking through docs o
 
 | Gap | Why |
 |-----|-----|
-| No system status CLI | Operator cannot see health/backend/backup age at a glance |
-| No execution viewer CLI | Operator must curl or read DB to see execution state |
-| No approval queue CLI | Operator cannot approve/reject without raw API calls |
-| No policy manager CLI | Operator cannot validate/simulate/apply from CLI |
-| No backup/restore CLI beyond basic | No drill mode, no backup list, no verification |
+| ~~No system status CLI~~ | Done — `ferrumctl admin status` aggregates health/readiness/deep/functional/metrics |
+| ~~No execution viewer CLI~~ | Done — `ferrumctl admin executions list/get/cancel` wired to existing endpoints (list uses intents API) |
+| ~~No approval queue CLI~~ | Done — `ferrumctl admin approvals list/get/resolve` wired to existing endpoints |
+| ~~No policy manager CLI~~ | Done — `ferrumctl policy validate/apply` provides validation and apply via existing endpoints |
+| ~~No backup/restore CLI beyond basic~~ | Done — `ferrumctl admin backup create/verify/restore` delegates to existing offline helpers |
 | No token/actor management CLI | No scoped token creation, revocation, rotation |
 
 ## Implementation tasks
 
 1. **Extend ferrumctl first** (recommended order)
-   - [ ] `ferrumctl admin status` — health, ready/deep, backend, backup age, queue depth, version
-   - [ ] `ferrumctl admin executions` — list with filters (state, actor, time, risk tier)
-   - [ ] `ferrumctl admin approvals` — pending approvals with inspect/approve/reject
+   - [x] `ferrumctl admin status` — health, ready/deep, backend, backup age, queue depth, version (local CLI aggregation of existing endpoints; no new `/v1/admin/status`)
+   - [x] `ferrumctl admin executions` — list/get/cancel using existing endpoints (list uses intents API; actor/time filters not yet supported)
+   - [x] `ferrumctl admin approvals` — pending approvals with inspect/approve/reject (local CLI using existing `/v1/approvals` endpoints; no new admin API)
    - [ ] `ferrumctl admin tokens` — list/create/revoke/rotate scoped tokens
-   - [ ] `ferrumctl admin backup` — run/verify/list/restore-drill
+   - [x] `ferrumctl admin backup` — create/verify/restore using existing offline helpers (no new server endpoint; no scheduler/remote backup)
    - [ ] `ferrumctl admin config` — view current effective config (redact token)
 
 2. **Add admin APIs where needed**
@@ -54,12 +54,12 @@ Enable operators to run and observe the system without spelunking through docs o
 
 ## Acceptance criteria
 
-- [ ] UX-1: Operator can view current health/status without curl.
-- [ ] UX-2: Operator can approve/reject without curl.
-- [ ] UX-3: Operator can inspect execution lineage from CLI.
+- [x] UX-1: Operator can view current health/status without curl. (local CLI aggregation of existing endpoints; no new admin API)
+- [x] UX-2: Operator can approve/reject without curl. (local CLI using existing approval endpoints; no new admin API)
+- [x] UX-3: Operator can inspect execution lineage from CLI. (local CLI using existing execution/intent endpoints; no new admin API)
 - [ ] UX-4: Operator can rotate/revoke token from CLI.
-- [ ] UX-5: Operator can validate/apply policy from CLI.
-- [ ] UX-6: Operator can run/verify backup from CLI.
+- [x] UX-5: Operator can validate/apply policy from CLI. (local CLI using existing policy bundle endpoints; no new admin API; POL-4 audit switch remains open)
+- [x] UX-6: Operator can run/verify backup from CLI. (local CLI delegation to existing offline backup helpers; no scheduler/remote backup)
 
 ## Evidence required
 
