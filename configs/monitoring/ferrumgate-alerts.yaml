@@ -248,3 +248,90 @@ groups:
           summary: "FerrumGate instance low disk space"
           description: "Disk space available is {{ $value | humanizePercentage }} on instance {{ $labels.instance }}."
           runbook_url: "https://docs.example.com/runbooks/ferrumgate-disk-space-low"
+
+  # PostgreSQL-specific alerts
+  # NOTE: These alerts use metrics emitted only when ferrumd is configured with
+  # a PostgreSQL DSN. If running SQLite, these metrics are absent and these rules
+  # should NOT be enabled (or will fire as intended if metrics should be present).
+  - name: ferrumgate_postgres
+    interval: 30s
+
+    rules:
+      # PostgreSQL connection down or backend not emitting PG metrics.
+      # TEMPLATE: Enable only when ferrumd is configured with postgres:// DSN.
+      # If you run postgres_exporter separately, prefer:
+      #   up{job="postgres"} == 0
+      - alert: FerrumGatePostgresMetricsAbsent
+        expr: absent(ferrumgate_store_pg_pool_max) == 1
+        for: 2m
+        labels:
+          severity: critical
+          service: ferrumgate
+          team: platform
+        annotations:
+          summary: "FerrumGate PostgreSQL metrics are absent"
+          description: "ferrumd is not emitting PostgreSQL pool metrics. Either the store backend is not PostgreSQL, or the PG connection is lost and the service has stopped reporting."
+          runbook_url: "https://docs.example.com/runbooks/ferrumgate-pg-down"
+
+      # Pool saturation — all connections in use.
+      - alert: FerrumGatePostgresPoolSaturation
+        expr: |
+          (
+            ferrumgate_store_pg_pool_idle == 0
+            and ferrumgate_store_pg_pool_size >= ferrumgate_store_pg_pool_max
+            and ferrumgate_store_pg_pool_max > 0
+          )
+        for: 1m
+        labels:
+          severity: warning
+          service: ferrumgate
+          team: platform
+        annotations:
+          summary: "FerrumGate PostgreSQL connection pool is saturated"
+          description: "PG pool has 0 idle connections out of max. New requests may block or timeout."
+          runbook_url: "https://docs.example.com/runbooks/ferrumgate-pg-pool-saturation"
+
+      # Slow acquire — connection acquisition timeouts.
+      - alert: FerrumGatePostgresSlowAcquire
+        expr: |
+          rate(ferrumgate_store_pg_acquire_timeouts_total[5m]) > 0
+        for: 2m
+        labels:
+          severity: warning
+          service: ferrumgate
+          team: platform
+        annotations:
+          summary: "FerrumGate PostgreSQL connection acquire timeouts"
+          description: "PG pool acquire timeout rate is {{ $value | printf \"%.3f\" }} timeouts/sec. Pool may be undersized or PG may be slow/unreachable."
+          runbook_url: "https://docs.example.com/runbooks/ferrumgate-pg-slow-acquire"
+
+      # Backup stale — PG-specific threshold (relies on generic backup metric).
+      # TEMPLATE: Adjust threshold based on your backup cadence.
+      - alert: FerrumGatePostgresBackupStale
+        expr: |
+          (time() - ferrumgate_backup_last_success_timestamp) > 7200
+        for: 5m
+        labels:
+          severity: warning
+          service: ferrumgate
+          team: platform
+        annotations:
+          summary: "FerrumGate PostgreSQL backup is stale"
+          description: "No successful backup in the last 2 hours. Last backup was {{ $value | humanizeDuration }} ago."
+          runbook_url: "https://docs.example.com/runbooks/ferrumgate-pg-backup-stale"
+
+      # Replication lag — PLACEHOLDER / DEFERRED.
+      # Requires postgres_exporter or equivalent for pg_stat_replication metrics.
+      # Enable only when HA/replication is deployed (PG-5).
+      - alert: FerrumGatePostgresReplicationLag
+        expr: |
+          pg_stat_replication_pg_wal_lsn_diff / 1024 / 1024 / 1024 > 1
+        for: 5m
+        labels:
+          severity: warning
+          service: ferrumgate
+          team: platform
+        annotations:
+          summary: "FerrumGate PostgreSQL replication lag high (TEMPLATE)"
+          description: "Replication lag is {{ $value | printf \"%.2f\" }} GB. Threshold and metric are TEMPLATE — requires postgres_exporter or equivalent. HA/replication not deployed."
+          runbook_url: "https://docs.example.com/runbooks/ferrumgate-pg-replication-lag"

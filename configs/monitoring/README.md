@@ -10,7 +10,7 @@ This directory contains monitoring configuration templates for FerrumGate deploy
 |------|---------|--------|
 | `prometheus-scrape-config.yaml` | Prometheus scrape job for ferrumgate /v1/metrics | Template |
 | `alertmanager-config.yaml` | AlertManager routing and receiver config | Template (local-only default) |
-| `ferrumgate-alerts.yaml` | Prometheus alert rules for ferrumgate | Template |
+| `ferrumgate-alerts.yaml` | Prometheus alert rules for ferrumgate (includes PG-specific rules) | Template |
 
 ## Usage
 
@@ -68,6 +68,20 @@ Or use `prometheus --config.file` to load directly.
      - /etc/prometheus/rules/ferrumgate-alerts.yaml
    ```
 3. Reload Prometheus
+
+#### PostgreSQL Alert Rules
+
+The `ferrumgate-alerts.yaml` file includes a `ferrumgate_postgres` rule group with alerts for:
+
+| Alert | Condition | Notes |
+|-------|-----------|-------|
+| `FerrumGatePostgresMetricsAbsent` | `absent(ferrumgate_store_pg_pool_max) == 1` | **TEMPLATE** — enable only when ferrumd uses PostgreSQL. Uses absence of PG pool metrics as a proxy for PG down / disconnected. |
+| `FerrumGatePostgresPoolSaturation` | `pool_idle == 0` and `pool_size >= pool_max` | Fires when all PG connections are in use. |
+| `FerrumGatePostgresSlowAcquire` | `rate(acquire_timeouts_total[5m]) > 0` | Fires on any acquire timeout. Tune threshold for your workload. |
+| `FerrumGatePostgresBackupStale` | `time() - backup_last_success_timestamp > 7200` | **TEMPLATE** — 2-hour threshold. Adjust to your backup cadence. Relies on generic backup metric. |
+| `FerrumGatePostgresReplicationLag` | `pg_stat_replication_pg_wal_lsn_diff > 1 GB` | **PLACEHOLDER / DEFERRED** — requires `postgres_exporter` or equivalent. Do not enable until HA/replication is deployed. |
+
+**Important**: The PG alert rules are templates. `FerrumGatePostgresMetricsAbsent` is a heuristic (absence of application-level metrics), not a definitive "database is down" signal. For production, supplement with `postgres_exporter` or cloud PG monitoring. The replication-lag alert is a placeholder with a fictional metric name and will not fire without external tooling.
 
 ## Placeholder Values
 

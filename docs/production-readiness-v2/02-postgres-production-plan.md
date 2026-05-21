@@ -38,7 +38,7 @@ PostgreSQL local/runtime foundation is strong:
 | No circuit breaker | High | DB failure can cascade to gateway |
 | No statement timeout | Medium/High | Slow queries can hold connections indefinitely |
 | No PG pool metrics | Medium | Cannot observe pool saturation |
-| No PG-specific alert rules | Medium | Hard to operate without alerts |
+| ~~No PG-specific alert rules~~ | ~~Medium~~ | ~~Hard to operate without alerts~~ ✅ **CLOSED** — template rules added to `configs/monitoring/ferrumgate-alerts.yaml` (2026-05-21). Not deployed to live Prometheus. |
 | No TLS/SSL DSN guidance | Medium | Production PG connection not hardened |
 | No incremental up/down migration engine | Medium/High | Versioned runner exists; full incremental engine not built |
 | No target-host PG drills | High | No evidence of production PG behavior |
@@ -125,6 +125,19 @@ PostgreSQL local/runtime foundation is strong:
 - [x] Emit `ferrumgate_store_pg_acquire_timeouts_total` in `/v1/metrics` when `pool_status` is `Some`.
 - [x] Add pool saturation component to `/v1/readyz/deep`: reports degraded when `idle_connections == 0 && total_connections >= max_connections` for `max > 0`.
 - [x] Tests for metric emission/omission and saturation behavior.
+
+#### PG-2.4 — PostgreSQL alert rules template (COMPLETE)
+
+- [x] Add `ferrumgate_postgres` alert group to `configs/monitoring/ferrumgate-alerts.yaml`.
+- [x] `FerrumGatePostgresMetricsAbsent` — proxy for PG down / not emitting metrics (`absent(ferrumgate_store_pg_pool_max)`).
+- [x] `FerrumGatePostgresPoolSaturation` — fires when `pool_idle == 0` and `pool_size >= pool_max`.
+- [x] `FerrumGatePostgresSlowAcquire` — fires on `rate(acquire_timeouts_total[5m]) > 0`.
+- [x] `FerrumGatePostgresBackupStale` — 2-hour threshold on generic backup timestamp metric.
+- [x] `FerrumGatePostgresReplicationLag` — **placeholder / deferred**; uses fictional metric requiring `postgres_exporter`.
+- [x] Document all alerts as **templates** in `configs/monitoring/README.md`.
+- [x] Create evidence artifact: `docs/implementation-path/artifacts/2026-05-21-pg-alert-rules-evidence.md`.
+
+> **Non-claim**: These are template rules only. They have **not** been validated against a live Prometheus instance or production PG backend. The `MetricsAbsent` alert is a heuristic, not definitive PG-down detection. Replication lag is a placeholder with a non-existent metric name. Operator must review thresholds and metric names before enabling.
 
 ##### PG-2.3b — Reconnect/retry and circuit breaker (DEFERRED — docs-only rationale)
 

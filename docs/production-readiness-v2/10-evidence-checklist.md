@@ -85,6 +85,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 | 1.14 | PG-4a: Schema version table + idempotent runner (PG-4b.1 docs+runner cleanup done, PG-4b.3 rollback strategy doc done; PG-4b.2 incremental engine + CI drift deferred) | Engineering | `pg-migration-evidence.md` + `02-postgres-production-plan.md` §PG-4b | ✅ COMPLETE — PG-4a done; PG-4b.1/4b.3 done; PG-4b.2/CI drift deferred |
 | 1.15 | PG-5: HA ADR approved; primary failure drill documented; RPO/RTO measured | Engineering + Operator | HA ADR + failure drill evidence | ☐ NOT STARTED |
 | 1.16 | PG-6: PostgreSQL scoped token repository implemented and tested | Engineering | `docs/implementation-path/artifacts/2026-05-21-target-slo-mcp-helm-domain-evidence.md` §6 | ✅ COMPLETE — `crates/ferrum-store/src/postgres/tokens.rs` implemented; 72 tests pass with postgres feature; workspace tests pass |
+| 1.17 | PG-2.4: PostgreSQL alert rules template prepared | Engineering | `configs/monitoring/ferrumgate-alerts.yaml` + `docs/implementation-path/artifacts/2026-05-21-pg-alert-rules-evidence.md` | ✅ COMPLETE — template rules added (PG down proxy, pool saturation, slow acquire, backup stale); replication lag placeholder deferred; NOT deployed to live Prometheus |
 
 ## Phase 2 — SLO/SLA and workload evidence
 
