@@ -1,4 +1,4 @@
-.PHONY: help check fmt lint test docs validate tree pretarget audit wal-drill site-build site-serve site-check
+.PHONY: help check fmt lint test docs validate tree pretarget audit wal-drill pg-restart-drill site-build site-serve site-check
 
 help:
 	@echo "make check     - cargo check workspace"
@@ -10,7 +10,8 @@ help:
 	@echo "make tree      - print repository tree"
 	@echo "make pretarget - local pre-target gate (config validation, restore drill, doc presence)"
 	@echo "make audit     - local security audit gate (cargo-deny / cargo-audit)"
-	@echo "make wal-drill - local SQLite WAL crash-recovery drill"
+	@echo "make wal-drill      - local SQLite WAL crash-recovery drill"
+	@echo "make pg-restart-drill - local PostgreSQL container restart recovery drill"
 	@echo "make site-build - build static site with Zola (optional; requires zola binary)"
 	@echo "make site-serve - serve static site locally with Zola (optional; requires zola binary)"
 	@echo "make site-check - check site scaffold presence (no zola required)"
@@ -49,6 +50,10 @@ audit:
 wal-drill:
 	@echo "Running local SQLite WAL crash-recovery drill..."
 	@bash scripts/run_wal_crash_recovery_drill.sh
+
+pg-restart-drill:
+	@echo "Running local PostgreSQL container restart recovery drill..."
+	@bash scripts/run_pg_container_restart_drill.sh
 
 site-build:
 	@echo "Building static site with Zola..."

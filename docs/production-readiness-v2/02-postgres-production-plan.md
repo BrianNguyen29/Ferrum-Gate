@@ -150,8 +150,11 @@ PostgreSQL local/runtime foundation is strong:
 - Describes transparent reconnect on new acquisition, readiness degradation during outage, recovery checks (`readyz/deep`, metrics), and when restart is/is not required.
 - Explicitly states no production-ready claim and no runtime recovery proof beyond local Docker.
 
-**B.2 — Integration test: restart PG container → ferrumd recovers** ☐ DEFERRED
-- Not implemented. Local Docker restart observation exists (2026-05-18) but is not an automated test.
+**B.2 — Integration test: restart PG container → ferrumd recovers** ✅ SCRIPT PREPARED
+- `scripts/run_pg_container_restart_drill.sh` created and locally validated on 2026-05-21.
+- Recovery measured at 14s (target <= 30s).
+- Script is manual/optional; not executed in CI.
+- Evidence: `docs/implementation-path/artifacts/2026-05-21-pg-container-restart-drill-evidence.md`.
 
 **B.3 — Circuit-breaker ADR for multi-node / load-balanced topology** ☐ DEFERRED
 - Deferred to PG-5 HA design.
