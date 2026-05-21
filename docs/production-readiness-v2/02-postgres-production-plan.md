@@ -144,9 +144,11 @@ PostgreSQL local/runtime foundation is strong:
 - [x] Document all alerts as **templates** in `configs/monitoring/README.md`.
 - [x] Create evidence artifact: `docs/implementation-path/artifacts/2026-05-21-pg-alert-rules-evidence.md`.
 - [x] Create alert deployment validation evidence template: `docs/implementation-path/artifacts/TEMPLATE-pg-alert-deployment-evidence.md`.
-- [ ] Live Prometheus alert deployment validated — ☐ **PENDING** (requires operator environment).
+- [x] **Local** `promtool check rules` syntax validation passed — ✅ COMPLETE on 2026-05-21 (`SUCCESS: 21 rules found`). See `docs/implementation-path/artifacts/2026-05-21-pg-local-alert-validation-evidence.md`.
+- [x] **Local** Prometheus readiness endpoint confirmed responding (`/-/ready` returned 200) — ✅ COMPLETE on 2026-05-21. See `docs/implementation-path/artifacts/2026-05-21-pg-local-alert-validation-evidence.md`.
+- [ ] Live Prometheus alert deployment validated (copy `ferrumgate-alerts.yaml` to rules dir, reload, verify rule state, PG alert behavior, AlertManager routing) — ☐ **PENDING** (requires operator environment).
 
-> **Non-claim**: These are template rules only. They have **not** been validated against a live Prometheus instance or production PG backend. `promtool check rules` and live Prometheus evaluation are unavailable in this environment and remain operator/env-dependent. The `MetricsAbsent` alert is a heuristic, not definitive PG-down detection. Replication lag is a placeholder with a non-existent metric name. Operator must review thresholds, metric names, and validate with `promtool` before enabling.
+> **Non-claim**: These are template rules only. **Local** `promtool` syntax validation and Prometheus readiness check passed, but `ferrumgate-alerts.yaml` was **not loaded** into the running Prometheus instance. Live rule evaluation, PG-specific alert behavior, and AlertManager routing remain **untested** and operator-dependent. The `MetricsAbsent` alert is a heuristic, not definitive PG-down detection. Replication lag is a placeholder with a non-existent metric name. Operator must review thresholds, metric names, and validate with `promtool` before enabling.
 
 #### PG-2.5 — TLS/SSL DSN guidance (RUNBOOK COMPLETE)
 
@@ -282,14 +284,17 @@ postgres://user@host:5432/db?sslmode=verify-full&sslcert=/etc/ferrumgate/certs/p
 - [x] Create evidence artifact — ✅ COMPLETE: `docs/implementation-path/artifacts/2026-05-18-pg-restore-drill-evidence.md`.
 - [x] Verify `/v1/readyz/deep` against restored DB — ✅ COMPLETE (HTTP 200, healthy true).
 
-#### PG-3 scheduled backup/retention — RUNBOOK COMPLETE / EXECUTION PENDING
+#### PG-3 scheduled backup/retention — LOCAL EVIDENCE CAPTURED / OPERATOR EXECUTION PENDING
 
 - [x] Document scheduled `pg_dump` procedure with cron and systemd timer examples — ✅ COMPLETE (see `docs/implementation-path/109-p5c-postgresql-backup-restore-runbook.md` §P5c.5).
 - [x] Document retention pruning policy and examples — ✅ COMPLETE (see `docs/implementation-path/109-p5c-postgresql-backup-restore-runbook.md` §P5c.5).
 - [x] Document offsite backup target considerations (GCS, S3, rsync) — ✅ COMPLETE (see below).
-- [ ] Operator deploys and validates scheduled backup on live PostgreSQL — ☐ **PENDING**.
-- [ ] Operator validates retention pruning on live backup target — ☐ **PENDING**.
-- [ ] Operator validates offsite sync success and restore-from-offsite drill — ☐ **PENDING**.
+- [x] **Local** `pg_dump` backup creation and integrity validation — ✅ COMPLETE on 2026-05-21 (local Docker). See `docs/implementation-path/artifacts/2026-05-21-pg-local-scheduled-backup-evidence.md`.
+- [x] **Local** retention pruning simulation (`find -mtime +4 -delete`) — ✅ COMPLETE on 2026-05-21 (local filesystem simulation). See `docs/implementation-path/artifacts/2026-05-21-pg-local-retention-pruning-evidence.md`.
+- [x] **Local** offsite sync simulation (local `cp` + `sha256sum` hash match) — ✅ COMPLETE on 2026-05-21. See `docs/implementation-path/artifacts/2026-05-21-pg-local-offsite-sync-evidence.md`.
+- [ ] Operator deploys and validates scheduled backup on **live production** PostgreSQL — ☐ **PENDING**.
+- [ ] Operator validates retention pruning on **live production** backup target — ☐ **PENDING**.
+- [ ] Operator validates offsite sync success and restore-from-offsite drill on **live production** target — ☐ **PENDING**.
 
 **Offsite backup target considerations**:
 

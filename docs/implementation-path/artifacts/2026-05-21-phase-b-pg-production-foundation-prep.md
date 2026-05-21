@@ -41,6 +41,10 @@
 | B.5 | Evidence checklist updated | `docs/production-readiness-v2/10-evidence-checklist.md` §Phase 1 | ✅ COMPLETE |
 | B.6 | PostgreSQL production plan gaps updated | `docs/production-readiness-v2/02-postgres-production-plan.md` §Gaps | ✅ COMPLETE |
 | B.7 | Evidence templates created | `docs/implementation-path/artifacts/TEMPLATE-pg-*.md` (6 templates) | ✅ COMPLETE — see §10 below |
+| B.8 | Local scheduled backup evidence | `docs/implementation-path/artifacts/2026-05-21-pg-local-scheduled-backup-evidence.md` | ✅ LOCAL EVIDENCE — manual `pg_dump` + restore drill against local Docker PostgreSQL |
+| B.9 | Local retention pruning evidence | `docs/implementation-path/artifacts/2026-05-21-pg-local-retention-pruning-evidence.md` | ✅ LOCAL EVIDENCE — `find -mtime +4 -delete` simulation on local filesystem |
+| B.10 | Local offsite sync evidence | `docs/implementation-path/artifacts/2026-05-21-pg-local-offsite-sync-evidence.md` | ✅ LOCAL EVIDENCE — local `cp` + `sha256sum` hash match simulation |
+| B.11 | Local alert validation evidence | `docs/implementation-path/artifacts/2026-05-21-pg-local-alert-validation-evidence.md` | ✅ LOCAL EVIDENCE — `promtool check rules` (21 rules) + Prometheus `/-/ready` 200 |
 
 ---
 
@@ -89,13 +93,18 @@
 - Recommended default: local `pg_dump` every 15 min → 4-day retention → hourly offsite sync → monthly restore drill.
 - Evidence artifact format defined.
 
+**Local evidence captured**:
+- **Local `pg_dump` backup creation and integrity**: Manual `pg_dump` against local Docker PostgreSQL (`postgres:16`) succeeded; backup file `919 bytes`; `pg_restore -l` listed 4 TOC entries; restore drill to clean drill DB succeeded. See `2026-05-21-pg-local-scheduled-backup-evidence.md`.
+- **Local retention pruning simulation**: Created backdated dump (`touch -d 2026-05-01`); `find -mtime +4 -delete` correctly removed old dump and preserved current dump. See `2026-05-21-pg-local-retention-pruning-evidence.md`.
+- **Local offsite sync simulation**: Copied dump to local offsite sim directory; `sha256sum` hash match verified (`23a59e64...94e32f3`). See `2026-05-21-pg-local-offsite-sync-evidence.md`.
+
 **What remains pending**:
-- Operator must configure and enable scheduler (cron or systemd timer) on live host.
-- Operator must verify backup files are created at the configured interval.
-- Operator must verify retention pruning removes old files as expected.
-- Operator must configure and verify offsite sync.
-- Operator must perform monthly restore drill and verify row counts + `/v1/readyz/deep`.
-- Evidence artifacts: `pg-scheduled-backup-evidence.md`, `pg-retention-pruning-evidence.md`, `pg-offsite-sync-evidence.md` (all pending operator).
+- Operator must configure and enable scheduler (cron or systemd timer) on **live production** host.
+- Operator must verify backup files are created at the configured interval on **live production** target.
+- Operator must verify retention pruning removes old files as expected on **live production** target.
+- Operator must configure and verify offsite sync to **real** GCS/S3/rsync target.
+- Operator must perform monthly restore drill and verify row counts + `/v1/readyz/deep` on **live production** target.
+- Evidence artifacts: `pg-scheduled-backup-evidence.md`, `pg-retention-pruning-evidence.md`, `pg-offsite-sync-evidence.md` (all pending operator production execution).
 
 ---
 
@@ -110,14 +119,18 @@
   5. Optional simulation in non-production.
   6. Evidence artifact template.
 - Added to `configs/monitoring/README.md` and `docs/guides/operator.md`.
-- `promtool check rules` already passed locally on 2026-05-21 (`SUCCESS: 21 rules found`).
+
+**Local evidence captured**:
+- **`promtool check rules` syntax validation**: Passed with `SUCCESS: 21 rules found` using Docker `prom/prometheus:v2.55.1`. See `2026-05-21-pg-local-alert-validation-evidence.md`.
+- **Prometheus readiness endpoint**: `curl -sf http://127.0.0.1:9090/-/ready` returned `Prometheus Server is Ready.` (HTTP 200). See `2026-05-21-pg-local-alert-validation-evidence.md`.
+- **Live rule deployment NOT performed**: Running Prometheus instance loads `/etc/prometheus/rules/intent_api_alerts.yml`, not `ferrumgate-alerts.yaml`. Rule evaluation against live metrics was not tested.
 
 **What remains pending**:
-- Operator must deploy `ferrumgate-alerts.yaml` to their live Prometheus.
-- Operator must verify rules load without error.
+- Operator must deploy `ferrumgate-alerts.yaml` to their **live** Prometheus rules directory and reload.
+- Operator must verify rules load without error via `/api/v1/rules`.
 - Operator must verify PG-specific alerts behave correctly with their ferrumd backend.
 - Operator must validate AlertManager routing (if applicable).
-- Evidence artifact: `pg-alert-deployment-evidence.md` (pending operator).
+- Evidence artifact: `pg-alert-deployment-evidence.md` (pending operator live deployment).
 
 ---
 
