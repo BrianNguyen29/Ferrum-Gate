@@ -1,7 +1,7 @@
 # HA ADR Phase 9 — Concise Planning Backlog
 
 > **Date**: 2026-05-21  
-> **Status**: PLANNING — ADR not yet written; no implementation  
+> **Status**: PLANNING — ADR drafted and operator-reviewable; pending operator review and signoff; no implementation
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md) §Phase 9 / [`docs/production-readiness-v2/09-ha-roadmap.md`](../../production-readiness-v2/09-ha-roadmap.md)  
 > **Non-claims**: HA/multi-node = NO; not production-ready; PostgreSQL production deployment = NO
 
@@ -22,13 +22,13 @@ Current status (2026-05-21):
 - ✅ SLO baseline ratified; canonical SLO Run #3 max-valid PASS.
 - ✅ Backup/restore drill local evidence exists.
 - ☐ PG target/staging production-like deployment NOT yet done.
-- ☐ HA ADR NOT yet drafted.
+- ✅ HA ADR drafted; pending operator review and signoff.
 
 ## Staged plan (from ROADMAP.md)
 
 | Stage | Item | Status |
 |-------|------|--------|
-| HA-1 | HA ADR approved | ☐ NOT STARTED |
+| HA-1 | HA ADR approved | 📝 DRAFT EXISTS — operator-reviewable; pending operator review and signoff |
 | HA-2 | Manual failover drill pass | ☐ NOT STARTED |
 | HA-3 | Read replica behavior documented | ☐ NOT STARTED |
 | HA-4 | Automated failover drill pass | ☐ DEFERRED |

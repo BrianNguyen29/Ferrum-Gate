@@ -83,7 +83,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 | 1.12 | PG-2.3b: Reconnect/retry and circuit breaker | Engineering | `02-postgres-production-plan.md` §PG-2.3b + `docs/guides/operator.md` §PostgreSQL reconnect and recovery + `docs/implementation-path/artifacts/2026-05-21-pg-container-restart-drill-evidence.md` + `docs/implementation-path/artifacts/2026-05-21-pg-2.3b-reconnect-circuit-breaker-backlog.md` | ✅ B.1 COMPLETE — operator runbook documents current PgPool reconnect behavior; B.2 SCRIPT PREPARED and locally validated (14s recovery); **B.3 EXPLICITLY DEFERRED** — circuit breaker ADR deferred until PG-5 HA design begins; **B.4 DEFERRED** — implementation blocked on B.3 ADR and PG-5 topology |
 | 1.13 | PG-3: Local backup/restore drill passes (scheduled backup/retention NOT STARTED) | Engineering | `docs/implementation-path/artifacts/2026-05-18-pg-restore-drill-evidence.md` | ✅ COMPLETE — local Docker drill only; scheduled backup/retention deferred |
 | 1.14 | PG-4a: Schema version table + idempotent runner (PG-4b.1 docs+runner cleanup done, PG-4b.3 rollback strategy doc done; PG-4b.2 incremental engine + CI drift deferred) | Engineering | `pg-migration-evidence.md` + `02-postgres-production-plan.md` §PG-4b | ✅ COMPLETE — PG-4a done; PG-4b.1/4b.3 done; PG-4b.2/CI drift deferred |
-| 1.15 | PG-5: HA ADR approved; primary failure drill documented; RPO/RTO measured | Engineering + Operator | HA ADR + failure drill evidence | ☐ NOT STARTED |
+| 1.15 | PG-5: HA ADR approved; primary failure drill documented; RPO/RTO measured | Engineering + Operator | HA ADR + failure drill evidence | 📝 DRAFT EXISTS — HA ADR drafted and operator-reviewable; pending operator review and signoff; no approval claim; no implementation |
 | 1.16 | PG-6: PostgreSQL scoped token repository implemented and tested | Engineering | `docs/implementation-path/artifacts/2026-05-21-target-slo-mcp-helm-domain-evidence.md` §6 | ✅ COMPLETE — `crates/ferrum-store/src/postgres/tokens.rs` implemented; 72 tests pass with postgres feature; workspace tests pass |
 | 1.17 | PG-2.4: PostgreSQL alert rules template prepared | Engineering | `configs/monitoring/ferrumgate-alerts.yaml` + `docs/implementation-path/artifacts/2026-05-21-pg-alert-rules-evidence.md` | ✅ COMPLETE — template rules added (PG down proxy, pool saturation, slow acquire, backup stale); replication lag placeholder deferred; **live Prometheus/promtool validation unavailable/operator-env-dependent**; NOT deployed to live Prometheus |
 
@@ -157,7 +157,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 | # | Item | Owner | Evidence | Status |
 |---|------|-------|----------|--------|
 | 5.1 | POL-1: Invalid policy returns useful error | Engineering | Test output | ✅ LOCAL CLI COMPLETE — `ferrumctl policy validate` implemented with tests; simulation deferred |
-| 5.2 | POL-2: Simulate returns decision without side effect | Engineering | `crates/ferrum-gateway/src/server.rs` `test_simulate_policy_bundle_*` + `bins/ferrumctl/src/main.rs` CLI parse tests | ✅ COMPLETE — online-only; server required; no store mutation or provenance emission; POL-5 remains open |
+| 5.2 | POL-2: Simulate returns decision without side effect | Engineering | `crates/ferrum-gateway/src/server.rs` `test_simulate_policy_bundle_*` + `bins/ferrumctl/src/main.rs` CLI parse tests | ✅ COMPLETE — online-only; server required; no store mutation or provenance emission; POL-5 complete via 5.5/5.6 |
 | 5.3 | POL-3: Template produces valid policy | Engineering | `docs/implementation-path/artifacts/2026-05-20-pol3-policy-template-validation-evidence.md` | ✅ COMPLETE — 7 templates validated offline with `ferrumctl policy validate`; schema updated to match implemented matcher set |
 | 5.4 | POL-4: Policy switch is auditable | Engineering | `integration_gateway_flow.rs` `test_policy_bundle_active_switch_emits_provenance` | ✅ COMPLETE — provenance events emitted for activation and deactivation |
 | 5.5 | POL-5 design: Version history, diff, and rollback design documented and accepted | Engineering | `05a-policy-version-history-design.md` | ✅ DESIGN COMPLETE — implementation done |
@@ -170,7 +170,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 | 6.1 | UX-1: Operator can view current health/status | Engineering | Demo recording or test | ✅ LOCAL CLI COMPLETE — `ferrumctl admin status` aggregates existing endpoints; no new `/v1/admin/status` |
 | 6.2 | UX-2: Operator can approve/reject without curl | Engineering | Demo recording or test | ✅ LOCAL CLI COMPLETE — `ferrumctl admin approvals list/get/resolve` wired to existing endpoints; no new admin API |
 | 6.3 | UX-3: Operator can inspect execution lineage | Engineering | Demo recording or test | ✅ LOCAL CLI COMPLETE — `ferrumctl admin executions list/get/cancel` wired to existing endpoints; list uses intents API; no new admin API |
-| 6.4 | UX-4: Operator can rotate/revoke token | Engineering | Demo recording or test | 🚫 BLOCKED (`BLK-UX-4`) — requires scoped token endpoints (Phase 4 token model); blocked until Phase 4 implementation unblocked |
+| 6.4 | UX-4: Operator can rotate/revoke token | Engineering | Demo recording or test | ✅ IMPLEMENTED — `ferrumctl admin tokens` list/create/revoke/rotate complete; BLK-UX-4 closed |
 | 6.5 | UX-5: Operator can validate/apply policy | Engineering | Demo recording or test | ✅ LOCAL CLI COMPLETE — `ferrumctl policy validate/apply` uses existing policy bundle endpoints; no new admin API; POL-4 audit switch remains open |
 | 6.6 | UX-6: Operator can run/verify backup | Engineering | Demo recording or test | ✅ LOCAL CLI COMPLETE — `ferrumctl admin backup create/verify/restore` delegates to existing offline helpers; no scheduler/remote backup |
 
@@ -207,7 +207,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 
 | # | Item | Owner | Evidence | Status |
 |---|------|-------|----------|--------|
-| 9.1 | HA-1: HA ADR approved | Engineering + Operator | `docs/production-readiness-v2/ha-adr.md` signoff | ☐ NOT STARTED — planning-only ADR draft created; no approval claim; no implementation |
+| 9.1 | HA-1: HA ADR approved | Engineering + Operator | `docs/production-readiness-v2/ha-adr.md` signoff | 📝 DRAFT EXISTS — HA ADR drafted and operator-reviewable; pending operator review and signoff; no approval claim; no implementation |
 | 9.2 | HA-2: Manual failover drill pass | Engineering + Operator | Failover drill log | ☐ |
 | 9.3 | HA-3: Read replica behavior documented | Engineering | `ha-read-replica-plan.md` | ☐ |
 | 9.4 | HA-4: Automated failover drill pass (deferred) | Engineering + Operator | Failover drill log | ☐ |

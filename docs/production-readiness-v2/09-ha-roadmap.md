@@ -1,6 +1,6 @@
 # 09 — HA/Multi-Node Roadmap
 
-> **Status**: Planning artifact. ADR-only; no implementation.
+> **Status**: Planning artifact. ADR drafted and operator-reviewable; no implementation.
 > **Owner**: Engineering + Operator
 > **Last updated**: 2026-05-21
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
@@ -17,7 +17,7 @@ Design the path from single-node production to multi-node/HA, starting with an A
 
 - Single-node SQLite is the only supported runtime.
 - PostgreSQL local runtime exists but is not production-deployed.
-- No HA design exists.
+- HA ADR drafted; pending operator review and signoff.
 - No replication configs.
 - No failover runbook.
 
@@ -25,7 +25,7 @@ Design the path from single-node production to multi-node/HA, starting with an A
 
 | Gap | Severity | Why |
 |-----|----------|-----|
-| No HA ADR | Critical | Cannot implement HA without a design |
+| HA ADR drafted; pending operator review | Critical | Cannot implement HA without an approved design |
 | No manual failover runbook | High | Operator cannot recover from primary failure |
 | No read replica plan | High | Read scaling is not possible |
 | No automated failover | Critical | Not true HA without automation |

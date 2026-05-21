@@ -1,6 +1,6 @@
 # HA-ADR-001 — High Availability Architecture Decision Record
 
-> **Status**: PLANNING-ONLY DRAFT — no approval, no implementation.  
+> **Status**: OPERATOR-REVIEWABLE — draft complete; pending operator review and signoff. No approval claim; no implementation.
 > **Owner**: Engineering + Operator  
 > **Last updated**: 2026-05-21  
 > **Parent**: [`docs/production-readiness-v2/09-ha-roadmap.md`](./09-ha-roadmap.md)  
@@ -258,7 +258,28 @@ ferrumd uses one `FERRUMD_STORE_DSN` environment variable (or config field). The
 
 ---
 
-## 9. Cross-references
+## 9. Operator review and signoff request
+
+This ADR is ready for operator review. The operator should read §2 (Options), §3 (Selected strategy), and §7 (Dependency chain), then decide:
+
+1. **Preferred HA path**: Does the operator accept the phased approach (managed PG/manual failover → read replicas → automated failover)?
+2. **Step 1 preference**: Managed PostgreSQL HA (cloud) or status quo + hardened backup for the first production-candidate posture?
+3. **RTO/RPO bounds**: What are the operator's acceptable bounds for Step 2 manual failover?
+4. **Step 3 readiness**: When should Step 3 (automated failover) be evaluated?
+5. **BLK-A-DOM acknowledgment**: Operator acknowledges that real owned domain remains required for production-ready or full G2 closure, and this ADR does not close Block A.
+
+**Signoff block**:
+
+```
+Operator name: ___________________
+Date: ___________________
+Decision: [ ] Approve phased approach  [ ] Request changes  [ ] Defer
+Notes: ___________________
+```
+
+No implementation should begin until this ADR is reviewed and the operator confirms the preferred path.
+
+## 10. Cross-references
 
 - [`docs/production-readiness-v2/09-ha-roadmap.md`](./09-ha-roadmap.md) — HA roadmap and phased plan
 - [`docs/production-readiness-v2/02-postgres-production-plan.md`](./02-postgres-production-plan.md) — PG hardening prerequisites (PG-1 through PG-5)
