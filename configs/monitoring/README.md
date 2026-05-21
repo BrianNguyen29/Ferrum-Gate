@@ -96,6 +96,112 @@ The following placeholders must be replaced before use:
 | `localhost:9093` | Default AlertManager URL (local-only mode default) |
 | `REPLACE_WITH_*` | Various webhook URLs, keys, passwords |
 
+## Alert Deployment Validation Runbook
+
+This section documents how an operator deploys the FerrumGate alert templates to a live Prometheus instance and validates them. It is a **runbook** — no live deployment has been performed in the engineering environment.
+
+### Prerequisites
+
+| Check | How | Gate |
+|-------|-----|------|
+| Prometheus server running | `curl http://<prometheus>:9090/-/healthy` returns `Prometheus Server is Healthy.` | Block if not 200 |
+| `promtool` installed | `promtool --version` succeeds | Block if missing |
+| AlertManager running (if routing alerts) | `curl http://<alertmanager>:9093/-/healthy` returns `OK` | Warn if missing |
+| `ferrumgate-alerts.yaml` reviewed | Operator has read this README and the alert descriptions above | Required |
+
+### Step 1 — Syntax validation with promtool
+
+```bash
+# Validate rule syntax before deployment
+promtool check rules configs/monitoring/ferrumgate-alerts.yaml
+```
+
+- **Pass**: `SUCCESS: 21 rules found` (or equivalent; rule count may change).
+- **Fail**: Fix syntax errors before proceeding.
+- **Evidence**: Capture `promtool` output.
+
+### Step 2 — Deploy to Prometheus rules directory
+
+```bash
+# Copy rules to Prometheus rules path (path is operator-specific)
+sudo cp configs/monitoring/ferrumgate-alerts.yaml /etc/prometheus/rules/
+
+# Ensure prometheus.yml includes the rules file
+# rule_files:
+#   - /etc/prometheus/rules/ferrumgate-alerts.yaml
+
+# Reload Prometheus (method depends on deployment)
+curl -X POST http://localhost:9090/-/reload
+# or
+sudo systemctl reload prometheus
+```
+
+- **Pass**: Prometheus reloads without error; `/api/v1/rules` shows `ferrumgate` group.
+- **Fail**: Check Prometheus logs for rule-loading errors.
+- **Evidence**: Screenshot or curl output of `/api/v1/rules` showing loaded groups.
+
+### Step 3 — Verify rule evaluation state
+
+```bash
+# List all rules and their evaluation state
+curl -s "http://<prometheus>:9090/api/v1/rules" | jq '.data.groups[] | select(.name == "ferrumgate")'
+
+# Check a specific alert state
+curl -s "http://<prometheus>:9090/api/v1/rules" | jq '.data.groups[] | select(.name == "ferrumgate_postgres") | .rules[] | {name, state}'
+```
+
+- **Pass**: All rules show `state: inactive` (normal) or documented expected state.
+- **Fail**: Rules in `firing` unexpectedly; investigate metric availability or thresholds.
+- **Evidence**: JSON output or screenshot of rule states.
+
+### Step 4 — Validate PG-specific alert behavior (if PG backend is active)
+
+If ferrumd is running with PostgreSQL and Prometheus is scraping `/v1/metrics`:
+
+```bash
+# Confirm PG pool metrics are present
+curl -s "http://<prometheus>:9090/api/v1/query?query=ferrumgate_store_pg_pool_max"
+
+# Confirm the absence-based alert is not falsely firing
+curl -s "http://<prometheus>:9090/api/v1/query?query=ALERTS{alertname=\"FerrumGatePostgresMetricsAbsent\"}"
+```
+
+- **Pass**: `ferrumgate_store_pg_pool_max` returns a value; `MetricsAbsent` alert is not active.
+- **Fail**: Metrics missing → check scrape config and ferrumd store backend.
+- **Evidence**: Query result JSON.
+
+### Step 5 — Simulate an alert condition (optional, non-production only)
+
+In a non-production environment, temporarily trigger an alert to verify AlertManager routing:
+
+```bash
+# Example: artificially stop ferrumd to cause metrics absence
+# (Only in test/staging environments)
+# Then verify AlertManager receives the alert:
+curl -s "http://<alertmanager>:9093/api/v2/alerts?filter=alertname=\"FerrumGatePostgresMetricsAbsent\""
+```
+
+- **Pass**: Alert appears in AlertManager with correct labels and annotations.
+- **Fail**: Alert missing → check Prometheus → AlertManager connectivity and routing config.
+- **Evidence**: AlertManager UI screenshot or API response.
+
+### Step 6 — Evidence artifact
+
+After validation, create:
+
+**Path**: `docs/implementation-path/artifacts/YYYY-MM-DD-pg-alert-deployment-evidence.md`
+
+Template sections:
+1. **Environment** — Prometheus version, AlertManager version, ferrumd backend.
+2. **promtool validation** — output and result.
+3. **Deployment method** — copy path, reload method.
+4. **Rule evaluation state** — screenshot or API output.
+5. **PG-specific alert check** — metric presence, alert state.
+6. **Simulation results** (if performed) — trigger method, AlertManager receipt.
+7. **Operator signoff** — blank until signed.
+
+> **Non-claim**: This runbook documents the intended validation procedure. No live Prometheus evaluation of these specific rules was performed in the engineering environment because the running Prometheus instance loads a different rule file (`intent_api_alerts.yml`). Operator must execute this runbook in their environment and create the evidence artifact.
+
 ## Non-Claims
 
 - **NOT production-ready configuration**

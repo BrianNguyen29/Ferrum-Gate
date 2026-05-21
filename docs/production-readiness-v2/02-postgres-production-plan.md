@@ -2,7 +2,7 @@
 
 > **Status**: Planning artifact. Production PG not deployed.
 > **Owner**: Engineering
-> **Last updated**: 2026-05-18
+> **Last updated**: 2026-05-21
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
 > **Scope**: [`00-scope-and-nonclaims.md`](00-scope-and-nonclaims.md)
 
@@ -46,12 +46,12 @@ PostgreSQL local/runtime foundation is strong:
 | No statement timeout | Medium/High | Slow queries can hold connections indefinitely |
 | No PG pool metrics | Medium | Cannot observe pool saturation |
 | ~~No PG-specific alert rules~~ | ~~Medium~~ | ~~Hard to operate without alerts~~ ✅ **CLOSED** — template rules added to `configs/monitoring/ferrumgate-alerts.yaml` (2026-05-21). Not deployed to live Prometheus. |
-| No TLS/SSL DSN guidance | Medium | Production PG connection not hardened |
+| ~~No TLS/SSL DSN guidance~~ | ~~Medium~~ | ~~Production PG connection not hardened~~ ✅ **CLOSED** — TLS/SSL DSN guidance documented in §PG-2.5 and `docs/guides/operator.md` (2026-05-21). Not deployed to live production PG. |
 | No incremental up/down migration engine | Medium/High | Versioned runner exists; full incremental engine not built |
 | No target-host PG drills | High | No evidence of production PG behavior |
 | No PG restore drill evidence | High | Backup docs exist; evidence does not |
 | No CI for postgres feature | Medium | Drift risk |
-| No PgBouncer/connection pooling story | Medium | Scaling is difficult |
+| ~~No PgBouncer/connection pooling story~~ | ~~Medium~~ | ~~Scaling is difficult~~ ✅ **CLOSED** — PgBouncer and pooling options documented in §PG-2.6 and `docs/guides/operator.md` (2026-05-21). No live deployment claimed. |
 | No HA/failover | Critical | No production HA |
 | No replication configs | High | No standby/read replica |
 | No failover runbook | High | No promote/reroute procedure |
@@ -146,6 +146,79 @@ PostgreSQL local/runtime foundation is strong:
 
 > **Non-claim**: These are template rules only. They have **not** been validated against a live Prometheus instance or production PG backend. `promtool check rules` and live Prometheus evaluation are unavailable in this environment and remain operator/env-dependent. The `MetricsAbsent` alert is a heuristic, not definitive PG-down detection. Replication lag is a placeholder with a non-existent metric name. Operator must review thresholds, metric names, and validate with `promtool` before enabling.
 
+#### PG-2.5 — TLS/SSL DSN guidance (RUNBOOK COMPLETE)
+
+- [x] Document PostgreSQL TLS connection options for ferrumd.
+- [x] Explain DSN parameters: `sslmode=require`, `sslmode=verify-ca`, `sslmode=verify-full`.
+- [x] Document certificate file paths (`sslcert`, `sslkey`, `sslrootcert`) and permissions.
+- [x] Provide example DSNs for common deployment patterns.
+- [x] Cross-reference operator guide (`docs/guides/operator.md`) for TLS setup steps.
+- [ ] Live TLS-encrypted PG connection validated on target host — ☐ **PENDING** (requires operator-provisioned PG with TLS).
+
+**DSN examples**:
+
+```text
+# Require TLS but do not verify server certificate (minimum for encrypted transport)
+postgres://user:pass@host:5432/db?sslmode=require
+
+# Verify server certificate against a CA bundle
+postgres://user:pass@host:5432/db?sslmode=verify-ca&sslrootcert=/etc/ferrumgate/certs/pg-ca.crt
+
+# Verify server certificate and hostname (strongest)
+postgres://user:pass@host:5432/db?sslmode=verify-full&sslrootcert=/etc/ferrumgate/certs/pg-ca.crt
+
+# Client certificate authentication (no password in DSN)
+postgres://user@host:5432/db?sslmode=verify-full&sslcert=/etc/ferrumgate/certs/pg-client.crt&sslkey=/etc/ferrumgate/certs/pg-client.key&sslrootcert=/etc/ferrumgate/certs/pg-ca.crt
+```
+
+**Operational notes**:
+- `sqlx` passes TLS parameters through to the underlying `tokio-postgres` / `native-tls` or `rustls` stack.
+- Client key files must be readable by the `ferrumd` process user (e.g., `ferrumgate:ferrumgate`) and **must not** be world-readable (`chmod 600`).
+- In containerized deployments, mount certificates as secrets (Kubernetes Secret, Docker secret, or equivalent).
+- Certificate rotation requires a `ferrumd` restart because the DSN and TLS config are loaded once at startup.
+
+> **Non-claim**: TLS DSN guidance is documented as a runbook only. No live TLS-encrypted PostgreSQL connection has been validated. Operator must procure certificates and test connectivity independently.
+
+#### PG-2.6 — PgBouncer / connection pooling story (RUNBOOK COMPLETE)
+
+- [x] Document PgBouncer as an optional intermediary between ferrumd and PostgreSQL.
+- [x] Explain when PgBouncer adds value vs. direct `sqlx::PgPool`.
+- [x] Provide recommended `pool_mode` and session/transaction considerations.
+- [x] Document connection count math (ferrumd pool max × ferrumd instances → PgBouncer pool size).
+- [x] Cross-reference operator guide (`docs/guides/operator.md`) for setup steps.
+- [ ] Live PgBouncer deployment validated — ☐ **PENDING** (requires operator environment).
+
+**When to use PgBouncer**:
+
+| Scenario | Recommendation |
+|----------|----------------|
+| Single ferrumd instance, modest concurrency | Direct `sqlx::PgPool` is sufficient. PgBouncer optional. |
+| Multiple ferrumd instances behind a load balancer | **PgBouncer recommended** — centralizes connection limit enforcement and prevents PG connection exhaustion. |
+| Short-lived connections or high churn | **PgBouncer recommended** — `transaction` pooling mode reduces PG backend process count. |
+| Prepared statements or session features required | Use `session` pool mode (or direct connections) because `transaction` mode does not preserve session state. |
+
+**Recommended default for FerrumGate**:
+
+- **Pool mode**: `transaction` (if no prepared statements or session features are used).
+- **PgBouncer `max_client_conn`**: Sum of all ferrumd instance `pg_max_connections` + headroom (e.g., 20%).
+- **PgBouncer `default_pool_size`**: PostgreSQL `max_connections` divided by number of PgBouncer instances minus overhead for admin/monitoring.
+- **ferrumd DSN**: Point at PgBouncer instead of PostgreSQL directly:
+  ```text
+  postgres://user:pass@pgbouncer-host:6432/ferrumgate?sslmode=require
+  ```
+
+**Operational notes**:
+- `sqlx::PgPool` already maintains an application-side connection pool. Adding PgBouncer creates a two-tier pool. Tune both layers to avoid over-provisioning.
+- If PgBouncer is in `transaction` mode, `SET` commands (such as `statement_timeout` applied by ferrumd in `after_connect`) may behave differently. Test thoroughly.
+- PgBouncer becomes a new single point of failure unless itself made HA (e.g., with HAProxy failover or multiple PgBouncer instances).
+
+**Trigger for enabling PgBouncer**:
+- More than 2 ferrumd instances connect to the same PostgreSQL.
+- PostgreSQL `max_connections` is approached under normal load.
+- Connection churn (frequent connect/disconnect) is observed in PG logs.
+
+> **Non-claim**: PgBouncer guidance is documented as a runbook only. No live PgBouncer deployment has been validated with ferrumd. Operator must test in their environment before production use.
+
 ##### PG-2.3b — Reconnect/retry and circuit breaker (PARTIAL — B.1 docs complete; B.2–B.4 deferred)
 
 > **Oracle verdict**: PG-2.3b code implementation is **deferred entirely**.
@@ -205,13 +278,36 @@ PostgreSQL local/runtime foundation is strong:
 - [x] Create evidence artifact — ✅ COMPLETE: `docs/implementation-path/artifacts/2026-05-18-pg-restore-drill-evidence.md`.
 - [x] Verify `/v1/readyz/deep` against restored DB — ✅ COMPLETE (HTTP 200, healthy true).
 
-#### PG-3 scheduled backup/retention — NOT STARTED / DEFERRED
+#### PG-3 scheduled backup/retention — RUNBOOK COMPLETE / EXECUTION PENDING
 
-- [ ] Implement scheduled `pg_dump` or WAL backup — ☐ NOT STARTED.
-- [ ] Implement retention pruning — ☐ NOT STARTED.
-- [ ] Offsite or production backup target validation — ☐ NOT STARTED.
+- [x] Document scheduled `pg_dump` procedure with cron and systemd timer examples — ✅ COMPLETE (see `docs/implementation-path/109-p5c-postgresql-backup-restore-runbook.md` §P5c.5).
+- [x] Document retention pruning policy and examples — ✅ COMPLETE (see `docs/implementation-path/109-p5c-postgresql-backup-restore-runbook.md` §P5c.5).
+- [x] Document offsite backup target considerations (GCS, S3, rsync) — ✅ COMPLETE (see below).
+- [ ] Operator deploys and validates scheduled backup on live PostgreSQL — ☐ **PENDING**.
+- [ ] Operator validates retention pruning on live backup target — ☐ **PENDING**.
+- [ ] Operator validates offsite sync success and restore-from-offsite drill — ☐ **PENDING**.
 
-> **Non-claim**: PG-3 local drill evidence is complete, but scheduled backup, retention pruning, and production backup targets remain NOT STARTED. Do not cite this artifact as evidence of production backup automation.
+**Offsite backup target considerations**:
+
+| Target | Method | Pros | Cons |
+|--------|--------|------|------|
+| GCS / S3 | `gsutil rsync` or `aws s3 sync` after local `pg_dump` | Durable, geo-redundant, scalable | Requires service account / IAM credentials; egress cost |
+| rsync / SFTP | `rsync -avz` to remote host | Simple, no cloud dependency | Remote host availability, bandwidth, retention management |
+| Managed PG backup | Cloud provider automated backup (RDS, Cloud SQL) | Zero operator effort, point-in-time recovery | Vendor lock-in, cost, may not meet custom RPO |
+
+**Recommended default for FerrumGate**:
+
+1. **Local `pg_dump`** every 15 minutes (cron or systemd timer) to `/var/backups/ferrumgate-postgres/`.
+2. **Retention pruning**: keep 4 days of local dumps (`find -mmin +$((15*4*24)) -delete`).
+3. **Offsite sync**: hourly `rsync` or `gsutil rsync` of the latest dump to offsite storage.
+4. **Restore drill**: monthly restore drill to a clean drill database; verify row counts and `/v1/readyz/deep`.
+
+**Evidence required for execution completion**:
+- `docs/implementation-path/artifacts/YYYY-MM-DD-pg-scheduled-backup-evidence.md`
+- `docs/implementation-path/artifacts/YYYY-MM-DD-pg-retention-pruning-evidence.md`
+- `docs/implementation-path/artifacts/YYYY-MM-DD-pg-offsite-sync-evidence.md`
+
+> **Non-claim**: PG-3 local drill evidence is complete. Scheduled backup, retention pruning, and offsite sync **runbooks** are complete (documented in `109-p5c-postgresql-backup-restore-runbook.md` and this section). **Execution on a live production PostgreSQL remains PENDING**. Do not cite this doc as evidence of production backup automation until operator-deployed evidence artifacts exist.
 
 ### Phase PG-4 — Schema migration discipline
 
@@ -306,7 +402,10 @@ PostgreSQL local/runtime foundation is strong:
 |------|----------|
 | PG-1 | `FERRUMD_STORE_DSN=postgres://...` and `/v1/readyz/deep = 200` |
 | PG-2 | Restart PG during test → ferrumd recovers or fails closed cleanly |
+| PG-2.5 | TLS/SSL DSN guidance documented with examples and operator setup steps |
+| PG-2.6 | PgBouncer/pooling options documented with recommendations, triggers, and caveats |
 | PG-3 | `pg_dump exit 0`, `pg_restore exit 0`, restored row count matches, readiness after restore pass |
+| PG-3.1 | Scheduled backup/retention/offsite runbook complete; execution pending operator environment |
 | PG-4 | Migration can run twice safely; version recorded; parity/rollback strategy documented; CI drift check deferred |
 | PG-5 | HA ADR approved; primary failure drill documented; RPO/RTO measured for manual failover |
 
@@ -316,6 +415,13 @@ PostgreSQL local/runtime foundation is strong:
 - `pg-restore-drill-evidence.md`
 - `pg-migration-evidence.md`
 - `pg-ha-adr.md`
+- `docs/implementation-path/artifacts/2026-05-21-phase-b-pg-production-foundation-prep.md` — Phase B consolidated artifact (TLS, PgBouncer, scheduled backup, alert deployment)
+- `pg-scheduled-backup-evidence.md` (operator-deployed; pending)
+- `pg-retention-pruning-evidence.md` (operator-deployed; pending)
+- `pg-offsite-sync-evidence.md` (operator-deployed; pending)
+- `pg-tls-dsn-evidence.md` (operator-deployed; pending)
+- `pg-pgbouncer-evidence.md` (operator-deployed; pending)
+- `pg-alert-deployment-evidence.md` (operator-deployed; pending)
 
 ## Non-claims
 
