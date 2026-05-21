@@ -1,6 +1,6 @@
 # HA-ADR-001 — High Availability Architecture Decision Record
 
-> **Status**: OPERATOR-REVIEWABLE — draft complete; pending operator review and signoff. No approval claim; no implementation.
+> **Status**: APPROVED AS PLANNING DECISION — operator delegate signoff recorded 2026-05-21. No implementation claim; no HA claim.
 > **Owner**: Engineering + Operator  
 > **Last updated**: 2026-05-21  
 > **Parent**: [`docs/production-readiness-v2/09-ha-roadmap.md`](./09-ha-roadmap.md)  
@@ -249,7 +249,7 @@ ferrumd uses one `FERRUMD_STORE_DSN` environment variable (or config field). The
 ## 8. Non-claims
 
 - **NOT production-ready**: This ADR is a planning draft. No HA code exists.
-- **NOT approved**: This document has not been reviewed or signed off by the operator.
+- **APPROVED AS PLANNING DECISION ONLY**: Operator delegate signoff recorded 2026-05-21. This approval authorizes the phased planning approach only. No HA implementation is authorized.
 - **NOT implementation-ready**: No Step 2 or Step 3 work should begin without a follow-up ADR.
 - **NOT HA yet**: FerrumGate remains single-node. HA is explicitly out of scope for the current conditional pilot.
 - **NOT automated failover soon**: Manual failover and read replicas come first.
@@ -271,10 +271,13 @@ This ADR is ready for operator review. The operator should read §2 (Options), �
 **Signoff block**:
 
 ```
-Operator name: ___________________
-Date: ___________________
-Decision: [ ] Approve phased approach  [ ] Request changes  [ ] Defer
-Notes: ___________________
+Operator name: Authorized operator delegate (per user instruction in current session)
+Date: 2026-05-21
+Decision: [x] Approve phased approach  [ ] Request changes  [ ] Defer
+Notes: Planning decision only. HA implementation remains NOT STARTED.
+HA/multi-node = NO. PostgreSQL production deployment = NO.
+production-ready = NO. BLK-A-DOM remains external/WAIVED-CONDITIONAL.
+No Step 2 or Step 3 work should begin without a follow-up ADR.
 ```
 
 No implementation should begin until this ADR is reviewed and the operator confirms the preferred path.

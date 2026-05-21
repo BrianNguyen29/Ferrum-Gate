@@ -1,11 +1,11 @@
 # 09 — HA/Multi-Node Roadmap
 
-> **Status**: Planning artifact. ADR drafted and operator-reviewable; no implementation.
+> **Status**: Planning artifact. ADR approved as planning decision; no implementation.
 > **Owner**: Engineering + Operator
 > **Last updated**: 2026-05-21
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
 > **Scope**: [`00-scope-and-nonclaims.md`](00-scope-and-nonclaims.md)
-> **HA ADR draft**: [`docs/production-readiness-v2/ha-adr.md`](./ha-adr.md) — planning-only; not approved
+> **HA ADR**: [`docs/production-readiness-v2/ha-adr.md`](./ha-adr.md) — approved as planning decision 2026-05-21; no implementation claim
 
 ---
 
@@ -17,7 +17,7 @@ Design the path from single-node production to multi-node/HA, starting with an A
 
 - Single-node SQLite is the only supported runtime.
 - PostgreSQL local runtime exists but is not production-deployed.
-- HA ADR drafted; pending operator review and signoff.
+- HA ADR approved as planning decision 2026-05-21; implementation remains NOT STARTED.
 - No replication configs.
 - No failover runbook.
 
@@ -25,7 +25,7 @@ Design the path from single-node production to multi-node/HA, starting with an A
 
 | Gap | Severity | Why |
 |-----|----------|-----|
-| HA ADR drafted; pending operator review | Critical | Cannot implement HA without an approved design |
+| HA ADR approved as planning decision; implementation NOT STARTED | Critical | Cannot implement HA without an approved design |
 | No manual failover runbook | High | Operator cannot recover from primary failure |
 | No read replica plan | High | Read scaling is not possible |
 | No automated failover | Critical | Not true HA without automation |
@@ -37,7 +37,7 @@ Design the path from single-node production to multi-node/HA, starting with an A
 
 - [x] Compare options: managed PostgreSQL HA, Patroni, repmgr, manual failover, read replicas only. — **DRAFTED** in [`ha-adr.md`](./ha-adr.md) §2.
 - [x] Define: failover strategy, replica strategy, split-brain prevention, leader/writer model, read routing, migration handling, RPO/RTO target. — **DRAFTED** in [`ha-adr.md`](./ha-adr.md) §3–§6.
-- [ ] Operator review and signoff of [`ha-adr.md`](./ha-adr.md). — **PENDING** (planning-only; no approval claim).
+- [x] Operator review and signoff of [`ha-adr.md`](./ha-adr.md). — **APPROVED AS PLANNING DECISION** 2026-05-21 (no implementation claim; no HA claim).
 
 ### HA-2 — Manual failover
 

@@ -83,6 +83,8 @@ The `ferrumgate-alerts.yaml` file includes a `ferrumgate_postgres` rule group wi
 
 **Important**: The PG alert rules are templates. `FerrumGatePostgresMetricsAbsent` is a heuristic (absence of application-level metrics), not a definitive "database is down" signal. For production, supplement with `postgres_exporter` or cloud PG monitoring. The replication-lag alert is a placeholder with a fictional metric name and will not fire without external tooling.
 
+**Validation status**: Docker `promtool check rules` passed (`SUCCESS: 21 rules found`) on 2026-05-21. Live Prometheus evaluation of these specific rules was not performed in the local environment because the running Prometheus instance loads a different rule file (`intent_api_alerts.yml`). Operator must validate firing behavior in their environment before deploying.
+
 ## Placeholder Values
 
 The following placeholders must be replaced before use:
