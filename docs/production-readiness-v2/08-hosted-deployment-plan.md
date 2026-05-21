@@ -2,7 +2,7 @@
 
 > **Status**: Planning artifact. Local demo compose validated (DEP-1/DEP-2). Target-host packaging remains planned.
 > **Owner**: Engineering
-> **Last updated**: 2026-05-19
+> **Last updated**: 2026-05-21
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
 > **Scope**: [`00-scope-and-nonclaims.md`](00-scope-and-nonclaims.md)
 
@@ -60,7 +60,7 @@ Package FerrumGate into reproducible deployment modes so operators can deploy co
 - [x] DEP-2: Healthz passes after compose up locally. Evidence: same artifact.
 - [x] DEP-3: Postgres deployment mode documented and tested locally (`docker-compose.postgres-demo.yml` + Dockerfile). Evidence: `docs/implementation-path/artifacts/2026-05-19-compose-demo-pg-evidence.md`.
 - [x] DEP-4: Systemd unit works with env file. Target-host systemd runtime validated on `ferrumgate-nonprod`; evidence: `docs/implementation-path/artifacts/2026-05-19-dep4-target-host-systemd-evidence.md`. Not a production-ready claim.
-- [x] DEP-5: Helm chart scaffold created locally (`deploy/helm/ferrumgate/`). Templates render without syntax errors. Live cluster install deferred. Not a production-ready claim.
+- [x] DEP-5: Helm chart scaffold created locally (`deploy/helm/ferrumgate/`). Templates render without syntax errors. Live kind cluster install succeeded 2026-05-21 (pod 1/1 Running, health/readiness OK). Evidence: `docs/implementation-path/artifacts/2026-05-21-canonical-slo-helm-conditional-signoff.md` §4. NOT production K8s/HA.
 - [x] DEP-6: Backup/restore procedure works in hosted mode. Hosted single-node SQLite backup/restore temp-copy drill passed on `ferrumgate-nonprod`; evidence: `docs/implementation-path/artifacts/2026-05-19-dep6-hosted-backup-restore-evidence.md`. Not a production-ready claim.
 
 ## Evidence required
@@ -71,7 +71,7 @@ Package FerrumGate into reproducible deployment modes so operators can deploy co
 ## Non-claims
 
 - **NOT production-ready**: Deployment packaging is a prerequisite, not a claim.
-- **NOT all modes validated**: Mode D (K8s) is not implemented yet.
+- **NOT all modes validated**: Mode D (K8s) validated on local kind only; production K8s/HA not implemented or claimed.
 - **NOT a managed service**: These are self-hosted deployment templates.
 
 ## Related docs

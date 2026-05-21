@@ -1393,7 +1393,7 @@ MVP screens:
 - DEP-2 healthz passes after compose up.
 - DEP-3 Postgres deployment mode documented and tested.
 - DEP-4 systemd unit works with env file. Target-host systemd runtime evidence captured at `docs/implementation-path/artifacts/2026-05-19-dep4-target-host-systemd-evidence.md`. This is not a production-ready claim.
-- DEP-5 Helm install produces ready pod.
+- DEP-5 Helm install produces ready pod. Live kind cluster install succeeded 2026-05-21; evidence: `docs/implementation-path/artifacts/2026-05-21-canonical-slo-helm-conditional-signoff.md` §4. NOT production K8s/HA.
 - DEP-6 backup/restore procedure works in hosted mode. Hosted single-node SQLite temp-copy restore drill captured at `docs/implementation-path/artifacts/2026-05-19-dep6-hosted-backup-restore-evidence.md`. This is not a production-ready claim.
 
 ### Phase 9 — HA/multi-node

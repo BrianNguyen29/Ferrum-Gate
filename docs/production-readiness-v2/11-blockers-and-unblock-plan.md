@@ -12,16 +12,18 @@
 
 One item remains open (`BLK-A-DOM`) between the current conditional RC posture and any production-candidate milestone. The other six blockers have been unblocked or completed as of 2026-05-21. This doc orders them, assigns owners, states prerequisites, and lists the exact next action for each. It does not claim production-ready status or full G2 closure.
 
+**Conditional signoff**: BrianNguyen authorized conditional re-signoff for single-node SQLite pilot scope on 2026-05-21. Full G2 closure remains NOT COMPLETE.
+
 The seven blockers:
 
 | # | Blocker ID | Item | Owner | Status |
 |---|------------|------|-------|--------|
 | 1 | **BLK-SLO-RAT** | SLO operator ratification | Operator | ✅ RATIFIED FOR VALIDATION BASELINE — 2026-05-20 |
-| 2 | **BLK-SLO-TGT** | SLO target-host workload validation | Engineering | ✅ UNBLOCKED — abbreviated target workload executed 2026-05-21; full SLO certification NOT claimed |
+| 2 | **BLK-SLO-TGT** | SLO target-host workload validation | Engineering | ✅ UNBLOCKED — canonical SLO Run #3 passed (max-valid config) 2026-05-21; Runs #1/#2 failed and documented as failure evidence; full certification NOT claimed for default/tuned configs |
 | 3 | **BLK-SEC-PH4** | Phase 4 scoped token / RBAC model | Engineering + Operator | ✅ IMPLEMENTED — operator decisions approved; SEC-1–SEC-5 + TTL enforcement complete |
 | 4 | **BLK-UX-4** | UX-4 token rotate / revoke CLI | Engineering | ✅ IMPLEMENTED — `ferrumctl admin tokens` CLI complete |
 | 5 | **BLK-MCP-TGT** | Phase 3 MCP target-host smoke | Engineering | ✅ UNBLOCKED — target-mode MCP smoke passed 15/15 on 2026-05-21 |
-| 6 | **BLK-DEP-5** | DEP-5 Helm / K8s packaging | Engineering | ✅ SCAFFOLD COMPLETE — `helm lint` + `helm template` passed 2026-05-21; live cluster install blocked by kind timeout |
+| 6 | **BLK-DEP-5** | DEP-5 Helm / K8s packaging | Engineering | ✅ LIVE KIND PASS — `helm lint` + `helm template` passed 2026-05-21; live kind cluster install succeeded 2026-05-21; NOT production K8s/HA |
 | 7 | **BLK-A-DOM** | Real owned domain / Block A full closure | Operator | ☐ WAIVED/CONDITIONAL — real domain still required for production-ready or full G2 closure |
 
 ---
@@ -135,23 +137,23 @@ The following questions must be answered by the operator to unblock BLK-SEC-PH4 
 
 - **Blocker ID**: `BLK-SLO-TGT`
 - **Owner**: Engineering
-- **Status**: ✅ UNBLOCKED — abbreviated target workload executed 2026-05-21
+- **Status**: ✅ UNBLOCKED — canonical SLO Run #3 passed (max-valid config) 2026-05-21; Runs #1/#2 documented as failure evidence
 - **Prerequisites**: BLK-SLO-RAT ratified; valid target bearer token available.
-- **Blocked on**: Nothing — token installed and workload executed.
+- **Blocked on**: Nothing — token installed and canonical workloads executed.
 - **Acceptance criteria**:
   - Pilot readiness check passes before and after run.
   - All five workload phases execute (baseline → low → target → spike → cooldown).
   - p99 latencies recorded for evaluate, mint, execute pipeline.
   - 5xx rate < 1%; 429 rate < 5%.
-  - Evidence artifact created and marked PENDING SIGNOFF.
-- **Evidence achieved (abbreviated)**:
-  - Abbreviated phases executed: baseline 5 s, target 30 s @ 1 rps, spike 10 s @ 2 rps, cooldown 5 s.
-  - Total requests 39, HTTP 200 = 39, errors = 0.
-  - Target phase p99 = 1000.073 ms; spike phase p99 = 527.098 ms.
-  - Evidence artifact: `artifacts/2026-05-21-target-slo-mcp-helm-domain-evidence.md` §3.
-- **Evidence required for full certification**: `artifacts/YYYY-MM-DD-slo-target-full-evidence.md` (canonical durations, operator signoff)
-- **Exact next action**: Operator review of abbreviated evidence; full SLO certification deferred until operator requests.
-- **Downstream impact**: Enables workload model refresh and G2 re-signoff.
+  - Evidence artifact created and marked PASS/FAIL per run.
+- **Evidence achieved (canonical)**:
+  - **Run #1 (default config)**: FAIL — 429 rate 46.8% (1114/2382), target p99 403.424 ms.
+  - **Run #2 (tuned config, 20/500)**: FAIL — 429 rate 73.4% (1795/2444), target p99 382.939 ms.
+  - **Run #3 (max-valid config, 1000/10000)**: PASS — 0 errors, 0 429s, target p99 394.054 ms, readyz all 200.
+  - Evidence artifact: `artifacts/2026-05-21-canonical-slo-helm-conditional-signoff.md` §3.
+- **Evidence required for full certification**: `artifacts/YYYY-MM-DD-slo-target-full-evidence.md` (default config pass without max-valid override, operator signoff)
+- **Exact next action**: Operator review of canonical evidence; full SLO certification for default config deferred until operator requests.
+- **Downstream impact**: Enables workload model refresh and conditional G2 re-signoff.
 
 ### BLK-SEC-PH4 — Phase 4 scoped token / RBAC model
 
@@ -217,17 +219,24 @@ The following questions must be answered by the operator to unblock BLK-SEC-PH4 
 
 - **Blocker ID**: `BLK-DEP-5`
 - **Owner**: Engineering
-- **Status**: ✅ SCAFFOLD COMPLETE — `helm lint` and `helm template` passed 2026-05-21; live cluster install blocked by kind timeout
+- **Status**: ✅ LIVE KIND PASS — `helm lint` + `helm template` passed 2026-05-21; live kind cluster install succeeded 2026-05-21; NOT production K8s/HA
 - **Prerequisites**: None for local scaffold; live cluster optional.
-- **Blocked on**: Live cluster install blocked by `kind create cluster` timeout (300 s). No cluster found afterward.
+- **Blocked on**: Nothing — live kind install completed successfully.
 - **Acceptance criteria**:
-  - `helm lint` passes locally.
-  - `helm template` renders valid K8s manifests locally.
-  - Local dry-run validation passes (`kubeconform` or equivalent) — deferred until Helm available.
-  - Optional: live cluster install produces ready pod — BLOCKED.
-- **Evidence required**: `artifacts/2026-05-20-dep5-helm-scaffold-evidence.md` + `artifacts/2026-05-21-target-slo-mcp-helm-domain-evidence.md` §5
-- **Exact next action**: Defer live `helm install`/ready-pod evidence until a working local cluster or operator cluster is available.
-- **Downstream impact**: Enables K8s deployment mode documentation and eventual live cluster testing.
+  - ✅ `helm lint` passes locally.
+  - ✅ `helm template` renders valid K8s manifests locally.
+  - ✅ Live cluster install produces ready pod — **PASS on kind**.
+  - Production K8s / HA — NOT CLAIMED.
+- **Evidence achieved**:
+  - kind v0.23.0 cluster `ferrumgate-helm-live` created successfully.
+  - Local Docker image `ferrumgate/ferrumd:0.1.0` loaded.
+  - Helm v3.15.4 release `ferrumgate` installed in namespace `ferrumgate`.
+  - Pod `ferrumgate-5cf6c87fb5-nr5hj 1/1 Running 0 restarts`.
+  - Port-forward health returned `{"status":"ok"}`; readiness returned `{"status":"ready"}`.
+  - Evidence artifact: `artifacts/2026-05-21-canonical-slo-helm-conditional-signoff.md` §4.
+- **Evidence required for production K8s claim**: Operator-provided cluster; Ingress/TLS; multi-node/rolling update evidence.
+- **Exact next action**: Operator review of kind-only evidence; production K8s validation deferred until operator cluster available.
+- **Downstream impact**: Enables K8s deployment mode documentation and operator cluster testing.
 
 ### BLK-A-DOM — Real owned domain / Block A full closure
 
@@ -241,10 +250,11 @@ The following questions must be answered by the operator to unblock BLK-SEC-PH4 
   - `dig +short <domain>` resolves correctly.
   - HTTPS 200 from target host.
   - L1–L5 re-run with real domain.
-  - G2 re-signoff completed.
+  - G2 re-signoff completed (full closure, not conditional).
 - **Evidence required**: `artifacts/YYYY-MM-DD-block-a-domain-evidence.md` + `artifacts/YYYY-MM-DD-block-a-closure-evidence.md`
 - **Exact next action**: Operator procures domain, configures DNS, then notifies engineering to re-run target bridge.
 - **Downstream impact**: Required for any production-ready or full G2 claim.
+- **Conditional signoff note**: BrianNguyen authorized conditional re-signoff for single-node SQLite pilot on 2026-05-21. This does **not** close BLK-A-DOM or complete full G2.
 
 ---
 
@@ -276,18 +286,20 @@ For each blocker resolution, use the following artifact paths:
 - [`docs/ROADMAP.md`](../../ROADMAP.md) — Post-pilot phased completion roadmap
 - [`docs/implementation-path/122-completion-roadmap-and-hardening-tracker.md`](../../implementation-path/122-completion-roadmap-and-hardening-tracker.md) — Prior blocker tracker
 - [`docs/implementation-path/67-production-readiness-roadmap.md`](../../implementation-path/67-production-readiness-roadmap.md) — Authoritative blocker status and evidence gates
+- [`docs/implementation-path/artifacts/2026-05-21-canonical-slo-helm-conditional-signoff.md`](../../implementation-path/artifacts/2026-05-21-canonical-slo-helm-conditional-signoff.md) — Canonical SLO + Helm live + conditional signoff
 
 ---
 
 ## Non-claims
 
 - **NOT production-ready**: This plan does not make FerrumGate production-ready.
-- **NOT full G2**: Full G2 requires BLK-A-DOM closure + BLK-SLO-TGT evidence + operator re-signoff.
-- **NOT full target-host certification**: Target SLO/MCP evidence exists, but the SLO run is abbreviated and full certification still requires operator-approved canonical-duration execution.
+- **NOT full G2**: Full G2 requires BLK-A-DOM closure + operator-approved default-config SLO pass + operator final signoff. Conditional re-signoff on 2026-05-21 is pilot-scope only.
+- **NOT full target-host certification for all configs**: Canonical SLO Run #3 passed under max-valid rate-limit config only. Runs #1/#2 failed under default/tuned configs. Full certification requires default-config pass without max-valid override.
 - **NOT all future security scope complete**: Phase 4 scoped token model and UX-4 CLI are implemented; SEC-6 audit-log schema remains deferred.
 - **NOT multi-tenant**: Single-tenant production (T1) is the recommended first posture.
 - **NOT a committed timeline**: Dates in artifact names are templates; actual execution dates are TBD and operator-dependent.
 - **DuckDNS conditional only**: Block A remains WAIVED/CONDITIONAL. Real owned domain is still required for any production-ready claim.
+- **NOT production K8s/HA**: Helm live install verified on local kind cluster only.
 
 ---
 

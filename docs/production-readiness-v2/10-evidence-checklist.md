@@ -14,10 +14,10 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 
 ## Current state
 
-- No unified per-phase evidence checklist exists.
-- Evidence artifacts are scattered across `docs/implementation-path/artifacts/`.
-- No systematic pass/fail tracking for production-path gates.
-- **Seven active blockers** are tracked in [`11-blockers-and-unblock-plan.md`](./11-blockers-and-unblock-plan.md): `BLK-SLO-RAT`, `BLK-SLO-TGT`, `BLK-SEC-PH4`, `BLK-UX-4`, `BLK-MCP-TGT`, `BLK-DEP-5`, `BLK-A-DOM`.
+- Unified per-phase evidence checklist exists and is actively maintained (this doc).
+- Evidence artifacts are organized in `docs/implementation-path/artifacts/` with dated filenames and cross-references.
+- Pass/fail tracking exists for all completed phases; remaining open items are Phase 9 (HA) and final production-ready prerequisites.
+- **Six of seven blockers unblocked/completed** as of 2026-05-21. One remains open: `BLK-A-DOM`. Tracked in [`11-blockers-and-unblock-plan.md`](./11-blockers-and-unblock-plan.md).
 
 ## Gaps
 
@@ -88,7 +88,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 
 ## Phase 2 — SLO/SLA and workload evidence
 
-> **Active blockers**: `BLK-SLO-RAT` ratified; `BLK-SLO-TGT` unblocked on 2026-05-21. Abbreviated target workload executed; full SLO certification NOT claimed. See [`11-blockers-and-unblock-plan.md`](./11-blockers-and-unblock-plan.md).
+> **Active blockers**: `BLK-SLO-RAT` ratified; `BLK-SLO-TGT` unblocked on 2026-05-21. Canonical SLO certification attempted (2 fails, 1 pass with max-valid config). Full SLO certification NOT claimed for default/tuned configs. See [`11-blockers-and-unblock-plan.md`](./11-blockers-and-unblock-plan.md).
 
 | # | Item | Owner | Evidence | Status |
 |---|------|-------|----------|--------|
@@ -98,9 +98,13 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 | 2.4 | SLO-4: p95/p99 latency measured locally | Engineering | `2026-05-19-slo-local-baseline-evidence.md` §Latency | ✅ LOCAL BASELINE MEASURED — local in-memory only; NOT target-host ratified |
 | 2.5 | SLO-5: Readiness success measured locally | Engineering | `2026-05-19-slo-local-baseline-evidence.md` §Post-run checks | ✅ LOCAL BASELINE MEASURED — local in-memory only; NOT target-host ratified |
 | 2.6 | SLO-6: Error rate measured locally | Engineering | `2026-05-19-slo-local-baseline-evidence.md` §SLO comparison | ✅ LOCAL BASELINE MEASURED — local in-memory only; NOT target-host ratified |
-| 2.7 | SLO-7: Evidence artifact reviewed by operator | Operator | `docs/implementation-path/artifacts/2026-05-20-slo-ratification-signoff.md` | ✅ BASELINE RATIFIED — target-host evidence review still pending after run |
+| 2.7 | SLO-7: Evidence artifact reviewed by operator | Operator | `docs/implementation-path/artifacts/2026-05-20-slo-ratification-signoff.md` | ✅ BASELINE RATIFIED — target-host evidence reviewed and conditionally signed |
 | 2.8 | SLO-target-host: Target preflight attempted and blocked (valid bearer token required) | Engineering | `docs/implementation-path/artifacts/2026-05-19-slo-target-preflight-blocked-evidence.md` | ✅ UNBLOCKED — token installed 2026-05-21; preflight no longer blocked |
 | 2.9 | SLO-target-abbreviated: Abbreviated target workload executed (NOT full certification) | Engineering | `docs/implementation-path/artifacts/2026-05-21-target-slo-mcp-helm-domain-evidence.md` §3 | ✅ ABBREVIATED TARGET RUN — 39 requests, 0 errors, light load only; NOT full SLO certification |
+| 2.10 | SLO-canonical-run1: Default rate-limit canonical workload (FAIL) | Engineering | `docs/implementation-path/artifacts/2026-05-21-canonical-slo-helm-conditional-signoff.md` §3.2 | ✅ FAILURE EVIDENCE — 429 rate 46.8%; default config insufficient |
+| 2.11 | SLO-canonical-run2: Tuned rate-limit canonical workload (FAIL) | Engineering | `docs/implementation-path/artifacts/2026-05-21-canonical-slo-helm-conditional-signoff.md` §3.3 | ✅ FAILURE EVIDENCE — 429 rate 73.4%; tuned config insufficient |
+| 2.12 | SLO-canonical-run3: Max-valid rate-limit canonical workload (PASS) | Engineering | `docs/implementation-path/artifacts/2026-05-21-canonical-slo-helm-conditional-signoff.md` §3.4 | ✅ PASS — 0 errors, 0 429s, all readyz 200; max-valid config only |
+| 2.13 | SLO-canonical-summary: All three runs documented with pass/fail | Engineering | `docs/implementation-path/artifacts/2026-05-21-canonical-slo-helm-conditional-signoff.md` §3.5 | ✅ COMPLETE — full SLO marked PASS only for max-valid config |
 
 ## Phase 3 — Target-host MCP/live workload
 
@@ -188,7 +192,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 | 8.5 | DEP-5: Helm chart scaffold created | Engineering | `deploy/helm/ferrumgate/` + `docs/implementation-path/artifacts/2026-05-20-dep5-helm-scaffold-evidence.md` | ✅ SCAFFOLD COMPLETE — local template/render validated; live cluster install deferred. See [`11-blockers-and-unblock-plan.md`](./11-blockers-and-unblock-plan.md) |
 | 8.5a | DEP-5a: `helm lint` passes | Engineering | `docs/implementation-path/artifacts/2026-05-21-target-slo-mcp-helm-domain-evidence.md` §5 | ✅ PASS — 1 chart, 0 failed |
 | 8.5b | DEP-5b: `helm template` renders valid manifests | Engineering | `docs/implementation-path/artifacts/2026-05-21-target-slo-mcp-helm-domain-evidence.md` §5 | ✅ PASS — ServiceAccount/Secret/Service/Deployment rendered |
-| 8.5c | DEP-5c: Live cluster install attempted | Engineering | `docs/implementation-path/artifacts/2026-05-21-target-slo-mcp-helm-domain-evidence.md` §5 | 🚫 BLOCKED — kind create cluster timed out at 300 s; no cluster found afterward |
+| 8.5c | DEP-5c: Live cluster install attempted | Engineering | `docs/implementation-path/artifacts/2026-05-21-canonical-slo-helm-conditional-signoff.md` §4 | ✅ PASS — kind cluster created; Helm release deployed; pod 1/1 Running; health/readiness returned OK/ready. NOT production K8s/HA |
 | 8.6 | DEP-6: Backup/restore procedure works in hosted mode | Engineering | `docs/implementation-path/artifacts/2026-05-19-dep6-hosted-backup-restore-evidence.md` | ✅ COMPLETE — hosted single-node SQLite temp-copy restore drill; not production-ready |
 
 ## Phase 9 — HA/multi-node
@@ -204,6 +208,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 ## Final production-ready claim prerequisites
 
 > **Active blocker**: `BLK-A-DOM` — real owned domain is still required for any production-ready or full G2 closure. DuckDNS remains WAIVED/CONDITIONAL only. See [`11-blockers-and-unblock-plan.md`](./11-blockers-and-unblock-plan.md).
+> **Conditional re-signoff**: BrianNguyen authorized conditional re-signoff for single-node SQLite pilot scope on 2026-05-21. Full G2 closure remains NOT COMPLETE.
 
 | # | Item | Owner | Evidence | Status |
 |---|------|-------|----------|--------|
@@ -212,12 +217,16 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 | F.3 | G2 re-signoff with new evidence | Operator | `54-operator-signoff-packet.md` updated | ☐ |
 | F.4 | Final evidence pack reviewed | Operator | Review signoff | ☐ |
 | F.5 | Operator signs final production posture | Operator | Signed doc | ☐ |
+| F.c | Conditional pilot re-signoff (BrianNguyen, 2026-05-21) | Operator | `docs/implementation-path/artifacts/2026-05-21-canonical-slo-helm-conditional-signoff.md` §5 | ✅ CONDITIONAL — single-node SQLite pilot scope only; NOT full production-ready |
 
 ## Non-claims
 
 - **NOT a guarantee**: This checklist is a template. Execution and evidence creation are required to check boxes.
 - **NOT production-ready**: Checking boxes in this doc does not make FerrumGate production-ready.
 - **NOT self-executing**: Each item requires engineering work or operator action.
+- **NOT full G2**: Conditional re-signoff on 2026-05-21 applies to single-node SQLite pilot only. Full G2 closure requires Block A resolution + operator final signoff.
+- **NOT canonical SLO for all configs**: SLO PASS claimed only for max-valid rate-limit configuration (1000/10000). Default and tuned configs failed.
+- **NOT production K8s/HA**: Helm live install verified on local kind cluster only.
 
 ## Related docs
 
