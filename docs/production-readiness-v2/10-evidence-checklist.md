@@ -80,12 +80,12 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 | 1.9 | PG-2.1: Session timeout config (`statement_timeout`, `idle_in_transaction_session_timeout`) | Engineering | `02-postgres-production-plan.md` §PG-2.1 | ✅ COMPLETE — code + tests |
 | 1.10 | PG-2.2: Pool metrics (`pool_size`, `pool_idle`, `pool_max`) | Engineering | `pg-target-evidence.md` §PG-2.2 | ✅ COMPLETE — code + tests |
 | 1.11 | PG-2.3a: Acquire timeout counter + pool saturation readiness | Engineering | `02-postgres-production-plan.md` §PG-2.3a | ✅ COMPLETE — code + tests |
-| 1.12 | PG-2.3b: Reconnect/retry and circuit breaker | Engineering | `02-postgres-production-plan.md` §PG-2.3b + `docs/guides/operator.md` §PostgreSQL reconnect and recovery + `docs/implementation-path/artifacts/2026-05-21-pg-container-restart-drill-evidence.md` | ✅ B.1 COMPLETE — operator runbook documents current PgPool reconnect behavior; B.2 SCRIPT PREPARED and locally validated (14s recovery); B.3/B.4 remain deferred |
+| 1.12 | PG-2.3b: Reconnect/retry and circuit breaker | Engineering | `02-postgres-production-plan.md` §PG-2.3b + `docs/guides/operator.md` §PostgreSQL reconnect and recovery + `docs/implementation-path/artifacts/2026-05-21-pg-container-restart-drill-evidence.md` + `docs/implementation-path/artifacts/2026-05-21-pg-2.3b-reconnect-circuit-breaker-backlog.md` | ✅ B.1 COMPLETE — operator runbook documents current PgPool reconnect behavior; B.2 SCRIPT PREPARED and locally validated (14s recovery); **B.3 EXPLICITLY DEFERRED** — circuit breaker ADR deferred until PG-5 HA design begins; **B.4 DEFERRED** — implementation blocked on B.3 ADR and PG-5 topology |
 | 1.13 | PG-3: Local backup/restore drill passes (scheduled backup/retention NOT STARTED) | Engineering | `docs/implementation-path/artifacts/2026-05-18-pg-restore-drill-evidence.md` | ✅ COMPLETE — local Docker drill only; scheduled backup/retention deferred |
 | 1.14 | PG-4a: Schema version table + idempotent runner (PG-4b.1 docs+runner cleanup done, PG-4b.3 rollback strategy doc done; PG-4b.2 incremental engine + CI drift deferred) | Engineering | `pg-migration-evidence.md` + `02-postgres-production-plan.md` §PG-4b | ✅ COMPLETE — PG-4a done; PG-4b.1/4b.3 done; PG-4b.2/CI drift deferred |
 | 1.15 | PG-5: HA ADR approved; primary failure drill documented; RPO/RTO measured | Engineering + Operator | HA ADR + failure drill evidence | ☐ NOT STARTED |
 | 1.16 | PG-6: PostgreSQL scoped token repository implemented and tested | Engineering | `docs/implementation-path/artifacts/2026-05-21-target-slo-mcp-helm-domain-evidence.md` §6 | ✅ COMPLETE — `crates/ferrum-store/src/postgres/tokens.rs` implemented; 72 tests pass with postgres feature; workspace tests pass |
-| 1.17 | PG-2.4: PostgreSQL alert rules template prepared | Engineering | `configs/monitoring/ferrumgate-alerts.yaml` + `docs/implementation-path/artifacts/2026-05-21-pg-alert-rules-evidence.md` | ✅ COMPLETE — template rules added (PG down proxy, pool saturation, slow acquire, backup stale); replication lag placeholder deferred; NOT deployed to live Prometheus |
+| 1.17 | PG-2.4: PostgreSQL alert rules template prepared | Engineering | `configs/monitoring/ferrumgate-alerts.yaml` + `docs/implementation-path/artifacts/2026-05-21-pg-alert-rules-evidence.md` | ✅ COMPLETE — template rules added (PG down proxy, pool saturation, slow acquire, backup stale); replication lag placeholder deferred; **live Prometheus/promtool validation unavailable/operator-env-dependent**; NOT deployed to live Prometheus |
 
 ## Phase 2 — SLO/SLA and workload evidence
 
@@ -207,7 +207,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 
 | # | Item | Owner | Evidence | Status |
 |---|------|-------|----------|--------|
-| 9.1 | HA-1: HA ADR approved | Engineering + Operator | `ha-adr.md` signoff | ☐ |
+| 9.1 | HA-1: HA ADR approved | Engineering + Operator | `docs/production-readiness-v2/ha-adr.md` signoff | ☐ NOT STARTED — planning-only ADR draft created; no approval claim; no implementation |
 | 9.2 | HA-2: Manual failover drill pass | Engineering + Operator | Failover drill log | ☐ |
 | 9.3 | HA-3: Read replica behavior documented | Engineering | `ha-read-replica-plan.md` | ☐ |
 | 9.4 | HA-4: Automated failover drill pass (deferred) | Engineering + Operator | Failover drill log | ☐ |

@@ -137,7 +137,7 @@ PostgreSQL local/runtime foundation is strong:
 - [x] Document all alerts as **templates** in `configs/monitoring/README.md`.
 - [x] Create evidence artifact: `docs/implementation-path/artifacts/2026-05-21-pg-alert-rules-evidence.md`.
 
-> **Non-claim**: These are template rules only. They have **not** been validated against a live Prometheus instance or production PG backend. The `MetricsAbsent` alert is a heuristic, not definitive PG-down detection. Replication lag is a placeholder with a non-existent metric name. Operator must review thresholds and metric names before enabling.
+> **Non-claim**: These are template rules only. They have **not** been validated against a live Prometheus instance or production PG backend. `promtool check rules` and live Prometheus evaluation are unavailable in this environment and remain operator/env-dependent. The `MetricsAbsent` alert is a heuristic, not definitive PG-down detection. Replication lag is a placeholder with a non-existent metric name. Operator must review thresholds, metric names, and validate with `promtool` before enabling.
 
 ##### PG-2.3b — Reconnect/retry and circuit breaker (PARTIAL — B.1 docs complete; B.2–B.4 deferred)
 
@@ -156,16 +156,25 @@ PostgreSQL local/runtime foundation is strong:
 - Script is manual/optional; not executed in CI.
 - Evidence: `docs/implementation-path/artifacts/2026-05-21-pg-container-restart-drill-evidence.md`.
 
-**B.3 — Circuit-breaker ADR for multi-node / load-balanced topology** ☐ DEFERRED
-- Deferred to PG-5 HA design.
+**B.3 — Circuit-breaker ADR for multi-node / load-balanced topology** ☐ **DEFERRED**
 
-**B.4 — Implement circuit breaker** ☐ DEFERRED
-- Only after HA ADR Phase 9.
+**Verdict**: DEFER now. No circuit breaker ADR will be written until HA design begins.
 
 **Rationale**:
+- PgPool reconnect + `/readyz/deep` pool saturation + acquire timeout metric + alert templates + operator runbook are sufficient for single-node fail-closed behavior.
+- A circuit breaker adds value only with a load-balanced HA topology (PG-5); a premature state machine would add complexity and false positives.
+- Revisit triggers: PG-5 HA design begins; load balancer introduced; RTO tightens beyond B.2 14 s recovery; real-world PG blips show failures a half-open state could mitigate.
+
+**B.4 — Implement circuit breaker** ☐ **DEFERRED**
+
+**Verdict**: DEFER until after HA ADR Phase 9 is approved and a multi-node/load-balanced topology is planned.
+
+**Rationale**: Implementation depends on B.3 ADR. No code will be written before the ADR is approved.
+
+**Combined rationale for PG-2.3b deferral**:
 - `sqlx::PgPool` already performs transparent reconnect with exponential backoff.
   The pool recovers automatically after a PostgreSQL restart without requiring
-  a ferrumd restart.
+  a ferrumd restart (local Docker drill measured 14 s recovery).
 - PG-2.3a provides acquire-timeout metrics and pool-saturation readiness
   (`/v1/readyz/deep`), which gives fail-closed behavior when the pool is
   exhausted. This is sufficient for the current single-node pilot scope.
@@ -177,6 +186,8 @@ PostgreSQL local/runtime foundation is strong:
 - PG-5 HA design (managed PG, Patroni, or load-balanced topology) where
   per-instance health state matters and concrete retry semantics / RTO need
   to be defined.
+- Load balancer introduced in front of ferrumd or PostgreSQL.
+- Real-world PostgreSQL blips show failure modes that a half-open state could mitigate.
 
 ### Phase PG-3 — Backup/restore evidence
 

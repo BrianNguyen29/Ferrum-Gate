@@ -40,7 +40,7 @@ The following metrics are emitted by `ferrumd` when the PostgreSQL backend is ac
 
 - **NOT production-deployed**: These rules exist in a template YAML file. They have **not** been loaded into a live Prometheus instance against a production PostgreSQL backend.
 - **NOT definitive PG-down detection**: `FerrumGatePostgresMetricsAbsent` is a heuristic based on metric absence. A real production setup should supplement with `postgres_exporter` or cloud-provider PG monitoring.
-- **NOT validated end-to-end**: No promtool or live Prometheus validation was performed (promtool unavailable in this environment).
+- **NOT validated end-to-end**: No promtool or live Prometheus validation was performed. `promtool check rules` and live Prometheus evaluation are **unavailable in this environment and remain operator/env-dependent**. Operator must validate before deploying.
 - **Replication lag is a placeholder**: The metric name `pg_stat_replication_pg_wal_lsn_diff` does not exist in the current codebase and requires external tooling. This rule will not fire and must not be enabled until HA/replication is deployed (PG-5).
 - **Thresholds are placeholders**: Acquire timeout threshold (`> 0`) and backup stale threshold (`7200s`) are conservative starting points. Operator must tune based on real workload and backup cadence.
 
@@ -52,7 +52,7 @@ The following metrics are emitted by `ferrumd` when the PostgreSQL backend is ac
 | Metric name cross-check | Pass | Names match documented PG pool metrics from PG-2.2 / PG-2.3a. |
 | `python3 scripts/check_contract_consistency.py` | Pass | No contract changes; script passes. |
 | `git diff --check` | Pass | No trailing whitespace or conflict markers introduced. |
-| `promtool check rules` | **Skipped** | promtool not installed in this environment. |
+| `promtool check rules` | **Skipped / operator-dependent** | promtool not installed in this environment. Live Prometheus evaluation also not performed. Operator must run `promtool check rules` and validate alert firing behavior in their environment before enabling. |
 
 ## Related docs
 

@@ -2,9 +2,10 @@
 
 > **Status**: Planning artifact. ADR-only; no implementation.
 > **Owner**: Engineering + Operator
-> **Last updated**: 2026-05-18
+> **Last updated**: 2026-05-21
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
 > **Scope**: [`00-scope-and-nonclaims.md`](00-scope-and-nonclaims.md)
+> **HA ADR draft**: [`docs/production-readiness-v2/ha-adr.md`](./ha-adr.md) — planning-only; not approved
 
 ---
 
@@ -34,8 +35,9 @@ Design the path from single-node production to multi-node/HA, starting with an A
 
 ### HA-1 — HA ADR
 
-- [ ] Compare options: managed PostgreSQL HA, Patroni, repmgr, manual failover, read replicas only.
-- [ ] Define: failover strategy, replica strategy, split-brain prevention, leader/writer model, read routing, migration handling, RPO/RTO target.
+- [x] Compare options: managed PostgreSQL HA, Patroni, repmgr, manual failover, read replicas only. — **DRAFTED** in [`ha-adr.md`](./ha-adr.md) §2.
+- [x] Define: failover strategy, replica strategy, split-brain prevention, leader/writer model, read routing, migration handling, RPO/RTO target. — **DRAFTED** in [`ha-adr.md`](./ha-adr.md) §3–§6.
+- [ ] Operator review and signoff of [`ha-adr.md`](./ha-adr.md). — **PENDING** (planning-only; no approval claim).
 
 ### HA-2 — Manual failover
 
