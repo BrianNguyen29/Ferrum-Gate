@@ -1,9 +1,16 @@
 # Phase B — PostgreSQL Production Foundation Prep — 2026-05-21
 
 > **Status**: Engineering planning/runbook artifact. No production PostgreSQL deployment claimed.
-> **Purpose**: Consolidate Phase B documentation progress for TLS/SSL DSN guidance, PgBouncer/pooling story, scheduled backup/retention runbook, and alert deployment validation runbook.
+> **Purpose**: Consolidate Phase B documentation progress for TLS/SSL DSN guidance, PgBouncer/pooling story, scheduled backup/retention runbook, alert deployment validation runbook, and evidence templates.
 > **Scope**: Single-node SQLite v1 conditional pilot. PostgreSQL production foundation planning only.
 > **Constraint**: `production-ready = NO` throughout. Block A remains WAIVED/CONDITIONAL. Full G2 remains NOT COMPLETE.
+
+> **Delegated signoff (planning-only — template readiness)**
+> - **Signed by**: BrianNguyen (session authorization)
+> - **Date**: 2026-05-21
+> - **Scope**: Phase B runbooks and evidence templates reviewed and accepted as ready for operator execution.
+> - **Nature**: Planning/template-readiness signoff only. This does not constitute evidence of live execution, deployment, or production readiness. Does not substitute for missing evidence.
+> - **Authority**: User explicitly authorized delegated signoff for planning and decision documents.
 
 ---
 
@@ -33,6 +40,7 @@
 | B.4 | Alert deployment validation runbook | `configs/monitoring/README.md` §Alert Deployment Validation Runbook + `docs/guides/operator.md` §Alert deployment validation | ✅ RUNBOOK COMPLETE |
 | B.5 | Evidence checklist updated | `docs/production-readiness-v2/10-evidence-checklist.md` §Phase 1 | ✅ COMPLETE |
 | B.6 | PostgreSQL production plan gaps updated | `docs/production-readiness-v2/02-postgres-production-plan.md` §Gaps | ✅ COMPLETE |
+| B.7 | Evidence templates created | `docs/implementation-path/artifacts/TEMPLATE-pg-*.md` (6 templates) | ✅ COMPLETE — see §10 below |
 
 ---
 
@@ -150,9 +158,26 @@
 
 ---
 
-## 9. Engineering Review Statement
+## 9. Evidence Templates
 
-> This artifact accurately records Phase B documentation progress as of 2026-05-21. Four runbooks were completed: TLS/SSL DSN guidance, PgBouncer/pooling story, scheduled backup/retention/offsite path, and alert deployment validation. All are planning/runbook artifacts only. No live deployment, no production PostgreSQL, no production-ready claim. Operator action is required to execute runbooks and produce evidence artifacts. Production-ready remains **NO**. Block A remains **WAIVED/CONDITIONAL**. Full G2 remains **NOT COMPLETE**.
+The following templates are ready for operator execution. Each includes environment, commands/checks, expected outputs, pass/fail criteria, sanitized evidence blocks, operator signoff, and non-claims.
+
+| Template | Purpose | Location |
+|----------|---------|----------|
+| `TEMPLATE-pg-tls-dsn-evidence.md` | TLS DSN validation: cert permissions, connectivity, startup, readiness, rotation drill | `docs/implementation-path/artifacts/` |
+| `TEMPLATE-pg-pgbouncer-evidence.md` | PgBouncer validation: config review, health, connectivity, startup, readiness, session compatibility, load observation | `docs/implementation-path/artifacts/` |
+| `TEMPLATE-pg-scheduled-backup-evidence.md` | Scheduled backup validation: scheduler config, execution observation, integrity, timing, RPO compliance | `docs/implementation-path/artifacts/` |
+| `TEMPLATE-pg-retention-pruning-evidence.md` | Retention pruning validation: policy definition, pre/post inventory, pruning execution, edge cases | `docs/implementation-path/artifacts/` |
+| `TEMPLATE-pg-offsite-sync-evidence.md` | Offsite sync validation: target config, sync execution, integrity, restore drill, RPO impact | `docs/implementation-path/artifacts/` |
+| `TEMPLATE-pg-alert-deployment-evidence.md` | Alert deployment validation: promtool syntax, deployment, rule presence, state check, PG behavior, simulation | `docs/implementation-path/artifacts/` |
+
+**Usage instruction**: Operator copies the relevant template, fills all sections with real execution output, and renames to `YYYY-MM-DD-<template-base>.md`. Do not sign until all pass/fail checkboxes are marked.
+
+---
+
+## 10. Engineering Review Statement
+
+> This artifact accurately records Phase B documentation progress as of 2026-05-21. Four runbooks and six evidence templates were completed: TLS/SSL DSN guidance, PgBouncer/pooling story, scheduled backup/retention/offsite path, and alert deployment validation. All are planning/runbook/template artifacts only. No live deployment, no production PostgreSQL, no production-ready claim. Operator action is required to execute runbooks, fill templates, and produce evidence artifacts. Production-ready remains **NO**. Block A remains **WAIVED/CONDITIONAL**. Full G2 remains **NOT COMPLETE**.
 
 ---
 

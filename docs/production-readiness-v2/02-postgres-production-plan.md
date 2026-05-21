@@ -143,6 +143,8 @@ PostgreSQL local/runtime foundation is strong:
 - [x] `FerrumGatePostgresReplicationLag` — **placeholder / deferred**; uses fictional metric requiring `postgres_exporter`.
 - [x] Document all alerts as **templates** in `configs/monitoring/README.md`.
 - [x] Create evidence artifact: `docs/implementation-path/artifacts/2026-05-21-pg-alert-rules-evidence.md`.
+- [x] Create alert deployment validation evidence template: `docs/implementation-path/artifacts/TEMPLATE-pg-alert-deployment-evidence.md`.
+- [ ] Live Prometheus alert deployment validated — ☐ **PENDING** (requires operator environment).
 
 > **Non-claim**: These are template rules only. They have **not** been validated against a live Prometheus instance or production PG backend. `promtool check rules` and live Prometheus evaluation are unavailable in this environment and remain operator/env-dependent. The `MetricsAbsent` alert is a heuristic, not definitive PG-down detection. Replication lag is a placeholder with a non-existent metric name. Operator must review thresholds, metric names, and validate with `promtool` before enabling.
 
@@ -154,6 +156,7 @@ PostgreSQL local/runtime foundation is strong:
 - [x] Provide example DSNs for common deployment patterns.
 - [x] Cross-reference operator guide (`docs/guides/operator.md`) for TLS setup steps.
 - [ ] Live TLS-encrypted PG connection validated on target host — ☐ **PENDING** (requires operator-provisioned PG with TLS).
+- **Evidence template**: `docs/implementation-path/artifacts/TEMPLATE-pg-tls-dsn-evidence.md`
 
 **DSN examples**:
 
@@ -187,6 +190,7 @@ postgres://user@host:5432/db?sslmode=verify-full&sslcert=/etc/ferrumgate/certs/p
 - [x] Document connection count math (ferrumd pool max × ferrumd instances → PgBouncer pool size).
 - [x] Cross-reference operator guide (`docs/guides/operator.md`) for setup steps.
 - [ ] Live PgBouncer deployment validated — ☐ **PENDING** (requires operator environment).
+- **Evidence template**: `docs/implementation-path/artifacts/TEMPLATE-pg-pgbouncer-evidence.md`
 
 **When to use PgBouncer**:
 
@@ -303,9 +307,9 @@ postgres://user@host:5432/db?sslmode=verify-full&sslcert=/etc/ferrumgate/certs/p
 4. **Restore drill**: monthly restore drill to a clean drill database; verify row counts and `/v1/readyz/deep`.
 
 **Evidence required for execution completion**:
-- `docs/implementation-path/artifacts/YYYY-MM-DD-pg-scheduled-backup-evidence.md`
-- `docs/implementation-path/artifacts/YYYY-MM-DD-pg-retention-pruning-evidence.md`
-- `docs/implementation-path/artifacts/YYYY-MM-DD-pg-offsite-sync-evidence.md`
+- `docs/implementation-path/artifacts/YYYY-MM-DD-pg-scheduled-backup-evidence.md` (use `TEMPLATE-pg-scheduled-backup-evidence.md`)
+- `docs/implementation-path/artifacts/YYYY-MM-DD-pg-retention-pruning-evidence.md` (use `TEMPLATE-pg-retention-pruning-evidence.md`)
+- `docs/implementation-path/artifacts/YYYY-MM-DD-pg-offsite-sync-evidence.md` (use `TEMPLATE-pg-offsite-sync-evidence.md`)
 
 > **Non-claim**: PG-3 local drill evidence is complete. Scheduled backup, retention pruning, and offsite sync **runbooks** are complete (documented in `109-p5c-postgresql-backup-restore-runbook.md` and this section). **Execution on a live production PostgreSQL remains PENDING**. Do not cite this doc as evidence of production backup automation until operator-deployed evidence artifacts exist.
 
@@ -416,12 +420,12 @@ postgres://user@host:5432/db?sslmode=verify-full&sslcert=/etc/ferrumgate/certs/p
 - `pg-migration-evidence.md`
 - `pg-ha-adr.md`
 - `docs/implementation-path/artifacts/2026-05-21-phase-b-pg-production-foundation-prep.md` — Phase B consolidated artifact (TLS, PgBouncer, scheduled backup, alert deployment)
-- `pg-scheduled-backup-evidence.md` (operator-deployed; pending)
-- `pg-retention-pruning-evidence.md` (operator-deployed; pending)
-- `pg-offsite-sync-evidence.md` (operator-deployed; pending)
-- `pg-tls-dsn-evidence.md` (operator-deployed; pending)
-- `pg-pgbouncer-evidence.md` (operator-deployed; pending)
-- `pg-alert-deployment-evidence.md` (operator-deployed; pending)
+- `pg-scheduled-backup-evidence.md` (operator-deployed; pending — use `TEMPLATE-pg-scheduled-backup-evidence.md`)
+- `pg-retention-pruning-evidence.md` (operator-deployed; pending — use `TEMPLATE-pg-retention-pruning-evidence.md`)
+- `pg-offsite-sync-evidence.md` (operator-deployed; pending — use `TEMPLATE-pg-offsite-sync-evidence.md`)
+- `pg-tls-dsn-evidence.md` (operator-deployed; pending — use `TEMPLATE-pg-tls-dsn-evidence.md`)
+- `pg-pgbouncer-evidence.md` (operator-deployed; pending — use `TEMPLATE-pg-pgbouncer-evidence.md`)
+- `pg-alert-deployment-evidence.md` (operator-deployed; pending — use `TEMPLATE-pg-alert-deployment-evidence.md`)
 
 ## Non-claims
 
