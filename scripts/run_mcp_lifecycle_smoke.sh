@@ -1,56 +1,123 @@
 #!/usr/bin/env bash
 # run_mcp_lifecycle_smoke.sh
-# Local MCP lifecycle smoke/evidence path for D1.7 + D1.11 tool-dispatch.
+# MCP lifecycle smoke/evidence path for D1.7 + D1.11 tool-dispatch.
 # Validates MCP stdio transport, lifecycle tool wiring, blocked tool behavior.
 # D1.11 extends with live-local lifecycle dispatch checks (submit/evaluate/mint).
-# Does NOT require target host, SSH, domain, or TLS.
+# Supports local dev mode (starts ferrumd) and target mode (uses configured gateway).
+# Does NOT require target host, SSH, domain, or TLS in local mode.
 # Does NOT claim G2/doc54/production-ready.
-# Naming: This is D1.7+D1.11 local lifecycle smoke, NOT D1.8 (output sanitization).
+# Naming: This is D1.7+D1.11 lifecycle smoke, NOT D1.8 (output sanitization).
 
 set -euo pipefail
-
-if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-    cat <<'EOF'
-Usage: bash scripts/run_mcp_lifecycle_smoke.sh [options]
-
-Local MCP lifecycle smoke/evidence path for D1.7 + D1.11 tool-dispatch.
-Validates MCP stdio transport, lifecycle tool wiring, blocked tool behavior.
-
-Options:
-  -h, --help    Show this help message and exit
-
-This script does NOT require a target host, SSH, domain, or TLS.
-It does NOT claim G2, production-ready, or D1.8 (output sanitization).
-EOF
-    exit 0
-fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# --- Find or build ferrumd ---
+# --- Argument parsing ---
+
+TARGET_MODE=0
+GATEWAY_URL=""
+BEARER_TOKEN_ENV="${BEARER_TOKEN_ENV:-FERRUM_GATEWAY_BEARER_TOKEN}"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)
+            cat <<'EOF'
+Usage: bash scripts/run_mcp_lifecycle_smoke.sh [options]
+
+MCP lifecycle smoke/evidence path for D1.7 + D1.11 tool-dispatch.
+Validates MCP stdio transport, lifecycle tool wiring, blocked tool behavior.
+
+Options:
+  -h, --help                Show this help message and exit
+  --gateway-url URL         Target FerrumGate gateway URL (enables target mode)
+  --bearer-token-env VAR    Name of env var holding bearer token
+                            (default: FERRUM_GATEWAY_BEARER_TOKEN; target mode only)
+  --target-mode             Shorthand: use FERRUM_GATEWAY_URL from environment
+                            (do not start local ferrumd)
+
+Local mode (default):
+  Builds/starts a local ferrumd (auth disabled) and runs smoke against it.
+
+Target mode:
+  Uses the gateway URL from --gateway-url or the FERRUM_GATEWAY_URL environment
+  variable. Does NOT start local ferrumd and does NOT overwrite
+  FERRUM_GATEWAY_URL / FERRUM_GATEWAY_BEARER_TOKEN.
+  The caller must ensure the target gateway is reachable and env vars are set.
+
+This script does NOT claim G2, production-ready, or D1.8 (output sanitization).
+EOF
+            exit 0
+            ;;
+        --gateway-url)
+            if [[ -z "${2:-}" ]]; then
+                echo "[FAIL] --gateway-url requires a URL argument" >&2
+                exit 1
+            fi
+            GATEWAY_URL="$2"
+            TARGET_MODE=1
+            shift 2
+            ;;
+        --bearer-token-env)
+            if [[ -z "${2:-}" ]]; then
+                echo "[FAIL] --bearer-token-env requires a variable name argument" >&2
+                exit 1
+            fi
+            BEARER_TOKEN_ENV="$2"
+            shift 2
+            ;;
+        --target-mode)
+            TARGET_MODE=1
+            shift
+            ;;
+        *)
+            echo "[FAIL] Unknown option: $1" >&2
+            echo "       Use --help for usage information." >&2
+            exit 1
+            ;;
+    esac
+done
+
+if [[ "$TARGET_MODE" -eq 1 ]]; then
+    if [[ -z "$GATEWAY_URL" ]]; then
+        GATEWAY_URL="${FERRUM_GATEWAY_URL:-}"
+    fi
+    if [[ -z "$GATEWAY_URL" ]]; then
+        echo "[FAIL] Target mode requires --gateway-url or FERRUM_GATEWAY_URL env var" >&2
+        exit 1
+    fi
+    echo "[INFO] Target mode enabled. Gateway URL: $GATEWAY_URL"
+    echo "[INFO] Bearer token env var: $BEARER_TOKEN_ENV"
+    if [[ -z "${!BEARER_TOKEN_ENV:-}" ]]; then
+        echo "[WARN] Bearer token env var ($BEARER_TOKEN_ENV) is empty or unset" >&2
+    fi
+fi
+
+# --- Find or build ferrumd (local mode only) ---
 
 FERRUMD="${FERRUMD:-}"
-if [[ -z "$FERRUMD" ]]; then
-    for candidate in \
-        "$REPO_ROOT/target/release/ferrumd" \
-        "$REPO_ROOT/target/debug/ferrumd"; do
-        [[ -x "$candidate" ]] && FERRUMD="$candidate" && break
-    done
-fi
+if [[ "$TARGET_MODE" -eq 0 ]]; then
+    if [[ -z "$FERRUMD" ]]; then
+        for candidate in \
+            "$REPO_ROOT/target/release/ferrumd" \
+            "$REPO_ROOT/target/debug/ferrumd"; do
+            [[ -x "$candidate" ]] && FERRUMD="$candidate" && break
+        done
+    fi
 
-if [[ -z "$FERRUMD" ]] || [[ ! -x "$FERRUMD" ]]; then
-    echo "[INFO] ferrumd not found; building release ferrumd..." >&2
-    cargo build --release --bin ferrumd --manifest-path "$REPO_ROOT/Cargo.toml"
-    FERRUMD="$REPO_ROOT/target/release/ferrumd"
-fi
+    if [[ -z "$FERRUMD" ]] || [[ ! -x "$FERRUMD" ]]; then
+        echo "[INFO] ferrumd not found; building release ferrumd..." >&2
+        cargo build --release --bin ferrumd --manifest-path "$REPO_ROOT/Cargo.toml"
+        FERRUMD="$REPO_ROOT/target/release/ferrumd"
+    fi
 
-if [[ -z "$FERRUMD" ]] || [[ ! -x "$FERRUMD" ]]; then
-    echo "[FAIL] ferrumd not found or not executable after build attempt." >&2
-    exit 1
-fi
+    if [[ -z "$FERRUMD" ]] || [[ ! -x "$FERRUMD" ]]; then
+        echo "[FAIL] ferrumd not found or not executable after build attempt." >&2
+        exit 1
+    fi
 
-echo "[INFO] Using ferrumd: $FERRUMD"
+    echo "[INFO] Using ferrumd: $FERRUMD"
+fi
 
 # --- Find or build ferrum-mcp-server ---
 
@@ -87,52 +154,54 @@ echo "[INFO] Using ferrum-mcp-server: $FERRUM_MCP"
 # --- Setup temp directory ---
 
 SMOKE_DIR=$(mktemp -d)
-CONFIG_FILE="$SMOKE_DIR/ferrumgate.mcp-smoke.toml"
 FERRUMD_LOG="$SMOKE_DIR/ferrumd.log"
 
-# Find a free port on localhost
-find_free_port() {
-    local port=18080
-    local max_attempts=100
-    local attempt=0
-    while ((attempt < max_attempts)); do
-        if ! (echo > /dev/tcp/127.0.0.1/$port) 2>/dev/null; then
-            echo $port
-            return 0
-        fi
-        port=$((port + 1))
-        attempt=$((attempt + 1))
-    done
-    echo ""
-    return 1
-}
+# --- Local mode: find free port, create config, start ferrumd ---
 
-FREE_PORT=$(find_free_port)
-if [[ -z "$FREE_PORT" ]]; then
-    echo "[FAIL] Could not find a free port in range 18080-18180" >&2
-    exit 1
-fi
+if [[ "$TARGET_MODE" -eq 0 ]]; then
+    # Find a free port on localhost
+    find_free_port() {
+        local port=18080
+        local max_attempts=100
+        local attempt=0
+        while ((attempt < max_attempts)); do
+            if ! (echo > /dev/tcp/127.0.0.1/$port) 2>/dev/null; then
+                echo $port
+                return 0
+            fi
+            port=$((port + 1))
+            attempt=$((attempt + 1))
+        done
+        echo ""
+        return 1
+    }
 
-BASE_URL="http://127.0.0.1:$FREE_PORT"
-
-echo "[INFO] Smoke directory: $SMOKE_DIR"
-echo "[INFO] Using port: $FREE_PORT"
-echo "[INFO] Base URL: $BASE_URL"
-
-# --- Cleanup function ---
-cleanup() {
-    if [[ -n "${FERRUMD_PID:-}" ]] && kill -0 "$FERRUMD_PID" 2>/dev/null; then
-        echo "[INFO] Stopping ferrumd (PID: $FERRUMD_PID)..."
-        kill "$FERRUMD_PID" 2>/dev/null || true
-        wait "$FERRUMD_PID" 2>/dev/null || true
+    FREE_PORT=$(find_free_port)
+    if [[ -z "$FREE_PORT" ]]; then
+        echo "[FAIL] Could not find a free port in range 18080-18180" >&2
+        exit 1
     fi
-    rm -rf "$SMOKE_DIR"
-}
-trap cleanup EXIT
 
-# --- Create temp config with auth disabled (dev mode) ---
+    BASE_URL="http://127.0.0.1:$FREE_PORT"
+    CONFIG_FILE="$SMOKE_DIR/ferrumgate.mcp-smoke.toml"
 
-cat > "$CONFIG_FILE" << EOF
+    echo "[INFO] Smoke directory: $SMOKE_DIR"
+    echo "[INFO] Using port: $FREE_PORT"
+    echo "[INFO] Base URL: $BASE_URL"
+
+    # --- Cleanup function ---
+    cleanup() {
+        if [[ -n "${FERRUMD_PID:-}" ]] && kill -0 "$FERRUMD_PID" 2>/dev/null; then
+            echo "[INFO] Stopping ferrumd (PID: $FERRUMD_PID)..."
+            kill "$FERRUMD_PID" 2>/dev/null || true
+            wait "$FERRUMD_PID" 2>/dev/null || true
+        fi
+        rm -rf "$SMOKE_DIR"
+    }
+    trap cleanup EXIT
+
+    # --- Create temp config with auth disabled (dev mode) ---
+    cat > "$CONFIG_FILE" << EOF
 [server]
 bind_addr = "127.0.0.1:$FREE_PORT"
 store_dsn = "sqlite::memory:"
@@ -141,22 +210,21 @@ allow_insecure_nonlocal_bind = false
 log_filter = "info"
 EOF
 
-echo "[INFO] Config file: $CONFIG_FILE"
+    echo "[INFO] Config file: $CONFIG_FILE"
 
-# --- Start ferrumd ---
+    # --- Start ferrumd ---
+    echo "[INFO] Starting ferrumd (dev mode, auth disabled)..."
+    "$FERRUMD" --config "$CONFIG_FILE" > "$FERRUMD_LOG" 2>&1 &
+    FERRUMD_PID=$!
 
-echo "[INFO] Starting ferrumd (dev mode, auth disabled)..."
-"$FERRUMD" --config "$CONFIG_FILE" > "$FERRUMD_LOG" 2>&1 &
-FERRUMD_PID=$!
+    echo "[INFO] ferrumd started with PID: $FERRUMD_PID"
 
-echo "[INFO] ferrumd started with PID: $FERRUMD_PID"
-
-# Wait for server to be ready
-wait_for_server() {
-    local max_wait=30
-    local waited=0
-    while ((waited < max_wait)); do
-        if python3 -c "
+    # Wait for server to be ready
+    wait_for_server() {
+        local max_wait=30
+        local waited=0
+        while ((waited < max_wait)); do
+            if python3 -c "
 import urllib.request
 import urllib.error
 import sys
@@ -168,28 +236,47 @@ except urllib.error.HTTPError as e:
 except Exception:
     sys.exit(1)
 " 2>/dev/null; then
-            return 0
-        fi
-        sleep 1
-        waited=$((waited + 1))
-    done
-    return 1
-}
+                return 0
+            fi
+            sleep 1
+            waited=$((waited + 1))
+        done
+        return 1
+    }
 
-echo "[INFO] Waiting for ferrumd to be ready (max 30s)..."
-if ! wait_for_server; then
-    echo "[FAIL] ferrumd did not become ready within 30 seconds" >&2
-    echo "--- ferrumd log ---"
-    tail -50 "$FERRUMD_LOG" 2>/dev/null || cat "$FERRUMD_LOG" 2>/dev/null || true
-    echo "--- end log ---"
-    exit 1
+    echo "[INFO] Waiting for ferrumd to be ready (max 30s)..."
+    if ! wait_for_server; then
+        echo "[FAIL] ferrumd did not become ready within 30 seconds" >&2
+        echo "--- ferrumd log ---"
+        tail -50 "$FERRUMD_LOG" 2>/dev/null || cat "$FERRUMD_LOG" 2>/dev/null || true
+        echo "--- end log ---"
+        exit 1
+    fi
+    echo "[INFO] ferrumd is ready"
+else
+    # Target mode setup
+    BASE_URL="$GATEWAY_URL"
+    echo "[INFO] Smoke directory: $SMOKE_DIR"
+    echo "[INFO] Target gateway: $BASE_URL"
+
+    cleanup() {
+        rm -rf "$SMOKE_DIR"
+    }
+    trap cleanup EXIT
 fi
-echo "[INFO] ferrumd is ready"
 
-# --- Run MCP lifecycle smoke tests ---
+# --- Environment for MCP server ---
 
-export FERRUM_GATEWAY_URL="$BASE_URL"
-export FERRUM_GATEWAY_BEARER_TOKEN=""
+if [[ "$TARGET_MODE" -eq 0 ]]; then
+    # Local mode: point MCP server at the temporary local instance
+    export FERRUM_GATEWAY_URL="$BASE_URL"
+    export FERRUM_GATEWAY_BEARER_TOKEN=""
+fi
+# Target mode: point MCP server at the requested gateway but do NOT overwrite
+# FERRUM_GATEWAY_BEARER_TOKEN; the token must be supplied by the configured env var.
+if [[ "$TARGET_MODE" -eq 1 ]]; then
+    export FERRUM_GATEWAY_URL="$BASE_URL"
+fi
 
 PASSED=0
 FAILED=0
@@ -199,14 +286,14 @@ FAILED=0
 # Secondary check: total count >= 19 as a sanity bound.
 REQUIRED_TOOLS=(
     "ferrum_gate_health"
+    "ferrum_gate_readyz_deep"
     "ferrum_gate_list_intents"
     "ferrum_gate_get_execution"
-    "ferrum_gate_get_proposal"
-    "ferrum_gate_get_capability"
-    "ferrum_gate_get_approval"
+    "ferrum_gate_query_lineage"
     "ferrum_gate_list_approvals"
-    "ferrum_gate_query_provenance"
-    "ferrum_gate_get_lineage"
+    "ferrum_gate_list_policy_bundles"
+    "ferrum_gate_list_bridges"
+    "ferrum_gate_list_bridge_tools"
     "ferrum_gate_submit_intent"
     "ferrum_gate_evaluate_intent"
     "ferrum_gate_mint_capability"
@@ -611,8 +698,10 @@ if [[ $FAILED -eq 0 ]]; then
     exit 0
 else
     echo "MCP LIFECYCLE SMOKE: SOME CHECKS FAILED"
-    echo "--- ferrumd log (last 30 lines) ---"
-    tail -30 "$FERRUMD_LOG" 2>/dev/null || cat "$FERRUMD_LOG" 2>/dev/null || true
-    echo "--- end log ---"
+    if [[ "$TARGET_MODE" -eq 0 ]]; then
+        echo "--- ferrumd log (last 30 lines) ---"
+        tail -30 "$FERRUMD_LOG" 2>/dev/null || cat "$FERRUMD_LOG" 2>/dev/null || true
+        echo "--- end log ---"
+    fi
     exit 1
 fi

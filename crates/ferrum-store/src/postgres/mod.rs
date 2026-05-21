@@ -49,7 +49,7 @@ pub use tokens::PostgresTokenRepo;
 use crate::Result;
 use crate::repos::{
     ApprovalRepo, CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo, PolicyBundleRepo,
-    ProposalRepo, ProvenanceRepo, RollbackRepo, StoreFacade,
+    ProposalRepo, ProvenanceRepo, RollbackRepo, StoreFacade, TokenRepo,
 };
 use async_trait::async_trait;
 use sqlx::PgPool;
@@ -454,6 +454,12 @@ mod tests {
     fn postgres_policy_bundle_repo_implements_policy_bundle_repo() {
         fn _check<T: PolicyBundleRepo>() {}
         _check::<PostgresPolicyBundleRepo>();
+    }
+
+    #[test]
+    fn postgres_token_repo_implements_token_repo() {
+        fn _check<T: TokenRepo>() {}
+        _check::<PostgresTokenRepo>();
     }
 
     #[test]

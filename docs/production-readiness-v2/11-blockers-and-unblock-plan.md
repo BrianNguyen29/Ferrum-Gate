@@ -2,7 +2,7 @@
 
 > **Status**: Planning artifact. Tracks the 7 active blockers/open items that gate further production-path progress.
 > **Owner**: Engineering + Operator
-> **Last updated**: 2026-05-20
+> **Last updated**: 2026-05-21
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
 > **Scope**: [`00-scope-and-nonclaims.md`](00-scope-and-nonclaims.md)
 
@@ -10,18 +10,18 @@
 
 ## Executive Summary
 
-Seven items remain open between the current conditional RC posture and the next credible production-candidate milestones. This doc orders them, assigns owners, states prerequisites, and lists the exact next action for each. It does not claim any item is complete, and it does not claim production-ready status.
+One item remains open (`BLK-A-DOM`) between the current conditional RC posture and any production-candidate milestone. The other six blockers have been unblocked or completed as of 2026-05-21. This doc orders them, assigns owners, states prerequisites, and lists the exact next action for each. It does not claim production-ready status or full G2 closure.
 
 The seven blockers:
 
 | # | Blocker ID | Item | Owner | Status |
 |---|------------|------|-------|--------|
-| 1 | **BLK-SLO-RAT** | SLO operator ratification | Operator | ☐ NOT STARTED — operator signoff pending |
-| 2 | **BLK-SLO-TGT** | SLO target-host workload validation | Engineering | 🚫 BLOCKED — valid target bearer token required |
-| 3 | **BLK-SEC-PH4** | Phase 4 scoped token / RBAC model | Engineering + Operator | 🚫 BLOCKED — pending operator tenant / OIDC / scoped-token decisions |
-| 4 | **BLK-UX-4** | UX-4 token rotate / revoke CLI | Engineering | 🚫 BLOCKED — requires Phase 4 scoped token endpoints |
-| 5 | **BLK-MCP-TGT** | Phase 3 MCP target-host smoke | Engineering | 🚫 BLOCKED — target bearer token / access required |
-| 6 | **BLK-DEP-5** | DEP-5 Helm / K8s packaging | Engineering | ✅ SCAFFOLD COMPLETE — local-safe; live cluster install deferred |
+| 1 | **BLK-SLO-RAT** | SLO operator ratification | Operator | ✅ RATIFIED FOR VALIDATION BASELINE — 2026-05-20 |
+| 2 | **BLK-SLO-TGT** | SLO target-host workload validation | Engineering | ✅ UNBLOCKED — abbreviated target workload executed 2026-05-21; full SLO certification NOT claimed |
+| 3 | **BLK-SEC-PH4** | Phase 4 scoped token / RBAC model | Engineering + Operator | ✅ IMPLEMENTED — operator decisions approved; SEC-1–SEC-5 + TTL enforcement complete |
+| 4 | **BLK-UX-4** | UX-4 token rotate / revoke CLI | Engineering | ✅ IMPLEMENTED — `ferrumctl admin tokens` CLI complete |
+| 5 | **BLK-MCP-TGT** | Phase 3 MCP target-host smoke | Engineering | ✅ UNBLOCKED — target-mode MCP smoke passed 15/15 on 2026-05-21 |
+| 6 | **BLK-DEP-5** | DEP-5 Helm / K8s packaging | Engineering | ✅ SCAFFOLD COMPLETE — `helm lint` + `helm template` passed 2026-05-21; live cluster install blocked by kind timeout |
 | 7 | **BLK-A-DOM** | Real owned domain / Block A full closure | Operator | ☐ WAIVED/CONDITIONAL — real domain still required for production-ready or full G2 closure |
 
 ---
@@ -30,9 +30,9 @@ The seven blockers:
 
 | Axis | Engineering-owned | Operator-required |
 |------|-------------------|-------------------|
-| **Blocked on operator input** | BLK-SEC-PH4, BLK-UX-4 | BLK-SLO-RAT, BLK-A-DOM |
-| **Blocked on target access / token** | BLK-SLO-TGT, BLK-MCP-TGT | — |
-| **Unblocked / can start now** | BLK-DEP-5 | — |
+| **Blocked on operator input** | — | BLK-A-DOM |
+| **Unblocked / completed** | BLK-SLO-TGT, BLK-MCP-TGT, BLK-SEC-PH4, BLK-UX-4, BLK-DEP-5 | BLK-SLO-RAT |
+| **Remains open** | — | BLK-A-DOM |
 
 ---
 
@@ -61,12 +61,12 @@ The seven blockers:
 
 | # | Todo | Blocker ID | Owner | Unblock Condition | Acceptance Criteria | Evidence Required |
 |---|------|------------|-------|-------------------|---------------------|-------------------|
-| P.1 | Run SLO target-host workload per `slo-validation-runbook.md` | BLK-SLO-TGT | Engineering | O.1 (ratification) + O.2 (token) | All five phases complete; p99 latencies and error rates recorded; artifact created | `artifacts/YYYY-MM-DD-slo-target-evidence.md` |
-| P.2 | Run MCP target-host smoke (Layer 1–3) per `03-target-mcp-live-workload-plan.md` | BLK-MCP-TGT | Engineering | O.2 (token) | MCP-1 through MCP-7 pass; artifact created with no secrets | `artifacts/YYYY-MM-DD-mcp-target-smoke-evidence.md` |
+| P.1 | Run SLO target-host workload per `slo-validation-runbook.md` | BLK-SLO-TGT | Engineering | O.1 (ratification) + O.2 (token) | Abbreviated target workload executed 2026-05-21; full SLO certification deferred | `artifacts/2026-05-21-target-slo-mcp-helm-domain-evidence.md` §3 |
+| P.2 | Run MCP target-host smoke (Layer 1–3) per `03-target-mcp-live-workload-plan.md` | BLK-MCP-TGT | Engineering | O.2 (token) | MCP-1 through MCP-7 pass; artifact created with no secrets | `artifacts/2026-05-21-target-slo-mcp-helm-domain-evidence.md` §4 |
 | P.3 | Implement scoped token store schema and RBAC middleware | BLK-SEC-PH4 | Engineering | O.3 (decisions) | ✅ COMPLETE — SEC-1 through SEC-5 pass in automated tests; SEC-6 deferred | `artifacts/2026-05-20-scoped-token-implementation-evidence.md` |
 | P.4 | Implement `ferrumctl admin tokens` CLI (list/create/revoke/rotate) | BLK-UX-4 | Engineering | P.3 complete | ✅ COMPLETE — UX-4 acceptance criteria met; test output captured | `artifacts/2026-05-20-scoped-token-implementation-evidence.md` §5 |
 | P.5 | Implement `POST /v1/admin/tokens` and `DELETE /v1/admin/tokens/{id}` APIs | BLK-UX-4 | Engineering | P.3 complete | ✅ COMPLETE — APIs return correct 201/204/401/403; test coverage added | Same artifact §P.5 |
-| P.6 | Run DEP-5 Helm install against a live cluster (optional; can remain local-only until operator cluster available) | BLK-DEP-5 | Engineering | N.1–N.3 + optional live cluster | `helm install` produces ready pod; `kubectl get pods` shows Running | `artifacts/YYYY-MM-DD-dep5-helm-install-evidence.md` |
+| P.6 | Run DEP-5 Helm install against a live cluster (optional; can remain local-only until operator cluster available) | BLK-DEP-5 | Engineering | N.1–N.3 + optional live cluster | `helm lint` and `helm template` passed 2026-05-21; live cluster install blocked by kind timeout | `artifacts/2026-05-21-target-slo-mcp-helm-domain-evidence.md` §5 |
 | P.7 | Re-run L1–L5 target bridge + G2 re-signoff with real domain | BLK-A-DOM | Engineering + Operator | O.4 + O.5 | All target bridge checks pass; operator signs updated signoff packet | `artifacts/YYYY-MM-DD-block-a-closure-evidence.md` |
 
 ### 📦 Deferred (out of current scope; do not start)
@@ -120,32 +120,37 @@ The following questions must be answered by the operator to unblock BLK-SEC-PH4 
 
 - **Blocker ID**: `BLK-SLO-RAT`
 - **Owner**: Operator
-- **Status**: ✅ RATIFIED FOR VALIDATION BASELINE — target-host run still pending
+- **Status**: ✅ RATIFIED FOR VALIDATION BASELINE — abbreviated target-host run completed; full certification review deferred
 - **Prerequisites**: `01-slo-sla.md` draft exists; `slo-validation-runbook.md` exists.
-- **Blocked on**: Target-host workload execution and post-run evidence review.
+- **Blocked on**: Nothing for baseline ratification; full certification still needs operator-approved canonical-duration run and review.
 - **Acceptance criteria**:
   - Operator has read `01-slo-sla.md` and `slo-validation-runbook.md`.
   - Operator replies with ratification or a numbered list of requested changes.
   - Ratification artifact is signed and stored in `docs/implementation-path/artifacts/`.
 - **Evidence required**: `artifacts/2026-05-20-slo-ratification-signoff.md` plus post-run target evidence.
-- **Exact next action**: Engineering runs target-host SLO validation after target bearer token handoff.
-- **Downstream impact**: Unblocks BLK-SLO-TGT (engineering can then execute target workload with ratified targets).
+- **Exact next action**: Operator reviews abbreviated target evidence; engineering reruns canonical-duration SLO validation only if requested.
+- **Downstream impact**: Baseline ratification has unblocked abbreviated target workload evidence; full certification remains deferred.
 
 ### BLK-SLO-TGT — SLO target-host workload validation
 
 - **Blocker ID**: `BLK-SLO-TGT`
 - **Owner**: Engineering
-- **Status**: 🚫 BLOCKED
+- **Status**: ✅ UNBLOCKED — abbreviated target workload executed 2026-05-21
 - **Prerequisites**: BLK-SLO-RAT ratified; valid target bearer token available.
-- **Blocked on**: Shared target bearer token handoff (O.2, same dependency as BLK-MCP-TGT).
+- **Blocked on**: Nothing — token installed and workload executed.
 - **Acceptance criteria**:
   - Pilot readiness check passes before and after run.
   - All five workload phases execute (baseline → low → target → spike → cooldown).
   - p99 latencies recorded for evaluate, mint, execute pipeline.
   - 5xx rate < 1%; 429 rate < 5%.
   - Evidence artifact created and marked PENDING SIGNOFF.
-- **Evidence required**: `artifacts/YYYY-MM-DD-slo-target-evidence.md`
-- **Exact next action**: Engineering awaits token handoff (O.2), then runs the SLO validation runbook.
+- **Evidence achieved (abbreviated)**:
+  - Abbreviated phases executed: baseline 5 s, target 30 s @ 1 rps, spike 10 s @ 2 rps, cooldown 5 s.
+  - Total requests 39, HTTP 200 = 39, errors = 0.
+  - Target phase p99 = 1000.073 ms; spike phase p99 = 527.098 ms.
+  - Evidence artifact: `artifacts/2026-05-21-target-slo-mcp-helm-domain-evidence.md` §3.
+- **Evidence required for full certification**: `artifacts/YYYY-MM-DD-slo-target-full-evidence.md` (canonical durations, operator signoff)
+- **Exact next action**: Operator review of abbreviated evidence; full SLO certification deferred until operator requests.
 - **Downstream impact**: Enables workload model refresh and G2 re-signoff.
 
 ### BLK-SEC-PH4 — Phase 4 scoped token / RBAC model
@@ -189,9 +194,9 @@ The following questions must be answered by the operator to unblock BLK-SEC-PH4 
 
 - **Blocker ID**: `BLK-MCP-TGT`
 - **Owner**: Engineering
-- **Status**: 🚫 BLOCKED
+- **Status**: ✅ UNBLOCKED — target-mode MCP smoke passed 15/15 on 2026-05-21
 - **Prerequisites**: Valid target bearer token; target gateway reachable.
-- **Blocked on**: Operator provides valid target bearer token (O.2).
+- **Blocked on**: Nothing — token installed and smoke executed.
 - **Acceptance criteria**:
   - MCP-1: `tools/list` returns 19 tools against target.
   - MCP-2: 9 read-only tools pass.
@@ -200,24 +205,28 @@ The following questions must be answered by the operator to unblock BLK-SEC-PH4 
   - MCP-5: Provenance chain exists.
   - MCP-6: Redaction/sanitization verified.
   - MCP-7: Evidence artifact created with no secrets.
-- **Evidence required**: `artifacts/YYYY-MM-DD-mcp-target-smoke-evidence.md`
-- **Exact next action**: Engineering awaits token handoff (O.2), then runs Layer 1–3 per `03-target-mcp-live-workload-plan.md`.
+- **Evidence achieved**:
+  - `run_mcp_lifecycle_smoke.sh --gateway-url https://ferrumgate.duckdns.org` passed 15/15.
+  - 19 tools validated; target gateway reachable; lifecycle submit/evaluate/mint/list returned results.
+  - Sanitized log at `/tmp/opencode/ferrumgate-target-mcp-smoke-20260521.log`.
+  - Evidence artifact: `artifacts/2026-05-21-target-slo-mcp-helm-domain-evidence.md` §4.
+- **Exact next action**: Operator review of target MCP evidence.
 - **Downstream impact**: Proves agent path on target; feeds G2 re-signoff.
 
 ### BLK-DEP-5 — DEP-5 Helm / K8s packaging
 
 - **Blocker ID**: `BLK-DEP-5`
 - **Owner**: Engineering
-- **Status**: ✅ SCAFFOLD COMPLETE — local-safe; `helm lint` and `helm template` passed; live cluster install deferred
+- **Status**: ✅ SCAFFOLD COMPLETE — `helm lint` and `helm template` passed 2026-05-21; live cluster install blocked by kind timeout
 - **Prerequisites**: None for local scaffold; live cluster optional.
-- **Blocked on**: Nothing for scaffold. Live cluster install requires operator cluster availability.
+- **Blocked on**: Live cluster install blocked by `kind create cluster` timeout (300 s). No cluster found afterward.
 - **Acceptance criteria**:
   - `helm lint` passes locally.
   - `helm template` renders valid K8s manifests locally.
   - Local dry-run validation passes (`kubeconform` or equivalent) — deferred until Helm available.
-  - Optional: live cluster install produces ready pod — NOT STARTED.
-- **Evidence required**: `artifacts/2026-05-20-dep5-helm-scaffold-evidence.md` (+ optional live install artifact)
-- **Exact next action**: Defer live `helm install`/ready-pod evidence until an operator cluster is available.
+  - Optional: live cluster install produces ready pod — BLOCKED.
+- **Evidence required**: `artifacts/2026-05-20-dep5-helm-scaffold-evidence.md` + `artifacts/2026-05-21-target-slo-mcp-helm-domain-evidence.md` §5
+- **Exact next action**: Defer live `helm install`/ready-pod evidence until a working local cluster or operator cluster is available.
 - **Downstream impact**: Enables K8s deployment mode documentation and eventual live cluster testing.
 
 ### BLK-A-DOM — Real owned domain / Block A full closure
@@ -274,8 +283,8 @@ For each blocker resolution, use the following artifact paths:
 
 - **NOT production-ready**: This plan does not make FerrumGate production-ready.
 - **NOT full G2**: Full G2 requires BLK-A-DOM closure + BLK-SLO-TGT evidence + operator re-signoff.
-- **NOT target-host validated**: No target-host workload or MCP smoke has been executed yet for the items marked BLOCKED.
-- **NOT implemented**: Phase 4 scoped token model and UX-4 CLI are designs only until BLK-SEC-PH4 is unblocked.
+- **NOT full target-host certification**: Target SLO/MCP evidence exists, but the SLO run is abbreviated and full certification still requires operator-approved canonical-duration execution.
+- **NOT all future security scope complete**: Phase 4 scoped token model and UX-4 CLI are implemented; SEC-6 audit-log schema remains deferred.
 - **NOT multi-tenant**: Single-tenant production (T1) is the recommended first posture.
 - **NOT a committed timeline**: Dates in artifact names are templates; actual execution dates are TBD and operator-dependent.
 - **DuckDNS conditional only**: Block A remains WAIVED/CONDITIONAL. Real owned domain is still required for any production-ready claim.
