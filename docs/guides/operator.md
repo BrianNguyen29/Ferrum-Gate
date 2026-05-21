@@ -269,6 +269,10 @@ Restart is **not** required for a transient PostgreSQL outage. Restart only if:
 
 For the full procedure to promote a PostgreSQL standby and update ferrumd's DSN manually, see [`docs/production-readiness-v2/manual-failover-runbook.md`](../../production-readiness-v2/manual-failover-runbook.md). This is a planning artifact only; no live drill has been performed.
 
+### Read replica design
+
+For the design of read replica routing, consistency semantics, and observability, see [`docs/production-readiness-v2/read-replica-design.md`](../../production-readiness-v2/read-replica-design.md). This is a planning artifact only; no read replica code or deployment exists.
+
 ## Related docs
 
 - [`hosted-deployment.md`](./hosted-deployment.md) — systemd, Docker, K8s deployment modes.

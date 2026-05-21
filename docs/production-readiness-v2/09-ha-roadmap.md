@@ -27,7 +27,7 @@ Design the path from single-node production to multi-node/HA, starting with an A
 |-----|----------|-----|
 | HA ADR approved as planning decision; implementation NOT STARTED | Critical | Cannot implement HA without an approved design |
 | No manual failover runbook | High | Operator cannot recover from primary failure |
-| No read replica plan | High | Read scaling is not possible |
+| Read replica design drafted; implementation NOT STARTED | High | Read scaling design exists; no code or deployment |
 | No automated failover | Critical | Not true HA without automation |
 | No split-brain prevention | Critical | HA claim is impossible without this |
 
@@ -49,10 +49,11 @@ Design the path from single-node production to multi-node/HA, starting with an A
 
 ### HA-3 — Read replicas
 
-- [ ] Read-only endpoints can use replica.
-- [ ] Writes go to primary.
-- [ ] Readiness shows replica lag.
-- [ ] Stale reads documented.
+- [x] Read-only endpoints can use replica. — **DESIGNED** in [`read-replica-design.md`](./read-replica-design.md) §5.2.
+- [x] Writes go to primary. — **DESIGNED** in [`read-replica-design.md`](./read-replica-design.md) §5.1.
+- [x] Readiness shows replica lag. — **DESIGNED** in [`read-replica-design.md`](./read-replica-design.md) §7.2.
+- [x] Stale reads documented. — **DESIGNED** in [`read-replica-design.md`](./read-replica-design.md) §6.
+- [ ] Read replica code implemented and tested. — **DEFERRED** until follow-up ADR selects Strategy A or B.
 
 ### HA-4 — Automated failover (deferred)
 
@@ -81,7 +82,8 @@ Design the path from single-node production to multi-node/HA, starting with an A
 - `ha-adr.md`
 - `manual-failover-runbook.md` (planning artifact; no live drill)
 - `manual-failover-drill-evidence.md` (deferred until operator environment ready)
-- `read-replica-test-evidence.md`
+- `read-replica-design.md` (planning artifact; no implementation)
+- `read-replica-test-evidence.md` (deferred until operator environment ready)
 
 ## Non-claims
 
