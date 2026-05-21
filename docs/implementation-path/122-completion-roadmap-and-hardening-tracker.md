@@ -9,13 +9,15 @@
 
 ## Executive Summary
 
-Following May 13–16 operator execution and evidence collection, plus May 16–18 engineering updates:
+Following May 13–16 operator execution and evidence collection, plus May 16–18 engineering updates, plus May 21 canonical target evidence:
 - **Block C (keyless backup)**: CLOSED — C1 path verified, residual key removed, offsite sync confirmed.
 - **Block B (off-VM alerting)**: CLOSED — operator confirmed primary and secondary inbox delivery (G-B1/G-B2); G-B3 verified/closed (bearer token rotation + SendGrid API key rotation, primary+secondary delivery confirmed, old SendGrid key revoked/deleted); G-B4 formally acknowledged on 2026-05-17.
 - **Block A (real domain)**: WAIVED/CONDITIONAL — DuckDNS accepted by operator on 2026-05-17 for single-node SQLite pilot only; operator acknowledged Path A conditional pilot closure on 2026-05-18 with no real domain available; real owned domain still required for production-ready or full G2 closure. See `artifacts/2026-05-18-path-a-conditional-pilot-closure-acknowledgment.md`
 - **P0 items**: All closed (CI hardened, D1–D6 passed, restore drill passed, backup automation verified, G2 signed, operator signoff obtained).
 - **Engineering items 7–9**: Completed — ferrum-cap fix verified (atomic `update_status_if_active`, gateway durable path wired, 9 tests pass); local/manual security audit gate added (`scripts/run_security_audit.sh` + `make audit`); `cargo-audit v0.22.1` and `cargo-deny v0.19.6` installed; `make audit` passes with both tools (cargo-deny advisories ok, cargo-audit 384 dependencies scanned, PASS; SECURITY AUDIT GATE: PASS).
-- **Production posture**: `production-ready = NO`; PostgreSQL production = `NO`; HA/multi-node = `NO`.
+- **May 21 canonical evidence**: Canonical SLO Run #3 max-valid PASS (0% 429, 2380/2380 HTTP 200); live Helm install on kind PASS; target MCP smoke 15/15 PASS; PostgreSQL scoped token repo implemented and passing all checks. Conditional re-signoff authorized by BrianNguyen 2026-05-21 for single-node SQLite pilot scope only.
+- **SLO default-config gap**: Default and tuned rate-limit configs FAIL canonical SLO (46.8% and 73.4% 429 respectively). Max-valid config (1000/10000) required to pass. Accepted as known limitation for conditional pilot. Engineering to investigate; operator to ratify operational baseline.
+- **Production posture**: `production-ready = NO`; full G2 = `NOT COMPLETE`; PostgreSQL production = `NO`; HA/multi-node = `NO`.
 
 ---
 
@@ -33,6 +35,13 @@ Following May 13–16 operator execution and evidence collection, plus May 16–
 | 8 | Add ferrum-cap tests | Engineering | ✅ Done | — | 9 tests pass (4 TTL boundaries + 5 mark_used paths: success, already_used, concurrent_single_use, revoked, expired) | — |
 | 9 | Add local/manual cargo-audit or cargo-deny gate | Engineering | ✅ Done | — | `cargo-audit v0.22.1` and `cargo-deny v0.19.6` installed; `scripts/run_security_audit.sh` created; `make audit` target added; checks for `cargo-deny` and `cargo-audit`, runs available tools, fails with install instructions if neither present; **dual-tool PASS** (cargo-deny advisory DB fetched, advisories ok; cargo-audit loaded 1090 advisories, scanned 384 dependencies, 0 actionable issues); `RUSTSEC-2023-0071` ignored because the affected crate path (`rsa` via `sqlx-mysql`) is an uncompiled optional dependency blocked by `default-features = false` on `sqlx` | — |
 | 10 | Run Block A domain/TLS path when real domain exists | Operator | ☐ WAIVED/CONDITIONAL — real domain still required for production-ready or full G2 closure | DuckDNS accepted by operator on 2026-05-17 for single-node SQLite pilot only; Path A conditional pilot closure acknowledged on 2026-05-18 with no real domain available. See `artifacts/2026-05-18-path-a-conditional-pilot-closure-acknowledgment.md` | `scripts/gcp/phase3g_configure_real_domain.sh` ready; requires `REAL_DOMAIN` + DNS A record → `34.158.51.8` | Operator procures domain, configures DNS A record, then executes Block A runbook (`R4` §A) to move Block A from WAIVED to CLOSED |
+| 11 | Canonical SLO certification (max-valid config) | Engineering | ✅ PASS — Run #3 max-valid (1000/10000) passed 0% 429, 2380/2380 HTTP 200 | Runs #1 default (46.8% 429) and #2 tuned (73.4% 429) documented as failure evidence. Max-valid config required to pass. | `docs/implementation-path/artifacts/2026-05-21-canonical-slo-helm-conditional-signoff.md` §3 | Engineering to investigate default/tuned config failures; operator to ratify operational rate-limit baseline |
+| 12 | Live Helm install on kind | Engineering | ✅ PASS — kind cluster created; Helm release deployed; pod 1/1 Running; health/readiness OK | NOT production K8s/HA. Local kind cluster only. | `docs/implementation-path/artifacts/2026-05-21-canonical-slo-helm-conditional-signoff.md` §4 | Operator review of kind-only evidence; production K8s validation deferred until operator cluster available |
+| 13 | Target MCP smoke | Engineering | ✅ PASS — 15/15 passed against `https://ferrumgate.duckdns.org` | Target-mode MCP smoke validated 19 tools, lifecycle flow, and redaction. | `docs/implementation-path/artifacts/2026-05-21-target-slo-mcp-helm-domain-evidence.md` §4 | Operator review of target MCP evidence |
+| 14 | PostgreSQL scoped token repo | Engineering | ✅ COMPLETE — `crates/ferrum-store/src/postgres/tokens.rs` implemented; all checks pass | 72 tests pass with postgres feature; workspace tests pass. | `docs/implementation-path/artifacts/2026-05-21-target-slo-mcp-helm-domain-evidence.md` §6 | Ready for integration when PostgreSQL-backed target host is deployed |
+| 15 | SEC-6 minimal append-only audit log | Engineering | ✅ IMPLEMENTED — domain types, SQLite/Postgres repo, migration 008, `GET /v1/admin/audit-logs`, best-effort append, `ferrumctl admin audit list` | Best-effort only; not compliance-grade; not production-ready | `docs/implementation-path/artifacts/2026-05-21-sec6-audit-log-implementation-evidence.md` | Operator review of SEC-6 evidence |
+| 16 | PG-2.3b reconnect / circuit breaker | Engineering | 📝 DEFERRED — docs-only rationale; `sqlx::PgPool` transparent reconnect sufficient for single-node | Revisit only after HA/multi-node topology | `docs/implementation-path/artifacts/2026-05-21-pg-2.3b-reconnect-circuit-breaker-backlog.md` | Engineering to revisit when HA ADR is drafted |
+| 17 | HA Phase 9 planning | Engineering + Operator | 📝 PLANNING — ADR not yet written; preconditions (PG stable, security model, SLO metrics, backup evidence) partially met | HA/multi-node = NO; do not start implementation until preconditions closed | `docs/implementation-path/artifacts/2026-05-21-ha-phase-9-planning-backlog.md` | Draft HA ADR after PG target deployment and operator signoff |
 
 ---
 
@@ -131,6 +140,27 @@ Following May 13–16 operator execution and evidence collection, plus May 16–
 | [`artifacts/2026-05-18-path-a-conditional-pilot-closure-acknowledgment.md`](./artifacts/2026-05-18-path-a-conditional-pilot-closure-acknowledgment.md) | Path A conditional pilot closure acknowledgment (2026-05-18) |
 | [`artifacts/2026-05-18-local-confidence-polish-evidence.md`](./artifacts/2026-05-18-local-confidence-polish-evidence.md) | D1–D6 API live local, G3.6 bounded local execute, MCP lifecycle smoke, WAL drill, pre-target gate (2026-05-18) |
 | [`docs/production-readiness-v2/11-blockers-and-unblock-plan.md`](../production-readiness-v2/11-blockers-and-unblock-plan.md) | Active blockers, ordered unblock plan, operator decision packet, and evidence naming convention |
+| [`artifacts/2026-05-21-canonical-slo-helm-conditional-signoff.md`](./artifacts/2026-05-21-canonical-slo-helm-conditional-signoff.md) | Canonical SLO certification (3 runs), live Helm kind install, and conditional re-signoff |
+| [`artifacts/2026-05-21-target-slo-mcp-helm-domain-evidence.md`](./artifacts/2026-05-21-target-slo-mcp-helm-domain-evidence.md) | Target token rotation, abbreviated SLO workload, target MCP smoke, Helm static validation, PG token repo |
+| [`artifacts/2026-05-21-sec6-audit-log-implementation-evidence.md`](./artifacts/2026-05-21-sec6-audit-log-implementation-evidence.md) | SEC-6 minimal append-only audit log implementation evidence |
+| [`artifacts/2026-05-21-pg-2.3b-reconnect-circuit-breaker-backlog.md`](./artifacts/2026-05-21-pg-2.3b-reconnect-circuit-breaker-backlog.md) | PG-2.3b reconnect/circuit breaker deferred backlog |
+| [`artifacts/2026-05-21-ha-phase-9-planning-backlog.md`](./artifacts/2026-05-21-ha-phase-9-planning-backlog.md) | HA Phase 9 planning backlog |
+
+---
+
+## SLO Default-Config Gap Decision
+
+| Attribute | Value |
+|-----------|-------|
+| **Gap** | Default rate-limit config (2 req/s, burst 50) and tuned config (20/500) both fail canonical SLO under the runbook workload profile |
+| **Run #1 (default)** | FAIL — 429 rate 46.767% (1114/2382 requests) |
+| **Run #2 (tuned 20/500)** | FAIL — 429 rate 73.445% (1795/2444 requests) |
+| **Run #3 (max-valid 1000/10000)** | PASS — 0 errors, 0 429s, 2380/2380 HTTP 200 |
+| **Decision** | Accepted as known limitation for conditional pilot. SLO certification claimed **only** for max-valid config. Default/tuned configs do not meet pilot SLO. |
+| **Owner (investigation)** | Engineering — investigate why default/tuned configs fail canonical workload; assess whether default limits are overly conservative or workload is atypical |
+| **Owner (ratification)** | Operator — ratify operational rate-limit baseline for pilot; decide whether max-valid config is acceptable or requires remediation before pilot |
+| **Rationale** | Default limits are intentionally conservative for safety. The canonical workload (baseline → low → target → spike → cooldown) generates sustained request volume that exceeds conservative limits. Max-valid config (within validation bounds) is required to pass. This is not a code defect; it is a config-vs-workload mismatch. |
+| **Evidence** | `docs/implementation-path/artifacts/2026-05-21-canonical-slo-helm-conditional-signoff.md` §3.5 |
 
 ---
 
@@ -143,6 +173,8 @@ Following May 13–16 operator execution and evidence collection, plus May 16–
 - **NOT full P0/G2 production claim**: Primary and secondary email delivery confirmed; Block B is closed, but Block A domain evidence is WAIVED/CONDITIONAL (not CLOSED).
 - **NOT production-ready despite Block B closure**: Block B is now CLOSED, but Block A is WAIVED/CONDITIONAL (not CLOSED) and production-ready remains NO.
 - **NOT full security audit**: `make audit` passes with both cargo-deny and cargo-audit. This is a local/manual gate, not CI.
+- **NOT SLO certified for all configs**: SLO PASS claimed only for max-valid rate-limit configuration (1000/10000). Default and tuned configs failed.
+- **NOT production K8s/HA**: Helm live install verified on local kind cluster only.
 
 ---
 

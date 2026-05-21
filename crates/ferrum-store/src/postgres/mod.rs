@@ -23,6 +23,7 @@
 //! See ADR-50 for the phased implementation plan.
 
 mod approvals;
+mod audit_log;
 mod capabilities;
 mod executions;
 mod helpers;
@@ -36,6 +37,7 @@ mod rollback;
 mod tokens;
 
 pub use approvals::PostgresApprovalRepo;
+pub use audit_log::PostgresAuditLogRepo;
 pub use capabilities::PostgresCapabilityRepo;
 pub use executions::PostgresExecutionRepo;
 pub use intents::PostgresIntentRepo;
@@ -48,8 +50,8 @@ pub use tokens::PostgresTokenRepo;
 
 use crate::Result;
 use crate::repos::{
-    ApprovalRepo, CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo, PolicyBundleRepo,
-    ProposalRepo, ProvenanceRepo, RollbackRepo, StoreFacade, TokenRepo,
+    ApprovalRepo, AuditLogRepo, CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo,
+    PolicyBundleRepo, ProposalRepo, ProvenanceRepo, RollbackRepo, StoreFacade, TokenRepo,
 };
 use async_trait::async_trait;
 use sqlx::PgPool;
@@ -312,6 +314,10 @@ impl PostgresStore {
     pub fn tokens(&self) -> PostgresTokenRepo {
         PostgresTokenRepo::new(self.pool.clone())
     }
+
+    pub fn audit_log(&self) -> PostgresAuditLogRepo {
+        PostgresAuditLogRepo::new(self.pool.clone())
+    }
 }
 
 #[async_trait]
@@ -354,6 +360,10 @@ impl StoreFacade for PostgresStore {
 
     fn tokens(&self) -> Arc<dyn TokenRepo> {
         Arc::new(self.tokens())
+    }
+
+    fn audit_log(&self) -> Arc<dyn AuditLogRepo> {
+        Arc::new(self.audit_log())
     }
 
     async fn health_check(&self) -> crate::Result<()> {
@@ -463,6 +473,12 @@ mod tests {
     }
 
     #[test]
+    fn postgres_audit_log_repo_implements_audit_log_repo() {
+        fn _check<T: AuditLogRepo>() {}
+        _check::<PostgresAuditLogRepo>();
+    }
+
+    #[test]
     fn postgres_pool_config_defaults_are_conservative() {
         let config = super::PostgresPoolConfig::default();
         assert_eq!(config.max_connections, 10);
@@ -499,7 +515,7 @@ mod tests {
 
     #[test]
     fn postgres_current_schema_version_is_set() {
-        assert_eq!(super::migrations::CURRENT_SCHEMA_VERSION, 1);
+        assert_eq!(super::migrations::CURRENT_SCHEMA_VERSION, 2);
     }
 
     #[tokio::test]

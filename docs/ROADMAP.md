@@ -454,7 +454,7 @@ Start with ADR before code.
 | No roles/RBAC | cao |
 | No tenant/org/workspace model | cao |
 | No scoped tokens | cao |
-| No admin audit log separate from provenance | trung bình/cao |
+| ~~No admin audit log separate from provenance~~ ✅ Done 2026-05-21 (SEC-6) | trung bình/cao |
 | Capability revocation durability concerns | trung bình |
 | No token rotation API | trung bình |
 | No OIDC/JWT/SSO | trung bình |
@@ -1217,7 +1217,7 @@ Purpose:
    - tenant_id later.
    - role/scopes maybe not all in event payload.
 
-5. **Add audit log:**
+5. **Add audit log:** ✅ Done 2026-05-21 — minimal append-only audit log with best-effort store append.
    - auth success/failure;
    - admin actions;
    - policy changes;

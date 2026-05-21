@@ -122,9 +122,9 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 
 ## Phase 4 — Security and tenant model
 
-> **Status**: Operator decisions approved on 2026-05-20. Implementation of scoped tokens, RBAC middleware, admin token APIs, and ferrumctl CLI completed on 2026-05-20. BLK-SEC-PH4 unblocked for implementation; remaining open items are SEC-6 (audit log) and Phase 4 full signoff. See [`11-blockers-and-unblock-plan.md`](./11-blockers-and-unblock-plan.md).
+> **Status**: Operator decisions approved on 2026-05-20. Implementation of scoped tokens, RBAC middleware, admin token APIs, ferrumctl CLI, and SEC-6 audit log completed on 2026-05-21. BLK-SEC-PH4 unblocked for implementation; remaining open item is Phase 4 full signoff. See [`11-blockers-and-unblock-plan.md`](./11-blockers-and-unblock-plan.md).
 >
-> **Prep complete**: Phase 4 prep artifacts created 2026-05-20. **Implementation complete** for: SQLite token store + migration, scoped auth middleware (`Disabled`/`Bearer`/`Scoped`), admin token lifecycle endpoints (`POST/GET/DELETE/rotate`), ferrumctl `admin tokens` CLI, SEC-1 through SEC-5 tests.
+> **Prep complete**: Phase 4 prep artifacts created 2026-05-20. **Implementation complete** for: SQLite token store + migration, scoped auth middleware (`Disabled`/`Bearer`/`Scoped`), admin token lifecycle endpoints (`POST/GET/DELETE/rotate`), ferrumctl `admin tokens` CLI, SEC-1 through SEC-6 tests.
 
 | # | Item | Owner | Evidence | Status |
 |---|------|-------|----------|--------|
@@ -139,7 +139,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 | 4.3 | SEC-3: Auditor token cannot execute | Engineering | `test_sec3_auditor_token_cannot_execute` in `crates/ferrum-gateway/src/server.rs` | ✅ IMPLEMENTED — `execution:authorize` endpoint returns 403 for auditor scoped token |
 | 4.4 | SEC-4: Revoked token fails | Engineering | `test_sec4_revoked_token_returns_401` in `crates/ferrum-gateway/src/server.rs` | ✅ IMPLEMENTED — revoked token returns 401 via `auth_middleware` |
 | 4.5 | SEC-5: Expired token fails | Engineering | `test_sec5_expired_token_returns_401` in `crates/ferrum-gateway/src/server.rs` | ✅ IMPLEMENTED — expired token returns 401 via `auth_middleware` |
-| 4.6 | SEC-6: Audit log records admin/policy/approval/token actions | Engineering | Audit log sample | 📝 DEFERRED — scoped token auth records actor via token; dedicated audit log schema deferred to later phase |
+| 4.6 | SEC-6: Audit log records admin/policy/approval/token actions | Engineering | `docs/implementation-path/artifacts/2026-05-21-sec6-audit-log-implementation-evidence.md` | ✅ IMPLEMENTED — minimal append-only audit log with best-effort store append; SQLite migration 008 + Postgres schema; `GET /v1/admin/audit-logs` with `admin:audit` scope; `ferrumctl admin audit list` |
 | 4.7 | SEC-7: Tenant ADR approved for implementation | Operator | `docs/implementation-path/artifacts/2026-05-20-security-model-operator-decisions.md` | ✅ APPROVED FOR IMPLEMENTATION — single-tenant, opaque scoped tokens, durable revocation, 90d max TTL, approved scope list |
 | 4.8 | TTL enforcement: create/rotate reject expiry beyond 90 days | Engineering | `test_create_token_rejects_excessive_ttl`, `test_rotate_token_rejects_excessive_ttl` in `crates/ferrum-gateway/src/server.rs` | ✅ IMPLEMENTED — server-side 400 Bad Request for >90d; client-side validation in ferrumctl |
 | 4.9 | Phase 4 implementation evidence artifact | Engineering | `docs/implementation-path/artifacts/2026-05-20-scoped-token-implementation-evidence.md` | ✅ COMPLETE — records all implemented items, test evidence, and deferred items |
@@ -233,3 +233,5 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 - [`docs/ROADMAP.md`](../../ROADMAP.md) — Full phase descriptions and acceptance gates.
 - [`docs/implementation-path/67-production-readiness-roadmap.md`](../../implementation-path/67-production-readiness-roadmap.md) — Prior blocker tracker.
 - [`docs/implementation-path/54-operator-signoff-packet.md`](../../implementation-path/54-operator-signoff-packet.md) — Operator signoff form.
+- [`docs/implementation-path/artifacts/2026-05-21-canonical-slo-helm-conditional-signoff.md`](../../implementation-path/artifacts/2026-05-21-canonical-slo-helm-conditional-signoff.md) — Canonical SLO certification, live Helm kind install, and conditional re-signoff.
+- [`docs/implementation-path/artifacts/2026-05-21-target-slo-mcp-helm-domain-evidence.md`](../../implementation-path/artifacts/2026-05-21-target-slo-mcp-helm-domain-evidence.md) — Target SLO abbreviated workload, MCP smoke, Helm static validation, and PG token repo evidence.

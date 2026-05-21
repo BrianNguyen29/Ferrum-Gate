@@ -1,10 +1,10 @@
 use async_trait::async_trait;
 use ferrum_proto::{
-    ActionProposal, ApprovalId, ApprovalRequest, ApprovalState, CapabilityId, CapabilityLease,
-    CapabilityStatus, EventId, ExecutionId, ExecutionRecord, ExecutionState, IntentEnvelope,
-    IntentId, IntentStatus, PolicyBundle, PolicyBundleVersion, ProposalId, ProvenanceEdge,
-    ProvenanceEvent, ProvenanceQueryRequest, RollbackContract, RollbackContractId, RollbackState,
-    Timestamp,
+    ActionProposal, ApprovalId, ApprovalRequest, ApprovalState, AuditAction, AuditLogEntry,
+    AuditResourceType, CapabilityId, CapabilityLease, CapabilityStatus, EventId, ExecutionId,
+    ExecutionRecord, ExecutionState, IntentEnvelope, IntentId, IntentStatus, PolicyBundle,
+    PolicyBundleVersion, ProposalId, ProvenanceEdge, ProvenanceEvent, ProvenanceQueryRequest,
+    RollbackContract, RollbackContractId, RollbackState, Timestamp,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -176,6 +176,24 @@ pub trait LedgerRepo: Send + Sync {
     async fn verify_chain(&self) -> Result<()>;
 }
 
+/// Repository for append-only audit logs.
+#[async_trait]
+pub trait AuditLogRepo: Send + Sync {
+    /// Append a new audit log entry.
+    async fn append(&self, entry: &AuditLogEntry) -> Result<()>;
+
+    /// List audit log entries with optional filters and cursor-based pagination.
+    /// Returns (items, next_cursor) where next_cursor is None when no more pages.
+    async fn list(
+        &self,
+        action: Option<AuditAction>,
+        resource_type: Option<AuditResourceType>,
+        resource_id: Option<&str>,
+        cursor: Option<&str>,
+        limit: u32,
+    ) -> Result<(Vec<AuditLogEntry>, Option<String>)>;
+}
+
 /// Repository for scoped tokens.
 ///
 /// Provides CRUD operations for opaque scoped bearer tokens with
@@ -283,6 +301,7 @@ pub trait StoreFacade: Send + Sync {
     fn proposals(&self) -> Arc<dyn ProposalRepo>;
     fn policy_bundles(&self) -> Arc<dyn PolicyBundleRepo>;
     fn tokens(&self) -> Arc<dyn TokenRepo>;
+    fn audit_log(&self) -> Arc<dyn AuditLogRepo>;
 
     /// Returns the current number of pending write operations in the queue.
     /// This represents operations that have been sent but not yet completed processing.

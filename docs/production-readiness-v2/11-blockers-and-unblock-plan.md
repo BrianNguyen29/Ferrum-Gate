@@ -65,7 +65,7 @@ The seven blockers:
 |---|------|------------|-------|-------------------|---------------------|-------------------|
 | P.1 | Run SLO target-host workload per `slo-validation-runbook.md` | BLK-SLO-TGT | Engineering | O.1 (ratification) + O.2 (token) | Abbreviated target workload executed 2026-05-21; full SLO certification deferred | `artifacts/2026-05-21-target-slo-mcp-helm-domain-evidence.md` §3 |
 | P.2 | Run MCP target-host smoke (Layer 1–3) per `03-target-mcp-live-workload-plan.md` | BLK-MCP-TGT | Engineering | O.2 (token) | MCP-1 through MCP-7 pass; artifact created with no secrets | `artifacts/2026-05-21-target-slo-mcp-helm-domain-evidence.md` §4 |
-| P.3 | Implement scoped token store schema and RBAC middleware | BLK-SEC-PH4 | Engineering | O.3 (decisions) | ✅ COMPLETE — SEC-1 through SEC-5 pass in automated tests; SEC-6 deferred | `artifacts/2026-05-20-scoped-token-implementation-evidence.md` |
+| P.3 | Implement scoped token store schema and RBAC middleware | BLK-SEC-PH4 | Engineering | O.3 (decisions) | ✅ COMPLETE — SEC-1 through SEC-6 pass in automated tests | `artifacts/2026-05-20-scoped-token-implementation-evidence.md` + `artifacts/2026-05-21-sec6-audit-log-implementation-evidence.md` |
 | P.4 | Implement `ferrumctl admin tokens` CLI (list/create/revoke/rotate) | BLK-UX-4 | Engineering | P.3 complete | ✅ COMPLETE — UX-4 acceptance criteria met; test output captured | `artifacts/2026-05-20-scoped-token-implementation-evidence.md` §5 |
 | P.5 | Implement `POST /v1/admin/tokens` and `DELETE /v1/admin/tokens/{id}` APIs | BLK-UX-4 | Engineering | P.3 complete | ✅ COMPLETE — APIs return correct 201/204/401/403; test coverage added | Same artifact §P.5 |
 | P.6 | Run DEP-5 Helm install against a live cluster (optional; can remain local-only until operator cluster available) | BLK-DEP-5 | Engineering | N.1–N.3 + optional live cluster | `helm lint` and `helm template` passed 2026-05-21; live cluster install blocked by kind timeout | `artifacts/2026-05-21-target-slo-mcp-helm-domain-evidence.md` §5 |
@@ -172,9 +172,9 @@ The following questions must be answered by the operator to unblock BLK-SEC-PH4 
   - ✅ Scoped token store schema implemented (SQLite migration 007; PostgreSQL 001_initial.sql updated).
   - ✅ RBAC middleware denies by default (`auth_middleware` in `server.rs`).
   - ✅ SEC-1 through SEC-5 automated tests pass.
-  - 📝 SEC-6 (audit log) deferred to later phase.
+  - ✅ SEC-6 (audit log) implemented 2026-05-21 — minimal append-only audit log with best-effort store append.
 - **Evidence required**: `artifacts/2026-05-20-security-model-operator-decisions.md` + `artifacts/2026-05-20-scoped-token-implementation-evidence.md`
-- **Exact next action**: SEC-6 audit log schema and provenance integration when prioritized.
+- **Exact next action**: Operator review of SEC-6 evidence artifact; Phase 4 full signoff pending.
 - **Downstream impact**: Unblocks BLK-UX-4 (token CLI).
 
 ### BLK-UX-4 — UX-4 token rotate / revoke CLI
@@ -295,7 +295,7 @@ For each blocker resolution, use the following artifact paths:
 - **NOT production-ready**: This plan does not make FerrumGate production-ready.
 - **NOT full G2**: Full G2 requires BLK-A-DOM closure + operator-approved default-config SLO pass + operator final signoff. Conditional re-signoff on 2026-05-21 is pilot-scope only.
 - **NOT full target-host certification for all configs**: Canonical SLO Run #3 passed under max-valid rate-limit config only. Runs #1/#2 failed under default/tuned configs. Full certification requires default-config pass without max-valid override.
-- **NOT all future security scope complete**: Phase 4 scoped token model and UX-4 CLI are implemented; SEC-6 audit-log schema remains deferred.
+- **NOT all future security scope complete**: Phase 4 scoped token model, UX-4 CLI, and SEC-6 audit log are implemented. Tenant model (T1–T5) and OIDC remain deferred.
 - **NOT multi-tenant**: Single-tenant production (T1) is the recommended first posture.
 - **NOT a committed timeline**: Dates in artifact names are templates; actual execution dates are TBD and operator-dependent.
 - **DuckDNS conditional only**: Block A remains WAIVED/CONDITIONAL. Real owned domain is still required for any production-ready claim.

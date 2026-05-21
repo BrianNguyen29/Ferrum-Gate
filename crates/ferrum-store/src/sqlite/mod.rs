@@ -1,4 +1,5 @@
 mod approvals;
+mod audit_log;
 mod capabilities;
 mod executions;
 mod helpers;
@@ -16,6 +17,7 @@ pub mod tokens;
 pub mod write_queue;
 
 pub use approvals::SqliteApprovalRepo;
+pub use audit_log::SqliteAuditLogRepo;
 pub use capabilities::SqliteCapabilityRepo;
 pub use executions::SqliteExecutionRepo;
 pub use intents::SqliteIntentRepo;
@@ -31,8 +33,8 @@ pub use tokens::SqliteTokenRepo;
 
 use crate::Result;
 use crate::repos::{
-    ApprovalRepo, CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo, PolicyBundleRepo,
-    ProposalRepo, ProvenanceRepo, RollbackRepo, StoreFacade, TokenRepo,
+    ApprovalRepo, AuditLogRepo, CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo,
+    PolicyBundleRepo, ProposalRepo, ProvenanceRepo, RollbackRepo, StoreFacade, TokenRepo,
 };
 use crate::sqlite::write_queue::{WriteQueue, WriterState, spawn_writer_task};
 use async_trait::async_trait;
@@ -326,6 +328,10 @@ impl SqliteStore {
         SqliteTokenRepo::new(self.pool.clone())
     }
 
+    pub fn audit_log(&self) -> SqliteAuditLogRepo {
+        SqliteAuditLogRepo::new(self.pool.clone())
+    }
+
     /// Verify the local ledger chain integrity.
     ///
     /// Delegates to `SqliteLedgerRepo::verify_chain()` which validates:
@@ -409,6 +415,10 @@ impl StoreFacade for SqliteStore {
         Arc::new(SqliteTokenRepo::new(self.pool.clone()))
     }
 
+    fn audit_log(&self) -> Arc<dyn AuditLogRepo> {
+        Arc::new(SqliteAuditLogRepo::new(self.pool.clone()))
+    }
+
     fn write_queue_depth(&self) -> usize {
         self.write_queue.pending_depth()
     }
@@ -449,6 +459,7 @@ mod tests {
         let _ = facade.intents();
         let _ = facade.proposals();
         let _ = facade.tokens();
+        let _ = facade.audit_log();
     }
 
     #[tokio::test]
@@ -468,6 +479,7 @@ mod tests {
         let _intents = facade.intents();
         let _props = facade.proposals();
         let _pb = facade.policy_bundles();
+        let _al = facade.audit_log();
 
         // Drop them to prove they're valid Arc types
         drop(_cap);
@@ -479,6 +491,7 @@ mod tests {
         drop(_intents);
         drop(_props);
         drop(_pb);
+        drop(_al);
     }
 
     #[tokio::test]
@@ -639,6 +652,103 @@ mod tests {
         let _ = std::fs::remove_file(&db_path);
         let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
         let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
+    }
+
+    #[tokio::test]
+    async fn test_audit_log_append_and_list() {
+        use ferrum_proto::{AuditAction, AuditLogEntry, AuditResourceType};
+
+        let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+
+        let entry = AuditLogEntry {
+            id: 0,
+            actor_id: "test-actor".to_string(),
+            action: AuditAction::TokenCreate,
+            resource_type: AuditResourceType::Token,
+            resource_id: "tok_123".to_string(),
+            result: "success".to_string(),
+            metadata: Some(serde_json::json!({"role": "admin"})),
+            created_at: chrono::Utc::now(),
+        };
+
+        store.audit_log().append(&entry).await.unwrap();
+
+        let (items, next_cursor) = store
+            .audit_log()
+            .list(None, None, None, None, 10)
+            .await
+            .unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].actor_id, "test-actor");
+        assert_eq!(items[0].action, AuditAction::TokenCreate);
+        assert_eq!(items[0].resource_type, AuditResourceType::Token);
+        assert_eq!(items[0].resource_id, "tok_123");
+        assert_eq!(items[0].result, "success");
+        assert!(next_cursor.is_none());
+
+        // Test filtering by action
+        let (filtered, _) = store
+            .audit_log()
+            .list(Some(AuditAction::TokenCreate), None, None, None, 10)
+            .await
+            .unwrap();
+        assert_eq!(filtered.len(), 1);
+
+        let (filtered, _) = store
+            .audit_log()
+            .list(Some(AuditAction::TokenRevoke), None, None, None, 10)
+            .await
+            .unwrap();
+        assert_eq!(filtered.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_audit_log_list_cursor_pagination_and_invalid_cursor() {
+        use ferrum_proto::{AuditAction, AuditLogEntry, AuditResourceType};
+
+        let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+
+        for i in 0..5 {
+            let entry = AuditLogEntry {
+                id: 0,
+                actor_id: format!("actor-{}", i),
+                action: AuditAction::TokenCreate,
+                resource_type: AuditResourceType::Token,
+                resource_id: format!("tok_{}", i),
+                result: "success".to_string(),
+                metadata: None,
+                created_at: chrono::Utc::now(),
+            };
+            store.audit_log().append(&entry).await.unwrap();
+        }
+
+        // Page 1: limit 2
+        let (page1, cursor1) = store
+            .audit_log()
+            .list(None, None, None, None, 2)
+            .await
+            .unwrap();
+        assert_eq!(page1.len(), 2);
+        let cursor1 = cursor1.expect("should have next cursor");
+
+        // Page 2: using valid cursor
+        let (page2, cursor2) = store
+            .audit_log()
+            .list(None, None, None, Some(&cursor1), 2)
+            .await
+            .unwrap();
+        assert_eq!(page2.len(), 2);
+        assert!(cursor2.is_some());
+
+        // Invalid cursor should not cause bind mismatch; treat as no cursor
+        let (page_all, _) = store
+            .audit_log()
+            .list(None, None, None, Some("not-a-number"), 10)
+            .await
+            .unwrap();
+        assert_eq!(page_all.len(), 5);
     }
 
     #[tokio::test]

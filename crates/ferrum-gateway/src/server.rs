@@ -13,14 +13,15 @@ use ferrum_graph::LineageGraph;
 use ferrum_pdp::StaticPdpEngine;
 use ferrum_proto::{
     ActorRef, ActorType, ApiError, ApiErrorCode, ApprovalBinding, ApprovalId, ApprovalListEnvelope,
-    ApprovalMode, ApprovalResolveRequest, ApprovalState, AuthorizeExecutionRequest,
-    AuthorizeExecutionResponse, CapabilityId, CapabilityLease, CapabilityMintRequest,
-    CapabilityMintResponse, CapabilityStatus, ComponentStatus, Decision, DeepHealthResponse,
-    DiffPolicyBundleVersionsResponse, EvaluateOutcomeResponse, EvaluateProposalResponse, EventId,
-    ExecutionDetailResponse, ExecutionId, ExecutionRecord, ExecutionState, HashChainRef,
-    HealthResponse, IntentCompileRequest, IntentCompileResponse, IntentEnvelope, IntentStatus,
-    LineageDirection, LineageQueryRequest, LineageQueryResponse, ListPolicyBundleVersionsResponse,
-    Matcher, ObjectRef, ObjectType, OutcomeClause, OutcomeReport, PolicyBundle, PolicyBundleId,
+    ApprovalMode, ApprovalResolveRequest, ApprovalState, AuditAction, AuditLogEntry,
+    AuditLogListResponse, AuditResourceType, AuthorizeExecutionRequest, AuthorizeExecutionResponse,
+    CapabilityId, CapabilityLease, CapabilityMintRequest, CapabilityMintResponse, CapabilityStatus,
+    ComponentStatus, Decision, DeepHealthResponse, DiffPolicyBundleVersionsResponse,
+    EvaluateOutcomeResponse, EvaluateProposalResponse, EventId, ExecutionDetailResponse,
+    ExecutionId, ExecutionRecord, ExecutionState, HashChainRef, HealthResponse,
+    IntentCompileRequest, IntentCompileResponse, IntentEnvelope, IntentStatus, LineageDirection,
+    LineageQueryRequest, LineageQueryResponse, ListPolicyBundleVersionsResponse, Matcher,
+    ObjectRef, ObjectType, OutcomeClause, OutcomeReport, PolicyBundle, PolicyBundleId,
     PolicyBundleSimulateRequest, PolicyBundleSimulateResponse, PolicyRule, ProposalId,
     ProvenanceEvent, ProvenanceEventKind, ProvenanceIngestRequest, ProvenanceIngestResponse,
     ProvenanceQueryRequest, ProvenanceQueryResponse, ResourceSelector, RiskTier, RollbackClass,
@@ -922,6 +923,8 @@ fn build_workload_router(state: Arc<AppState>) -> Router {
         .route("/v1/admin/tokens", get(list_tokens))
         .route("/v1/admin/tokens/{token_id}", delete(revoke_token))
         .route("/v1/admin/tokens/{token_id}/rotate", post(rotate_token))
+        // Audit log endpoint
+        .route("/v1/admin/audit-logs", get(list_audit_logs))
         .with_state(state)
         .layer(TraceLayer::new_for_http())
 }
@@ -1162,6 +1165,8 @@ fn required_scope_for_path(method: &str, path: &str) -> Option<&'static str> {
         ("POST", p) if p.starts_with("/v1/admin/tokens/") && p.ends_with("/rotate") => {
             Some("admin:tokens")
         }
+        // Audit logs
+        ("GET", "/v1/admin/audit-logs") => Some("admin:audit"),
         _ => Some("admin:tokens"), // Deny-by-default for unknown paths
     }
 }
@@ -4091,6 +4096,20 @@ async fn cancel_execution(
             )
         })?;
 
+    // Audit log: execution canceled
+    append_audit(
+        &state.runtime.store,
+        "gateway",
+        AuditAction::ExecutionCancel,
+        AuditResourceType::Execution,
+        &execution_id.to_string(),
+        "success",
+        Some(serde_json::json!({
+            "previous_state": format!("{:?}", previous_state),
+        })),
+    )
+    .await;
+
     // Emit SideEffectRolledBack provenance event for cancel operation.
     // Cancel triggers a rollback-like effect even if no contract exists.
     let cancel_event = ProvenanceEvent {
@@ -4840,6 +4859,21 @@ async fn resolve_approval(
                 ApiProblem::internal(anyhow::Error::from(e)),
             )
         })?;
+
+    // Audit log: approval resolved
+    append_audit(
+        &state.runtime.store,
+        &request.actor.actor_id,
+        AuditAction::ApprovalResolve,
+        AuditResourceType::Approval,
+        &approval_id.to_string(),
+        "success",
+        Some(serde_json::json!({
+            "approved": request.approve,
+            "reason": request.reason,
+        })),
+    )
+    .await;
 
     // Fetch the updated approval
     let updated_approval = state
@@ -5943,6 +5977,21 @@ async fn create_policy_bundle(
             )
         })?;
 
+    // Audit log: policy bundle created
+    append_audit(
+        &state.runtime.store,
+        "gateway",
+        AuditAction::PolicyBundleCreate,
+        AuditResourceType::PolicyBundle,
+        &bundle.bundle_id,
+        "success",
+        Some(serde_json::json!({
+            "version": bundle.version,
+            "content_hash": content_hash,
+        })),
+    )
+    .await;
+
     governance_ok!(
         state,
         GovernanceRoute::PolicyBundlesCreate,
@@ -6197,6 +6246,20 @@ async fn set_policy_bundle_active(
                 ApiProblem::internal(anyhow::Error::from(e)),
             )
         })?;
+
+    // Audit log: policy bundle activated/deactivated
+    append_audit(
+        &state.runtime.store,
+        "gateway",
+        AuditAction::PolicyBundleActivate,
+        AuditResourceType::PolicyBundle,
+        &bundle_id,
+        "success",
+        Some(serde_json::json!({
+            "active": request.active,
+        })),
+    )
+    .await;
 
     // Emit provenance event for policy bundle activation/deactivation (POL-4)
     let policy_bundle_id = uuid::Uuid::parse_str(&bundle_id).ok().map(PolicyBundleId);
@@ -6512,6 +6575,22 @@ async fn rollback_policy_bundle(
         .await
         .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
 
+    // Audit log: policy bundle rollback
+    append_audit(
+        &state.runtime.store,
+        request.actor.as_deref().unwrap_or("unknown"),
+        AuditAction::PolicyBundleRollback,
+        AuditResourceType::PolicyBundle,
+        &bundle_id,
+        "success",
+        Some(serde_json::json!({
+            "previous_version": previous_version,
+            "new_version": new_version,
+            "rolled_back_to_version": request.target_version,
+        })),
+    )
+    .await;
+
     // Emit provenance event
     let event = ProvenanceEvent {
         event_id: EventId::new(),
@@ -6629,6 +6708,19 @@ async fn create_token(
 
     match state.runtime.store.tokens().insert(&token).await {
         Ok(()) => {
+            // Audit log: token created
+            append_audit(
+                &state.runtime.store,
+                &token.actor_id,
+                AuditAction::TokenCreate,
+                AuditResourceType::Token,
+                &token_id,
+                "success",
+                Some(serde_json::json!({
+                    "role": format!("{:?}", req.role),
+                })),
+            )
+            .await;
             let meta: ferrum_proto::ScopedTokenMeta = token.into();
             let response = ferrum_proto::CreateTokenResponse {
                 token: meta,
@@ -6711,7 +6803,22 @@ async fn revoke_token(
         .revoke(&token_id, req.reason.as_deref())
         .await
     {
-        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(true) => {
+            // Audit log: token revoked
+            append_audit(
+                &state.runtime.store,
+                "unknown",
+                AuditAction::TokenRevoke,
+                AuditResourceType::Token,
+                &token_id,
+                "success",
+                Some(serde_json::json!({
+                    "reason": req.reason,
+                })),
+            )
+            .await;
+            StatusCode::NO_CONTENT.into_response()
+        }
         Ok(false) => {
             let error = ApiError {
                 code: ApiErrorCode::NotFound,
@@ -6822,7 +6929,7 @@ async fn rotate_token(
         last_used_at: None,
         revoked_at: None,
         revoked_reason: None,
-        rotated_from: Some(token_id),
+        rotated_from: Some(token_id.clone()),
         token_lookup_hash: new_token_lookup_hash,
         token_hash: new_token_hash,
         token_salt: new_token_salt,
@@ -6830,6 +6937,20 @@ async fn rotate_token(
 
     match state.runtime.store.tokens().insert(&new_token).await {
         Ok(()) => {
+            // Audit log: token rotated
+            append_audit(
+                &state.runtime.store,
+                &new_token.actor_id,
+                AuditAction::TokenRotate,
+                AuditResourceType::Token,
+                &new_token_id,
+                "success",
+                Some(serde_json::json!({
+                    "old_token_id": token_id,
+                    "reason": req.reason,
+                })),
+            )
+            .await;
             let meta: ferrum_proto::ScopedTokenMeta = new_token.into();
             let response = ferrum_proto::CreateTokenResponse {
                 token: meta,
@@ -6848,6 +6969,87 @@ async fn rotate_token(
             };
             (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response()
         }
+    }
+}
+
+// ── Audit Log Handler ──
+
+#[derive(Debug, Deserialize)]
+struct ListAuditLogsQuery {
+    action: Option<String>,
+    resource_type: Option<String>,
+    resource_id: Option<String>,
+    cursor: Option<String>,
+    limit: Option<u32>,
+}
+
+async fn list_audit_logs(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ListAuditLogsQuery>,
+) -> Response {
+    let action = params.action.and_then(|s| s.parse::<AuditAction>().ok());
+    let resource_type = params
+        .resource_type
+        .and_then(|s| s.parse::<AuditResourceType>().ok());
+    let limit = params.limit.unwrap_or(50).min(200);
+
+    match state
+        .runtime
+        .store
+        .audit_log()
+        .list(
+            action,
+            resource_type,
+            params.resource_id.as_deref(),
+            params.cursor.as_deref(),
+            limit,
+        )
+        .await
+    {
+        Ok((items, next_cursor)) => {
+            let response = AuditLogListResponse {
+                items,
+                next_cursor,
+                total: 0, // Not computed for performance
+            };
+            (StatusCode::OK, Json(response)).into_response()
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "audit log list failed");
+            let error = ApiError {
+                code: ApiErrorCode::Internal,
+                message: "failed to list audit logs".to_string(),
+                correlation_id: uuid::Uuid::new_v4().to_string(),
+                retriable: false,
+                details: serde_json::json!({}),
+            };
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response()
+        }
+    }
+}
+
+/// Append an audit log entry. Errors are logged but not propagated.
+async fn append_audit(
+    store: &Arc<dyn StoreFacade>,
+    actor_id: &str,
+    action: AuditAction,
+    resource_type: AuditResourceType,
+    resource_id: &str,
+    result: &str,
+    metadata: Option<serde_json::Value>,
+) {
+    let entry = AuditLogEntry {
+        id: 0,
+        actor_id: actor_id.to_string(),
+        action,
+        resource_type,
+        resource_id: resource_id.to_string(),
+        result: result.to_string(),
+        metadata,
+        created_at: Utc::now(),
+    };
+    if let Err(e) = store.audit_log().append(&entry).await {
+        tracing::warn!(error = %e, "failed to append audit log entry");
     }
 }
 
@@ -7055,8 +7257,8 @@ mod tests {
     use ferrum_pdp::StaticPdpEngine;
     use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
     use ferrum_store::repos::{
-        ApprovalRepo, CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo, PolicyBundleRepo,
-        ProposalRepo, ProvenanceRepo, RollbackRepo, TokenRepo,
+        ApprovalRepo, AuditLogRepo, CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo,
+        PolicyBundleRepo, ProposalRepo, ProvenanceRepo, RollbackRepo, TokenRepo,
     };
     use ferrum_store::{SqliteStore, StoreError, StoreFacade};
     use ferrum_sync::{BridgeToolInfo, ExternalEventSource, McpBridge};
@@ -7106,6 +7308,9 @@ mod tests {
         }
         fn tokens(&self) -> Arc<dyn TokenRepo> {
             self.inner.tokens()
+        }
+        fn audit_log(&self) -> Arc<dyn AuditLogRepo> {
+            self.inner.audit_log()
         }
         fn write_queue_depth(&self) -> usize {
             self.inner.write_queue_depth()
@@ -7400,6 +7605,9 @@ mod tests {
         fn tokens(&self) -> Arc<dyn TokenRepo> {
             self.inner.tokens()
         }
+        fn audit_log(&self) -> Arc<dyn AuditLogRepo> {
+            self.inner.audit_log()
+        }
         fn write_queue_depth(&self) -> usize {
             self.queue_depth
         }
@@ -7517,6 +7725,9 @@ mod tests {
         }
         fn tokens(&self) -> Arc<dyn TokenRepo> {
             self.inner.tokens()
+        }
+        fn audit_log(&self) -> Arc<dyn AuditLogRepo> {
+            self.inner.audit_log()
         }
         fn write_queue_depth(&self) -> usize {
             self.inner.write_queue_depth()

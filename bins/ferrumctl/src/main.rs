@@ -385,6 +385,11 @@ enum AdminCommand {
         #[command(subcommand)]
         sub: AdminTokensCommand,
     },
+    /// Query audit logs.
+    Audit {
+        #[command(subcommand)]
+        sub: AdminAuditCommand,
+    },
 }
 
 /// Approvals subcommands under `admin approvals`.
@@ -623,6 +628,37 @@ enum AdminTokensCommand {
         /// Skip interactive confirmation.
         #[arg(long)]
         force: bool,
+    },
+}
+
+/// Audit subcommands under `admin audit`.
+#[derive(Debug, Subcommand)]
+enum AdminAuditCommand {
+    /// List audit log entries with optional filters.
+    List {
+        /// Filter by action (e.g., token_create, policy_bundle_activate).
+        #[arg(long, value_name = "ACTION")]
+        action: Option<String>,
+
+        /// Filter by resource type (e.g., token, policy_bundle, approval, execution).
+        #[arg(long, value_name = "TYPE")]
+        resource_type: Option<String>,
+
+        /// Filter by resource ID.
+        #[arg(long, value_name = "ID")]
+        resource_id: Option<String>,
+
+        /// Pagination cursor (from previous page).
+        #[arg(long)]
+        cursor: Option<String>,
+
+        /// Number of items per page (default 50, max 200).
+        #[arg(long, value_name = "N", default_value = "50")]
+        limit: u32,
+
+        /// Output format: text (default) or json.
+        #[arg(long, value_name = "FORMAT", default_value = "text")]
+        format: OutputFormat,
     },
 }
 
@@ -1514,6 +1550,56 @@ async fn main() -> Result<()> {
                             println!(
                                 "\nIMPORTANT: Save the new token value now. It will never be shown again."
                             );
+                        }
+                    }
+                },
+                AdminCommand::Audit { sub } => match sub {
+                    AdminAuditCommand::List {
+                        action,
+                        resource_type,
+                        resource_id,
+                        cursor,
+                        limit,
+                        format,
+                    } => {
+                        let response = client
+                            .list_audit_logs(
+                                action.as_deref(),
+                                resource_type.as_deref(),
+                                resource_id.as_deref(),
+                                cursor.as_deref(),
+                                limit,
+                            )
+                            .await?;
+                        match format {
+                            OutputFormat::Json => {
+                                println!("{}", serde_json::to_string_pretty(&response)?);
+                            }
+                            _ => {
+                                println!(
+                                    "{:<24} {:<20} {:<24} {:<16} {:<36} {:<10}",
+                                    "CREATED_AT",
+                                    "ACTOR_ID",
+                                    "ACTION",
+                                    "RESOURCE_TYPE",
+                                    "RESOURCE_ID",
+                                    "RESULT"
+                                );
+                                for item in &response.items {
+                                    println!(
+                                        "{:<24} {:<20} {:<24} {:<16} {:<36} {:<10}",
+                                        item.created_at.to_rfc3339(),
+                                        item.actor_id,
+                                        item.action.to_string(),
+                                        item.resource_type.to_string(),
+                                        item.resource_id,
+                                        item.result,
+                                    );
+                                }
+                                if let Some(cursor) = response.next_cursor {
+                                    println!("Next cursor: {}", cursor);
+                                }
+                            }
                         }
                     }
                 },

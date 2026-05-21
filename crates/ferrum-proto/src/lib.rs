@@ -1,5 +1,6 @@
 pub mod api;
 pub mod approval;
+pub mod audit_log;
 pub mod capability;
 pub mod common;
 pub mod execution;
@@ -12,6 +13,7 @@ pub mod token;
 
 pub use api::*;
 pub use approval::*;
+pub use audit_log::*;
 pub use capability::*;
 pub use common::*;
 pub use execution::*;

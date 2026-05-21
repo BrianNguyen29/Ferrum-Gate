@@ -615,4 +615,33 @@ impl Client {
         }
         Ok(resp.json().await?)
     }
+
+    // ── Audit Log Methods ──
+
+    pub async fn list_audit_logs(
+        &self,
+        action: Option<&str>,
+        resource_type: Option<&str>,
+        resource_id: Option<&str>,
+        cursor: Option<&str>,
+        limit: u32,
+    ) -> Result<ferrum_proto::AuditLogListResponse> {
+        let mut url = format!("{}/v1/admin/audit-logs?", self.base_url);
+        if let Some(action) = action {
+            url.push_str(&format!("action={}&", action));
+        }
+        if let Some(resource_type) = resource_type {
+            url.push_str(&format!("resource_type={}&", resource_type));
+        }
+        if let Some(resource_id) = resource_id {
+            url.push_str(&format!("resource_id={}&", resource_id));
+        }
+        if let Some(cursor) = cursor {
+            url.push_str(&format!("cursor={}&", cursor));
+        }
+        url.push_str(&format!("limit={}", limit));
+        let resp = self.add_auth(self.http.get(&url)).send().await?;
+        resp.error_for_status_ref()?;
+        Ok(resp.json().await?)
+    }
 }
