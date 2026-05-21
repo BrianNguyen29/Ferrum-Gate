@@ -6,6 +6,13 @@
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
 > **Scope**: [`00-scope-and-nonclaims.md`](00-scope-and-nonclaims.md)
 
+> **Delegated signoff (planning-only)**
+> - **Signed by**: BrianNguyen (session authorization)
+> - **Date**: 2026-05-21
+> - **Scope**: PostgreSQL production plan reviewed and accepted as engineering planning baseline.
+> - **Nature**: Planning/decision document signoff only. This does not constitute evidence of production PostgreSQL deployment, target-host validation, or HA readiness. Does not substitute for missing evidence.
+> - **Authority**: User explicitly authorized delegated signoff for planning and decision documents.
+
 ---
 
 ## Goal

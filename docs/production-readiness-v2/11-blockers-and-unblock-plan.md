@@ -252,7 +252,7 @@ The following questions must be answered by the operator to unblock BLK-SEC-PH4 
   - L1–L5 re-run with real domain.
   - G2 re-signoff completed (full closure, not conditional).
 - **Evidence required**: `artifacts/YYYY-MM-DD-block-a-domain-evidence.md` + `artifacts/YYYY-MM-DD-block-a-closure-evidence.md`
-- **Exact next action**: Operator procures domain, configures DNS, then notifies engineering to re-run target bridge.
+- **Exact next action**: Operator procures domain, configures DNS, then notifies engineering to re-run target bridge. See `docs/implementation-path/artifacts/2026-05-21-blk-a-dom-operator-action-brief.md` for step-by-step requirements, evidence format, consequences, and timeline decision point.
 - **Downstream impact**: Required for any production-ready or full G2 claim.
 - **Conditional signoff note**: BrianNguyen authorized conditional re-signoff for single-node SQLite pilot on 2026-05-21. This does **not** close BLK-A-DOM or complete full G2.
 

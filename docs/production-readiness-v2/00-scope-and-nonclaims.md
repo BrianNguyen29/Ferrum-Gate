@@ -2,7 +2,7 @@
 
 > **Status**: Planning artifact. Not a claim of readiness.
 > **Owner**: Engineering
-> **Last updated**: 2026-05-19
+> **Last updated**: 2026-05-21
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
 
 ---

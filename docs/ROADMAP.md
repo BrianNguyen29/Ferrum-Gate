@@ -126,11 +126,12 @@ Lý do: nhiều mục phụ thuộc vào PostgreSQL production:
 
 Hiện có RPO/RTO và một số metric trong docs, nhưng chưa đủ thành SLO/SLA production.
 
-**Lưu ý về rate-limit và SLO (đã giải quyết 2026-05-21):**
-- Default safety profile `2/50` không đủ cho canonical SLO workload.
-- SLO certification cần explicit high-throughput profile `1000/10000`.
+**Lưu ý về rate-limit và SLO (đã giải quyết 2026-05-21 — conservative resolution):**
+- Default safety profile `2/50` là **intentionally conservative** và không thay đổi.
+- SLO default-config gap đã được **đóng với conservative resolution**: default là safety-oriented, SLO certification yêu cầu explicit high-throughput profile `1000/10000`.
 - Operator phải tune dựa trên traffic/IP distribution thực tế.
 - Xem `docs/operations/rate-limit-tuning-guide.md`.
+- **Không phải lỗi code**: 429 cao dưới default/tuned config là expected behavior, không phải defect.
 
 Cần định nghĩa:
 

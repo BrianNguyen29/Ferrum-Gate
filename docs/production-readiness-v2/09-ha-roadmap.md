@@ -7,6 +7,13 @@
 > **Scope**: [`00-scope-and-nonclaims.md`](00-scope-and-nonclaims.md)
 > **HA ADR**: [`docs/production-readiness-v2/ha-adr.md`](./ha-adr.md) — approved as planning decision 2026-05-21; no implementation claim
 
+> **Delegated signoff (planning-only)**
+> - **Signed by**: BrianNguyen (session authorization)
+> - **Date**: 2026-05-21
+> - **Scope**: HA roadmap and ADR approved as planning decision only.
+> - **Nature**: Planning/decision document signoff only. This does not constitute evidence of HA implementation, multi-node deployment, automated failover, or production readiness. Does not substitute for missing evidence.
+> - **Authority**: User explicitly authorized delegated signoff for planning and decision documents.
+
 ---
 
 ## Goal

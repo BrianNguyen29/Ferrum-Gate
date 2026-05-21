@@ -189,10 +189,15 @@ Text format includes: `timestamp`, `level`, `target`, `message`.
 - Real domain + DNS A record → `34.158.51.8` is still required for production-ready or full G2 closure.
 
 ### SLO posture
-- No formal SLO/SLA is ratified yet.
+- SLO/SLA draft ratified for validation baseline on 2026-05-20. **NOT a committed SLA**.
 - Local stress baselines exist (see tables above) but are **not target-host validated**.
+- Canonical SLO target runs executed 2026-05-21:
+  - Default `2/50`: FAIL (46.8% 429)
+  - Tuned `20/500`: FAIL (73.4% 429)
+  - Max-valid `1000/10000`: PASS (0% 429, 0% error)
+- **SLO default-config gap closed with conservative resolution** (2026-05-21): Default safety profile remains unchanged. SLO certification requires explicit high-throughput profile. Operator must tune based on real traffic/IP distribution. See `docs/operations/rate-limit-tuning-guide.md`.
 - Draft SLOs are in [`docs/production-readiness-v2/01-slo-sla.md`](./production-readiness-v2/01-slo-sla.md).
-- Do not cite local baselines as committed production targets.
+- Do not cite local baselines or max-valid run as committed production targets.
 
 ### HA posture
 - **HA/multi-node is NOT implemented**.

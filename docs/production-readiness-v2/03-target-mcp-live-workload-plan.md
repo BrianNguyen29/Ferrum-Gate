@@ -6,6 +6,13 @@
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
 > **Scope**: [`00-scope-and-nonclaims.md`](00-scope-and-nonclaims.md)
 
+> **Delegated signoff (planning-only)**
+> - **Signed by**: BrianNguyen (session authorization)
+> - **Date**: 2026-05-21
+> - **Scope**: Target-host MCP/live workload plan reviewed and accepted as engineering planning baseline.
+> - **Nature**: Planning/decision document signoff only. This does not constitute evidence of sustained production workload, full Layer 2–3 validation, or production readiness. Does not substitute for missing evidence.
+> - **Authority**: User explicitly authorized delegated signoff for planning and decision documents.
+
 ---
 
 ## Goal

@@ -7,6 +7,13 @@
 > **Scope**: [`00-scope-and-nonclaims.md`](./00-scope-and-nonclaims.md)
 > **ADR**: [`docs/production-readiness-v2/ha-adr.md`](./ha-adr.md)
 
+> **Delegated signoff (planning-only)**
+> - **Signed by**: BrianNguyen (session authorization)
+> - **Date**: 2026-05-21
+> - **Scope**: Read replica behavior design reviewed and accepted as planning artifact.
+> - **Nature**: Planning/decision document signoff only. This does not constitute evidence of read replica implementation, deployment, testing, or production readiness. Does not substitute for missing evidence.
+> - **Authority**: User explicitly authorized delegated signoff for planning and decision documents.
+
 ---
 
 ## 1. Purpose

@@ -217,7 +217,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 
 ## Final production-ready claim prerequisites
 
-> **Active blocker**: `BLK-A-DOM` — real owned domain is still required for any production-ready or full G2 closure. DuckDNS remains WAIVED/CONDITIONAL only. See [`11-blockers-and-unblock-plan.md`](./11-blockers-and-unblock-plan.md).
+> **Active blocker**: `BLK-A-DOM` — real owned domain is still required for any production-ready or full G2 closure. DuckDNS remains WAIVED/CONDITIONAL only. See [`11-blockers-and-unblock-plan.md`](./11-blockers-and-unblock-plan.md) and [`docs/implementation-path/artifacts/2026-05-21-blk-a-dom-operator-action-brief.md`](../../implementation-path/artifacts/2026-05-21-blk-a-dom-operator-action-brief.md).
 > **Conditional re-signoff**: BrianNguyen authorized conditional re-signoff for single-node SQLite pilot scope on 2026-05-21. Full G2 closure remains NOT COMPLETE.
 
 | # | Item | Owner | Evidence | Status |
