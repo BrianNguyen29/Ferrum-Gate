@@ -139,11 +139,25 @@ PostgreSQL local/runtime foundation is strong:
 
 > **Non-claim**: These are template rules only. They have **not** been validated against a live Prometheus instance or production PG backend. The `MetricsAbsent` alert is a heuristic, not definitive PG-down detection. Replication lag is a placeholder with a non-existent metric name. Operator must review thresholds and metric names before enabling.
 
-##### PG-2.3b — Reconnect/retry and circuit breaker (DEFERRED — docs-only rationale)
+##### PG-2.3b — Reconnect/retry and circuit breaker (PARTIAL — B.1 docs complete; B.2–B.4 deferred)
 
 > **Oracle verdict**: PG-2.3b code implementation is **deferred entirely**.
 > No custom reconnect/retry policy or circuit breaker will be built for the
 > single-node pilot.
+
+**B.1 — Document `sqlx::PgPool` reconnect behavior** ✅ COMPLETE
+- Operator runbook section added to `docs/guides/operator.md` §"PostgreSQL reconnect and recovery" (2026-05-21).
+- Describes transparent reconnect on new acquisition, readiness degradation during outage, recovery checks (`readyz/deep`, metrics), and when restart is/is not required.
+- Explicitly states no production-ready claim and no runtime recovery proof beyond local Docker.
+
+**B.2 — Integration test: restart PG container → ferrumd recovers** ☐ DEFERRED
+- Not implemented. Local Docker restart observation exists (2026-05-18) but is not an automated test.
+
+**B.3 — Circuit-breaker ADR for multi-node / load-balanced topology** ☐ DEFERRED
+- Deferred to PG-5 HA design.
+
+**B.4 — Implement circuit breaker** ☐ DEFERRED
+- Only after HA ADR Phase 9.
 
 **Rationale**:
 - `sqlx::PgPool` already performs transparent reconnect with exponential backoff.

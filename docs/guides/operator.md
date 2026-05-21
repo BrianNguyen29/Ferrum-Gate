@@ -224,6 +224,47 @@ See [`slo-sla.md`](./slo-sla.md) for draft targets. Not yet ratified.
 
 > **production-ready = NO**. This guide describes intended operator procedures. Some CLI expansions (admin status, approval queue, token management) are planned but not yet implemented. See [`docs/ROADMAP.md`](../../ROADMAP.md) §4 Phase 6.
 
+## PostgreSQL reconnect and recovery
+
+> **Scope**: This section documents the **current** behavior of `sqlx::PgPool` reconnect. It is a runbook, not a guarantee of production resilience. PostgreSQL production deployment remains **NO**.
+
+### What the pool does automatically
+
+When FerrumGate uses PostgreSQL, `sqlx::PgPool` manages connections with the following built-in behavior:
+
+- **Transparent reconnect on new acquisition**: If a connection is dropped (e.g., PostgreSQL restart, network blip), the next `pool.acquire()` attempts to create a fresh connection. The pool does this with an internal retry/backoff strategy; you do not need to restart `ferrumd` for new requests to recover.
+- **Existing connections fail**: In-flight queries on a connection that was severed will return an error. The caller (gateway endpoint) surfaces that as a 503 or 500 depending on context.
+- **No application-level circuit breaker**: There is no custom reconnect policy, no bounded retry with jitter, and no automatic fallback to read-only mode. Those are deferred to PG-5 HA design.
+
+### Operator checks during and after a PostgreSQL outage
+
+1. **During outage**:
+   - `curl /v1/readyz/deep` will likely return 503 because the store health check cannot acquire a healthy connection.
+   - Metrics `ferrumgate_store_health_up` drops to `0`.
+   - Metrics `ferrumgate_store_pg_acquire_timeouts_total` may increment if the pool is exhausted.
+   - The gateway is **fail-closed**: requests that need the store will fail rather than bypass governance.
+
+2. **After PostgreSQL returns**:
+   - Watch `ferrumgate_store_health_up` return to `1`.
+   - Confirm `curl /v1/readyz/deep` returns HTTP 200.
+   - Confirm `ferrumgate_store_pg_pool_idle` is > 0 (pool has recovered spare connections).
+   - No `ferrumd` restart is required for basic recovery.
+
+### When to restart `ferrumd`
+
+Restart is **not** required for a transient PostgreSQL outage. Restart only if:
+
+- The DSN or credentials changed (pool uses the original DSN; it does not reload config).
+- `readyz/deep` stays unhealthy for longer than your incident-response threshold despite PostgreSQL being reachable.
+- You observe a memory or connection leak that outlasts the outage.
+- You are instructed to restart as part of a specific upgrade or config migration.
+
+### Limitations
+
+- Recovery speed depends on `sqlx` internals; there is no operator-tunable reconnect interval today.
+- Pool saturation (`idle == 0 && size >= max`) is reported as degraded readiness, but no automatic scaling or queue shedding exists.
+- These behaviors are validated locally with Docker Compose only, not on a production-like target host.
+
 ## Related docs
 
 - [`hosted-deployment.md`](./hosted-deployment.md) — systemd, Docker, K8s deployment modes.
@@ -231,3 +272,4 @@ See [`slo-sla.md`](./slo-sla.md) for draft targets. Not yet ratified.
 - [`troubleshooting.md`](./troubleshooting.md) — Common issues and fixes.
 - [`docs/PRODUCTION_NOTES.md`](../../PRODUCTION_NOTES.md) — Runtime config and stress baselines.
 - [`api.md`](./api.md) — Endpoint reference.
+- [`docs/production-readiness-v2/02-postgres-production-plan.md`](../../production-readiness-v2/02-postgres-production-plan.md) §PG-2.3b — Full deferred rationale.
