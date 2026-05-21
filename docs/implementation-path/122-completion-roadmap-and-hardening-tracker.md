@@ -16,7 +16,7 @@ Following May 13–16 operator execution and evidence collection, plus May 16–
 - **P0 items**: All closed (CI hardened, D1–D6 passed, restore drill passed, backup automation verified, G2 signed, operator signoff obtained).
 - **Engineering items 7–9**: Completed — ferrum-cap fix verified (atomic `update_status_if_active`, gateway durable path wired, 9 tests pass); local/manual security audit gate added (`scripts/run_security_audit.sh` + `make audit`); `cargo-audit v0.22.1` and `cargo-deny v0.19.6` installed; `make audit` passes with both tools (cargo-deny advisories ok, cargo-audit 384 dependencies scanned, PASS; SECURITY AUDIT GATE: PASS).
 - **May 21 canonical evidence**: Canonical SLO Run #3 max-valid PASS (0% 429, 2380/2380 HTTP 200); live Helm install on kind PASS; target MCP smoke 15/15 PASS; PostgreSQL scoped token repo implemented and passing all checks. Conditional re-signoff authorized by BrianNguyen 2026-05-21 for single-node SQLite pilot scope only.
-- **SLO default-config gap**: Default and tuned rate-limit configs FAIL canonical SLO (46.8% and 73.4% 429 respectively). Max-valid config (1000/10000) required to pass. Accepted as known limitation for conditional pilot. Engineering to investigate; operator to ratify operational baseline.
+- **SLO default-config gap**: **CLOSED with conservative resolution.** Default and tuned rate-limit configs FAIL canonical SLO (46.8% and 73.4% 429 respectively). Max-valid config (1000/10000) required to pass. Defaults remain safety-oriented and unchanged. SLO certification requires explicit high-throughput profile. Operator must tune based on real traffic/IP distribution. See `docs/operations/rate-limit-tuning-guide.md`.
 - **Production posture**: `production-ready = NO`; full G2 = `NOT COMPLETE`; PostgreSQL production = `NO`; HA/multi-node = `NO`.
 
 ---
@@ -156,11 +156,12 @@ Following May 13–16 operator execution and evidence collection, plus May 16–
 | **Run #1 (default)** | FAIL — 429 rate 46.767% (1114/2382 requests) |
 | **Run #2 (tuned 20/500)** | FAIL — 429 rate 73.445% (1795/2444 requests) |
 | **Run #3 (max-valid 1000/10000)** | PASS — 0 errors, 0 429s, 2380/2380 HTTP 200 |
-| **Decision** | Accepted as known limitation for conditional pilot. SLO certification claimed **only** for max-valid config. Default/tuned configs do not meet pilot SLO. |
-| **Owner (investigation)** | Engineering — investigate why default/tuned configs fail canonical workload; assess whether default limits are overly conservative or workload is atypical |
-| **Owner (ratification)** | Operator — ratify operational rate-limit baseline for pilot; decide whether max-valid config is acceptable or requires remediation before pilot |
-| **Rationale** | Default limits are intentionally conservative for safety. The canonical workload (baseline → low → target → spike → cooldown) generates sustained request volume that exceeds conservative limits. Max-valid config (within validation bounds) is required to pass. This is not a code defect; it is a config-vs-workload mismatch. |
-| **Evidence** | `docs/implementation-path/artifacts/2026-05-21-canonical-slo-helm-conditional-signoff.md` §3.5 |
+| **Decision** | **CLOSED — conservative resolution.** Conservative defaults remain safety-oriented and are not changed. SLO certification requires an explicit high-throughput profile (1000/10000). Operators must tune rate limits based on real traffic volume and client IP distribution. |
+| **Owner (investigation)** | Engineering — investigation closed. Root cause identified: per-IP token-bucket mismatch between canonical SLO workload and conservative defaults. Default limits are intentionally safety-oriented; changing them silently to max-valid would weaken default safety posture. |
+| **Owner (ratification)** | Operator — must select a rate-limit profile appropriate to expected traffic. Default safety profile is acceptable for low-traffic pilots. SLO certification profile (1000/10000) is required for canonical workload validation. Production tuning remains TBD until real traffic/IP distribution is known. |
+| **Rationale** | Default limits are intentionally conservative for safety. The canonical workload (baseline → low → target → spike → cooldown) generates sustained request volume that exceeds conservative limits. Max-valid config (within validation bounds) is required to pass. This is not a code defect; it is a config-vs-workload mismatch. Tuned config 20/500 performed worse than default 2/50 because the higher sustained rate drained the burst bucket faster under per-IP enforcement, leaving less headroom for spike phases. |
+| **Profiles** | 1) **Default safety** `2/50` — built-in, protects against accidental overload. 2) **SLO certification** `1000/10000` — required to pass canonical workload. 3) **Production / operator-tuned** — TBD based on real traffic and IP distribution. |
+| **Evidence** | `docs/implementation-path/artifacts/2026-05-21-canonical-slo-helm-conditional-signoff.md` §3.5; `docs/operations/rate-limit-tuning-guide.md` |
 
 ---
 

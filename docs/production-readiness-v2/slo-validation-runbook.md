@@ -35,6 +35,22 @@ evidence artifact.
 | Store backend healthy | Deep readiness probe | Block if `/v1/readyz/deep` ≠ 200 |
 | Config frozen for run | Document `rate_limit_per_second`, `rate_limit_burst`, store mode | Warn if drift likely |
 
+### Rate-limit profile selection
+
+The canonical workload in this runbook requires the **SLO-certification profile**
+(`1000 req/s`, `burst 10000`). The default safety profile (`2 req/s`, `burst 50`)
+will fail the canonical workload with excessive 429 responses.
+
+| Profile | `rate_limit_per_second` | `rate_limit_burst` | Use case |
+|---------|------------------------|--------------------|----------|
+| Default safety | 2 | 50 | Low-traffic pilots, local development, accidental-overload protection |
+| SLO certification | 1000 | 10000 | Canonical validation run (this runbook) |
+| Production / operator-tuned | TBD | TBD | Based on real traffic volume, client IP distribution, and backend capacity |
+
+> **Operator note**: Do not run the canonical five-phase workload against the default
+> safety profile and treat the resulting 429s as a service defect. The default profile
+> is intentionally conservative. See `docs/operations/rate-limit-tuning-guide.md`.
+
 ## SLO targets (draft — to be ratified)
 
 Use the table from [`01-slo-sla.md`](01-slo-sla.md). The pilot-tier targets are

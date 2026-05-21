@@ -88,7 +88,14 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 
 ## Phase 2 — SLO/SLA and workload evidence
 
-> **Active blockers**: `BLK-SLO-RAT` ratified; `BLK-SLO-TGT` unblocked on 2026-05-21. Canonical SLO certification attempted (2 fails, 1 pass with max-valid config). Full SLO certification NOT claimed for default/tuned configs. See [`11-blockers-and-unblock-plan.md`](./11-blockers-and-unblock-plan.md).
+> **Status**: SLO default-config gap **CLOSED with conservative resolution** on 2026-05-21.
+> Conservative defaults (2/50) remain safety-oriented and unchanged. SLO certification requires
+> explicit high-throughput profile (1000/10000). Operator must tune based on real traffic/IP
+> distribution. See `docs/operations/rate-limit-tuning-guide.md`.
+>
+> `BLK-SLO-RAT` ratified; `BLK-SLO-TGT` unblocked on 2026-05-21. Canonical SLO certification
+> attempted (2 fails, 1 pass with max-valid config). Full SLO certification NOT claimed for
+> default/tuned configs. See [`11-blockers-and-unblock-plan.md`](./11-blockers-and-unblock-plan.md).
 
 | # | Item | Owner | Evidence | Status |
 |---|------|-------|----------|--------|

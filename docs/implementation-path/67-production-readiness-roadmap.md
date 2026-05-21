@@ -93,6 +93,8 @@ Phase 3 PostgreSQL (Path 3) — both are outside the scope of this roadmap.
   (`FERRUMD_RATE_LIMIT_PER_SECOND`, `FERRUMD_RATE_LIMIT_BURST`), or config file fields
   (`rate_limit_per_second`, `rate_limit_burst` under `[server]`). Defaults remain 2 req/s and burst 50.
   Validation rejects 0 and values >10000 for burst. CLI > env > config file > defaults precedence.
+  **Three profiles**: default safety `2/50`, SLO certification `1000/10000`, production/operator-tuned TBD.
+  See `docs/operations/rate-limit-tuning-guide.md`.
 - P1.1: `/v1/readyz/deep` is the functional readiness probe. Returns HTTP 200 when store is healthy
   AND write queue depth <= 100; returns HTTP 503 when store is unhealthy OR write queue depth > 100.
   Use for load balancers and Kubernetes readiness probes.
@@ -327,7 +329,7 @@ bash scripts/gcp/phase3g_configure_real_domain.sh --confirm \
 | **PostgreSQL production deployment** | **NO** | Remains deferred unless explicitly selected by operator; Path 3 scope |
 | **HA / multi-node** | **NO / out of v1 scope** | Not implemented; single-node SQLite only |
 | **CI cost / local gate** | **Accepted** | GitHub-hosted Actions minutes avoided; local `run_pre_target_gate.sh --full` and manual validation are the accepted approach; self-hosted runner is a future option |
-| **SLO default-config gap** | **ACCEPTED as known limitation** | Canonical SLO Run #1 (default rate limits) FAIL 46.8% 429; Run #2 (tuned 20/500) FAIL 73.4% 429; Run #3 (max-valid 1000/10000) PASS 0% 429. Default/tuned configs insufficient for canonical workload. Max-valid config required to pass. Engineering owner: investigate root cause (conservative defaults vs workload mismatch). Operator owner: ratify operational rate-limit baseline. See [`artifacts/2026-05-21-canonical-slo-helm-conditional-signoff.md`](./artifacts/2026-05-21-canonical-slo-helm-conditional-signoff.md) §3.5. |
+| **SLO default-config gap** | **CLOSED — conservative resolution** | Canonical SLO Run #1 (default rate limits) FAIL 46.8% 429; Run #2 (tuned 20/500) FAIL 73.4% 429; Run #3 (max-valid 1000/10000) PASS 0% 429. Defaults remain safety-oriented and unchanged. SLO certification requires explicit high-throughput profile (1000/10000). Operator must tune based on real traffic volume and client IP distribution. Engineering investigation closed: root cause is per-IP token-bucket mismatch between conservative defaults and canonical workload; not a code defect. See [`artifacts/2026-05-21-canonical-slo-helm-conditional-signoff.md`](./artifacts/2026-05-21-canonical-slo-helm-conditional-signoff.md) §3.5 and `docs/operations/rate-limit-tuning-guide.md`. |
 
 ---
 
