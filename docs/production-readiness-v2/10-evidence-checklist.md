@@ -205,10 +205,12 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 
 ## Phase 9 — HA/multi-node
 
+> **Status updated 2026-05-21**: HA-2 manual failover runbook drafted as planning artifact. No live drill performed. HA implementation remains NOT STARTED.
+
 | # | Item | Owner | Evidence | Status |
 |---|------|-------|----------|--------|
 | 9.1 | HA-1: HA ADR approved as planning decision | Engineering + Operator | `docs/production-readiness-v2/ha-adr.md` signoff | ✅ APPROVED AS PLANNING DECISION — operator delegate signoff recorded 2026-05-21; no implementation claim; no HA claim |
-| 9.2 | HA-2: Manual failover drill pass | Engineering + Operator | Failover drill log | ☐ |
+| 9.2 | HA-2: Manual failover runbook drafted | Engineering + Operator | `docs/production-readiness-v2/manual-failover-runbook.md` | ✅ PLANNING ARTIFACT COMPLETE — runbook exists; no live drill performed; no HA claim |
 | 9.3 | HA-3: Read replica behavior documented | Engineering | `ha-read-replica-plan.md` | ☐ |
 | 9.4 | HA-4: Automated failover drill pass (deferred) | Engineering + Operator | Failover drill log | ☐ |
 | 9.5 | RPO/RTO measured for HA scenario | Engineering | Measurement log | ☐ |

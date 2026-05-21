@@ -29,7 +29,7 @@ Current status (2026-05-21):
 | Stage | Item | Status |
 |-------|------|--------|
 | HA-1 | HA ADR approved as planning decision | ✅ APPROVED — operator delegate signoff recorded 2026-05-21; no implementation claim |
-| HA-2 | Manual failover drill pass | ☐ NOT STARTED |
+| HA-2 | Manual failover runbook drafted | ✅ RUNBOOK DRAFTED — planning artifact 2026-05-21; no live drill |
 | HA-3 | Read replica behavior documented | ☐ NOT STARTED |
 | HA-4 | Automated failover drill pass | ☐ DEFERRED |
 | HA-5 | RPO/RTO measured for HA scenario | ☐ NOT STARTED |
@@ -50,7 +50,7 @@ Do not promise HA earlier than this sequence.
 | # | Item | Priority | Owner | Acceptance |
 |---|------|----------|-------|------------|
 | H.1 | Draft HA ADR covering managed-PG vs self-hosted, failover strategy, replica strategy, split-brain prevention, leader/writer model, read routing, migration handling, RPO/RTO target | P1 | Engineering + Operator | ADR reviewed and approved before any HA code |
-| H.2 | Document manual failover runbook (primary down → standby promoted → ferrumd reconnect) | P2 | Engineering + Operator | Runbook exists; no live drill required for planning artifact |
+| H.2 | Document manual failover runbook (primary down → standby promoted → ferrumd reconnect) | P2 | Engineering + Operator | Runbook exists as of 2026-05-21; no live drill required for planning artifact |
 | H.3 | Design read-replica routing (read-only endpoints → replica, writes → primary) | P2 | Engineering | Design doc approved; readiness probe shows replica lag |
 | H.4 | Implement automated failover (only after H.1–H.3 and operator cluster available) | P3 | Engineering + Operator | Primary failure drill pass; no split-brain; RPO/RTO measured |
 

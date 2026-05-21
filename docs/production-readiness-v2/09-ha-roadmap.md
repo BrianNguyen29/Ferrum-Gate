@@ -18,8 +18,8 @@ Design the path from single-node production to multi-node/HA, starting with an A
 - Single-node SQLite is the only supported runtime.
 - PostgreSQL local runtime exists but is not production-deployed.
 - HA ADR approved as planning decision 2026-05-21; implementation remains NOT STARTED.
+- Manual failover runbook drafted as planning artifact 2026-05-21; no live drill performed.
 - No replication configs.
-- No failover runbook.
 
 ## Gaps
 
@@ -41,10 +41,11 @@ Design the path from single-node production to multi-node/HA, starting with an A
 
 ### HA-2 — Manual failover
 
-- [ ] Primary down detection procedure.
-- [ ] Standby promotion procedure (manual).
-- [ ] ferrumd reconnect/reroute procedure.
-- [ ] RPO/RTO measurement.
+- [x] Primary down detection procedure. — **DOCUMENTED** in [`manual-failover-runbook.md`](./manual-failover-runbook.md) §3.
+- [x] Standby promotion procedure (manual). — **DOCUMENTED** in [`manual-failover-runbook.md`](./manual-failover-runbook.md) §4.
+- [x] ferrumd reconnect/reroute procedure. — **DOCUMENTED** in [`manual-failover-runbook.md`](./manual-failover-runbook.md) §5.
+- [x] RPO/RTO expectations documented. — **DOCUMENTED** in [`manual-failover-runbook.md`](./manual-failover-runbook.md) §6 and [`ha-adr.md`](./ha-adr.md) §3.
+- [ ] RPO/RTO measured during live drill. — **DEFERRED** until operator environment with replication exists.
 
 ### HA-3 — Read replicas
 
@@ -78,7 +79,8 @@ Design the path from single-node production to multi-node/HA, starting with an A
 ## Evidence required
 
 - `ha-adr.md`
-- `manual-failover-drill-evidence.md`
+- `manual-failover-runbook.md` (planning artifact; no live drill)
+- `manual-failover-drill-evidence.md` (deferred until operator environment ready)
 - `read-replica-test-evidence.md`
 
 ## Non-claims

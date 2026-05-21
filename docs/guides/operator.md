@@ -265,6 +265,10 @@ Restart is **not** required for a transient PostgreSQL outage. Restart only if:
 - Pool saturation (`idle == 0 && size >= max`) is reported as degraded readiness, but no automatic scaling or queue shedding exists.
 - These behaviors are validated locally with Docker Compose only, not on a production-like target host.
 
+### Manual failover runbook
+
+For the full procedure to promote a PostgreSQL standby and update ferrumd's DSN manually, see [`docs/production-readiness-v2/manual-failover-runbook.md`](../../production-readiness-v2/manual-failover-runbook.md). This is a planning artifact only; no live drill has been performed.
+
 ## Related docs
 
 - [`hosted-deployment.md`](./hosted-deployment.md) — systemd, Docker, K8s deployment modes.
