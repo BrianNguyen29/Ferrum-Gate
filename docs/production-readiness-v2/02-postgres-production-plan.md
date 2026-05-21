@@ -50,7 +50,7 @@ PostgreSQL local/runtime foundation is strong:
 | No incremental up/down migration engine | Medium/High | Versioned runner exists; full incremental engine not built |
 | No target-host PG drills | High | No evidence of production PG behavior |
 | No PG restore drill evidence | High | Backup docs exist; evidence does not |
-| No CI for postgres feature | Medium | Drift risk |
+| ~~No CI for postgres feature~~ | ~~Medium~~ | ~~Drift risk~~ ✅ **CLOSED** — `cargo check --workspace --all-features` and `cargo clippy --workspace --all-targets --all-features -- -D warnings` added to `.github/workflows/ci.yml` (2026-05-21). Compiles all feature-gated postgres code paths on every push/PR. Live execution pending normal CI trigger. |
 | ~~No PgBouncer/connection pooling story~~ | ~~Medium~~ | ~~Scaling is difficult~~ ✅ **CLOSED** — PgBouncer and pooling options documented in §PG-2.6 and `docs/guides/operator.md` (2026-05-21). No live deployment claimed. |
 | No HA/failover | Critical | No production HA |
 | No replication configs | High | No standby/read replica |

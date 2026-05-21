@@ -151,7 +151,7 @@
 |-----|----------|-----|
 | No target-host PG drills | High | No evidence of production PG behavior on operator infrastructure |
 | No PG restore drill evidence on live DB | High | Local Docker drill complete; live drill pending |
-| No CI for postgres feature | Medium | Drift risk |
+| ~~No CI for postgres feature~~ | ~~Medium~~ | ~~Drift risk~~ ✅ **CLOSED** — `cargo check --workspace --all-features` and `cargo clippy --workspace --all-targets --all-features -- -D warnings` added to `.github/workflows/ci.yml` (2026-05-21). Compiles all feature-gated postgres code paths on every push/PR. Live execution pending normal CI trigger. |
 | No HA/failover | Critical | No production HA; deferred to Phase 9 |
 | No replication configs | High | No standby/read replica; deferred to Phase 9 |
 | No split-brain prevention | High | HA claim impossible without this; deferred to Phase 9 |

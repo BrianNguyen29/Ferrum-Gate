@@ -54,7 +54,7 @@ impl AuditLogRepo for PostgresAuditLogRepo {
         let metadata = entry
             .metadata
             .as_ref()
-            .map(|m| serde_json::to_string(m))
+            .map(serde_json::to_string)
             .transpose()?;
         sqlx::query(
             "INSERT INTO audit_log (

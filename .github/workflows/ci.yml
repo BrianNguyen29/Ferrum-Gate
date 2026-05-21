@@ -25,3 +25,7 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Cargo test
         run: cargo test --workspace
+      - name: Cargo check (all features)
+        run: cargo check --workspace --all-features
+      - name: Cargo clippy (all features)
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
