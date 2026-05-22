@@ -123,6 +123,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 | 2.12 | SLO-canonical-run3: Max-valid rate-limit canonical workload (PASS) | Engineering | `docs/implementation-path/artifacts/2026-05-21-canonical-slo-helm-conditional-signoff.md` §3.4 | ✅ PASS — 0 errors, 0 429s, all readyz 200; max-valid config only |
 | 2.13 | SLO-canonical-summary: All three runs documented with pass/fail | Engineering | `docs/implementation-path/artifacts/2026-05-21-canonical-slo-helm-conditional-signoff.md` §3.5 | ✅ COMPLETE — full SLO marked PASS only for max-valid config |
 | 2.14 | SLO-default-config-evidence: Formal failure/decision evidence compiled | Engineering | `docs/implementation-path/artifacts/2026-05-22-slo-default-config-evidence.md` | ✅ DECISION EVIDENCE — default config intentionally fails canonical SLO; certification requires explicit high-throughput profile |
+| 2.15 | Workload-model-refresh: Observed datasets compiled vs. original signed assumption | Engineering | `docs/implementation-path/artifacts/2026-05-22-workload-model-refresh-evidence.md` | ✅ ENGINEERING EVIDENCE — canonical max-valid (2,380 req, 0 errors), abbreviated target (39 req, 0 errors), local baseline (22 req, 0 errors), local stress (258 RPS) compiled; 300 writes/s assumption documented as never approached; operator re-review still required |
 
 ## Phase 3 — Target-host MCP/live workload
 

@@ -44,12 +44,13 @@ All items below must be checked with evidence artifacts before this re-signoff i
 
 | Field | Value |
 |-------|-------|
-| Evidence artifact | `YYYY-MM-DD-workload-model-refresh-evidence.md` |
-| Assumed vs observed throughput | *(fill)* |
-| Latency p50/p95/p99 per endpoint | *(fill)* |
-| Capacity ceiling observed | *(fill)* |
-| Recommended safe limits | *(fill)* |
-| Pass/Fail | ☐ |
+| Evidence artifact | `docs/implementation-path/artifacts/2026-05-22-workload-model-refresh-evidence.md` |
+| Original signed assumption | ≤300 writes/s sustained, ≤300 writes/s peak, ≤1M writes/day (BrianNguyen, 2026-05-09) |
+| Assumed vs observed throughput | Assumed ≤300 writes/s; observed target-host canonical run total 2,380 requests with zero errors; **assumption never approached** |
+| Latency p50/p95/p99 per endpoint | Canonical target p50 ~190 ms, p95 ~380 ms, p99 ~394 ms; local steady-state p99 ~2 ms |
+| Capacity ceiling observed | 2,380 requests, 0 errors, under max-valid rate-limit config (1000/10000); NOT a 300 writes/s validation |
+| Recommended safe limits | Sustained ≤10 req/s, burst ≤50 req/s (engineering recommendation only; pending operator review) |
+| Pass/Fail | ☐ — **Requires operator review and re-signoff** |
 
 ### G2.2 — Auth / TLS / Security Refreshed
 
