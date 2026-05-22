@@ -52,7 +52,7 @@ This table maps each target claim from its current NO/conditional state to the e
 | 2.1 | Block A closed (real domain + DNS + HTTPS) | Operator | `YYYY-MM-DD-block-a-closure-evidence.md` | ☐ OPEN — BLK-A-DOM |
 | 2.2 | Workload model refreshed with target metrics | Engineering | `docs/implementation-path/artifacts/2026-05-22-workload-model-refresh-evidence.md` | ✅ ENGINEERING EVIDENCE — observed target-host canonical + abbreviated + local baseline compiled; 300 writes/s assumption documented as never approached; operator re-review still required |
 | 2.3 | SLO default-config failure/decision evidence compiled | Engineering | `docs/implementation-path/artifacts/2026-05-22-slo-default-config-evidence.md` | ✅ DECISION EVIDENCE — default config intentionally fails canonical SLO; full G2 requires accepted explicit-profile policy (documented) |
-| 2.4 | MCP target-host live workload (sustained, not smoke) | Engineering | `YYYY-MM-DD-mcp-target-live-workload-evidence.md` | ☐ OPEN — smoke only |
+| 2.4 | MCP target-host live workload (sustained, not smoke) | Engineering | `docs/implementation-path/artifacts/2026-05-22-mcp-target-live-workload-evidence.md` | ✅ COMPLETE (engineering evidence) — 10/10 iterations passed; baseline smoke PASS; bounded repeated MCP lifecycle smoke against DuckDNS target; NOT full adapter matrix; NOT production traffic; operator signoff not obtained |
 | 2.5 | G2.1–G2.8 individually re-signed with new evidence | Operator | `54-operator-signoff-packet.md` updated | ☐ BLOCKED on 2.1 |
 | 2.6 | Operator signs `TEMPLATE-full-g2-resignoff.md` | Operator | Signed artifact | ☐ BLOCKED on 2.1–2.5 |
 

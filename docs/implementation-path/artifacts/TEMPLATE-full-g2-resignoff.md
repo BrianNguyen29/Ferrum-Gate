@@ -29,7 +29,7 @@ All items below must be checked with evidence artifacts before this re-signoff i
 | P.1 | Block A closed — real domain + DNS + HTTPS | `YYYY-MM-DD-block-a-closure-evidence.md` | ☐ |
 | P.2 | Workload model refreshed with target metrics | `YYYY-MM-DD-workload-model-refresh-evidence.md` | ☐ |
 | P.3 | SLO default-config failure/decision evidence compiled | `docs/implementation-path/artifacts/2026-05-22-slo-default-config-evidence.md` | ✅ DECISION EVIDENCE — default config intentionally fails; certification requires explicit high-throughput profile |
-| P.4 | MCP target-host live workload (sustained) | `YYYY-MM-DD-mcp-target-live-workload-evidence.md` | ☐ |
+| P.4 | MCP target-host live workload (sustained) | `docs/implementation-path/artifacts/2026-05-22-mcp-target-live-workload-evidence.md` | ✅ ENGINEERING EVIDENCE — 10/10 iterations passed; baseline smoke PASS; bounded repeated MCP lifecycle smoke; NOT exhaustive adapter matrix; NOT production traffic; operator signoff NOT obtained |
 | P.5 | PostgreSQL production deployment evidence | `YYYY-MM-DD-pg-production-deployment-signoff.md` | ☐ |
 | P.6 | Backup/restore drill on production PG | `YYYY-MM-DD-pg-restore-drill-evidence.md` | ☐ |
 | P.7 | Security audit pass (scoped tokens, RBAC, audit log) | `YYYY-MM-DD-security-audit-evidence.md` (planning reference: `docs/implementation-path/artifacts/2026-05-22-security-audit-evidence.md`) | ☐ |

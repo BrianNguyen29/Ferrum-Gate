@@ -138,6 +138,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 | 3.5 | MCP-5: Provenance chain exists | Engineering | `docs/implementation-path/artifacts/2026-05-21-target-slo-mcp-helm-domain-evidence.md` §4 | ✅ PASS — provenance events emitted during lifecycle smoke |
 | 3.6 | MCP-6: Redaction/sanitization verified | Engineering | `docs/implementation-path/artifacts/2026-05-21-target-slo-mcp-helm-domain-evidence.md` §4 | ✅ PASS — sanitized log contains no secrets |
 | 3.7 | MCP-7: Target evidence artifact created | Engineering | `docs/implementation-path/artifacts/2026-05-21-target-slo-mcp-helm-domain-evidence.md` | ✅ COMPLETE — artifact created with no secrets |
+| 3.8 | MCP-8: Target MCP sustained workload (10 iterations) | Engineering | `docs/implementation-path/artifacts/2026-05-22-mcp-target-live-workload-evidence.md` | ✅ ENGINEERING EVIDENCE — 10/10 iterations passed; baseline smoke PASS; bounded repeated MCP lifecycle smoke; NOT exhaustive adapter matrix; NOT production traffic; operator signoff NOT obtained |
 
 ## Phase 4 — Security and tenant model
 
