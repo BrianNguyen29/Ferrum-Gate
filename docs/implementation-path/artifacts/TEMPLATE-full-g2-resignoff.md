@@ -123,7 +123,7 @@ All items below must be checked with evidence artifacts before this re-signoff i
 
 | Field | Value |
 |-------|-------|
-| Evidence artifact | `YYYY-MM-DD-compensate-path-evidence.md` |
+| Evidence artifact | `docs/implementation-path/artifacts/2026-05-22-compensate-path-evidence.md` (local/conditional evidence only) |
 | Compensate path tested | `YES / NO` |
 | Noop path tested | `YES / NO` |
 | Rollback contract coverage | `N%` |

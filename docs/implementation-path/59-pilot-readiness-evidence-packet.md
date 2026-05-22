@@ -414,7 +414,7 @@ Adapter list: Target adapters for conditional single-node pilot (specific adapte
 > Step 2: Execute compensate and confirm external state is restored
 > Step 3: Document any discrepancies and inform operator
 
-**G2.8 Scope Note**: Compensate behavior verified via existing local integration evidence (`compensate_execution_flow` test PASS). For conditional single-node pilot: noop-backed/limited external undo accepted with manual verification procedure.
+**G2.8 Scope Note**: Compensate behavior verified via existing local integration evidence (`compensate_execution_flow` test PASS). Consolidated compensate path evidence compiled 2026-05-22 in `artifacts/2026-05-22-compensate-path-evidence.md` (local/conditional only). For conditional single-node pilot: noop-backed/limited external undo accepted with manual verification procedure.
 
 ### Operator Signoff
 > **G2.8 Signoff phrase**: "Operator accepts compensate noop risk with manual verification procedure for conditional single-node pilot scope."

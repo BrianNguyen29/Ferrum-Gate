@@ -240,6 +240,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 | F.4 | Final evidence pack reviewed | Operator | Review signoff | ☐ |
 | F.5 | Operator signs final production posture | Operator | Use `TEMPLATE-final-production-readiness-signoff.md` | ☐ |
 | F.c | Conditional pilot re-signoff (BrianNguyen, 2026-05-21) | Operator | `docs/implementation-path/artifacts/2026-05-21-canonical-slo-helm-conditional-signoff.md` §5 | ✅ CONDITIONAL — single-node SQLite pilot scope only; NOT full production-ready |
+| F.8 | Compensate/rollback path evidence compiled | Engineering | `docs/implementation-path/artifacts/2026-05-22-compensate-path-evidence.md` | ✅ LOCAL EVIDENCE — consolidated from implementation/tests/drills; conditional only; does not complete full G2.8 |
 
 ## Non-claims
 
