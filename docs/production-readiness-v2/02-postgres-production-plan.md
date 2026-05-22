@@ -343,15 +343,20 @@ postgres://user@host:5432/db?sslmode=verify-full&sslcert=/etc/ferrumgate/certs/p
   - `003_add_sync_state.sql` → `sync_state` (sync-only, SQLite)
   - `004_add_leader_allowlist.sql` → `leader_allowlist` (sync-only, SQLite)
   - `005_add_policy_bundles.sql` → `policy_bundles` **already present** in PG `001_initial.sql`
-- [x] `CURRENT_SCHEMA_VERSION` remains `1` for PostgreSQL.
+- [x] `CURRENT_SCHEMA_VERSION` is `2` for PostgreSQL.
 - [x] Added module-level docs in `crates/ferrum-store/src/postgres/migrations.rs` and
   doc comments in `mod.rs` recording the parity matrix.
 
-##### PG-4b.2 — Incremental up/down engine + per-version SQL files (DEFERRED)
+##### PG-4b.2 — Bounded forward-only incremental runner + per-version SQL files (COMPLETE)
 
-- [ ] Add per-migration up/down SQL files for future PG schema changes.
-- [ ] Extend the runner to loop over versioned files when `CURRENT_SCHEMA_VERSION > 1`.
-- [ ] Deferred until a real schema change requires it; no overengineering now.
+- [x] Added `EmbeddedMigration` struct and `MIGRATIONS` ordered array in `migrations.rs`.
+- [x] Included `001_initial.sql` (version 1) and `002_add_policy_bundle_versions.sql` (version 2).
+- [x] Refactored `apply_embedded_migrations` to loop over `MIGRATIONS` and apply only versions greater than the recorded `_schema_version`.
+- [x] Each migration is recorded in `_schema_version` immediately after its SQL succeeds, within the same transaction.
+- [x] Fresh DB: applies 001 then 002, records version 2.
+- [x] Existing DB at version 1: applies only 002, records version 2.
+- [x] Existing DB at version 2: no-op.
+- [x] No `refinery`/`sqlx`-migrator dependency added; no automatic down migrations.
 
 ##### PG-4b.3 — Rollback / forward strategy doc (COMPLETE)
 
@@ -376,11 +381,13 @@ postgres://user@host:5432/db?sslmode=verify-full&sslcert=/etc/ferrumgate/certs/p
 
 3. **Adding a future migration**
    When a new schema change is required:
-   - Add `migrations/postgres/002_<name>.sql` containing the new DDL.
-   - Append the same DDL to `INIT_MIGRATION` (or refactor the runner to loop
-     over files) so fresh databases receive the full schema in one transaction.
-   - Increment `CURRENT_SCHEMA_VERSION` in `migrations.rs`.
-   - The runner will then apply `002_*.sql` on the next startup.
+   - Add `migrations/postgres/00N_<name>.sql` containing the new DDL.
+   - Append a new `EmbeddedMigration` entry to the `MIGRATIONS` array in
+     `migrations.rs` with the next version number.
+   - Increment `CURRENT_SCHEMA_VERSION` in `migrations.rs` to match the new
+     highest version.
+   - The runner will apply the new migration on the next startup for any
+     database whose recorded version is less than the new version.
    - Keep the migration within a single `BEGIN ... COMMIT` block if possible;
      the runner wraps everything in its own transaction, so individual files
      should avoid explicit `BEGIN`/`COMMIT`.

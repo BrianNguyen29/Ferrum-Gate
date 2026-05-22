@@ -195,8 +195,9 @@ impl PostgresStore {
     /// appears in `001_initial.sql` for completeness when the file is run
     /// manually, but the authoritative versioned flow is this method.
     ///
-    /// Idempotent: checks `_schema_version` before running SQL. If the recorded
-    /// version is >= [`migrations::CURRENT_SCHEMA_VERSION`], the call is a no-op.
+    /// Idempotent: checks `_schema_version` before running SQL. Only migrations
+    /// with a version greater than the recorded version are applied, and each
+    /// version is recorded immediately after its SQL succeeds.
     ///
     /// SQLite-only migrations (`leader_tips`, `sync_state`, `leader_allowlist`)
     /// are intentionally **not** ported to PostgreSQL. `policy_bundles` is already
@@ -225,45 +226,46 @@ impl PostgresStore {
                 .await?
                 .unwrap_or(0);
 
-        if (current_version as i64) >= migrations::CURRENT_SCHEMA_VERSION {
-            tx.commit().await?;
-            return Ok(());
-        }
-
-        let mut statement = String::new();
-
-        for line in migrations::INIT_MIGRATION.lines() {
-            let trimmed = line.trim();
-            if trimmed.starts_with("--") {
+        for migration in migrations::MIGRATIONS {
+            if migration.version <= current_version as i64 {
                 continue;
             }
 
-            statement.push_str(line);
-            statement.push('\n');
+            let mut statement = String::new();
 
-            if trimmed.ends_with(';') {
-                let sql = statement.trim();
-                if !sql.is_empty() {
-                    sqlx::query(sql).execute(&mut *tx).await?;
+            for line in migration.sql.lines() {
+                let trimmed = line.trim();
+                if trimmed.starts_with("--") {
+                    continue;
                 }
-                statement.clear();
+
+                statement.push_str(line);
+                statement.push('\n');
+
+                if trimmed.ends_with(';') {
+                    let sql = statement.trim();
+                    if !sql.is_empty() {
+                        sqlx::query(sql).execute(&mut *tx).await?;
+                    }
+                    statement.clear();
+                }
             }
-        }
 
-        let sql = statement.trim();
-        if !sql.is_empty() {
-            sqlx::query(sql).execute(&mut *tx).await?;
-        }
+            let sql = statement.trim();
+            if !sql.is_empty() {
+                sqlx::query(sql).execute(&mut *tx).await?;
+            }
 
-        let now = chrono::Utc::now().to_rfc3339();
-        sqlx::query(
-            "INSERT INTO _schema_version (version, applied_at) VALUES ($1, $2)
-             ON CONFLICT (version) DO UPDATE SET applied_at = $2",
-        )
-        .bind(migrations::CURRENT_SCHEMA_VERSION)
-        .bind(now)
-        .execute(&mut *tx)
-        .await?;
+            let now = chrono::Utc::now().to_rfc3339();
+            sqlx::query(
+                "INSERT INTO _schema_version (version, applied_at) VALUES ($1, $2)
+                 ON CONFLICT (version) DO UPDATE SET applied_at = $2",
+            )
+            .bind(migration.version)
+            .bind(now)
+            .execute(&mut *tx)
+            .await?;
+        }
 
         tx.commit().await?;
         Ok(())

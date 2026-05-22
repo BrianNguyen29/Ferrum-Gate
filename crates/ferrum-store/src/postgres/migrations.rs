@@ -1,7 +1,7 @@
 //! PostgreSQL embedded migration parity.
 //!
-//! `INIT_MIGRATION` is the single source of truth for the PostgreSQL schema.
-//! `CURRENT_SCHEMA_VERSION` is **2** after adding the `audit_log` table.
+//! `MIGRATIONS` is the ordered list of forward-only schema changes.
+//! `CURRENT_SCHEMA_VERSION` is **2** after adding `policy_bundle_version`.
 //!
 //! # SQLite-only migrations intentionally skipped
 //!
@@ -15,13 +15,85 @@
 //! | `004_add_leader_allowlist.sql` | `leader_allowlist` | **Skipped** — sync-only, SQLite-specific. |
 //! | `005_add_policy_bundles.sql` | `policy_bundles` | **Already present** in `001_initial.sql`. |
 //!
-//! All DDL in `001_initial.sql` uses `IF NOT EXISTS`, making it safe to re-run
-//! when bumping the schema version.
+//! All DDL uses `IF NOT EXISTS`, making it safe to re-run when bumping the
+//! schema version.
 
-pub const INIT_MIGRATION: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/migrations/postgres/001_initial.sql"
-));
+/// A single forward-only embedded migration.
+pub struct EmbeddedMigration {
+    /// Monotonically increasing version number.
+    pub version: i64,
+    /// Human-readable name for diagnostics.
+    #[allow(dead_code)]
+    pub name: &'static str,
+    /// SQL to execute. Must be idempotent where possible.
+    pub sql: &'static str,
+}
+
+/// Ordered list of PostgreSQL forward-only migrations.
+///
+/// The runner applies every migration whose `version` is greater than the
+/// current value stored in `_schema_version`.
+pub const MIGRATIONS: &[EmbeddedMigration] = &[
+    EmbeddedMigration {
+        version: 1,
+        name: "001_initial",
+        sql: include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/migrations/postgres/001_initial.sql"
+        )),
+    },
+    EmbeddedMigration {
+        version: 2,
+        name: "002_add_policy_bundle_versions",
+        sql: include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/migrations/postgres/002_add_policy_bundle_versions.sql"
+        )),
+    },
+];
 
 /// Current schema version for the PostgreSQL embedded migration.
+///
+/// Must match the highest `version` in [`MIGRATIONS`].
+#[allow(dead_code)]
 pub const CURRENT_SCHEMA_VERSION: i64 = 2;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn migrations_are_sorted_and_non_empty() {
+        assert!(!MIGRATIONS.is_empty(), "MIGRATIONS must not be empty");
+        for window in MIGRATIONS.windows(2) {
+            assert!(
+                window[0].version < window[1].version,
+                "MIGRATIONS must be strictly ascending: {} followed by {}",
+                window[0].version,
+                window[1].version
+            );
+        }
+    }
+
+    #[test]
+    fn current_schema_version_matches_last_migration() {
+        let last = MIGRATIONS.last().expect("MIGRATIONS is non-empty");
+        assert_eq!(
+            CURRENT_SCHEMA_VERSION, last.version,
+            "CURRENT_SCHEMA_VERSION must match the last migration version"
+        );
+    }
+
+    #[test]
+    fn migration_versions_are_unique() {
+        let mut versions: Vec<i64> = MIGRATIONS.iter().map(|m| m.version).collect();
+        let original_len = versions.len();
+        versions.sort_unstable();
+        versions.dedup();
+        assert_eq!(
+            versions.len(),
+            original_len,
+            "Migration versions must be unique"
+        );
+    }
+}
