@@ -32,7 +32,7 @@ All items below must be checked with evidence artifacts before this re-signoff i
 | P.4 | MCP target-host live workload (sustained) | `YYYY-MM-DD-mcp-target-live-workload-evidence.md` | ☐ |
 | P.5 | PostgreSQL production deployment evidence | `YYYY-MM-DD-pg-production-deployment-signoff.md` | ☐ |
 | P.6 | Backup/restore drill on production PG | `YYYY-MM-DD-pg-restore-drill-evidence.md` | ☐ |
-| P.7 | Security audit pass (scoped tokens, RBAC, audit log) | `YYYY-MM-DD-security-audit-evidence.md` | ☐ |
+| P.7 | Security audit pass (scoped tokens, RBAC, audit log) | `YYYY-MM-DD-security-audit-evidence.md` (planning reference: `docs/implementation-path/artifacts/2026-05-22-security-audit-evidence.md`) | ☐ |
 
 **Overall prerequisites**: `PASS / FAIL` *(requires all P.1–P.7 checked)*
 

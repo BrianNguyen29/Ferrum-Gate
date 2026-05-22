@@ -160,6 +160,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 | 4.7 | SEC-7: Tenant ADR approved for implementation | Operator | `docs/implementation-path/artifacts/2026-05-20-security-model-operator-decisions.md` | ✅ APPROVED FOR IMPLEMENTATION — single-tenant, opaque scoped tokens, durable revocation, 90d max TTL, approved scope list |
 | 4.8 | TTL enforcement: create/rotate reject expiry beyond 90 days | Engineering | `test_create_token_rejects_excessive_ttl`, `test_rotate_token_rejects_excessive_ttl` in `crates/ferrum-gateway/src/server.rs` | ✅ IMPLEMENTED — server-side 400 Bad Request for >90d; client-side validation in ferrumctl |
 | 4.9 | Phase 4 implementation evidence artifact | Engineering | `docs/implementation-path/artifacts/2026-05-20-scoped-token-implementation-evidence.md` | ✅ COMPLETE — records all implemented items, test evidence, and deferred items |
+| 4.10 | Consolidated security audit evidence compilation | Engineering | `docs/implementation-path/artifacts/2026-05-22-security-audit-evidence.md` | ✅ COMPLETE — compilation of SEC-1–SEC-6, scoped-token, audit-log, and invariant evidence; no new implementation; no production-ready claim |
 
 ## Phase 5 — Policy authoring UX
 

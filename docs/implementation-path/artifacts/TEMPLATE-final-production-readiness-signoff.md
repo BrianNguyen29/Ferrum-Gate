@@ -32,7 +32,7 @@ All items below must be checked with evidence artifacts before this signoff is v
 | P.5 | PostgreSQL production deployment + target drill | `YYYY-MM-DD-pg-production-deployment-signoff.md` | ☐ |
 | P.6 | Backup/restore drill on production PG | `YYYY-MM-DD-pg-restore-drill-evidence.md` | ☐ |
 | P.7 | Full G2 re-signoff with real domain + new evidence | `YYYY-MM-DD-g2-resignoff-evidence.md` | ☐ |
-| P.8 | Security audit pass (no auth bypass, no secret leaks) | `YYYY-MM-DD-security-audit-evidence.md` | ☐ |
+| P.8 | Security audit pass (no auth bypass, no secret leaks) | `YYYY-MM-DD-security-audit-evidence.md` (planning reference: `docs/implementation-path/artifacts/2026-05-22-security-audit-evidence.md`) | ☐ |
 | P.9 | Alert rules deployed and validated on live Prometheus | `YYYY-MM-DD-pg-alert-deployment-evidence.md` | ☐ |
 | P.10 | Operator runbook reviewed and acknowledged | `docs/guides/operator.md` review signoff | ☐ |
 
