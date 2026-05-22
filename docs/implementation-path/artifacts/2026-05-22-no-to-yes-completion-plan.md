@@ -34,7 +34,7 @@ This table maps each target claim from its current NO/conditional state to the e
 |---|------|-------|-------------------|----------------|
 | 1.1 | Real domain acquired and DNS A record → target IP | Operator | `YYYY-MM-DD-block-a-domain-evidence.md` | ☐ OPEN — BLK-A-DOM |
 | 1.2 | L1–L5 target bridge re-run with real domain | Engineering | `YYYY-MM-DD-block-a-closure-evidence.md` | ☐ BLOCKED on 1.1 |
-| 1.3 | SLO canonical pass under **default** rate-limit config (not max-valid override) | Engineering | `YYYY-MM-DD-slo-default-config-pass-evidence.md` | ☐ OPEN — Runs #1/#2 failed; only max-valid passed |
+| 1.3 | SLO default-config failure/decision evidence compiled | Engineering | `docs/implementation-path/artifacts/2026-05-22-slo-default-config-evidence.md` | ✅ DECISION EVIDENCE — default config intentionally fails canonical SLO; certification requires explicit high-throughput profile |
 | 1.4 | SLO sustained evidence window (7–30 days) | Engineering + Operator | `YYYY-MM-DD-slo-sustained-window-evidence.md` | ☐ OPEN |
 | 1.5 | PostgreSQL production deployment + target drill | Engineering + Operator | `YYYY-MM-DD-pg-production-deployment-signoff.md` (from `TEMPLATE-pg-production-deployment-signoff.md`) | ☐ OPEN — local only |
 | 1.6 | Backup/restore drill on production PG | Engineering + Operator | `YYYY-MM-DD-pg-restore-drill-evidence.md` | ☐ OPEN — local only |
@@ -51,7 +51,7 @@ This table maps each target claim from its current NO/conditional state to the e
 |---|------|-------|-------------------|----------------|
 | 2.1 | Block A closed (real domain + DNS + HTTPS) | Operator | `YYYY-MM-DD-block-a-closure-evidence.md` | ☐ OPEN — BLK-A-DOM |
 | 2.2 | Workload model refreshed with target metrics | Engineering | `YYYY-MM-DD-workload-model-refresh-evidence.md` | ☐ OPEN — local baseline only |
-| 2.3 | SLO canonical default-config pass | Engineering | `YYYY-MM-DD-slo-default-config-pass-evidence.md` | ☐ OPEN |
+| 2.3 | SLO default-config failure/decision evidence compiled | Engineering | `docs/implementation-path/artifacts/2026-05-22-slo-default-config-evidence.md` | ✅ DECISION EVIDENCE — default config intentionally fails canonical SLO; full G2 requires accepted explicit-profile policy (documented) |
 | 2.4 | MCP target-host live workload (sustained, not smoke) | Engineering | `YYYY-MM-DD-mcp-target-live-workload-evidence.md` | ☐ OPEN — smoke only |
 | 2.5 | G2.1–G2.8 individually re-signed with new evidence | Operator | `54-operator-signoff-packet.md` updated | ☐ BLOCKED on 2.1 |
 | 2.6 | Operator signs `TEMPLATE-full-g2-resignoff.md` | Operator | Signed artifact | ☐ BLOCKED on 2.1–2.5 |

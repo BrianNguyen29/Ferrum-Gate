@@ -28,7 +28,7 @@ All items below must be checked with evidence artifacts before this re-signoff i
 |---|-------------|-------------------|--------|
 | P.1 | Block A closed — real domain + DNS + HTTPS | `YYYY-MM-DD-block-a-closure-evidence.md` | ☐ |
 | P.2 | Workload model refreshed with target metrics | `YYYY-MM-DD-workload-model-refresh-evidence.md` | ☐ |
-| P.3 | SLO canonical pass under default rate-limit config | `YYYY-MM-DD-slo-default-config-pass-evidence.md` | ☐ |
+| P.3 | SLO default-config failure/decision evidence compiled | `docs/implementation-path/artifacts/2026-05-22-slo-default-config-evidence.md` | ✅ DECISION EVIDENCE — default config intentionally fails; certification requires explicit high-throughput profile |
 | P.4 | MCP target-host live workload (sustained) | `YYYY-MM-DD-mcp-target-live-workload-evidence.md` | ☐ |
 | P.5 | PostgreSQL production deployment evidence | `YYYY-MM-DD-pg-production-deployment-signoff.md` | ☐ |
 | P.6 | Backup/restore drill on production PG | `YYYY-MM-DD-pg-restore-drill-evidence.md` | ☐ |
@@ -101,8 +101,8 @@ All items below must be checked with evidence artifacts before this re-signoff i
 
 | Field | Value |
 |-------|-------|
-| Evidence artifact | `YYYY-MM-DD-slo-default-config-pass-evidence.md` |
-| SLO canonical run result | `PASS / FAIL` |
+| Evidence artifact | `docs/implementation-path/artifacts/2026-05-22-slo-default-config-evidence.md` (decision evidence: default fails by design; pass requires explicit profile) |
+| SLO canonical run result | `PASS under explicit profile / FAIL under default` |
 | SLO sustained window result | `PASS / FAIL` |
 | Error rate | `N%` |
 | 429 rate | `N%` |

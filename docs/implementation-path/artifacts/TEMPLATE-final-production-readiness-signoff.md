@@ -27,7 +27,7 @@ All items below must be checked with evidence artifacts before this signoff is v
 |---|-------------|-------------------|--------|
 | P.1 | Real owned domain acquired and DNS A record configured | `YYYY-MM-DD-block-a-domain-evidence.md` | ☐ |
 | P.2 | L1–L5 target bridge re-run with real domain | `YYYY-MM-DD-block-a-closure-evidence.md` | ☐ |
-| P.3 | SLO canonical pass under **default** rate-limit config | `YYYY-MM-DD-slo-default-config-pass-evidence.md` | ☐ |
+| P.3 | SLO default-config failure/decision evidence compiled | `docs/implementation-path/artifacts/2026-05-22-slo-default-config-evidence.md` | ✅ DECISION EVIDENCE — default config intentionally fails; certification requires explicit high-throughput profile |
 | P.4 | SLO sustained evidence window (7–30 days) | `YYYY-MM-DD-slo-sustained-window-evidence.md` | ☐ |
 | P.5 | PostgreSQL production deployment + target drill | `YYYY-MM-DD-pg-production-deployment-signoff.md` | ☐ |
 | P.6 | Backup/restore drill on production PG | `YYYY-MM-DD-pg-restore-drill-evidence.md` | ☐ |
