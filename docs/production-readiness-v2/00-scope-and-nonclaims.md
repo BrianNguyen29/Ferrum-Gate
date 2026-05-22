@@ -103,3 +103,8 @@ evidence planning layer.
 - [`docs/ROADMAP.md`](../../ROADMAP.md) — Parent roadmap with full gap analysis and phase plan.
 - [`docs/implementation-path/67-production-readiness-roadmap.md`](../../implementation-path/67-production-readiness-roadmap.md) — Prior v1 production-readiness tracker.
 - [`docs/PRODUCTION_NOTES.md`](../../PRODUCTION_NOTES.md) — Runtime configuration and stress baselines.
+- [`docs/implementation-path/artifacts/2026-05-22-no-to-yes-completion-plan.md`](../../implementation-path/artifacts/2026-05-22-no-to-yes-completion-plan.md) — Phase 0 NO→YES completion map and template readiness signoff.
+- [`docs/implementation-path/artifacts/TEMPLATE-final-production-readiness-signoff.md`](../../implementation-path/artifacts/TEMPLATE-final-production-readiness-signoff.md) — Final production readiness signoff template (planning-only; requires real evidence).
+- [`docs/implementation-path/artifacts/TEMPLATE-full-g2-resignoff.md`](../../implementation-path/artifacts/TEMPLATE-full-g2-resignoff.md) — Full G2 re-signoff template (planning-only; requires real evidence).
+- [`docs/implementation-path/artifacts/TEMPLATE-pg-production-deployment-signoff.md`](../../implementation-path/artifacts/TEMPLATE-pg-production-deployment-signoff.md) — PostgreSQL production deployment signoff template (planning-only; requires real evidence).
+- [`docs/implementation-path/artifacts/TEMPLATE-ha-multinode-evidence-pack.md`](../../implementation-path/artifacts/TEMPLATE-ha-multinode-evidence-pack.md) — HA/multi-node evidence pack template (planning-only; requires real evidence).

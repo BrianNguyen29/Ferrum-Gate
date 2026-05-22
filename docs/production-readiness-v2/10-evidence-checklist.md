@@ -66,6 +66,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 ## Phase 1 — PostgreSQL production foundation
 
 > **PG-1 scope**: PostgreSQL target/staging baseline only. Local Docker fallback evidence passed on 2026-05-18. No production-ready claim. Block A remains WAIVED/CONDITIONAL.
+> **Template**: `TEMPLATE-pg-production-deployment-signoff.md` prepared for eventual production PG signoff (requires real evidence).
 
 | # | Item | Owner | Evidence | Status |
 |---|---|------|-------|----------|--------|
@@ -214,6 +215,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 ## Phase 9 — HA/multi-node
 
 > **Status updated 2026-05-21**: HA-2 manual failover runbook drafted as planning artifact. HA-3 read replica design drafted as planning artifact. No live drill or replica deployment performed. HA implementation remains NOT STARTED.
+> **Template**: `TEMPLATE-ha-multinode-evidence-pack.md` prepared for eventual HA evidence (requires real drills).
 
 | # | Item | Owner | Evidence | Status |
 |---|------|-------|----------|--------|
@@ -227,14 +229,15 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 
 > **Active blocker**: `BLK-A-DOM` — real owned domain is still required for any production-ready or full G2 closure. DuckDNS remains WAIVED/CONDITIONAL only. See [`11-blockers-and-unblock-plan.md`](./11-blockers-and-unblock-plan.md) and [`docs/implementation-path/artifacts/2026-05-21-blk-a-dom-operator-action-brief.md`](../../implementation-path/artifacts/2026-05-21-blk-a-dom-operator-action-brief.md).
 > **Conditional re-signoff**: BrianNguyen authorized conditional re-signoff for single-node SQLite pilot scope on 2026-05-21. Full G2 closure remains NOT COMPLETE.
+> **Templates prepared**: Signoff/evidence templates created 2026-05-22. See [`docs/implementation-path/artifacts/2026-05-22-no-to-yes-completion-plan.md`](../../implementation-path/artifacts/2026-05-22-no-to-yes-completion-plan.md).
 
 | # | Item | Owner | Evidence | Status |
 |---|------|-------|----------|--------|
 | F.1 | Real domain acquired and DNS configured | Operator | `dig` + HTTPS 200 | ☐ |
 | F.2 | L1–L5 re-run with real domain | Operator | Live evidence artifact | ☐ |
-| F.3 | G2 re-signoff with new evidence | Operator | `54-operator-signoff-packet.md` updated | ☐ |
+| F.3 | G2 re-signoff with new evidence | Operator | `54-operator-signoff-packet.md` updated; use `TEMPLATE-full-g2-resignoff.md` | ☐ |
 | F.4 | Final evidence pack reviewed | Operator | Review signoff | ☐ |
-| F.5 | Operator signs final production posture | Operator | Signed doc | ☐ |
+| F.5 | Operator signs final production posture | Operator | Use `TEMPLATE-final-production-readiness-signoff.md` | ☐ |
 | F.c | Conditional pilot re-signoff (BrianNguyen, 2026-05-21) | Operator | `docs/implementation-path/artifacts/2026-05-21-canonical-slo-helm-conditional-signoff.md` §5 | ✅ CONDITIONAL — single-node SQLite pilot scope only; NOT full production-ready |
 
 ## Non-claims
