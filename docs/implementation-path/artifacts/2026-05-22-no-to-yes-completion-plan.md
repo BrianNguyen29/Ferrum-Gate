@@ -147,6 +147,7 @@ This table maps each target claim from its current NO/conditional state to the e
 | [`docs/implementation-path/artifacts/2026-05-21-blk-a-dom-operator-action-brief.md`](./2026-05-21-blk-a-dom-operator-action-brief.md) | Block A operator action requirements |
 | [`docs/implementation-path/artifacts/2026-05-23-operator-review-packet.md`](./2026-05-23-operator-review-packet.md) | Operator review packet bundling five 2026-05-22 evidence artifacts; separates review-now from blocked items |
 | [`2026-05-23-workload-assumption-risk-acceptance.md`](./2026-05-23-workload-assumption-risk-acceptance.md) | P1/P2 workload assumption risk acceptance — BrianNguyen acknowledges 300 writes/s was never validated; applies to single-node SQLite conditional pilot scope only |
+| [`2026-05-23-rc-ready-conditional-end-state.md`](./2026-05-23-rc-ready-conditional-end-state.md) | RC-ready conditional end state — documents maximum achievable state without real domain; records completed evidence, remaining blockers, and path to production-ready/full G2 |
 
 ---
 
