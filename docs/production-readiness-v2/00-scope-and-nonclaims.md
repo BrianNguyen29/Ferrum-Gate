@@ -20,7 +20,7 @@ Lock the scope of the post-conditional-pilot production path and make all non-cl
 - Block C is **CLOSED**.
 - PostgreSQL local runtime/Docker is implemented; production PG deployment is **NOT** done.
 - HA/multi-node is **NOT** implemented.
-- MCP local smoke passes; target-host MCP live workload is **NOT** evidence-backed.
+- MCP local smoke passes; target-host MCP live workload has **bounded engineering evidence** (10-iteration sustained run, 2026-05-22) but operator signoff is **NOT obtained**.
 
 ## Gaps
 
@@ -44,7 +44,7 @@ Lock the scope of the post-conditional-pilot production path and make all non-cl
 | **Block A = WAIVED/CONDITIONAL** | Real domain is deferred. Block A is not closed. |
 | **PostgreSQL production = NO** | Local PG runtime exists; production PG target deployment + evidence does not. |
 | **HA/multi-node = NO** | Not implemented. Single-node SQLite is the only supported runtime. |
-| **Target-host MCP live workload = NOT EVIDENCE-BACKED** | Local smoke passes; target-host sustained workload evidence is pending. |
+| **Target-host MCP live workload = CONDITIONAL/EVIDENCE-BACKED** | Engineering evidence exists: 10-iteration sustained run passed (2026-05-22); operator signoff NOT obtained; DuckDNS conditional pilot only. |
 | **Scoped auth/RBAC = NO** | Single global bearer token is the only auth mode in production pilot config. |
 | **Multi-tenant = NO** | No tenant isolation exists. |
 

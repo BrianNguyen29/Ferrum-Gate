@@ -1,6 +1,6 @@
 # 13 — Token API Contract
 
-> **Status**: Planning artifact. Proposed API contract; pending operator signoff (BLK-SEC-PH4). No code changes.
+> **Status**: Implemented — token admin endpoints (POST/GET/DELETE/rotate) implemented 2026-05-21. Conditional on operator review boundaries. See [`10-evidence-checklist.md`](./10-evidence-checklist.md) §Phase 4.
 > **Owner**: Engineering
 > **Last updated**: 2026-05-20
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
@@ -289,10 +289,9 @@ When scoped-token enforcement is enabled (`auth_mode = Scoped`):
 
 ## Non-claims
 
-- **NOT implemented**: This contract is a design spec. No endpoints exist yet.
-- **NOT production-ready**: Bearer-only remains the production pilot auth mode.
-- **NOT final**: Operator may request changes to fields, error codes, or behavior.
-- **NOT enforcing**: No middleware, no store schema, no token table exist yet.
+- **NOT production-ready**: Scoped-token enforcement requires explicit operator enablement; bearer-only remains the production pilot auth mode until then.
+- **NOT final**: Operator review may request changes to fields, error codes, or behavior.
+- **Engineering evidence only**: Implementation evidence compiled 2026-05-22; full operator signoff and Phase 4 signoff remaining.
 
 ## Related docs
 

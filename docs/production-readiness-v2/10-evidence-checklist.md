@@ -21,9 +21,9 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 
 ## Gaps
 
-- No checklist links ROADMAP phases to required evidence files.
-- No owner assignment for each evidence item.
-- No explicit signoff state tracking.
+- **Resolved**: Checklist now links every phase (0–9) to evidence files with Owner, Evidence, and Status columns.
+- **Resolved**: Owner assignment and signoff state tracking added to all checklist tables.
+- **Remaining**: Phase 9 (HA) and final production-ready prerequisites (F.1–F.5) still require operator action and live evidence.
 
 ## Implementation tasks
 

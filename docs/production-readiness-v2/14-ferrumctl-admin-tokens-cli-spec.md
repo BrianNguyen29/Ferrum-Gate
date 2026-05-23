@@ -1,6 +1,6 @@
 # 14 — ferrumctl Admin Tokens CLI Surface Spec
 
-> **Status**: Planning artifact. Proposed CLI surface; pending operator signoff (BLK-SEC-PH4) and BLK-UX-4 unblock. No code changes.
+> **Status**: Implemented — `ferrumctl admin tokens` CLI (list/create/revoke/rotate) implemented 2026-05-21. Conditional on operator review boundaries. See [`10-evidence-checklist.md`](./10-evidence-checklist.md) §Phase 4.
 > **Owner**: Engineering
 > **Last updated**: 2026-05-20
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
@@ -307,10 +307,9 @@ When implemented, the following test categories should be added:
 
 ## Non-claims
 
-- **NOT implemented**: This is a CLI surface specification. No code changes yet.
-- **NOT production-ready**: Bearer-only remains the production pilot auth mode.
-- **NOT final**: Operator may request UX changes before implementation.
-- **NOT wired**: No server APIs exist yet to call; this spec assumes [`13-token-api-contract.md`](13-token-api-contract.md) is implemented first.
+- **NOT production-ready**: Scoped-token enforcement requires explicit operator enablement; bearer-only remains the production pilot auth mode until then.
+- **NOT final**: Operator review may request UX changes.
+- **Engineering evidence only**: Implementation evidence compiled 2026-05-22; full operator signoff and Phase 4 signoff remaining.
 
 ## Related docs
 

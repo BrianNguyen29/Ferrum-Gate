@@ -1,6 +1,6 @@
 # 12 — Endpoint-to-Scope Mapping
 
-> **Status**: Planning artifact. Proposed mapping; pending operator signoff (BLK-SEC-PH4). No code changes.
+> **Status**: Implemented — scoped token endpoints (create/list/revoke/rotate) implemented 2026-05-21. Operator signoff and Phase 4 full signoff remaining. See [`10-evidence-checklist.md`](./10-evidence-checklist.md) §Phase 4.
 > **Owner**: Engineering
 > **Last updated**: 2026-05-20
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
@@ -120,7 +120,7 @@ These scopes are drawn from [`04-security-tenant-model-adr.md`](04-security-tena
 | `GET` | `/v1/bridges` | `provenance:read` | List configured bridges |
 | `GET` | `/v1/bridges/{bridge_id}/tools` | `provenance:read` | List tools exposed by a bridge |
 
-### Planned admin/token endpoints (not yet implemented)
+### Admin/token endpoints (implemented 2026-05-21)
 
 | Method | Route | Minimum scope | Notes |
 |--------|-------|---------------|-------|
@@ -153,10 +153,9 @@ Derived from [`04-security-tenant-model-adr.md`](04-security-tenant-model-adr.md
 
 ## Non-claims
 
-- **NOT implemented**: This is a design mapping; no RBAC middleware or scope enforcement exists in code yet.
-- **NOT final**: Operator may request scope changes during Q6 review.
-- **NOT production-ready**: Bearer-only remains the production pilot auth mode.
+- **NOT production-ready**: Scoped-token enforcement requires explicit operator enablement; bearer-only remains the production pilot auth mode until then.
 - **NOT multi-tenant**: This mapping assumes single-tenant (T1) from [`04-security-tenant-model-adr.md`](04-security-tenant-model-adr.md).
+- **Partial implementation**: RBAC middleware and scope enforcement implemented 2026-05-21 for token lifecycle endpoints; operator signoff and Phase 4 full signoff remaining.
 
 ## Related docs
 
