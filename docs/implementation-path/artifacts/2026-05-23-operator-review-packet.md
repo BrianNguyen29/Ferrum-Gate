@@ -57,7 +57,7 @@ All five artifacts below were produced on 2026-05-22. Each is engineering eviden
 | 1 | [`2026-05-22-security-audit-evidence.md`](./2026-05-22-security-audit-evidence.md) | 2026-05-22 | Compilation | SEC-1–SEC-6 automated tests pass; scoped token RBAC implemented; audit log implemented; dependency audit local PASS; no secrets in artifacts | **Review / Acknowledge** |
 | 2 | [`2026-05-22-compensate-path-evidence.md`](./2026-05-22-compensate-path-evidence.md) | 2026-05-22 | Compilation | Compensate handler with state guards confirmed; R3 auto-commit suppression confirmed; D1–D6 local drills passed; adapter compensation matrix documented | **Review / Acknowledge** |
 | 3 | [`2026-05-22-slo-default-config-evidence.md`](./2026-05-22-slo-default-config-evidence.md) | 2026-05-22 | Decision | Default config (2/50) intentionally fails canonical SLO (46.8% 429); max-valid (1000/10000) passes; certification requires explicit profile selection | **Review / Acknowledge / Decide** |
-| 4 | [`2026-05-22-workload-model-refresh-evidence.md`](./2026-05-22-workload-model-refresh-evidence.md) | 2026-05-22 | Engineering | 300 writes/s signed assumption was never approached; observed max 2,380 requests (canonical run) with zero errors; recommended safe limits: ≤10 req/s sustained, ≤50 req/s burst | **Review / Acknowledge / Note gap** |
+| 4 | [`2026-05-22-workload-model-refresh-evidence.md`](./2026-05-22-workload-model-refresh-evidence.md) | 2026-05-22 | Engineering | 300 writes/s signed assumption was never approached; observed max 2,380 requests (canonical run) with zero errors; recommended safe limits: ≤10 req/s sustained, ≤50 req/s burst | **Review / Acknowledge / Note gap** — see [`2026-05-23-workload-assumption-risk-acceptance.md`](./2026-05-23-workload-assumption-risk-acceptance.md) for P1/P2 risk acceptance |
 | 5 | [`2026-05-22-mcp-target-live-workload-evidence.md`](./2026-05-22-mcp-target-live-workload-evidence.md) | 2026-05-22 | Engineering | 10/10 MCP lifecycle iterations passed against DuckDNS target; baseline smoke PASS; NOT exhaustive adapter matrix; NOT production traffic | **Review / Acknowledge** |
 
 ### 2.1 Artifact Status Summary
@@ -157,22 +157,22 @@ This checklist is for the operator to record their review state. It is **not** a
 
 | # | Artifact | Reviewed | Concerns | Date |
 |---|----------|----------|----------|------|
-| R-1 | `2026-05-22-security-audit-evidence.md` | ☐ | | |
-| R-2 | `2026-05-22-compensate-path-evidence.md` | ☐ | | |
-| R-3 | `2026-05-22-slo-default-config-evidence.md` | ☐ | | |
-| R-4 | `2026-05-22-workload-model-refresh-evidence.md` | ☐ | | |
-| R-5 | `2026-05-22-mcp-target-live-workload-evidence.md` | ☐ | | |
+| R-1 | `2026-05-22-security-audit-evidence.md` | ✅ | None | 2026-05-23 |
+| R-2 | `2026-05-22-compensate-path-evidence.md` | ✅ | None | 2026-05-23 |
+| R-3 | `2026-05-22-slo-default-config-evidence.md` | ✅ | None | 2026-05-23 |
+| R-4 | `2026-05-22-workload-model-refresh-evidence.md` | ✅ | None — see [`2026-05-23-workload-assumption-risk-acceptance.md`](./2026-05-23-workload-assumption-risk-acceptance.md) | 2026-05-23 |
+| R-5 | `2026-05-22-mcp-target-live-workload-evidence.md` | ✅ | None | 2026-05-23 |
 
 ### 5.2 Key Decisions and Acknowledgments
 
 | # | Statement | Operator Acknowledges |
 |---|-----------|----------------------|
-| D-1 | Default rate-limit config (2/50) intentionally fails canonical SLO by design. SLO certification requires explicit high-throughput profile (1000/10000). | ☐ Yes — I understand this |
-| D-2 | The 300 writes/s signed assumption was never tested. Observed traffic was far below that ceiling. | ☐ Yes — I understand this |
-| D-3 | MCP target live workload (10/10 iterations) is bounded engineering evidence, not exhaustive adapter matrix validation, not production traffic. | ☐ Yes — I understand this |
-| D-4 | Compensate path evidence covers G2.8 for conditional pilot scope only. Full G2.8 requires target-host operator drill execution and real domain. | ☐ Yes — I understand this |
-| D-5 | Security audit evidence is local compilation. No third-party penetration test. No target-host security validation. | ☐ Yes — I understand this |
-| D-6 | No final production-ready, full G2, Block A closed, PostgreSQL production, or HA claim is being made or requested. | ☐ Yes — I understand this |
+| D-1 | Default rate-limit config (2/50) intentionally fails canonical SLO by design. SLO certification requires explicit high-throughput profile (1000/10000). | ✅ Yes — I understand this |
+| D-2 | The 300 writes/s signed assumption was never tested. Observed traffic was far below that ceiling. | ✅ Yes — I understand this — see [`2026-05-23-workload-assumption-risk-acceptance.md`](./2026-05-23-workload-assumption-risk-acceptance.md) |
+| D-3 | MCP target live workload (10/10 iterations) is bounded engineering evidence, not exhaustive adapter matrix validation, not production traffic. | ✅ Yes — I understand this |
+| D-4 | Compensate path evidence covers G2.8 for conditional pilot scope only. Full G2.8 requires target-host operator drill execution and real domain. | ✅ Yes — I understand this |
+| D-5 | Security audit evidence is local compilation. No third-party penetration test. No target-host security validation. | ✅ Yes — I understand this |
+| D-6 | No final production-ready, full G2, Block A closed, PostgreSQL production, or HA claim is being made or requested. | ✅ Yes — I understand this |
 
 ### 5.3 Concerns or Required Changes
 
@@ -203,7 +203,7 @@ This section records that the operator has reviewed the bundled evidence artifac
 | Role | Name | Date | Signature / Ack |
 |------|------|------|----------------|
 | Engineering | | | |
-| Operator | | | |
+| Operator | BrianNguyen | 2026-05-23 | Acknowledged — receipt only; not production-ready signoff; not full G2 signoff |
 
 ---
 
@@ -255,6 +255,7 @@ This packet explicitly does **not** claim or request the following:
 | [`2026-05-22-compensate-path-evidence.md`](./2026-05-22-compensate-path-evidence.md) | Compensate path evidence compilation |
 | [`2026-05-22-slo-default-config-evidence.md`](./2026-05-22-slo-default-config-evidence.md) | SLO default-config decision evidence |
 | [`2026-05-22-workload-model-refresh-evidence.md`](./2026-05-22-workload-model-refresh-evidence.md) | Workload model refresh evidence |
+| [`2026-05-23-workload-assumption-risk-acceptance.md`](./2026-05-23-workload-assumption-risk-acceptance.md) | P1/P2 workload assumption risk acceptance — operator (BrianNguyen) acknowledges 300 writes/s was never validated; conditional pilot scope only |
 | [`2026-05-22-mcp-target-live-workload-evidence.md`](./2026-05-22-mcp-target-live-workload-evidence.md) | MCP target live workload evidence |
 | [`2026-05-22-no-to-yes-completion-plan.md`](./2026-05-22-no-to-yes-completion-plan.md) | NO→YES completion map (all five artifacts referenced here) |
 | [`TEMPLATE-final-production-readiness-signoff.md`](./TEMPLATE-final-production-readiness-signoff.md) | Final production readiness signoff template (blank) |
