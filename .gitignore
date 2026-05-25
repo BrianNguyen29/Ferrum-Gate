@@ -7,6 +7,7 @@ Cargo.lock
 /.idea
 /.vscode
 .agents/
+.codegraph/
 .DS_Store
 *.log
 *.db
