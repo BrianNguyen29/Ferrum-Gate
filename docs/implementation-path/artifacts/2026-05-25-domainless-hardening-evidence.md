@@ -44,7 +44,7 @@
 | 2.2 | SLO real rehearsal (1 min) | `bash scripts/run_slo_sustained_observation.sh --base-url http://127.0.0.1:8080 --duration-min 1 --interval-min 1 --output-dir /tmp/ferrumgate-slo-rehearsal-20260525` | ✅ PASS |
 | 2.3 | Local restore drill | `make restore-drill` | ✅ PASS |
 | 2.4 | PG container restart drill | `make pg-restart-drill` | ✅ PASS |
-| 2.5 | Pilot readiness check | `FERRUMCTL=/home/uong_guyen/work/Ferrum-Gate/target/release/ferrumctl python3 scripts/check_pilot_readiness.py --server-url http://127.0.0.1:8080 --skip-functional` | ✅ PASS / partial |
+| 2.5 | Pilot readiness check | `make check-pilot-readiness` | ✅ PASS |
 | 2.6 | Stress suite — default config | `BASE_URL=http://127.0.0.1:8080 WORKERS=5 DURATION=3 make stress` (default profile) | ⚠️ MIXED (s1/s8 PASS; s2/s4/s7 FAIL due to rate-limit) |
 | 2.7 | Stress suite — high-throughput profile | `BASE_URL=http://127.0.0.1:8080 WORKERS=5 DURATION=3 make stress` (high-throughput env) | ✅ PASS (all 5 scenarios) |
 
@@ -151,10 +151,7 @@ make pg-restart-drill
 
 **Command:**
 ```bash
-FERRUMCTL=/home/uong_guyen/work/Ferrum-Gate/target/release/ferrumctl \
-  python3 scripts/check_pilot_readiness.py \
-  --server-url http://127.0.0.1:8080 \
-  --skip-functional
+make check-pilot-readiness
 ```
 
 **Results:**
@@ -163,10 +160,10 @@ FERRUMCTL=/home/uong_guyen/work/Ferrum-Gate/target/release/ferrumctl \
 |-------|--------|
 | Shallow readiness (`/v1/readyz`) | ✅ PASS |
 | Deep readiness (`/v1/readyz/deep`) | ✅ PASS |
+| Functional readiness (`/v1/approvals?limit=1`) | ✅ PASS |
 | Metrics endpoint (`/v1/metrics`) | ✅ PASS |
-| Functional readiness (`/v1/approvals`) | ⏭️ SKIPPED (by flag) |
 
-**Interpretation:** The automated readiness and metrics probes pass against a local `ferrumd`. Functional readiness was intentionally skipped because the local dev profile runs with `auth=disabled`; the functional probe requires a bearer token. This script does **not** complete G2; operator review and explicit signoff are still required.
+**Interpretation:** The automated shallow, deep, functional, and metrics probes all pass against a local `ferrumd`. The `make` target auto-detects the repo-local `ferrumctl` binary when available, so the probe is now reproducible without manually exporting `FERRUMCTL`. This script does **not** complete G2; operator review and explicit signoff are still required.
 
 ---
 
@@ -254,7 +251,7 @@ This result is consistent with the canonical SLO Run #3 max-valid pass documente
 - SLO sustained observations are **rehearsals**, not approved SLO window closures.
 - PG restart drill is **local Docker only**; production PostgreSQL recovery, TLS/SSL DSN, and HA failover are not tested.
 - Restore drill is **temp-directory only**; target-host restore and offsite backup validation are not tested.
-- Pilot readiness functional probe was **skipped** due to `auth=disabled` local profile.
+- Pilot readiness passes locally, but this remains an automated probe only; it is not operator signoff or target-host evidence.
 - Stress suite duration was **3 seconds** per scenario; longer sustained runs would be needed for full SLO certification.
 - Default rate-limit stress failures are **config mismatch**, not code bugs. The max-valid profile is required for load validation.
 
