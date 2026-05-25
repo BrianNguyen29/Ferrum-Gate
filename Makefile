@@ -1,17 +1,20 @@
-.PHONY: help check fmt lint test docs validate tree pretarget audit wal-drill pg-restart-drill site-build site-serve site-check slo-sustained-dry-run
+.PHONY: help check fmt lint test docs validate tree pretarget audit wal-drill pg-restart-drill site-build site-serve site-check slo-sustained-dry-run restore-drill stress check-pilot-readiness
 
 help:
 	@echo "make check     - cargo check workspace"
 	@echo "make fmt       - cargo fmt --all"
 	@echo "make lint      - cargo clippy --workspace --all-targets -- -D warnings"
 	@echo "make test      - cargo test --workspace"
-	@echo "make docs      - build docs placeholder"
-	@echo "make validate  - validate contracts/openapi/schemas placeholder"
+	@echo "make docs      - validate docs links and site scaffold"
+	@echo "make validate  - run expanded local validation (layout, contracts, templates, toml, openapi, docs links, MCP tools)"
 	@echo "make tree      - print repository tree"
-	@echo "make pretarget - local pre-target gate (config validation, restore drill, doc presence)"
+	@echo "make pretarget - local pre-target gate (config validation, restore drill, doc presence, expanded validators)"
 	@echo "make audit     - local security audit gate (cargo-deny / cargo-audit)"
 	@echo "make wal-drill      - local SQLite WAL crash-recovery drill"
 	@echo "make pg-restart-drill - local PostgreSQL container restart recovery drill"
+	@echo "make restore-drill  - local temp SQLite backup/restore drill (requires ferrumctl binary or cargo build)"
+	@echo "make stress         - stress tests against a running service (requires BASE_URL env var)"
+	@echo "make check-pilot-readiness - pilot readiness probes (requires running server via --server-url or FERRUMCTL_SERVER_URL)"
 	@echo "make site-build - build static site with Zola (optional; requires zola binary)"
 	@echo "make site-serve - serve static site locally with Zola (optional; requires zola binary)"
 	@echo "make site-check - check site scaffold presence (no zola required)"
@@ -30,7 +33,9 @@ test:
 	cargo test --workspace
 
 docs:
-	@echo "Docs live in ./docs"
+	@echo "Running docs validation..."
+	@python3 scripts/validate_docs_links.py
+	@$(MAKE) site-check
 
 validate:
 	@echo "Running local validation (layout + contract consistency + MCP required-tools + evidence templates + toml + openapi + docs-links)..."
@@ -59,6 +64,20 @@ wal-drill:
 pg-restart-drill:
 	@echo "Running local PostgreSQL container restart recovery drill..."
 	@bash scripts/run_pg_container_restart_drill.sh
+
+restore-drill:
+	@echo "Running local temp SQLite backup/restore drill..."
+	@bash scripts/run_local_restore_drill.sh
+
+stress:
+	@echo "Running stress tests against $$BASE_URL..."
+	@echo "Requires a running local or target service. Set BASE_URL, TOKEN, DURATION, WORKERS as needed."
+	@bash scripts/stress/run-all.sh
+
+check-pilot-readiness:
+	@echo "Running pilot readiness checks..."
+	@echo "Requires a running server. Use --server-url or FERRUMCTL_SERVER_URL env var."
+	@python3 scripts/check_pilot_readiness.py
 
 slo-sustained-dry-run:
 	@echo "Running SLO sustained observation in dry-run mode..."

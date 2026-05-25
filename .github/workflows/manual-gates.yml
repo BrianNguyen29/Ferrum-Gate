@@ -19,6 +19,7 @@ on:
           - pretarget
           - wal-drill
           - pg-restart-drill
+          - restore-drill
           - mcp-smoke
           - all
 
@@ -55,6 +56,10 @@ jobs:
       - name: Gate — pg-restart-drill
         if: ${{ inputs.gate == 'pg-restart-drill' || inputs.gate == 'all' }}
         run: bash scripts/run_pg_container_restart_drill.sh --dry-run
+
+      - name: Gate — restore-drill
+        if: ${{ inputs.gate == 'restore-drill' || inputs.gate == 'all' }}
+        run: bash scripts/run_local_restore_drill.sh
 
       - name: Gate — mcp-smoke
         if: ${{ inputs.gate == 'mcp-smoke' || inputs.gate == 'all' }}

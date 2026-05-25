@@ -180,12 +180,29 @@ for ex in "${REQUIRED_EXAMPLES[@]}"; do
 done
 $ALL_EXAMPLES_PRESENT && echo "[PASS] All required config examples present"
 
-# --- 6. Local bearer-auth smoke ---
+# --- 6. Expanded local validators ---
+
+run_check "Evidence templates validation" \
+    "python3 '$SCRIPT_DIR/validate_evidence_templates.py'"
+
+run_check "TOML configs validation" \
+    "python3 '$SCRIPT_DIR/validate_toml_configs.py'"
+
+run_check "OpenAPI YAML validation" \
+    "python3 '$SCRIPT_DIR/validate_openapi_yaml.py'"
+
+run_check "Docs links validation" \
+    "python3 '$SCRIPT_DIR/validate_docs_links.py'"
+
+run_check "MCP required-tools validation" \
+    "bash '$SCRIPT_DIR/validate_mcp_required_tools.sh'"
+
+# --- 7. Local bearer-auth smoke ---
 
 run_check "Local bearer-auth smoke" \
     "bash '$SCRIPT_DIR/run_local_auth_smoke.sh'"
 
-# --- 7. WAL crash-recovery drill ---
+# --- 8. WAL crash-recovery drill ---
 
 run_check "WAL crash-recovery drill" \
     "bash '$SCRIPT_DIR/run_wal_crash_recovery_drill.sh'"

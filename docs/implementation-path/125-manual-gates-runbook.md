@@ -43,6 +43,7 @@ has limited Actions quota, use these gates sparingly:
 | `pretarget` | Config validation, restore drill, evidence skeleton, bearer-auth smoke | 3–5 min | Before operator handoff, after config changes |
 | `wal-drill` | SQLite WAL crash-recovery drill | 2–3 min | After store/rollback changes, before backup validation |
 | `pg-restart-drill` | PostgreSQL container restart recovery drill (dry-run in CI; full drill local) | 1–2 min in CI; 5–10 min local | After PostgreSQL store changes, before production PG deployment |
+| `restore-drill` | Local temp SQLite backup/restore integrity drill | 2–5 min | After backup/restore changes, before target backup validation |
 | `mcp-smoke` | MCP stdio transport, lifecycle tool wiring, blocked-tool behavior | 5–10 min | After MCP server changes, before D1 stage gates |
 | `all` | Runs every gate above in sequence | 15–30 min | Before major milestones, RC tags, or operator review |
 
@@ -74,11 +75,22 @@ make wal-drill
 # PostgreSQL container restart recovery drill
 make pg-restart-drill
 
+# Local temp SQLite backup/restore drill (builds ferrumctl if missing)
+make restore-drill
+
 # MCP lifecycle smoke (builds ferrumd and ferrum-mcp-server locally)
 bash scripts/run_mcp_lifecycle_smoke.sh
 
 # Required-tools regression (no live services needed)
 bash scripts/validate_mcp_required_tools.sh
+
+# Stress tests — requires a running service; not run in CI by default
+# Set BASE_URL (default http://127.0.0.1:8080), TOKEN, DURATION, WORKERS as needed
+make stress
+
+# Pilot readiness probes — requires a running server; not run in CI by default
+# Use --server-url or FERRUMCTL_SERVER_URL; skip functional/metrics if server lacks auth
+make check-pilot-readiness
 ```
 
 ## Artifact Retention
