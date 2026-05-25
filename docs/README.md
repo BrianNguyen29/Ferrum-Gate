@@ -1,5 +1,7 @@
 # FerrumGate Docs
 
+> **Repository workspace**: `/home/uong_guyen/work/Ferrum-Gate`. Older workspace paths in dated evidence artifacts are historical references; use the path above for current operations.
+
 Đây là **thư mục docs duy nhất** dùng làm nền triển khai cho dự án FerrumGate.
 
 Mục tiêu của bộ docs này:

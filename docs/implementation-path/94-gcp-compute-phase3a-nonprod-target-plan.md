@@ -142,7 +142,7 @@ Runs **on the VM** via SSH. Set environment variables before SSH:
 ### 1. Create GCP Resources
 
 ```bash
-cd /path/to/Ferrum-Gate-verify
+cd /home/uong_guyen/work/Ferrum-Gate
 
 # Dry-run check (no resources created, no --confirm needed)
 gcloud compute instances list --project=fairy-b13f4 --zone=asia-southeast1-a

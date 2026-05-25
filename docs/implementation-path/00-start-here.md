@@ -1,5 +1,7 @@
 # 00 — Start here
 
+> **Note**: Repository workspace moved to `/home/uong_guyen/work/Ferrum-Gate`. Older `Ferrum-Gate-verify` paths in dated evidence artifacts are historical references and should not be rewritten unless explicitly refreshing that evidence.
+
 ## Bạn là ai
 Bạn là agent hoặc engineer tiếp quản repo FerrumGate.
 

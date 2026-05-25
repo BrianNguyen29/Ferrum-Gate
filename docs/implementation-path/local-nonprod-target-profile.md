@@ -88,7 +88,7 @@ The following commands were executed to validate local tooling:
 ### Auth Smoke Check
 
 ```bash
-cd /home/uong_guyen/work/ferrum-gate/Ferrum-Gate-verify
+cd /home/uong_guyen/work/Ferrum-Gate
 bash scripts/run_local_auth_smoke.sh
 ```
 
@@ -106,7 +106,7 @@ This script:
 ### Restore Drill
 
 ```bash
-cd /home/uong_guyen/work/ferrum-gate/Ferrum-Gate-verify
+cd /home/uong_guyen/work/Ferrum-Gate
 bash scripts/run_local_restore_drill.sh
 ```
 

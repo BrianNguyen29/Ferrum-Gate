@@ -115,7 +115,7 @@ curl -s -o /dev/null -w "%{http_code}" \
 ### 1. Configure TLS
 
 ```bash
-cd /path/to/Ferrum-Gate-verify
+cd /home/uong_guyen/work/Ferrum-Gate
 
 # Verify prerequisites first (no VM changes, no --confirm needed)
 nslookup 34-158-51-8.nip.io
