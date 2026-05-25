@@ -102,3 +102,4 @@ Design the path from single-node production to multi-node/HA, starting with an A
 
 - [`docs/ROADMAP.md`](../../ROADMAP.md) §3.3.3 Phase PG-5, §4 Phase 9
 - [`docs/production-readiness-v2/02-postgres-production-plan.md`](./02-postgres-production-plan.md) — PG hardening prerequisites.
+- [`docs/implementation-path/artifacts/HA-multi-node-evidence-runbook.md`](../../implementation-path/artifacts/HA-multi-node-evidence-runbook.md) — Detailed operator execution guide for capturing HA/multi-node evidence (failover drill, RPO/RTO measurement, read replica validation, rollback criteria)

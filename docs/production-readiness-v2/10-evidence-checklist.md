@@ -67,6 +67,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 
 > **PG-1 scope**: PostgreSQL target/staging baseline only. Local Docker fallback evidence passed on 2026-05-18. No production-ready claim. Block A remains WAIVED/CONDITIONAL.
 > **Template**: `TEMPLATE-pg-production-deployment-signoff.md` prepared for eventual production PG signoff (requires real evidence).
+> **Runbook**: `PG-production-evidence-pack-runbook.md` provides concrete capture commands, redaction rules, pass/fail criteria, and rollback checks for operator execution.
 
 | # | Item | Owner | Evidence | Status |
 |---|---|------|-------|----------|--------|
@@ -220,6 +221,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 
 > **Status updated 2026-05-21**: HA-2 manual failover runbook drafted as planning artifact. HA-3 read replica design drafted as planning artifact. No live drill or replica deployment performed. HA implementation remains NOT STARTED.
 > **Template**: `TEMPLATE-ha-multinode-evidence-pack.md` prepared for eventual HA evidence (requires real drills).
+> **Runbook**: `HA-multi-node-evidence-runbook.md` provides detailed failover drill procedure, RPO/RTO measurement template, read replica validation checklist, and rollback criteria for operator execution.
 
 | # | Item | Owner | Evidence | Status |
 |---|------|-------|----------|--------|
@@ -264,3 +266,5 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 - [`docs/implementation-path/artifacts/2026-05-23-operator-review-packet.md`](../../implementation-path/artifacts/2026-05-23-operator-review-packet.md) — Operator review packet bundling five 2026-05-22 evidence artifacts; separates review-now from blocked items
 - [`docs/implementation-path/artifacts/2026-05-23-workload-assumption-risk-acceptance.md`](../../implementation-path/artifacts/2026-05-23-workload-assumption-risk-acceptance.md) — P1/P2 workload assumption risk acceptance; BrianNguyen acknowledges 300 writes/s was never validated; conditional single-node SQLite pilot scope only
 - [`docs/implementation-path/artifacts/2026-05-23-rc-ready-conditional-end-state.md`](../../implementation-path/artifacts/2026-05-23-rc-ready-conditional-end-state.md) — RC-ready conditional end state; documents maximum achievable state without real domain; records completed evidence, remaining blockers, and path to production-ready/full G2
+- [`docs/implementation-path/artifacts/PG-production-evidence-pack-runbook.md`](../../implementation-path/artifacts/PG-production-evidence-pack-runbook.md) — Operator execution guide for PG production evidence capture
+- [`docs/implementation-path/artifacts/HA-multi-node-evidence-runbook.md`](../../implementation-path/artifacts/HA-multi-node-evidence-runbook.md) — Operator execution guide for HA/multi-node evidence capture

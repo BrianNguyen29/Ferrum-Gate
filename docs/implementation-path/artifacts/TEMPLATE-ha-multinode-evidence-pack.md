@@ -187,3 +187,4 @@ All items below must be checked before this evidence pack is valid.
 - [`docs/production-readiness-v2/11-blockers-and-unblock-plan.md`](../../production-readiness-v2/11-blockers-and-unblock-plan.md)
 - [`docs/implementation-path/artifacts/2026-05-22-no-to-yes-completion-plan.md`](./2026-05-22-no-to-yes-completion-plan.md)
 - [`docs/implementation-path/artifacts/TEMPLATE-pg-production-deployment-signoff.md`](./TEMPLATE-pg-production-deployment-signoff.md)
+- [`docs/implementation-path/artifacts/HA-multi-node-evidence-runbook.md`](./HA-multi-node-evidence-runbook.md) — Operator execution guide for failover drill, RPO/RTO measurement, read replica validation, and rollback criteria

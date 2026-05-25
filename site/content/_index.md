@@ -25,11 +25,17 @@ FerrumGate is an **intent-scoped execution gateway** — an audit and rollback l
 
 ## Quick links
 
-- [Quickstart guide](https://github.com/ferrumgate/ferrum-gate/blob/main/docs/guides/quickstart.md) — 10-minute local demo
-- [Concepts guide](https://github.com/ferrumgate/ferrum-gate/blob/main/docs/guides/concepts.md) — Intent, proposal, capability, provenance, lineage
-- [API guide](https://github.com/ferrumgate/ferrum-gate/blob/main/docs/guides/api.md) — Endpoint reference and lifecycle
-- [Operator guide](https://github.com/ferrumgate/ferrum-gate/blob/main/docs/guides/operator.md) — Config, health, backup, incident response
-- [Adapter reference](https://github.com/ferrumgate/ferrum-gate/blob/main/docs/guides/adapter-reference.md) — Per-adapter operations and rollback
+- [Quickstart guide](@/guides/quickstart.md) — 10-minute local demo
+- [Concepts guide](@/guides/concepts.md) — Intent, proposal, capability, provenance, lineage
+- [API guide](@/guides/api.md) — Endpoint reference and lifecycle
+- [Operator guide](@/guides/operator.md) — Config, health, backup, incident response
+- [Adapter reference](@/guides/adapter-reference.md) — Per-adapter operations and rollback
+- [Policy authoring](@/guides/policy-authoring.md) — Policy bundles, templates, patterns
+- [MCP integration](@/guides/mcp-integration.md) — Server setup, client config, tools
+- [Hosted deployment](@/guides/hosted-deployment.md) — Docker Compose, systemd, PostgreSQL
+- [Security model](@/guides/security-model.md) — Bearer auth, scoped tokens, RBAC
+- [SLO / SLA](@/guides/slo-sla.md) — Draft targets, validation runbook, metrics
+- [Troubleshooting](@/guides/troubleshooting.md) — Common issues and fixes
 
 ## Site scaffold note
 

@@ -450,3 +450,4 @@ postgres://user@host:5432/db?sslmode=verify-full&sslcert=/etc/ferrumgate/certs/p
 - [`docs/ROADMAP.md`](../../ROADMAP.md) §3.3, §4 Phase 1
 - [`docs/implementation-path/109-p5c-postgresql-backup-restore-runbook.md`](../../implementation-path/109-p5c-postgresql-backup-restore-runbook.md)
 - [`docs/PRODUCTION_NOTES.md`](../../PRODUCTION_NOTES.md) — SQLite vs PG scaling guidance
+- [`docs/implementation-path/artifacts/PG-production-evidence-pack-runbook.md`](../../implementation-path/artifacts/PG-production-evidence-pack-runbook.md) — Detailed operator execution guide for capturing PG production evidence (commands, redaction, pass/fail, rollback checks)

@@ -162,3 +162,4 @@ All items below must be checked before this signoff is valid.
 - [`docs/implementation-path/artifacts/TEMPLATE-pg-offsite-sync-evidence.md`](./TEMPLATE-pg-offsite-sync-evidence.md)
 - [`docs/implementation-path/artifacts/TEMPLATE-pg-alert-deployment-evidence.md`](./TEMPLATE-pg-alert-deployment-evidence.md)
 - [`docs/implementation-path/artifacts/TEMPLATE-pg-pgbouncer-evidence.md`](./TEMPLATE-pg-pgbouncer-evidence.md)
+- [`docs/implementation-path/artifacts/PG-production-evidence-pack-runbook.md`](./PG-production-evidence-pack-runbook.md) — Operator execution guide for capturing each prerequisite (commands, redaction, pass/fail, rollback checks)

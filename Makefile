@@ -33,11 +33,14 @@ docs:
 	@echo "Docs live in ./docs"
 
 validate:
-	@echo "Running local validation (layout + contract consistency + MCP required-tools + evidence templates)..."
+	@echo "Running local validation (layout + contract consistency + MCP required-tools + evidence templates + toml + openapi + docs-links)..."
 	@bash scripts/validate_repo_layout.sh
 	@python3 scripts/check_contract_consistency.py
 	@bash scripts/validate_mcp_required_tools.sh
 	@python3 scripts/validate_evidence_templates.py
+	@python3 scripts/validate_toml_configs.py
+	@python3 scripts/validate_openapi_yaml.py
+	@python3 scripts/validate_docs_links.py
 
 tree:
 	find . -maxdepth 4 | sort
@@ -84,5 +87,8 @@ site-check:
 	@test -f site/config.toml && echo "[OK] site/config.toml" || echo "[MISSING] site/config.toml"
 	@test -f site/templates/base.html && echo "[OK] site/templates/base.html" || echo "[MISSING] site/templates/base.html"
 	@test -f site/templates/index.html && echo "[OK] site/templates/index.html" || echo "[MISSING] site/templates/index.html"
+	@test -f site/templates/guide.html && echo "[OK] site/templates/guide.html" || echo "[MISSING] site/templates/guide.html"
 	@test -f site/static/css/main.css && echo "[OK] site/static/css/main.css" || echo "[MISSING] site/static/css/main.css"
 	@test -f site/content/_index.md && echo "[OK] site/content/_index.md" || echo "[MISSING] site/content/_index.md"
+	@test -f site/content/guides/_index.md && echo "[OK] site/content/guides/_index.md" || echo "[MISSING] site/content/guides/_index.md"
+	@test -n "$(shell ls site/content/guides/*.md 2>/dev/null)" && echo "[OK] guide pages found" || echo "[MISSING] guide pages"

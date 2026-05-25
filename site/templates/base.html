@@ -12,12 +12,12 @@
     <div class="container">
       <a class="brand" href="{{ config.base_url }}">{{ config.title }}</a>
       <nav class="nav">
-        <a href="#what">What</a>
-        <a href="#when-to-use">When to use</a>
-        <a href="#when-not-to-use">When NOT to use</a>
-        <a href="#architecture">Architecture</a>
-        <a href="#quickstart">Quickstart</a>
-        <a href="#docs">Docs</a>
+        <a href="{{ get_url(path='@/_index.md') }}#what">What</a>
+        <a href="{{ get_url(path='@/_index.md') }}#when-to-use">When to use</a>
+        <a href="{{ get_url(path='@/_index.md') }}#when-not-to-use">When NOT to use</a>
+        <a href="{{ get_url(path='@/_index.md') }}#architecture">Architecture</a>
+        <a href="{{ get_url(path='@/_index.md') }}#quickstart">Quickstart</a>
+        <a href="{{ get_url(path='@/guides/_index.md') }}">Guides</a>
       </nav>
     </div>
   </header>

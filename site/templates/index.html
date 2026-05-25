@@ -75,7 +75,7 @@
       Each adapter declares a default rollback class per operation.
     </p>
     <p>
-      For a deeper explanation, see the <a href="{{ config.extra.repo_url }}/blob/main/{{ config.extra.docs_path }}concepts.md">Concepts guide</a>.
+      For a deeper explanation, see the <a href="{{ get_url(path='@/guides/concepts.md') }}">Concepts guide</a>.
     </p>
   </div>
 </section>
@@ -94,7 +94,7 @@
       <li>Configure an MCP client to interact via the MCP bridge.</li>
     </ol>
     <p>
-      <a class="cta" href="{{ config.extra.repo_url }}/blob/main/{{ config.extra.docs_path }}quickstart.md">Read the full quickstart guide</a>
+      <a class="cta" href="{{ get_url(path='@/guides/quickstart.md') }}">Read the full quickstart guide</a>
     </p>
     <p class="small muted">
       Validated locally only. Fresh-user test has not been performed.
@@ -108,28 +108,44 @@
     <h2>Documentation</h2>
     <div class="doc-grid">
       <div class="doc-card">
-        <h3><a href="{{ config.extra.repo_url }}/blob/main/{{ config.extra.docs_path }}concepts.md">Concepts</a></h3>
+        <h3><a href="{{ get_url(path='@/guides/concepts.md') }}">Concepts</a></h3>
         <p>Intent, proposal, capability, provenance, lineage, adapters, rollback classes.</p>
       </div>
       <div class="doc-card">
-        <h3><a href="{{ config.extra.repo_url }}/blob/main/{{ config.extra.docs_path }}api.md">API</a></h3>
+        <h3><a href="{{ get_url(path='@/guides/api.md') }}">API</a></h3>
         <p>Endpoint reference, auth, errors, execution lifecycle.</p>
       </div>
       <div class="doc-card">
-        <h3><a href="{{ config.extra.repo_url }}/blob/main/{{ config.extra.docs_path }}operator.md">Operator Guide</a></h3>
+        <h3><a href="{{ get_url(path='@/guides/operator.md') }}">Operator Guide</a></h3>
         <p>Config, health, backup/restore, token rotation, monitoring, incident response.</p>
       </div>
       <div class="doc-card">
-        <h3><a href="{{ config.extra.repo_url }}/blob/main/{{ config.extra.docs_path }}adapter-reference.md">Adapter Reference</a></h3>
+        <h3><a href="{{ get_url(path='@/guides/adapter-reference.md') }}">Adapter Reference</a></h3>
         <p>Per-adapter operations, rollback behavior, limitations, risk classes.</p>
       </div>
       <div class="doc-card">
-        <h3><a href="{{ config.extra.repo_url }}/blob/main/{{ config.extra.docs_path }}policy-authoring.md">Policy Authoring</a></h3>
+        <h3><a href="{{ get_url(path='@/guides/policy-authoring.md') }}">Policy Authoring</a></h3>
         <p>Policy bundles, templates, patterns, and examples.</p>
       </div>
       <div class="doc-card">
-        <h3><a href="{{ config.extra.repo_url }}/blob/main/{{ config.extra.docs_path }}mcp-integration.md">MCP Integration</a></h3>
+        <h3><a href="{{ get_url(path='@/guides/mcp-integration.md') }}">MCP Integration</a></h3>
         <p>Server setup, client config, tools, auth.</p>
+      </div>
+      <div class="doc-card">
+        <h3><a href="{{ get_url(path='@/guides/hosted-deployment.md') }}">Hosted Deployment</a></h3>
+        <p>Docker Compose, systemd, PostgreSQL, future Helm.</p>
+      </div>
+      <div class="doc-card">
+        <h3><a href="{{ get_url(path='@/guides/security-model.md') }}">Security Model</a></h3>
+        <p>Bearer auth, scoped tokens, RBAC design, tenant model.</p>
+      </div>
+      <div class="doc-card">
+        <h3><a href="{{ get_url(path='@/guides/slo-sla.md') }}">SLO / SLA</a></h3>
+        <p>SLO targets, validation runbook, metrics.</p>
+      </div>
+      <div class="doc-card">
+        <h3><a href="{{ get_url(path='@/guides/troubleshooting.md') }}">Troubleshooting</a></h3>
+        <p>Common issues, diagnostics, recovery steps.</p>
       </div>
     </div>
   </div>
