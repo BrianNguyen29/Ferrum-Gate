@@ -24,13 +24,20 @@ def find_toml_files() -> list[Path]:
     return sorted(files)
 
 
+def _rel(path: Path) -> str:
+    try:
+        return str(path.relative_to(ROOT))
+    except ValueError:
+        return str(path)
+
+
 def check_parsable(path: Path) -> list[str]:
     errors: list[str] = []
     try:
         with path.open("rb") as f:
             tomllib.load(f)
     except Exception as exc:
-        errors.append(f"{path.relative_to(ROOT)}: parse error: {exc}")
+        errors.append(f"{_rel(path)}: parse error: {exc}")
     return errors
 
 
@@ -53,11 +60,11 @@ def check_safety(path: Path) -> list[str]:
         auth_mode = server.get("auth_mode", "").lower()
         if auth_mode == "disabled":
             errors.append(
-                f"{path.relative_to(ROOT)}: prod-like config has auth_mode=disabled"
+                f"{_rel(path)}: prod-like config has auth_mode=disabled"
             )
         if server.get("allow_insecure_nonlocal_bind", False):
             errors.append(
-                f"{path.relative_to(ROOT)}: prod-like config has allow_insecure_nonlocal_bind=true"
+                f"{_rel(path)}: prod-like config has allow_insecure_nonlocal_bind=true"
             )
 
     return errors

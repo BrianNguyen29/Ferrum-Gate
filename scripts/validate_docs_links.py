@@ -43,6 +43,13 @@ def resolve_link(source: Path, link_target: str) -> Path | None:
     return resolved
 
 
+def _rel(path: Path) -> str:
+    try:
+        return str(path.relative_to(ROOT))
+    except ValueError:
+        return str(path)
+
+
 def check_file(path: Path) -> list[str]:
     errors: list[str] = []
     text = path.read_text(encoding="utf-8")
@@ -70,8 +77,8 @@ def check_file(path: Path) -> list[str]:
 
         if not resolved.exists():
             errors.append(
-                f"{path.relative_to(ROOT)}: broken link to '{link_target}'"
-                f" (resolved: {resolved.relative_to(ROOT)})"
+                f"{_rel(path)}: broken link to '{link_target}'"
+                f" (resolved: {_rel(resolved)})"
             )
 
     return errors

@@ -1,4 +1,4 @@
-.PHONY: help check fmt lint test docs validate tree pretarget audit wal-drill pg-restart-drill site-build site-serve site-check slo-sustained-dry-run restore-drill stress check-pilot-readiness
+.PHONY: help check fmt lint test docs test-python-validators validate tree pretarget audit wal-drill pg-restart-drill site-build site-serve site-check slo-sustained-dry-run restore-drill stress check-pilot-readiness
 
 help:
 	@echo "make check     - cargo check workspace"
@@ -37,8 +37,12 @@ docs:
 	@python3 scripts/validate_docs_links.py
 	@$(MAKE) site-check
 
+test-python-validators:
+	@echo "Running Python validator tests..."
+	@python3 -m unittest discover -s tests -p 'test_validate_*.py' -v
+
 validate:
-	@echo "Running local validation (layout + contract consistency + MCP required-tools + evidence templates + toml + openapi + docs-links)..."
+	@echo "Running local validation (layout + contract consistency + MCP required-tools + evidence templates + toml + openapi + docs-links + python-validator-tests)..."
 	@bash scripts/validate_repo_layout.sh
 	@python3 scripts/check_contract_consistency.py
 	@bash scripts/validate_mcp_required_tools.sh
@@ -46,6 +50,7 @@ validate:
 	@python3 scripts/validate_toml_configs.py
 	@python3 scripts/validate_openapi_yaml.py
 	@python3 scripts/validate_docs_links.py
+	@$(MAKE) test-python-validators
 
 tree:
 	find . -maxdepth 4 | sort
@@ -77,7 +82,14 @@ stress:
 check-pilot-readiness:
 	@echo "Running pilot readiness checks..."
 	@echo "Requires a running server. Use --server-url or FERRUMCTL_SERVER_URL env var."
-	@python3 scripts/check_pilot_readiness.py
+	@FERRUMCTL_PATH=$$( \
+		if [ -n "$$FERRUMCTL" ]; then printf '%s' "$$FERRUMCTL"; \
+		elif [ -x target/release/ferrumctl ]; then printf '%s' "target/release/ferrumctl"; \
+		elif [ -x target/debug/ferrumctl ]; then printf '%s' "target/debug/ferrumctl"; \
+		else printf '%s' "ferrumctl"; fi \
+	); \
+	echo "Using FERRUMCTL=$$FERRUMCTL_PATH"; \
+	FERRUMCTL="$$FERRUMCTL_PATH" python3 scripts/check_pilot_readiness.py
 
 slo-sustained-dry-run:
 	@echo "Running SLO sustained observation in dry-run mode..."

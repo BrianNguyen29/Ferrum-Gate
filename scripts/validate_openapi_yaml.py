@@ -11,27 +11,10 @@ REQUIRED_TOP_KEYS = {"openapi", "info", "paths"}
 REQUIRED_INFO_KEYS = {"title", "version"}
 
 
-def main() -> int:
-    if not OPENAPI_PATH.exists():
-        print(f"OPENAPI VALIDATION FAILED: missing {OPENAPI_PATH.relative_to(ROOT)}")
-        return 1
-
-    try:
-        import yaml
-    except ImportError:
-        print("OPENAPI VALIDATION SKIPPED: PyYAML not available")
-        return 0
-
-    try:
-        with OPENAPI_PATH.open("r", encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-    except Exception as exc:
-        print(f"OPENAPI VALIDATION FAILED: parse error: {exc}")
-        return 1
-
+def validate_openapi_dict(data) -> list[str]:
+    """Return a list of validation errors for parsed OpenAPI data."""
     if not isinstance(data, dict):
-        print("OPENAPI VALIDATION FAILED: root is not a mapping")
-        return 1
+        return ["root is not a mapping"]
 
     errors: list[str] = []
     missing_top = REQUIRED_TOP_KEYS - set(data.keys())
@@ -52,6 +35,28 @@ def main() -> int:
     elif not paths:
         errors.append("'paths' is empty")
 
+    return errors
+
+
+def main() -> int:
+    if not OPENAPI_PATH.exists():
+        print(f"OPENAPI VALIDATION FAILED: missing {OPENAPI_PATH.relative_to(ROOT)}")
+        return 1
+
+    try:
+        import yaml
+    except ImportError:
+        print("OPENAPI VALIDATION SKIPPED: PyYAML not available")
+        return 0
+
+    try:
+        with OPENAPI_PATH.open("r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+    except Exception as exc:
+        print(f"OPENAPI VALIDATION FAILED: parse error: {exc}")
+        return 1
+
+    errors = validate_openapi_dict(data)
     if errors:
         print("OPENAPI VALIDATION FAILED")
         for error in errors:
