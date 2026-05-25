@@ -1,4 +1,4 @@
-.PHONY: help check fmt lint test docs validate tree pretarget audit wal-drill pg-restart-drill site-build site-serve site-check
+.PHONY: help check fmt lint test docs validate tree pretarget audit wal-drill pg-restart-drill site-build site-serve site-check slo-sustained-dry-run
 
 help:
 	@echo "make check     - cargo check workspace"
@@ -15,6 +15,7 @@ help:
 	@echo "make site-build - build static site with Zola (optional; requires zola binary)"
 	@echo "make site-serve - serve static site locally with Zola (optional; requires zola binary)"
 	@echo "make site-check - check site scaffold presence (no zola required)"
+	@echo "make slo-sustained-dry-run - safe dry-run rehearsal for SLO sustained observation"
 
 check:
 	cargo check --workspace
@@ -32,10 +33,11 @@ docs:
 	@echo "Docs live in ./docs"
 
 validate:
-	@echo "Running local validation (layout + contract consistency + MCP required-tools)..."
+	@echo "Running local validation (layout + contract consistency + MCP required-tools + evidence templates)..."
 	@bash scripts/validate_repo_layout.sh
 	@python3 scripts/check_contract_consistency.py
 	@bash scripts/validate_mcp_required_tools.sh
+	@python3 scripts/validate_evidence_templates.py
 
 tree:
 	find . -maxdepth 4 | sort
@@ -54,6 +56,10 @@ wal-drill:
 pg-restart-drill:
 	@echo "Running local PostgreSQL container restart recovery drill..."
 	@bash scripts/run_pg_container_restart_drill.sh
+
+slo-sustained-dry-run:
+	@echo "Running SLO sustained observation in dry-run mode..."
+	@bash scripts/run_slo_sustained_observation.sh --dry-run
 
 site-build:
 	@echo "Building static site with Zola..."

@@ -18,6 +18,7 @@ on:
           - audit
           - pretarget
           - wal-drill
+          - pg-restart-drill
           - mcp-smoke
           - all
 
@@ -50,6 +51,10 @@ jobs:
       - name: Gate — wal-drill
         if: ${{ inputs.gate == 'wal-drill' || inputs.gate == 'all' }}
         run: bash scripts/run_wal_crash_recovery_drill.sh
+
+      - name: Gate — pg-restart-drill
+        if: ${{ inputs.gate == 'pg-restart-drill' || inputs.gate == 'all' }}
+        run: bash scripts/run_pg_container_restart_drill.sh --dry-run
 
       - name: Gate — mcp-smoke
         if: ${{ inputs.gate == 'mcp-smoke' || inputs.gate == 'all' }}

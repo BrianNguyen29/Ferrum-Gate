@@ -2,7 +2,7 @@
 
 > **Status**: Draft procedure. Targets are draft/conditional until ratified by operator.
 > **Owner**: Engineering + Operator
-> **Last updated**: 2026-05-18
+> **Last updated**: 2026-05-25
 > **Parent**: [`01-slo-sla.md`](01-slo-sla.md)
 > **Scope**: [`00-scope-and-nonclaims.md`](00-scope-and-nonclaims.md)
 
@@ -85,6 +85,7 @@ the validation baseline for the first run:
 | [`scripts/run_real_workload_generator.py`](../../scripts/run_real_workload_generator.py) | G3.6 workload generator with phased RPS | Latency, Error rate, Availability | `--plan` produces valid plan; `--execute` completes all phases; p99 < thresholds; 5xx < 1%; 429 < 5% |
 | [`scripts/run_g36_workload_wrapper.sh`](../../scripts/run_g36_workload_wrapper.sh) | Robust wrapper with drift probes, sentinel, revert | Operational (config stability), Error rate (abort on drift) | Pre-run E-check passes; generator exits 0; no drift abort; sentinel = COMPLETE.status |
 | [`scripts/check_pilot_readiness.py`](../../scripts/check_pilot_readiness.py) | Shallow/deep/functional readiness + metrics probe | Availability, Operational | All probes PASS; `/v1/readyz/deep` returns 200 with store + write_queue (+ pool for backends that expose pool status); required metrics present |
+| [`scripts/run_slo_sustained_observation.sh`](../../scripts/run_slo_sustained_observation.sh) | Domain-free sustained observation (short rehearsal or long window) | Availability, Operational | Dry-run produces scaffold; real run produces per-sample JSONL + summary markdown; no secrets in output |
 
 ## Workload phases
 
@@ -101,6 +102,59 @@ adjusted per environment, but the phase order must be preserved.
 
 > These are the default phases used by `run_real_workload_generator.py` and the
 > wrapper. Custom phases may be supplied via `--phases` JSON.
+
+## Sustained observation tooling (rehearsal vs real window)
+
+The [`scripts/run_slo_sustained_observation.sh`](../../scripts/run_slo_sustained_observation.sh) script supports both short local rehearsals and future long-window observations without requiring a real domain by default.
+
+### Short local rehearsal (dry-run or real)
+
+Use this to verify the tooling, output format, and local endpoint behavior before committing to a long window:
+
+```bash
+# Safe dry-run — no network calls, exercises summary logic
+make slo-sustained-dry-run
+
+# Short real rehearsal against localhost (requires a running server)
+bash scripts/run_slo_sustained_observation.sh \
+  --base-url http://localhost:8080 \
+  --duration-min 2 \
+  --interval-min 1 \
+  --output-dir /tmp/slo-rehearsal-$(date +%Y%m%d_%H%M%S)
+```
+
+- **What it produces**: `run_meta.json`, `observations.jsonl`, `observation_summary.md`
+- **What it does NOT produce**: an SLO window closure claim.
+- **Pass criteria**: Script exits 0; summary markdown is readable; JSONL contains expected sample count.
+
+### Real sustained window (operator decision required)
+
+> **WARNING**: This sends live requests over an extended period. Requires operator awareness and approval.
+
+To observe a real target for the approved duration (e.g., 7–30 days):
+
+```bash
+export FERRUM_BEARER_TOKEN="<token>"
+bash scripts/run_slo_sustained_observation.sh \
+  --base-url https://<host> \
+  --duration-min 10080 \
+  --interval-min 30 \
+  --output-dir /tmp/slo-7day-$(date +%Y%m%d_%H%M%S)
+```
+
+- **Pass criteria**: Availability and latency observed values meet draft SLO thresholds for the full window.
+- **Evidence**: The full output directory (JSONL + summary) must be stored and signed by the operator.
+- **Important**: The `observation_summary.md` explicitly marks itself as **NOT an SLO window closure claim** until the operator signoff block is filled.
+
+### Rehearsal vs real window distinction
+
+| Attribute | Rehearsal (dry-run / short real) | Real sustained window |
+|-----------|----------------------------------|----------------------|
+| Duration | Minutes | 7–30 days (operator-approved) |
+| Target | localhost or any host | Approved production/pilot host |
+| Claim | **None** — tooling verification only | Availability/latency observation only; still not a full G2 signoff |
+| Evidence validity | Not valid for SLO closure | Valid only after operator review and signoff |
+| Makefile target | `make slo-sustained-dry-run` | No Makefile target; explicit operator invocation required |
 
 ## Validation procedure
 

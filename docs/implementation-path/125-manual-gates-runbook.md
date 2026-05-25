@@ -42,6 +42,7 @@ has limited Actions quota, use these gates sparingly:
 | `audit` | `cargo-deny` + `cargo-audit` security scan | 2–5 min | Before releases, after dependency bumps |
 | `pretarget` | Config validation, restore drill, evidence skeleton, bearer-auth smoke | 3–5 min | Before operator handoff, after config changes |
 | `wal-drill` | SQLite WAL crash-recovery drill | 2–3 min | After store/rollback changes, before backup validation |
+| `pg-restart-drill` | PostgreSQL container restart recovery drill (dry-run in CI; full drill local) | 1–2 min in CI; 5–10 min local | After PostgreSQL store changes, before production PG deployment |
 | `mcp-smoke` | MCP stdio transport, lifecycle tool wiring, blocked-tool behavior | 5–10 min | After MCP server changes, before D1 stage gates |
 | `all` | Runs every gate above in sequence | 15–30 min | Before major milestones, RC tags, or operator review |
 
@@ -70,6 +71,9 @@ make audit
 # WAL crash-recovery drill
 make wal-drill
 
+# PostgreSQL container restart recovery drill
+make pg-restart-drill
+
 # MCP lifecycle smoke (builds ferrumd and ferrum-mcp-server locally)
 bash scripts/run_mcp_lifecycle_smoke.sh
 
@@ -89,6 +93,7 @@ They contain logs and evidence files but **no secrets or live credentials**.
 | Gate fails on `cargo-deny` | Advisory DB outdated | Run locally with `make audit` and update DB |
 | MCP smoke cannot find ferrumd | Binary not built | Script auto-builds; check disk space and Rust toolchain |
 | WAL drill times out | SQLite busy | Close other connections to the test DB |
+| PG restart drill fails preflight | Docker not available | Install Docker and docker compose; or run locally |
 
 ## Related Documents
 
