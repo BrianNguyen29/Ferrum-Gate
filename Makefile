@@ -87,6 +87,12 @@ site-build:
 	@echo "Building static site with Zola..."
 	@if command -v zola >/dev/null 2>&1; then \
 		cd site && zola build; \
+		if grep -q "FerrumGate in 10 Minutes" public/guides/quickstart/index.html 2>/dev/null; then \
+			echo "[OK] Guide content renders correctly (quickstart)"; \
+		else \
+			echo "[ERROR] Guide content missing or misresolved"; \
+			exit 1; \
+		fi; \
 	else \
 		echo "zola not found; skipping build. Install Zola to use this target."; \
 		echo "See https://www.getzola.org/documentation/getting-started/installation/"; \
@@ -111,3 +117,15 @@ site-check:
 	@test -f site/content/_index.md && echo "[OK] site/content/_index.md" || echo "[MISSING] site/content/_index.md"
 	@test -f site/content/guides/_index.md && echo "[OK] site/content/guides/_index.md" || echo "[MISSING] site/content/guides/_index.md"
 	@test -n "$(shell ls site/content/guides/*.md 2>/dev/null)" && echo "[OK] guide pages found" || echo "[MISSING] guide pages"
+	@for f in site/content/guides/*.md; do \
+		target=$$(grep 'source_path = ' "$$f" 2>/dev/null | cut -d'"' -f2 || true); \
+		if [ -n "$$target" ]; then \
+			basename=$$(basename "$$target"); \
+			if [ -f "docs/guides/$$basename" ]; then \
+				echo "[OK] docs/guides/$$basename exists"; \
+			else \
+				echo "[MISSING] docs/guides/$$basename referenced by $$f"; \
+				exit 1; \
+			fi; \
+		fi; \
+	done

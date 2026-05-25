@@ -23,9 +23,9 @@ See [RELEASE.md](./RELEASE.md) for full release notes, accepted risks, evidence 
 
 ### Remaining Blockers (Non-Production Declaration)
 
-- **Block A (real domain)**: BLOCKED — no real owned domain or DNS available yet
-- **SendGrid API key rotation**: pending / operator-blocked
-- **Live target-host MCP smoke/load**: still open — local-only validation to date
+- **Block A (real domain)**: WAIVED/CONDITIONAL — no real owned domain or DNS available yet; DuckDNS accepted for single-node SQLite pilot only; real owned domain still required for production-ready or full G2 closure
+- **SendGrid API key rotation**: CLOSED — verified on VM, synthetic alert delivered to primary+secondary inboxes, old key revoked
+- **Live target-host MCP smoke/load**: local bounded evidence available; target-host validation remains deferred — not production-ready
 - **Production deployment**: requires explicit operator signoff per `31-release-paths-todo.md` Path 2 gates
 
 ---
