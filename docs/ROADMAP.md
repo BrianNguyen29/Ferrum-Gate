@@ -1512,6 +1512,39 @@ production-grade single-node PostgreSQL
 
 ## 6. Suggested milestones
 
+### Milestone 0.5 — “Domainless Production-Candidate”
+
+**Objective:**
+
+Reach Tier 1 (domainless production-candidate) by completing B+C+HA-B engineering evidence without requiring a real owned domain.
+
+**Scope:**
+
+- **B**: Domainless readiness semantics defined (`domainless production-candidate` is Tier 1; legacy `production-ready` remains Tier 2 only).
+- **C**: PostgreSQL local hardening maximized with migration/restore/backup/resume/timer and sustained workload evidence.
+- **HA-B**: Local Docker primary/standby streaming replication and manual failover simulation passes with RPO/RTO measured (NOT production HA).
+
+**Exit criteria:**
+
+- B+C+HA-B evidence artifacts exist and are reviewable.
+- Operator acknowledges Tier 1 scope and non-claims.
+- `production-ready = NO` remains explicit.
+- `full G2 = NOT COMPLETE` remains explicit.
+- `Block A = WAIVED/CONDITIONAL` remains explicit.
+- `PostgreSQL production = NO` remains explicit.
+- `HA/multi-node = NO` remains explicit.
+
+**Non-claims:**
+
+- Tier 1 is **not** production-ready.
+- Tier 1 does **not** close Block A.
+- Tier 1 does **not** complete full G2.
+- Tier 1 does **not** deploy PostgreSQL to production.
+- Tier 1 does **not** implement production HA/multi-node; HA-B is local Docker simulation only.
+- Tier 1 does **not** require or claim a real owned domain.
+
+See [`docs/production-readiness-v2/00a-domainless-readiness-tier.md`](./production-readiness-v2/00a-domainless-readiness-tier.md) for the canonical three-tier model.
+
 ### Milestone 1 — “Production Foundation without Domain”
 
 **Objective:**

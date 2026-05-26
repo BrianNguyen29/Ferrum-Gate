@@ -1,8 +1,8 @@
 # 09 — HA/Multi-Node Roadmap
 
-> **Status**: Planning artifact. ADR approved as planning decision; no implementation.
+> **Status**: Planning artifact. ADR approved as planning decision; local simulation added 2026-05-26; no production HA implementation.
 > **Owner**: Engineering + Operator
-> **Last updated**: 2026-05-21
+> **Last updated**: 2026-05-26
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
 > **Scope**: [`00-scope-and-nonclaims.md`](00-scope-and-nonclaims.md)
 > **HA ADR**: [`docs/production-readiness-v2/ha-adr.md`](./ha-adr.md) — approved as planning decision 2026-05-21; no implementation claim
@@ -26,7 +26,8 @@ Design the path from single-node production to multi-node/HA, starting with an A
 - PostgreSQL local runtime exists but is not production-deployed.
 - HA ADR approved as planning decision 2026-05-21; implementation remains NOT STARTED.
 - Manual failover runbook drafted as planning artifact 2026-05-21; no live drill performed.
-- No replication configs.
+- **Local HA simulation added 2026-05-26**: Docker Compose primary/standby with streaming replication, `pg_basebackup`, and manual `pg_promote()` failover drill. Latest measured RTO 3 s, RPO 0 rows lost locally. See [`docs/implementation-path/artifacts/2026-05-26-ha-local-failover-simulation-evidence.md`](../../implementation-path/artifacts/2026-05-26-ha-local-failover-simulation-evidence.md).
+- No replication configs in production or target environments.
 
 ## Gaps
 
@@ -34,6 +35,7 @@ Design the path from single-node production to multi-node/HA, starting with an A
 |-----|----------|-----|
 | HA ADR approved as planning decision; implementation NOT STARTED | Critical | Cannot implement HA without an approved design |
 | No manual failover runbook | High | Operator cannot recover from primary failure |
+| Local simulation exists but is not production evidence | Medium | Local Docker simulation validates procedure concepts; target-host replication still required for real evidence |
 | Read replica design drafted; implementation NOT STARTED | High | Read scaling design exists; no code or deployment |
 | No automated failover | Critical | Not true HA without automation |
 | No split-brain prevention | Critical | HA claim is impossible without this |
@@ -52,7 +54,8 @@ Design the path from single-node production to multi-node/HA, starting with an A
 - [x] Standby promotion procedure (manual). — **DOCUMENTED** in [`manual-failover-runbook.md`](./manual-failover-runbook.md) §4.
 - [x] ferrumd reconnect/reroute procedure. — **DOCUMENTED** in [`manual-failover-runbook.md`](./manual-failover-runbook.md) §5.
 - [x] RPO/RTO expectations documented. — **DOCUMENTED** in [`manual-failover-runbook.md`](./manual-failover-runbook.md) §6 and [`ha-adr.md`](./ha-adr.md) §3.
-- [ ] RPO/RTO measured during live drill. — **DEFERRED** until operator environment with replication exists.
+- [x] RPO/RTO measured during local simulation drill. — **LOCAL EVIDENCE** 2026-05-26; latest RTO 3 s, RPO 0 rows lost. See [`docs/implementation-path/artifacts/2026-05-26-ha-local-failover-simulation-evidence.md`](../../implementation-path/artifacts/2026-05-26-ha-local-failover-simulation-evidence.md).
+- [ ] RPO/RTO measured during live operator-environment drill. — **DEFERRED** until operator environment with replication exists.
 
 ### HA-3 — Read replicas
 
@@ -80,7 +83,8 @@ Design the path from single-node production to multi-node/HA, starting with an A
 ## Acceptance criteria
 
 - [ ] HA ADR approved.
-- [ ] Manual failover drill passes with measured RPO/RTO.
+- [x] Manual failover drill passes with measured RPO/RTO locally. — **LOCAL ONLY** 2026-05-26.
+- [ ] Manual failover drill passes with measured RPO/RTO in operator environment.
 - [ ] Read replica behavior documented and tested.
 - [ ] Automated failover deferred until tenant/security model is stable.
 
@@ -88,15 +92,16 @@ Design the path from single-node production to multi-node/HA, starting with an A
 
 - `ha-adr.md`
 - `manual-failover-runbook.md` (planning artifact; no live drill)
-- `manual-failover-drill-evidence.md` (deferred until operator environment ready)
+- `manual-failover-drill-evidence.md` — local simulation [`2026-05-26-ha-local-failover-simulation-evidence.md`](../../implementation-path/artifacts/2026-05-26-ha-local-failover-simulation-evidence.md) exists; operator-environment drill deferred
 - `read-replica-design.md` (planning artifact; no implementation)
 - `read-replica-test-evidence.md` (deferred until operator environment ready)
 
 ## Non-claims
 
-- **NOT HA yet**: This is a roadmap and ADR; no HA code exists.
+- **NOT HA yet**: This is a roadmap and ADR; local simulation exists but is not production HA code or deployment.
 - **NOT production-ready**: HA is explicitly out of scope for production-ready claim.
 - **NOT automated failover soon**: Manual failover and read replicas come first.
+- **NOT true multi-node**: Local simulation runs both containers on a single Docker host.
 
 ## Related docs
 

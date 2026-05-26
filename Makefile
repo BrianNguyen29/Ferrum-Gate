@@ -1,4 +1,4 @@
-.PHONY: help check fmt lint test docs test-python-validators validate tree pretarget audit wal-drill pg-restart-drill pg-restore-drill pg-migration-drill pg-backup-retention-drill pg-partial-failure-drill pg-scheduled-timer-simulation pg-local-batch site-build site-serve site-check slo-sustained-dry-run restore-drill stress check-pilot-readiness
+.PHONY: help check fmt lint test docs test-python-validators validate tree pretarget audit wal-drill pg-restart-drill pg-restore-drill pg-migration-drill pg-backup-retention-drill pg-partial-failure-drill pg-sustained-workload-drill pg-scheduled-timer-simulation pg-local-batch ha-local-setup ha-local-failover-drill ha-local-teardown site-build site-serve site-check slo-sustained-dry-run restore-drill stress check-pilot-readiness
 
 help:
 	@echo "make check     - cargo check workspace"
@@ -16,8 +16,12 @@ help:
 	@echo "make pg-migration-drill - local SQLite to PostgreSQL migration drill"
 	@echo "make pg-backup-retention-drill - local PostgreSQL backup/retention/offsite drill"
 	@echo "make pg-partial-failure-drill - local PostgreSQL resume/partial-failure drill"
+	@echo "make pg-sustained-workload-drill - local PostgreSQL sustained workload drill (short default, env override for longer)"
 	@echo "make pg-scheduled-timer-simulation - local text-only systemd timer due/skip simulation (no install)"
-	@echo "make pg-local-batch - run all local PostgreSQL drills + timer simulation in deterministic order"
+	@echo "make pg-local-batch - run all local PostgreSQL drills + sustained workload + timer simulation in deterministic order"
+	@echo "make ha-local-setup         - start local HA primary/standby PostgreSQL simulation"
+	@echo "make ha-local-failover-drill - run local HA failover drill (requires ha-local-setup first)"
+	@echo "make ha-local-teardown      - stop and remove local HA simulation containers/volumes"
 	@echo "make restore-drill  - local temp SQLite backup/restore drill (requires ferrumctl binary or cargo build)"
 	@echo "make stress         - stress tests against a running service (requires BASE_URL env var)"
 	@echo "make check-pilot-readiness - pilot readiness probes (requires running server via --server-url or FERRUMCTL_SERVER_URL)"
@@ -92,18 +96,35 @@ pg-partial-failure-drill:
 	@echo "Running local PostgreSQL partial-failure/resume drill..."
 	@bash scripts/run_pg_partial_failure_drill.sh
 
+pg-sustained-workload-drill:
+	@echo "Running local PostgreSQL sustained workload drill..."
+	@bash scripts/run_pg_sustained_workload_drill.sh
+
 pg-scheduled-timer-simulation:
 	@echo "Running local PostgreSQL scheduled timer simulation..."
 	@bash scripts/run_pg_scheduled_timer_simulation.sh
 
 pg-local-batch:
-	@echo "Running local PostgreSQL batch: migration, restore, backup/retention, partial-failure, timer simulation..."
+	@echo "Running local PostgreSQL batch: migration, restore, backup/retention, partial-failure, sustained workload, timer simulation..."
 	@$(MAKE) pg-migration-drill && \
 	$(MAKE) pg-restore-drill && \
 	$(MAKE) pg-backup-retention-drill && \
 	$(MAKE) pg-partial-failure-drill && \
+	$(MAKE) pg-sustained-workload-drill && \
 	$(MAKE) pg-scheduled-timer-simulation
 	@echo "PG LOCAL BATCH: ALL TARGETS PASSED"
+
+ha-local-setup:
+	@echo "Setting up local HA PostgreSQL simulation..."
+	@bash scripts/setup_ha_local.sh
+
+ha-local-failover-drill:
+	@echo "Running local HA failover drill..."
+	@bash scripts/run_ha_local_failover_drill.sh
+
+ha-local-teardown:
+	@echo "Tearing down local HA PostgreSQL simulation..."
+	@bash scripts/teardown_ha_local.sh
 
 restore-drill:
 	@echo "Running local temp SQLite backup/restore drill..."

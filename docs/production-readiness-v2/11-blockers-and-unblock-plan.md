@@ -10,7 +10,7 @@
 
 ## Executive Summary
 
-One item remains open (`BLK-A-DOM`) between the current conditional RC posture and any production-candidate milestone. The other six blockers have been unblocked or completed as of 2026-05-21. This doc orders them, assigns owners, states prerequisites, and lists the exact next action for each. It does not claim production-ready status or full G2 closure.
+One item remains open (`BLK-A-DOM`) between Tier 1 (domainless production-candidate) and Tier 2 (production-ready / domain-backed). The other six blockers have been unblocked or completed as of 2026-05-21. This doc orders them, assigns owners, states prerequisites, and lists the exact next action for each. It does not claim production-ready status or full G2 closure. See [`00a-domainless-readiness-tier.md`](./00a-domainless-readiness-tier.md) for the canonical three-tier model.
 
 **Conditional signoff**: BrianNguyen authorized conditional re-signoff for single-node SQLite pilot scope on 2026-05-21. Full G2 closure remains NOT COMPLETE.
 
@@ -24,7 +24,7 @@ The seven blockers:
 | 4 | **BLK-UX-4** | UX-4 token rotate / revoke CLI | Engineering | ✅ IMPLEMENTED — `ferrumctl admin tokens` CLI complete |
 | 5 | **BLK-MCP-TGT** | Phase 3 MCP target-host smoke | Engineering | ✅ UNBLOCKED — target-mode MCP smoke passed 15/15 on 2026-05-21 |
 | 6 | **BLK-DEP-5** | DEP-5 Helm / K8s packaging | Engineering | ✅ LIVE KIND PASS — `helm lint` + `helm template` passed 2026-05-21; live kind cluster install succeeded 2026-05-21; NOT production K8s/HA |
-| 7 | **BLK-A-DOM** | Real owned domain / Block A full closure | Operator | ☐ WAIVED/CONDITIONAL — real domain still required for production-ready or full G2 closure |
+| 7 | **BLK-A-DOM** | Real owned domain / Block A full closure | Operator | ☐ WAIVED/CONDITIONAL — real domain still required for Tier 2 (production-ready); Tier 1 (domainless production-candidate) does not require real domain |
 
 ---
 
@@ -253,7 +253,7 @@ The following questions must be answered by the operator to unblock BLK-SEC-PH4 
   - G2 re-signoff completed (full closure, not conditional).
 - **Evidence required**: `artifacts/YYYY-MM-DD-block-a-domain-evidence.md` + `artifacts/YYYY-MM-DD-block-a-closure-evidence.md`
 - **Exact next action**: Operator procures domain, configures DNS, then notifies engineering to re-run target bridge. See `docs/implementation-path/artifacts/2026-05-21-blk-a-dom-operator-action-brief.md` for step-by-step requirements, evidence format, consequences, and timeline decision point.
-- **Downstream impact**: Required for any production-ready or full G2 claim.
+- **Downstream impact**: Required for Tier 2 (production-ready / domain-backed). Gates Tier 1 → Tier 2 progression. Does not gate Tier 0 → Tier 1.
 - **Conditional signoff note**: BrianNguyen authorized conditional re-signoff for single-node SQLite pilot on 2026-05-21. This does **not** close BLK-A-DOM or complete full G2.
 
 ---
@@ -276,6 +276,7 @@ For each blocker resolution, use the following artifact paths:
 
 ## Cross-references
 
+- [`00a-domainless-readiness-tier.md`](./00a-domainless-readiness-tier.md) — Canonical three-tier readiness model
 - [`01-slo-sla.md`](./01-slo-sla.md) — SLO/SLA draft and targets
 - [`slo-validation-runbook.md`](./slo-validation-runbook.md) — Repeatable validation procedure
 - [`03-target-mcp-live-workload-plan.md`](./03-target-mcp-live-workload-plan.md) — MCP target-host plan
@@ -304,8 +305,8 @@ For each blocker resolution, use the following artifact paths:
 - **NOT all future security scope complete**: Phase 4 scoped token model, UX-4 CLI, and SEC-6 audit log are implemented. Tenant model (T1–T5) and OIDC remain deferred.
 - **NOT multi-tenant**: Single-tenant production (T1) is the recommended first posture.
 - **NOT a committed timeline**: Dates in artifact names are templates; actual execution dates are TBD and operator-dependent.
-- **DuckDNS conditional only**: Block A remains WAIVED/CONDITIONAL. Real owned domain is still required for any production-ready claim.
-- **NOT production K8s/HA**: Helm live install verified on local kind cluster only.
+- **DuckDNS conditional only**: Block A remains WAIVED/CONDITIONAL. Real owned domain is still required for Tier 2 (production-ready). Tier 1 (domainless production-candidate) does not require real domain.
+- **NOT production K8s/HA**: Helm live install verified on local kind cluster only. Tier 1 includes HA-B (local Helm validation), not HA implementation.
 
 ---
 

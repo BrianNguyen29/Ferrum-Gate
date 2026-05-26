@@ -1,9 +1,9 @@
 # HA-ADR-001 — High Availability Architecture Decision Record
 
-> **Status**: APPROVED AS PLANNING DECISION — operator delegate signoff recorded 2026-05-21. No implementation claim; no HA claim.
-> **Owner**: Engineering + Operator  
-> **Last updated**: 2026-05-21  
-> **Parent**: [`docs/production-readiness-v2/09-ha-roadmap.md`](./09-ha-roadmap.md)  
+> **Status**: APPROVED AS PLANNING DECISION — operator delegate signoff recorded 2026-05-21. Local simulation drill added 2026-05-26. No implementation claim; no HA claim.
+> **Owner**: Engineering + Operator
+> **Last updated**: 2026-05-26
+> **Parent**: [`docs/production-readiness-v2/09-ha-roadmap.md`](./09-ha-roadmap.md)
 > **Scope**: [`00-scope-and-nonclaims.md`](./00-scope-and-nonclaims.md)  
 
 ---
@@ -17,9 +17,9 @@
 | Runtime | Single-node only (SQLite or PostgreSQL) |
 | Store backend | One DSN per ferrumd process (`FERRUMD_STORE_DSN`) |
 | Connection pool | `sqlx::PgPool` with transparent reconnect; no circuit breaker |
-| Replication | None |
+| Replication | None in production; local Docker simulation exists (primary + standby streaming replication) |
 | Read routing | None |
-| Failover | None (manual restart only) |
+| Failover | None in production (manual restart only); local simulation uses manual `pg_promote()` |
 | Load balancer | None |
 
 ### 1.2 Problem
@@ -248,10 +248,10 @@ ferrumd uses one `FERRUMD_STORE_DSN` environment variable (or config field). The
 
 ## 8. Non-claims
 
-- **NOT production-ready**: This ADR is a planning draft. No HA code exists.
+- **NOT production-ready**: This ADR is a planning draft. Local simulation exists but is not production HA code or deployment.
 - **APPROVED AS PLANNING DECISION ONLY**: Operator delegate signoff recorded 2026-05-21. This approval authorizes the phased planning approach only. No HA implementation is authorized.
 - **NOT implementation-ready**: No Step 2 or Step 3 work should begin without a follow-up ADR.
-- **NOT HA yet**: FerrumGate remains single-node. HA is explicitly out of scope for the current conditional pilot.
+- **NOT HA yet**: FerrumGate remains single-node. Local simulation is rehearsal-only; HA is explicitly out of scope for the current conditional pilot.
 - **NOT automated failover soon**: Manual failover and read replicas come first.
 - **NOT closing BLK-A-DOM**: Real owned domain remains required for production-ready or full G2 closure.
 - **NOT a committed timeline**: Dates are placeholders; actual execution is operator-dependent.

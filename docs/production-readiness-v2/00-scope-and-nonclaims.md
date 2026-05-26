@@ -21,6 +21,7 @@ Lock the scope of the post-conditional-pilot production path and make all non-cl
 - PostgreSQL local runtime/Docker is implemented; production PG deployment is **NOT** done.
 - HA/multi-node is **NOT** implemented.
 - MCP local smoke passes; target-host MCP live workload has **bounded engineering evidence** (10-iteration sustained run, 2026-05-22) but operator signoff is **NOT obtained**.
+- **Tier 1 target**: The confirmed B+C+HA-B plan defines a `domainless production-candidate` milestone. See [`00a-domainless-readiness-tier.md`](./00a-domainless-readiness-tier.md) for the canonical three-tier model.
 
 ## Gaps
 
@@ -45,8 +46,9 @@ Lock the scope of the post-conditional-pilot production path and make all non-cl
 | **PostgreSQL production = NO** | Local PG runtime exists; production PG target deployment + evidence does not. |
 | **HA/multi-node = NO** | Not implemented. Single-node SQLite is the only supported runtime. |
 | **Target-host MCP live workload = CONDITIONAL/EVIDENCE-BACKED** | Engineering evidence exists: 10-iteration sustained run passed (2026-05-22); operator signoff NOT obtained; DuckDNS conditional pilot only. |
-| **Scoped auth/RBAC = NO** | Single global bearer token is the only auth mode in production pilot config. |
+| **Scoped auth/RBAC = PARTIAL** | Scoped tokens and RBAC middleware implemented; tenant model and OIDC deferred. |
 | **Multi-tenant = NO** | No tenant isolation exists. |
+| **Tier 1 = domainless production-candidate** | B+C+HA-B engineering evidence complete; NOT production-ready; real domain still required for Tier 2. See [`00a-domainless-readiness-tier.md`](./00a-domainless-readiness-tier.md). |
 
 ## Scope boundaries
 
@@ -77,7 +79,8 @@ See [`docs/ROADMAP.md` §"Naming crosswalk"](../../ROADMAP.md#naming-crosswalk) 
 | Term | Definition |
 |------|------------|
 | conditional pilot | Single-node SQLite deployment with operator signoff for bounded evaluation; not production-ready. |
-| production-ready | Requires: real domain + revalidation + G2 re-signoff + SLO evidence window + operator final signoff. |
+| production-ready | Requires: real domain + revalidation + G2 re-signoff + SLO evidence window + operator final signoff. Maps to Tier 2 only. |
+| domainless production-candidate | Tier 1 milestone: B+C+HA-B engineering evidence complete; credible production candidate without real domain; NOT production-ready. |
 | WAIVED/CONDITIONAL | Blocker is acknowledged but not resolved; accepted for current pilot scope only. |
 
 ## Acceptance criteria
@@ -100,6 +103,7 @@ evidence planning layer.
 
 ## Related docs
 
+- [`docs/production-readiness-v2/00a-domainless-readiness-tier.md`](./00a-domainless-readiness-tier.md) — Canonical three-tier readiness model (Tier 0 / Tier 1 / Tier 2).
 - [`docs/ROADMAP.md`](../../ROADMAP.md) — Parent roadmap with full gap analysis and phase plan.
 - [`docs/implementation-path/67-production-readiness-roadmap.md`](../../implementation-path/67-production-readiness-roadmap.md) — Prior v1 production-readiness tracker.
 - [`docs/PRODUCTION_NOTES.md`](../../PRODUCTION_NOTES.md) — Runtime configuration and stress baselines.

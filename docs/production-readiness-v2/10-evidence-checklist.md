@@ -98,8 +98,9 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 | 1.25 | PG-2.4b: Local `promtool` syntax validation + Prometheus readiness | Engineering | `docs/implementation-path/artifacts/2026-05-21-pg-local-alert-validation-evidence.md` | ✅ LOCAL EVIDENCE — `promtool check rules` passed (21 rules); Prometheus `/-/ready` returned 200; **live rule deployment to Prometheus, rule state verification, PG alert behavior, and AlertManager routing pending operator** |
 | 1.26 | PG-local hardening batch: automated populated migration + restore drills | Engineering | `docs/implementation-path/artifacts/2026-05-25-pg-local-hardening-evidence.md` | ✅ LOCAL EVIDENCE — populated SQLite→PostgreSQL migration drill and populated PG backup/restore drill both passed locally; local Docker only; **no PostgreSQL production claim** |
 | 1.27 | PG-local automation batch: backup/retention/offsite wrapper + deterministic resume simulation | Engineering | `docs/implementation-path/artifacts/2026-05-26-pg-local-automation-resume-evidence.md` | ✅ LOCAL EVIDENCE — backup/retention/offsite wrapper and deterministic partial-failure/resume simulation both passed locally; local Docker only; **no PostgreSQL production claim** |
-| 1.28 | PG-local batch aggregate target: all four heavy PG drills + timer simulation in deterministic order | Engineering | `docs/implementation-path/artifacts/2026-05-26-pg-local-batch-timer-evidence.md` | ✅ LOCAL EVIDENCE — `make pg-local-batch` full local run passed; heavy Docker drills plus text-only timer simulation; **no PostgreSQL production claim** |
+| 1.28 | PG-local batch aggregate target: all four heavy PG drills + sustained workload + timer simulation in deterministic order | Engineering | `docs/implementation-path/artifacts/2026-05-26-pg-local-batch-timer-evidence.md` | ✅ LOCAL EVIDENCE — `make pg-local-batch` full local run passed; heavy Docker drills plus sustained workload plus text-only timer simulation; **no PostgreSQL production claim** |
 | 1.29 | PG-local scheduled timer simulation: text-only unit validation and due/skip behavior | Engineering | `docs/implementation-path/artifacts/2026-05-26-pg-local-batch-timer-evidence.md` | ✅ LOCAL EVIDENCE — `make pg-scheduled-timer-simulation` passed (18 checks); no systemd install; **no production-ready claim** |
+| 1.30 | PG-local sustained workload: short bounded request workload against local Docker PG with readiness and pool-metric verification | Engineering | `docs/implementation-path/artifacts/2026-05-26-pg-local-sustained-workload-evidence.md` | ✅ LOCAL EVIDENCE — default 30s @ 1 rps (~30 requests) all 2xx; readyz 200; PG pool metrics present; env override supported; included in `pg-local-batch`; **no PostgreSQL production claim** |
 
 ## Phase 2 — SLO/SLA and workload evidence
 
@@ -224,7 +225,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 
 ## Phase 9 — HA/multi-node
 
-> **Status updated 2026-05-21**: HA-2 manual failover runbook drafted as planning artifact. HA-3 read replica design drafted as planning artifact. No live drill or replica deployment performed. HA implementation remains NOT STARTED.
+> **Status updated 2026-05-26**: HA-2 manual failover runbook drafted as planning artifact; **local simulation drill performed** (latest RTO 3 s, RPO 0 rows lost). HA-3 read replica design drafted as planning artifact. No operator-environment live drill or replica deployment performed. HA implementation remains NOT STARTED.
 > **Template**: `TEMPLATE-ha-multinode-evidence-pack.md` prepared for eventual HA evidence (requires real drills).
 > **Runbook**: `HA-multi-node-evidence-runbook.md` provides detailed failover drill procedure, RPO/RTO measurement template, read replica validation checklist, and rollback criteria for operator execution.
 
@@ -232,9 +233,11 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 |---|------|-------|----------|--------|
 | 9.1 | HA-1: HA ADR approved as planning decision | Engineering + Operator | `docs/production-readiness-v2/ha-adr.md` signoff | ✅ APPROVED AS PLANNING DECISION — operator delegate signoff recorded 2026-05-21; no implementation claim; no HA claim |
 | 9.2 | HA-2: Manual failover runbook drafted | Engineering + Operator | `docs/production-readiness-v2/manual-failover-runbook.md` | ✅ PLANNING ARTIFACT COMPLETE — runbook exists; no live drill performed; no HA claim |
+| 9.2a | HA-B: Local HA simulation (primary + standby streaming replication) | Engineering | `docker-compose.ha-local.yml` + `scripts/setup_ha_local.sh` | ✅ LOCAL EVIDENCE — Docker Compose streaming replication simulation; local only; not production HA |
+| 9.2b | HA-B: Local failover drill with measured RPO/RTO | Engineering | `scripts/run_ha_local_failover_drill.sh` + [`2026-05-26-ha-local-failover-simulation-evidence.md`](../../implementation-path/artifacts/2026-05-26-ha-local-failover-simulation-evidence.md) | ✅ LOCAL EVIDENCE — 16/16 checks passed; latest RTO 3 s; RPO 0 rows lost; manual `pg_promote()`; local only; not production HA |
 | 9.3 | HA-3: Read replica behavior designed | Engineering | `docs/production-readiness-v2/read-replica-design.md` | ✅ PLANNING ARTIFACT COMPLETE — design doc exists; no implementation; no replica deployed |
 | 9.4 | HA-4: Automated failover drill pass (deferred) | Engineering + Operator | Failover drill log | ☐ |
-| 9.5 | RPO/RTO measured for HA scenario | Engineering | Measurement log | ☐ |
+| 9.5 | RPO/RTO measured for HA scenario in operator environment | Engineering | Measurement log | ☐ |
 
 ## Final production-ready claim prerequisites
 
@@ -260,6 +263,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 - **NOT full G2**: Conditional re-signoff on 2026-05-21 applies to single-node SQLite pilot only. Full G2 closure requires Block A resolution + operator final signoff.
 - **NOT canonical SLO for all configs**: SLO PASS claimed only for max-valid rate-limit configuration (1000/10000). Default and tuned configs failed.
 - **NOT production K8s/HA**: Helm live install verified on local kind cluster only.
+- **NOT production HA**: HA local simulation is Docker Compose on a single host with manual promotion. No automated failover, no multi-node, no production claim.
 
 ## Related docs
 

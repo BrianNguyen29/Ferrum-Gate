@@ -1,8 +1,8 @@
 # HA-2 — Manual Failover Runbook
 
-> **Status**: PLANNING ARTIFACT — runbook drafted; no live drill performed; no HA implementation.
+> **Status**: PLANNING ARTIFACT — runbook drafted; local simulation drill performed 2026-05-26; no operator-environment live drill; no HA implementation.
 > **Owner**: Engineering + Operator
-> **Last updated**: 2026-05-21
+> **Last updated**: 2026-05-26
 > **Parent**: [`docs/production-readiness-v2/09-ha-roadmap.md`](./09-ha-roadmap.md)
 > **Scope**: [`00-scope-and-nonclaims.md`](./00-scope-and-nonclaims.md)
 > **ADR**: [`docs/production-readiness-v2/ha-adr.md`](./ha-adr.md)
@@ -162,6 +162,9 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 | **RTO** | Minutes (operator detection + promotion + ferrumd restart). Target: < 10 min for experienced operator. | HA ADR §4.3 Step 2 |
 | **RPO** | Bounded by replication lag. If async replication: seconds to minutes of unflushed WAL may be lost. If sync replication: near-zero RPO, at the cost of write latency. | HA ADR §5.3 |
 | **Current reality** | N/A — no replication configured; single-node SQLite is the only supported runtime today. | HA ADR §1.1 |
+| **Local simulation (2026-05-26)** | Latest observed RTO 3 s, RPO 0 rows lost. Local Docker primary/standby with `pg_promote()`. | [`2026-05-26-ha-local-failover-simulation-evidence.md`](../../implementation-path/artifacts/2026-05-26-ha-local-failover-simulation-evidence.md) |
+
+> Local simulation values are **not representative** of production RTO/RPO. They measure only container stop + `pg_promote()` latency on a single host with no network partitions, no operator decision time, and no ferrumd restart.
 
 ---
 
@@ -206,8 +209,8 @@ If the promoted standby is unstable or the old primary recovers and you must rev
 
 ## 10. Non-claims
 
-- **NOT a live drill**: This runbook is drafted as a planning artifact only. No failover drill has been executed.
-- **NOT HA implementation**: FerrumGate remains single-node. No replication, no standby, no automated failover exists.
+- **NOT a live operator-environment drill**: A local Docker simulation was executed 2026-05-26. No operator-environment or target-host failover drill has been performed.
+- **NOT HA implementation**: FerrumGate remains single-node. Local simulation is rehearsal-only; no production replication, standby, or automated failover exists.
 - **NOT production-ready**: This document does not make FerrumGate production-ready.
 - **NOT a guarantee of RPO/RTO**: Actual bounds depend on operator speed, replication configuration, and infrastructure. Values are targets, not SLA commitments.
 - **NOT automated failover**: This runbook covers manual steps only. Automated failover is deferred to HA ADR Step 3.
