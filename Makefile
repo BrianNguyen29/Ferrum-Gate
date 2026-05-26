@@ -1,4 +1,4 @@
-.PHONY: help check fmt lint test docs test-python-validators validate tree pretarget audit wal-drill pg-restart-drill pg-restore-drill pg-migration-drill pg-backup-retention-drill pg-partial-failure-drill site-build site-serve site-check slo-sustained-dry-run restore-drill stress check-pilot-readiness
+.PHONY: help check fmt lint test docs test-python-validators validate tree pretarget audit wal-drill pg-restart-drill pg-restore-drill pg-migration-drill pg-backup-retention-drill pg-partial-failure-drill pg-scheduled-timer-simulation pg-local-batch site-build site-serve site-check slo-sustained-dry-run restore-drill stress check-pilot-readiness
 
 help:
 	@echo "make check     - cargo check workspace"
@@ -16,6 +16,8 @@ help:
 	@echo "make pg-migration-drill - local SQLite to PostgreSQL migration drill"
 	@echo "make pg-backup-retention-drill - local PostgreSQL backup/retention/offsite drill"
 	@echo "make pg-partial-failure-drill - local PostgreSQL resume/partial-failure drill"
+	@echo "make pg-scheduled-timer-simulation - local text-only systemd timer due/skip simulation (no install)"
+	@echo "make pg-local-batch - run all local PostgreSQL drills + timer simulation in deterministic order"
 	@echo "make restore-drill  - local temp SQLite backup/restore drill (requires ferrumctl binary or cargo build)"
 	@echo "make stress         - stress tests against a running service (requires BASE_URL env var)"
 	@echo "make check-pilot-readiness - pilot readiness probes (requires running server via --server-url or FERRUMCTL_SERVER_URL)"
@@ -89,6 +91,19 @@ pg-backup-retention-drill:
 pg-partial-failure-drill:
 	@echo "Running local PostgreSQL partial-failure/resume drill..."
 	@bash scripts/run_pg_partial_failure_drill.sh
+
+pg-scheduled-timer-simulation:
+	@echo "Running local PostgreSQL scheduled timer simulation..."
+	@bash scripts/run_pg_scheduled_timer_simulation.sh
+
+pg-local-batch:
+	@echo "Running local PostgreSQL batch: migration, restore, backup/retention, partial-failure, timer simulation..."
+	@$(MAKE) pg-migration-drill && \
+	$(MAKE) pg-restore-drill && \
+	$(MAKE) pg-backup-retention-drill && \
+	$(MAKE) pg-partial-failure-drill && \
+	$(MAKE) pg-scheduled-timer-simulation
+	@echo "PG LOCAL BATCH: ALL TARGETS PASSED"
 
 restore-drill:
 	@echo "Running local temp SQLite backup/restore drill..."

@@ -19,6 +19,8 @@ Historical evidence artifacts may still mention older local paths such as `Ferru
 
 **May 26 PG local automation + resume evidence**: [`artifacts/2026-05-26-pg-local-automation-resume-evidence.md`](./artifacts/2026-05-26-pg-local-automation-resume-evidence.md) — fresh local Docker PG runs: automated backup/retention/offsite wrapper PASS (retention prune + offsite hash match + offsite restore 10/10 counts) and deterministic partial-failure/resume simulation PASS (7 skipped tables, 3 re-migrated tables, 10 checkpoints restored); no production-ready claim.
 
+**May 26 PG local batch + timer simulation evidence**: [`artifacts/2026-05-26-pg-local-batch-timer-evidence.md`](./artifacts/2026-05-26-pg-local-batch-timer-evidence.md) — `make pg-local-batch` full local run PASS (migration → restore → backup/retention → partial-failure → timer simulation); `make pg-scheduled-timer-simulation` text-only due/skip simulation PASS (18 checks, 0 failures); no systemd install, no production-ready claim.
+
 **Release support contract**:
 - Supported = SQLite-backed single-node governance core.
 - Partial = adapter crates and extended runtime integrations (uneven implementation slices exist, not production-verified).
