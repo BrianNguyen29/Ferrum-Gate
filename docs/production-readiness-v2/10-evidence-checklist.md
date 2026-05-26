@@ -2,7 +2,7 @@
 
 > **Status**: Planning artifact. Checklist template; not yet filled.
 > **Owner**: Engineering + Operator
-> **Last updated**: 2026-05-25
+> **Last updated**: 2026-05-26
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
 > **Scope**: [`00-scope-and-nonclaims.md`](00-scope-and-nonclaims.md)
 
@@ -97,6 +97,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 | 1.24 | PG-3.1c: Local offsite sync simulation | Engineering | `docs/implementation-path/artifacts/2026-05-21-pg-local-offsite-sync-evidence.md` | ✅ LOCAL EVIDENCE — local `cp` + `sha256sum` hash match verified; **real GCS/S3/rsync offsite sync and production target pending operator** |
 | 1.25 | PG-2.4b: Local `promtool` syntax validation + Prometheus readiness | Engineering | `docs/implementation-path/artifacts/2026-05-21-pg-local-alert-validation-evidence.md` | ✅ LOCAL EVIDENCE — `promtool check rules` passed (21 rules); Prometheus `/-/ready` returned 200; **live rule deployment to Prometheus, rule state verification, PG alert behavior, and AlertManager routing pending operator** |
 | 1.26 | PG-local hardening batch: automated populated migration + restore drills | Engineering | `docs/implementation-path/artifacts/2026-05-25-pg-local-hardening-evidence.md` | ✅ LOCAL EVIDENCE — populated SQLite→PostgreSQL migration drill and populated PG backup/restore drill both passed locally; local Docker only; **no PostgreSQL production claim** |
+| 1.27 | PG-local automation batch: backup/retention/offsite wrapper + deterministic resume simulation | Engineering | `docs/implementation-path/artifacts/2026-05-26-pg-local-automation-resume-evidence.md` | ✅ LOCAL EVIDENCE — backup/retention/offsite wrapper and deterministic partial-failure/resume simulation both passed locally; local Docker only; **no PostgreSQL production claim** |
 
 ## Phase 2 — SLO/SLA and workload evidence
 

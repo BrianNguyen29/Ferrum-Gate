@@ -1,4 +1,4 @@
-.PHONY: help check fmt lint test docs test-python-validators validate tree pretarget audit wal-drill pg-restart-drill pg-restore-drill pg-migration-drill site-build site-serve site-check slo-sustained-dry-run restore-drill stress check-pilot-readiness
+.PHONY: help check fmt lint test docs test-python-validators validate tree pretarget audit wal-drill pg-restart-drill pg-restore-drill pg-migration-drill pg-backup-retention-drill pg-partial-failure-drill site-build site-serve site-check slo-sustained-dry-run restore-drill stress check-pilot-readiness
 
 help:
 	@echo "make check     - cargo check workspace"
@@ -14,6 +14,8 @@ help:
 	@echo "make pg-restart-drill - local PostgreSQL container restart recovery drill"
 	@echo "make pg-restore-drill - local PostgreSQL populated backup/restore drill"
 	@echo "make pg-migration-drill - local SQLite to PostgreSQL migration drill"
+	@echo "make pg-backup-retention-drill - local PostgreSQL backup/retention/offsite drill"
+	@echo "make pg-partial-failure-drill - local PostgreSQL resume/partial-failure drill"
 	@echo "make restore-drill  - local temp SQLite backup/restore drill (requires ferrumctl binary or cargo build)"
 	@echo "make stress         - stress tests against a running service (requires BASE_URL env var)"
 	@echo "make check-pilot-readiness - pilot readiness probes (requires running server via --server-url or FERRUMCTL_SERVER_URL)"
@@ -79,6 +81,14 @@ pg-restore-drill:
 pg-migration-drill:
 	@echo "Running local SQLite to PostgreSQL migration drill..."
 	@bash scripts/run_pg_migration_drill.sh
+
+pg-backup-retention-drill:
+	@echo "Running local PostgreSQL backup/retention/offsite drill..."
+	@bash scripts/run_pg_backup_retention_drill.sh
+
+pg-partial-failure-drill:
+	@echo "Running local PostgreSQL partial-failure/resume drill..."
+	@bash scripts/run_pg_partial_failure_drill.sh
 
 restore-drill:
 	@echo "Running local temp SQLite backup/restore drill..."
