@@ -1,6 +1,6 @@
 # 05a — Policy Version History Design
 
-> **Status**: Design artifact. POL-5 design-first; implementation NOT STARTED.
+> **Status**: Design artifact. POL-5 design accepted; version history, diff, rollback endpoints, CLI, tests, and rollback provenance are implemented.
 > **Owner**: Engineering
 > **Last updated**: 2026-05-20
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
@@ -14,10 +14,10 @@ Define the design for policy bundle version history, diff, and rollback so that 
 
 ## Current state
 
-- Policy bundles have CRUD but no history table.
+- Policy bundles have CRUD plus immutable version history, diff, and rollback support.
 - Active bundle switch emits a provenance event (`test_policy_bundle_active_switch_emits_provenance`).
-- No previous versions are retained.
-- Rollback is not possible.
+- Previous versions are retained.
+- Rollback creates a new auditable version and emits `PolicyBundleRolledBack` provenance.
 
 ## Design decisions
 
@@ -95,20 +95,20 @@ payload:
 
 ## Implementation tasks (post-design)
 
-- [ ] Create `policy_bundle_version` migration.
-- [ ] Backfill existing bundles.
-- [ ] Update bundle create/update to insert version rows.
-- [ ] Implement `GET /v1/policy-bundles/{id}/versions`.
-- [ ] Implement `GET /v1/policy-bundles/{id}/diff`.
-- [ ] Implement `POST /v1/policy-bundles/{id}/rollback`.
-- [ ] Implement `ferrumctl policy diff`.
-- [ ] Implement `ferrumctl policy rollback`.
-- [ ] Add integration tests for version history, diff, and rollback.
-- [ ] Add rollback provenance event test.
+- [x] Create `policy_bundle_version` migration.
+- [x] Backfill existing bundles.
+- [x] Update bundle create/update to insert version rows.
+- [x] Implement `GET /v1/policy-bundles/{id}/versions`.
+- [x] Implement `GET /v1/policy-bundles/{id}/diff`.
+- [x] Implement `POST /v1/policy-bundles/{id}/rollback`.
+- [x] Implement `ferrumctl policy diff`.
+- [x] Implement `ferrumctl policy rollback`.
+- [x] Add integration tests for version history, diff, and rollback.
+- [x] Add rollback provenance event test.
 
 ## Non-claims
 
-- **NOT implemented**: This doc is a design artifact only.
+- **Implemented for current scope**: Version history, diff, rollback endpoints, CLI, tests, and rollback provenance are implemented.
 - **NOT production-ready**: Version history does not change the production-ready posture.
 - **NOT a versioning scheme**: Version numbers are monotonic integers, not SemVer.
 - **NOT multi-tenant aware**: `tenant_id` is not in this design; defer to Phase 4 tenant model.

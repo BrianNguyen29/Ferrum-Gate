@@ -146,9 +146,9 @@ PostgreSQL local/runtime foundation is strong:
 - [x] Create alert deployment validation evidence template: `docs/implementation-path/artifacts/TEMPLATE-pg-alert-deployment-evidence.md`.
 - [x] **Local** `promtool check rules` syntax validation passed — ✅ COMPLETE on 2026-05-21 (`SUCCESS: 21 rules found`). See `docs/implementation-path/artifacts/2026-05-21-pg-local-alert-validation-evidence.md`.
 - [x] **Local** Prometheus readiness endpoint confirmed responding (`/-/ready` returned 200) — ✅ COMPLETE on 2026-05-21. See `docs/implementation-path/artifacts/2026-05-21-pg-local-alert-validation-evidence.md`.
-- [ ] Live Prometheus alert deployment validated (copy `ferrumgate-alerts.yaml` to rules dir, reload, verify rule state, PG alert behavior, AlertManager routing) — ☐ **PENDING** (requires operator environment).
+- [x] Tier 1.5 nonprod-target Prometheus alert deployment validated — ✅ **COMPLETE ON NONPROD TARGET VM** (rules deployed to live Prometheus and validated; see `docs/implementation-path/artifacts/2026-05-27-pg-alert-deployment-evidence.md`). Tier 2 production alert validation with real domain/final posture remains separate.
 
-> **Non-claim**: These are template rules only. **Local** `promtool` syntax validation and Prometheus readiness check passed, but `ferrumgate-alerts.yaml` was **not loaded** into the running Prometheus instance. Live rule evaluation, PG-specific alert behavior, and AlertManager routing remain **untested** and operator-dependent. The `MetricsAbsent` alert is a heuristic, not definitive PG-down detection. Replication lag is a placeholder with a non-existent metric name. Operator must review thresholds, metric names, and validate with `promtool` before enabling.
+> **Non-claim**: Template rules and local validation were completed, and Tier 1.5 nonprod-target Prometheus alert deployment evidence exists. This is **not** Tier 2 production-ready alert signoff. Real-domain/Tier 2 production alert validation and final operator production posture signoff remain pending.
 
 #### PG-2.5 — TLS/SSL DSN guidance (RUNBOOK COMPLETE)
 
@@ -157,7 +157,7 @@ PostgreSQL local/runtime foundation is strong:
 - [x] Document certificate file paths (`sslcert`, `sslkey`, `sslrootcert`) and permissions.
 - [x] Provide example DSNs for common deployment patterns.
 - [x] Cross-reference operator guide (`docs/guides/operator.md`) for TLS setup steps.
-- [ ] Live TLS-encrypted PG connection validated on target host — ☐ **PENDING** (requires operator-provisioned PG with TLS).
+- [x] Tier 1.5 nonprod-target TLS-encrypted PG connection validated — ✅ **COMPLETE ON NONPROD TARGET VM** (see `docs/implementation-path/artifacts/2026-05-27-pg-tls-dsn-evidence.md`). Tier 2 production TLS validation with real domain/final posture remains separate.
 - **Evidence template**: `docs/implementation-path/artifacts/TEMPLATE-pg-tls-dsn-evidence.md`
 
 **DSN examples**:
@@ -182,7 +182,7 @@ postgres://user@host:5432/db?sslmode=verify-full&sslcert=/etc/ferrumgate/certs/p
 - In containerized deployments, mount certificates as secrets (Kubernetes Secret, Docker secret, or equivalent).
 - Certificate rotation requires a `ferrumd` restart because the DSN and TLS config are loaded once at startup.
 
-> **Non-claim**: TLS DSN guidance is documented as a runbook only. No live TLS-encrypted PostgreSQL connection has been validated. Operator must procure certificates and test connectivity independently.
+> **Non-claim**: TLS DSN guidance and Tier 1.5 nonprod-target TLS validation exist. This is **not** Tier 2 production-ready TLS signoff; real-domain/Tier 2 production validation and final operator production posture signoff remain pending.
 
 #### PG-2.6 — PgBouncer / connection pooling story (RUNBOOK COMPLETE)
 
@@ -191,7 +191,7 @@ postgres://user@host:5432/db?sslmode=verify-full&sslcert=/etc/ferrumgate/certs/p
 - [x] Provide recommended `pool_mode` and session/transaction considerations.
 - [x] Document connection count math (ferrumd pool max × ferrumd instances → PgBouncer pool size).
 - [x] Cross-reference operator guide (`docs/guides/operator.md`) for setup steps.
-- [ ] Live PgBouncer deployment validated — ☐ **PENDING** (requires operator environment).
+- [x] Tier 1.5 nonprod-target PgBouncer deployment validated — ✅ **COMPLETE ON NONPROD TARGET VM** (see `docs/implementation-path/artifacts/2026-05-27-pg-pgbouncer-evidence.md`). Tier 2 production PgBouncer validation with real domain/final posture remains separate.
 - **Evidence template**: `docs/implementation-path/artifacts/TEMPLATE-pg-pgbouncer-evidence.md`
 
 **When to use PgBouncer**:
@@ -223,7 +223,7 @@ postgres://user@host:5432/db?sslmode=verify-full&sslcert=/etc/ferrumgate/certs/p
 - PostgreSQL `max_connections` is approached under normal load.
 - Connection churn (frequent connect/disconnect) is observed in PG logs.
 
-> **Non-claim**: PgBouncer guidance is documented as a runbook only. No live PgBouncer deployment has been validated with ferrumd. Operator must test in their environment before production use.
+> **Non-claim**: PgBouncer guidance and Tier 1.5 nonprod-target PgBouncer validation exist. This is **not** Tier 2 production-ready PgBouncer signoff; real-domain/Tier 2 production validation and final operator production posture signoff remain pending.
 
 ##### PG-2.3b — Reconnect/retry and circuit breaker (PARTIAL — B.1 docs complete; B.2–B.4 deferred)
 
@@ -284,7 +284,7 @@ postgres://user@host:5432/db?sslmode=verify-full&sslcert=/etc/ferrumgate/certs/p
 - [x] Create evidence artifact — ✅ COMPLETE: `docs/implementation-path/artifacts/2026-05-18-pg-restore-drill-evidence.md`.
 - [x] Verify `/v1/readyz/deep` against restored DB — ✅ COMPLETE (HTTP 200, healthy true).
 
-#### PG-3 scheduled backup/retention — LOCAL EVIDENCE CAPTURED / OPERATOR EXECUTION PENDING
+#### PG-3 scheduled backup/retention — TIER 1.5 NONPROD TARGET EVIDENCE COMPLETE / TIER 2 PRODUCTION PENDING
 
 - [x] Document scheduled `pg_dump` procedure with cron and systemd timer examples — ✅ COMPLETE (see `docs/implementation-path/109-p5c-postgresql-backup-restore-runbook.md` §P5c.5).
 - [x] Document retention pruning policy and examples — ✅ COMPLETE (see `docs/implementation-path/109-p5c-postgresql-backup-restore-runbook.md` §P5c.5).
@@ -292,9 +292,10 @@ postgres://user@host:5432/db?sslmode=verify-full&sslcert=/etc/ferrumgate/certs/p
 - [x] **Local** `pg_dump` backup creation and integrity validation — ✅ COMPLETE on 2026-05-21 (local Docker). See `docs/implementation-path/artifacts/2026-05-21-pg-local-scheduled-backup-evidence.md`.
 - [x] **Local** retention pruning simulation (`find -mtime +4 -delete`) — ✅ COMPLETE on 2026-05-21 (local filesystem simulation). See `docs/implementation-path/artifacts/2026-05-21-pg-local-retention-pruning-evidence.md`.
 - [x] **Local** offsite sync simulation (local `cp` + `sha256sum` hash match) — ✅ COMPLETE on 2026-05-21. See `docs/implementation-path/artifacts/2026-05-21-pg-local-offsite-sync-evidence.md`.
-- [ ] Operator deploys and validates scheduled backup on **live production** PostgreSQL — ☐ **PENDING**.
-- [ ] Operator validates retention pruning on **live production** backup target — ☐ **PENDING**.
-- [ ] Operator validates offsite sync success and restore-from-offsite drill on **live production** target — ☐ **PENDING**.
+- [x] Tier 1.5 scheduled backup validated on nonprod-target PostgreSQL — ✅ **COMPLETE ON NONPROD TARGET VM** (see `docs/implementation-path/artifacts/2026-05-27-pg-restore-drill-evidence.md`).
+- [x] Tier 1.5 retention pruning validated on nonprod-target backup path — ✅ **COMPLETE ON NONPROD TARGET VM** (4-day retention documented and exercised; see `docs/implementation-path/artifacts/2026-05-27-pg-restore-drill-evidence.md`).
+- [x] Tier 1.5 offsite sync and restore drill validated on nonprod target — ✅ **COMPLETE ON NONPROD TARGET VM** (GCS offsite sync and restore row counts matched; see `docs/implementation-path/artifacts/2026-05-27-pg-restore-drill-evidence.md`).
+- [ ] Tier 2 live production backup/retention/offsite validation with real domain and final production posture — ☐ **PENDING**.
 
 **Offsite backup target considerations**:
 

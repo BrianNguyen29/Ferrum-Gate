@@ -1,6 +1,6 @@
 # 16 — Operator Shortcut Decision Packet
 
-> **Status**: Planning artifact. Condensed decision packet for operator review. No code changes.
+> **Status**: Resolved decision packet. Operator decisions were recorded in [`2026-05-20-security-model-operator-decisions.md`](../implementation-path/artifacts/2026-05-20-security-model-operator-decisions.md); Phase 4 evidence review was signed in [`2026-05-27-phase4-security-operator-signoff.md`](../implementation-path/artifacts/2026-05-27-phase4-security-operator-signoff.md).
 > **Owner**: Engineering + Operator
 > **Last updated**: 2026-05-20
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
@@ -19,7 +19,7 @@ Provide a single-page decision packet that the operator can review, fill out, an
 2. Operator reviews each question, selects an option, and records the decision.
 3. Operator signs and dates the packet.
 4. The completed packet is stored in `docs/implementation-path/artifacts/` as evidence.
-5. Engineering begins Phase 4 implementation only after the signed packet is received.
+5. Engineering begins Phase 4 implementation only after the signed packet is received. **Resolved 2026-05-20**: decisions were recorded in the signed artifact linked above.
 
 ---
 
@@ -29,12 +29,12 @@ Provide a single-page decision packet that the operator can review, fill out, an
 
 | # | Question | Context | Options | Engineering recommendation | Operator decision |
 |---|----------|---------|---------|---------------------------|-------------------|
-| **Q1** | Which tenant model for first production posture? | Single-tenant (T1) means one deployment = one tenant. No `tenant_id` in schema yet. Row-level and RLS options require large migrations. | ☐ Option 1 — Single-tenant production (one deployment = one tenant) <br> ☐ Option 2 — Row-level `tenant_id` in every table <br> ☐ Option 3 — PostgreSQL RLS | **Option 1** — minimal code change, fits self-hosted, defers SaaS complexity. T2–T5 can follow later without breaking T1. | ☐ |
-| **Q2** | Is OIDC/JWT/SSO required for the first production posture, or can it be deferred? | OIDC adds significant integration work (provider config, callback handling, JWT validation, session management). | ☐ Required now <br> ☐ Deferred to later phase | **Deferred** — bearer + scoped tokens first; OIDC later as an additional auth mode. | ☐ |
-| **Q3** | Which RBAC roles should be enabled in the first implementation? | The role set in `04-security-tenant-model-adr.md` is already minimal viable. Removing roles does not reduce implementation cost significantly. | ☐ Full set (admin, operator, policy_author, auditor, agent, read_only) <br> ☐ Subset (specify below) | **Full set** — the scope set is minimal viable; subsetting does not simplify the middleware. | ☐ |
-| **Q4** | Should token revocation be immediate (in-memory) or durable (store-backed)? | See [`15-revocation-durability-tradeoff.md`](15-revocation-durability-tradeoff.md) for full comparison. Immediate is faster but loses revocations on restart. Durable is slightly slower but survives restart and provides audit trail. | ☐ Immediate (in-memory deny list) <br> ☐ Durable (store-backed `revoked_at`) <br> ☐ Hybrid (store + cache; see tradeoff doc) | **Durable** — the schema already has `revoked_at`; store lookup cost is negligible for pilot volume; no restart edge cases. | ☐ |
-| **Q5** | What is the maximum token TTL acceptable for service-account tokens? | Human operator tokens should be short (hours–days). Service-account tokens may be longer. The max TTL is enforced at creation time. | ☐ 24 hours <br> ☐ 7 days <br> ☐ 30 days <br> ☐ 90 days <br> ☐ Other: _______ | **90 days** with mandatory rotation reminder. Allows service accounts without frequent manual intervention. | ☐ |
-| **Q6** | Do you approve the scoped token model and scope list in `04-security-tenant-model-adr.md` §Scopes and `12-endpoint-to-scope-mapping.md`? | The scope list and endpoint mapping have been reviewed by engineering. Changes here affect middleware design and CLI spec. | ☐ Approve as-is <br> ☐ Approve with changes (describe below) <br> ☐ Request changes before approval | **Approve as-is** — the scope set is minimal and covers all current endpoints. | ☐ |
+| **Q1** | Which tenant model for first production posture? | Single-tenant (T1) means one deployment = one tenant. No `tenant_id` in schema yet. Row-level and RLS options require large migrations. | Option 1 — Single-tenant production (one deployment = one tenant) | **Option 1** — minimal code change, fits self-hosted, defers SaaS complexity. T2–T5 can follow later without breaking T1. | ✅ Option 1 |
+| **Q2** | Is OIDC/JWT/SSO required for the first production posture, or can it be deferred? | OIDC adds significant integration work (provider config, callback handling, JWT validation, session management). | Deferred to later phase | **Deferred** — bearer + scoped tokens first; OIDC later as an additional auth mode. | ✅ Deferred |
+| **Q3** | Which RBAC roles should be enabled in the first implementation? | The role set in `04-security-tenant-model-adr.md` is already minimal viable. Removing roles does not reduce implementation cost significantly. | Full set (admin, operator, policy_author, auditor, agent, read_only) | **Full set** — the scope set is minimal viable; subsetting does not simplify the middleware. | ✅ Full set |
+| **Q4** | Should token revocation be immediate (in-memory) or durable (store-backed)? | See [`15-revocation-durability-tradeoff.md`](15-revocation-durability-tradeoff.md) for full comparison. Immediate is faster but loses revocations on restart. Durable is slightly slower but survives restart and provides audit trail. | Durable (store-backed `revoked_at`) | **Durable** — the schema already has `revoked_at`; store lookup cost is negligible for pilot volume; no restart edge cases. | ✅ Durable |
+| **Q5** | What is the maximum token TTL acceptable for service-account tokens? | Human operator tokens should be short (hours–days). Service-account tokens may be longer. The max TTL is enforced at creation time. | 90 days | **90 days** with mandatory rotation reminder. Allows service accounts without frequent manual intervention. | ✅ 90 days |
+| **Q6** | Do you approve the scoped token model and scope list in `04-security-tenant-model-adr.md` §Scopes and `12-endpoint-to-scope-mapping.md`? | The scope list and endpoint mapping have been reviewed by engineering. Changes here affect middleware design and CLI spec. | Approve as-is | **Approve as-is** — the scope set is minimal and covers all current endpoints. | ✅ Approve as-is |
 
 ### Operator notes / change requests
 
@@ -62,9 +62,9 @@ By signing below, the operator confirms:
 
 | Field | Value |
 |-------|-------|
-| **Operator name** | |
-| **Date** | |
-| **Signature** | |
+| **Operator name** | BrianNguyen |
+| **Date** | 2026-05-20 |
+| **Signature** | Recorded in [`2026-05-20-security-model-operator-decisions.md`](../implementation-path/artifacts/2026-05-20-security-model-operator-decisions.md) |
 
 ## Engineering acknowledgment
 
@@ -75,9 +75,9 @@ By signing below, engineering confirms:
 
 | Field | Value |
 |-------|-------|
-| **Engineering lead** | |
-| **Date** | |
-| **Signature** | |
+| **Engineering lead** | Engineering |
+| **Date** | 2026-05-20 |
+| **Signature** | Implemented and later reviewed in [`2026-05-27-phase4-security-operator-signoff.md`](../implementation-path/artifacts/2026-05-27-phase4-security-operator-signoff.md) |
 
 ## Evidence artifact path
 
