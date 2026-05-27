@@ -1600,6 +1600,8 @@ Reach Tier 1.5 (domainless production infrastructure complete) by completing Pos
 
 PostgreSQL + SLO definitions + workload plan ready.
 
+**Status:** ✅ COMPLETE / DOMAINLESS — PostgreSQL target deployment, backup/restore, SLO docs, and domain-deferred docs exist; no production-ready claim.
+
 **Tasks:**
 
 - PG baseline target/staging deployment.
@@ -1619,6 +1621,8 @@ PostgreSQL + SLO definitions + workload plan ready.
 
 Sustained workload and MCP target-host evidence.
 
+**Status:** ✅ ENGINEERING EVIDENCE COMPLETE / CONDITIONAL — target MCP smoke/workload evidence exists; SLO gaps are documented; no 7–30 day sustained SLO window claim.
+
 - full G3.6 workload target run.
 - stress run mapped to SLO.
 - target MCP lifecycle smoke.
@@ -1635,6 +1639,8 @@ Sustained workload and MCP target-host evidence.
 ### Milestone 3 — “Security Control Plane”
 
 Move beyond single bearer token.
+
+**Status:** ✅ COMPLETE / SIGNED FOR T1 SCOPE — scoped token model, RBAC endpoint mapping, token persistence/revocation, SEC-6 minimal audit log, and token/admin CLI are implemented and operator-reviewed; no multi-tenant/OIDC/compliance-grade audit claim.
 
 - scoped token model.
 - RBAC endpoint mapping.

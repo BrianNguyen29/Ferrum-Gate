@@ -1,6 +1,6 @@
 # 10 — Evidence Checklist
 
-> **Status**: Planning artifact. Checklist template; not yet filled.
+> **Status**: Active evidence checklist. Completed phases, Tier 1, and Tier 1.5 are populated; remaining open items are explicitly marked.
 > **Owner**: Engineering + Operator
 > **Last updated**: 2026-05-26
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
@@ -23,7 +23,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 
 - **Resolved**: Checklist now links every phase (0–9) to evidence files with Owner, Evidence, and Status columns.
 - **Resolved**: Owner assignment and signoff state tracking added to all checklist tables.
-- **Remaining**: Phase 9 (HA) and final production-ready prerequisites (F.1–F.5) still require operator action and live evidence.
+- **Remaining**: Phase 9 multi-host HA/read-replica work and final production-ready prerequisites (F.1–F.5) still require operator action and live evidence.
 
 ## Implementation tasks
 
@@ -150,7 +150,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 
 ## Phase 4 — Security and tenant model
 
-> **Status**: Operator decisions approved on 2026-05-20. Implementation of scoped tokens, RBAC middleware, admin token APIs, ferrumctl CLI, and SEC-6 audit log completed on 2026-05-21. BLK-SEC-PH4 unblocked for implementation; remaining open item is Phase 4 full signoff. See [`11-blockers-and-unblock-plan.md`](./11-blockers-and-unblock-plan.md).
+> **Status**: COMPLETE / SIGNED. Operator decisions approved on 2026-05-20. Implementation of scoped tokens, RBAC middleware, admin token APIs, ferrumctl CLI, and SEC-6 audit log completed on 2026-05-21. Phase 4 evidence review/signoff recorded on 2026-05-27. See [`11-blockers-and-unblock-plan.md`](./11-blockers-and-unblock-plan.md).
 >
 > **Prep complete**: Phase 4 prep artifacts created 2026-05-20. **Implementation complete** for: SQLite token store + migration, scoped auth middleware (`Disabled`/`Bearer`/`Scoped`), admin token lifecycle endpoints (`POST/GET/DELETE/rotate`), ferrumctl `admin tokens` CLI, SEC-1 through SEC-6 tests.
 
@@ -172,6 +172,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 | 4.8 | TTL enforcement: create/rotate reject expiry beyond 90 days | Engineering | `test_create_token_rejects_excessive_ttl`, `test_rotate_token_rejects_excessive_ttl` in `crates/ferrum-gateway/src/server.rs` | ✅ IMPLEMENTED — server-side 400 Bad Request for >90d; client-side validation in ferrumctl |
 | 4.9 | Phase 4 implementation evidence artifact | Engineering | `docs/implementation-path/artifacts/2026-05-20-scoped-token-implementation-evidence.md` | ✅ COMPLETE — records all implemented items, test evidence, and deferred items |
 | 4.10 | Consolidated security audit evidence compilation | Engineering | `docs/implementation-path/artifacts/2026-05-22-security-audit-evidence.md` | ✅ COMPLETE — compilation of SEC-1–SEC-6, scoped-token, audit-log, and invariant evidence; no new implementation; no production-ready claim |
+| 4.11 | Phase 4 operator evidence review/signoff | Operator | `docs/implementation-path/artifacts/2026-05-27-phase4-security-operator-signoff.md` | ✅ SIGNED — Phase 4 scoped token/RBAC/SEC-6 evidence reviewed; no production-ready, full G2, Block A, multi-tenant, OIDC, or compliance-grade audit claim |
 
 ## Phase 5 — Policy authoring UX
 

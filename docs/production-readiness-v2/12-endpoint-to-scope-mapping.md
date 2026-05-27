@@ -1,6 +1,6 @@
 # 12 — Endpoint-to-Scope Mapping
 
-> **Status**: Implemented — scoped token endpoints (create/list/revoke/rotate) implemented 2026-05-21. Operator signoff and Phase 4 full signoff remaining. See [`10-evidence-checklist.md`](./10-evidence-checklist.md) §Phase 4.
+> **Status**: Implemented / signed — scoped token endpoints (create/list/revoke/rotate) implemented 2026-05-21; Phase 4 evidence review/signoff recorded 2026-05-27. See [`10-evidence-checklist.md`](./10-evidence-checklist.md) §Phase 4.
 > **Owner**: Engineering
 > **Last updated**: 2026-05-20
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
@@ -155,7 +155,7 @@ Derived from [`04-security-tenant-model-adr.md`](04-security-tenant-model-adr.md
 
 - **NOT production-ready**: Scoped-token enforcement requires explicit operator enablement; bearer-only remains the production pilot auth mode until then.
 - **NOT multi-tenant**: This mapping assumes single-tenant (T1) from [`04-security-tenant-model-adr.md`](04-security-tenant-model-adr.md).
-- **Partial implementation**: RBAC middleware and scope enforcement implemented 2026-05-21 for token lifecycle endpoints; operator signoff and Phase 4 full signoff remaining.
+- **Implementation signed**: RBAC middleware and scope enforcement implemented 2026-05-21 for token lifecycle endpoints; Phase 4 evidence review/signoff recorded in [`2026-05-27-phase4-security-operator-signoff.md`](../implementation-path/artifacts/2026-05-27-phase4-security-operator-signoff.md). Multi-tenant and OIDC remain deferred.
 
 ## Related docs
 

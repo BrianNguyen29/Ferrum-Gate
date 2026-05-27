@@ -150,23 +150,23 @@ Every table has `tenant_id`; every query filters `tenant_id`.
 
 ## Implementation tasks (design phase)
 
-- [ ] Write scoped token ADR.
-- [ ] Write RBAC endpoint mapping ADR.
-- [ ] Write audit log schema ADR.
-- [ ] Write tenant model ADR (choose option + migration path).
-- [ ] Define token revocation durability strategy.
-- [ ] Define token rotation API contract.
+- [x] Write scoped token ADR/contract (`13-token-api-contract.md`).
+- [x] Write RBAC endpoint mapping ADR (`12-endpoint-to-scope-mapping.md`).
+- [x] Write audit log schema/evidence (`2026-05-21-sec6-audit-log-implementation-evidence.md`).
+- [x] Write tenant model ADR (this doc; T1 single-tenant selected in `2026-05-20-security-model-operator-decisions.md`).
+- [x] Define token revocation durability strategy (`15-revocation-durability-tradeoff.md`; durable revocation selected).
+- [x] Define token rotation API contract (`13-token-api-contract.md`; implemented in admin token API/CLI).
 
 ## Acceptance criteria (design)
 
-- [ ] ADR approved by engineering and operator.
-- [ ] Token read-only cannot mutate (by design review).
-- [ ] Agent token cannot approve (by design review).
-- [ ] Auditor cannot execute (by design review).
-- [ ] Tenant A cannot read tenant B (by design review).
-- [ ] Revoked token returns 401 (by design review).
-- [ ] Expired token returns 401 (by design review).
-- [ ] Audit log records actor/action/result (by design review).
+- [x] ADR approved by engineering and operator for T1 single-tenant scoped-token scope.
+- [x] Token read-only cannot mutate (implemented/tested as SEC-1).
+- [x] Agent token cannot approve (implemented/tested as SEC-2).
+- [x] Auditor cannot execute (implemented/tested as SEC-3).
+- [x] Tenant A cannot read tenant B (deferred by T1 single-tenant decision; no multi-tenant claim).
+- [x] Revoked token returns 401 (implemented/tested as SEC-4).
+- [x] Expired token returns 401 (implemented/tested as SEC-5).
+- [x] Audit log records actor/action/result for current scope (implemented/tested as SEC-6 minimal audit log).
 
 ## Evidence required
 
@@ -176,8 +176,8 @@ Every table has `tenant_id`; every query filters `tenant_id`.
 
 ## Non-claims
 
-- **NOT implemented**: This is a design ADR; no code changes yet.
-- **NOT production security**: Bearer-only remains the production pilot auth mode until implementation is complete.
+- **T1 scoped-token implementation complete/signed**: Scoped token store, RBAC middleware, admin token APIs/CLI, TTL enforcement, and SEC-6 minimal audit log are implemented and operator-reviewed for the current scope.
+- **NOT full production security**: Tier 2 production security still requires real-domain revalidation, full G2 re-signoff, and final production posture signoff.
 - **NOT multi-tenant**: T1 is single-tenant only.
 
 ## Related docs

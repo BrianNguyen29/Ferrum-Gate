@@ -159,7 +159,7 @@ The following questions must be answered by the operator to unblock BLK-SEC-PH4 
 
 - **Blocker ID**: `BLK-SEC-PH4`
 - **Owner**: Engineering + Operator
-- **Status**: ✅ APPROVED FOR IMPLEMENTATION — prep complete; implementation may proceed under signed defaults
+- **Status**: ✅ COMPLETE / SIGNED — prep, implementation, SEC-6 evidence, and operator evidence review complete
 - **Prerequisites**: `04-security-tenant-model-adr.md` reviewed by operator. **Prep artifacts created 2026-05-20:**
   - `12-endpoint-to-scope-mapping.md` — endpoint-to-scope mapping
   - `13-token-api-contract.md` — token API contract
@@ -173,8 +173,8 @@ The following questions must be answered by the operator to unblock BLK-SEC-PH4 
   - ✅ RBAC middleware denies by default (`auth_middleware` in `server.rs`).
   - ✅ SEC-1 through SEC-5 automated tests pass.
   - ✅ SEC-6 (audit log) implemented 2026-05-21 — minimal append-only audit log with best-effort store append.
-- **Evidence required**: `artifacts/2026-05-20-security-model-operator-decisions.md` + `artifacts/2026-05-20-scoped-token-implementation-evidence.md`
-- **Exact next action**: Operator review of SEC-6 evidence artifact; Phase 4 full signoff pending.
+- **Evidence required**: `artifacts/2026-05-20-security-model-operator-decisions.md` + `artifacts/2026-05-20-scoped-token-implementation-evidence.md` + `artifacts/2026-05-21-sec6-audit-log-implementation-evidence.md` + `artifacts/2026-05-27-phase4-security-operator-signoff.md`
+- **Exact next action**: None for Phase 4 evidence review. Remaining future security work (tenant model beyond T1, OIDC/SSO, compliance-grade audit logging) is post-v1/Tier 2+ scope.
 - **Downstream impact**: Unblocks BLK-UX-4 (token CLI).
 
 ### BLK-UX-4 — UX-4 token rotate / revoke CLI

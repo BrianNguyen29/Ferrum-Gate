@@ -53,9 +53,9 @@ Khi có mâu thuẫn, ưu tiên theo thứ tự:
 
 ## Bước tiếp theo hiện tại
 
-- Path 1 đã xong: `v0.1.0-rc.1` là GitHub prerelease.
-- Path 2 đang chờ operator: hoàn tất/ký `implementation-path/54-operator-signoff-packet.md` trước production pilot.
-- Path 3 chưa bắt đầu: PostgreSQL/Phase 3 chỉ mở sau khi G2 pilot confirmation và G3.2–G3.4 thỏa mãn.
+- Tier 1 đã xong/ký: domainless production-candidate (`production-ready = NO`).
+- Tier 1.5 đã xong/ký: PostgreSQL target deployment + same-VM HA topology + same-VM automated failover (`production-ready = NO`).
+- Tier 2 vẫn bị chặn bởi real owned domain, DNS, revalidation, sustained SLO window, full G2 re-signoff, và final production posture signoff.
 
 ## Kết luận ngắn
 

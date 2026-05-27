@@ -200,10 +200,10 @@ Text format includes: `timestamp`, `level`, `target`, `message`.
 - Do not cite local baselines or max-valid run as committed production targets.
 
 ### HA posture
-- **HA/multi-node is NOT implemented**.
-- Single-node SQLite is the only supported runtime.
-- PostgreSQL local runtime exists; production PG deployment is deferred.
-- HA roadmap is design-only in [`docs/production-readiness-v2/09-ha-roadmap.md`](./production-readiness-v2/09-ha-roadmap.md).
+- **Tier 1.5 same-VM HA evidence is complete/acknowledged**: PostgreSQL primary/standby streaming replication and watchdog failover passed on the nonprod target VM.
+- **Multi-host production HA is NOT implemented**: Tier 1.5 evidence is same-VM only and does not claim multi-host HA.
+- PostgreSQL target deployment evidence is complete on the nonprod target VM; this is not Tier 2 production-ready signoff.
+- HA roadmap remains the source for deferred multi-host/read-replica work in [`docs/production-readiness-v2/09-ha-roadmap.md`](./production-readiness-v2/09-ha-roadmap.md).
 
 ## Related docs
 

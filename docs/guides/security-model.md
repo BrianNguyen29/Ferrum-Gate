@@ -1,27 +1,27 @@
 # Security Model Guide
 
-> **Status**: Scaffold. Security model is design-only; not yet implemented.
+> **Status**: Scoped token/RBAC/SEC-6 implementation signed for current T1 scope; not full production security.
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
 
 ---
 
 ## Current security posture
 
-- **Auth mode**: `Disabled` (dev) or `Bearer` (pilot).
-- **Bearer token**: Single global token with full power.
-- **No RBAC**: Anyone with the token can do anything.
+- **Auth mode**: `Disabled` (dev), `Bearer` (pilot), or scoped-token mode when explicitly enabled.
+- **Bearer token**: Single global token remains supported for conditional pilot compatibility.
+- **Scoped tokens/RBAC**: Implemented for the current T1 scope with deny-by-default middleware and admin token lifecycle APIs/CLI.
 - **No multi-tenancy**: One deployment, one implicit tenant.
-- **No audit log separate from provenance**: Provenance exists but is not a security audit log.
+- **Audit log**: SEC-6 minimal append-only audit log implemented for admin/policy/approval/token actions; not compliance-grade WORM/signed storage.
 
 ## Threat model (summary)
 
 | Threat | Current mitigation | Future mitigation |
 |--------|--------------------|--------------------|
-| Token theft | Token stored on VM only; rotation procedure exists | Scoped tokens with expiry + revocation |
-| Insider abuse | Operator trust | RBAC + audit log |
+| Token theft | Token stored on VM only; rotation procedure exists; scoped tokens support expiry + revocation | OIDC/SSO and stronger operational policy |
+| Insider abuse | Operator trust plus RBAC + minimal audit log | Compliance-grade audit logging |
 | Tenant data leak | N/A (single tenant) | tenant_id filtering + PG RLS |
-| Auth bypass | Constant-time token comparison | RBAC middleware + deny-by-default |
-| Secret leak in logs | Output redaction in MCP | Structured audit log with redaction |
+| Auth bypass | Constant-time token comparison plus scoped-token RBAC middleware | External identity integration |
+| Secret leak in logs | Output redaction in MCP; minimal audit log avoids secret material | Structured compliance-grade audit controls |
 
 ## Target security model
 
@@ -37,7 +37,7 @@ Tenant
               └── Service Account
 ```
 
-### Roles (planned)
+### Roles
 
 | Role | Permissions |
 |------|-------------|
@@ -48,7 +48,7 @@ Tenant
 | agent | Submit intent / use MCP within scope |
 | read_only | Health and status only |
 
-### Token scopes (planned)
+### Token scopes
 
 - `intent:submit`
 - `proposal:evaluate`
@@ -60,15 +60,15 @@ Tenant
 - `admin:tokens`, `admin:config`
 - `backup:run`
 
-### Acceptance targets (planned)
+### Acceptance targets
 
-- Read-only token cannot call mutating endpoints.
-- Agent token cannot approve proposals.
-- Auditor token cannot execute actions.
-- Tenant A cannot read tenant B data.
-- Revoked token returns 401.
-- Expired token returns 401.
-- Audit log records actor, action, and result.
+- [x] Read-only token cannot call mutating endpoints.
+- [x] Agent token cannot approve proposals.
+- [x] Auditor token cannot execute actions.
+- [x] Revoked token returns 401.
+- [x] Expired token returns 401.
+- [x] Audit log records actor, action, and result for current scope.
+- [ ] Tenant A cannot read tenant B data — deferred by single-tenant T1 decision; no multi-tenant claim.
 
 ## Hardening checklist
 
@@ -83,10 +83,10 @@ Tenant
 
 ### Near-term (post-pilot)
 
-- [ ] Implement scoped tokens with metadata in store.
-- [ ] Implement RBAC middleware (endpoint → required scope mapping).
-- [ ] Add audit log separate from provenance.
-- [ ] Design tenant model ADR.
+- [x] Implement scoped tokens with metadata in store.
+- [x] Implement RBAC middleware (endpoint → required scope mapping).
+- [x] Add minimal audit log separate from provenance.
+- [x] Design tenant model ADR for T1 single-tenant scope.
 
 ### Long-term
 
@@ -97,7 +97,7 @@ Tenant
 
 ## Status caveat
 
-> **production-ready = NO**. The current auth model (single global bearer token) is acceptable for conditional pilot only. Scoped auth/RBAC is planned but not implemented. See [`docs/production-readiness-v2/04-security-tenant-model-adr.md`](../../production-readiness-v2/04-security-tenant-model-adr.md).
+> **production-ready = NO**. Scoped auth/RBAC/SEC-6 are implemented and signed for the current T1 scope, but this does not complete full G2, Block A, multi-tenant security, OIDC/SSO, or compliance-grade audit logging. See [`docs/production-readiness-v2/04-security-tenant-model-adr.md`](../../production-readiness-v2/04-security-tenant-model-adr.md) and [`docs/implementation-path/artifacts/2026-05-27-phase4-security-operator-signoff.md`](../../implementation-path/artifacts/2026-05-27-phase4-security-operator-signoff.md).
 
 ## Related docs
 
