@@ -74,10 +74,11 @@ All 6 PostgreSQL production deployment gates (PG-P.1 to PG-P.6) have been succes
 
 With PG-P.1 to PG-P.6 complete, the PostgreSQL production deployment component of Tier 1.5 is **COMPLETE**.
 
-Remaining Tier 1.5 components:
-- ☐ HA multi-node topology (Batch 2)
-- ☐ Automated failover (Batch 3)
-- ☐ Operator acknowledgment
+Tier 1.5 follow-up components are now complete and acknowledged:
+- ✅ HA multi-node topology (Batch 2)
+- ✅ Automated failover (Batch 3)
+- ✅ Operator acknowledgment
+- ✅ Tier 1.5 end-state publication
 
 ---
 
@@ -90,6 +91,7 @@ Remaining Tier 1.5 components:
 - [2026-05-27-pg-alert-deployment-evidence.md](./2026-05-27-pg-alert-deployment-evidence.md)
 - [docs/production-readiness-v2/00b-tier-1.5-domainless-infrastructure.md](../../production-readiness-v2/00b-tier-1.5-domainless-infrastructure.md)
 - [docs/production-readiness-v2/13-tier-1.5-completion-status.md](../../production-readiness-v2/13-tier-1.5-completion-status.md)
+- [2026-05-27-tier-1-5-complete-end-state.md](./2026-05-27-tier-1-5-complete-end-state.md)
 
 ---
 

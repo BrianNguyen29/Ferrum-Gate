@@ -1552,7 +1552,7 @@ Reach Tier 1 (domainless production-candidate) by completing B+C+HA-B engineerin
 
 See [`docs/production-readiness-v2/00a-domainless-readiness-tier.md`](./production-readiness-v2/00a-domainless-readiness-tier.md) for the canonical tiered readiness model.
 
-### Milestone 0.75 — “Tier 1.5 Domainless Production Infrastructure” ☐ IN PROGRESS / PARTIAL
+### Milestone 0.75 — “Tier 1.5 Domainless Production Infrastructure” ✅ COMPLETE
 
 **Objective:**
 
@@ -1560,10 +1560,12 @@ Reach Tier 1.5 (domainless production infrastructure complete) by completing Pos
 
 **Status:**
 
-- **ENGINEERING COMPLETE / ACKNOWLEDGMENT PENDING** as of 2026-05-27.
+- **COMPLETE / ACKNOWLEDGED** as of 2026-05-27.
 - Batch 1 PostgreSQL production deployment evidence complete.
 - Batch 2 same-VM HA multi-node topology evidence complete.
 - Batch 3 same-VM automated failover evidence complete.
+- Operator (BrianNguyen) explicitly authorized Tier 1.5 acknowledgment.
+- End-state artifact: [`docs/implementation-path/artifacts/2026-05-27-tier-1-5-complete-end-state.md`](./implementation-path/artifacts/2026-05-27-tier-1-5-complete-end-state.md)
 - Canonical definition: [`docs/production-readiness-v2/00b-tier-1.5-domainless-infrastructure.md`](./production-readiness-v2/00b-tier-1.5-domainless-infrastructure.md)
 - Completion tracker: [`docs/production-readiness-v2/13-tier-1.5-completion-status.md`](./production-readiness-v2/13-tier-1.5-completion-status.md)
 
@@ -1578,7 +1580,7 @@ Reach Tier 1.5 (domainless production infrastructure complete) by completing Pos
 - PostgreSQL production deployment evidence complete. ✅
 - HA multi-node topology evidence complete. ✅ (same VM primary/standby topology; no multi-host production HA claim)
 - Automated failover evidence complete. ✅ (same-VM watchdog + PgBouncer reconnect; no multi-host production HA claim)
-- Operator acknowledges Tier 1.5 scope and non-claims. ☐
+- Operator acknowledges Tier 1.5 scope and non-claims. ✅
 - `production-ready = NO` remains explicit. ✅ (preserved by framework)
 - `full G2 = NOT COMPLETE` remains explicit. ✅ (preserved by framework)
 - `Block A = WAIVED/CONDITIONAL` remains explicit. ✅ (preserved by framework)

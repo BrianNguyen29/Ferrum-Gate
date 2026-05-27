@@ -54,10 +54,10 @@ Latest full-gate verification (`make domainless-tier1-gate`, 2026-05-26): **PASS
 To advance to Tier 2 (production-ready / domain-backed), the following must be completed:
 
 **Optional Tier 1.5 path:**
-1. Engineering completes PostgreSQL production deployment evidence (target PG, TLS, PgBouncer, backup/restore, alerts).
-2. Engineering completes HA multi-node topology evidence (≥2 nodes, replication, routing, lag, fencing).
-3. Engineering completes automated failover evidence (no manual `pg_promote`, ferrumd reconnect, RTO/RPO, no split-brain, 3 drills).
-4. Operator acknowledges Tier 1.5 scope and non-claims.
+1. Engineering completed PostgreSQL production deployment evidence (target PG, TLS, PgBouncer, backup/restore, alerts).
+2. Engineering completed HA multi-node topology evidence (same-VM primary/standby replication, routing, lag, fencing).
+3. Engineering completed automated failover evidence (no manual `pg_promote`, ferrumd reconnect, RTO/RPO, no split-brain, 3 drills).
+4. Operator acknowledged Tier 1.5 scope and non-claims.
 5. See [`docs/production-readiness-v2/13-tier-1.5-completion-status.md`](./13-tier-1.5-completion-status.md) for the Tier 1.5 tracker.
 
 **Required for Tier 2 (regardless of Tier 1.5):**
@@ -71,7 +71,7 @@ To advance to Tier 2 (production-ready / domain-backed), the following must be c
 
 See [`docs/production-readiness-v2/00a-domainless-readiness-tier.md`](./00a-domainless-readiness-tier.md) §"Tier progression rules" for details.
 
-**Next tracker**: [`docs/production-readiness-v2/13-tier-1.5-completion-status.md`](./13-tier-1.5-completion-status.md) — Tier 1.5 domainless production infrastructure (all items PENDING / NOT COMPLETE).
+**Next tracker**: [`docs/production-readiness-v2/13-tier-1.5-completion-status.md`](./13-tier-1.5-completion-status.md) — Tier 1.5 domainless production infrastructure (COMPLETE / ACKNOWLEDGED; no production-ready claim).
 
 ---
 
@@ -81,7 +81,9 @@ See [`docs/production-readiness-v2/00a-domainless-readiness-tier.md`](./00a-doma
 - [`00b-tier-1.5-domainless-infrastructure.md`](./00b-tier-1.5-domainless-infrastructure.md) — Tier 1.5 canonical definition and acceptance gates.
 - [`00-scope-and-nonclaims.md`](./00-scope-and-nonclaims.md) — Scope boundaries and master non-claims.
 - [`10-evidence-checklist.md`](./10-evidence-checklist.md) — Per-phase evidence checklist (includes Tier 1.5 placeholders).
-- [`13-tier-1.5-completion-status.md`](./13-tier-1.5-completion-status.md) — Tier 1.5 completion tracker (all items PENDING).
+- [`13-tier-1.5-completion-status.md`](./13-tier-1.5-completion-status.md) — Tier 1.5 completion tracker (COMPLETE / ACKNOWLEDGED).
+- [`docs/implementation-path/artifacts/2026-05-27-tier-1-5-operator-acknowledgment.md`](../implementation-path/artifacts/2026-05-27-tier-1-5-operator-acknowledgment.md) — Tier 1.5 operator acknowledgment.
+- [`docs/implementation-path/artifacts/2026-05-27-tier-1-5-complete-end-state.md`](../implementation-path/artifacts/2026-05-27-tier-1-5-complete-end-state.md) — Tier 1.5 final end-state declaration.
 - [`docs/implementation-path/artifacts/2026-05-26-domainless-tier1-completion-evidence.md`](../implementation-path/artifacts/2026-05-26-domainless-tier1-completion-evidence.md) — Evidence pack.
 - [`docs/implementation-path/artifacts/2026-05-26-domainless-tier1-operator-acknowledgment.md`](../implementation-path/artifacts/2026-05-26-domainless-tier1-operator-acknowledgment.md) — Operator acknowledgment.
 - [`docs/implementation-path/artifacts/2026-05-26-domainless-tier1-complete-end-state.md`](../implementation-path/artifacts/2026-05-26-domainless-tier1-complete-end-state.md) — Final end-state declaration.

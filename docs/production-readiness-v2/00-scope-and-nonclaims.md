@@ -18,10 +18,11 @@ Lock the scope of the post-conditional-pilot production path and make all non-cl
 - Block A is **WAIVED/CONDITIONAL** — DuckDNS accepted for single-node SQLite pilot only; real owned domain still required for production-ready or full G2 closure.
 - Block B is **CLOSED**.
 - Block C is **CLOSED**.
-- PostgreSQL local runtime/Docker is implemented; production PG deployment is **NOT** done.
-- HA/multi-node is **NOT** implemented.
+- PostgreSQL target deployment evidence is complete for Tier 1.5 on the nonprod target VM; this is **not** Tier 2 production-ready signoff.
+- HA/multi-node topology evidence is complete for Tier 1.5 on a same-VM primary/standby topology; multi-host production HA is **NOT** implemented.
 - MCP local smoke passes; target-host MCP live workload has **bounded engineering evidence** (10-iteration sustained run, 2026-05-22) but operator signoff is **NOT obtained**.
 - **Tier 1 status**: COMPLETE / ACKNOWLEDGED on 2026-05-26. B+C+HA-B engineering evidence complete; operator acknowledgment recorded. See [`00a-domainless-readiness-tier.md`](./00a-domainless-readiness-tier.md) and [`12-domainless-completion-status.md`](./12-domainless-completion-status.md).
+- **Tier 1.5 status**: COMPLETE / ACKNOWLEDGED on 2026-05-27. PostgreSQL target deployment, same-VM HA topology, same-VM automated failover evidence, and operator acknowledgment recorded. See [`00b-tier-1.5-domainless-infrastructure.md`](./00b-tier-1.5-domainless-infrastructure.md) and [`13-tier-1.5-completion-status.md`](./13-tier-1.5-completion-status.md).
 
 ## Gaps
 
@@ -43,13 +44,13 @@ Lock the scope of the post-conditional-pilot production path and make all non-cl
 | **production-ready = NO** | FerrumGate is not production-ready. Do not deploy to unbounded production workloads. |
 | **full G2 = NOT COMPLETE** | G2.1–G2.8 are signed for conditional pilot only, not full production signoff. |
 | **Block A = WAIVED/CONDITIONAL** | Real domain is deferred. Block A is not closed. |
-| **PostgreSQL production = NO** | Local PG runtime exists; production PG target deployment + evidence does not. |
-| **HA/multi-node = NO** | Not implemented. Single-node SQLite is the only supported runtime. |
+| **PostgreSQL production deployment component = COMPLETE ON NONPROD TARGET VM** | Tier 1.5 PG evidence exists; this is not Tier 2 production-ready signoff. |
+| **multi-host production HA = NO** | Tier 1.5 same-VM HA evidence exists; multi-host production HA is not implemented. |
 | **Target-host MCP live workload = CONDITIONAL/EVIDENCE-BACKED** | Engineering evidence exists: 10-iteration sustained run passed (2026-05-22); operator signoff NOT obtained; DuckDNS conditional pilot only. |
 | **Scoped auth/RBAC = PARTIAL** | Scoped tokens and RBAC middleware implemented; tenant model and OIDC deferred. |
 | **Multi-tenant = NO** | No tenant isolation exists. |
 | **Tier 1 = domainless production-candidate COMPLETE / ACKNOWLEDGED** | B+C+HA-B engineering evidence complete and operator acknowledged on 2026-05-26; NOT production-ready; real domain still required for Tier 2. See [`00a-domainless-readiness-tier.md`](./00a-domainless-readiness-tier.md) and [`12-domainless-completion-status.md`](./12-domainless-completion-status.md). |
-| **Tier 1.5 = domainless production infrastructure PLANNED / NOT COMPLETE** | Optional final intermediate tier. PostgreSQL production deployment, HA multi-node topology, and automated failover are planned but not started. `production-ready = NO` remains explicit. `full G2 = NOT COMPLETE` remains explicit. `Block A = WAIVED/CONDITIONAL` remains explicit. See [`00b-tier-1.5-domainless-infrastructure.md`](./00b-tier-1.5-domainless-infrastructure.md) and [`13-tier-1.5-completion-status.md`](./13-tier-1.5-completion-status.md). |
+| **Tier 1.5 = domainless production infrastructure COMPLETE / ACKNOWLEDGED** | PostgreSQL target deployment, same-VM HA topology, same-VM automated failover evidence, and operator acknowledgment are complete; NOT production-ready; real domain still required for Tier 2. See [`00b-tier-1.5-domainless-infrastructure.md`](./00b-tier-1.5-domainless-infrastructure.md) and [`13-tier-1.5-completion-status.md`](./13-tier-1.5-completion-status.md). |
 
 ## Scope boundaries
 
@@ -106,7 +107,7 @@ evidence planning layer.
 ## Related docs
 
 - [`docs/production-readiness-v2/00a-domainless-readiness-tier.md`](./00a-domainless-readiness-tier.md) — Canonical tiered readiness model.
-- [`docs/production-readiness-v2/00b-tier-1.5-domainless-infrastructure.md`](./00b-tier-1.5-domainless-infrastructure.md) — Tier 1.5 framework (PLANNED / NOT COMPLETE).
+- [`docs/production-readiness-v2/00b-tier-1.5-domainless-infrastructure.md`](./00b-tier-1.5-domainless-infrastructure.md) — Tier 1.5 framework (COMPLETE / ACKNOWLEDGED).
 - [`docs/ROADMAP.md`](../../ROADMAP.md) — Parent roadmap with full gap analysis and phase plan.
 - [`docs/implementation-path/67-production-readiness-roadmap.md`](../../implementation-path/67-production-readiness-roadmap.md) — Prior v1 production-readiness tracker.
 - [`docs/PRODUCTION_NOTES.md`](../../PRODUCTION_NOTES.md) — Runtime configuration and stress baselines.

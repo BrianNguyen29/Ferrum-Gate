@@ -243,7 +243,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 
 ## Tier 1.5 — Domainless production infrastructure
 
-> **Status**: ENGINEERING COMPLETE / ACKNOWLEDGMENT PENDING. PostgreSQL production deployment, same-VM HA topology, and same-VM automated failover evidence are complete. Tier 1.5 does not claim production-ready status.
+> **Status**: COMPLETE / ACKNOWLEDGED. PostgreSQL production deployment, same-VM HA topology, same-VM automated failover evidence, operator acknowledgment, and end-state publication are complete. Tier 1.5 does not claim production-ready status.
 > **Canonical definition**: [`docs/production-readiness-v2/00b-tier-1.5-domainless-infrastructure.md`](../../production-readiness-v2/00b-tier-1.5-domainless-infrastructure.md)
 > **Completion tracker**: [`docs/production-readiness-v2/13-tier-1.5-completion-status.md`](../../production-readiness-v2/13-tier-1.5-completion-status.md)
 
@@ -266,8 +266,8 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 | T1.5-HA-A.3 | RTO and RPO measured and documented | Engineering + Operator | [`2026-05-27-ha-automated-failover-drill-evidence.md`](../../implementation-path/artifacts/2026-05-27-ha-automated-failover-drill-evidence.md) | ✅ COMPLETE |
 | T1.5-HA-A.4 | No split-brain observed during or after failover | Engineering + Operator | [`2026-05-27-ha-automated-failover-drill-evidence.md`](../../implementation-path/artifacts/2026-05-27-ha-automated-failover-drill-evidence.md) | ✅ COMPLETE |
 | T1.5-HA-A.5 | At least three failover drills performed with pass evidence | Engineering + Operator | [`2026-05-27-ha-automated-failover-signoff.md`](../../implementation-path/artifacts/2026-05-27-ha-automated-failover-signoff.md) | ✅ COMPLETE |
-| T1.5-ACK | Operator acknowledgment of Tier 1.5 scope and non-claims | Operator | Tier 1.5 operator acknowledgment artifact | ☐ NOT STARTED |
-| T1.5-END | Tier 1.5 complete end-state declaration published | Engineering | Tier 1.5 complete end-state artifact | ☐ NOT STARTED |
+| T1.5-ACK | Operator acknowledgment of Tier 1.5 scope and non-claims | Operator | [`2026-05-27-tier-1-5-operator-acknowledgment.md`](../../implementation-path/artifacts/2026-05-27-tier-1-5-operator-acknowledgment.md) | ✅ ACKNOWLEDGED |
+| T1.5-END | Tier 1.5 complete end-state declaration published | Engineering | [`2026-05-27-tier-1-5-complete-end-state.md`](../../implementation-path/artifacts/2026-05-27-tier-1-5-complete-end-state.md) | ✅ COMPLETE |
 
 ## Tier 1 — Domainless production-candidate completion
 

@@ -1,6 +1,6 @@
 # 13 — Tier 1.5 Completion Status
 
-> **Status**: Tracking artifact. All Tier 1.5 components are PENDING / NOT COMPLETE.
+> **Status**: Tier 1.5 COMPLETE / ACKNOWLEDGED. This tracker records the domainless production infrastructure milestone only; it is not a production-ready claim.
 > **Owner**: Engineering + Operator
 > **Last updated**: 2026-05-27
 > **Parent**: [`docs/production-readiness-v2/00b-tier-1.5-domainless-infrastructure.md`](./00b-tier-1.5-domainless-infrastructure.md)
@@ -21,10 +21,10 @@ Provide a single-page status tracker for the Tier 1.5 (domainless production inf
 | **PostgreSQL production deployment** | ✅ COMPLETE | [`2026-05-27-pg-production-deployment-signoff.md`](../implementation-path/artifacts/2026-05-27-pg-production-deployment-signoff.md): PG-P.1–PG-P.6 complete on target VM. |
 | **HA multi-node topology** | ✅ COMPLETE | [`2026-05-27-ha-multinode-topology-signoff.md`](../implementation-path/artifacts/2026-05-27-ha-multinode-topology-signoff.md): HA-M.1–HA-M.4 complete on same VM primary/standby topology. |
 | **Automated failover** | ✅ COMPLETE | [`2026-05-27-ha-automated-failover-signoff.md`](../implementation-path/artifacts/2026-05-27-ha-automated-failover-signoff.md): HA-A.1–HA-A.5 complete with three same-VM automated failover drills. |
-| **Operator acknowledgment** | ☐ NOT ACKNOWLEDGED | Pending |
-| **Docs/consistency** | ☐ NOT COMPLETE | Batch 1–3 engineering evidence docs created; final operator acknowledgment and end-state remain pending |
+| **Operator acknowledgment** | ✅ ACKNOWLEDGED | [`2026-05-27-tier-1-5-operator-acknowledgment.md`](../implementation-path/artifacts/2026-05-27-tier-1-5-operator-acknowledgment.md): operator acknowledged Tier 1.5 scope and non-claims. |
+| **Docs/consistency** | ✅ COMPLETE | [`2026-05-27-tier-1-5-complete-end-state.md`](../implementation-path/artifacts/2026-05-27-tier-1-5-complete-end-state.md): final Tier 1.5 end-state published. |
 
-**Verdict**: **Tier 1.5 domainless production infrastructure: ENGINEERING COMPLETE / ACKNOWLEDGMENT PENDING**
+**Verdict**: **Tier 1.5 domainless production infrastructure: COMPLETE / ACKNOWLEDGED**
 
 ---
 
@@ -40,7 +40,7 @@ Provide a single-page status tracker for the Tier 1.5 (domainless production inf
 | **automated failover component** | **COMPLETE ON SAME VM** — three automated drills passed; not a multi-host production HA claim. |
 | **Sustained SLO window** | **NO** — Bounded runs and drills only. No 7–30 day observation window. |
 | **Real domain** | **NO** — Tier 1.5 is explicitly domainless. |
-| **Operator final signoff** | **NO** — Tier 1.5 requires acknowledgment, not final production signoff. |
+| **Operator final production signoff** | **NO** — Tier 1.5 acknowledgment is complete, but final Tier 2 production posture signoff remains separate and pending. |
 
 ---
 
@@ -67,7 +67,9 @@ See [`docs/production-readiness-v2/00b-tier-1.5-domainless-infrastructure.md`](.
 - [`00-scope-and-nonclaims.md`](./00-scope-and-nonclaims.md) — Scope boundaries and master non-claims.
 - [`10-evidence-checklist.md`](./10-evidence-checklist.md) — Per-phase evidence checklist.
 - [`12-domainless-completion-status.md`](./12-domainless-completion-status.md) — Tier 1 completion tracker.
+- [`../implementation-path/artifacts/2026-05-27-tier-1-5-operator-acknowledgment.md`](../implementation-path/artifacts/2026-05-27-tier-1-5-operator-acknowledgment.md) — Tier 1.5 operator acknowledgment.
+- [`../implementation-path/artifacts/2026-05-27-tier-1-5-complete-end-state.md`](../implementation-path/artifacts/2026-05-27-tier-1-5-complete-end-state.md) — Tier 1.5 complete end-state declaration.
 
 ---
 
-*End of file — Tier 1.5 Completion Status (all items PENDING / NOT COMPLETE).*
+*End of file — Tier 1.5 Completion Status (COMPLETE / ACKNOWLEDGED; no production-ready claim).*

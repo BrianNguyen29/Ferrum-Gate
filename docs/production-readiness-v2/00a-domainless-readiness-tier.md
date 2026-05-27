@@ -1,6 +1,6 @@
 # 00a — Domainless Readiness Tier Model
 
-> **Status**: Tier 1 COMPLETE / ACKNOWLEDGED. This doc remains the canonical tiered readiness model definition.
+> **Status**: Tier 1 COMPLETE / ACKNOWLEDGED; Tier 1.5 COMPLETE / ACKNOWLEDGED. This doc remains the canonical tiered readiness model definition.
 > **Owner**: Engineering
 > **Last updated**: 2026-05-27
 > **Parent**: [`docs/production-readiness-v2/00-scope-and-nonclaims.md`](./00-scope-and-nonclaims.md)
@@ -83,7 +83,7 @@ Tier 1 is **not** production-ready. It is an intermediate milestone that says:
 - **Tier 1 does not deploy PostgreSQL to production**.
 - **Tier 1 does not validate a sustained SLO observation window**.
 - **Tier 1 does not require or claim a real owned domain**.
-- **Tier 1.5 is optional and not yet started**; when pursued, it remains not production-ready and does not close Block A or complete full G2.
+- **Tier 1.5 is complete/acknowledged**; it remains not production-ready and does not close Block A, complete full G2, validate a sustained SLO window, or claim multi-host production HA.
 
 ---
 
@@ -94,12 +94,14 @@ Tier 1 is **not** production-ready. It is an intermediate milestone that says:
 - [`docs/implementation-path/01-current-state.md`](../implementation-path/01-current-state.md) — Current state with Tier 1 completion status.
 - [`docs/ROADMAP.md`](../ROADMAP.md) — Milestone 0.5 (Domainless Production-Candidate) and phased completion roadmap.
 - [`docs/production-readiness-v2/12-domainless-completion-status.md`](./12-domainless-completion-status.md) — Tier 1 completion tracker.
-- [`docs/production-readiness-v2/00b-tier-1.5-domainless-infrastructure.md`](./00b-tier-1.5-domainless-infrastructure.md) — Tier 1.5 canonical definition (PLANNED / NOT COMPLETE).
-- [`docs/production-readiness-v2/13-tier-1.5-completion-status.md`](./13-tier-1.5-completion-status.md) — Tier 1.5 completion tracker (all items PENDING).
+- [`docs/production-readiness-v2/00b-tier-1.5-domainless-infrastructure.md`](./00b-tier-1.5-domainless-infrastructure.md) — Tier 1.5 canonical definition (COMPLETE / ACKNOWLEDGED).
+- [`docs/production-readiness-v2/13-tier-1.5-completion-status.md`](./13-tier-1.5-completion-status.md) — Tier 1.5 completion tracker.
+- [`docs/implementation-path/artifacts/2026-05-27-tier-1-5-complete-end-state.md`](../implementation-path/artifacts/2026-05-27-tier-1-5-complete-end-state.md) — Final Tier 1.5 end-state declaration.
+- [`docs/implementation-path/artifacts/2026-05-27-tier-1-5-operator-acknowledgment.md`](../implementation-path/artifacts/2026-05-27-tier-1-5-operator-acknowledgment.md) — Tier 1.5 operator acknowledgment record.
 - [`docs/implementation-path/artifacts/2026-05-26-domainless-candidate-plan.md`](../implementation-path/artifacts/2026-05-26-domainless-candidate-plan.md) — Tier 1 scope, B+C+HA-B work, expected evidence, and non-claims.
 - [`docs/implementation-path/artifacts/2026-05-26-domainless-tier1-complete-end-state.md`](../implementation-path/artifacts/2026-05-26-domainless-tier1-complete-end-state.md) — Final Tier 1 end-state declaration.
 - [`docs/implementation-path/artifacts/2026-05-26-domainless-tier1-operator-acknowledgment.md`](../implementation-path/artifacts/2026-05-26-domainless-tier1-operator-acknowledgment.md) — Operator acknowledgment record.
 
 ---
 
-*End of file — Domainless Readiness Tier Model. Tier 1 is complete/acknowledged; Tier 1.5 is planned/not complete; Tier 2 remains gated.*
+*End of file — Domainless Readiness Tier Model. Tier 1 and Tier 1.5 are complete/acknowledged; Tier 2 remains gated.*

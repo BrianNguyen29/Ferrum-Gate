@@ -1,6 +1,6 @@
 # 00b — Tier 1.5 Domainless Production Infrastructure
 
-> **Status**: PLANNED / NOT COMPLETE. This doc defines the Tier 1.5 framework only; no completion is claimed.
+> **Status**: COMPLETE / ACKNOWLEDGED. This doc defines the Tier 1.5 framework and links to the completed Tier 1.5 evidence set.
 > **Owner**: Engineering
 > **Last updated**: 2026-05-27
 > **Parent**: [`docs/production-readiness-v2/00a-domainless-readiness-tier.md`](./00a-domainless-readiness-tier.md)
@@ -127,9 +127,11 @@ Tier 1.5 is **not** production-ready. It is an infrastructure-layer milestone th
 - [`00a-domainless-readiness-tier.md`](./00a-domainless-readiness-tier.md) — Canonical tiered readiness model.
 - [`00-scope-and-nonclaims.md`](./00-scope-and-nonclaims.md) — Scope boundaries and master non-claims table.
 - [`13-tier-1.5-completion-status.md`](./13-tier-1.5-completion-status.md) — Tier 1.5 completion tracker.
+- [`docs/implementation-path/artifacts/2026-05-27-tier-1-5-complete-end-state.md`](../implementation-path/artifacts/2026-05-27-tier-1-5-complete-end-state.md) — Tier 1.5 complete end-state declaration.
+- [`docs/implementation-path/artifacts/2026-05-27-tier-1-5-operator-acknowledgment.md`](../implementation-path/artifacts/2026-05-27-tier-1-5-operator-acknowledgment.md) — Tier 1.5 operator acknowledgment record.
 - [`docs/implementation-path/01-current-state.md`](../implementation-path/01-current-state.md) — Current state with Tier 1 completion status.
 - [`docs/ROADMAP.md`](../ROADMAP.md) — Milestone 0.75 (Tier 1.5 framework) and phased completion roadmap.
 
 ---
 
-*End of file — Tier 1.5 Domainless Production Infrastructure definition. Tier 1.5 is PLANNED / NOT COMPLETE.*
+*End of file — Tier 1.5 Domainless Production Infrastructure definition. Tier 1.5 is COMPLETE / ACKNOWLEDGED; Tier 2 remains gated.*

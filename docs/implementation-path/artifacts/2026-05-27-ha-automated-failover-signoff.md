@@ -35,9 +35,9 @@ With Batch 3 complete, the engineering infrastructure components of Tier 1.5 are
 | PostgreSQL production deployment | ✅ COMPLETE |
 | HA multi-node topology | ✅ COMPLETE |
 | Automated failover | ✅ COMPLETE |
-| Operator acknowledgment | ☐ PENDING |
+| Operator acknowledgment | ✅ ACKNOWLEDGED |
 
-Tier 1.5 remains pending final operator acknowledgment and end-state publication before it can be marked `COMPLETE / ACKNOWLEDGED`.
+Tier 1.5 is now marked `COMPLETE / ACKNOWLEDGED` by the operator acknowledgment and final end-state artifacts.
 
 ---
 
@@ -59,6 +59,8 @@ Tier 1.5 remains pending final operator acknowledgment and end-state publication
 - [`2026-05-27-ha-automated-failover-drill-evidence.md`](./2026-05-27-ha-automated-failover-drill-evidence.md)
 - [`2026-05-27-ha-multinode-topology-signoff.md`](./2026-05-27-ha-multinode-topology-signoff.md)
 - [`2026-05-27-pg-production-deployment-signoff.md`](./2026-05-27-pg-production-deployment-signoff.md)
+- [`2026-05-27-tier-1-5-operator-acknowledgment.md`](./2026-05-27-tier-1-5-operator-acknowledgment.md)
+- [`2026-05-27-tier-1-5-complete-end-state.md`](./2026-05-27-tier-1-5-complete-end-state.md)
 
 ---
 

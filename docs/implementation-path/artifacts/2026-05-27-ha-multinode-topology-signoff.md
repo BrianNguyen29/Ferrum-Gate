@@ -103,19 +103,18 @@ With HA-M.1 to HA-M.4 complete, the HA multi-node topology component of Tier 1.5
 |-----------|--------|
 | PostgreSQL production deployment | ✅ COMPLETE (Batch 1) |
 | HA multi-node topology | ✅ COMPLETE (Batch 2) |
-| Automated failover | ☐ PENDING (Batch 3) |
-| Operator acknowledgment | ☐ PENDING |
+| Automated failover | ✅ COMPLETE (Batch 3) |
+| Operator acknowledgment | ✅ ACKNOWLEDGED |
 
 ---
 
-## 7. Next Steps (Batch 3)
+## 7. Follow-up Completion
 
-### Automated Failover
+Batch 3 automated failover and final Tier 1.5 acknowledgment were completed after this Batch 2 signoff:
 
-- Implement Patroni, repmgr, or custom watchdog
-- Add automatic promotion on primary failure
-- Implement fencing mechanisms (STONITH/witness/quorum)
-- Test failover scenarios (3 drills minimum)
+- [`2026-05-27-ha-automated-failover-signoff.md`](./2026-05-27-ha-automated-failover-signoff.md) — HA-A.1–HA-A.5 complete.
+- [`2026-05-27-tier-1-5-operator-acknowledgment.md`](./2026-05-27-tier-1-5-operator-acknowledgment.md) — Tier 1.5 operator acknowledgment.
+- [`2026-05-27-tier-1-5-complete-end-state.md`](./2026-05-27-tier-1-5-complete-end-state.md) — Tier 1.5 complete end-state declaration.
 
 ### Monitoring Enhancements
 
