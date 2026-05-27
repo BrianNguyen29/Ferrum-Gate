@@ -1,8 +1,8 @@
 # 09 — HA/Multi-Node Roadmap
 
-> **Status**: Phase 9 topology ADR selected. ADR approved as planning decision; local simulation added 2026-05-26; Tier 1.5 same-VM HA evidence complete; Phase 9 selected topology is two independent PostgreSQL hosts with streaming replication + PgBouncer/manual failover; multi-host production HA implementation remains NOT COMPLETE.
+> **Status**: Phase 9 multi-host manual evidence partially captured. ADR approved as planning decision; local simulation added 2026-05-26; Tier 1.5 same-VM HA evidence complete; Phase 9 deployed two independent PostgreSQL hosts with streaming replication + PgBouncer/manual failover evidence on 2026-05-27; multi-host production HA and automated failover remain NOT COMPLETE.
 > **Owner**: Engineering + Operator
-> **Last updated**: 2026-05-26
+> **Last updated**: 2026-05-27
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
 > **Scope**: [`00-scope-and-nonclaims.md`](00-scope-and-nonclaims.md)
 > **HA ADR**: [`docs/production-readiness-v2/ha-adr.md`](./ha-adr.md) — approved as planning decision 2026-05-21; no implementation claim
@@ -29,14 +29,15 @@ Design the path from single-node production to multi-node/HA, starting with an A
 - **Tier 1.5 same-VM HA evidence added 2026-05-27**: nonprod target PostgreSQL primary/standby streaming replication, same-VM automated failover drills, and operator acknowledgment are complete. See [`docs/production-readiness-v2/13-tier-1.5-completion-status.md`](./13-tier-1.5-completion-status.md).
 - **Phase 9 prerequisites unblocked 2026-05-27**: PostgreSQL foundation, security/tenant decisions, SLO metrics, and backup/restore evidence are now available for beginning the next HA workstream. See [`docs/implementation-path/artifacts/2026-05-27-ha-phase9-prerequisites-unblocked.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-prerequisites-unblocked.md).
 - **Phase 9 topology ADR selected 2026-05-27**: two independent PostgreSQL hosts/VMs with streaming replication, PgBouncer routing, and manual/operator-controlled failover drills before any automated multi-host claim. See [`2026-05-27-ha-phase9-multihost-topology-adr.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-multihost-topology-adr.md).
-- Multi-host production HA remains NOT COMPLETE.
+- **Phase 9 multi-host manual drill evidence captured 2026-05-27**: host A `ferrumgate-nonprod` (`10.0.0.2`) and host B `ferrumgate-pg-ha-b` (`10.0.0.3`) were configured with PostgreSQL streaming replication; manual failover A→B restored ferrumd readiness with RTO 246s and observed RPO 0 marker loss; bounded partition check confirmed host A stayed read-only. See [`2026-05-27-ha-phase9-multihost-drill-evidence.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-multihost-drill-evidence.md).
+- Multi-host production HA and multi-host automated failover remain NOT COMPLETE.
 
 ## Gaps
 
 | Gap | Severity | Why |
 |-----|----------|-----|
-| Multi-host production HA NOT COMPLETE | Critical | Tier 1.5 evidence is same-VM only; independent-host failover evidence is still required before any production HA claim |
-| Operator-environment Phase 9 HA-4/HA-5 evidence missing | Critical | Multi-host automated failover and RPO/RTO measurement have not been executed |
+| Multi-host production HA NOT COMPLETE | Critical | One manual independent-host drill exists, but production HA still requires repeated drills, fencing/automation decision, and operator production posture signoff |
+| Operator-environment Phase 9 HA-4 evidence missing | Critical | Multi-host automated failover has not been executed and no fencing/STONITH/consensus design is approved |
 | Read replica implementation deferred | High | Read scaling design exists; code/deployment require follow-up ADR/implementation |
 | Sustained SLO window missing | High | Available SLO evidence is bounded/canonical, not a 7–30 day observation window |
 
@@ -56,7 +57,7 @@ Design the path from single-node production to multi-node/HA, starting with an A
 - [x] ferrumd reconnect/reroute procedure. — **DOCUMENTED** in [`manual-failover-runbook.md`](./manual-failover-runbook.md) §5.
 - [x] RPO/RTO expectations documented. — **DOCUMENTED** in [`manual-failover-runbook.md`](./manual-failover-runbook.md) §6 and [`ha-adr.md`](./ha-adr.md) §3.
 - [x] RPO/RTO measured during local simulation drill. — **LOCAL EVIDENCE** 2026-05-26; latest RTO 3 s, RPO 0 rows lost. See [`docs/implementation-path/artifacts/2026-05-26-ha-local-failover-simulation-evidence.md`](../../implementation-path/artifacts/2026-05-26-ha-local-failover-simulation-evidence.md).
-- [ ] RPO/RTO measured during multi-host/operator-environment drill. — **OPEN** for Phase 9 follow-up; prerequisites are unblocked, but evidence does not exist yet.
+- [x] RPO/RTO measured during multi-host/operator-environment drill. — **MANUAL EVIDENCE CAPTURED** 2026-05-27; one A→B drill measured RTO 246s and observed RPO 0 marker loss. This does not complete automated failover or production HA.
 
 ### HA-3 — Read replicas
 
@@ -87,7 +88,7 @@ See [`2026-05-27-ha-phase9-prerequisites-unblocked.md`](../../implementation-pat
 
 - [x] HA ADR approved as planning decision.
 - [x] Manual failover drill passes with measured RPO/RTO locally. — **LOCAL ONLY** 2026-05-26.
-- [ ] Multi-host/operator-environment failover drill passes with measured RPO/RTO.
+- [x] Multi-host/operator-environment failover drill passes with measured RPO/RTO. — **ONE MANUAL DRILL ONLY** 2026-05-27; 3+ multi-host drills and automated/fenced failover remain open.
 - [ ] Read replica behavior implemented and tested.
 - [x] Tenant/security model stable enough to begin Phase 9 planning; automated failover evidence remains open for multi-host/operator-environment scope.
 
@@ -96,7 +97,7 @@ See [`2026-05-27-ha-phase9-prerequisites-unblocked.md`](../../implementation-pat
 - `ha-adr.md`
 - [`2026-05-27-ha-phase9-multihost-topology-adr.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-multihost-topology-adr.md) — selected Phase 9 multi-host topology ADR; no implementation/evidence claim
 - `manual-failover-runbook.md` (planning artifact; no live drill)
-- `manual-failover-drill-evidence.md` — local simulation [`2026-05-26-ha-local-failover-simulation-evidence.md`](../../implementation-path/artifacts/2026-05-26-ha-local-failover-simulation-evidence.md) exists; operator-environment drill deferred
+- `manual-failover-drill-evidence.md` — local simulation [`2026-05-26-ha-local-failover-simulation-evidence.md`](../../implementation-path/artifacts/2026-05-26-ha-local-failover-simulation-evidence.md) exists; operator-environment manual drill captured in [`2026-05-27-ha-phase9-multihost-drill-evidence.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-multihost-drill-evidence.md)
 - `read-replica-design.md` (planning artifact; no implementation)
 - `read-replica-test-evidence.md` (deferred until operator environment ready)
 - [`2026-05-27-ha-phase9-prerequisites-unblocked.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-prerequisites-unblocked.md) — prerequisite unblock notice; no multi-host HA claim
@@ -106,7 +107,7 @@ See [`2026-05-27-ha-phase9-prerequisites-unblocked.md`](../../implementation-pat
 - **NOT multi-host production HA yet**: This is a roadmap/prerequisite notice; local simulation and Tier 1.5 same-VM HA exist but do not prove independent-host HA.
 - **NOT production-ready**: HA is explicitly out of scope for production-ready claim.
 - **NOT Phase 9 automated failover complete**: Same-VM Tier 1.5 automated failover exists, but Phase 9 multi-host/operator-environment automated failover evidence remains open.
-- **NOT true multi-node production HA**: Local simulation and Tier 1.5 topology share host fate.
+- **NOT true multi-node production HA**: One manual multi-host drill exists, but repeated drills, fencing/automation, monitoring/incident evidence, and production signoff remain incomplete.
 
 ## Related docs
 

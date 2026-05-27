@@ -227,7 +227,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 
 ## Phase 9 — HA/multi-node
 
-> **Status updated 2026-05-27**: Phase 9 prerequisites are unblocked and multi-host topology ADR is selected for follow-up planning/execution preparation. HA-2 manual failover runbook exists; local simulation drill passed (latest RTO 3 s, RPO 0 rows lost); Tier 1.5 same-VM HA topology and automated failover evidence are complete. Multi-host/operator-environment HA-4/HA-5 evidence remains open.
+> **Status updated 2026-05-27**: Phase 9 prerequisites are unblocked, multi-host topology ADR is selected, and one multi-host/operator-environment manual failover drill has been captured. HA-2 manual failover runbook exists; local simulation drill passed (latest RTO 3 s, RPO 0 rows lost); Tier 1.5 same-VM HA topology and automated failover evidence are complete. Multi-host automated failover and production HA remain open.
 > **Template**: `TEMPLATE-ha-multinode-evidence-pack.md` prepared for eventual HA evidence (requires real drills).
 > **Runbook**: `HA-multi-node-evidence-runbook.md` provides detailed failover drill procedure, RPO/RTO measurement template, read replica validation checklist, and rollback criteria for operator execution.
 
@@ -241,8 +241,9 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 | 9.3 | HA-3: Read replica behavior designed | Engineering | `docs/production-readiness-v2/read-replica-design.md` | ✅ PLANNING ARTIFACT COMPLETE — design doc exists; no implementation; no replica deployed |
 | 9.3a | Phase 9 HA prerequisites unblocked | Engineering + Operator | [`2026-05-27-ha-phase9-prerequisites-unblocked.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-prerequisites-unblocked.md) | ✅ UNBLOCKED FOR PLANNING — PG foundation, security model, SLO metrics, and backup/restore evidence exist; no multi-host HA claim |
 | 9.3b | Phase 9 multi-host topology ADR selected | Engineering + Operator | [`2026-05-27-ha-phase9-multihost-topology-adr.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-multihost-topology-adr.md) | ✅ ADR COMPLETE — selected two independent PostgreSQL hosts + streaming replication + PgBouncer/manual failover for future evidence; no multi-host HA claim |
+| 9.3c | Phase 9 multi-host manual failover drill captured | Engineering + Operator | [`2026-05-27-ha-phase9-multihost-drill-evidence.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-multihost-drill-evidence.md) | ✅ MANUAL EVIDENCE — two independent PostgreSQL VMs, streaming replication, A→B manual promotion, PgBouncer reroute, RTO 246s, observed RPO 0 marker loss; not automated failover or production HA |
 | 9.4 | HA-4: Automated failover drill pass (deferred) | Engineering + Operator | Failover drill log | ☐ |
-| 9.5 | RPO/RTO measured for HA scenario in operator environment | Engineering | Measurement log | ☐ |
+| 9.5 | RPO/RTO measured for HA scenario in operator environment | Engineering | [`2026-05-27-ha-phase9-multihost-drill-evidence.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-multihost-drill-evidence.md) | ✅ ONE MANUAL DRILL — RTO 246s, observed RPO 0 marker loss; 3+ repeated drills remain incomplete |
 
 ## Tier 1.5 — Domainless production infrastructure
 
@@ -316,8 +317,8 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 - **NOT full G2**: Conditional re-signoff on 2026-05-21 applies to single-node SQLite pilot only. Full G2 closure requires Block A resolution + operator final signoff.
 - **NOT canonical SLO for all configs**: SLO PASS claimed only for max-valid rate-limit configuration (1000/10000). Default and tuned configs failed.
 - **NOT production K8s/HA**: Helm live install verified on local kind cluster only.
-- **NOT production HA**: HA local simulation is Docker Compose on a single host with manual promotion. No automated failover, no multi-node, no production claim.
-- **NOT automated failover**: `ha-local-failover-drill` and `ha-local-ferrumd-reconnect-drill` use manual `pg_promote()` and ferrumd restart. No automatic failover mechanism exists.
+- **NOT production HA**: HA local simulation and one multi-host manual drill exist, but production HA requires repeated drills, fencing/automation decision, monitoring/incident evidence, and final operator signoff.
+- **NOT multi-host automated failover**: Phase 9 multi-host evidence uses manual/operator-controlled promotion and PgBouncer reroute. No multi-host automatic failover mechanism is complete.
 
 ## Related docs
 
