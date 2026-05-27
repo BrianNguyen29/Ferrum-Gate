@@ -2,7 +2,7 @@
 
 > **Status**: Planning artifact. Not a claim of readiness.
 > **Owner**: Engineering
-> **Last updated**: 2026-05-21
+> **Last updated**: 2026-05-27
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
 
 ---
@@ -49,6 +49,7 @@ Lock the scope of the post-conditional-pilot production path and make all non-cl
 | **Scoped auth/RBAC = PARTIAL** | Scoped tokens and RBAC middleware implemented; tenant model and OIDC deferred. |
 | **Multi-tenant = NO** | No tenant isolation exists. |
 | **Tier 1 = domainless production-candidate COMPLETE / ACKNOWLEDGED** | B+C+HA-B engineering evidence complete and operator acknowledged on 2026-05-26; NOT production-ready; real domain still required for Tier 2. See [`00a-domainless-readiness-tier.md`](./00a-domainless-readiness-tier.md) and [`12-domainless-completion-status.md`](./12-domainless-completion-status.md). |
+| **Tier 1.5 = domainless production infrastructure PLANNED / NOT COMPLETE** | Optional final intermediate tier. PostgreSQL production deployment, HA multi-node topology, and automated failover are planned but not started. `production-ready = NO` remains explicit. `full G2 = NOT COMPLETE` remains explicit. `Block A = WAIVED/CONDITIONAL` remains explicit. See [`00b-tier-1.5-domainless-infrastructure.md`](./00b-tier-1.5-domainless-infrastructure.md) and [`13-tier-1.5-completion-status.md`](./13-tier-1.5-completion-status.md). |
 
 ## Scope boundaries
 
@@ -81,6 +82,7 @@ See [`docs/ROADMAP.md` §"Naming crosswalk"](../../ROADMAP.md#naming-crosswalk) 
 | conditional pilot | Single-node SQLite deployment with operator signoff for bounded evaluation; not production-ready. |
 | production-ready | Requires: real domain + revalidation + G2 re-signoff + SLO evidence window + operator final signoff. Maps to Tier 2 only. |
 | domainless production-candidate | Tier 1 milestone: B+C+HA-B engineering evidence complete; credible production candidate without real domain; NOT production-ready. |
+| domainless production infrastructure complete | Tier 1.5 milestone: PostgreSQL production deployment, HA multi-node topology, and automated failover evidence complete; still NOT production-ready and still domainless. |
 | WAIVED/CONDITIONAL | Blocker is acknowledged but not resolved; accepted for current pilot scope only. |
 
 ## Acceptance criteria
@@ -103,7 +105,8 @@ evidence planning layer.
 
 ## Related docs
 
-- [`docs/production-readiness-v2/00a-domainless-readiness-tier.md`](./00a-domainless-readiness-tier.md) — Canonical three-tier readiness model (Tier 0 / Tier 1 / Tier 2).
+- [`docs/production-readiness-v2/00a-domainless-readiness-tier.md`](./00a-domainless-readiness-tier.md) — Canonical tiered readiness model.
+- [`docs/production-readiness-v2/00b-tier-1.5-domainless-infrastructure.md`](./00b-tier-1.5-domainless-infrastructure.md) — Tier 1.5 framework (PLANNED / NOT COMPLETE).
 - [`docs/ROADMAP.md`](../../ROADMAP.md) — Parent roadmap with full gap analysis and phase plan.
 - [`docs/implementation-path/67-production-readiness-roadmap.md`](../../implementation-path/67-production-readiness-roadmap.md) — Prior v1 production-readiness tracker.
 - [`docs/PRODUCTION_NOTES.md`](../../PRODUCTION_NOTES.md) — Runtime configuration and stress baselines.

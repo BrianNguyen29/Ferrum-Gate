@@ -10,7 +10,7 @@
 
 ## Executive Summary
 
-One item remains open (`BLK-A-DOM`) between Tier 1 (domainless production-candidate) and Tier 2 (production-ready / domain-backed). The other six blockers have been unblocked or completed as of 2026-05-21. This doc orders them, assigns owners, states prerequisites, and lists the exact next action for each. It does not claim production-ready status or full G2 closure. See [`00a-domainless-readiness-tier.md`](./00a-domainless-readiness-tier.md) for the canonical three-tier model.
+One item remains open (`BLK-A-DOM`) between the domainless intermediate tiers and Tier 2 (production-ready / domain-backed). The other six blockers have been unblocked or completed as of 2026-05-21. This doc orders them, assigns owners, states prerequisites, and lists the exact next action for each. It does not claim production-ready status or full G2 closure. See [`00a-domainless-readiness-tier.md`](./00a-domainless-readiness-tier.md) for the canonical tiered readiness model.
 
 **Conditional signoff**: BrianNguyen authorized conditional re-signoff for single-node SQLite pilot scope on 2026-05-21. Full G2 closure remains NOT COMPLETE.
 
@@ -276,7 +276,7 @@ For each blocker resolution, use the following artifact paths:
 
 ## Cross-references
 
-- [`00a-domainless-readiness-tier.md`](./00a-domainless-readiness-tier.md) — Canonical three-tier readiness model
+- [`00a-domainless-readiness-tier.md`](./00a-domainless-readiness-tier.md) — Canonical tiered readiness model
 - [`01-slo-sla.md`](./01-slo-sla.md) — SLO/SLA draft and targets
 - [`slo-validation-runbook.md`](./slo-validation-runbook.md) — Repeatable validation procedure
 - [`03-target-mcp-live-workload-plan.md`](./03-target-mcp-live-workload-plan.md) — MCP target-host plan

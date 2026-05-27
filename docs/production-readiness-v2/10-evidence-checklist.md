@@ -70,7 +70,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 > **Runbook**: `PG-production-evidence-pack-runbook.md` provides concrete capture commands, redaction rules, pass/fail criteria, and rollback checks for operator execution.
 
 | # | Item | Owner | Evidence | Status |
-|---|---|------|-------|----------|--------|
+|---|------|-------|----------|--------|
 | 1.1 | PG-1.1: PostgreSQL target/staging provisioned | Engineering | `docs/implementation-path/artifacts/2026-05-18-pg-target-deployment-evidence.md` §PG-1.1 | ✅ COMPLETE — local Docker fallback |
 | 1.2 | PG-1.2: ferrumd starts with postgres DSN | Engineering | `docs/implementation-path/artifacts/2026-05-18-pg-target-deployment-evidence.md` §PG-1.2 | ✅ COMPLETE — local Docker fallback |
 | 1.3 | PG-1.3: `/v1/readyz/deep` reports PG health (200) | Engineering | `docs/implementation-path/artifacts/2026-05-18-pg-target-deployment-evidence.md` §PG-1.3 | ✅ COMPLETE — local Docker fallback |
@@ -231,7 +231,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 > **Runbook**: `HA-multi-node-evidence-runbook.md` provides detailed failover drill procedure, RPO/RTO measurement template, read replica validation checklist, and rollback criteria for operator execution.
 
 | # | Item | Owner | Evidence | Status |
-|---|------|-------|----------|--------|
+|---|---|------|-------|----------|--------|
 | 9.1 | HA-1: HA ADR approved as planning decision | Engineering + Operator | `docs/production-readiness-v2/ha-adr.md` signoff | ✅ APPROVED AS PLANNING DECISION — operator delegate signoff recorded 2026-05-21; no implementation claim; no HA claim |
 | 9.2 | HA-2: Manual failover runbook drafted | Engineering + Operator | `docs/production-readiness-v2/manual-failover-runbook.md` | ✅ PLANNING ARTIFACT COMPLETE — runbook exists; no live drill performed; no HA claim |
 | 9.2a | HA-B: Local HA simulation (primary + standby streaming replication) | Engineering | `docker-compose.ha-local.yml` + `scripts/setup_ha_local.sh` | ✅ LOCAL EVIDENCE — Docker Compose streaming replication simulation; local only; not production HA |
@@ -240,6 +240,34 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 | 9.3 | HA-3: Read replica behavior designed | Engineering | `docs/production-readiness-v2/read-replica-design.md` | ✅ PLANNING ARTIFACT COMPLETE — design doc exists; no implementation; no replica deployed |
 | 9.4 | HA-4: Automated failover drill pass (deferred) | Engineering + Operator | Failover drill log | ☐ |
 | 9.5 | RPO/RTO measured for HA scenario in operator environment | Engineering | Measurement log | ☐ |
+
+## Tier 1.5 — Domainless production infrastructure
+
+> **Status**: PLANNED / NOT COMPLETE. Tier 1.5 is the optional, final intermediate tier between Tier 1 and Tier 2. It represents infrastructure-layer completeness (PostgreSQL production deployment, HA multi-node topology, automated failover) without claiming production-ready status.
+> **Canonical definition**: [`docs/production-readiness-v2/00b-tier-1.5-domainless-infrastructure.md`](../../production-readiness-v2/00b-tier-1.5-domainless-infrastructure.md)
+> **Completion tracker**: [`docs/production-readiness-v2/13-tier-1.5-completion-status.md`](../../production-readiness-v2/13-tier-1.5-completion-status.md)
+
+### Tier 1.5 acceptance checklist placeholders
+
+| # | Item | Owner | Evidence | Status |
+|---|---|------|-------|----------|--------|
+| T1.5-PG-P.1 | PostgreSQL target deployment provisioned and reachable | Engineering + Operator | PG target deployment signoff | ☐ NOT STARTED |
+| T1.5-PG-P.2 | ferrumd starts with production postgres DSN; readyz/deep 200 | Engineering + Operator | Deployment evidence artifact | ☐ NOT STARTED |
+| T1.5-PG-P.3 | TLS/SSL encrypted DSN validated or operator waiver documented | Engineering + Operator | TLS DSN evidence artifact | ☐ NOT STARTED |
+| T1.5-PG-P.4 | PgBouncer or equivalent connection-pooling story operational | Engineering + Operator | PgBouncer evidence artifact | ☐ NOT STARTED |
+| T1.5-PG-P.5 | Backup/restore drill passes with row counts and hash checks | Engineering + Operator | Backup/restore drill evidence | ☐ NOT STARTED |
+| T1.5-PG-P.6 | Alert rules deployed to live Prometheus and validated | Engineering + Operator | Alert deployment evidence artifact | ☐ NOT STARTED |
+| T1.5-HA-M.1 | At least two-node PG primary/standby streaming replication deployed | Engineering + Operator | HA topology evidence artifact | ☐ NOT STARTED |
+| T1.5-HA-M.2 | Read/write routing documented and validated | Engineering + Operator | Routing validation evidence | ☐ NOT STARTED |
+| T1.5-HA-M.3 | Replication lag measured and within acceptable bounds | Engineering + Operator | Lag measurement log | ☐ NOT STARTED |
+| T1.5-HA-M.4 | Fencing or split-brain prevention mechanism designed and documented | Engineering + Operator | Fencing design doc | ☐ NOT STARTED |
+| T1.5-HA-A.1 | Failover occurs without manual `pg_promote` | Engineering + Operator | Failover drill log | ☐ NOT STARTED |
+| T1.5-HA-A.2 | ferrumd reconnects to new primary without manual restart | Engineering + Operator | Reconnect drill log | ☐ NOT STARTED |
+| T1.5-HA-A.3 | RTO and RPO measured and documented | Engineering + Operator | RTO/RPO measurement log | ☐ NOT STARTED |
+| T1.5-HA-A.4 | No split-brain observed during or after failover | Engineering + Operator | Incident log / consistency check | ☐ NOT STARTED |
+| T1.5-HA-A.5 | At least three failover drills performed with pass evidence | Engineering + Operator | Drill evidence artifacts (×3) | ☐ NOT STARTED |
+| T1.5-ACK | Operator acknowledgment of Tier 1.5 scope and non-claims | Operator | Tier 1.5 operator acknowledgment artifact | ☐ NOT STARTED |
+| T1.5-END | Tier 1.5 complete end-state declaration published | Engineering | Tier 1.5 complete end-state artifact | ☐ NOT STARTED |
 
 ## Tier 1 — Domainless production-candidate completion
 

@@ -1550,7 +1550,44 @@ Reach Tier 1 (domainless production-candidate) by completing B+C+HA-B engineerin
 - Tier 1 does **not** implement production HA/multi-node; HA-B is local Docker simulation only.
 - Tier 1 does **not** require or claim a real owned domain.
 
-See [`docs/production-readiness-v2/00a-domainless-readiness-tier.md`](./production-readiness-v2/00a-domainless-readiness-tier.md) for the canonical three-tier model.
+See [`docs/production-readiness-v2/00a-domainless-readiness-tier.md`](./production-readiness-v2/00a-domainless-readiness-tier.md) for the canonical tiered readiness model.
+
+### Milestone 0.75 — “Tier 1.5 Domainless Production Infrastructure” ☐ PLANNED / NOT COMPLETE
+
+**Objective:**
+
+Reach Tier 1.5 (domainless production infrastructure complete) by completing PostgreSQL production deployment, HA multi-node topology, and automated failover evidence in an operator environment — without requiring a real owned domain. Tier 1.5 is the optional, final intermediate tier; no further subtier may be introduced without a written ADR and explicit operator acknowledgment.
+
+**Status:**
+
+- **PLANNED / NOT COMPLETE** as of 2026-05-27.
+- Canonical definition: [`docs/production-readiness-v2/00b-tier-1.5-domainless-infrastructure.md`](./production-readiness-v2/00b-tier-1.5-domainless-infrastructure.md)
+- Completion tracker: [`docs/production-readiness-v2/13-tier-1.5-completion-status.md`](./production-readiness-v2/13-tier-1.5-completion-status.md)
+
+**Scope:**
+
+- **PostgreSQL production deployment**: Target/staging PostgreSQL provisioned, ferrumd starts with production DSN, `/v1/readyz/deep` reports PG health, TLS/SSL DSN validated, PgBouncer operational, backup/restore drill passes, alert rules deployed and validated.
+- **HA multi-node topology**: At least two-node PostgreSQL primary/standby streaming replication deployed, read/write routing validated, replication lag measured, fencing/split-brain prevention documented.
+- **Automated failover**: Failover without manual `pg_promote`, ferrumd reconnect without manual restart, RTO/RPO measured, no split-brain, at least three drills with evidence.
+
+**Exit criteria (none satisfied):**
+
+- PostgreSQL production deployment evidence complete. ☐
+- HA multi-node topology evidence complete. ☐
+- Automated failover evidence complete. ☐
+- Operator acknowledges Tier 1.5 scope and non-claims. ☐
+- `production-ready = NO` remains explicit. ✅ (preserved by framework)
+- `full G2 = NOT COMPLETE` remains explicit. ✅ (preserved by framework)
+- `Block A = WAIVED/CONDITIONAL` remains explicit. ✅ (preserved by framework)
+
+**Non-claims (preserved):**
+
+- Tier 1.5 is **not** production-ready.
+- Tier 1.5 does **not** close Block A.
+- Tier 1.5 does **not** complete full G2.
+- Tier 1.5 does **not** validate a sustained SLO observation window.
+- Tier 1.5 does **not** require or claim a real owned domain.
+- Tier 1.5 does **not** replace operator final signoff for Tier 2.
 
 ### Milestone 1 — “Production Foundation without Domain”
 
