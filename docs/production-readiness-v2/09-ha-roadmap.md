@@ -31,6 +31,7 @@ Design the path from single-node production to multi-node/HA, starting with an A
 - **Phase 9 topology ADR selected 2026-05-27**: two independent PostgreSQL hosts/VMs with streaming replication, PgBouncer routing, and manual/operator-controlled failover drills before any automated multi-host claim. See [`2026-05-27-ha-phase9-multihost-topology-adr.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-multihost-topology-adr.md).
 - **Phase 9 multi-host manual drill evidence captured 2026-05-27**: host A `ferrumgate-nonprod` (`10.0.0.2`) and host B `ferrumgate-pg-ha-b` (`10.0.0.3`) were configured with PostgreSQL streaming replication; four manual drills passed, including A→B failover and B→A failback, with observed RPO 0 marker loss and RTO improving from 246s to 22s after TLS/config parity fixes; bounded partition check confirmed standby stayed read-only. See [`2026-05-27-ha-phase9-multihost-drill-evidence.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-multihost-drill-evidence.md).
 - **Phase 9 automated failover/fencing ADR drafted 2026-05-27**: next safe step selected as automated detection + operator-confirmed manual promotion; automatic promotion without fencing is rejected. See [`2026-05-27-ha-phase9-automated-failover-fencing-adr.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-automated-failover-fencing-adr.md).
+- **Phase 9 detection-only watchdog evidence captured 2026-05-27**: detection-only watchdog installed/enabled on both hosts; healthy and alert paths verified without auto-promotion; PostgreSQL TLS/WAL parity normalized; Alertmanager service/API mismatch resolved as unit-name mismatch (`prometheus-alertmanager.service`). See [`2026-05-27-ha-phase9-watchdog-config-parity-evidence.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-watchdog-config-parity-evidence.md).
 - Multi-host production HA and multi-host automated failover remain NOT COMPLETE.
 
 ## Gaps
@@ -51,6 +52,7 @@ Design the path from single-node production to multi-node/HA, starting with an A
 - [x] Operator review and signoff of [`ha-adr.md`](./ha-adr.md). — **APPROVED AS PLANNING DECISION** 2026-05-21 (no implementation claim; no HA claim).
 - [x] Phase 9 multi-host topology ADR selected. — **PLANNING ADR COMPLETE** 2026-05-27: two independent PostgreSQL hosts + streaming replication + PgBouncer/manual failover. No multi-host HA claim.
 - [x] Phase 9 automated failover/fencing ADR drafted. — **ADR COMPLETE** 2026-05-27: selected automated detection + operator-confirmed manual promotion; rejected auto-promotion without fencing. No HA-4 completion claim.
+- [x] Detection-only/manual-promotion watchdog installed and verified. — **DETECTION ONLY** 2026-05-27: no auto-promotion, no fencing, no HA-4 completion claim.
 
 ### HA-2 — Manual failover
 
@@ -99,6 +101,7 @@ See [`2026-05-27-ha-phase9-prerequisites-unblocked.md`](../../implementation-pat
 - `ha-adr.md`
 - [`2026-05-27-ha-phase9-multihost-topology-adr.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-multihost-topology-adr.md) — selected Phase 9 multi-host topology ADR; no implementation/evidence claim
 - [`2026-05-27-ha-phase9-automated-failover-fencing-adr.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-automated-failover-fencing-adr.md) — selected detection-only/manual-promotion path; rejects auto-promotion without fencing
+- [`2026-05-27-ha-phase9-watchdog-config-parity-evidence.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-watchdog-config-parity-evidence.md) — detection-only watchdog, config parity, and Alertmanager unit evidence; no HA-4 completion claim
 - `manual-failover-runbook.md` (planning artifact; no live drill)
 - `manual-failover-drill-evidence.md` — local simulation [`2026-05-26-ha-local-failover-simulation-evidence.md`](../../implementation-path/artifacts/2026-05-26-ha-local-failover-simulation-evidence.md) exists; operator-environment manual drill captured in [`2026-05-27-ha-phase9-multihost-drill-evidence.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-multihost-drill-evidence.md)
 - `read-replica-design.md` (planning artifact; no implementation)

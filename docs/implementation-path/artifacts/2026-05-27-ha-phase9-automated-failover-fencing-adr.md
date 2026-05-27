@@ -59,6 +59,8 @@ Non-goals for this ADR:
 - No HA-4 completion claim.
 - No production HA claim.
 
+Implementation evidence for this selected next step was captured in [`2026-05-27-ha-phase9-watchdog-config-parity-evidence.md`](./2026-05-27-ha-phase9-watchdog-config-parity-evidence.md). The watchdog implementation remains detection-only and does not complete HA-4.
+
 ---
 
 ## 4. Gates Required Before HA-4 Automated Failover Can Be Checked
