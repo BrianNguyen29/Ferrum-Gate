@@ -33,6 +33,7 @@ Design the path from single-node production to multi-node/HA, starting with an A
 - **Phase 9 automated failover/fencing ADR drafted 2026-05-27**: next safe step selected as automated detection + operator-confirmed manual promotion; automatic promotion without fencing is rejected. See [`2026-05-27-ha-phase9-automated-failover-fencing-adr.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-automated-failover-fencing-adr.md).
 - **Phase 9 detection-only watchdog evidence captured 2026-05-27**: detection-only watchdog installed/enabled on both hosts; healthy and alert paths verified without auto-promotion; PostgreSQL TLS/WAL parity normalized; Alertmanager service/API mismatch resolved as unit-name mismatch (`prometheus-alertmanager.service`). See [`2026-05-27-ha-phase9-watchdog-config-parity-evidence.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-watchdog-config-parity-evidence.md).
 - **Phase 9 GCP fencing mechanism evidence captured 2026-05-27**: `scripts/gcp/phase9_fencing.sh` validated (`bash -n` pass); dry-run confirmed no action; app-host guard blocked fencing of `ferrumgate-nonprod` without `--force-app-host`; real safe fencing test on standby host B succeeded (instance `TERMINATED`, host A remained primary and app healthy); recovery succeeded (VM restart, PostgreSQL manual start, B returned to standby, A replication verified). This is fencing-mechanism evidence only, not HA-4 automated failover. See [`2026-05-27-ha-phase9-gcp-fencing-evidence.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-gcp-fencing-evidence.md).
+- **Phase 9 host B redundancy fenced-drill evidence captured 2026-05-27**: host B PgBouncer/ferrumd redundancy was prepared; a bounded operator-controlled fenced drill stopped host A, promoted host B, started host B app/PgBouncer, reached readyz/deep healthy in 69s with RPO 0 marker loss, and then failed back to A-primary/B-standby. This is not unattended HA-4 automation and has no external endpoint cutover claim. See [`2026-05-27-ha-phase9-host-b-redundancy-fenced-drill-evidence.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-host-b-redundancy-fenced-drill-evidence.md).
 - Multi-host production HA and multi-host automated failover remain NOT COMPLETE.
 
 ## Gaps
@@ -40,7 +41,7 @@ Design the path from single-node production to multi-node/HA, starting with an A
 | Gap | Severity | Why |
 |-----|----------|-----|
 | Multi-host production HA NOT COMPLETE | Critical | Manual independent-host drills exist, but production HA still requires automated/fenced failover evidence, full incident-response signoff, and operator production posture signoff |
-| Operator-environment Phase 9 HA-4 evidence missing | Critical | Multi-host automated failover has not been executed; ADR selects detection-only/manual promotion until fencing gates pass. GCP fencing script exists and was tested on standby host B only; app-host SPOF still blocks safe host-A fencing and automated HA-4 |
+| Operator-environment Phase 9 HA-4 evidence missing | Critical | Bounded operator-controlled fenced failover has been demonstrated with host B redundancy, but unattended fencing/promotion/routing automation and external endpoint cutover have not been executed |
 | Read replica implementation deferred | High | Read scaling design exists; code/deployment require follow-up ADR/implementation |
 | Sustained SLO window missing | High | Available SLO evidence is bounded/canonical, not a 7–30 day observation window |
 
@@ -54,6 +55,7 @@ Design the path from single-node production to multi-node/HA, starting with an A
 - [x] Phase 9 multi-host topology ADR selected. — **PLANNING ADR COMPLETE** 2026-05-27: two independent PostgreSQL hosts + streaming replication + PgBouncer/manual failover. No multi-host HA claim.
 - [x] Phase 9 automated failover/fencing ADR drafted. — **ADR COMPLETE** 2026-05-27: selected automated detection + operator-confirmed manual promotion; rejected auto-promotion without fencing. No HA-4 completion claim.
 - [x] Detection-only/manual-promotion watchdog installed and verified. — **DETECTION ONLY** 2026-05-27: no auto-promotion, no fencing, no HA-4 completion claim.
+- [x] Host B PgBouncer/ferrumd redundancy and bounded fenced drill captured. — **OPERATOR-CONTROLLED ONLY** 2026-05-27: host A fenced, host B promoted and served readyz/deep, failback restored; no unattended HA-4 completion claim.
 
 ### HA-2 — Manual failover
 
@@ -105,6 +107,7 @@ See [`2026-05-27-ha-phase9-prerequisites-unblocked.md`](../../implementation-pat
 - [`2026-05-27-ha-phase9-multihost-topology-adr.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-multihost-topology-adr.md) — selected Phase 9 multi-host topology ADR; no implementation/evidence claim
 - [`2026-05-27-ha-phase9-automated-failover-fencing-adr.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-automated-failover-fencing-adr.md) — selected detection-only/manual-promotion path; rejects auto-promotion without fencing
 - [`2026-05-27-ha-phase9-watchdog-config-parity-evidence.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-watchdog-config-parity-evidence.md) — detection-only watchdog, config parity, and Alertmanager unit evidence; no HA-4 completion claim
+- [`2026-05-27-ha-phase9-host-b-redundancy-fenced-drill-evidence.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-host-b-redundancy-fenced-drill-evidence.md) — host B app/PgBouncer redundancy and bounded operator-controlled fenced failover; no unattended HA-4 or production HA claim
 - `manual-failover-runbook.md` (planning artifact; no live drill)
 - `manual-failover-drill-evidence.md` — local simulation [`2026-05-26-ha-local-failover-simulation-evidence.md`](../../implementation-path/artifacts/2026-05-26-ha-local-failover-simulation-evidence.md) exists; operator-environment manual drill captured in [`2026-05-27-ha-phase9-multihost-drill-evidence.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-multihost-drill-evidence.md)
 - `read-replica-design.md` (planning artifact; no implementation)
@@ -115,7 +118,7 @@ See [`2026-05-27-ha-phase9-prerequisites-unblocked.md`](../../implementation-pat
 
 - **NOT multi-host production HA yet**: This is a roadmap/prerequisite notice; local simulation and Tier 1.5 same-VM HA exist but do not prove independent-host HA.
 - **NOT production-ready**: HA is explicitly out of scope for production-ready claim.
-- **NOT Phase 9 automated failover complete**: Same-VM Tier 1.5 automated failover exists, but Phase 9 multi-host/operator-environment automated failover evidence remains open.
+- **NOT Phase 9 automated failover complete**: Same-VM Tier 1.5 automated failover exists and one bounded operator-controlled multi-host fenced drill exists, but Phase 9 unattended multi-host/operator-environment automated failover remains open.
 - **NOT true multi-node production HA**: Manual multi-host drills exist, but automated/fenced failover, full incident-response evidence, and production signoff remain incomplete.
 
 ## Related docs

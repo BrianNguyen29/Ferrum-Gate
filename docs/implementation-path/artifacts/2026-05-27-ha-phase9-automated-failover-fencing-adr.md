@@ -68,7 +68,7 @@ Implementation evidence for this selected next step was captured in [`2026-05-27
 | Gate | Requirement | Evidence required |
 |------|-------------|-------------------|
 | FG-1 — Fencing mechanism selected | Pick a concrete cross-host old-primary fencing method: GCP instance stop, firewall isolation, STONITH-equivalent, or consensus/witness design. | ✅ **Progress** — GCP instance stop selected; `scripts/gcp/phase9_fencing.sh` created with app-host guard and dry-run defaults. See [`2026-05-27-ha-phase9-gcp-fencing-evidence.md`](./2026-05-27-ha-phase9-gcp-fencing-evidence.md). |
-| FG-2 — Fencing tested | Demonstrate old primary is stopped or provably isolated before standby promotion. | 📝 **Partial** — Standby host B successfully fenced and recovered; app-host guard blocks host A by default. Full FG-2 requires old-primary isolation before real promotion, which was not performed. See [`2026-05-27-ha-phase9-gcp-fencing-evidence.md`](./2026-05-27-ha-phase9-gcp-fencing-evidence.md). |
+| FG-2 — Fencing tested | Demonstrate old primary is stopped or provably isolated before standby promotion. | 📝 **Partial+** — Standby host B was successfully fenced/recovered, then host A was fenced in one bounded operator-controlled drill with host B redundancy. Full FG-2/HA-4 still requires unattended fencing/promotion/routing drills and endpoint strategy. See [`2026-05-27-ha-phase9-gcp-fencing-evidence.md`](./2026-05-27-ha-phase9-gcp-fencing-evidence.md) and [`2026-05-27-ha-phase9-host-b-redundancy-fenced-drill-evidence.md`](./2026-05-27-ha-phase9-host-b-redundancy-fenced-drill-evidence.md). |
 | FG-3 — Mutual partition drill | Simulate both nodes being unable to reach each other and prove no two-writer state. | Partition artifact showing exactly one writable primary or no promotion. |
 | FG-4 — Config parity validated | TLS, HBA, WAL sender/slot limits, replication users, and PgBouncer routing are pre-staged on both hosts. | Config parity artifact and drill with no certificate/HBA-induced RTO penalty. |
 | FG-5 — Routing automation validated | PgBouncer or equivalent routing update is performed safely and repeatably. | Drill log showing bounded routing update and ferrumd readiness recovery. |
@@ -83,7 +83,7 @@ Implementation evidence for this selected next step was captured in [`2026-05-27
 |------|--------|------------|
 | Two-node partition ambiguity | Open | Do not auto-promote until FG-1/FG-2/FG-3 pass. |
 | Same-zone correlated failure | Open | Accept for nonprod/operator evidence; production HA requires stronger topology. |
-| PgBouncer/ferrumd on host A remains routing/application SPOF | Open | Future ADR may add host B PgBouncer/app endpoint or managed routing. |
+| PgBouncer/ferrumd on host A remains routing/application SPOF | Partially mitigated for bounded drill | Host B PgBouncer/ferrumd redundancy can serve after manual promotion, but no external endpoint/LB/DNS cutover or unattended activation exists. |
 | Host config drift | Observed | Normalize TLS/HBA/WAL settings before automation. |
 | Alerting service ambiguity | Observed | Investigate Alertmanager systemd inactive/API reachable mismatch before production alerting signoff. |
 
@@ -107,6 +107,7 @@ Implementation evidence for this selected next step was captured in [`2026-05-27
 - [`2026-05-27-ha-phase9-multihost-topology-adr.md`](./2026-05-27-ha-phase9-multihost-topology-adr.md)
 - [`2026-05-27-ha-phase9-multihost-drill-evidence.md`](./2026-05-27-ha-phase9-multihost-drill-evidence.md)
 - [`2026-05-27-ha-phase9-gcp-fencing-evidence.md`](./2026-05-27-ha-phase9-gcp-fencing-evidence.md) — GCP instance stop tested on standby host B; app-host guard verified
+- [`2026-05-27-ha-phase9-host-b-redundancy-fenced-drill-evidence.md`](./2026-05-27-ha-phase9-host-b-redundancy-fenced-drill-evidence.md) — Host B app/PgBouncer redundancy plus bounded operator-controlled host-A-fenced drill
 - [`HA-multi-node-evidence-runbook.md`](./HA-multi-node-evidence-runbook.md)
 
 ---
