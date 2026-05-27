@@ -243,7 +243,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 
 ## Tier 1.5 — Domainless production infrastructure
 
-> **Status**: IN PROGRESS / PARTIAL. PostgreSQL production deployment and same-VM HA topology evidence are complete; automated failover remains pending. Tier 1.5 does not claim production-ready status.
+> **Status**: ENGINEERING COMPLETE / ACKNOWLEDGMENT PENDING. PostgreSQL production deployment, same-VM HA topology, and same-VM automated failover evidence are complete. Tier 1.5 does not claim production-ready status.
 > **Canonical definition**: [`docs/production-readiness-v2/00b-tier-1.5-domainless-infrastructure.md`](../../production-readiness-v2/00b-tier-1.5-domainless-infrastructure.md)
 > **Completion tracker**: [`docs/production-readiness-v2/13-tier-1.5-completion-status.md`](../../production-readiness-v2/13-tier-1.5-completion-status.md)
 
@@ -261,11 +261,11 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 | T1.5-HA-M.2 | Read/write routing documented and validated | Engineering + Operator | [`2026-05-27-ha-read-write-routing-evidence.md`](../../implementation-path/artifacts/2026-05-27-ha-read-write-routing-evidence.md) | ✅ COMPLETE |
 | T1.5-HA-M.3 | Replication lag measured and within acceptable bounds | Engineering + Operator | [`2026-05-27-ha-replication-lag-evidence.md`](../../implementation-path/artifacts/2026-05-27-ha-replication-lag-evidence.md) | ✅ COMPLETE |
 | T1.5-HA-M.4 | Fencing or split-brain prevention mechanism designed and documented | Engineering + Operator | [`2026-05-27-ha-fencing-design-evidence.md`](../../implementation-path/artifacts/2026-05-27-ha-fencing-design-evidence.md) | ✅ COMPLETE |
-| T1.5-HA-A.1 | Failover occurs without manual `pg_promote` | Engineering + Operator | Failover drill log | ☐ NOT STARTED |
-| T1.5-HA-A.2 | ferrumd reconnects to new primary without manual restart | Engineering + Operator | Reconnect drill log | ☐ NOT STARTED |
-| T1.5-HA-A.3 | RTO and RPO measured and documented | Engineering + Operator | RTO/RPO measurement log | ☐ NOT STARTED |
-| T1.5-HA-A.4 | No split-brain observed during or after failover | Engineering + Operator | Incident log / consistency check | ☐ NOT STARTED |
-| T1.5-HA-A.5 | At least three failover drills performed with pass evidence | Engineering + Operator | Drill evidence artifacts (×3) | ☐ NOT STARTED |
+| T1.5-HA-A.1 | Failover occurs without manual `pg_promote` | Engineering + Operator | [`2026-05-27-ha-automated-failover-drill-evidence.md`](../../implementation-path/artifacts/2026-05-27-ha-automated-failover-drill-evidence.md) | ✅ COMPLETE |
+| T1.5-HA-A.2 | ferrumd reconnects to new primary without manual restart | Engineering + Operator | [`2026-05-27-ha-automated-failover-drill-evidence.md`](../../implementation-path/artifacts/2026-05-27-ha-automated-failover-drill-evidence.md) | ✅ COMPLETE |
+| T1.5-HA-A.3 | RTO and RPO measured and documented | Engineering + Operator | [`2026-05-27-ha-automated-failover-drill-evidence.md`](../../implementation-path/artifacts/2026-05-27-ha-automated-failover-drill-evidence.md) | ✅ COMPLETE |
+| T1.5-HA-A.4 | No split-brain observed during or after failover | Engineering + Operator | [`2026-05-27-ha-automated-failover-drill-evidence.md`](../../implementation-path/artifacts/2026-05-27-ha-automated-failover-drill-evidence.md) | ✅ COMPLETE |
+| T1.5-HA-A.5 | At least three failover drills performed with pass evidence | Engineering + Operator | [`2026-05-27-ha-automated-failover-signoff.md`](../../implementation-path/artifacts/2026-05-27-ha-automated-failover-signoff.md) | ✅ COMPLETE |
 | T1.5-ACK | Operator acknowledgment of Tier 1.5 scope and non-claims | Operator | Tier 1.5 operator acknowledgment artifact | ☐ NOT STARTED |
 | T1.5-END | Tier 1.5 complete end-state declaration published | Engineering | Tier 1.5 complete end-state artifact | ☐ NOT STARTED |
 

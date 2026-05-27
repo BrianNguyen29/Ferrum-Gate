@@ -1560,9 +1560,10 @@ Reach Tier 1.5 (domainless production infrastructure complete) by completing Pos
 
 **Status:**
 
-- **IN PROGRESS / PARTIAL** as of 2026-05-27.
+- **ENGINEERING COMPLETE / ACKNOWLEDGMENT PENDING** as of 2026-05-27.
 - Batch 1 PostgreSQL production deployment evidence complete.
 - Batch 2 same-VM HA multi-node topology evidence complete.
+- Batch 3 same-VM automated failover evidence complete.
 - Canonical definition: [`docs/production-readiness-v2/00b-tier-1.5-domainless-infrastructure.md`](./production-readiness-v2/00b-tier-1.5-domainless-infrastructure.md)
 - Completion tracker: [`docs/production-readiness-v2/13-tier-1.5-completion-status.md`](./production-readiness-v2/13-tier-1.5-completion-status.md)
 
@@ -1576,7 +1577,7 @@ Reach Tier 1.5 (domainless production infrastructure complete) by completing Pos
 
 - PostgreSQL production deployment evidence complete. ✅
 - HA multi-node topology evidence complete. ✅ (same VM primary/standby topology; no multi-host production HA claim)
-- Automated failover evidence complete. ☐
+- Automated failover evidence complete. ✅ (same-VM watchdog + PgBouncer reconnect; no multi-host production HA claim)
 - Operator acknowledges Tier 1.5 scope and non-claims. ☐
 - `production-ready = NO` remains explicit. ✅ (preserved by framework)
 - `full G2 = NOT COMPLETE` remains explicit. ✅ (preserved by framework)

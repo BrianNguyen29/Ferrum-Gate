@@ -20,11 +20,11 @@ Provide a single-page status tracker for the Tier 1.5 (domainless production inf
 |-----------|--------|----------|
 | **PostgreSQL production deployment** | ✅ COMPLETE | [`2026-05-27-pg-production-deployment-signoff.md`](../implementation-path/artifacts/2026-05-27-pg-production-deployment-signoff.md): PG-P.1–PG-P.6 complete on target VM. |
 | **HA multi-node topology** | ✅ COMPLETE | [`2026-05-27-ha-multinode-topology-signoff.md`](../implementation-path/artifacts/2026-05-27-ha-multinode-topology-signoff.md): HA-M.1–HA-M.4 complete on same VM primary/standby topology. |
-| **Automated failover** | ☐ NOT COMPLETE | No-manual-promotion, ferrumd reconnect, RTO/RPO, no split-brain, 3 drills — all pending |
+| **Automated failover** | ✅ COMPLETE | [`2026-05-27-ha-automated-failover-signoff.md`](../implementation-path/artifacts/2026-05-27-ha-automated-failover-signoff.md): HA-A.1–HA-A.5 complete with three same-VM automated failover drills. |
 | **Operator acknowledgment** | ☐ NOT ACKNOWLEDGED | Pending |
-| **Docs/consistency** | ☐ NOT COMPLETE | Batch 1 and Batch 2 evidence docs created; automated failover evidence and final acknowledgment remain pending |
+| **Docs/consistency** | ☐ NOT COMPLETE | Batch 1–3 engineering evidence docs created; final operator acknowledgment and end-state remain pending |
 
-**Verdict**: **Tier 1.5 domainless production infrastructure: IN PROGRESS / PARTIAL**
+**Verdict**: **Tier 1.5 domainless production infrastructure: ENGINEERING COMPLETE / ACKNOWLEDGMENT PENDING**
 
 ---
 
@@ -37,7 +37,7 @@ Provide a single-page status tracker for the Tier 1.5 (domainless production inf
 | **Block A** | **WAIVED/CONDITIONAL** — Real domain still required for Tier 2. |
 | **PostgreSQL production deployment component** | **COMPLETE ON NONPROD TARGET VM** — not a Tier 2 production-ready claim. |
 | **HA/multi-node topology component** | **COMPLETE ON SAME VM** — primary/standby topology exists, but multi-host production HA remains NO. |
-| **automated failover** | **NO** — local simulation used manual promotion. Automated failover remains NOT STARTED. |
+| **automated failover component** | **COMPLETE ON SAME VM** — three automated drills passed; not a multi-host production HA claim. |
 | **Sustained SLO window** | **NO** — Bounded runs and drills only. No 7–30 day observation window. |
 | **Real domain** | **NO** — Tier 1.5 is explicitly domainless. |
 | **Operator final signoff** | **NO** — Tier 1.5 requires acknowledgment, not final production signoff. |
