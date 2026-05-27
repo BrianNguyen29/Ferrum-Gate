@@ -1552,7 +1552,7 @@ Reach Tier 1 (domainless production-candidate) by completing B+C+HA-B engineerin
 
 See [`docs/production-readiness-v2/00a-domainless-readiness-tier.md`](./production-readiness-v2/00a-domainless-readiness-tier.md) for the canonical tiered readiness model.
 
-### Milestone 0.75 — “Tier 1.5 Domainless Production Infrastructure” ☐ PLANNED / NOT COMPLETE
+### Milestone 0.75 — “Tier 1.5 Domainless Production Infrastructure” ☐ IN PROGRESS / PARTIAL
 
 **Objective:**
 
@@ -1560,7 +1560,9 @@ Reach Tier 1.5 (domainless production infrastructure complete) by completing Pos
 
 **Status:**
 
-- **PLANNED / NOT COMPLETE** as of 2026-05-27.
+- **IN PROGRESS / PARTIAL** as of 2026-05-27.
+- Batch 1 PostgreSQL production deployment evidence complete.
+- Batch 2 same-VM HA multi-node topology evidence complete.
 - Canonical definition: [`docs/production-readiness-v2/00b-tier-1.5-domainless-infrastructure.md`](./production-readiness-v2/00b-tier-1.5-domainless-infrastructure.md)
 - Completion tracker: [`docs/production-readiness-v2/13-tier-1.5-completion-status.md`](./production-readiness-v2/13-tier-1.5-completion-status.md)
 
@@ -1570,10 +1572,10 @@ Reach Tier 1.5 (domainless production infrastructure complete) by completing Pos
 - **HA multi-node topology**: At least two-node PostgreSQL primary/standby streaming replication deployed, read/write routing validated, replication lag measured, fencing/split-brain prevention documented.
 - **Automated failover**: Failover without manual `pg_promote`, ferrumd reconnect without manual restart, RTO/RPO measured, no split-brain, at least three drills with evidence.
 
-**Exit criteria (none satisfied):**
+**Exit criteria:**
 
-- PostgreSQL production deployment evidence complete. ☐
-- HA multi-node topology evidence complete. ☐
+- PostgreSQL production deployment evidence complete. ✅
+- HA multi-node topology evidence complete. ✅ (same VM primary/standby topology; no multi-host production HA claim)
 - Automated failover evidence complete. ☐
 - Operator acknowledges Tier 1.5 scope and non-claims. ☐
 - `production-ready = NO` remains explicit. ✅ (preserved by framework)

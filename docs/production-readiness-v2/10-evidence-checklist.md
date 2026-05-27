@@ -243,24 +243,24 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 
 ## Tier 1.5 — Domainless production infrastructure
 
-> **Status**: PLANNED / NOT COMPLETE. Tier 1.5 is the optional, final intermediate tier between Tier 1 and Tier 2. It represents infrastructure-layer completeness (PostgreSQL production deployment, HA multi-node topology, automated failover) without claiming production-ready status.
+> **Status**: IN PROGRESS / PARTIAL. PostgreSQL production deployment and same-VM HA topology evidence are complete; automated failover remains pending. Tier 1.5 does not claim production-ready status.
 > **Canonical definition**: [`docs/production-readiness-v2/00b-tier-1.5-domainless-infrastructure.md`](../../production-readiness-v2/00b-tier-1.5-domainless-infrastructure.md)
 > **Completion tracker**: [`docs/production-readiness-v2/13-tier-1.5-completion-status.md`](../../production-readiness-v2/13-tier-1.5-completion-status.md)
 
 ### Tier 1.5 acceptance checklist placeholders
 
 | # | Item | Owner | Evidence | Status |
-|---|---|------|-------|----------|--------|
-| T1.5-PG-P.1 | PostgreSQL target deployment provisioned and reachable | Engineering + Operator | PG target deployment signoff | ☐ NOT STARTED |
-| T1.5-PG-P.2 | ferrumd starts with production postgres DSN; readyz/deep 200 | Engineering + Operator | Deployment evidence artifact | ☐ NOT STARTED |
-| T1.5-PG-P.3 | TLS/SSL encrypted DSN validated or operator waiver documented | Engineering + Operator | TLS DSN evidence artifact | ☐ NOT STARTED |
-| T1.5-PG-P.4 | PgBouncer or equivalent connection-pooling story operational | Engineering + Operator | PgBouncer evidence artifact | ☐ NOT STARTED |
-| T1.5-PG-P.5 | Backup/restore drill passes with row counts and hash checks | Engineering + Operator | Backup/restore drill evidence | ☐ NOT STARTED |
-| T1.5-PG-P.6 | Alert rules deployed to live Prometheus and validated | Engineering + Operator | Alert deployment evidence artifact | ☐ NOT STARTED |
-| T1.5-HA-M.1 | At least two-node PG primary/standby streaming replication deployed | Engineering + Operator | HA topology evidence artifact | ☐ NOT STARTED |
-| T1.5-HA-M.2 | Read/write routing documented and validated | Engineering + Operator | Routing validation evidence | ☐ NOT STARTED |
-| T1.5-HA-M.3 | Replication lag measured and within acceptable bounds | Engineering + Operator | Lag measurement log | ☐ NOT STARTED |
-| T1.5-HA-M.4 | Fencing or split-brain prevention mechanism designed and documented | Engineering + Operator | Fencing design doc | ☐ NOT STARTED |
+|---|------|-------|----------|--------|
+| T1.5-PG-P.1 | PostgreSQL target deployment provisioned and reachable | Engineering + Operator | [`2026-05-27-pg-target-deployment-evidence.md`](../../implementation-path/artifacts/2026-05-27-pg-target-deployment-evidence.md) | ✅ COMPLETE |
+| T1.5-PG-P.2 | ferrumd starts with production postgres DSN; readyz/deep 200 | Engineering + Operator | [`2026-05-27-pg-target-deployment-evidence.md`](../../implementation-path/artifacts/2026-05-27-pg-target-deployment-evidence.md) | ✅ COMPLETE |
+| T1.5-PG-P.3 | TLS/SSL encrypted DSN validated or operator waiver documented | Engineering + Operator | [`2026-05-27-pg-tls-dsn-evidence.md`](../../implementation-path/artifacts/2026-05-27-pg-tls-dsn-evidence.md) | ✅ COMPLETE |
+| T1.5-PG-P.4 | PgBouncer or equivalent connection-pooling story operational | Engineering + Operator | [`2026-05-27-pg-pgbouncer-evidence.md`](../../implementation-path/artifacts/2026-05-27-pg-pgbouncer-evidence.md) | ✅ COMPLETE |
+| T1.5-PG-P.5 | Backup/restore drill passes with row counts and hash checks | Engineering + Operator | [`2026-05-27-pg-restore-drill-evidence.md`](../../implementation-path/artifacts/2026-05-27-pg-restore-drill-evidence.md) | ✅ COMPLETE |
+| T1.5-PG-P.6 | Alert rules deployed to live Prometheus and validated | Engineering + Operator | [`2026-05-27-pg-alert-deployment-evidence.md`](../../implementation-path/artifacts/2026-05-27-pg-alert-deployment-evidence.md) | ✅ COMPLETE |
+| T1.5-HA-M.1 | Same-VM PG primary/standby streaming replication deployed | Engineering + Operator | [`2026-05-27-ha-streaming-replication-evidence.md`](../../implementation-path/artifacts/2026-05-27-ha-streaming-replication-evidence.md) | ✅ COMPLETE |
+| T1.5-HA-M.2 | Read/write routing documented and validated | Engineering + Operator | [`2026-05-27-ha-read-write-routing-evidence.md`](../../implementation-path/artifacts/2026-05-27-ha-read-write-routing-evidence.md) | ✅ COMPLETE |
+| T1.5-HA-M.3 | Replication lag measured and within acceptable bounds | Engineering + Operator | [`2026-05-27-ha-replication-lag-evidence.md`](../../implementation-path/artifacts/2026-05-27-ha-replication-lag-evidence.md) | ✅ COMPLETE |
+| T1.5-HA-M.4 | Fencing or split-brain prevention mechanism designed and documented | Engineering + Operator | [`2026-05-27-ha-fencing-design-evidence.md`](../../implementation-path/artifacts/2026-05-27-ha-fencing-design-evidence.md) | ✅ COMPLETE |
 | T1.5-HA-A.1 | Failover occurs without manual `pg_promote` | Engineering + Operator | Failover drill log | ☐ NOT STARTED |
 | T1.5-HA-A.2 | ferrumd reconnects to new primary without manual restart | Engineering + Operator | Reconnect drill log | ☐ NOT STARTED |
 | T1.5-HA-A.3 | RTO and RPO measured and documented | Engineering + Operator | RTO/RPO measurement log | ☐ NOT STARTED |

@@ -135,7 +135,7 @@ ferrumgate_store_pg_acquire_timeouts_total 0
 
 - [`2026-05-27-pg-tls-dsn-evidence.md`](./2026-05-27-pg-tls-dsn-evidence.md) — TLS/SSL setup
 - [`2026-05-27-pg-pgbouncer-evidence.md`](./2026-05-27-pg-pgbouncer-evidence.md) — PgBouncer deployment
-- [`docs/production-readiness-v2/00b-tier-1.5-domainless-infrastructure.md`](../production-readiness-v2/00b-tier-1.5-domainless-infrastructure.md) — Tier 1.5 framework
+- [`docs/production-readiness-v2/00b-tier-1.5-domainless-infrastructure.md`](../../production-readiness-v2/00b-tier-1.5-domainless-infrastructure.md) — Tier 1.5 framework
 
 ---
 

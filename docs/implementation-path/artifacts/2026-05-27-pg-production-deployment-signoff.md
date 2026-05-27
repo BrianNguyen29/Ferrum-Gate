@@ -88,8 +88,8 @@ Remaining Tier 1.5 components:
 - [2026-05-27-pg-pgbouncer-evidence.md](./2026-05-27-pg-pgbouncer-evidence.md)
 - [2026-05-27-pg-restore-drill-evidence.md](./2026-05-27-pg-restore-drill-evidence.md)
 - [2026-05-27-pg-alert-deployment-evidence.md](./2026-05-27-pg-alert-deployment-evidence.md)
-- [docs/production-readiness-v2/00b-tier-1.5-domainless-infrastructure.md](../production-readiness-v2/00b-tier-1.5-domainless-infrastructure.md)
-- [docs/production-readiness-v2/13-tier-1.5-completion-status.md](../production-readiness-v2/13-tier-1.5-completion-status.md)
+- [docs/production-readiness-v2/00b-tier-1.5-domainless-infrastructure.md](../../production-readiness-v2/00b-tier-1.5-domainless-infrastructure.md)
+- [docs/production-readiness-v2/13-tier-1.5-completion-status.md](../../production-readiness-v2/13-tier-1.5-completion-status.md)
 
 ---
 

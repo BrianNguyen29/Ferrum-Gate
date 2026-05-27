@@ -18,13 +18,13 @@ Provide a single-page status tracker for the Tier 1.5 (domainless production inf
 
 | Component | Status | Evidence |
 |-----------|--------|----------|
-| **PostgreSQL production deployment** | ☐ NOT COMPLETE | Target deployment, TLS, PgBouncer, backup/restore, alerts — all pending |
-| **HA multi-node topology** | ☐ NOT COMPLETE | ≥2 nodes, replication, read/write routing, lag, fencing — all pending |
+| **PostgreSQL production deployment** | ✅ COMPLETE | [`2026-05-27-pg-production-deployment-signoff.md`](../implementation-path/artifacts/2026-05-27-pg-production-deployment-signoff.md): PG-P.1–PG-P.6 complete on target VM. |
+| **HA multi-node topology** | ✅ COMPLETE | [`2026-05-27-ha-multinode-topology-signoff.md`](../implementation-path/artifacts/2026-05-27-ha-multinode-topology-signoff.md): HA-M.1–HA-M.4 complete on same VM primary/standby topology. |
 | **Automated failover** | ☐ NOT COMPLETE | No-manual-promotion, ferrumd reconnect, RTO/RPO, no split-brain, 3 drills — all pending |
 | **Operator acknowledgment** | ☐ NOT ACKNOWLEDGED | Pending |
-| **Docs/consistency** | ☐ NOT COMPLETE | Tier 1.5 framework docs created; execution evidence docs and final acknowledgment remain pending |
+| **Docs/consistency** | ☐ NOT COMPLETE | Batch 1 and Batch 2 evidence docs created; automated failover evidence and final acknowledgment remain pending |
 
-**Verdict**: **Tier 1.5 domainless production infrastructure: NOT COMPLETE / PLANNED**
+**Verdict**: **Tier 1.5 domainless production infrastructure: IN PROGRESS / PARTIAL**
 
 ---
 
@@ -35,8 +35,8 @@ Provide a single-page status tracker for the Tier 1.5 (domainless production inf
 | **production-ready** | **NO** — Tier 1.5 is not production-ready. |
 | **full G2** | **NOT COMPLETE** — G2.1–G2.8 remain signed for conditional pilot only. |
 | **Block A** | **WAIVED/CONDITIONAL** — Real domain still required for Tier 2. |
-| **PostgreSQL production** | **NO** — local Docker/runtime support exists; production PG deployment does not. |
-| **HA/multi-node production** | **NO** — local simulation only. Multi-node production remains NOT STARTED. |
+| **PostgreSQL production deployment component** | **COMPLETE ON NONPROD TARGET VM** — not a Tier 2 production-ready claim. |
+| **HA/multi-node topology component** | **COMPLETE ON SAME VM** — primary/standby topology exists, but multi-host production HA remains NO. |
 | **automated failover** | **NO** — local simulation used manual promotion. Automated failover remains NOT STARTED. |
 | **Sustained SLO window** | **NO** — Bounded runs and drills only. No 7–30 day observation window. |
 | **Real domain** | **NO** — Tier 1.5 is explicitly domainless. |

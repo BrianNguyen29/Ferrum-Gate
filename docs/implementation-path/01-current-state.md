@@ -31,6 +31,10 @@ Historical evidence artifacts may still mention older local paths such as `Ferru
 
 **May 26 Tier 1 completion evidence**: [`artifacts/2026-05-26-domainless-tier1-completion-evidence.md`](./artifacts/2026-05-26-domainless-tier1-completion-evidence.md) — consolidated evidence inventory for Tier 1 B+C+HA-B scope; [`artifacts/2026-05-26-domainless-tier1-operator-acknowledgment.md`](./artifacts/2026-05-26-domainless-tier1-operator-acknowledgment.md) — operator acknowledgment recorded; [`artifacts/2026-05-26-domainless-tier1-complete-end-state.md`](./artifacts/2026-05-26-domainless-tier1-complete-end-state.md) — final end-state declaration with explicit non-claims preserved.
 
+**May 27 Tier 1.5 PostgreSQL deployment evidence**: [`artifacts/2026-05-27-pg-production-deployment-signoff.md`](./artifacts/2026-05-27-pg-production-deployment-signoff.md) — PG-P.1–PG-P.6 complete on `ferrumgate-nonprod`: PostgreSQL 16.14 target deployment, ferrumd PG backend, TLS, PgBouncer, backup/restore/offsite, and Prometheus alert rules; no production-ready claim.
+
+**May 27 Tier 1.5 HA topology evidence**: [`artifacts/2026-05-27-ha-multinode-topology-signoff.md`](./artifacts/2026-05-27-ha-multinode-topology-signoff.md) — HA-M.1–HA-M.4 complete using same-VM PostgreSQL primary/standby topology: streaming replication, read/write validation, replication lag measurement, and fencing design; no automated failover, no multi-host production HA claim.
+
 **Release support contract**:
 - Supported = SQLite-backed single-node governance core.
 - Partial = adapter crates and extended runtime integrations (uneven implementation slices exist, not production-verified).
