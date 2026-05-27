@@ -1,4 +1,4 @@
-.PHONY: help check fmt lint test docs test-python-validators validate tree pretarget audit wal-drill pg-restart-drill pg-restore-drill pg-migration-drill pg-backup-retention-drill pg-partial-failure-drill pg-sustained-workload-drill pg-scheduled-timer-simulation pg-local-batch ha-local-setup ha-local-failover-drill ha-local-teardown site-build site-serve site-check slo-sustained-dry-run restore-drill stress check-pilot-readiness
+.PHONY: help check fmt lint test docs test-python-validators validate tree pretarget audit wal-drill pg-restart-drill pg-restore-drill pg-migration-drill pg-backup-retention-drill pg-partial-failure-drill pg-sustained-workload-drill pg-sustained-workload-extended pg-scheduled-timer-simulation pg-local-batch ha-local-setup ha-local-failover-drill ha-local-ferrumd-reconnect-drill ha-local-teardown site-build site-serve site-check slo-sustained-dry-run restore-drill stress check-pilot-readiness domainless-tier1-fast domainless-tier1-gate
 
 help:
 	@echo "make check     - cargo check workspace"
@@ -17,11 +17,15 @@ help:
 	@echo "make pg-backup-retention-drill - local PostgreSQL backup/retention/offsite drill"
 	@echo "make pg-partial-failure-drill - local PostgreSQL resume/partial-failure drill"
 	@echo "make pg-sustained-workload-drill - local PostgreSQL sustained workload drill (short default, env override for longer)"
+	@echo "make pg-sustained-workload-extended - local PostgreSQL sustained workload drill (extended 120s @ 1 rps, env override supported)"
 	@echo "make pg-scheduled-timer-simulation - local text-only systemd timer due/skip simulation (no install)"
 	@echo "make pg-local-batch - run all local PostgreSQL drills + sustained workload + timer simulation in deterministic order"
 	@echo "make ha-local-setup         - start local HA primary/standby PostgreSQL simulation"
 	@echo "make ha-local-failover-drill - run local HA failover drill (requires ha-local-setup first)"
+	@echo "make ha-local-ferrumd-reconnect-drill - run local HA ferrumd reconnect drill (setup if needed, measures app-level RTO)"
 	@echo "make ha-local-teardown      - stop and remove local HA simulation containers/volumes"
+	@echo "make domainless-tier1-fast  - lightweight Tier 1 gate (docs/validate + syntax/dry-run/light checks, no heavy Docker drills)"
+	@echo "make domainless-tier1-gate  - full domainless Tier 1 gate (docs/validate + pg-local-batch + HA setup/failover/reconnect/teardown)"
 	@echo "make restore-drill  - local temp SQLite backup/restore drill (requires ferrumctl binary or cargo build)"
 	@echo "make stress         - stress tests against a running service (requires BASE_URL env var)"
 	@echo "make check-pilot-readiness - pilot readiness probes (requires running server via --server-url or FERRUMCTL_SERVER_URL)"
@@ -100,6 +104,10 @@ pg-sustained-workload-drill:
 	@echo "Running local PostgreSQL sustained workload drill..."
 	@bash scripts/run_pg_sustained_workload_drill.sh
 
+pg-sustained-workload-extended:
+	@echo "Running local PostgreSQL sustained workload drill (extended)..."
+	@FERRUMD_RATE_LIMIT_PER_SECOND=1000 FERRUMD_RATE_LIMIT_BURST=10000 SUSTAINED_PHASES='[{"name":"extended","duration_sec":120,"rate_rps":1.0}]' bash scripts/run_pg_sustained_workload_drill.sh
+
 pg-scheduled-timer-simulation:
 	@echo "Running local PostgreSQL scheduled timer simulation..."
 	@bash scripts/run_pg_scheduled_timer_simulation.sh
@@ -121,6 +129,10 @@ ha-local-setup:
 ha-local-failover-drill:
 	@echo "Running local HA failover drill..."
 	@bash scripts/run_ha_local_failover_drill.sh
+
+ha-local-ferrumd-reconnect-drill:
+	@echo "Running local HA ferrumd reconnect drill..."
+	@bash scripts/run_ha_local_ferrumd_reconnect_drill.sh
 
 ha-local-teardown:
 	@echo "Tearing down local HA PostgreSQL simulation..."
@@ -174,6 +186,22 @@ site-serve:
 		echo "zola not found; skipping serve. Install Zola to use this target."; \
 		echo "See https://www.getzola.org/documentation/getting-started/installation/"; \
 	fi
+
+domainless-tier1-fast:
+	@echo "Running domainless Tier 1 fast gate..."
+	@$(MAKE) docs
+	@$(MAKE) validate
+	@echo "[OK] Tier 1 fast gate passed (docs + validate only; no heavy Docker drills)"
+
+domainless-tier1-gate:
+	@echo "Running full domainless Tier 1 gate..."
+	@$(MAKE) domainless-tier1-fast
+	@$(MAKE) pg-local-batch
+	@$(MAKE) ha-local-setup
+	@$(MAKE) ha-local-failover-drill
+	@$(MAKE) ha-local-ferrumd-reconnect-drill
+	@$(MAKE) ha-local-teardown
+	@echo "DOMAINLESS TIER 1 GATE: ALL TARGETS PASSED"
 
 site-check:
 	@echo "Checking site scaffold presence..."

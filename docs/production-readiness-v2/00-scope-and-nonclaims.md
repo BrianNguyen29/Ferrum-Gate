@@ -21,7 +21,7 @@ Lock the scope of the post-conditional-pilot production path and make all non-cl
 - PostgreSQL local runtime/Docker is implemented; production PG deployment is **NOT** done.
 - HA/multi-node is **NOT** implemented.
 - MCP local smoke passes; target-host MCP live workload has **bounded engineering evidence** (10-iteration sustained run, 2026-05-22) but operator signoff is **NOT obtained**.
-- **Tier 1 target**: The confirmed B+C+HA-B plan defines a `domainless production-candidate` milestone. See [`00a-domainless-readiness-tier.md`](./00a-domainless-readiness-tier.md) for the canonical three-tier model.
+- **Tier 1 status**: COMPLETE / ACKNOWLEDGED on 2026-05-26. B+C+HA-B engineering evidence complete; operator acknowledgment recorded. See [`00a-domainless-readiness-tier.md`](./00a-domainless-readiness-tier.md) and [`12-domainless-completion-status.md`](./12-domainless-completion-status.md).
 
 ## Gaps
 
@@ -48,7 +48,7 @@ Lock the scope of the post-conditional-pilot production path and make all non-cl
 | **Target-host MCP live workload = CONDITIONAL/EVIDENCE-BACKED** | Engineering evidence exists: 10-iteration sustained run passed (2026-05-22); operator signoff NOT obtained; DuckDNS conditional pilot only. |
 | **Scoped auth/RBAC = PARTIAL** | Scoped tokens and RBAC middleware implemented; tenant model and OIDC deferred. |
 | **Multi-tenant = NO** | No tenant isolation exists. |
-| **Tier 1 = domainless production-candidate** | B+C+HA-B engineering evidence complete; NOT production-ready; real domain still required for Tier 2. See [`00a-domainless-readiness-tier.md`](./00a-domainless-readiness-tier.md). |
+| **Tier 1 = domainless production-candidate COMPLETE / ACKNOWLEDGED** | B+C+HA-B engineering evidence complete and operator acknowledged on 2026-05-26; NOT production-ready; real domain still required for Tier 2. See [`00a-domainless-readiness-tier.md`](./00a-domainless-readiness-tier.md) and [`12-domainless-completion-status.md`](./12-domainless-completion-status.md). |
 
 ## Scope boundaries
 

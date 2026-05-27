@@ -1512,11 +1512,18 @@ production-grade single-node PostgreSQL
 
 ## 6. Suggested milestones
 
-### Milestone 0.5 — “Domainless Production-Candidate”
+### Milestone 0.5 — “Domainless Production-Candidate” ✅ COMPLETE
 
 **Objective:**
 
 Reach Tier 1 (domainless production-candidate) by completing B+C+HA-B engineering evidence without requiring a real owned domain.
+
+**Status:**
+
+- **COMPLETE / ACKNOWLEDGED** on 2026-05-26.
+- Operator (BrianNguyen) explicitly authorized Tier 1 acknowledgment.
+- End-state artifact: [`docs/implementation-path/artifacts/2026-05-26-domainless-tier1-complete-end-state.md`](./implementation-path/artifacts/2026-05-26-domainless-tier1-complete-end-state.md)
+- Completion tracker: [`docs/production-readiness-v2/12-domainless-completion-status.md`](./production-readiness-v2/12-domainless-completion-status.md)
 
 **Scope:**
 
@@ -1524,17 +1531,17 @@ Reach Tier 1 (domainless production-candidate) by completing B+C+HA-B engineerin
 - **C**: PostgreSQL local hardening maximized with migration/restore/backup/resume/timer and sustained workload evidence.
 - **HA-B**: Local Docker primary/standby streaming replication and manual failover simulation passes with RPO/RTO measured (NOT production HA).
 
-**Exit criteria:**
+**Exit criteria (all satisfied):**
 
-- B+C+HA-B evidence artifacts exist and are reviewable.
-- Operator acknowledges Tier 1 scope and non-claims.
-- `production-ready = NO` remains explicit.
-- `full G2 = NOT COMPLETE` remains explicit.
-- `Block A = WAIVED/CONDITIONAL` remains explicit.
-- `PostgreSQL production = NO` remains explicit.
-- `HA/multi-node = NO` remains explicit.
+- B+C+HA-B evidence artifacts exist and are reviewable. ✅
+- Operator acknowledges Tier 1 scope and non-claims. ✅
+- `production-ready = NO` remains explicit. ✅
+- `full G2 = NOT COMPLETE` remains explicit. ✅
+- `Block A = WAIVED/CONDITIONAL` remains explicit. ✅
+- `PostgreSQL production = NO` remains explicit. ✅
+- `HA/multi-node = NO` remains explicit. ✅
 
-**Non-claims:**
+**Non-claims (preserved):**
 
 - Tier 1 is **not** production-ready.
 - Tier 1 does **not** close Block A.

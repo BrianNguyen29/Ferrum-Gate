@@ -1,9 +1,10 @@
 # 00a — Domainless Readiness Tier Model
 
-> **Status**: Planning artifact. Defines the canonical three-tier readiness model for the post-conditional-pilot production path.
+> **Status**: Tier 1 COMPLETE / ACKNOWLEDGED. This doc remains the canonical three-tier readiness model definition.
 > **Owner**: Engineering
 > **Last updated**: 2026-05-26
 > **Parent**: [`docs/production-readiness-v2/00-scope-and-nonclaims.md`](./00-scope-and-nonclaims.md)
+> **Completion tracker**: [`docs/production-readiness-v2/12-domainless-completion-status.md`](./12-domainless-completion-status.md)
 
 ---
 
@@ -87,10 +88,13 @@ Tier 1 is **not** production-ready. It is an intermediate milestone that says:
 
 - [`00-scope-and-nonclaims.md`](./00-scope-and-nonclaims.md) — Scope boundaries and master non-claims table.
 - [`11-blockers-and-unblock-plan.md`](./11-blockers-and-unblock-plan.md) — Blocker status; BLK-A-DOM gates Tier 1→Tier 2.
-- [`docs/implementation-path/01-current-state.md`](../implementation-path/01-current-state.md) — Current state with Tier 1 target status.
+- [`docs/implementation-path/01-current-state.md`](../implementation-path/01-current-state.md) — Current state with Tier 1 completion status.
 - [`docs/ROADMAP.md`](../ROADMAP.md) — Milestone 0.5 (Domainless Production-Candidate) and phased completion roadmap.
+- [`docs/production-readiness-v2/12-domainless-completion-status.md`](./12-domainless-completion-status.md) — Tier 1 completion tracker.
 - [`docs/implementation-path/artifacts/2026-05-26-domainless-candidate-plan.md`](../implementation-path/artifacts/2026-05-26-domainless-candidate-plan.md) — Tier 1 scope, B+C+HA-B work, expected evidence, and non-claims.
+- [`docs/implementation-path/artifacts/2026-05-26-domainless-tier1-complete-end-state.md`](../implementation-path/artifacts/2026-05-26-domainless-tier1-complete-end-state.md) — Final Tier 1 end-state declaration.
+- [`docs/implementation-path/artifacts/2026-05-26-domainless-tier1-operator-acknowledgment.md`](../implementation-path/artifacts/2026-05-26-domainless-tier1-operator-acknowledgment.md) — Operator acknowledgment record.
 
 ---
 
-*End of file — Domainless Readiness Tier Model (planning artifact only).*
+*End of file — Domainless Readiness Tier Model. Tier 1 is complete/acknowledged; Tier 2 remains gated.*

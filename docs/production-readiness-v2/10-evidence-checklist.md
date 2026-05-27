@@ -101,6 +101,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 | 1.28 | PG-local batch aggregate target: all four heavy PG drills + sustained workload + timer simulation in deterministic order | Engineering | `docs/implementation-path/artifacts/2026-05-26-pg-local-batch-timer-evidence.md` | ✅ LOCAL EVIDENCE — `make pg-local-batch` full local run passed; heavy Docker drills plus sustained workload plus text-only timer simulation; **no PostgreSQL production claim** |
 | 1.29 | PG-local scheduled timer simulation: text-only unit validation and due/skip behavior | Engineering | `docs/implementation-path/artifacts/2026-05-26-pg-local-batch-timer-evidence.md` | ✅ LOCAL EVIDENCE — `make pg-scheduled-timer-simulation` passed (18 checks); no systemd install; **no production-ready claim** |
 | 1.30 | PG-local sustained workload: short bounded request workload against local Docker PG with readiness and pool-metric verification | Engineering | `docs/implementation-path/artifacts/2026-05-26-pg-local-sustained-workload-evidence.md` | ✅ LOCAL EVIDENCE — default 30s @ 1 rps (~30 requests) all 2xx; readyz 200; PG pool metrics present; env override supported; included in `pg-local-batch`; **no PostgreSQL production claim** |
+| 1.31 | PG-local extended sustained workload: 120s @ 1 rps against local Docker PG | Engineering | `docs/implementation-path/artifacts/2026-05-26-pg-local-sustained-workload-extended-evidence.md` | ✅ LOCAL EVIDENCE — extended 120s @ 1 rps (~120 requests) all 2xx; readyz 200; PG pool metrics present; **no PostgreSQL production claim** |
 
 ## Phase 2 — SLO/SLA and workload evidence
 
@@ -235,14 +236,35 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 | 9.2 | HA-2: Manual failover runbook drafted | Engineering + Operator | `docs/production-readiness-v2/manual-failover-runbook.md` | ✅ PLANNING ARTIFACT COMPLETE — runbook exists; no live drill performed; no HA claim |
 | 9.2a | HA-B: Local HA simulation (primary + standby streaming replication) | Engineering | `docker-compose.ha-local.yml` + `scripts/setup_ha_local.sh` | ✅ LOCAL EVIDENCE — Docker Compose streaming replication simulation; local only; not production HA |
 | 9.2b | HA-B: Local failover drill with measured RPO/RTO | Engineering | `scripts/run_ha_local_failover_drill.sh` + [`2026-05-26-ha-local-failover-simulation-evidence.md`](../../implementation-path/artifacts/2026-05-26-ha-local-failover-simulation-evidence.md) | ✅ LOCAL EVIDENCE — 16/16 checks passed; latest RTO 3 s; RPO 0 rows lost; manual `pg_promote()`; local only; not production HA |
+| 9.2c | HA-B: Local ferrumd reconnect drill with app-level RTO | Engineering | `scripts/run_ha_local_ferrumd_reconnect_drill.sh` + [`2026-05-26-ha-local-ferrumd-reconnect-evidence.md`](../../implementation-path/artifacts/2026-05-26-ha-local-ferrumd-reconnect-evidence.md) | ✅ LOCAL EVIDENCE — ferrumd restart against promoted standby passes; app-level RTO measured; local only; not production HA |
 | 9.3 | HA-3: Read replica behavior designed | Engineering | `docs/production-readiness-v2/read-replica-design.md` | ✅ PLANNING ARTIFACT COMPLETE — design doc exists; no implementation; no replica deployed |
 | 9.4 | HA-4: Automated failover drill pass (deferred) | Engineering + Operator | Failover drill log | ☐ |
 | 9.5 | RPO/RTO measured for HA scenario in operator environment | Engineering | Measurement log | ☐ |
+
+## Tier 1 — Domainless production-candidate completion
+
+> **Status updated 2026-05-26**: Tier 1 (domainless production-candidate) B+C+HA-B engineering evidence is complete and operator acknowledged. This is a milestone, not a production-ready claim.
+> **End-state artifact**: [`docs/implementation-path/artifacts/2026-05-26-domainless-tier1-complete-end-state.md`](../../implementation-path/artifacts/2026-05-26-domainless-tier1-complete-end-state.md)
+> **Operator acknowledgment**: [`docs/implementation-path/artifacts/2026-05-26-domainless-tier1-operator-acknowledgment.md`](../../implementation-path/artifacts/2026-05-26-domainless-tier1-operator-acknowledgment.md)
+> **Completion evidence pack**: [`docs/implementation-path/artifacts/2026-05-26-domainless-tier1-completion-evidence.md`](../../implementation-path/artifacts/2026-05-26-domainless-tier1-completion-evidence.md)
+> **Status tracker**: [`docs/production-readiness-v2/12-domainless-completion-status.md`](./12-domainless-completion-status.md)
+
+| # | Item | Owner | Evidence | Status |
+|---|------|-------|----------|--------|
+| T1.1 | B — Domainless readiness semantics defined | Engineering | `00a-domainless-readiness-tier.md` | ✅ COMPLETE |
+| T1.2 | C — PostgreSQL local hardening maximized | Engineering | `pg-local-batch` + sustained workload + automation/resume evidence | ✅ COMPLETE |
+| T1.3 | HA-B — Local HA simulation and failover drill | Engineering | `ha-local-setup` + `ha-local-failover-drill` + `ha-local-ferrumd-reconnect-drill` | ✅ COMPLETE |
+| T1.4 | Operator acknowledgment recorded | Operator | `2026-05-26-domainless-tier1-operator-acknowledgment.md` | ✅ ACKNOWLEDGED |
+| T1.5 | End-state declaration published | Engineering | `2026-05-26-domainless-tier1-complete-end-state.md` | ✅ COMPLETE |
+| T1.6 | Make targets added for fast/full gate | Engineering | `domainless-tier1-fast` + `domainless-tier1-gate` | ✅ ADDED |
+
+---
 
 ## Final production-ready claim prerequisites
 
 > **Active blocker**: `BLK-A-DOM` — real owned domain is still required for any production-ready or full G2 closure. DuckDNS remains WAIVED/CONDITIONAL only. See [`11-blockers-and-unblock-plan.md`](./11-blockers-and-unblock-plan.md) and [`docs/implementation-path/artifacts/2026-05-21-blk-a-dom-operator-action-brief.md`](../../implementation-path/artifacts/2026-05-21-blk-a-dom-operator-action-brief.md).
 > **Conditional re-signoff**: BrianNguyen authorized conditional re-signoff for single-node SQLite pilot scope on 2026-05-21. Full G2 closure remains NOT COMPLETE.
+> **Tier 1 re-signoff**: BrianNguyen authorized Tier 1 domainless production-candidate acknowledgment on 2026-05-26. Full G2 closure remains NOT COMPLETE.
 > **Templates prepared**: Signoff/evidence templates created 2026-05-22. See [`docs/implementation-path/artifacts/2026-05-22-no-to-yes-completion-plan.md`](../../implementation-path/artifacts/2026-05-22-no-to-yes-completion-plan.md).
 
 | # | Item | Owner | Evidence | Status |
@@ -264,6 +286,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 - **NOT canonical SLO for all configs**: SLO PASS claimed only for max-valid rate-limit configuration (1000/10000). Default and tuned configs failed.
 - **NOT production K8s/HA**: Helm live install verified on local kind cluster only.
 - **NOT production HA**: HA local simulation is Docker Compose on a single host with manual promotion. No automated failover, no multi-node, no production claim.
+- **NOT automated failover**: `ha-local-failover-drill` and `ha-local-ferrumd-reconnect-drill` use manual `pg_promote()` and ferrumd restart. No automatic failover mechanism exists.
 
 ## Related docs
 
