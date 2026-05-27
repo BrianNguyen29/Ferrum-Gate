@@ -1,8 +1,8 @@
 # 10 — Evidence Checklist
 
-> **Status**: Active evidence checklist. Completed phases, Tier 1, and Tier 1.5 are populated; remaining open items are explicitly marked.
+> **Status**: Active evidence checklist. Completed phases, Tier 1, and Tier 1.5 are populated; Phase 9 GCP fencing-mechanism evidence added 2026-05-27; remaining open items are explicitly marked.
 > **Owner**: Engineering + Operator
-> **Last updated**: 2026-05-26
+> **Last updated**: 2026-05-27
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
 > **Scope**: [`00-scope-and-nonclaims.md`](00-scope-and-nonclaims.md)
 
@@ -244,6 +244,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 | 9.3c | Phase 9 multi-host manual failover drills captured | Engineering + Operator | [`2026-05-27-ha-phase9-multihost-drill-evidence.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-multihost-drill-evidence.md) | ✅ MANUAL EVIDENCE — two independent PostgreSQL VMs, streaming replication, 4 manual drills including A→B and B→A failback, RTO 246s/59s/29s/22s, observed RPO 0 marker loss; not automated failover or production HA |
 | 9.3d | Phase 9 automated failover/fencing ADR drafted | Engineering + Operator | [`2026-05-27-ha-phase9-automated-failover-fencing-adr.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-automated-failover-fencing-adr.md) | ✅ ADR COMPLETE — selected automated detection + operator-confirmed manual promotion; rejected automatic promotion without fencing; no HA-4 completion claim |
 | 9.3e | Detection-only/manual-promotion watchdog installed and verified | Engineering + Operator | [`2026-05-27-ha-phase9-watchdog-config-parity-evidence.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-watchdog-config-parity-evidence.md) + `scripts/gcp/phase9_ha_detection_watchdog.sh` | ✅ DETECTION ONLY — watchdog healthy and alert paths verified; no auto-promotion; HA-4 remains open |
+| 9.3f | GCP fencing mechanism: script validated, app-host guard verified, standby host B fenced and recovered | Engineering + Operator | [`2026-05-27-ha-phase9-gcp-fencing-evidence.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-gcp-fencing-evidence.md) + `scripts/gcp/phase9_fencing.sh` | ✅ FENCING MECHANISM ONLY — GCP instance stop tested on standby B; app-host guard blocks host A by default; NOT HA-4; NOT automated promotion; host A app/PgBouncer SPOF still blocks safe host-A fencing |
 | 9.4 | HA-4: Automated failover drill pass (deferred) | Engineering + Operator | Failover drill log | ☐ |
 | 9.5 | RPO/RTO measured for HA scenario in operator environment | Engineering | [`2026-05-27-ha-phase9-multihost-drill-evidence.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-multihost-drill-evidence.md) | ✅ MANUAL DRILLS — 4 drill RTO/RPO log captured; observed RPO 0 marker loss; automated/fenced failover remains incomplete |
 | 9.6 | Bounded monitoring/incident readiness captured after failover | Engineering | [`2026-05-27-ha-phase9-multihost-drill-evidence.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-multihost-drill-evidence.md) §3.9 | ✅ BOUNDED EVIDENCE — ferrumd healthy, Prometheus ready, active targets up, Alertmanager API reachable; full human incident-response signoff remains open |

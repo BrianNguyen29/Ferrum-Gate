@@ -67,8 +67,8 @@ Implementation evidence for this selected next step was captured in [`2026-05-27
 
 | Gate | Requirement | Evidence required |
 |------|-------------|-------------------|
-| FG-1 — Fencing mechanism selected | Pick a concrete cross-host old-primary fencing method: GCP instance stop, firewall isolation, STONITH-equivalent, or consensus/witness design. | ADR update with operator signoff. |
-| FG-2 — Fencing tested | Demonstrate old primary is stopped or provably isolated before standby promotion. | Drill log with timestamps and `pg_is_in_recovery()` / write tests on both hosts. |
+| FG-1 — Fencing mechanism selected | Pick a concrete cross-host old-primary fencing method: GCP instance stop, firewall isolation, STONITH-equivalent, or consensus/witness design. | ✅ **Progress** — GCP instance stop selected; `scripts/gcp/phase9_fencing.sh` created with app-host guard and dry-run defaults. See [`2026-05-27-ha-phase9-gcp-fencing-evidence.md`](./2026-05-27-ha-phase9-gcp-fencing-evidence.md). |
+| FG-2 — Fencing tested | Demonstrate old primary is stopped or provably isolated before standby promotion. | 📝 **Partial** — Standby host B successfully fenced and recovered; app-host guard blocks host A by default. Full FG-2 requires old-primary isolation before real promotion, which was not performed. See [`2026-05-27-ha-phase9-gcp-fencing-evidence.md`](./2026-05-27-ha-phase9-gcp-fencing-evidence.md). |
 | FG-3 — Mutual partition drill | Simulate both nodes being unable to reach each other and prove no two-writer state. | Partition artifact showing exactly one writable primary or no promotion. |
 | FG-4 — Config parity validated | TLS, HBA, WAL sender/slot limits, replication users, and PgBouncer routing are pre-staged on both hosts. | Config parity artifact and drill with no certificate/HBA-induced RTO penalty. |
 | FG-5 — Routing automation validated | PgBouncer or equivalent routing update is performed safely and repeatably. | Drill log showing bounded routing update and ferrumd readiness recovery. |
@@ -106,6 +106,7 @@ Implementation evidence for this selected next step was captured in [`2026-05-27
 
 - [`2026-05-27-ha-phase9-multihost-topology-adr.md`](./2026-05-27-ha-phase9-multihost-topology-adr.md)
 - [`2026-05-27-ha-phase9-multihost-drill-evidence.md`](./2026-05-27-ha-phase9-multihost-drill-evidence.md)
+- [`2026-05-27-ha-phase9-gcp-fencing-evidence.md`](./2026-05-27-ha-phase9-gcp-fencing-evidence.md) — GCP instance stop tested on standby host B; app-host guard verified
 - [`HA-multi-node-evidence-runbook.md`](./HA-multi-node-evidence-runbook.md)
 
 ---

@@ -32,6 +32,7 @@ Design the path from single-node production to multi-node/HA, starting with an A
 - **Phase 9 multi-host manual drill evidence captured 2026-05-27**: host A `ferrumgate-nonprod` (`10.0.0.2`) and host B `ferrumgate-pg-ha-b` (`10.0.0.3`) were configured with PostgreSQL streaming replication; four manual drills passed, including A→B failover and B→A failback, with observed RPO 0 marker loss and RTO improving from 246s to 22s after TLS/config parity fixes; bounded partition check confirmed standby stayed read-only. See [`2026-05-27-ha-phase9-multihost-drill-evidence.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-multihost-drill-evidence.md).
 - **Phase 9 automated failover/fencing ADR drafted 2026-05-27**: next safe step selected as automated detection + operator-confirmed manual promotion; automatic promotion without fencing is rejected. See [`2026-05-27-ha-phase9-automated-failover-fencing-adr.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-automated-failover-fencing-adr.md).
 - **Phase 9 detection-only watchdog evidence captured 2026-05-27**: detection-only watchdog installed/enabled on both hosts; healthy and alert paths verified without auto-promotion; PostgreSQL TLS/WAL parity normalized; Alertmanager service/API mismatch resolved as unit-name mismatch (`prometheus-alertmanager.service`). See [`2026-05-27-ha-phase9-watchdog-config-parity-evidence.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-watchdog-config-parity-evidence.md).
+- **Phase 9 GCP fencing mechanism evidence captured 2026-05-27**: `scripts/gcp/phase9_fencing.sh` validated (`bash -n` pass); dry-run confirmed no action; app-host guard blocked fencing of `ferrumgate-nonprod` without `--force-app-host`; real safe fencing test on standby host B succeeded (instance `TERMINATED`, host A remained primary and app healthy); recovery succeeded (VM restart, PostgreSQL manual start, B returned to standby, A replication verified). This is fencing-mechanism evidence only, not HA-4 automated failover. See [`2026-05-27-ha-phase9-gcp-fencing-evidence.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-gcp-fencing-evidence.md).
 - Multi-host production HA and multi-host automated failover remain NOT COMPLETE.
 
 ## Gaps
@@ -39,7 +40,7 @@ Design the path from single-node production to multi-node/HA, starting with an A
 | Gap | Severity | Why |
 |-----|----------|-----|
 | Multi-host production HA NOT COMPLETE | Critical | Manual independent-host drills exist, but production HA still requires automated/fenced failover evidence, full incident-response signoff, and operator production posture signoff |
-| Operator-environment Phase 9 HA-4 evidence missing | Critical | Multi-host automated failover has not been executed; ADR selects detection-only/manual promotion until fencing gates pass |
+| Operator-environment Phase 9 HA-4 evidence missing | Critical | Multi-host automated failover has not been executed; ADR selects detection-only/manual promotion until fencing gates pass. GCP fencing script exists and was tested on standby host B only; app-host SPOF still blocks safe host-A fencing and automated HA-4 |
 | Read replica implementation deferred | High | Read scaling design exists; code/deployment require follow-up ADR/implementation |
 | Sustained SLO window missing | High | Available SLO evidence is bounded/canonical, not a 7–30 day observation window |
 
@@ -78,6 +79,8 @@ Design the path from single-node production to multi-node/HA, starting with an A
 - [ ] Writes resume.
 - [ ] Data consistency verified.
 - [ ] Incident log generated.
+
+> **Fencing progress 2026-05-27**: GCP instance-stop fencing script created and tested on standby host B; app-host guard blocks host A by default. HA-4 remains deferred because host A app/PgBouncer SPOF prevents safe automated fencing of the primary. Host B PgBouncer/app endpoint or managed routing is required before HA-4 can proceed safely.
 
 ## Do not start before
 
