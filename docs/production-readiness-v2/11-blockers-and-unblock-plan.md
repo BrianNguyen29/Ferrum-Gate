@@ -75,7 +75,7 @@ The seven blockers:
 
 | # | Todo | Blocker ID | Owner | Rationale |
 |---|------|------------|-------|-----------|
-| D.1 | HA/multi-node (Phase 9) | — | Engineering + Operator | Requires PG production foundation + security model stable; see `09-ha-roadmap.md` |
+| D.1 | HA/multi-node (Phase 9) | — | Engineering + Operator | Prerequisites unblocked for follow-up planning/execution preparation on 2026-05-27; multi-host production HA evidence remains NOT COMPLETE. See `09-ha-roadmap.md` and `artifacts/2026-05-27-ha-phase9-prerequisites-unblocked.md` |
 | D.2 | Web admin dashboard / TUI | — | Engineering | CLI-first; P2 deferred per `06-admin-operator-ux-plan.md` |
 | D.3 | Terraform / Pulumi module | — | Engineering | After Helm/K8s model stabilizes per `08-hosted-deployment-plan.md` |
 | D.4 | Multi-tenant implementation (T3–T5) | — | Engineering | After single-tenant production hardening and PG baseline per `04-security-tenant-model-adr.md` |
