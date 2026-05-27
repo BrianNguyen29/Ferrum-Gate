@@ -285,6 +285,7 @@ No implementation should begin until this ADR is reviewed and the operator confi
 ## 10. Cross-references
 
 - [`docs/production-readiness-v2/09-ha-roadmap.md`](./09-ha-roadmap.md) — HA roadmap and phased plan
+- [`docs/implementation-path/artifacts/2026-05-27-ha-phase9-multihost-topology-adr.md`](../implementation-path/artifacts/2026-05-27-ha-phase9-multihost-topology-adr.md) — Phase 9 follow-up topology ADR selecting two independent PostgreSQL hosts + streaming replication + PgBouncer/manual failover for future evidence
 - [`docs/production-readiness-v2/02-postgres-production-plan.md`](./02-postgres-production-plan.md) — PG hardening prerequisites (PG-1 through PG-5)
 - [`docs/implementation-path/artifacts/2026-05-21-pg-2.3b-reconnect-circuit-breaker-backlog.md`](../implementation-path/artifacts/2026-05-21-pg-2.3b-reconnect-circuit-breaker-backlog.md) — B.3 circuit breaker deferral decision
 - [`docs/production-readiness-v2/10-evidence-checklist.md`](./10-evidence-checklist.md) — Phase 9 evidence checklist

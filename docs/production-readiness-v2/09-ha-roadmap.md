@@ -1,6 +1,6 @@
 # 09 — HA/Multi-Node Roadmap
 
-> **Status**: Phase 9 prerequisites unblocked. ADR approved as planning decision; local simulation added 2026-05-26; Tier 1.5 same-VM HA evidence complete; multi-host production HA implementation remains NOT COMPLETE.
+> **Status**: Phase 9 topology ADR selected. ADR approved as planning decision; local simulation added 2026-05-26; Tier 1.5 same-VM HA evidence complete; Phase 9 selected topology is two independent PostgreSQL hosts with streaming replication + PgBouncer/manual failover; multi-host production HA implementation remains NOT COMPLETE.
 > **Owner**: Engineering + Operator
 > **Last updated**: 2026-05-26
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
@@ -28,6 +28,7 @@ Design the path from single-node production to multi-node/HA, starting with an A
 - **Local HA simulation added 2026-05-26**: Docker Compose primary/standby with streaming replication, `pg_basebackup`, and manual `pg_promote()` failover drill. Latest measured RTO 3 s, RPO 0 rows lost locally. See [`docs/implementation-path/artifacts/2026-05-26-ha-local-failover-simulation-evidence.md`](../../implementation-path/artifacts/2026-05-26-ha-local-failover-simulation-evidence.md).
 - **Tier 1.5 same-VM HA evidence added 2026-05-27**: nonprod target PostgreSQL primary/standby streaming replication, same-VM automated failover drills, and operator acknowledgment are complete. See [`docs/production-readiness-v2/13-tier-1.5-completion-status.md`](./13-tier-1.5-completion-status.md).
 - **Phase 9 prerequisites unblocked 2026-05-27**: PostgreSQL foundation, security/tenant decisions, SLO metrics, and backup/restore evidence are now available for beginning the next HA workstream. See [`docs/implementation-path/artifacts/2026-05-27-ha-phase9-prerequisites-unblocked.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-prerequisites-unblocked.md).
+- **Phase 9 topology ADR selected 2026-05-27**: two independent PostgreSQL hosts/VMs with streaming replication, PgBouncer routing, and manual/operator-controlled failover drills before any automated multi-host claim. See [`2026-05-27-ha-phase9-multihost-topology-adr.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-multihost-topology-adr.md).
 - Multi-host production HA remains NOT COMPLETE.
 
 ## Gaps
@@ -46,6 +47,7 @@ Design the path from single-node production to multi-node/HA, starting with an A
 - [x] Compare options: managed PostgreSQL HA, Patroni, repmgr, manual failover, read replicas only. — **DRAFTED** in [`ha-adr.md`](./ha-adr.md) §2.
 - [x] Define: failover strategy, replica strategy, split-brain prevention, leader/writer model, read routing, migration handling, RPO/RTO target. — **DRAFTED** in [`ha-adr.md`](./ha-adr.md) §3–§6.
 - [x] Operator review and signoff of [`ha-adr.md`](./ha-adr.md). — **APPROVED AS PLANNING DECISION** 2026-05-21 (no implementation claim; no HA claim).
+- [x] Phase 9 multi-host topology ADR selected. — **PLANNING ADR COMPLETE** 2026-05-27: two independent PostgreSQL hosts + streaming replication + PgBouncer/manual failover. No multi-host HA claim.
 
 ### HA-2 — Manual failover
 
@@ -92,6 +94,7 @@ See [`2026-05-27-ha-phase9-prerequisites-unblocked.md`](../../implementation-pat
 ## Evidence required
 
 - `ha-adr.md`
+- [`2026-05-27-ha-phase9-multihost-topology-adr.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-multihost-topology-adr.md) — selected Phase 9 multi-host topology ADR; no implementation/evidence claim
 - `manual-failover-runbook.md` (planning artifact; no live drill)
 - `manual-failover-drill-evidence.md` — local simulation [`2026-05-26-ha-local-failover-simulation-evidence.md`](../../implementation-path/artifacts/2026-05-26-ha-local-failover-simulation-evidence.md) exists; operator-environment drill deferred
 - `read-replica-design.md` (planning artifact; no implementation)

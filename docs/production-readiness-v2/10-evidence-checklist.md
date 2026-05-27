@@ -227,7 +227,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 
 ## Phase 9 — HA/multi-node
 
-> **Status updated 2026-05-27**: Phase 9 prerequisites are unblocked for follow-up planning/execution preparation. HA-2 manual failover runbook exists; local simulation drill passed (latest RTO 3 s, RPO 0 rows lost); Tier 1.5 same-VM HA topology and automated failover evidence are complete. Multi-host/operator-environment HA-4/HA-5 evidence remains open.
+> **Status updated 2026-05-27**: Phase 9 prerequisites are unblocked and multi-host topology ADR is selected for follow-up planning/execution preparation. HA-2 manual failover runbook exists; local simulation drill passed (latest RTO 3 s, RPO 0 rows lost); Tier 1.5 same-VM HA topology and automated failover evidence are complete. Multi-host/operator-environment HA-4/HA-5 evidence remains open.
 > **Template**: `TEMPLATE-ha-multinode-evidence-pack.md` prepared for eventual HA evidence (requires real drills).
 > **Runbook**: `HA-multi-node-evidence-runbook.md` provides detailed failover drill procedure, RPO/RTO measurement template, read replica validation checklist, and rollback criteria for operator execution.
 
@@ -240,6 +240,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 | 9.2c | HA-B: Local ferrumd reconnect drill with app-level RTO | Engineering | `scripts/run_ha_local_ferrumd_reconnect_drill.sh` + [`2026-05-26-ha-local-ferrumd-reconnect-evidence.md`](../../implementation-path/artifacts/2026-05-26-ha-local-ferrumd-reconnect-evidence.md) | ✅ LOCAL EVIDENCE — ferrumd restart against promoted standby passes; app-level RTO measured; local only; not production HA |
 | 9.3 | HA-3: Read replica behavior designed | Engineering | `docs/production-readiness-v2/read-replica-design.md` | ✅ PLANNING ARTIFACT COMPLETE — design doc exists; no implementation; no replica deployed |
 | 9.3a | Phase 9 HA prerequisites unblocked | Engineering + Operator | [`2026-05-27-ha-phase9-prerequisites-unblocked.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-prerequisites-unblocked.md) | ✅ UNBLOCKED FOR PLANNING — PG foundation, security model, SLO metrics, and backup/restore evidence exist; no multi-host HA claim |
+| 9.3b | Phase 9 multi-host topology ADR selected | Engineering + Operator | [`2026-05-27-ha-phase9-multihost-topology-adr.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-multihost-topology-adr.md) | ✅ ADR COMPLETE — selected two independent PostgreSQL hosts + streaming replication + PgBouncer/manual failover for future evidence; no multi-host HA claim |
 | 9.4 | HA-4: Automated failover drill pass (deferred) | Engineering + Operator | Failover drill log | ☐ |
 | 9.5 | RPO/RTO measured for HA scenario in operator environment | Engineering | Measurement log | ☐ |
 
