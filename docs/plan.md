@@ -146,7 +146,7 @@ FerrumGate nên chơi sâu ở layer giữa.
 | Policy simulation / dry-run | P0/P1 | Build | `TODO/VERIFY` | `docs/api/policy-simulation.md` + API + CLI |
 | Sustained SLO evidence window | P0 | Operate / Document | `TODO/VERIFY` | `docs/implementation-path/artifacts/YYYY-MM-DD-sustained-slo-window-evidence.md` |
 | Secure MCP tunnel integration guide | P1 | Integrate / Document | `DOCS COMPLETE` | `docs/guides/secure-mcp-tunnel-integration.md` |
-| OIDC / JWT federation | P1 | Integrate | `TODO/VERIFY` | `docs/security/oidc-jwt-federation.md` + config + tests |
+| OIDC / JWT federation | P1 | Integrate | `DESIGN COMPLETE` | `docs/security/oidc-jwt-federation.md` + Phase 4.2+ implementation/tests pending |
 | STRIDE threat model | P1 | Document | `TODO/VERIFY` | `docs/security/threat-model-stride.md` |
 | Tamper-evident audit | P1/P2 | Build minimal | `TODO/VERIFY` | `docs/architecture/tamper-evident-audit-design.md` + `ferrumctl audit verify` |
 | Agent Ed25519 identity | P2 | Build minimal | `TODO/VERIFY` | `docs/security/agent-identity-ed25519.md` + implementation |
@@ -279,7 +279,8 @@ Thứ tự này giúp FerrumGate:
 ### Phase 4: Identity federation and agent identity
 **Mục tiêu:** Tích hợp identity provider bên ngoài và cung cấp agent identity nhẹ.
 
-- [ ] **4.1** Thiết kế OIDC/JWT federation flow và config schema (`auth.oidc` config). (Owner: Dev / Type: Document)
+- [x] **4.1** Thiết kế OIDC/JWT federation flow và config schema (`auth.oidc` config). (Owner: Dev / Type: Document)
+  - Evidence: [`docs/security/oidc-jwt-federation.md`](./security/oidc-jwt-federation.md)
 - [ ] **4.2** Implement JWT validation middleware cho ít nhất 1 provider (Google hoặc Keycloak). (Owner: Dev / Type: Build)
 - [ ] **4.3** Implement role mapping từ JWT claims sang FerrumGate roles/scopes. (Owner: Dev / Type: Build)
 - [ ] **4.4** Viết `docs/security/oidc-jwt-federation.md`. (Owner: Dev / Type: Document)
