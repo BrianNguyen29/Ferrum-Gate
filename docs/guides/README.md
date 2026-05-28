@@ -16,11 +16,11 @@
 | [Operator Guide](operator.md) | Expanded | Configuration, health, backup/restore, token rotation, monitoring, incident response, local-vs-hosted caveats |
 | [Policy Authoring](policy-authoring.md) | Templates validated; implemented locally | Policy bundles, 7 validated examples, common patterns; validate/simulate/apply/diff/rollback/versions implemented |
 | [MCP Integration](mcp-integration.md) | Locally validated | MCP server setup, client config, tools list, auth; local lifecycle and query_lineage validated after bugfix |
-| [Hosted Deployment](hosted-deployment.md) | Scaffold | Docker Compose, systemd, PostgreSQL, future Helm |
-| [Security Model](security-model.md) | Scaffold | Bearer auth, scoped tokens, RBAC design, tenant model |
-| [SLO/SLA](slo-sla.md) | Scaffold | SLO targets, validation runbook, metrics |
+| [Hosted Deployment](hosted-deployment.md) | Expanded guide | Docker Compose, systemd, PostgreSQL, future Helm |
+| [Security Model](security-model.md) | Expanded guide | Bearer auth, scoped tokens, RBAC design, tenant model |
+| [SLO/SLA](slo-sla.md) | Expanded guide | SLO targets, validation runbook, metrics |
 | [Adapter Reference](adapter-reference.md) | Expanded | Per-adapter operations, rollback, limitations, examples, risk classes |
-| [Troubleshooting](troubleshooting.md) | Scaffold | Common issues, diagnostics, recovery steps |
+| [Troubleshooting](troubleshooting.md) | Expanded guide | Common issues, diagnostics, recovery steps |
 
 ## Landing page
 

@@ -1,6 +1,6 @@
 # SLO/SLA Guide
 
-> **Status**: Scaffold. SLO targets are draft; not yet validated.
+> **Status**: Expanded guide. Canonical SLO evidence and rate-limit profiles incorporated.
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
 
 ---
@@ -9,33 +9,30 @@
 
 This guide documents the draft Service Level Objectives (SLOs) for FerrumGate and explains how to validate them. These are **not committed SLAs** until ratified by an operator and backed by evidence.
 
-## Current baselines
+## SLI / SLO definitions
 
-SQLite single-node stress test results (post-Phase-1 write queue):
+### Service Level Indicators (SLIs)
 
-| Scenario | p50 Latency | Error Rate |
-|----------|-------------|------------|
-| health (GET /v1/healthz) | 1.28ms | 0% |
-| auth (GET /v1/approvals) | 3.03ms | 0% |
-| provenance-query (POST) | 2.76ms | 0% |
-| intent-compile (POST, sync write) | 2.25ms | 0% |
-| execution-pipeline (6 steps) | 16.0ms | 0% |
-| capability (mint→revoke cycle) | 0.30ms | 0% |
-| sqlite-contention (ingest writes, 50 workers) | 29.9ms | 0% |
-| mixed workload (5 workers) | 4.80ms | 0% |
+| SLI | Measurement |
+|-----|-------------|
+| Availability | Ratio of successful `healthz` / `readyz/deep` probes over a window |
+| Latency | p50/p95/p99 request duration per operation from `/v1/metrics` |
+| Error rate | Ratio of 5xx and 429 responses to total requests |
+| Durability | Backup age, restore success, row-count/hash parity |
+| Correctness | Capability bypass count, provenance gap count, scope violation count |
+| Security | Auth bypass count, secret leak in output/logs count |
+| Operational | Incident acknowledgement time |
 
-> **Caveat**: These are local results. Target-host results may differ.
+### Draft SLOs
 
-## Draft SLOs
-
-### Availability
+#### Availability
 
 | Endpoint | Pilot target | Single-node PG target | HA target |
 |----------|--------------|-----------------------|-----------|
 | `/v1/healthz` | 99.0% | 99.5% | 99.9% |
 | `/v1/readyz/deep` | 99.0% | 99.5% | 99.9% |
 
-### Latency
+#### Latency
 
 | Operation | Pilot p99 | Single-node PG p99 | HA p99 |
 |-----------|-----------|--------------------|--------|
@@ -47,14 +44,14 @@ SQLite single-node stress test results (post-Phase-1 write queue):
 | verify | < 1s | < 500ms | < 300ms |
 | full pipeline | < 5s | < 3s | < 2s |
 
-### Error rate
+#### Error rate
 
 | Metric | Pilot | Single-node PG | HA |
 |--------|-------|----------------|----|
 | 5xx rate | < 1% | < 0.5% | < 0.1% |
 | 429 rate | < 5% | < 2% | < 1% |
 
-### Durability
+#### Durability
 
 | Metric | Target |
 |--------|--------|
@@ -63,7 +60,7 @@ SQLite single-node stress test results (post-Phase-1 write queue):
 | RPO | 15 minutes |
 | RTO | 15 minutes |
 
-### Correctness
+#### Correctness
 
 | Metric | Target |
 |--------|--------|
@@ -71,18 +68,44 @@ SQLite single-node stress test results (post-Phase-1 write queue):
 | Provenance gap | 0 |
 | Scope violation | 0 |
 
-### Security
+#### Security
 
 | Metric | Target |
 |--------|--------|
 | Auth bypass | 0 |
 | Secret leak in output/logs | 0 |
 
-### Operational
+#### Operational
 
 | Metric | Pilot | Single-node PG | HA |
 |--------|-------|----------------|----|
 | Incident acknowledgement | < 1h | < 30min | < 15min |
+
+## Canonical SLO evidence summary
+
+On 2026-05-21, a canonical target-host SLO certification was attempted with three rate-limit configurations:
+
+| Run | Config | 429 rate | Result |
+|-----|--------|----------|--------|
+| #1 | Default `2/50` | 46.8% | **FAIL** |
+| #2 | Tuned `20/500` | 73.4% | **FAIL** |
+| #3 | Max-valid `1000/10000` | 0% | **PASS** |
+
+**Decision**: Default and tuned configurations are intentionally conservative and remain unchanged. SLO certification requires explicit high-throughput profile selection. Operator must tune based on real traffic and IP distribution.
+
+Evidence:
+- [`docs/implementation-path/artifacts/2026-05-21-canonical-slo-helm-conditional-signoff.md`](../../implementation-path/artifacts/2026-05-21-canonical-slo-helm-conditional-signoff.md)
+- [`docs/operations/rate-limit-tuning-guide.md`](../../operations/rate-limit-tuning-guide.md)
+
+## Rate-limit profiles
+
+| Profile | `rate_limit_per_second` | `rate_limit_burst` | When to use |
+|---------|------------------------|--------------------|-------------|
+| **Default safety** | 2 | 50 | Low-traffic pilots, local development, accidental-overload protection |
+| **SLO certification** | 1000 | 10000 | Canonical five-phase SLO validation workload |
+| **Production / operator-tuned** | TBD | TBD | Real deployments; derive from observed per-IP traffic and backend capacity |
+
+> **Do not** claim SLO certification unless you explicitly used the SLO-certification profile or a validated operator-tuned equivalent.
 
 ## Validation runbook
 
@@ -122,12 +145,39 @@ Each run must produce:
 - `error-report.md` — error counts and rates
 - `runbook-checklist.md` — signed pass/fail per gate
 
+### Quick validation commands
+
+```bash
+# Health
+curl http://localhost:8080/v1/healthz
+curl http://localhost:8080/v1/readyz/deep
+
+# Pool saturation (PostgreSQL)
+curl -s http://localhost:8080/v1/metrics | grep ferrumgate_store_pg_pool_idle
+curl -s http://localhost:8080/v1/metrics | grep ferrumgate_store_pg_acquire_timeouts_total
+
+# Rate-limit errors
+curl -s http://localhost:8080/v1/metrics | grep 'ferrumgate_governance_errors_total{status="429"}'
+```
+
 ## Status caveat
 
-> **production-ready = NO**. These SLOs are draft targets. No target-host sustained workload has been run against them. Do not cite as committed SLAs. See [`docs/production-readiness-v2/01-slo-sla.md`](../../production-readiness-v2/01-slo-sla.md).
+> **production-ready = NO**. These SLOs are draft targets. No sustained SLO window (7–30 days) has been observed. Do not cite as committed SLAs. See [`docs/production-readiness-v2/01-slo-sla.md`](../../production-readiness-v2/01-slo-sla.md).
+
+## Non-claims
+
+| Non-claim | Status |
+|-----------|--------|
+| **production-ready** | **NO** |
+| **full G2** | **NOT COMPLETE** |
+| **Block A** | **WAIVED/CONDITIONAL** |
+| **Tier 2** | **NOT COMPLETE** |
+| **sustained SLO window** | **NO** |
+| **default-config SLO certification** | **FAIL** — only max-valid config passed |
 
 ## Related docs
 
 - [`docs/production-readiness-v2/01-slo-sla.md`](../../production-readiness-v2/01-slo-sla.md) — Full SLO draft and runbook plan.
 - [`docs/PRODUCTION_NOTES.md`](../../PRODUCTION_NOTES.md) — Stress test baselines.
 - [`operator.md`](./operator.md) — Monitoring and alerting guidance.
+- [`docs/operations/rate-limit-tuning-guide.md`](../../operations/rate-limit-tuning-guide.md) — Rate-limit profile selection.

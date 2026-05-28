@@ -1,17 +1,18 @@
 # Security Model Guide
 
-> **Status**: Scoped token/RBAC/SEC-6 implementation signed for current T1 scope; not full production security.
+> **Status**: Expanded guide. Scoped token/RBAC/SEC-6 implementation signed for current T1 scope; not full production security.
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
 
 ---
 
 ## Current security posture
 
-- **Auth mode**: `Disabled` (dev), `Bearer` (pilot), or scoped-token mode when explicitly enabled.
+- **Auth mode**: `Disabled` (dev), `Bearer` (pilot), or `Scoped` when explicitly enabled.
 - **Bearer token**: Single global token remains supported for conditional pilot compatibility.
 - **Scoped tokens/RBAC**: Implemented for the current T1 scope with deny-by-default middleware and admin token lifecycle APIs/CLI.
 - **No multi-tenancy**: One deployment, one implicit tenant.
 - **Audit log**: SEC-6 minimal append-only audit log implemented for admin/policy/approval/token actions; not compliance-grade WORM/signed storage.
+- **Token TTL enforcement**: Server-side rejection of tokens with expiry > 90 days.
 
 ## Threat model (summary)
 
@@ -22,6 +23,86 @@
 | Tenant data leak | N/A (single tenant) | tenant_id filtering + PG RLS |
 | Auth bypass | Constant-time token comparison plus scoped-token RBAC middleware | External identity integration |
 | Secret leak in logs | Output redaction in MCP; minimal audit log avoids secret material | Structured compliance-grade audit controls |
+
+## Scoped token and RBAC implementation
+
+### What is implemented
+
+| Feature | Evidence | Status |
+|---------|----------|--------|
+| Scoped token store (SQLite + PostgreSQL) | [`2026-05-20-scoped-token-implementation-evidence.md`](../../implementation-path/artifacts/2026-05-20-scoped-token-implementation-evidence.md) | ✅ Complete |
+| RBAC middleware (endpoint → required scope) | `crates/ferrum-gateway/src/server.rs` | ✅ Complete |
+| Admin token lifecycle API (`POST/GET/DELETE/rotate`) | `13-token-api-contract.md` | ✅ Complete |
+| `ferrumctl admin tokens` CLI | `14-ferrumctl-admin-tokens-cli-spec.md` | ✅ Complete |
+| TTL enforcement (>90d rejected) | `test_create_token_rejects_excessive_ttl` | ✅ Complete |
+| Durable revocation (`revoked_at` in store) | `15-revocation-durability-tradeoff.md` | ✅ Complete |
+
+### Acceptance targets
+
+- [x] Read-only token cannot call mutating endpoints (SEC-1).
+- [x] Agent token cannot approve proposals (SEC-2).
+- [x] Auditor token cannot execute actions (SEC-3).
+- [x] Revoked token returns 401 (SEC-4).
+- [x] Expired token returns 401 (SEC-5).
+- [x] Audit log records actor, action, and result for current scope (SEC-6).
+- [ ] Tenant A cannot read tenant B data — deferred by single-tenant T1 decision; no multi-tenant claim.
+
+## Bearer auth hardening
+
+1. Generate token on the target host (never print to logs):
+   ```bash
+   openssl rand -hex 32
+   ```
+2. Store token with `chmod 640` and restricted ownership (`root:ferrumgate`).
+3. Set `FERRUMD_AUTH_MODE=Bearer` in the environment file.
+4. Deploy behind a TLS-terminating reverse proxy.
+5. Do not print tokens in logs or command history.
+6. Rotate token after initial setup and periodically:
+   - Update env/config with new token.
+   - Restart ferrumd.
+   - Verify new token returns 200 and old token returns 401.
+   - Record rotation in audit log.
+
+> **Rotation validated on target host**: See [`docs/implementation-path/artifacts/2026-05-17-sendgrid-rotation-evidence.md`](../../implementation-path/artifacts/2026-05-17-sendgrid-rotation-evidence.md) for secret-rotation evidence.
+
+## Audit log (SEC-6)
+
+### What is logged
+
+| Action | Trigger endpoint |
+|--------|------------------|
+| `token_create` | `POST /v1/admin/tokens` |
+| `token_revoke` | `DELETE /v1/admin/tokens/{id}` |
+| `token_rotate` | `POST /v1/admin/tokens/{id}/rotate` |
+| `policy_bundle_create` | `POST /v1/policy-bundles` |
+| `policy_bundle_activate` | `PUT /v1/policy-bundles/{id}/active` |
+| `policy_bundle_rollback` | `POST /v1/policy-bundles/{id}/rollback` |
+| `approval_resolve` | `POST /v1/approvals/{id}/resolve` |
+| `execution_cancel` | `POST /v1/executions/{id}/cancel` |
+
+### How to query
+
+```bash
+# API (requires admin:audit scope)
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8080/v1/admin/audit-logs?action=token_create&limit=10"
+
+# CLI
+ferrumctl admin audit list --limit 20
+```
+
+### Limitations
+
+- Append is **best-effort**; store errors do not fail the primary action.
+- No cryptographic signing or WORM storage.
+- Not compliance-grade forensic audit.
+
+## Secret handling
+
+- Token material is **hashed** in the store; plaintext is never persisted.
+- DSN credentials in env files should use `chmod 640` and `root:ferrumgate` ownership.
+- TLS client keys: `chmod 600` and `ferrumgate:ferrumgate` ownership.
+- Certificate rotation requires a ferrumd restart because DSN is parsed once at startup.
 
 ## Target security model
 
@@ -60,16 +141,6 @@ Tenant
 - `admin:tokens`, `admin:config`
 - `backup:run`
 
-### Acceptance targets
-
-- [x] Read-only token cannot call mutating endpoints.
-- [x] Agent token cannot approve proposals.
-- [x] Auditor token cannot execute actions.
-- [x] Revoked token returns 401.
-- [x] Expired token returns 401.
-- [x] Audit log records actor, action, and result for current scope.
-- [ ] Tenant A cannot read tenant B data — deferred by single-tenant T1 decision; no multi-tenant claim.
-
 ## Hardening checklist
 
 ### Immediate (pilot)
@@ -99,8 +170,22 @@ Tenant
 
 > **production-ready = NO**. Scoped auth/RBAC/SEC-6 are implemented and signed for the current T1 scope, but this does not complete full G2, Block A, multi-tenant security, OIDC/SSO, or compliance-grade audit logging. See [`docs/production-readiness-v2/04-security-tenant-model-adr.md`](../../production-readiness-v2/04-security-tenant-model-adr.md) and [`docs/implementation-path/artifacts/2026-05-27-phase4-security-operator-signoff.md`](../../implementation-path/artifacts/2026-05-27-phase4-security-operator-signoff.md).
 
+## Non-claims
+
+| Non-claim | Status |
+|-----------|--------|
+| **production-ready** | **NO** |
+| **full G2** | **NOT COMPLETE** |
+| **Block A** | **WAIVED/CONDITIONAL** |
+| **Tier 2** | **NOT COMPLETE** |
+| **multi-tenant production security** | **NO** |
+| **OIDC/SSO** | **DEFERRED** |
+| **compliance-grade audit logging** | **NO** |
+
 ## Related docs
 
 - [`operator.md`](./operator.md) — Token rotation and incident response.
 - [`docs/production-readiness-v2/04-security-tenant-model-adr.md`](../../production-readiness-v2/04-security-tenant-model-adr.md) — Full ADR.
 - [`docs/implementation-path/70-security-hardening-local-only-plan.md`](../../implementation-path/70-security-hardening-local-only-plan.md) — Local security audit commands.
+- [`docs/implementation-path/artifacts/2026-05-20-security-model-operator-decisions.md`](../../implementation-path/artifacts/2026-05-20-security-model-operator-decisions.md) — Operator decisions Q1–Q6.
+- [`docs/implementation-path/artifacts/2026-05-21-sec6-audit-log-implementation-evidence.md`](../../implementation-path/artifacts/2026-05-21-sec6-audit-log-implementation-evidence.md) — SEC-6 implementation evidence.
