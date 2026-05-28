@@ -27,3 +27,7 @@ jobs:
         run: cargo check --workspace --all-features
       - name: Cargo clippy (all features)
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Cargo check (postgres feature)
+        run: cargo check -p ferrumd -p ferrum-migrate -p ferrum-store -p ferrum-gateway --features postgres
+      - name: Cargo clippy (postgres feature)
+        run: cargo clippy -p ferrumd -p ferrum-migrate -p ferrum-store -p ferrum-gateway --features postgres -- -D warnings

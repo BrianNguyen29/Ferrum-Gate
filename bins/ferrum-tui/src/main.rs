@@ -19,8 +19,8 @@ use tokio::sync::mpsc;
 mod app;
 mod client;
 
-use app::{App, ProbeResult, ProbeStatus};
-use client::Client;
+use app::{App, ApprovalsView, ProbeResult, ProbeStatus};
+use client::{ApprovalRequest, Client};
 
 #[derive(Debug, Parser)]
 #[command(name = "ferrum-tui")]
@@ -54,6 +54,7 @@ fn resolve_env(primary: &str, fallback: &str) -> Option<String> {
 enum AppEvent {
     Key(event::KeyEvent),
     Probes(Vec<ProbeResult>),
+    Approvals(Result<Vec<ApprovalRequest>, String>),
 }
 
 #[tokio::main]
@@ -188,7 +189,42 @@ async fn run_app<B: Backend>(
                 results
             };
 
+            let approvals = if dry_run {
+                Ok(vec![
+                    ApprovalRequest {
+                        approval_id: "dry-run-001".to_string(),
+                        proposal_id: "dry-run-prop-001".to_string(),
+                        requested_by: serde_json::json!("dry-run-user"),
+                        reason: "Synthetic approval for dry-run mode".to_string(),
+                        state: "pending".to_string(),
+                        created_at: "2024-01-01T00:00:00Z".to_string(),
+                        expires_at: "2024-01-02T00:00:00Z".to_string(),
+                    },
+                    ApprovalRequest {
+                        approval_id: "dry-run-002".to_string(),
+                        proposal_id: "dry-run-prop-002".to_string(),
+                        requested_by: serde_json::json!({"user": "dry-run-admin", "role": "operator"}),
+                        reason: "Another synthetic approval".to_string(),
+                        state: "approved".to_string(),
+                        created_at: "2024-01-01T12:00:00Z".to_string(),
+                        expires_at: "2024-01-02T12:00:00Z".to_string(),
+                    },
+                ])
+            } else {
+                match refresh_client.list_approvals().await {
+                    Ok(resp) => Ok(resp.items),
+                    Err(e) => Err(format!("{:#}", e)),
+                }
+            };
+
             if refresh_tx.send(AppEvent::Probes(results)).await.is_err() {
+                break;
+            }
+            if refresh_tx
+                .send(AppEvent::Approvals(approvals))
+                .await
+                .is_err()
+            {
                 break;
             }
 
@@ -226,6 +262,9 @@ async fn run_app<B: Backend>(
                             KeyCode::Char('r') => {
                                 app.message = "Refreshing...".to_string();
                             }
+                            KeyCode::Char('a') => {
+                                app.approvals_visible = !app.approvals_visible;
+                            }
                             KeyCode::Char('?') | KeyCode::Char('h') => {
                                 app.help_visible = !app.help_visible;
                             }
@@ -239,6 +278,12 @@ async fn run_app<B: Backend>(
                     if app.message == "Refreshing..." {
                         app.message.clear();
                     }
+                }
+                AppEvent::Approvals(result) => {
+                    app.approvals = match result {
+                        Ok(items) => ApprovalsView::Loaded(items),
+                        Err(e) => ApprovalsView::Error(e),
+                    };
                 }
             }
         }

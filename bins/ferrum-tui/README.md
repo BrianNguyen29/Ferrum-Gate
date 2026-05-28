@@ -37,6 +37,7 @@ cargo build --release --bin ferrum-tui
 | Key | Action |
 |-----|--------|
 | `r` | Refresh probes now |
+| `a` | Toggle approvals panel |
 | `?` / `h` | Toggle help overlay |
 | `q` | Quit |
 
@@ -45,6 +46,7 @@ cargo build --release --bin ferrum-tui
 - `GET /v1/healthz`
 - `GET /v1/readyz`
 - `GET /v1/readyz/deep`
+- `GET /v1/approvals?limit=20` (read-only approvals view)
 
 ## Non-claims
 

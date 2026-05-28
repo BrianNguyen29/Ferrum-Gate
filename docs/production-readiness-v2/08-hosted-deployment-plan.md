@@ -2,7 +2,7 @@
 
 > **Status**: Planning artifact. Local demo compose validated (DEP-1/DEP-2). Target-host packaging remains planned.
 > **Owner**: Engineering
-> **Last updated**: 2026-05-21
+> **Last updated**: 2026-05-28
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
 > **Scope**: [`00-scope-and-nonclaims.md`](00-scope-and-nonclaims.md)
 
@@ -44,7 +44,7 @@ Package FerrumGate into reproducible deployment modes so operators can deploy co
 
 - [x] Helm chart scaffold (local-only; `deploy/helm/ferrumgate/`). `helm lint` / `helm template` passed locally with Helm 3.15.4. Not production-ready.
 - [x] K8s manifests (included in Helm chart templates).
-- [ ] Prometheus/Grafana dashboard integration.
+- [x] Prometheus/Grafana dashboard integration. Dashboard JSON template added to `configs/monitoring/ferrumgate-grafana-dashboard.json`; import instructions in `configs/monitoring/README.md`. NOT production observability.
 - [x] Backup cron/timer docs — added to `docs/guides/hosted-deployment.md` referencing existing example files.
 - [x] Managed PostgreSQL guide — added to `docs/guides/hosted-deployment.md` referencing `postgres-target-env.template`; no secrets.
 

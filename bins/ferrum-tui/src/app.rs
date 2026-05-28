@@ -6,6 +6,8 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, Wrap},
 };
 
+use crate::client::ApprovalRequest;
+
 #[derive(Debug, Clone)]
 pub enum ProbeStatus {
     Loading,
@@ -42,6 +44,13 @@ pub struct ProbeResult {
     pub latency_ms: Option<u128>,
 }
 
+#[derive(Debug, Clone)]
+pub enum ApprovalsView {
+    Loading,
+    Loaded(Vec<ApprovalRequest>),
+    Error(String),
+}
+
 pub struct App {
     pub base_url: String,
     pub token_redacted: String,
@@ -52,6 +61,8 @@ pub struct App {
     pub refresh_interval_secs: u64,
     pub quit: bool,
     pub message: String,
+    pub approvals_visible: bool,
+    pub approvals: ApprovalsView,
 }
 
 impl App {
@@ -93,6 +104,8 @@ impl App {
             refresh_interval_secs: interval_secs,
             quit: false,
             message: String::new(),
+            approvals_visible: false,
+            approvals: ApprovalsView::Loading,
         }
     }
 }
@@ -108,7 +121,11 @@ pub fn draw(f: &mut Frame, app: &App) {
         .split(f.area());
 
     draw_header(f, app, main_layout[0]);
-    draw_probe_table(f, app, main_layout[1]);
+    if app.approvals_visible {
+        draw_approvals_table(f, app, main_layout[1]);
+    } else {
+        draw_probe_table(f, app, main_layout[1]);
+    }
     draw_footer(f, app, main_layout[2]);
 
     if app.help_visible {
@@ -209,6 +226,97 @@ fn draw_probe_table(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(table, area);
 }
 
+fn draw_approvals_table(f: &mut Frame, app: &App, area: Rect) {
+    let title = if app.dry_run {
+        " Pending Approvals [DRY-RUN] "
+    } else {
+        " Pending Approvals "
+    };
+
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Blue));
+
+    match &app.approvals {
+        ApprovalsView::Loading => {
+            let text = Paragraph::new("Loading approvals...")
+                .block(block)
+                .alignment(Alignment::Center);
+            f.render_widget(text, area);
+        }
+        ApprovalsView::Error(err) => {
+            let text = Paragraph::new(Span::styled(
+                format!("Error loading approvals: {}", err),
+                Style::default().fg(Color::Red),
+            ))
+            .block(block)
+            .wrap(Wrap { trim: true });
+            f.render_widget(text, area);
+        }
+        ApprovalsView::Loaded(items) => {
+            let header = Row::new(vec![
+                "Approval ID",
+                "Proposal ID",
+                "State",
+                "Reason",
+                "By",
+                "Created",
+                "Expires",
+            ])
+            .style(Style::default().add_modifier(Modifier::BOLD))
+            .height(1);
+
+            let rows: Vec<Row> = items
+                .iter()
+                .map(|a| {
+                    let by_text = match &a.requested_by {
+                        serde_json::Value::String(s) => s.clone(),
+                        other => other.to_string(),
+                    };
+                    let by_truncated: String = by_text.chars().take(12).collect();
+
+                    let state_style = match a.state.to_lowercase().as_str() {
+                        "pending" => Style::default().fg(Color::Yellow),
+                        "approved" => Style::default().fg(Color::Green),
+                        "rejected" | "denied" => Style::default().fg(Color::Red),
+                        _ => Style::default().fg(Color::Gray),
+                    };
+
+                    Row::new(vec![
+                        Cell::from(a.approval_id.chars().take(16).collect::<String>()),
+                        Cell::from(a.proposal_id.chars().take(16).collect::<String>()),
+                        Cell::from(Span::styled(&a.state, state_style)),
+                        Cell::from(a.reason.chars().take(20).collect::<String>()),
+                        Cell::from(by_truncated),
+                        Cell::from(a.created_at.chars().take(16).collect::<String>()),
+                        Cell::from(a.expires_at.chars().take(16).collect::<String>()),
+                    ])
+                    .height(1)
+                })
+                .collect();
+
+            let table = Table::new(
+                rows,
+                [
+                    Constraint::Length(18),
+                    Constraint::Length(18),
+                    Constraint::Length(10),
+                    Constraint::Min(8),
+                    Constraint::Length(14),
+                    Constraint::Length(18),
+                    Constraint::Length(18),
+                ],
+            )
+            .header(header)
+            .block(block)
+            .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED));
+
+            f.render_widget(table, area);
+        }
+    }
+}
+
 fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     let refresh_info = app
         .last_refresh
@@ -216,7 +324,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         .map(|t| format!("Last refresh: {}", t))
         .unwrap_or_else(|| "Last refresh: —".to_string());
 
-    let help_hint = "Press ? for help  |  q to quit  |  r to refresh";
+    let help_hint = "Press ? for help  |  q to quit  |  r to refresh  |  a approvals";
 
     let text = Text::from(vec![Line::from(vec![
         Span::styled(help_hint, Style::default().fg(Color::Gray)),
@@ -247,6 +355,10 @@ fn draw_help(f: &mut Frame, _app: &App) {
         Line::from(vec![
             Span::styled("r", Style::default().add_modifier(Modifier::BOLD)),
             Span::raw("     Refresh probes now"),
+        ]),
+        Line::from(vec![
+            Span::styled("a", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw("     Toggle approvals panel"),
         ]),
         Line::from(vec![
             Span::styled("? / h", Style::default().add_modifier(Modifier::BOLD)),
