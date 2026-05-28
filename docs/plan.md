@@ -14,6 +14,14 @@ FerrumGate nên giữ định vị riêng: execution-governance gateway cho MCP/
 > - Sustained SLO window (7–30 ngày liên tục) chưa có evidence đầy đủ.
 >
 > **Kế hoạch này là strategic execution checklist**, không phải bằng chứng rằng các mục đã hoàn thành. Mỗi mục phải có artifact xác thực riêng.
+>
+> **SSOT Boundary Declaration**
+>
+> - `docs/plan.md` is the **single source of truth (SSOT)** for strategic execution checklist, task ordering, priorities, and phase gates.
+> - It is **NOT** canonical evidence that tasks are complete by itself; each item requires its own artifact.
+> - It is **NOT** the canonical non-claims/readiness boundary document; see [`docs/security/non-claims.md`](./security/non-claims.md).
+> - It is **NOT** the canonical production evidence/readiness artifact set; see [`docs/production-readiness-v2/`](./production-readiness-v2/) and [`docs/implementation-path/artifacts/`](./implementation-path/artifacts/).
+> - [`docs/ROADMAP.md`](./ROADMAP.md) remains historical/legacy/reference roadmap material unless explicitly cited by current plan/evidence docs.
 
 ## 1. Định vị nên giữ
 
@@ -201,12 +209,18 @@ Thứ tự này giúp FerrumGate:
 ### Phase 0: Alignment / Non-claims / Doc hygiene
 **Mục tiêu:** Đảm bảo mọi tuyên bố đều trung thực, không overclaim, và tài liệu nền tảng sẵn sàng trước khi build.
 
-- [ ] **0.1** Xác nhận lại toàn bộ `docs/` không có claim `production-ready`, `Tier 2 complete`, `GA`, `enterprise-ready`. (Owner: Operator / Type: Operate)
-- [ ] **0.2** Thêm / cập nhật `docs/security/non-claims.md` ghi rõ những gì FerrumGate **không** làm được hiện tại. (Owner: Operator / Type: Document)
-- [ ] **0.3** Kiểm tra toàn bộ README / marketing docs không có real domain giả định. (Owner: Operator / Type: Operate)
-- [ ] **0.4** Đánh dấu `HA-4 = NOT COMPLETE` trong mọi tài liệu liên quan đến high availability. (Owner: Operator / Type: Operate)
-- [ ] **0.5** Đánh dấu `Sustained SLO window = NOT COMPLETE` nếu chưa có evidence đủ 7 ngày. (Owner: Operator / Type: Operate)
-- [ ] **0.6** Tạo / cập nhật `docs/plan.md` (file này) làm single source of truth cho roadmap. (Owner: Operator / Type: Document)
+- [x] **0.1** Xác nhận lại toàn bộ `docs/` không có claim `production-ready`, `Tier 2 complete`, `GA`, `enterprise-ready`. (Owner: Operator / Type: Operate)
+  - Evidence: [`docs/implementation-path/artifacts/2026-05-28-phase0.1-overclaim-audit-evidence.md`](./implementation-path/artifacts/2026-05-28-phase0.1-overclaim-audit-evidence.md)
+- [x] **0.2** Thêm / cập nhật `docs/security/non-claims.md` ghi rõ những gì FerrumGate **không** làm được hiện tại. (Owner: Operator / Type: Document)
+  - Evidence: [`docs/security/non-claims.md`](./security/non-claims.md)
+- [x] **0.3** Kiểm tra toàn bộ README / marketing docs không có real domain giả định. (Owner: Operator / Type: Operate)
+  - Evidence: [`docs/implementation-path/artifacts/2026-05-28-phase0.3-domain-assumption-audit-evidence.md`](./implementation-path/artifacts/2026-05-28-phase0.3-domain-assumption-audit-evidence.md)
+- [x] **0.4** Đánh dấu `HA-4 = NOT COMPLETE` trong mọi tài liệu liên quan đến high availability. (Owner: Operator / Type: Operate)
+  - Evidence: [`docs/implementation-path/artifacts/2026-05-28-phase0.4-ha4-audit-evidence.md`](./implementation-path/artifacts/2026-05-28-phase0.4-ha4-audit-evidence.md)
+- [x] **0.5** Đánh dấu `Sustained SLO window = NOT COMPLETE` nếu chưa có evidence đủ 7 ngày. (Owner: Operator / Type: Operate)
+  - Evidence: [`docs/implementation-path/artifacts/2026-05-28-phase0.5-slo-sustained-window-audit-evidence.md`](./implementation-path/artifacts/2026-05-28-phase0.5-slo-sustained-window-audit-evidence.md)
+- [x] **0.6** Tạo / cập nhật `docs/plan.md` (file này) làm single source of truth cho strategic execution checklist. (Owner: Operator / Type: Document)
+  - Evidence: [`docs/implementation-path/artifacts/2026-05-28-phase0.6-plan-ssot-update-evidence.md`](./implementation-path/artifacts/2026-05-28-phase0.6-plan-ssot-update-evidence.md)
 
 **Success criteria:** Không còn claim sai ở bất kỳ đâu trong repo.  
 **Evidence artifact:** `docs/security/non-claims.md`, `docs/plan.md`, scan log.
@@ -214,11 +228,16 @@ Thứ tự này giúp FerrumGate:
 ### Phase 1: Execution governance hardening
 **Mục tiêu:** Xây dựng các primitive kiểm soát thực thi cốt lõi.
 
-- [ ] **1.1** Implement scoped token model với danh sách scope cụ thể. (Owner: Dev / Type: Build)
-- [ ] **1.2** Implement deny-by-default middleware trên toàn bộ API surface. (Owner: Dev / Type: Build)
-- [ ] **1.3** Implement token lifecycle: create, revoke, rotate, list redacted, `last_used_at`, `expires_at`. (Owner: Dev / Type: Build)
-- [ ] **1.4** Thêm `ferrumctl admin token lifecycle` commands. (Owner: Dev / Type: Build)
-- [ ] **1.5** Viết `docs/security/scoped-tokens-rbac.md` mô tả model, role mapping, và flow. (Owner: Dev / Type: Document)
+- [x] **1.1** Implement scoped token model với danh sách scope cụ thể. (Owner: Dev / Type: Build)
+  - Evidence: [`docs/implementation-path/artifacts/2026-05-28-phase1.1-scoped-token-model-evidence.md`](./implementation-path/artifacts/2026-05-28-phase1.1-scoped-token-model-evidence.md)
+- [x] **1.2** Implement deny-by-default middleware trên toàn bộ API surface. (Owner: Dev / Type: Build)
+  - Evidence: [`docs/implementation-path/artifacts/2026-05-28-phase1.2-deny-by-default-evidence.md`](./implementation-path/artifacts/2026-05-28-phase1.2-deny-by-default-evidence.md)
+- [x] **1.3** Implement token lifecycle: create, revoke, rotate, list redacted, `last_used_at`, `expires_at`. (Owner: Dev / Type: Build)
+  - Evidence: [`docs/implementation-path/artifacts/2026-05-28-phase1.3-token-lifecycle-evidence.md`](./implementation-path/artifacts/2026-05-28-phase1.3-token-lifecycle-evidence.md)
+- [x] **1.4** Thêm `ferrumctl admin token lifecycle` commands. (Owner: Dev / Type: Build)
+  - Evidence: [`docs/implementation-path/artifacts/2026-05-28-phase1.4-ferrumctl-token-lifecycle-evidence.md`](./implementation-path/artifacts/2026-05-28-phase1.4-ferrumctl-token-lifecycle-evidence.md)
+- [x] **1.5** Viết `docs/security/scoped-tokens-rbac.md` mô tả model, role mapping, và flow. (Owner: Dev / Type: Document)
+  - Evidence: [`docs/security/scoped-tokens-rbac.md`](./security/scoped-tokens-rbac.md), [`docs/implementation-path/artifacts/2026-05-28-phase1.5-scoped-tokens-rbac-doc-evidence.md`](./implementation-path/artifacts/2026-05-28-phase1.5-scoped-tokens-rbac-doc-evidence.md)
 - [ ] **1.6** Viết integration tests cho RBAC deny-by-default. (Owner: Dev / Type: Build)
 - [ ] **1.7** Thiết kế và implement Policy simulation API (`POST /v1/policy/simulate`). (Owner: Dev / Type: Build)
 - [ ] **1.8** Thêm `ferrumctl policy simulate --file intent.json`. (Owner: Dev / Type: Build)
