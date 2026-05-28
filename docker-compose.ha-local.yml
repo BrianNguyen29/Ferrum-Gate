@@ -32,7 +32,7 @@ services:
       -c max_wal_senders=10
       -c max_replication_slots=10
       -c hot_standby=on
-      -c listen_addresses='*'
+      -c listen_addresses=*
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ferrumgate_dev -d ferrumgate_ha_test"]
       interval: 5s

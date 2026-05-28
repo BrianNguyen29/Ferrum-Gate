@@ -84,19 +84,19 @@ done
 
 # Helper to run psql via docker exec with SQL passed through env
 psql_primary() {
-    docker exec -e FERRUM_SQL="$1" "$PRIMARY_CONTAINER" bash -lc 'export PGPASSWORD="$POSTGRES_PASSWORD"; psql -U ferrumgate_dev -d ferrumgate_ha_test -v ON_ERROR_STOP=1 -c "$FERRUM_SQL"'
+    docker exec -e FERRUM_SQL="$1" "$PRIMARY_CONTAINER" bash -lc 'export PGPASSWORD="$POSTGRES_PASSWORD"; psql -h localhost -U ferrumgate_dev -d ferrumgate_ha_test -v ON_ERROR_STOP=1 -c "$FERRUM_SQL"'
 }
 
 psql_primary_at() {
-    docker exec -e FERRUM_SQL="$1" "$PRIMARY_CONTAINER" bash -lc 'export PGPASSWORD="$POSTGRES_PASSWORD"; psql -U ferrumgate_dev -d ferrumgate_ha_test -At -v ON_ERROR_STOP=1 -c "$FERRUM_SQL"'
+    docker exec -e FERRUM_SQL="$1" "$PRIMARY_CONTAINER" bash -lc 'export PGPASSWORD="$POSTGRES_PASSWORD"; psql -h localhost -U ferrumgate_dev -d ferrumgate_ha_test -At -v ON_ERROR_STOP=1 -c "$FERRUM_SQL"'
 }
 
 psql_standby() {
-    docker exec -e FERRUM_SQL="$1" "$STANDBY_CONTAINER" bash -lc 'export PGPASSWORD="$POSTGRES_PASSWORD"; psql -U ferrumgate_dev -d ferrumgate_ha_test -v ON_ERROR_STOP=1 -c "$FERRUM_SQL"'
+    docker exec -e FERRUM_SQL="$1" "$STANDBY_CONTAINER" bash -lc 'export PGPASSWORD="$POSTGRES_PASSWORD"; psql -h localhost -U ferrumgate_dev -d ferrumgate_ha_test -v ON_ERROR_STOP=1 -c "$FERRUM_SQL"'
 }
 
 psql_standby_at() {
-    docker exec -e FERRUM_SQL="$1" "$STANDBY_CONTAINER" bash -lc 'export PGPASSWORD="$POSTGRES_PASSWORD"; psql -U ferrumgate_dev -d ferrumgate_ha_test -At -v ON_ERROR_STOP=1 -c "$FERRUM_SQL"'
+    docker exec -e FERRUM_SQL="$1" "$STANDBY_CONTAINER" bash -lc 'export PGPASSWORD="$POSTGRES_PASSWORD"; psql -h localhost -U ferrumgate_dev -d ferrumgate_ha_test -At -v ON_ERROR_STOP=1 -c "$FERRUM_SQL"'
 }
 
 echo ""

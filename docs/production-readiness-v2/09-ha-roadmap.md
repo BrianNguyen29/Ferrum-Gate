@@ -2,7 +2,7 @@
 
 > **Status**: Phase 9 multi-host manual evidence captured. ADR approved as planning decision; local simulation added 2026-05-26; Tier 1.5 same-VM HA evidence complete; Phase 9 deployed two independent PostgreSQL hosts with streaming replication + PgBouncer/manual failover evidence on 2026-05-27, including 4 manual drills and failback; multi-host production HA and automated failover remain NOT COMPLETE.
 > **Owner**: Engineering + Operator
-> **Last updated**: 2026-05-27
+> **Last updated**: 2026-05-28
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
 > **Scope**: [`00-scope-and-nonclaims.md`](00-scope-and-nonclaims.md)
 > **HA ADR**: [`docs/production-readiness-v2/ha-adr.md`](./ha-adr.md) — approved as planning decision 2026-05-21; no implementation claim
@@ -34,6 +34,7 @@ Design the path from single-node production to multi-node/HA, starting with an A
 - **Phase 9 detection-only watchdog evidence captured 2026-05-27**: detection-only watchdog installed/enabled on both hosts; healthy and alert paths verified without auto-promotion; PostgreSQL TLS/WAL parity normalized; Alertmanager service/API mismatch resolved as unit-name mismatch (`prometheus-alertmanager.service`). See [`2026-05-27-ha-phase9-watchdog-config-parity-evidence.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-watchdog-config-parity-evidence.md).
 - **Phase 9 GCP fencing mechanism evidence captured 2026-05-27**: `scripts/gcp/phase9_fencing.sh` validated (`bash -n` pass); dry-run confirmed no action; app-host guard blocked fencing of `ferrumgate-nonprod` without `--force-app-host`; real safe fencing test on standby host B succeeded (instance `TERMINATED`, host A remained primary and app healthy); recovery succeeded (VM restart, PostgreSQL manual start, B returned to standby, A replication verified). This is fencing-mechanism evidence only, not HA-4 automated failover. See [`2026-05-27-ha-phase9-gcp-fencing-evidence.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-gcp-fencing-evidence.md).
 - **Phase 9 host B redundancy fenced-drill evidence captured 2026-05-27**: host B PgBouncer/ferrumd redundancy was prepared; a bounded operator-controlled fenced drill stopped host A, promoted host B, started host B app/PgBouncer, reached readyz/deep healthy in 69s with RPO 0 marker loss, and then failed back to A-primary/B-standby. This is not unattended HA-4 automation and has no external endpoint cutover claim. See [`2026-05-27-ha-phase9-host-b-redundancy-fenced-drill-evidence.md`](../../implementation-path/artifacts/2026-05-27-ha-phase9-host-b-redundancy-fenced-drill-evidence.md).
+- **Local HA rehearsal after script fix captured 2026-05-28**: `psql` calls forced to TCP with `-h localhost`; `listen_addresses='*'` simplified; failover drill (16/16 pass, RTO 4s, RPO 0) and ferrumd reconnect drill (13/13 pass, app-level RTO 4s) both passed cleanly after fix. See [`2026-05-28-ha-local-rehearsal-and-script-fix-evidence.md`](../../implementation-path/artifacts/2026-05-28-ha-local-rehearsal-and-script-fix-evidence.md).
 - Multi-host production HA and multi-host automated failover remain NOT COMPLETE.
 
 ## Gaps

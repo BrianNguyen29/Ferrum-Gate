@@ -107,7 +107,7 @@ echo "Verifying replication user"
 echo "========================================"
 echo ""
 
-REPLICATOR_EXISTS=$(docker exec -e FERRUM_SQL="SELECT 1 FROM pg_roles WHERE rolname='replicator';" "$PRIMARY_CONTAINER" bash -lc 'export PGPASSWORD="$POSTGRES_PASSWORD"; psql -U ferrumgate_dev -d ferrumgate_ha_test -At -v ON_ERROR_STOP=1 -c "$FERRUM_SQL"')
+REPLICATOR_EXISTS=$(docker exec -e FERRUM_SQL="SELECT 1 FROM pg_roles WHERE rolname='replicator';" "$PRIMARY_CONTAINER" bash -lc 'export PGPASSWORD="$POSTGRES_PASSWORD"; psql -h localhost -U ferrumgate_dev -d ferrumgate_ha_test -At -v ON_ERROR_STOP=1 -c "$FERRUM_SQL"')
 if [[ "$REPLICATOR_EXISTS" == "1" ]]; then
     pass "replication user exists on primary"
 else
@@ -169,11 +169,11 @@ echo "========================================"
 echo ""
 
 # Quick replication sanity check: create table on primary and wait for standby
-docker exec -e FERRUM_SQL="CREATE TABLE IF NOT EXISTS _ha_setup_verify (id int PRIMARY KEY); INSERT INTO _ha_setup_verify VALUES (42) ON CONFLICT DO NOTHING;" "$PRIMARY_CONTAINER" bash -lc 'export PGPASSWORD="$POSTGRES_PASSWORD"; psql -U ferrumgate_dev -d ferrumgate_ha_test -v ON_ERROR_STOP=1 -c "$FERRUM_SQL"'
+docker exec -e FERRUM_SQL="CREATE TABLE IF NOT EXISTS _ha_setup_verify (id int PRIMARY KEY); INSERT INTO _ha_setup_verify VALUES (42) ON CONFLICT DO NOTHING;" "$PRIMARY_CONTAINER" bash -lc 'export PGPASSWORD="$POSTGRES_PASSWORD"; psql -h localhost -U ferrumgate_dev -d ferrumgate_ha_test -v ON_ERROR_STOP=1 -c "$FERRUM_SQL"'
 
 REPLICATED=false
 for _ in {1..15}; do
-    STANDBY_VAL=$(docker exec -e FERRUM_SQL="SELECT id FROM _ha_setup_verify WHERE id=42;" "$STANDBY_CONTAINER" bash -lc 'export PGPASSWORD="$POSTGRES_PASSWORD"; psql -U ferrumgate_dev -d ferrumgate_ha_test -At -v ON_ERROR_STOP=1 -c "$FERRUM_SQL"' || true)
+    STANDBY_VAL=$(docker exec -e FERRUM_SQL="SELECT id FROM _ha_setup_verify WHERE id=42;" "$STANDBY_CONTAINER" bash -lc 'export PGPASSWORD="$POSTGRES_PASSWORD"; psql -h localhost -U ferrumgate_dev -d ferrumgate_ha_test -At -v ON_ERROR_STOP=1 -c "$FERRUM_SQL"' || true)
     if [[ "$STANDBY_VAL" == "42" ]]; then
         REPLICATED=true
         break
