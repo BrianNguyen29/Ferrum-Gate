@@ -2,7 +2,7 @@
 
 > **Status**: Planning artifact. Tracks the 7 active blockers/open items that gate further production-path progress.
 > **Owner**: Engineering + Operator
-> **Last updated**: 2026-05-21
+> **Last updated**: 2026-05-28
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
 > **Scope**: [`00-scope-and-nonclaims.md`](00-scope-and-nonclaims.md)
 
@@ -75,7 +75,7 @@ The seven blockers:
 
 | # | Todo | Blocker ID | Owner | Rationale |
 |---|------|------------|-------|-----------|
-| D.1 | HA/multi-node (Phase 9) | — | Engineering + Operator | Prerequisites unblocked for follow-up planning/execution preparation on 2026-05-27; multi-host production HA evidence remains NOT COMPLETE. See `09-ha-roadmap.md` and `artifacts/2026-05-27-ha-phase9-prerequisites-unblocked.md` |
+| D.1 | HA/multi-node (Phase 9) | — | Engineering + Operator | Manual multi-host failover/failback drills, GCP fencing mechanism, detection-only watchdog, and host B redundancy evidence captured 2026-05-27. HA-4 unattended automated failover and external endpoint cutover remain NOT COMPLETE. See `09-ha-roadmap.md`, `artifacts/2026-05-27-ha-phase9-multihost-drill-evidence.md`, and `artifacts/2026-05-27-ha-phase9-host-b-redundancy-fenced-drill-evidence.md` |
 | D.2 | Web admin dashboard / TUI | — | Engineering | CLI-first; P2 deferred per `06-admin-operator-ux-plan.md` |
 | D.3 | Terraform / Pulumi module | — | Engineering | After Helm/K8s model stabilizes per `08-hosted-deployment-plan.md` |
 | D.4 | Multi-tenant implementation (T3–T5) | — | Engineering | After single-tenant production hardening and PG baseline per `04-security-tenant-model-adr.md` |

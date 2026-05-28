@@ -2,7 +2,7 @@
 
 > **Status**: Active evidence checklist. Completed phases, Tier 1, and Tier 1.5 are populated; Phase 9 GCP fencing-mechanism evidence added 2026-05-27; remaining open items are explicitly marked.
 > **Owner**: Engineering + Operator
-> **Last updated**: 2026-05-27
+> **Last updated**: 2026-05-28
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
 > **Scope**: [`00-scope-and-nonclaims.md`](00-scope-and-nonclaims.md)
 

@@ -20,7 +20,7 @@ make audit   # local security audit gate (cargo-deny / cargo-audit)
 - Pre-target gate (local only): `bash scripts/run_pre_target_gate.sh` — validates config examples, restore drill, evidence skeleton generator, docs present, bearer-auth smoke
 - Manual gates (workflow_dispatch only): `.github/workflows/manual-gates.yml` — audit, pretarget, wal-drill, mcp-smoke. Triggered manually; may incur GitHub Actions minutes when run. No automatic push/PR triggers.
 
-## Current Verification Status (2026-05-17)
+## Current Verification Status (2026-05-28)
 - Layout/contract validation: PASSES locally
 - `cargo fmt --all -- --check`: PASSES locally
 - `cargo check --workspace`: PASSES locally
@@ -30,7 +30,8 @@ make audit   # local security audit gate (cargo-deny / cargo-audit)
 - `make audit`: PASSES locally (`cargo-deny v0.19.6` and `cargo-audit v0.22.1` installed; cargo-deny advisory DB ok; 1090 advisories loaded; 384 dependencies scanned; `RUSTSEC-2023-0071` ignored as uncompiled optional dependency; `SECURITY AUDIT GATE: PASS`)
 - Full workspace gate rerun: PASSED (ALL LOCAL CHECKS PASSED)
 - Summary: layout=0 contract=0 fmt=0 check=0 clippy=0 test=0 pre_target_gate_full=0 audit=0
-- Recent commits (2026-05-17): c661a15 hardens MCP D1 local coverage (239 tests); e543dbf refreshes MCP D1 coverage docs.
+- Recent commits (2026-05-27): df2954b docs: add phase 9 host b redundancy evidence
+- Phase 9 milestone: Manual multi-host failover/failback drills, GCP fencing, detection-only watchdog, and host B redundancy evidence captured. HA-4 unattended automated failover remains NOT COMPLETE.
 
 ## ferrumd Config Precedence
 CLI args > env vars > config file > defaults.
@@ -68,6 +69,7 @@ README.md and CONTRIBUTING.md now correctly reference actual onboarding paths. O
   - Block B: CLOSED — inbox delivery confirmed for primary and secondary email paths (G-B1/G-B2); bearer token rotation executed on VM; SendGrid API key rotation verified on VM, synthetic alert delivered to primary+secondary inboxes, old key revoked/deleted (G-B3 verified; see `docs/implementation-path/artifacts/2026-05-17-sendgrid-rotation-evidence.md`); escalation matrix formally acknowledged on 2026-05-17 (see `docs/implementation-path/artifacts/2026-05-17-escalation-matrix-acknowledgment.md`)
   - Block C: CLOSED — C1 keyless backup verified, residual key removed, offsite sync confirmed
 - P1 items: readiness semantics, configurable rate limit, structured logging, metrics/observability — all done
+- Phase 9 HA evidence: manual multi-host failover/failback drills, GCP fencing, detection-only watchdog, and host B redundancy captured 2026-05-27; HA-4 unattended automated failover remains NOT COMPLETE
 - No production-ready claim; FerrumGate v1 is RC-ready/conditional; G2 requires operator action
 
 ## Contributing Rules
