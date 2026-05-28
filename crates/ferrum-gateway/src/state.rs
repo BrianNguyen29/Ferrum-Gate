@@ -196,6 +196,13 @@ impl OidcJwksCache {
         Ok(state.keys.get(kid).cloned())
     }
 
+    /// Return the elapsed seconds since the last successful JWKS fetch.
+    /// Returns `None` if the cache has never been populated.
+    pub fn cache_age_seconds(&self) -> Option<u64> {
+        let state = self.state.lock().ok()?;
+        state.fetched_at.map(|t| t.elapsed().as_secs())
+    }
+
     async fn fetch_and_cache(&self) -> Result<(), String> {
         let response = reqwest::get(&self.url)
             .await

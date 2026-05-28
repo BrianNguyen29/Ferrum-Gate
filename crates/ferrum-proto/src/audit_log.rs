@@ -33,6 +33,7 @@ pub enum AuditAction {
     PolicyBundleRollback,
     ApprovalResolve,
     ExecutionCancel,
+    AuthFailed,
 }
 
 impl std::fmt::Display for AuditAction {
@@ -46,6 +47,7 @@ impl std::fmt::Display for AuditAction {
             AuditAction::PolicyBundleRollback => "policy_bundle_rollback",
             AuditAction::ApprovalResolve => "approval_resolve",
             AuditAction::ExecutionCancel => "execution_cancel",
+            AuditAction::AuthFailed => "auth_failed",
         };
         write!(f, "{}", s)
     }
@@ -64,6 +66,7 @@ impl std::str::FromStr for AuditAction {
             "policy_bundle_rollback" => Ok(AuditAction::PolicyBundleRollback),
             "approval_resolve" => Ok(AuditAction::ApprovalResolve),
             "execution_cancel" => Ok(AuditAction::ExecutionCancel),
+            "auth_failed" => Ok(AuditAction::AuthFailed),
             _ => Err(format!("invalid audit action: {}", s)),
         }
     }
@@ -76,6 +79,7 @@ pub enum AuditResourceType {
     PolicyBundle,
     Approval,
     Execution,
+    Auth,
 }
 
 impl std::fmt::Display for AuditResourceType {
@@ -85,6 +89,7 @@ impl std::fmt::Display for AuditResourceType {
             AuditResourceType::PolicyBundle => "policy_bundle",
             AuditResourceType::Approval => "approval",
             AuditResourceType::Execution => "execution",
+            AuditResourceType::Auth => "auth",
         };
         write!(f, "{}", s)
     }
@@ -99,6 +104,7 @@ impl std::str::FromStr for AuditResourceType {
             "policy_bundle" => Ok(AuditResourceType::PolicyBundle),
             "approval" => Ok(AuditResourceType::Approval),
             "execution" => Ok(AuditResourceType::Execution),
+            "auth" => Ok(AuditResourceType::Auth),
             _ => Err(format!("invalid audit resource type: {}", s)),
         }
     }

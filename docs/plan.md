@@ -286,10 +286,14 @@ Thứ tự này giúp FerrumGate:
   - Evidence: `crates/ferrum-gateway/src/server.rs` OIDC middleware + tests, `crates/ferrum-gateway/src/state.rs` `OidcConfig`/`KeyMaterial`
 - [x] **4.4** Implement live JWKS fetch/cache (`reqwest`) và OIDC config loading from TOML/env. (Owner: Dev / Type: Build)
   - Evidence: `crates/ferrum-gateway/src/state.rs` `OidcJwksCache`, `crates/ferrum-gateway/src/server.rs` JWKS fallback, `bins/ferrumd/src/main.rs` OIDC config parsing, tests
-- [ ] **4.5** Thiết kế agent identity Ed25519: schema, request envelope, verification flow. (Owner: Dev / Type: Document)
+- [x] **4.5** Thiết kế agent identity Ed25519: schema, request envelope, verification flow. (Owner: Dev / Type: Document)
+  - Evidence: [`docs/security/agent-identity-ed25519.md`](./security/agent-identity-ed25519.md)
+- [ ] **4.8** Merged with 4.5 — Ed25519 design doc is the same deliverable. (Owner: Dev / Type: Document)
+  - Evidence: See 4.5 above.
 - [ ] **4.6** Implement agent registry và signature verification. (Owner: Dev / Type: Build)
 - [ ] **4.7** Implement `ferrumctl agent register` và `ferrumctl agent revoke`. (Owner: Dev / Type: Build)
-- [ ] **4.8** Viết `docs/security/agent-identity-ed25519.md`. (Owner: Dev / Type: Document)
+
+> **OIDC hardening notes (post-4.4):** Future `iat` rejection added to JWT validation; missing `iat` is tolerated. OIDC authentication failures emit sanitized `AuthFailed` audit entries by default (actor_id=`unknown`, no token/header logged). JWKS cache age exposed as `ferrumgate_oidc_jwks_cache_age_seconds` in `/v1/metrics`. All changes are tested.
 
 **Success criteria:** Operator có thể đăng nhập qua OIDC; agent có thể ký request và FerrumGate verify thành công.  
 **Evidence artifact:** `docs/security/oidc-jwt-federation.md`, `docs/security/agent-identity-ed25519.md`, integration tests.

@@ -1016,14 +1016,48 @@ async fn auth_middleware(
                 Some(c) => c,
                 None => {
                     tracing::error!("oidc config missing");
+                    append_audit(
+                        &state.runtime.store,
+                        "unknown",
+                        AuditAction::AuthFailed,
+                        AuditResourceType::Auth,
+                        "oidc",
+                        "oidc auth misconfigured",
+                        Some(serde_json::json!({"reason": "oidc config missing"})),
+                    )
+                    .await;
                     return auth_error("oidc auth misconfigured");
                 }
             };
             match validate_oidc_token(provided, oidc, state.jwks_cache.as_ref(), method, path).await
             {
                 Ok(()) => next.run(request).await,
-                Err(OidcAuthError::Unauthorized(msg)) => auth_error(&msg),
-                Err(OidcAuthError::Forbidden(msg)) => forbidden_error(&msg),
+                Err(OidcAuthError::Unauthorized(msg)) => {
+                    append_audit(
+                        &state.runtime.store,
+                        "unknown",
+                        AuditAction::AuthFailed,
+                        AuditResourceType::Auth,
+                        "oidc",
+                        "unauthorized",
+                        Some(serde_json::json!({"reason": msg})),
+                    )
+                    .await;
+                    auth_error(&msg)
+                }
+                Err(OidcAuthError::Forbidden(msg)) => {
+                    append_audit(
+                        &state.runtime.store,
+                        "unknown",
+                        AuditAction::AuthFailed,
+                        AuditResourceType::Auth,
+                        "oidc",
+                        "forbidden",
+                        Some(serde_json::json!({"reason": msg})),
+                    )
+                    .await;
+                    forbidden_error(&msg)
+                }
             }
         }
         AuthMode::Scoped => {
@@ -1328,6 +1362,18 @@ async fn validate_oidc_token(
         };
 
     let claims = token_data.claims;
+
+    // Step 4b: explicit future-iat rejection (fail closed).
+    // If `iat` is present and beyond now + clock_skew, reject.
+    // Missing `iat` is tolerated to avoid breaking IdPs that omit it.
+    if let Some(iat_val) = claims.get("iat").and_then(|v| v.as_i64()) {
+        let now = chrono::Utc::now().timestamp();
+        let skew = oidc.clock_skew_secs.max(0);
+        if iat_val > now + skew {
+            tracing::warn!(iat = %iat_val, now = %now, skew = %skew, "jwt iat is in the future");
+            return Err(OidcAuthError::Unauthorized("invalid jwt".to_string()));
+        }
+    }
 
     // Step 5: email verification check
     if oidc.require_email_verified {
@@ -2189,6 +2235,17 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
             "ferrumgate_store_pg_acquire_timeouts_total {}\n",
             ps.acquire_timeouts
         ));
+    }
+
+    // Append JWKS cache age metric when cache exists and has been fetched
+    if let Some(ref cache) = state.jwks_cache {
+        if let Some(age) = cache.cache_age_seconds() {
+            body.push_str(
+                "# HELP ferrumgate_oidc_jwks_cache_age_seconds Age of the JWKS cache in seconds\n",
+            );
+            body.push_str("# TYPE ferrumgate_oidc_jwks_cache_age_seconds gauge\n");
+            body.push_str(&format!("ferrumgate_oidc_jwks_cache_age_seconds {}\n", age));
+        }
     }
 
     // Record metrics handler's own latency
@@ -12360,5 +12417,199 @@ rules:
 
         // Must fail closed with 401, not allow access
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_oidc_future_iat_returns_401() {
+        let runtime = test_runtime().await;
+        let config = test_oidc_server_config();
+        let router = build_router_with_auth(runtime, config);
+
+        let mut claims = serde_json::Map::new();
+        claims.insert("sub".to_string(), serde_json::json!("user-123"));
+        claims.insert(
+            "iss".to_string(),
+            serde_json::json!("https://test-issuer.example.com"),
+        );
+        claims.insert("aud".to_string(), serde_json::json!("ferrumgate-test"));
+        claims.insert(
+            "exp".to_string(),
+            serde_json::json!((chrono::Utc::now() + chrono::Duration::hours(1)).timestamp()),
+        );
+        claims.insert(
+            "iat".to_string(),
+            serde_json::json!((chrono::Utc::now() + chrono::Duration::hours(1)).timestamp()),
+        );
+        claims.insert("groups".to_string(), serde_json::json!(["fg-operators"]));
+
+        let jwt = mint_test_jwt(claims, Some("test-key-1"));
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("Authorization", format!("Bearer {}", jwt))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_oidc_missing_iat_is_tolerated() {
+        let runtime = test_runtime().await;
+        let config = test_oidc_server_config();
+        let router = build_router_with_auth(runtime, config);
+
+        let mut claims = serde_json::Map::new();
+        claims.insert("sub".to_string(), serde_json::json!("user-123"));
+        claims.insert(
+            "iss".to_string(),
+            serde_json::json!("https://test-issuer.example.com"),
+        );
+        claims.insert("aud".to_string(), serde_json::json!("ferrumgate-test"));
+        claims.insert(
+            "exp".to_string(),
+            serde_json::json!((chrono::Utc::now() + chrono::Duration::hours(1)).timestamp()),
+        );
+        // No "iat" claim
+        claims.insert("groups".to_string(), serde_json::json!(["fg-operators"]));
+
+        let jwt = mint_test_jwt(claims, Some("test-key-1"));
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("Authorization", format!("Bearer {}", jwt))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_oidc_auth_failure_emits_audit_entry() {
+        let runtime = test_runtime().await;
+        let config = test_oidc_server_config();
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let mut claims = serde_json::Map::new();
+        claims.insert("sub".to_string(), serde_json::json!("user-123"));
+        claims.insert(
+            "iss".to_string(),
+            serde_json::json!("https://test-issuer.example.com"),
+        );
+        claims.insert("aud".to_string(), serde_json::json!("ferrumgate-test"));
+        claims.insert(
+            "exp".to_string(),
+            serde_json::json!((chrono::Utc::now() + chrono::Duration::hours(1)).timestamp()),
+        );
+        claims.insert("groups".to_string(), serde_json::json!(["fg-operators"]));
+
+        // Sign with a different secret to trigger an auth failure
+        let header = jsonwebtoken::Header {
+            typ: Some("JWT".to_string()),
+            alg: jsonwebtoken::Algorithm::HS256,
+            kid: Some("test-key-1".to_string()),
+            ..Default::default()
+        };
+        let bad_key = jsonwebtoken::EncodingKey::from_secret(b"wrong-secret");
+        let jwt = jsonwebtoken::encode(&header, &claims, &bad_key).unwrap();
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("Authorization", format!("Bearer {}", jwt))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        // Verify audit entry was persisted
+        let (items, _) = runtime
+            .store
+            .audit_log()
+            .list(
+                Some(AuditAction::AuthFailed),
+                Some(AuditResourceType::Auth),
+                None,
+                None,
+                10,
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            !items.is_empty(),
+            "expected at least one AuthFailed audit entry"
+        );
+        let entry = items
+            .iter()
+            .find(|e| e.action == AuditAction::AuthFailed)
+            .expect("auth_failed audit entry");
+        assert_eq!(entry.actor_id, "unknown");
+        assert_eq!(entry.result, "unauthorized");
+        let meta = entry.metadata.as_ref().expect("metadata present");
+        assert!(meta.get("reason").is_some(), "reason in metadata");
+    }
+
+    #[tokio::test]
+    async fn test_oidc_jwks_cache_age_metric_in_output() {
+        use axum::{Json, Router, routing::get};
+
+        let jwks = serde_json::json!({
+            "keys": [{
+                "kty": "RSA",
+                "kid": "test-rsa-key",
+                "n": "k4BWME9tVOIreUI5ROut2R594BH3kxnrUFJ26SAtBG3s0mYE6VM_uyvM1Lmc11oA1mzp0u_ilPOBUdDF8J2sCQ",
+                "e": "AQAB"
+            }]
+        });
+
+        let app = Router::new().route("/jwks", get(|| async { Json(jwks) }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let cache = Arc::new(crate::OidcJwksCache::new(
+            format!("http://{}/jwks", addr),
+            300,
+        ));
+        // Populate cache
+        let _ = cache.get_key("test-rsa-key").await.unwrap();
+
+        let runtime = test_runtime().await;
+        let state = Arc::new(AppState {
+            runtime,
+            server_config: ServerConfig::default(),
+            metrics: Arc::new(Metrics::new()),
+            jwks_cache: Some(cache),
+        });
+
+        let response = metrics_handler(axum::extract::State(state)).await;
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let text = String::from_utf8(body.to_vec()).unwrap();
+        assert!(
+            text.contains("ferrumgate_oidc_jwks_cache_age_seconds"),
+            "metrics output missing JWKS cache age gauge: {}",
+            text
+        );
     }
 }
