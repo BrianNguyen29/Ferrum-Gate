@@ -201,6 +201,8 @@ pub enum AuthMode {
     Disabled,
     Bearer,
     Scoped,
+    /// OIDC/JWT bearer token validation (Phase 4.3+).
+    Oidc,
 }
 
 impl std::fmt::Display for AuthMode {
@@ -209,6 +211,7 @@ impl std::fmt::Display for AuthMode {
             AuthMode::Disabled => write!(f, "disabled"),
             AuthMode::Bearer => write!(f, "bearer"),
             AuthMode::Scoped => write!(f, "scoped"),
+            AuthMode::Oidc => write!(f, "oidc"),
         }
     }
 }
@@ -221,6 +224,7 @@ impl std::str::FromStr for AuthMode {
             "disabled" => Ok(AuthMode::Disabled),
             "bearer" => Ok(AuthMode::Bearer),
             "scoped" => Ok(AuthMode::Scoped),
+            "oidc" => Ok(AuthMode::Oidc),
             _ => Err(format!("invalid auth mode: {}", s)),
         }
     }

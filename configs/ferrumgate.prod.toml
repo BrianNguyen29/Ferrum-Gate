@@ -16,7 +16,7 @@ bind_addr = "0.0.0.0:8080"
 #   postgres://user:pass@localhost:5432/db - PostgreSQL (local Docker/runtime only)
 store_dsn = "sqlite:///var/lib/ferrumgate/ferrumgate.db"
 
-# Authentication mode: "disabled" or "bearer"
+# Authentication mode: "disabled", "bearer", "scoped", or "oidc"
 # WARNING: Never use "disabled" in production with a non-loopback bind address
 auth_mode = "bearer"
 
@@ -37,3 +37,22 @@ log_filter = "info"
 pg_max_connections = 10
 pg_min_idle = 2
 pg_acquire_timeout_secs = 5
+
+# ── OIDC Configuration (Phase 4.4) ──
+# Uncomment and configure when auth_mode = "oidc".
+# Static keys take precedence over fetched JWKS keys.
+# At least one of static_keys or jwks_url must be configured.
+#
+# [oidc]
+# issuer = "https://your-issuer.example.com"
+# audiences = ["ferrumgate"]
+# jwks_url = "https://your-issuer.example.com/.well-known/jwks.json"
+# jwks_cache_ttl_secs = 300
+# actor_id_claim = "sub"
+# role_source_claim = "groups"
+# require_email_verified = true
+# allowed_algorithms = ["RS256", "ES256", "EdDSA"]
+#
+# [oidc.role_mappings]
+# fg-admins = "admin"
+# fg-operators = "operator"

@@ -4,7 +4,9 @@ use ferrum_pdp::PdpEngine;
 use ferrum_rollback::RollbackService;
 use ferrum_store::StoreFacade;
 use ferrum_sync::RuntimeBridge;
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 #[derive(Clone)]
 pub struct GatewayRuntime {
@@ -35,38 +37,242 @@ impl GatewayRuntime {
     }
 }
 
-/// Authentication mode for the gateway.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum AuthMode {
-    /// No authentication required.
-    #[default]
-    Disabled,
-    /// Global bearer token authentication required.
-    Bearer,
-    /// Scoped opaque bearer token authentication required.
-    Scoped,
+/// Re-export canonical `AuthMode` from `ferrum-proto` to eliminate drift.
+pub use ferrum_proto::token::{AuthMode, TokenRole};
+
+/// Static key material for offline JWT validation (Phase 4.3).
+///
+/// Production deployments should use asymmetric algorithms (RSA/EC/Ed)
+/// and load keys from config files or environment. HS256 is supported
+/// for tests only and must be explicitly enabled.
+#[derive(Clone, Debug)]
+pub enum KeyMaterial {
+    /// HMAC secret (test-only; explicitly opt-in).
+    Hmac(Vec<u8>),
+    /// RSA public key PEM.
+    Rsa(Vec<u8>),
+    /// ECDSA public key PEM.
+    Ecdsa(Vec<u8>),
+    /// Ed25519 public key PEM.
+    Ed(Vec<u8>),
+    /// RSA public key from JWKS (base64url-encoded modulus and exponent).
+    ///
+    /// Supported for live JWKS fetch (Phase 4.4). Other JWK key types
+    /// (EC, Ed, oct) are explicitly unsupported and will be skipped
+    /// with a warning during JWKS fetch.
+    RsaJwk { n: String, e: String },
 }
 
-impl std::fmt::Display for AuthMode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl KeyMaterial {
+    /// Build a `jsonwebtoken::DecodingKey` from this key material.
+    pub fn to_decoding_key(
+        &self,
+    ) -> Result<jsonwebtoken::DecodingKey, jsonwebtoken::errors::Error> {
         match self {
-            AuthMode::Disabled => write!(f, "disabled"),
-            AuthMode::Bearer => write!(f, "bearer"),
-            AuthMode::Scoped => write!(f, "scoped"),
+            KeyMaterial::Hmac(bytes) => Ok(jsonwebtoken::DecodingKey::from_secret(bytes)),
+            KeyMaterial::Rsa(pem) => jsonwebtoken::DecodingKey::from_rsa_pem(pem),
+            KeyMaterial::Ecdsa(pem) => jsonwebtoken::DecodingKey::from_ec_pem(pem),
+            KeyMaterial::Ed(pem) => jsonwebtoken::DecodingKey::from_ed_pem(pem),
+            KeyMaterial::RsaJwk { n, e } => jsonwebtoken::DecodingKey::from_rsa_components(n, e),
         }
     }
 }
 
-impl std::str::FromStr for AuthMode {
-    type Err = String;
+/// OIDC configuration for JWT validation (Phase 4.3 + 4.4).
+///
+/// Supports both static keys (offline validation) and live JWKS fetch
+/// with lazy cache. Static keys take precedence over fetched JWKS keys.
+#[derive(Clone, Debug)]
+pub struct OidcConfig {
+    /// Expected JWT issuer (`iss`). Must match exactly.
+    pub issuer: String,
+    /// Allowed audiences (`aud`). At least one must match.
+    pub audiences: Vec<String>,
+    /// Clock skew / leeway in seconds. Default: 30.
+    pub clock_skew_secs: i64,
+    /// Claim name for actor_id. Default: "sub".
+    pub actor_id_claim: String,
+    /// Claim name for role/group membership. Default: "groups".
+    pub role_source_claim: String,
+    /// Mapping from IdP group/role name to FerrumGate `TokenRole`.
+    /// Unmapped roles are deny-by-default.
+    pub role_mappings: HashMap<String, TokenRole>,
+    /// Allowed signature algorithms. Production should restrict this to
+    /// asymmetric algorithms only (e.g., RS256, ES256, EdDSA).
+    pub allowed_algorithms: Vec<jsonwebtoken::Algorithm>,
+    /// Static decoding keys keyed by JWT `kid`.
+    /// For JWTs without `kid`, use an empty string as the key.
+    pub static_keys: HashMap<String, KeyMaterial>,
+    /// If true, require `email_verified` claim to be true.
+    pub require_email_verified: bool,
+    /// URL to fetch JWKS from. When set, static_keys may be empty.
+    pub jwks_url: Option<String>,
+    /// JWKS cache TTL in seconds. Default: 300.
+    pub jwks_cache_ttl_secs: u64,
+}
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_ascii_lowercase().as_str() {
-            "disabled" => Ok(AuthMode::Disabled),
-            "bearer" => Ok(AuthMode::Bearer),
-            "scoped" => Ok(AuthMode::Scoped),
-            _ => Err(format!("invalid auth mode: {}", s)),
+impl Default for OidcConfig {
+    fn default() -> Self {
+        Self {
+            issuer: String::new(),
+            audiences: Vec::new(),
+            clock_skew_secs: 30,
+            actor_id_claim: "sub".to_string(),
+            role_source_claim: "groups".to_string(),
+            role_mappings: HashMap::new(),
+            allowed_algorithms: vec![
+                jsonwebtoken::Algorithm::RS256,
+                jsonwebtoken::Algorithm::RS384,
+                jsonwebtoken::Algorithm::RS512,
+                jsonwebtoken::Algorithm::ES256,
+                jsonwebtoken::Algorithm::ES384,
+                jsonwebtoken::Algorithm::EdDSA,
+            ],
+            static_keys: HashMap::new(),
+            require_email_verified: true,
+            jwks_url: None,
+            jwks_cache_ttl_secs: 300,
         }
+    }
+}
+
+/// Lazy JWKS cache for live key fetching (Phase 4.4).
+///
+/// Fetches JWKS on key miss or when the cache is stale. Only RSA keys
+/// are supported from JWKS; other key types are skipped with a warning.
+/// Fail-closed: any fetch or parse error returns an error so that the
+/// caller can reject the token.
+pub struct OidcJwksCache {
+    url: String,
+    ttl: Duration,
+    state: Mutex<JwksCacheState>,
+}
+
+struct JwksCacheState {
+    keys: HashMap<String, KeyMaterial>,
+    fetched_at: Option<Instant>,
+}
+
+impl OidcJwksCache {
+    /// Create a new cache for the given JWKS URL and TTL.
+    pub fn new(url: String, ttl_secs: u64) -> Self {
+        Self {
+            url,
+            ttl: Duration::from_secs(ttl_secs),
+            state: Mutex::new(JwksCacheState {
+                keys: HashMap::new(),
+                fetched_at: None,
+            }),
+        }
+    }
+
+    /// Look up a key by `kid`. Returns `Ok(Some(key))` on hit,
+    /// `Ok(None)` if the key is not present after fetching,
+    /// or `Err(String)` on fetch/parse failure.
+    pub async fn get_key(&self, kid: &str) -> Result<Option<KeyMaterial>, String> {
+        // Fast path: check cache while holding the lock
+        {
+            let state = self
+                .state
+                .lock()
+                .map_err(|e| format!("jwks cache lock poisoned: {e}"))?;
+            if let Some(key) = state.keys.get(kid) {
+                if let Some(fetched_at) = state.fetched_at {
+                    if fetched_at.elapsed() < self.ttl {
+                        return Ok(Some(key.clone()));
+                    }
+                }
+            }
+        }
+
+        // Cache miss or stale — fetch fresh JWKS (lock is released during I/O)
+        self.fetch_and_cache().await?;
+
+        // Re-check cache after fetch
+        let state = self
+            .state
+            .lock()
+            .map_err(|e| format!("jwks cache lock poisoned: {e}"))?;
+        Ok(state.keys.get(kid).cloned())
+    }
+
+    async fn fetch_and_cache(&self) -> Result<(), String> {
+        let response = reqwest::get(&self.url)
+            .await
+            .map_err(|e| format!("jwks fetch failed: {e}"))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            return Err(format!("jwks fetch returned status {status}"));
+        }
+
+        let jwks: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| format!("jwks parse failed: {e}"))?;
+
+        let keys = jwks
+            .get("keys")
+            .and_then(|v| v.as_array())
+            .ok_or("jwks response missing 'keys' array")?;
+
+        let mut new_keys = HashMap::new();
+        for key in keys {
+            let kid = key
+                .get("kid")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            match jwk_to_key_material(key) {
+                Ok(km) => {
+                    new_keys.insert(kid.clone(), km);
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, kid = %kid, "skipping unsupported jwk");
+                }
+            }
+        }
+
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|e| format!("jwks cache lock poisoned: {e}"))?;
+        state.keys = new_keys;
+        state.fetched_at = Some(Instant::now());
+        tracing::debug!(key_count = state.keys.len(), "jwks cache refreshed");
+        Ok(())
+    }
+}
+
+/// Convert a single JWK entry to `KeyMaterial`.
+///
+/// Currently only RSA keys (`kty = "RSA"`) are supported.
+/// Other key types return an explicit unsupported error.
+pub(crate) fn jwk_to_key_material(jwk: &serde_json::Value) -> Result<KeyMaterial, String> {
+    let kty = jwk
+        .get("kty")
+        .and_then(|v| v.as_str())
+        .ok_or("jwk missing 'kty'")?;
+    match kty {
+        "RSA" => {
+            let n = jwk
+                .get("n")
+                .and_then(|v| v.as_str())
+                .ok_or("jwk missing 'n'")?;
+            let e = jwk
+                .get("e")
+                .and_then(|v| v.as_str())
+                .ok_or("jwk missing 'e'")?;
+            // Validate that the components are well-formed by attempting to build a DecodingKey
+            let _ = jsonwebtoken::DecodingKey::from_rsa_components(n, e)
+                .map_err(|err| format!("invalid RSA JWK components: {err}"))?;
+            Ok(KeyMaterial::RsaJwk {
+                n: n.to_string(),
+                e: e.to_string(),
+            })
+        }
+        _ => Err(format!("unsupported jwk key type: {kty}")),
     }
 }
 
@@ -147,6 +353,8 @@ pub struct ServerConfig {
     /// PostgreSQL session idle-in-transaction timeout in milliseconds (`0` disables).
     /// Conservative default: 10000.
     pub pg_idle_in_transaction_timeout_ms: u64,
+    /// OIDC configuration. Required when `auth_mode` is `Oidc`.
+    pub oidc_config: Option<OidcConfig>,
 }
 
 impl Default for ServerConfig {
@@ -169,6 +377,7 @@ impl Default for ServerConfig {
             pg_acquire_timeout_secs: 5,
             pg_statement_timeout_ms: 5000,
             pg_idle_in_transaction_timeout_ms: 10000,
+            oidc_config: None,
         }
     }
 }
@@ -186,6 +395,35 @@ impl ServerConfig {
 
         // Scoped mode does not require a global bearer token; tokens are stored in the database.
         // However, we still validate that the store DSN is valid.
+
+        // Check that OIDC mode has a valid configuration
+        if self.auth_mode == AuthMode::Oidc {
+            let oidc = self
+                .oidc_config
+                .as_ref()
+                .ok_or("oidc config is required when auth mode is oidc".to_string())?;
+            if oidc.issuer.is_empty() {
+                return Err("oidc issuer cannot be empty".to_string());
+            }
+            if oidc.audiences.is_empty() {
+                return Err("oidc audiences cannot be empty".to_string());
+            }
+            // Phase 4.4: static_keys may be empty if jwks_url is configured
+            if oidc.static_keys.is_empty() && oidc.jwks_url.is_none() {
+                return Err(
+                    "oidc static_keys cannot be empty when jwks_url is not configured".to_string(),
+                );
+            }
+            if oidc.role_mappings.is_empty() {
+                return Err(
+                    "oidc role_mappings cannot be empty (unmapped roles are denied by default)"
+                        .to_string(),
+                );
+            }
+            if oidc.allowed_algorithms.is_empty() {
+                return Err("oidc allowed_algorithms cannot be empty".to_string());
+            }
+        }
 
         // Check that non-loopback bind is allowed when auth is disabled
         if !self.allow_insecure_nonlocal_bind

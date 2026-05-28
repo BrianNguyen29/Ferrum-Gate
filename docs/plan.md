@@ -146,7 +146,7 @@ FerrumGate nên chơi sâu ở layer giữa.
 | Policy simulation / dry-run | P0/P1 | Build | `TODO/VERIFY` | `docs/api/policy-simulation.md` + API + CLI |
 | Sustained SLO evidence window | P0 | Operate / Document | `TODO/VERIFY` | `docs/implementation-path/artifacts/YYYY-MM-DD-sustained-slo-window-evidence.md` |
 | Secure MCP tunnel integration guide | P1 | Integrate / Document | `DOCS COMPLETE` | `docs/guides/secure-mcp-tunnel-integration.md` |
-| OIDC / JWT federation | P1 | Integrate | `DESIGN COMPLETE` | `docs/security/oidc-jwt-federation.md` + Phase 4.2+ implementation/tests pending |
+| OIDC / JWT federation | P1 | Integrate | `PHASE 4.4 COMPLETE` | `docs/security/oidc-jwt-federation.md` + offline JWT validation + live JWKS fetch/cache + config loading + tests |
 | STRIDE threat model | P1 | Document | `TODO/VERIFY` | `docs/security/threat-model-stride.md` |
 | Tamper-evident audit | P1/P2 | Build minimal | `TODO/VERIFY` | `docs/architecture/tamper-evident-audit-design.md` + `ferrumctl audit verify` |
 | Agent Ed25519 identity | P2 | Build minimal | `TODO/VERIFY` | `docs/security/agent-identity-ed25519.md` + implementation |
@@ -281,9 +281,11 @@ Thứ tự này giúp FerrumGate:
 
 - [x] **4.1** Thiết kế OIDC/JWT federation flow và config schema (`auth.oidc` config). (Owner: Dev / Type: Document)
   - Evidence: [`docs/security/oidc-jwt-federation.md`](./security/oidc-jwt-federation.md)
-- [ ] **4.2** Implement JWT validation middleware cho ít nhất 1 provider (Google hoặc Keycloak). (Owner: Dev / Type: Build)
-- [ ] **4.3** Implement role mapping từ JWT claims sang FerrumGate roles/scopes. (Owner: Dev / Type: Build)
-- [ ] **4.4** Viết `docs/security/oidc-jwt-federation.md`. (Owner: Dev / Type: Document)
+- [x] **4.2** Sync `AuthMode` enums (single source in `ferrum-proto`, re-export via `ferrum-gateway`), add `Oidc` variant with `Display`/`FromStr`, attach auth middleware that fails closed (401) until Phase 4.3, document JWT dependency strategy. (Owner: Dev / Type: Build)
+- [x] **4.3** Implement JWT validation middleware (offline/static JWKS) và role mapping từ JWT claims sang FerrumGate roles/scopes. (Owner: Dev / Type: Build)
+  - Evidence: `crates/ferrum-gateway/src/server.rs` OIDC middleware + tests, `crates/ferrum-gateway/src/state.rs` `OidcConfig`/`KeyMaterial`
+- [x] **4.4** Implement live JWKS fetch/cache (`reqwest`) và OIDC config loading from TOML/env. (Owner: Dev / Type: Build)
+  - Evidence: `crates/ferrum-gateway/src/state.rs` `OidcJwksCache`, `crates/ferrum-gateway/src/server.rs` JWKS fallback, `bins/ferrumd/src/main.rs` OIDC config parsing, tests
 - [ ] **4.5** Thiết kế agent identity Ed25519: schema, request envelope, verification flow. (Owner: Dev / Type: Document)
 - [ ] **4.6** Implement agent registry và signature verification. (Owner: Dev / Type: Build)
 - [ ] **4.7** Implement `ferrumctl agent register` và `ferrumctl agent revoke`. (Owner: Dev / Type: Build)

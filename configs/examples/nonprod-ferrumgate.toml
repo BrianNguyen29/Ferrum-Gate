@@ -14,7 +14,7 @@ bind_addr = "127.0.0.1:8080"
 #   sqlite:///var/lib/ferrumgate/nonprod-ferrumgate.db - absolute path
 store_dsn = "sqlite:///var/lib/ferrumgate/nonprod-ferrumgate.db"
 
-# Authentication mode: "disabled" or "bearer"
+# Authentication mode: "disabled", "bearer", "scoped", or "oidc"
 # WARNING: Never use "disabled" with a non-loopback bind address in non-prod
 # Non-prod environments should use bearer auth to match production configuration
 auth_mode = "bearer"
@@ -67,3 +67,22 @@ store_synchronous = "NORMAL"
 # Adjust based on expected client behavior and server capacity.
 # rate_limit_per_second = 2
 # rate_limit_burst = 50
+
+# ── OIDC Configuration (Phase 4.4) ──
+# Uncomment and configure when auth_mode = "oidc".
+# Static keys take precedence over fetched JWKS keys.
+# At least one of static_keys or jwks_url must be configured.
+#
+# [oidc]
+# issuer = "https://your-issuer.example.com"
+# audiences = ["ferrumgate"]
+# jwks_url = "https://your-issuer.example.com/.well-known/jwks.json"
+# jwks_cache_ttl_secs = 300
+# actor_id_claim = "sub"
+# role_source_claim = "groups"
+# require_email_verified = true
+# allowed_algorithms = ["RS256", "ES256", "EdDSA"]
+#
+# [oidc.role_mappings]
+# fg-admins = "admin"
+# fg-operators = "operator"

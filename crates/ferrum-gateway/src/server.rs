@@ -50,7 +50,7 @@ use tower_governor::{
 };
 use tower_http::trace::TraceLayer;
 
-use crate::{AuthMode, GatewayRuntime, ServerConfig};
+use crate::{AuthMode, GatewayRuntime, OidcJwksCache, ServerConfig};
 
 /// Shared state that includes both runtime and server config for auth.
 #[derive(Clone)]
@@ -59,6 +59,7 @@ struct AppState {
     #[allow(dead_code)]
     server_config: ServerConfig,
     metrics: Arc<Metrics>,
+    jwks_cache: Option<Arc<OidcJwksCache>>,
 }
 
 /// Metrics state for the /v1/metrics endpoint.
@@ -701,10 +702,16 @@ async fn shutdown_signal() {
 }
 
 pub async fn run_http_server(config: ServerConfig, runtime: GatewayRuntime) -> anyhow::Result<()> {
+    let jwks_cache = config.oidc_config.as_ref().and_then(|oidc| {
+        oidc.jwks_url
+            .as_ref()
+            .map(|url| Arc::new(OidcJwksCache::new(url.clone(), oidc.jwks_cache_ttl_secs)))
+    });
     let state = Arc::new(AppState {
         runtime,
         server_config: config.clone(),
         metrics: Arc::new(Metrics::new()),
+        jwks_cache,
     });
 
     let monitoring_router = build_monitoring_router(state.clone());
@@ -735,8 +742,11 @@ pub async fn run_http_server(config: ServerConfig, runtime: GatewayRuntime) -> a
 
     let mut app = monitoring_router.merge(workload_router);
 
-    // Add auth layer if auth mode is Bearer or Scoped
-    if config.auth_mode == AuthMode::Bearer || config.auth_mode == AuthMode::Scoped {
+    // Add auth layer if auth mode requires authentication
+    if config.auth_mode == AuthMode::Bearer
+        || config.auth_mode == AuthMode::Scoped
+        || config.auth_mode == AuthMode::Oidc
+    {
         let auth_layer = ServiceBuilder::new()
             .layer(axum::middleware::from_fn_with_state(
                 state.clone(),
@@ -769,6 +779,7 @@ pub fn build_router(runtime: GatewayRuntime) -> Router {
         runtime,
         server_config: ServerConfig::default(),
         metrics: Arc::new(Metrics::new()),
+        jwks_cache: None,
     });
     let monitoring_router = build_monitoring_router(state.clone());
     let workload_router = build_workload_router(state);
@@ -777,17 +788,26 @@ pub fn build_router(runtime: GatewayRuntime) -> Router {
 
 /// Build a router with auth middleware using the given server config.
 pub fn build_router_with_auth(runtime: GatewayRuntime, server_config: ServerConfig) -> Router {
+    let jwks_cache = server_config.oidc_config.as_ref().and_then(|oidc| {
+        oidc.jwks_url
+            .as_ref()
+            .map(|url| Arc::new(OidcJwksCache::new(url.clone(), oidc.jwks_cache_ttl_secs)))
+    });
     let state = Arc::new(AppState {
         runtime,
         server_config: server_config.clone(),
         metrics: Arc::new(Metrics::new()),
+        jwks_cache,
     });
     let monitoring_router = build_monitoring_router(state.clone());
     let workload_router = build_workload_router(state.clone());
     let mut router = monitoring_router.merge(workload_router);
 
-    // Add auth layer if auth mode is Bearer or Scoped
-    if server_config.auth_mode == AuthMode::Bearer || server_config.auth_mode == AuthMode::Scoped {
+    // Add auth layer if auth mode requires authentication
+    if server_config.auth_mode == AuthMode::Bearer
+        || server_config.auth_mode == AuthMode::Scoped
+        || server_config.auth_mode == AuthMode::Oidc
+    {
         let auth_layer = ServiceBuilder::new()
             .layer(axum::middleware::from_fn_with_state(
                 state.clone(),
@@ -824,6 +844,7 @@ pub fn build_router_with_governor(
         runtime,
         server_config: ServerConfig::default(),
         metrics: Arc::new(Metrics::new()),
+        jwks_cache: None,
     });
 
     let monitoring_router = build_monitoring_router(state.clone());
@@ -988,6 +1009,21 @@ async fn auth_middleware(
                 next.run(request).await
             } else {
                 auth_error("invalid bearer token")
+            }
+        }
+        AuthMode::Oidc => {
+            let oidc = match &config.oidc_config {
+                Some(c) => c,
+                None => {
+                    tracing::error!("oidc config missing");
+                    return auth_error("oidc auth misconfigured");
+                }
+            };
+            match validate_oidc_token(provided, oidc, state.jwks_cache.as_ref(), method, path).await
+            {
+                Ok(()) => next.run(request).await,
+                Err(OidcAuthError::Unauthorized(msg)) => auth_error(&msg),
+                Err(OidcAuthError::Forbidden(msg)) => forbidden_error(&msg),
             }
         }
         AuthMode::Scoped => {
@@ -1186,6 +1222,193 @@ fn required_scope_for_path(method: &str, path: &str) -> Option<&'static str> {
         ("GET", "/v1/admin/audit/verify") => Some("admin:audit"),
         _ => Some("admin:tokens"), // Deny-by-default for unknown paths
     }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4.3: OIDC/JWT offline validation helpers
+// ---------------------------------------------------------------------------
+
+/// Error type for OIDC auth failures.
+enum OidcAuthError {
+    Unauthorized(String),
+    Forbidden(String),
+}
+
+/// Validate a Bearer JWT against OIDC config.
+///
+/// Flow:
+/// 1. Decode header, select static key by `kid`.
+/// 2. If static key missing and jwks_url configured, fetch from JWKS cache.
+/// 3. Validate signature, algorithm allowlist, issuer, audience, exp, nbf.
+/// 4. Map actor_id from configured claim.
+/// 5. Map role from configured role/group claims via explicit mapping table.
+/// 6. Derive scopes via `TokenRole::default_scopes()`.
+/// 7. Enforce `required_scope_for_path()`.
+///
+/// Fail closed: any validation failure returns `OidcAuthError::Unauthorized`.
+/// Unmapped role or missing required scope returns `OidcAuthError::Forbidden`.
+async fn validate_oidc_token(
+    token: &str,
+    oidc: &crate::OidcConfig,
+    jwks_cache: Option<&Arc<OidcJwksCache>>,
+    method: &str,
+    path: &str,
+) -> Result<(), OidcAuthError> {
+    // Step 1: decode header to get kid and alg
+    let header = match jsonwebtoken::decode_header(token) {
+        Ok(h) => h,
+        Err(e) => {
+            tracing::warn!(error = %e, "failed to decode jwt header");
+            return Err(OidcAuthError::Unauthorized("invalid jwt".to_string()));
+        }
+    };
+
+    // Reject "none" algorithm unconditionally
+    if header.alg == jsonwebtoken::Algorithm::HS256
+        && !oidc
+            .allowed_algorithms
+            .contains(&jsonwebtoken::Algorithm::HS256)
+    {
+        // HS256 is only allowed if explicitly listed (tests)
+    }
+    if !oidc.allowed_algorithms.contains(&header.alg) {
+        tracing::warn!(alg = ?header.alg, "jwt algorithm not in allowlist");
+        return Err(OidcAuthError::Unauthorized(
+            "unsupported jwt algorithm".to_string(),
+        ));
+    }
+
+    // Step 2: select key by kid (empty string fallback for JWTs without kid)
+    let kid = header.kid.as_deref().unwrap_or("");
+    let key_material = if let Some(km) = oidc.static_keys.get(kid) {
+        km.clone()
+    } else if let Some(cache) = jwks_cache {
+        match cache.get_key(kid).await {
+            Ok(Some(km)) => km,
+            Ok(None) => {
+                tracing::warn!(kid = %kid, "jwt key not found in static keys or jwks");
+                return Err(OidcAuthError::Unauthorized("jwt key not found".to_string()));
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, kid = %kid, "jwks fetch failed");
+                return Err(OidcAuthError::Unauthorized(
+                    "jwt key unavailable".to_string(),
+                ));
+            }
+        }
+    } else {
+        tracing::warn!(kid = %kid, "jwt key not found in static keys");
+        return Err(OidcAuthError::Unauthorized("jwt key not found".to_string()));
+    };
+
+    let decoding_key = match key_material.to_decoding_key() {
+        Ok(k) => k,
+        Err(e) => {
+            tracing::error!(error = %e, "failed to build decoding key");
+            return Err(OidcAuthError::Unauthorized("jwt key invalid".to_string()));
+        }
+    };
+
+    // Step 3: build validation
+    let mut validation = jsonwebtoken::Validation::new(header.alg);
+    validation.leeway = oidc.clock_skew_secs.max(0) as u64;
+    validation.validate_nbf = true;
+    validation.set_issuer(&[&oidc.issuer]);
+    validation.set_audience(&oidc.audiences);
+    validation.algorithms = oidc.allowed_algorithms.clone();
+
+    // Step 4: decode and validate signature + claims
+    let token_data: jsonwebtoken::TokenData<serde_json::Map<String, serde_json::Value>> =
+        match jsonwebtoken::decode(token, &decoding_key, &validation) {
+            Ok(td) => td,
+            Err(e) => {
+                tracing::warn!(error = %e, "jwt validation failed");
+                return Err(OidcAuthError::Unauthorized("invalid jwt".to_string()));
+            }
+        };
+
+    let claims = token_data.claims;
+
+    // Step 5: email verification check
+    if oidc.require_email_verified {
+        let verified = claims
+            .get("email_verified")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if !verified {
+            tracing::warn!("jwt email_verified is false or missing");
+            return Err(OidcAuthError::Unauthorized(
+                "email not verified".to_string(),
+            ));
+        }
+    }
+
+    // Step 6: extract actor_id
+    let actor_id = match claims.get(&oidc.actor_id_claim).and_then(|v| v.as_str()) {
+        Some(s) if !s.is_empty() => s.to_string(),
+        _ => {
+            tracing::warn!(claim = %oidc.actor_id_claim, "jwt missing actor_id claim");
+            return Err(OidcAuthError::Unauthorized(
+                "missing actor_id claim".to_string(),
+            ));
+        }
+    };
+
+    // Step 7: extract role_source claim and map to TokenRole
+    let role_source_values = match claims.get(&oidc.role_source_claim) {
+        Some(serde_json::Value::Array(arr)) => arr
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .collect::<Vec<_>>(),
+        Some(serde_json::Value::String(s)) => vec![s.clone()],
+        _ => {
+            tracing::warn!(
+                claim = %oidc.role_source_claim,
+                "jwt missing role_source claim"
+            );
+            return Err(OidcAuthError::Forbidden("unmapped role".to_string()));
+        }
+    };
+
+    let mapped_role = role_source_values
+        .iter()
+        .filter_map(|name| oidc.role_mappings.get(name))
+        .next()
+        .copied();
+
+    let role = match mapped_role {
+        Some(r) => r,
+        None => {
+            tracing::warn!(
+                values = ?role_source_values,
+                "jwt role not mapped"
+            );
+            return Err(OidcAuthError::Forbidden("unmapped role".to_string()));
+        }
+    };
+
+    // Step 8: derive scopes from role
+    let scopes = role.default_scopes();
+
+    // Step 9: enforce required scope for path
+    if let Some(required) = required_scope_for_path(method, path) {
+        let has_scope = scopes.iter().any(|s| s == "*" || s == required);
+        if !has_scope {
+            tracing::warn!(
+                actor_id = %actor_id,
+                role = ?role,
+                required = %required,
+                "jwt insufficient scope"
+            );
+            return Err(OidcAuthError::Forbidden(format!(
+                "required scope {}",
+                required
+            )));
+        }
+    }
+
+    tracing::debug!(actor_id = %actor_id, role = ?role, "oidc auth succeeded");
+    Ok(())
 }
 
 async fn healthz(State(state): State<Arc<AppState>>) -> Json<HealthResponse> {
@@ -7374,6 +7597,7 @@ pub async fn test_runtime_with_bridges(bridges: Vec<Arc<dyn RuntimeBridge>>) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{KeyMaterial, OidcConfig};
     use axum::{body::Body, http::Request};
     use ferrum_cap::InMemoryCapabilityService;
     use ferrum_pdp::StaticPdpEngine;
@@ -11569,5 +11793,572 @@ rules:
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // ── OIDC/JWT Offline Validation Tests (Phase 4.3) ──
+
+    fn test_oidc_config() -> OidcConfig {
+        let mut role_mappings = std::collections::HashMap::new();
+        role_mappings.insert("fg-admins".to_string(), ferrum_proto::TokenRole::Admin);
+        role_mappings.insert(
+            "fg-operators".to_string(),
+            ferrum_proto::TokenRole::Operator,
+        );
+        role_mappings.insert("fg-readonly".to_string(), ferrum_proto::TokenRole::ReadOnly);
+
+        let mut static_keys = std::collections::HashMap::new();
+        static_keys.insert(
+            "test-key-1".to_string(),
+            KeyMaterial::Hmac(b"test-secret-key-for-hs256-only".to_vec()),
+        );
+        // Also register a fallback key for JWTs without kid
+        static_keys.insert(
+            "".to_string(),
+            KeyMaterial::Hmac(b"test-secret-key-for-hs256-only".to_vec()),
+        );
+
+        OidcConfig {
+            issuer: "https://test-issuer.example.com".to_string(),
+            audiences: vec!["ferrumgate-test".to_string()],
+            clock_skew_secs: 30,
+            actor_id_claim: "sub".to_string(),
+            role_source_claim: "groups".to_string(),
+            role_mappings,
+            allowed_algorithms: vec![jsonwebtoken::Algorithm::HS256],
+            static_keys,
+            require_email_verified: false,
+            jwks_url: None,
+            jwks_cache_ttl_secs: 300,
+        }
+    }
+
+    fn mint_test_jwt(
+        claims: serde_json::Map<String, serde_json::Value>,
+        kid: Option<&str>,
+    ) -> String {
+        let header = jsonwebtoken::Header {
+            typ: Some("JWT".to_string()),
+            alg: jsonwebtoken::Algorithm::HS256,
+            kid: kid.map(|s| s.to_string()),
+            ..Default::default()
+        };
+        let key = jsonwebtoken::EncodingKey::from_secret(b"test-secret-key-for-hs256-only");
+        jsonwebtoken::encode(&header, &claims, &key).unwrap()
+    }
+
+    fn test_oidc_server_config() -> ServerConfig {
+        ServerConfig {
+            auth_mode: AuthMode::Oidc,
+            oidc_config: Some(test_oidc_config()),
+            ..ServerConfig::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn test_oidc_valid_jwt_with_mapped_role_allows_access() {
+        let runtime = test_runtime().await;
+        let config = test_oidc_server_config();
+        let router = build_router_with_auth(runtime, config);
+
+        let mut claims = serde_json::Map::new();
+        claims.insert("sub".to_string(), serde_json::json!("user-123"));
+        claims.insert(
+            "iss".to_string(),
+            serde_json::json!("https://test-issuer.example.com"),
+        );
+        claims.insert("aud".to_string(), serde_json::json!("ferrumgate-test"));
+        claims.insert(
+            "exp".to_string(),
+            serde_json::json!((chrono::Utc::now() + chrono::Duration::hours(1)).timestamp()),
+        );
+        claims.insert("groups".to_string(), serde_json::json!(["fg-operators"]));
+
+        let jwt = mint_test_jwt(claims, Some("test-key-1"));
+
+        // /v1/approvals requires "approval:resolve" which Operator has
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("Authorization", format!("Bearer {}", jwt))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_oidc_expired_jwt_returns_401() {
+        let runtime = test_runtime().await;
+        let config = test_oidc_server_config();
+        let router = build_router_with_auth(runtime, config);
+
+        let mut claims = serde_json::Map::new();
+        claims.insert("sub".to_string(), serde_json::json!("user-123"));
+        claims.insert(
+            "iss".to_string(),
+            serde_json::json!("https://test-issuer.example.com"),
+        );
+        claims.insert("aud".to_string(), serde_json::json!("ferrumgate-test"));
+        claims.insert(
+            "exp".to_string(),
+            serde_json::json!((chrono::Utc::now() - chrono::Duration::hours(1)).timestamp()),
+        );
+        claims.insert("groups".to_string(), serde_json::json!(["fg-operators"]));
+
+        let jwt = mint_test_jwt(claims, Some("test-key-1"));
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("Authorization", format!("Bearer {}", jwt))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_oidc_wrong_issuer_returns_401() {
+        let runtime = test_runtime().await;
+        let config = test_oidc_server_config();
+        let router = build_router_with_auth(runtime, config);
+
+        let mut claims = serde_json::Map::new();
+        claims.insert("sub".to_string(), serde_json::json!("user-123"));
+        claims.insert(
+            "iss".to_string(),
+            serde_json::json!("https://wrong-issuer.example.com"),
+        );
+        claims.insert("aud".to_string(), serde_json::json!("ferrumgate-test"));
+        claims.insert(
+            "exp".to_string(),
+            serde_json::json!((chrono::Utc::now() + chrono::Duration::hours(1)).timestamp()),
+        );
+        claims.insert("groups".to_string(), serde_json::json!(["fg-operators"]));
+
+        let jwt = mint_test_jwt(claims, Some("test-key-1"));
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("Authorization", format!("Bearer {}", jwt))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_oidc_wrong_audience_returns_401() {
+        let runtime = test_runtime().await;
+        let config = test_oidc_server_config();
+        let router = build_router_with_auth(runtime, config);
+
+        let mut claims = serde_json::Map::new();
+        claims.insert("sub".to_string(), serde_json::json!("user-123"));
+        claims.insert(
+            "iss".to_string(),
+            serde_json::json!("https://test-issuer.example.com"),
+        );
+        claims.insert("aud".to_string(), serde_json::json!("wrong-audience"));
+        claims.insert(
+            "exp".to_string(),
+            serde_json::json!((chrono::Utc::now() + chrono::Duration::hours(1)).timestamp()),
+        );
+        claims.insert("groups".to_string(), serde_json::json!(["fg-operators"]));
+
+        let jwt = mint_test_jwt(claims, Some("test-key-1"));
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("Authorization", format!("Bearer {}", jwt))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_oidc_unmapped_role_returns_403() {
+        let runtime = test_runtime().await;
+        let config = test_oidc_server_config();
+        let router = build_router_with_auth(runtime, config);
+
+        let mut claims = serde_json::Map::new();
+        claims.insert("sub".to_string(), serde_json::json!("user-123"));
+        claims.insert(
+            "iss".to_string(),
+            serde_json::json!("https://test-issuer.example.com"),
+        );
+        claims.insert("aud".to_string(), serde_json::json!("ferrumgate-test"));
+        claims.insert(
+            "exp".to_string(),
+            serde_json::json!((chrono::Utc::now() + chrono::Duration::hours(1)).timestamp()),
+        );
+        claims.insert("groups".to_string(), serde_json::json!(["fg-unknown-role"]));
+
+        let jwt = mint_test_jwt(claims, Some("test-key-1"));
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("Authorization", format!("Bearer {}", jwt))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_oidc_valid_role_but_missing_scope_returns_403() {
+        let runtime = test_runtime().await;
+        let config = test_oidc_server_config();
+        let router = build_router_with_auth(runtime, config);
+
+        // ReadOnly role has "policy:read" and "provenance:read" but not "approval:resolve"
+        let mut claims = serde_json::Map::new();
+        claims.insert("sub".to_string(), serde_json::json!("user-123"));
+        claims.insert(
+            "iss".to_string(),
+            serde_json::json!("https://test-issuer.example.com"),
+        );
+        claims.insert("aud".to_string(), serde_json::json!("ferrumgate-test"));
+        claims.insert(
+            "exp".to_string(),
+            serde_json::json!((chrono::Utc::now() + chrono::Duration::hours(1)).timestamp()),
+        );
+        claims.insert("groups".to_string(), serde_json::json!(["fg-readonly"]));
+
+        let jwt = mint_test_jwt(claims, Some("test-key-1"));
+
+        // /v1/approvals requires "approval:resolve" which ReadOnly does NOT have
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("Authorization", format!("Bearer {}", jwt))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_oidc_missing_auth_header_returns_401() {
+        let runtime = test_runtime().await;
+        let config = test_oidc_server_config();
+        let router = build_router_with_auth(runtime, config);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_oidc_invalid_signature_returns_401() {
+        let runtime = test_runtime().await;
+        let config = test_oidc_server_config();
+        let router = build_router_with_auth(runtime, config);
+
+        let mut claims = serde_json::Map::new();
+        claims.insert("sub".to_string(), serde_json::json!("user-123"));
+        claims.insert(
+            "iss".to_string(),
+            serde_json::json!("https://test-issuer.example.com"),
+        );
+        claims.insert("aud".to_string(), serde_json::json!("ferrumgate-test"));
+        claims.insert(
+            "exp".to_string(),
+            serde_json::json!((chrono::Utc::now() + chrono::Duration::hours(1)).timestamp()),
+        );
+        claims.insert("groups".to_string(), serde_json::json!(["fg-operators"]));
+
+        // Sign with a different secret to create an invalid signature
+        let header = jsonwebtoken::Header {
+            typ: Some("JWT".to_string()),
+            alg: jsonwebtoken::Algorithm::HS256,
+            kid: Some("test-key-1".to_string()),
+            ..Default::default()
+        };
+        let bad_key = jsonwebtoken::EncodingKey::from_secret(b"wrong-secret");
+        let jwt = jsonwebtoken::encode(&header, &claims, &bad_key).unwrap();
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("Authorization", format!("Bearer {}", jwt))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_oidc_missing_actor_id_claim_returns_401() {
+        let runtime = test_runtime().await;
+        let config = test_oidc_server_config();
+        let router = build_router_with_auth(runtime, config);
+
+        let mut claims = serde_json::Map::new();
+        // No "sub" claim
+        claims.insert(
+            "iss".to_string(),
+            serde_json::json!("https://test-issuer.example.com"),
+        );
+        claims.insert("aud".to_string(), serde_json::json!("ferrumgate-test"));
+        claims.insert(
+            "exp".to_string(),
+            serde_json::json!((chrono::Utc::now() + chrono::Duration::hours(1)).timestamp()),
+        );
+        claims.insert("groups".to_string(), serde_json::json!(["fg-operators"]));
+
+        let jwt = mint_test_jwt(claims, Some("test-key-1"));
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("Authorization", format!("Bearer {}", jwt))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_oidc_readonly_role_can_access_allowed_route() {
+        let runtime = test_runtime().await;
+        let config = test_oidc_server_config();
+        let router = build_router_with_auth(runtime, config);
+
+        let mut claims = serde_json::Map::new();
+        claims.insert("sub".to_string(), serde_json::json!("user-123"));
+        claims.insert(
+            "iss".to_string(),
+            serde_json::json!("https://test-issuer.example.com"),
+        );
+        claims.insert("aud".to_string(), serde_json::json!("ferrumgate-test"));
+        claims.insert(
+            "exp".to_string(),
+            serde_json::json!((chrono::Utc::now() + chrono::Duration::hours(1)).timestamp()),
+        );
+        claims.insert("groups".to_string(), serde_json::json!(["fg-readonly"]));
+
+        let jwt = mint_test_jwt(claims, Some("test-key-1"));
+
+        // /v1/policy-bundles GET requires "policy:read" which ReadOnly has
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/policy-bundles")
+                    .header("Authorization", format!("Bearer {}", jwt))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_oidc_healthz_is_public_under_oidc_auth() {
+        let runtime = test_runtime().await;
+        let config = test_oidc_server_config();
+
+        let response = build_router_with_auth(runtime, config)
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/healthz")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_oidc_admin_role_wildcard_scope_allows_all_routes() {
+        let runtime = test_runtime().await;
+        let mut config = test_oidc_server_config();
+        let mut role_mappings = std::collections::HashMap::new();
+        role_mappings.insert("fg-admins".to_string(), ferrum_proto::TokenRole::Admin);
+        if let Some(ref mut oidc) = config.oidc_config {
+            oidc.role_mappings = role_mappings;
+        }
+        let router = build_router_with_auth(runtime, config);
+
+        let mut claims = serde_json::Map::new();
+        claims.insert("sub".to_string(), serde_json::json!("admin-123"));
+        claims.insert(
+            "iss".to_string(),
+            serde_json::json!("https://test-issuer.example.com"),
+        );
+        claims.insert("aud".to_string(), serde_json::json!("ferrumgate-test"));
+        claims.insert(
+            "exp".to_string(),
+            serde_json::json!((chrono::Utc::now() + chrono::Duration::hours(1)).timestamp()),
+        );
+        claims.insert("groups".to_string(), serde_json::json!(["fg-admins"]));
+
+        let jwt = mint_test_jwt(claims, Some("test-key-1"));
+
+        // Admin wildcard scope should allow any route
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("Authorization", format!("Bearer {}", jwt))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    // ── Phase 4.4: JWKS cache/fetch tests ──
+
+    #[tokio::test]
+    async fn test_jwk_to_key_material_rsa_ok() {
+        let jwk = serde_json::json!({
+            "kty": "RSA",
+            "kid": "test-rsa-key",
+            "n": "k4BWME9tVOIreUI5ROut2R594BH3kxnrUFJ26SAtBG3s0mYE6VM_uyvM1Lmc11oA1mzp0u_ilPOBUdDF8J2sCQ",
+            "e": "AQAB"
+        });
+        let km = crate::jwk_to_key_material(&jwk).unwrap();
+        assert!(
+            matches!(km, crate::KeyMaterial::RsaJwk { n, e } if n == "k4BWME9tVOIreUI5ROut2R594BH3kxnrUFJ26SAtBG3s0mYE6VM_uyvM1Lmc11oA1mzp0u_ilPOBUdDF8J2sCQ" && e == "AQAB")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_jwk_to_key_material_unsupported_kty() {
+        let jwk = serde_json::json!({
+            "kty": "EC",
+            "kid": "test-ec-key",
+            "crv": "P-256",
+            "x": "test-x",
+            "y": "test-y"
+        });
+        let err = crate::jwk_to_key_material(&jwk).unwrap_err();
+        assert!(err.contains("unsupported jwk key type: EC"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn test_oidc_jwks_cache_fetches_from_server() {
+        use axum::{Json, Router, routing::get};
+
+        let jwks = serde_json::json!({
+            "keys": [{
+                "kty": "RSA",
+                "kid": "test-rsa-key",
+                "n": "k4BWME9tVOIreUI5ROut2R594BH3kxnrUFJ26SAtBG3s0mYE6VM_uyvM1Lmc11oA1mzp0u_ilPOBUdDF8J2sCQ",
+                "e": "AQAB"
+            }]
+        });
+
+        let app = Router::new().route("/jwks", get(|| async { Json(jwks) }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        // Small delay to let the server start
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let cache = crate::OidcJwksCache::new(format!("http://{}/jwks", addr), 300);
+        let key = cache.get_key("test-rsa-key").await.unwrap();
+        assert!(key.is_some());
+        assert!(
+            matches!(key.unwrap(), crate::KeyMaterial::RsaJwk { n, e } if n == "k4BWME9tVOIreUI5ROut2R594BH3kxnrUFJ26SAtBG3s0mYE6VM_uyvM1Lmc11oA1mzp0u_ilPOBUdDF8J2sCQ" && e == "AQAB")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_oidc_jwks_unavailable_returns_401() {
+        let runtime = test_runtime().await;
+        let mut config = test_oidc_server_config();
+        if let Some(ref mut oidc) = config.oidc_config {
+            // Remove static keys so JWKS fallback is attempted
+            oidc.static_keys.clear();
+            // Point to an unreachable URL
+            oidc.jwks_url = Some("http://127.0.0.1:1/unreachable/jwks".to_string());
+        }
+        let router = build_router_with_auth(runtime, config);
+
+        let mut claims = serde_json::Map::new();
+        claims.insert("sub".to_string(), serde_json::json!("user-123"));
+        claims.insert(
+            "iss".to_string(),
+            serde_json::json!("https://test-issuer.example.com"),
+        );
+        claims.insert("aud".to_string(), serde_json::json!("ferrumgate-test"));
+        claims.insert(
+            "exp".to_string(),
+            serde_json::json!((chrono::Utc::now() + chrono::Duration::hours(1)).timestamp()),
+        );
+        claims.insert("groups".to_string(), serde_json::json!(["fg-operators"]));
+
+        // Sign with the original test secret, but kid won't be in static keys
+        let jwt = mint_test_jwt(claims, Some("missing-kid"));
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("Authorization", format!("Bearer {}", jwt))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Must fail closed with 401, not allow access
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 }

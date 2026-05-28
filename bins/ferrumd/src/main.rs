@@ -38,7 +38,7 @@ struct Args {
     #[arg(long)]
     store_dsn: Option<String>,
 
-    /// Auth mode: "disabled" or "bearer".
+    /// Auth mode: "disabled", "bearer", "scoped", or "oidc".
     #[arg(long)]
     auth_mode: Option<String>,
 
@@ -107,6 +107,8 @@ fn get_env<T: std::str::FromStr>(key: &str) -> Option<T> {
 struct ConfigFile {
     #[serde(default)]
     server: Option<ServerSection>,
+    #[serde(default)]
+    oidc: Option<OidcSection>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -145,6 +147,66 @@ struct ServerSection {
     pg_statement_timeout_ms: Option<u64>,
     #[serde(default)]
     pg_idle_in_transaction_timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct OidcSection {
+    issuer: String,
+    audiences: Vec<String>,
+    #[serde(default = "default_jwks_cache_ttl")]
+    jwks_cache_ttl_secs: u64,
+    #[serde(default = "default_actor_id_claim")]
+    actor_id_claim: String,
+    #[serde(default = "default_role_source_claim")]
+    role_source_claim: String,
+    #[serde(default)]
+    require_email_verified: bool,
+    #[serde(default)]
+    allowed_algorithms: Vec<String>,
+    #[serde(default)]
+    role_mappings: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    jwks_url: Option<String>,
+    #[serde(default)]
+    static_keys: Vec<StaticKeyEntry>,
+}
+
+fn default_jwks_cache_ttl() -> u64 {
+    300
+}
+
+fn default_actor_id_claim() -> String {
+    "sub".to_string()
+}
+
+fn default_role_source_claim() -> String {
+    "groups".to_string()
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct StaticKeyEntry {
+    kid: String,
+    #[serde(rename = "type")]
+    key_type: String,
+    #[serde(default)]
+    secret: Option<String>,
+    #[serde(default)]
+    pem: Option<String>,
+}
+
+fn parse_oidc_algorithm(s: &str) -> Result<jsonwebtoken::Algorithm, String> {
+    match s.to_ascii_uppercase().as_str() {
+        "HS256" => Ok(jsonwebtoken::Algorithm::HS256),
+        "HS384" => Ok(jsonwebtoken::Algorithm::HS384),
+        "HS512" => Ok(jsonwebtoken::Algorithm::HS512),
+        "RS256" => Ok(jsonwebtoken::Algorithm::RS256),
+        "RS384" => Ok(jsonwebtoken::Algorithm::RS384),
+        "RS512" => Ok(jsonwebtoken::Algorithm::RS512),
+        "ES256" => Ok(jsonwebtoken::Algorithm::ES256),
+        "ES384" => Ok(jsonwebtoken::Algorithm::ES384),
+        "EDDSA" | "ED25519" => Ok(jsonwebtoken::Algorithm::EdDSA),
+        _ => Err(format!("unknown jwt algorithm: {s}")),
+    }
 }
 
 fn load_config_file(path: &PathBuf) -> Result<ConfigFile> {
@@ -301,6 +363,171 @@ fn resolve_config(args: &Args) -> Result<ServerConfig> {
         .parse()
         .map_err(|e: String| anyhow::anyhow!("invalid auth mode: {}", e))?;
 
+    // Build OIDC config from file + env overrides
+    let oidc_config = if auth_mode_parsed == AuthMode::Oidc {
+        let file_oidc = file_config.as_ref().and_then(|c| c.oidc.as_ref());
+
+        let issuer = get_env::<String>("FERRUMD_OIDC_ISSUER")
+            .or_else(|| file_oidc.map(|o| o.issuer.clone()))
+            .unwrap_or_default();
+
+        let audiences_env = get_env::<String>("FERRUMD_OIDC_AUDIENCES");
+        let audiences = if let Some(aud_str) = audiences_env {
+            aud_str.split(',').map(|s| s.trim().to_string()).collect()
+        } else {
+            file_oidc.map(|o| o.audiences.clone()).unwrap_or_default()
+        };
+
+        let jwks_url = get_env::<String>("FERRUMD_OIDC_JWKS_URL")
+            .or_else(|| file_oidc.and_then(|o| o.jwks_url.clone()));
+
+        let jwks_cache_ttl_secs = get_env::<u64>("FERRUMD_OIDC_JWKS_CACHE_TTL_SECS")
+            .or_else(|| file_oidc.map(|o| o.jwks_cache_ttl_secs))
+            .unwrap_or(300);
+
+        let actor_id_claim = get_env::<String>("FERRUMD_OIDC_ACTOR_ID_CLAIM")
+            .or_else(|| file_oidc.map(|o| o.actor_id_claim.clone()))
+            .unwrap_or_else(|| "sub".to_string());
+
+        let role_source_claim = get_env::<String>("FERRUMD_OIDC_ROLE_SOURCE_CLAIM")
+            .or_else(|| file_oidc.map(|o| o.role_source_claim.clone()))
+            .unwrap_or_else(|| "groups".to_string());
+
+        let require_email_verified = get_env::<bool>("FERRUMD_OIDC_REQUIRE_EMAIL_VERIFIED")
+            .or_else(|| file_oidc.map(|o| o.require_email_verified))
+            .unwrap_or(true);
+
+        let algorithms_env = get_env::<String>("FERRUMD_OIDC_ALLOWED_ALGORITHMS");
+        let allowed_algorithms: Vec<jsonwebtoken::Algorithm> = if let Some(alg_str) = algorithms_env
+        {
+            alg_str
+                .split(',')
+                .map(|s| parse_oidc_algorithm(s.trim()))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| anyhow::anyhow!("invalid FERRUMD_OIDC_ALLOWED_ALGORITHMS: {e}"))?
+        } else if let Some(oidc) = file_oidc {
+            if oidc.allowed_algorithms.is_empty() {
+                vec![
+                    jsonwebtoken::Algorithm::RS256,
+                    jsonwebtoken::Algorithm::RS384,
+                    jsonwebtoken::Algorithm::RS512,
+                    jsonwebtoken::Algorithm::ES256,
+                    jsonwebtoken::Algorithm::ES384,
+                    jsonwebtoken::Algorithm::EdDSA,
+                ]
+            } else {
+                oidc.allowed_algorithms
+                    .iter()
+                    .map(|s| parse_oidc_algorithm(s))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|e| anyhow::anyhow!("invalid allowed_algorithms in config: {e}"))?
+            }
+        } else {
+            vec![
+                jsonwebtoken::Algorithm::RS256,
+                jsonwebtoken::Algorithm::RS384,
+                jsonwebtoken::Algorithm::RS512,
+                jsonwebtoken::Algorithm::ES256,
+                jsonwebtoken::Algorithm::ES384,
+                jsonwebtoken::Algorithm::EdDSA,
+            ]
+        };
+
+        let role_mappings_env = get_env::<String>("FERRUMD_OIDC_ROLE_MAPPINGS");
+        let role_mappings: std::collections::HashMap<String, ferrum_proto::TokenRole> =
+            if let Some(rm_str) = role_mappings_env {
+                let mut map = std::collections::HashMap::new();
+                for pair in rm_str.split(',') {
+                    let pair = pair.trim();
+                    if pair.is_empty() {
+                        continue;
+                    }
+                    let (name, role_str) = pair.split_once('=').ok_or_else(|| {
+                        anyhow::anyhow!("invalid role mapping '{pair}': expected name=role")
+                    })?;
+                    let role = role_str
+                        .trim()
+                        .parse::<ferrum_proto::TokenRole>()
+                        .map_err(|e| anyhow::anyhow!("invalid role in mapping '{pair}': {e}"))?;
+                    map.insert(name.trim().to_string(), role);
+                }
+                map
+            } else if let Some(oidc) = file_oidc {
+                let mut map = std::collections::HashMap::new();
+                for (name, role_str) in &oidc.role_mappings {
+                    let role = role_str
+                        .parse::<ferrum_proto::TokenRole>()
+                        .map_err(|e| anyhow::anyhow!("invalid role '{role_str}' in config: {e}"))?;
+                    map.insert(name.clone(), role);
+                }
+                map
+            } else {
+                std::collections::HashMap::new()
+            };
+
+        let mut static_keys = std::collections::HashMap::new();
+        if let Some(oidc) = file_oidc {
+            for entry in &oidc.static_keys {
+                let km = match entry.key_type.as_str() {
+                    "hmac" => {
+                        let secret_b64 = entry.secret.as_deref().ok_or_else(|| {
+                            anyhow::anyhow!("static key '{}' missing 'secret'", entry.kid)
+                        })?;
+                        let bytes = base64::Engine::decode(
+                            &base64::engine::general_purpose::STANDARD,
+                            secret_b64,
+                        )
+                        .map_err(|e| {
+                            anyhow::anyhow!("invalid base64 secret for '{}': {e}", entry.kid)
+                        })?;
+                        ferrum_gateway::KeyMaterial::Hmac(bytes)
+                    }
+                    "rsa" => {
+                        let pem = entry.pem.as_deref().ok_or_else(|| {
+                            anyhow::anyhow!("static key '{}' missing 'pem'", entry.kid)
+                        })?;
+                        ferrum_gateway::KeyMaterial::Rsa(pem.as_bytes().to_vec())
+                    }
+                    "ecdsa" => {
+                        let pem = entry.pem.as_deref().ok_or_else(|| {
+                            anyhow::anyhow!("static key '{}' missing 'pem'", entry.kid)
+                        })?;
+                        ferrum_gateway::KeyMaterial::Ecdsa(pem.as_bytes().to_vec())
+                    }
+                    "ed" => {
+                        let pem = entry.pem.as_deref().ok_or_else(|| {
+                            anyhow::anyhow!("static key '{}' missing 'pem'", entry.kid)
+                        })?;
+                        ferrum_gateway::KeyMaterial::Ed(pem.as_bytes().to_vec())
+                    }
+                    other => {
+                        return Err(anyhow::anyhow!(
+                            "static key '{}' has unsupported type '{other}'",
+                            entry.kid
+                        ));
+                    }
+                };
+                static_keys.insert(entry.kid.clone(), km);
+            }
+        }
+
+        Some(ferrum_gateway::OidcConfig {
+            issuer,
+            audiences,
+            clock_skew_secs: 30,
+            actor_id_claim,
+            role_source_claim,
+            role_mappings,
+            allowed_algorithms,
+            static_keys,
+            require_email_verified,
+            jwks_url,
+            jwks_cache_ttl_secs,
+        })
+    } else {
+        None
+    };
+
     let config = ServerConfig {
         bind_addr: bind_addr_parsed,
         store_dsn,
@@ -319,6 +546,7 @@ fn resolve_config(args: &Args) -> Result<ServerConfig> {
         pg_acquire_timeout_secs,
         pg_statement_timeout_ms,
         pg_idle_in_transaction_timeout_ms,
+        oidc_config,
     };
 
     // Validate configuration
@@ -459,6 +687,15 @@ mod tests {
             "FERRUMD_PG_ACQUIRE_TIMEOUT_SECS",
             "FERRUMD_PG_STATEMENT_TIMEOUT_MS",
             "FERRUMD_PG_IDLE_IN_TRANSACTION_TIMEOUT_MS",
+            "FERRUMD_OIDC_ISSUER",
+            "FERRUMD_OIDC_AUDIENCES",
+            "FERRUMD_OIDC_JWKS_URL",
+            "FERRUMD_OIDC_JWKS_CACHE_TTL_SECS",
+            "FERRUMD_OIDC_ACTOR_ID_CLAIM",
+            "FERRUMD_OIDC_ROLE_SOURCE_CLAIM",
+            "FERRUMD_OIDC_REQUIRE_EMAIL_VERIFIED",
+            "FERRUMD_OIDC_ALLOWED_ALGORITHMS",
+            "FERRUMD_OIDC_ROLE_MAPPINGS",
         ] {
             unsafe { std::env::remove_var(key) };
         }
@@ -2125,5 +2362,390 @@ pg_idle_in_transaction_timeout_ms = 0
         assert_eq!(config.pg_idle_in_transaction_timeout_ms, 0);
 
         let _ = fs::remove_file(path);
+    }
+
+    // ── OIDC Config Tests (Phase 4.4) ──
+
+    #[test]
+    fn test_resolve_config_oidc_from_toml_with_jwks_url() {
+        let _guard = env_lock().lock().unwrap();
+        clear_test_env();
+
+        let path = write_temp_config(
+            r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "oidc"
+
+[oidc]
+issuer = "https://test-issuer.example.com"
+audiences = ["ferrumgate-test"]
+jwks_url = "https://test-issuer.example.com/jwks.json"
+jwks_cache_ttl_secs = 600
+actor_id_claim = "sub"
+role_source_claim = "groups"
+require_email_verified = true
+allowed_algorithms = ["HS256"]
+
+[oidc.role_mappings]
+fg-admins = "admin"
+fg-operators = "operator"
+"#,
+        );
+
+        let args = Args {
+            config: Some(path.clone()),
+            bind_addr: None,
+            store_dsn: None,
+            auth_mode: None,
+            bearer_token: None,
+            allow_insecure_nonlocal_bind: false,
+            log_filter: None,
+            store_synchronous: None,
+            store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
+            write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
+        };
+
+        let config = resolve_config(&args).unwrap();
+        assert_eq!(config.auth_mode, AuthMode::Oidc);
+        let oidc = config.oidc_config.as_ref().unwrap();
+        assert_eq!(oidc.issuer, "https://test-issuer.example.com");
+        assert_eq!(oidc.audiences, vec!["ferrumgate-test"]);
+        assert_eq!(
+            oidc.jwks_url.as_deref(),
+            Some("https://test-issuer.example.com/jwks.json")
+        );
+        assert_eq!(oidc.jwks_cache_ttl_secs, 600);
+        assert_eq!(oidc.actor_id_claim, "sub");
+        assert_eq!(oidc.role_source_claim, "groups");
+        assert!(oidc.require_email_verified);
+        assert_eq!(
+            oidc.allowed_algorithms,
+            vec![jsonwebtoken::Algorithm::HS256]
+        );
+        assert_eq!(oidc.role_mappings.len(), 2);
+        assert_eq!(
+            oidc.role_mappings.get("fg-admins"),
+            Some(&ferrum_proto::TokenRole::Admin)
+        );
+        assert_eq!(
+            oidc.role_mappings.get("fg-operators"),
+            Some(&ferrum_proto::TokenRole::Operator)
+        );
+        assert!(oidc.static_keys.is_empty());
+
+        let _ = fs::remove_file(path);
+        clear_test_env();
+    }
+
+    #[test]
+    fn test_resolve_config_oidc_from_env_overrides_toml() {
+        let _guard = env_lock().lock().unwrap();
+        clear_test_env();
+
+        let path = write_temp_config(
+            r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "oidc"
+
+[oidc]
+issuer = "https://file-issuer.example.com"
+audiences = ["file-aud"]
+jwks_url = "https://file-issuer.example.com/jwks.json"
+
+[oidc.role_mappings]
+fg-admins = "admin"
+"#,
+        );
+
+        unsafe {
+            std::env::set_var("FERRUMD_OIDC_ISSUER", "https://env-issuer.example.com");
+            std::env::set_var("FERRUMD_OIDC_AUDIENCES", "env-aud1,env-aud2");
+            std::env::set_var(
+                "FERRUMD_OIDC_JWKS_URL",
+                "https://env-issuer.example.com/jwks.json",
+            );
+            std::env::set_var("FERRUMD_OIDC_JWKS_CACHE_TTL_SECS", "120");
+            std::env::set_var("FERRUMD_OIDC_ACTOR_ID_CLAIM", "email");
+            std::env::set_var("FERRUMD_OIDC_ROLE_SOURCE_CLAIM", "roles");
+            std::env::set_var("FERRUMD_OIDC_REQUIRE_EMAIL_VERIFIED", "false");
+            std::env::set_var("FERRUMD_OIDC_ALLOWED_ALGORITHMS", "RS256,ES256");
+            std::env::set_var(
+                "FERRUMD_OIDC_ROLE_MAPPINGS",
+                "env-admins=admin,env-operators=operator",
+            );
+        }
+
+        let args = Args {
+            config: Some(path.clone()),
+            bind_addr: None,
+            store_dsn: None,
+            auth_mode: None,
+            bearer_token: None,
+            allow_insecure_nonlocal_bind: false,
+            log_filter: None,
+            store_synchronous: None,
+            store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
+            write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
+        };
+
+        let config = resolve_config(&args).unwrap();
+        let oidc = config.oidc_config.as_ref().unwrap();
+        assert_eq!(oidc.issuer, "https://env-issuer.example.com");
+        assert_eq!(oidc.audiences, vec!["env-aud1", "env-aud2"]);
+        assert_eq!(
+            oidc.jwks_url.as_deref(),
+            Some("https://env-issuer.example.com/jwks.json")
+        );
+        assert_eq!(oidc.jwks_cache_ttl_secs, 120);
+        assert_eq!(oidc.actor_id_claim, "email");
+        assert_eq!(oidc.role_source_claim, "roles");
+        assert!(!oidc.require_email_verified);
+        assert_eq!(
+            oidc.allowed_algorithms,
+            vec![
+                jsonwebtoken::Algorithm::RS256,
+                jsonwebtoken::Algorithm::ES256
+            ]
+        );
+        assert_eq!(oidc.role_mappings.len(), 2);
+        assert_eq!(
+            oidc.role_mappings.get("env-admins"),
+            Some(&ferrum_proto::TokenRole::Admin)
+        );
+        assert_eq!(
+            oidc.role_mappings.get("env-operators"),
+            Some(&ferrum_proto::TokenRole::Operator)
+        );
+
+        let _ = fs::remove_file(path);
+        clear_test_env();
+    }
+
+    #[test]
+    fn test_resolve_config_oidc_rejects_missing_issuer() {
+        let _guard = env_lock().lock().unwrap();
+        clear_test_env();
+
+        let path = write_temp_config(
+            r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "oidc"
+
+[oidc]
+issuer = ""
+audiences = ["ferrumgate-test"]
+"#,
+        );
+
+        let args = Args {
+            config: Some(path.clone()),
+            bind_addr: None,
+            store_dsn: None,
+            auth_mode: None,
+            bearer_token: None,
+            allow_insecure_nonlocal_bind: false,
+            log_filter: None,
+            store_synchronous: None,
+            store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
+            write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
+        };
+
+        let err = resolve_config(&args).err().expect("expected config error");
+        assert!(
+            err.to_string().contains("oidc issuer cannot be empty"),
+            "got: {}",
+            err
+        );
+
+        let _ = fs::remove_file(path);
+        clear_test_env();
+    }
+
+    #[test]
+    fn test_resolve_config_oidc_rejects_empty_static_keys_without_jwks_url() {
+        let _guard = env_lock().lock().unwrap();
+        clear_test_env();
+
+        let path = write_temp_config(
+            r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "oidc"
+
+[oidc]
+issuer = "https://test-issuer.example.com"
+audiences = ["ferrumgate-test"]
+
+[oidc.role_mappings]
+fg-admins = "admin"
+"#,
+        );
+
+        let args = Args {
+            config: Some(path.clone()),
+            bind_addr: None,
+            store_dsn: None,
+            auth_mode: None,
+            bearer_token: None,
+            allow_insecure_nonlocal_bind: false,
+            log_filter: None,
+            store_synchronous: None,
+            store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
+            write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
+        };
+
+        let err = resolve_config(&args).err().expect("expected config error");
+        assert!(
+            err.to_string()
+                .contains("static_keys cannot be empty when jwks_url is not configured"),
+            "got: {}",
+            err
+        );
+
+        let _ = fs::remove_file(path);
+        clear_test_env();
+    }
+
+    #[test]
+    fn test_resolve_config_oidc_allows_empty_static_keys_with_jwks_url() {
+        let _guard = env_lock().lock().unwrap();
+        clear_test_env();
+
+        let path = write_temp_config(
+            r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "oidc"
+
+[oidc]
+issuer = "https://test-issuer.example.com"
+audiences = ["ferrumgate-test"]
+jwks_url = "https://test-issuer.example.com/jwks.json"
+
+[oidc.role_mappings]
+fg-admins = "admin"
+"#,
+        );
+
+        let args = Args {
+            config: Some(path.clone()),
+            bind_addr: None,
+            store_dsn: None,
+            auth_mode: None,
+            bearer_token: None,
+            allow_insecure_nonlocal_bind: false,
+            log_filter: None,
+            store_synchronous: None,
+            store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
+            write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
+        };
+
+        let config = resolve_config(&args).unwrap();
+        let oidc = config.oidc_config.as_ref().unwrap();
+        assert!(oidc.static_keys.is_empty());
+        assert_eq!(
+            oidc.jwks_url.as_deref(),
+            Some("https://test-issuer.example.com/jwks.json")
+        );
+
+        let _ = fs::remove_file(path);
+        clear_test_env();
+    }
+
+    #[test]
+    fn test_resolve_config_oidc_static_key_hmac_from_toml() {
+        let _guard = env_lock().lock().unwrap();
+        clear_test_env();
+
+        let secret_b64 =
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, b"test-secret");
+        let toml = format!(
+            r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "oidc"
+
+[oidc]
+issuer = "https://test-issuer.example.com"
+audiences = ["ferrumgate-test"]
+
+[[oidc.static_keys]]
+kid = "test-key-1"
+type = "hmac"
+secret = "{secret_b64}"
+
+[oidc.role_mappings]
+fg-admins = "admin"
+"#
+        );
+
+        let path = write_temp_config(&toml);
+
+        let args = Args {
+            config: Some(path.clone()),
+            bind_addr: None,
+            store_dsn: None,
+            auth_mode: None,
+            bearer_token: None,
+            allow_insecure_nonlocal_bind: false,
+            log_filter: None,
+            store_synchronous: None,
+            store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
+            write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
+        };
+
+        let config = resolve_config(&args).unwrap();
+        let oidc = config.oidc_config.as_ref().unwrap();
+        assert_eq!(oidc.static_keys.len(), 1);
+        let km = oidc.static_keys.get("test-key-1").unwrap();
+        assert!(matches!(km, ferrum_gateway::KeyMaterial::Hmac(bytes) if bytes == b"test-secret"));
+
+        let _ = fs::remove_file(path);
+        clear_test_env();
     }
 }
