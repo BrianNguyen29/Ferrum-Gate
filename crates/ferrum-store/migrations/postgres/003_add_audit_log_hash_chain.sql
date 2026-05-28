@@ -1,0 +1,2 @@
+ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS content_hash TEXT;
+ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS previous_hash TEXT;

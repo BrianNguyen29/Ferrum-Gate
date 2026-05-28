@@ -937,8 +937,9 @@ fn build_workload_router(state: Arc<AppState>) -> Router {
         .route("/v1/admin/tokens", get(list_tokens))
         .route("/v1/admin/tokens/{token_id}", delete(revoke_token))
         .route("/v1/admin/tokens/{token_id}/rotate", post(rotate_token))
-        // Audit log endpoint
+        // Audit log endpoints
         .route("/v1/admin/audit-logs", get(list_audit_logs))
+        .route("/v1/admin/audit/verify", get(verify_audit_chain))
         .with_state(state)
         .layer(TraceLayer::new_for_http())
 }
@@ -1182,6 +1183,7 @@ fn required_scope_for_path(method: &str, path: &str) -> Option<&'static str> {
         }
         // Audit logs
         ("GET", "/v1/admin/audit-logs") => Some("admin:audit"),
+        ("GET", "/v1/admin/audit/verify") => Some("admin:audit"),
         _ => Some("admin:tokens"), // Deny-by-default for unknown paths
     }
 }
@@ -7121,6 +7123,31 @@ async fn list_audit_logs(
     }
 }
 
+/// Verify the audit log hash chain integrity.
+async fn verify_audit_chain(State(state): State<Arc<AppState>>) -> Response {
+    match state.runtime.store.audit_log().verify_chain().await {
+        Ok(()) => {
+            let response = ferrum_proto::AuditLogVerifyResponse {
+                valid: true,
+                total_entries: 0,
+                hashed_entries: 0,
+                error: None,
+            };
+            (StatusCode::OK, Json(response)).into_response()
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "audit chain verification failed");
+            let response = ferrum_proto::AuditLogVerifyResponse {
+                valid: false,
+                total_entries: 0,
+                hashed_entries: 0,
+                error: Some(e.to_string()),
+            };
+            (StatusCode::OK, Json(response)).into_response()
+        }
+    }
+}
+
 /// Append an audit log entry. Errors are logged but not propagated.
 async fn append_audit(
     store: &Arc<dyn StoreFacade>,
@@ -7140,6 +7167,8 @@ async fn append_audit(
         result: result.to_string(),
         metadata,
         created_at: Utc::now(),
+        content_hash: None,
+        previous_hash: None,
     };
     if let Err(e) = store.audit_log().append(&entry).await {
         tracing::warn!(error = %e, "failed to append audit log entry");

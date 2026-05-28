@@ -670,6 +670,8 @@ mod tests {
             result: "success".to_string(),
             metadata: Some(serde_json::json!({"role": "admin"})),
             created_at: chrono::Utc::now(),
+            content_hash: None,
+            previous_hash: None,
         };
 
         store.audit_log().append(&entry).await.unwrap();
@@ -720,6 +722,8 @@ mod tests {
                 result: "success".to_string(),
                 metadata: None,
                 created_at: chrono::Utc::now(),
+                content_hash: None,
+                previous_hash: None,
             };
             store.audit_log().append(&entry).await.unwrap();
         }

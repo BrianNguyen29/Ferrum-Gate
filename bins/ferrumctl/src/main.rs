@@ -677,6 +677,12 @@ enum AdminAuditCommand {
         #[arg(long, value_name = "FORMAT", default_value = "text")]
         format: OutputFormat,
     },
+    /// Verify the audit log hash chain integrity.
+    Verify {
+        /// Output format: text (default) or json.
+        #[arg(long, value_name = "FORMAT", default_value = "text")]
+        format: OutputFormat,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -1686,6 +1692,24 @@ async fn main() -> Result<()> {
                                 }
                                 if let Some(cursor) = response.next_cursor {
                                     println!("Next cursor: {}", cursor);
+                                }
+                            }
+                        }
+                    }
+                    AdminAuditCommand::Verify { format } => {
+                        let response = client.verify_audit_chain().await?;
+                        match format {
+                            OutputFormat::Json => {
+                                println!("{}", serde_json::to_string_pretty(&response)?);
+                            }
+                            _ => {
+                                if response.valid {
+                                    println!("Audit chain verification: VALID");
+                                } else {
+                                    println!("Audit chain verification: INVALID");
+                                    if let Some(ref err) = response.error {
+                                        println!("Error: {}", err);
+                                    }
                                 }
                             }
                         }

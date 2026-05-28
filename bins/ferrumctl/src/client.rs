@@ -671,4 +671,11 @@ impl Client {
         resp.error_for_status_ref()?;
         Ok(resp.json().await?)
     }
+
+    pub async fn verify_audit_chain(&self) -> Result<ferrum_proto::AuditLogVerifyResponse> {
+        let url = format!("{}/v1/admin/audit/verify", self.base_url);
+        let resp = self.add_auth(self.http.get(&url)).send().await?;
+        resp.error_for_status_ref()?;
+        Ok(resp.json().await?)
+    }
 }

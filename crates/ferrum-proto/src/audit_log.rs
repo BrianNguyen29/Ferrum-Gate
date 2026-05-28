@@ -14,6 +14,12 @@ pub struct AuditLogEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
     pub created_at: DateTime<Utc>,
+    /// Deterministic SHA-256 hash of canonical entry content (excludes id, hashes).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_hash: Option<String>,
+    /// Hash of the previous audit log entry's `content_hash`, forming a linear chain.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_hash: Option<String>,
 }
 
 /// The action performed in an audit log entry.
@@ -124,4 +130,18 @@ pub struct AuditLogListResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
     pub total: usize,
+}
+
+/// Response from an audit chain verification request.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct AuditLogVerifyResponse {
+    /// Whether the chain is intact. If false, `error` should be populated.
+    pub valid: bool,
+    /// Total number of entries inspected (includes legacy entries without hashes).
+    pub total_entries: usize,
+    /// Number of hashed (tamper-evident) entries in the chain.
+    pub hashed_entries: usize,
+    /// Human-readable error if the chain is broken.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }

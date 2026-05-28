@@ -192,6 +192,15 @@ pub trait AuditLogRepo: Send + Sync {
         cursor: Option<&str>,
         limit: u32,
     ) -> Result<(Vec<AuditLogEntry>, Option<String>)>;
+
+    /// Verify the audit log hash chain integrity.
+    ///
+    /// Reads all entries ordered by id ASC and validates that each entry's
+    /// `previous_hash` matches the prior hashed entry's `content_hash`.
+    /// Legacy entries without `content_hash` are skipped (treated as pre-chain).
+    /// Returns `Ok(())` if the chain is valid or empty; returns `Err` with a
+    /// descriptive message if a break is detected.
+    async fn verify_chain(&self) -> Result<()>;
 }
 
 /// Repository for scoped tokens.

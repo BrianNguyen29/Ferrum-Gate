@@ -244,6 +244,7 @@ Thứ tự này giúp FerrumGate:
 - [x] **1.9** Viết `docs/api/policy-simulation.md` mô tả input/output và constraints. (Owner: Dev / Type: Document)
 - [ ] **1.10** Bắt đầu chạy 7-day sustained SLO evidence window và thiết lập monitoring. (Owner: Operator / Type: Operate) — **STARTED 2026-05-28; NOT COMPLETE** until 7–30 days of evidence are collected.
   - Evidence: [`docs/implementation-path/artifacts/2026-05-28-phase1.10-slo-window-start-evidence.md`](./implementation-path/artifacts/2026-05-28-phase1.10-slo-window-start-evidence.md)
+  - Daily log template: [`docs/implementation-path/artifacts/TEMPLATE-slo-daily-evidence-log.md`](./implementation-path/artifacts/TEMPLATE-slo-daily-evidence-log.md)
 
 **Success criteria:** Deny-by-default hoạt động trên 100% API; policy simulation trả về decision đúng mà không side-effect; SLO window đang chạy. **Phase 1.10 sustained evidence collection is in progress and must not be marked complete until the observation period finishes.**  
 **Evidence artifact:** Integration test reports, `docs/security/scoped-tokens-rbac.md`, `docs/api/policy-simulation.md`, monitoring dashboard screenshot / log.
@@ -253,10 +254,11 @@ Thứ tự này giúp FerrumGate:
 
 - [ ] **2.1** Hoàn thành và đóng gói 7-day (hoặc 30-day) sustained SLO evidence artifact. (Owner: Operator / Type: Operate)
 - [ ] **2.2** Viết `docs/implementation-path/artifacts/YYYY-MM-DD-sustained-slo-window-evidence.md` đầy đủ các mục: start/end, environment, workload, criteria, metrics, incidents, exclusions, conclusion. (Owner: Operator / Type: Document)
-- [ ] **2.3** Thiết kế tamper-evident audit: canonical serialization, per-event hash, previous_hash, chain root. (Owner: Dev / Type: Document)
-- [ ] **2.4** Implement `ferrumctl audit verify`. (Owner: Dev / Type: Build)
-- [ ] **2.5** Viết `docs/architecture/tamper-evident-audit-design.md`. (Owner: Dev / Type: Document)
-- [ ] **2.6** Viết `docs/security/threat-model-stride.md` với trust boundaries và STRIDE mapping đầy đủ. (Owner: Security / Type: Document)
+  - Use [`docs/implementation-path/artifacts/TEMPLATE-slo-daily-evidence-log.md`](./implementation-path/artifacts/TEMPLATE-slo-daily-evidence-log.md) for per-day entries during the window.
+- [x] **2.3** Thiết kế tamper-evident audit: canonical serialization, per-event hash, previous_hash, chain root. (Owner: Dev / Type: Document) — Design implemented as hash chain with SHA-256 canonical serialization; Merkle root deferred.
+- [x] **2.4** Implement `ferrumctl audit verify`. (Owner: Dev / Type: Build) — Remote verify via `GET /v1/admin/audit/verify` implemented; local DB direct-verify deferred.
+- [x] **2.5** Viết `docs/architecture/tamper-evident-audit-design.md`. (Owner: Dev / Type: Document) — Doc written; covers design, scope, legacy handling, non-claims.
+- [x] **2.6** Viết `docs/security/threat-model-stride.md` với trust boundaries và STRIDE mapping đầy đủ. (Owner: Security / Type: Document) — Doc written; 8 trust boundaries mapped with controls/gaps/deferred items.
 - [ ] **2.7** Nếu có real domain, chạy validation trên domain thật và cập nhật status; nếu không, ghi rõ `domainless`. (Owner: Operator / Type: Operate)
 
 **Success criteria:** Có artifact SLO hoàn chỉnh; threat model được review; audit verify chạy được trên local/test data.  

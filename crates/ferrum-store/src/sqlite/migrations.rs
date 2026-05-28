@@ -37,8 +37,13 @@ pub const INIT_MIGRATION: &str = concat!(
     include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/migrations/008_add_audit_log.sql"
+    )),
+    "\n",
+    include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/migrations/009_add_audit_log_hash_chain.sql"
     ))
 );
 
 /// Current schema version for the SQLite embedded migration.
-pub const CURRENT_SCHEMA_VERSION: i64 = 8;
+pub const CURRENT_SCHEMA_VERSION: i64 = 9;
