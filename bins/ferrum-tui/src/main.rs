@@ -19,7 +19,7 @@ use tokio::sync::mpsc;
 mod app;
 mod client;
 
-use app::{App, ApprovalsView, ProbeResult, ProbeStatus};
+use app::{App, ApprovalsView, MetricsView, ProbeResult, ProbeStatus, Tab};
 use client::{ApprovalRequest, Client};
 
 #[derive(Debug, Parser)]
@@ -55,6 +55,7 @@ enum AppEvent {
     Key(event::KeyEvent),
     Probes(Vec<ProbeResult>),
     Approvals(Result<Vec<ApprovalRequest>, String>),
+    Metrics(Result<String, String>),
 }
 
 #[tokio::main]
@@ -217,6 +218,23 @@ async fn run_app<B: Backend>(
                 }
             };
 
+            let metrics = if dry_run {
+                let synthetic = r#"# HELP store_health Store health status
+# TYPE store_health gauge
+store_health 1
+# HELP http_requests_total Total HTTP requests
+# TYPE http_requests_total counter
+http_requests_total{method="GET",path="/v1/healthz"} 42
+http_requests_total{method="GET",path="/v1/readyz"} 17
+"#;
+                Ok(synthetic.to_string())
+            } else {
+                match refresh_client.metrics().await {
+                    Ok(text) => Ok(text),
+                    Err(e) => Err(format!("{:#}", e)),
+                }
+            };
+
             if refresh_tx.send(AppEvent::Probes(results)).await.is_err() {
                 break;
             }
@@ -225,6 +243,9 @@ async fn run_app<B: Backend>(
                 .await
                 .is_err()
             {
+                break;
+            }
+            if refresh_tx.send(AppEvent::Metrics(metrics)).await.is_err() {
                 break;
             }
 
@@ -260,14 +281,24 @@ async fn run_app<B: Backend>(
                                 app.quit = true;
                             }
                             KeyCode::Char('r') => {
-                                app.message = "Refreshing...".to_string();
+                                app.message = "Refreshing…".to_string();
                             }
                             KeyCode::Char('a') => {
-                                app.approvals_visible = !app.approvals_visible;
+                                app.current_tab = Tab::Approvals;
                             }
                             KeyCode::Char('?') | KeyCode::Char('h') => {
                                 app.help_visible = !app.help_visible;
                             }
+                            KeyCode::Tab | KeyCode::Right => {
+                                app.current_tab = app.current_tab.next();
+                            }
+                            KeyCode::BackTab | KeyCode::Left => {
+                                app.current_tab = app.current_tab.prev();
+                            }
+                            KeyCode::Char('1') => app.current_tab = Tab::Overview,
+                            KeyCode::Char('2') => app.current_tab = Tab::Approvals,
+                            KeyCode::Char('3') => app.current_tab = Tab::Metrics,
+                            KeyCode::Char('4') => app.current_tab = Tab::Help,
                             _ => {}
                         }
                     }
@@ -275,7 +306,8 @@ async fn run_app<B: Backend>(
                 AppEvent::Probes(probes) => {
                     app.probes = probes;
                     app.last_refresh = Some(Local::now().format("%H:%M:%S").to_string());
-                    if app.message == "Refreshing..." {
+                    app.compute_error_count();
+                    if app.message == "Refreshing…" {
                         app.message.clear();
                     }
                 }
@@ -284,6 +316,21 @@ async fn run_app<B: Backend>(
                         Ok(items) => ApprovalsView::Loaded(items),
                         Err(e) => ApprovalsView::Error(e),
                     };
+                    app.compute_error_count();
+                }
+                AppEvent::Metrics(result) => {
+                    app.metrics = match result {
+                        Ok(text) => {
+                            let pairs = parse_metrics(&text);
+                            if pairs.is_empty() {
+                                MetricsView::Skipped
+                            } else {
+                                MetricsView::Loaded(pairs)
+                            }
+                        }
+                        Err(e) => MetricsView::Error(e),
+                    };
+                    app.compute_error_count();
                 }
             }
         }
@@ -294,4 +341,46 @@ async fn run_app<B: Backend>(
     }
 
     Ok(())
+}
+
+fn parse_metrics(text: &str) -> Vec<(String, String)> {
+    let mut pairs = Vec::new();
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let parts: Vec<&str> = trimmed.split_whitespace().collect();
+        if parts.len() < 2 {
+            continue;
+        }
+        let metric_part = parts[0];
+        let value = parts[1];
+        if value.parse::<f64>().is_err() {
+            continue;
+        }
+        let name_end = metric_part.find('{').unwrap_or(metric_part.len());
+        let name = &metric_part[..name_end];
+        if name.is_empty() {
+            continue;
+        }
+        // Keep a curated set of interesting metric names
+        let is_interesting = name.contains("health")
+            || name.contains("total")
+            || name.contains("count")
+            || name.contains("pool")
+            || name.contains("requests")
+            || name.contains("duration")
+            || name.contains("latency")
+            || name.contains("active")
+            || name.contains("idle")
+            || name.contains("connections")
+            || name.contains("errors");
+        if is_interesting {
+            pairs.push((name.to_string(), value.to_string()));
+        }
+    }
+    // Cap to avoid overwhelming the UI
+    pairs.truncate(30);
+    pairs
 }

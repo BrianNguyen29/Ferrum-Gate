@@ -34,12 +34,47 @@ cargo build --release --bin ferrum-tui
 
 ## Keyboard shortcuts
 
+### Navigation
+
 | Key | Action |
 |-----|--------|
-| `r` | Refresh probes now |
-| `a` | Toggle approvals panel |
+| `Tab` / `→` | Next tab |
+| `Shift+Tab` / `←` | Previous tab |
+| `1` | Overview tab |
+| `2` | Approvals tab |
+| `3` | Metrics tab |
+| `4` | Help tab |
+| `a` | Jump to Approvals tab |
+
+### Actions
+
+| Key | Action |
+|-----|--------|
+| `r` | Refresh data now |
 | `?` / `h` | Toggle help overlay |
 | `q` | Quit |
+
+## Layout
+
+- **Title bar** — App name, mode badge (LIVE / DRY-RUN), base URL, auth badge, refresh interval.
+- **Summary cards** — Healthy endpoints, pending approvals, errors, last refresh time.
+- **Tab bar** — Overview · Approvals · Metrics · Help.
+- **Content area** — Tab-specific data.
+- **Footer** — Context-aware shortcut hints and status messages.
+
+## Tabs
+
+### Overview
+Endpoint status table showing health, readiness, and deep-readiness probes with semantic status badges and latency.
+
+### Approvals
+Read-only list of pending approvals with state badges, truncation for narrow terminals, and empty-state messaging.
+
+### Metrics
+Parses `/v1/metrics` (Prometheus text format) and displays a curated subset of numeric metrics (health, totals, counts, pool stats, latency, etc.). If parsing yields no recognised metrics or the endpoint is unavailable, a friendly skip message is shown.
+
+### Help
+Full-page keyboard reference and non-claims reminder.
 
 ## Endpoints monitored
 
@@ -47,6 +82,7 @@ cargo build --release --bin ferrum-tui
 - `GET /v1/readyz`
 - `GET /v1/readyz/deep`
 - `GET /v1/approvals?limit=20` (read-only approvals view)
+- `GET /v1/metrics` (optional Prometheus metrics summary)
 
 ## Non-claims
 
@@ -55,3 +91,4 @@ cargo build --release --bin ferrum-tui
 - **No mutation operations**: MVP is read-only. No approve/reject, token rotation, or policy changes via TUI.
 - **Token redaction**: The bearer token is never rendered to the terminal surface or logs.
 - **Domainless/waiver scope**: Implemented under the same domainless/waiver scope as the rest of the pilot-tier operator UX.
+- **Metrics are best-effort**: Prometheus metric parsing is heuristic and may skip metrics it does not recognise.
