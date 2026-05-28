@@ -390,6 +390,8 @@ enum AdminCommand {
         #[command(subcommand)]
         sub: AdminAuditCommand,
     },
+    /// Show effective CLI/client configuration (read-only, no server call).
+    Config,
 }
 
 /// Approvals subcommands under `admin approvals`.
@@ -989,6 +991,39 @@ fn run_author_bundle_bump(
     Ok(())
 }
 
+/// Print effective CLI/client configuration (read-only; no server call).
+/// Token values are fully redacted.
+fn run_admin_config(server_url: &str, bearer_token: Option<&str>) -> Result<()> {
+    let mut map = serde_json::Map::new();
+    map.insert(
+        "server_url".to_string(),
+        serde_json::Value::String(server_url.to_string()),
+    );
+    map.insert(
+        "bearer_token".to_string(),
+        match bearer_token {
+            Some(_) => serde_json::Value::String("<set:redacted>".to_string()),
+            None => serde_json::Value::String("<unset>".to_string()),
+        },
+    );
+    map.insert(
+        "env_FERRUMCTL_SERVER_URL".to_string(),
+        match get_env("FERRUMCTL_SERVER_URL") {
+            Some(_) => serde_json::Value::String("<set>".to_string()),
+            None => serde_json::Value::String("<unset>".to_string()),
+        },
+    );
+    map.insert(
+        "env_FERRUMCTL_BEARER_TOKEN".to_string(),
+        match get_env("FERRUMCTL_BEARER_TOKEN") {
+            Some(_) => serde_json::Value::String("<set:redacted>".to_string()),
+            None => serde_json::Value::String("<unset>".to_string()),
+        },
+    );
+    println!("{}", serde_json::to_string_pretty(&map)?);
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -1166,7 +1201,7 @@ async fn main() -> Result<()> {
             }
         },
         Command::Admin { sub } => {
-            let client = client::Client::new(server_url, bearer_token)?;
+            let client = client::Client::new(server_url.clone(), bearer_token.clone())?;
             match sub {
                 AdminCommand::Backup { sub } => match sub {
                     AdminBackupCommand::Create {
@@ -1603,6 +1638,9 @@ async fn main() -> Result<()> {
                         }
                     }
                 },
+                AdminCommand::Config => {
+                    run_admin_config(&server_url, bearer_token.as_deref())?;
+                }
             }
         }
         Command::Author { sub } => match sub {
@@ -2594,6 +2632,18 @@ rules: []
         match sub {
             AdminCommand::Status => {}
             _ => panic!("expected Status command"),
+        }
+    }
+
+    #[test]
+    fn test_admin_config_command_parses() {
+        let cli = Cli::parse_from(["ferrumctl", "admin", "config"]);
+        let Command::Admin { sub } = cli.command else {
+            panic!("expected Admin command");
+        };
+        match sub {
+            AdminCommand::Config => {}
+            _ => panic!("expected Config command"),
         }
     }
 

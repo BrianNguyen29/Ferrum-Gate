@@ -38,7 +38,7 @@ Enable operators to run and observe the system without spelunking through docs o
    - [x] `ferrumctl admin approvals` — pending approvals with inspect/approve/reject (local CLI using existing `/v1/approvals` endpoints; no new admin API)
    - [x] `ferrumctl admin tokens` — list/create/revoke/rotate scoped tokens
    - [x] `ferrumctl admin backup` — create/verify/restore using existing offline helpers (no new server endpoint; no scheduler/remote backup)
-   - [ ] `ferrumctl admin config` — view current effective config (redact token)
+   - [x] `ferrumctl admin config` — view current effective config (redact token)
 
 2. **Add admin APIs where needed**
    - [ ] `GET /v1/admin/status`

@@ -103,6 +103,8 @@ Both D.2 and D.3 are explicitly tracked as **opened work** in this posture. Thei
 - [`11-blockers-and-unblock-plan.md`](./11-blockers-and-unblock-plan.md) — Blocker status; D.2/D.3 tracked in deferred table.
 - [`06-admin-operator-ux-plan.md`](./06-admin-operator-ux-plan.md) — D.2 TUI MVP and web dashboard deferral.
 - [`docs/implementation-path/artifacts/2026-05-28-delegated-ship-fast-waiver-signoff.md`](../implementation-path/artifacts/2026-05-28-delegated-ship-fast-waiver-signoff.md) — Delegated ship-fast waiver signoff.
+- [`docs/implementation-path/artifacts/2026-05-28-domainless-operations-d2-d3-closure.md`](../implementation-path/artifacts/2026-05-28-domainless-operations-d2-d3-closure.md) — D.2/D.3 closure artifact.
+- [`docs/implementation-path/artifacts/2026-05-28-domainless-end-state-snapshot.md`](../implementation-path/artifacts/2026-05-28-domainless-end-state-snapshot.md) — Domainless end-state snapshot.
 - [`docs/implementation-path/01-current-state.md`](../implementation-path/01-current-state.md) — Current state with Tier 1 / Tier 1.5 status.
 
 ---

@@ -196,6 +196,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 | 6.4 | UX-4: Operator can rotate/revoke token | Engineering | Demo recording or test | ✅ IMPLEMENTED — `ferrumctl admin tokens` list/create/revoke/rotate complete; BLK-UX-4 closed |
 | 6.5 | UX-5: Operator can validate/apply policy | Engineering | Demo recording or test | ✅ LOCAL CLI COMPLETE — `ferrumctl policy validate/apply` uses existing policy bundle endpoints; no new admin API; POL-4 audit switch remains open |
 | 6.6 | UX-6: Operator can run/verify backup | Engineering | Demo recording or test | ✅ LOCAL CLI COMPLETE — `ferrumctl admin backup create/verify/restore` delegates to existing offline helpers; no scheduler/remote backup |
+| 6.7 | UX-7: Operator can view effective CLI/client config | Engineering | `bins/ferrumctl/src/main.rs` `run_admin_config` | ✅ LOCAL CLI COMPLETE — read-only; no server call; token redacted |
 
 ## Phase 7 — Product-facing docs and demo flows
 
@@ -226,6 +227,8 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 | 8.5c | DEP-5c: Live cluster install attempted | Engineering | `docs/implementation-path/artifacts/2026-05-21-canonical-slo-helm-conditional-signoff.md` §4 | ✅ PASS — kind cluster created; Helm release deployed; pod 1/1 Running; health/readiness returned OK/ready. NOT production K8s/HA |
 | 8.6 | DEP-6: Backup/restore procedure works in hosted mode | Engineering | `docs/implementation-path/artifacts/2026-05-19-dep6-hosted-backup-restore-evidence.md` | ✅ COMPLETE — hosted single-node SQLite temp-copy restore drill; not production-ready |
 | 8.7 | DEP-7: Terraform single-node module created | Engineering | `deploy/terraform/ferrumgate-single-node/` | ✅ COMPLETE — local artifact generator; provider-neutral (`local_file` + `null_resource`); no cloud credentials; not production-ready |
+| 8.8 | DEP-8: Backup cron/timer docs added to deployment guide | Engineering | `docs/guides/hosted-deployment.md` §Automated backup scheduling | ✅ COMPLETE — references existing example files; operator-owned |
+| 8.9 | DEP-9: Managed PostgreSQL guide added to deployment guide | Engineering | `docs/guides/hosted-deployment.md` §Managed PostgreSQL guide | ✅ COMPLETE — references `postgres-target-env.template`; no secrets |
 
 ## Phase 9 — HA/multi-node
 

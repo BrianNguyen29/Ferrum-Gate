@@ -47,6 +47,10 @@ Historical evidence artifacts may still mention older local paths such as `Ferru
 
 **May 28 delegated ship-fast waiver signoff**: [`artifacts/2026-05-28-delegated-ship-fast-waiver-signoff.md`](./artifacts/2026-05-28-delegated-ship-fast-waiver-signoff.md) — operator-delegated risk acceptance for rehearsal evidence; HA-4 unattended automated failover = USER-WAIVED / NOT COMPLETE; sustained SLO window = USER-WAIVED / NOT COMPLETE; multi-host production HA = USER-WAIVED / NOT COMPLETE.
 
+**May 28 domainless operations D.2/D.3 closure**: [`artifacts/2026-05-28-domainless-operations-d2-d3-closure.md`](./artifacts/2026-05-28-domainless-operations-d2-d3-closure.md) — `ferrumctl admin config` implemented; backup cron/timer and managed PostgreSQL docs added; evidence checklist housekeeping; non-claims preserved.
+
+**May 28 domainless end-state snapshot**: [`artifacts/2026-05-28-domainless-end-state-snapshot.md`](./artifacts/2026-05-28-domainless-end-state-snapshot.md) — point-in-time snapshot of domainless posture after closure batch.
+
 **Operator-Accepted Domainless Operations posture**: [`docs/production-readiness-v2/00c-operator-accepted-domainless-operations.md`](../production-readiness-v2/00c-operator-accepted-domainless-operations.md) — canonical posture declaration (not a tier; parallel to tier model); records D.2/D.3 opened work and preserves all non-claims.
 
 **Release support contract**:

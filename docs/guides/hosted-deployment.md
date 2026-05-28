@@ -209,6 +209,17 @@ See [`docs/production-readiness-v2/02-postgres-production-plan.md`](../../produc
 4. `curl http://localhost:8080/v1/metrics | grep ferrumgate_store_pg_pool_max` — non-zero
 5. `promtool check rules /etc/prometheus/rules/ferrumgate-postgres-alerts.yml` — syntax pass
 
+## Managed PostgreSQL guide
+
+If you are using a managed PostgreSQL service (e.g., Amazon RDS, Google Cloud SQL, Azure Database) or a self-managed instance, keep the following in mind:
+
+- **Do not inline passwords in environment files**. Use `PGPASSFILE` (mode `600`) or your secrets manager. See [`configs/examples/postgres-target-env.template`](../../configs/examples/postgres-target-env.template) for a placeholder-only env template.
+- **Connect via PgBouncer or direct TLS**. If the managed instance supports TLS, prefer `sslmode=require` or `verify-ca` in the DSN and keep certificates in `/etc/ferrumgate/certs/`.
+- **Set conservative pool limits**. Managed instances often enforce connection limits; align `FERRUMD_PG_MAX_CONNECTIONS` with the instance tier.
+- **Backups are operator-owned**. Managed services usually provide automated backups, but you should still test restore procedures and validate row counts independently.
+
+This is **not** a production-ready configuration guide. See [`docs/production-readiness-v2/02-postgres-production-plan.md`](../../production-readiness-v2/02-postgres-production-plan.md) for full hardening requirements.
+
 ## Backup / restore in hosted mode
 
 ### SQLite
@@ -250,6 +261,22 @@ curl -s http://localhost:8080/v1/readyz/deep | jq .
 ```
 
 > **PG-P.5 evidence**: Restore drill passed on target VM with row-count and hash verification. See [`docs/implementation-path/artifacts/2026-05-27-pg-restore-drill-evidence.md`](../../implementation-path/artifacts/2026-05-27-pg-restore-drill-evidence.md).
+
+### Automated backup scheduling
+
+FerrumGate does not run a backup scheduler itself. Use the host scheduler (systemd timer or cron) with the example units below. Review paths, users, and retention before installing.
+
+**systemd timer examples**
+
+- PostgreSQL (`pg_dump` every 15 min): [`configs/examples/postgres-backup.timer`](../../configs/examples/postgres-backup.timer) + [`configs/examples/postgres-backup.service`](../../configs/examples/postgres-backup.service)
+- SQLite (daily): [`configs/examples/ferrumgate-backup.timer`](../../configs/examples/ferrumgate-backup.timer) + [`configs/examples/ferrumgate-backup.service`](../../configs/examples/ferrumgate-backup.service)
+
+**cron examples**
+
+- PostgreSQL: [`configs/examples/postgres-backup.cron`](../../configs/examples/postgres-backup.cron)
+- SQLite: [`configs/examples/ferrumgate-backup.cron`](../../configs/examples/ferrumgate-backup.cron)
+
+> **Operator-owned**: These examples are templates. Do not install them without reviewing credentials, paths, and retention. No scheduler is active by default.
 
 ## HA operational posture
 
