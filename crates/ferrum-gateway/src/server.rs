@@ -22,11 +22,11 @@ use ferrum_proto::{
     IntentCompileRequest, IntentCompileResponse, IntentEnvelope, IntentStatus, LineageDirection,
     LineageQueryRequest, LineageQueryResponse, ListPolicyBundleVersionsResponse, Matcher,
     ObjectRef, ObjectType, OutcomeClause, OutcomeReport, PolicyBundle, PolicyBundleId,
-    PolicyBundleSimulateRequest, PolicyBundleSimulateResponse, PolicyRule, ProposalId,
-    ProvenanceEvent, ProvenanceEventKind, ProvenanceIngestRequest, ProvenanceIngestResponse,
-    ProvenanceQueryRequest, ProvenanceQueryResponse, ResourceSelector, RiskTier, RollbackClass,
-    RollbackPolicyBundleRequest, RollbackPolicyBundleResponse, RollbackTarget, TimeBudget,
-    TrustContextSummary, TrustLabel as ProtoTrustLabel,
+    PolicyBundleSimulateRequest, PolicyBundleSimulateResponse, PolicyRule, PolicySimulateRequest,
+    ProposalId, ProvenanceEvent, ProvenanceEventKind, ProvenanceIngestRequest,
+    ProvenanceIngestResponse, ProvenanceQueryRequest, ProvenanceQueryResponse, ResourceSelector,
+    RiskTier, RollbackClass, RollbackPolicyBundleRequest, RollbackPolicyBundleResponse,
+    RollbackTarget, TimeBudget, TrustContextSummary, TrustLabel as ProtoTrustLabel,
 };
 use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
 use ferrum_store::SqliteStore;
@@ -94,6 +94,7 @@ struct Metrics {
     governance_errors_v1_policy_bundles_update: AtomicU64,
     governance_errors_v1_policy_bundles_delete: AtomicU64,
     governance_errors_v1_policy_bundles_set_active: AtomicU64,
+    governance_errors_v1_policy_simulate: AtomicU64,
     governance_errors_v1_policy_bundles_simulate: AtomicU64,
     governance_errors_v1_policy_bundles_versions: AtomicU64,
     governance_errors_v1_policy_bundles_diff: AtomicU64,
@@ -126,6 +127,7 @@ struct Metrics {
     governance_success_v1_policy_bundles_update: AtomicU64,
     governance_success_v1_policy_bundles_delete: AtomicU64,
     governance_success_v1_policy_bundles_set_active: AtomicU64,
+    governance_success_v1_policy_simulate: AtomicU64,
     governance_success_v1_policy_bundles_simulate: AtomicU64,
     governance_success_v1_policy_bundles_versions: AtomicU64,
     governance_success_v1_policy_bundles_diff: AtomicU64,
@@ -188,6 +190,7 @@ impl Metrics {
             governance_errors_v1_policy_bundles_update: AtomicU64::new(0),
             governance_errors_v1_policy_bundles_delete: AtomicU64::new(0),
             governance_errors_v1_policy_bundles_set_active: AtomicU64::new(0),
+            governance_errors_v1_policy_simulate: AtomicU64::new(0),
             governance_errors_v1_policy_bundles_simulate: AtomicU64::new(0),
             governance_errors_v1_policy_bundles_versions: AtomicU64::new(0),
             governance_errors_v1_policy_bundles_diff: AtomicU64::new(0),
@@ -219,6 +222,7 @@ impl Metrics {
             governance_success_v1_policy_bundles_update: AtomicU64::new(0),
             governance_success_v1_policy_bundles_delete: AtomicU64::new(0),
             governance_success_v1_policy_bundles_set_active: AtomicU64::new(0),
+            governance_success_v1_policy_simulate: AtomicU64::new(0),
             governance_success_v1_policy_bundles_simulate: AtomicU64::new(0),
             governance_success_v1_policy_bundles_versions: AtomicU64::new(0),
             governance_success_v1_policy_bundles_diff: AtomicU64::new(0),
@@ -315,6 +319,9 @@ impl Metrics {
                 .fetch_add(1, Ordering::Relaxed),
             GovernanceRoute::PolicyBundlesSetActive => self
                 .governance_errors_v1_policy_bundles_set_active
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::PolicySimulate => self
+                .governance_errors_v1_policy_simulate
                 .fetch_add(1, Ordering::Relaxed),
             GovernanceRoute::PolicyBundlesSimulate => self
                 .governance_errors_v1_policy_bundles_simulate
@@ -414,6 +421,9 @@ impl Metrics {
                 .fetch_add(1, Ordering::Relaxed),
             GovernanceRoute::PolicyBundlesSetActive => self
                 .governance_success_v1_policy_bundles_set_active
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::PolicySimulate => self
+                .governance_success_v1_policy_simulate
                 .fetch_add(1, Ordering::Relaxed),
             GovernanceRoute::PolicyBundlesSimulate => self
                 .governance_success_v1_policy_bundles_simulate
@@ -528,6 +538,7 @@ enum GovernanceRoute {
     PolicyBundlesUpdate,
     PolicyBundlesDelete,
     PolicyBundlesSetActive,
+    PolicySimulate,
     PolicyBundlesSimulate,
     PolicyBundlesVersions,
     PolicyBundlesDiff,
@@ -567,6 +578,7 @@ impl GovernanceRoute {
             GovernanceRoute::PolicyBundlesUpdate => "/v1/policy-bundles/{bundle_id}",
             GovernanceRoute::PolicyBundlesDelete => "/v1/policy-bundles/{bundle_id}",
             GovernanceRoute::PolicyBundlesSetActive => "/v1/policy-bundles/{bundle_id}/active",
+            GovernanceRoute::PolicySimulate => "/v1/policy/simulate",
             GovernanceRoute::PolicyBundlesSimulate => "/v1/policy-bundles/simulate",
             GovernanceRoute::PolicyBundlesVersions => "/v1/policy-bundles/{bundle_id}/versions",
             GovernanceRoute::PolicyBundlesDiff => "/v1/policy-bundles/{bundle_id}/diff",
@@ -607,6 +619,7 @@ impl GovernanceRoute {
             GovernanceRoute::PolicyBundlesUpdate => "PUT",
             GovernanceRoute::PolicyBundlesDelete => "DELETE",
             GovernanceRoute::PolicyBundlesSetActive => "PUT",
+            GovernanceRoute::PolicySimulate => "POST",
             GovernanceRoute::PolicyBundlesSimulate => "POST",
             GovernanceRoute::PolicyBundlesVersions => "GET",
             GovernanceRoute::PolicyBundlesDiff => "GET",
@@ -905,6 +918,7 @@ fn build_workload_router(state: Arc<AppState>) -> Router {
             "/v1/policy-bundles/{bundle_id}/active",
             put(set_policy_bundle_active),
         )
+        .route("/v1/policy/simulate", post(simulate_policy))
         .route("/v1/policy-bundles/simulate", post(simulate_policy_bundle))
         .route(
             "/v1/policy-bundles/{bundle_id}/versions",
@@ -1141,6 +1155,7 @@ fn required_scope_for_path(method: &str, path: &str) -> Option<&'static str> {
         ("POST", p) if p.starts_with("/v1/policy-bundles/") && p.ends_with("/rollback") => {
             Some("policy:write")
         }
+        ("POST", "/v1/policy/simulate") => Some("policy:read"),
         ("POST", "/v1/policy-bundles/simulate") => Some("policy:read"),
         ("GET", p) if p.starts_with("/v1/policy-bundles/") => Some("policy:read"),
         ("PUT", p) if p.starts_with("/v1/policy-bundles/") && p.ends_with("/active") => {
@@ -1442,6 +1457,10 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
         .metrics
         .governance_errors_v1_policy_bundles_set_active
         .load(Ordering::Relaxed);
+    let gov_err_policy_simulate = state
+        .metrics
+        .governance_errors_v1_policy_simulate
+        .load(Ordering::Relaxed);
     let gov_err_policy_bundles_simulate = state
         .metrics
         .governance_errors_v1_policy_bundles_simulate
@@ -1567,6 +1586,10 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
     let gov_ok_policy_bundles_set_active = state
         .metrics
         .governance_success_v1_policy_bundles_set_active
+        .load(Ordering::Relaxed);
+    let gov_ok_policy_simulate = state
+        .metrics
+        .governance_success_v1_policy_simulate
         .load(Ordering::Relaxed);
     let gov_ok_policy_bundles_simulate = state
         .metrics
@@ -1786,6 +1809,7 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
          ferrumgate_governance_errors_total{{route=\"/v1/policy-bundles/{{bundle_id}}\",method=\"PUT\"}} {}\n\
          ferrumgate_governance_errors_total{{route=\"/v1/policy-bundles/{{bundle_id}}\",method=\"DELETE\"}} {}\n\
          ferrumgate_governance_errors_total{{route=\"/v1/policy-bundles/{{bundle_id}}/active\",method=\"PUT\"}} {}\n\
+         ferrumgate_governance_errors_total{{route=\"/v1/policy/simulate\",method=\"POST\"}} {}\n\
          ferrumgate_governance_errors_total{{route=\"/v1/policy-bundles/simulate\",method=\"POST\"}} {}\n\
          ferrumgate_governance_errors_total{{route=\"/v1/policy-bundles/{{bundle_id}}/versions\",method=\"GET\"}} {}\n\
          ferrumgate_governance_errors_total{{route=\"/v1/policy-bundles/{{bundle_id}}/diff\",method=\"GET\"}} {}\n\
@@ -1819,6 +1843,7 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
          ferrumgate_governance_success_total{{route=\"/v1/policy-bundles/{{bundle_id}}\",method=\"PUT\"}} {}\n\
          ferrumgate_governance_success_total{{route=\"/v1/policy-bundles/{{bundle_id}}\",method=\"DELETE\"}} {}\n\
          ferrumgate_governance_success_total{{route=\"/v1/policy-bundles/{{bundle_id}}/active\",method=\"PUT\"}} {}\n\
+         ferrumgate_governance_success_total{{route=\"/v1/policy/simulate\",method=\"POST\"}} {}\n\
          ferrumgate_governance_success_total{{route=\"/v1/policy-bundles/simulate\",method=\"POST\"}} {}\n\
          ferrumgate_governance_success_total{{route=\"/v1/policy-bundles/{{bundle_id}}/versions\",method=\"GET\"}} {}\n\
          ferrumgate_governance_success_total{{route=\"/v1/policy-bundles/{{bundle_id}}/diff\",method=\"GET\"}} {}\n\
@@ -1860,6 +1885,7 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
         gov_err_policy_bundles_update,
         gov_err_policy_bundles_delete,
         gov_err_policy_bundles_set_active,
+        gov_err_policy_simulate,
         gov_err_policy_bundles_simulate,
         gov_err_policy_bundles_versions,
         gov_err_policy_bundles_diff,
@@ -1891,6 +1917,7 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
         gov_ok_policy_bundles_update,
         gov_ok_policy_bundles_delete,
         gov_ok_policy_bundles_set_active,
+        gov_ok_policy_simulate,
         gov_ok_policy_bundles_simulate,
         gov_ok_policy_bundles_versions,
         gov_ok_policy_bundles_diff,
@@ -6328,6 +6355,72 @@ async fn set_policy_bundle_active(
     )
 }
 
+/// Simulate evaluation against the active runtime policy without side effects.
+/// No proposal, intent, bundle, or provenance is persisted.
+async fn simulate_policy(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<PolicySimulateRequest>,
+) -> Result<Json<EvaluateProposalResponse>, ApiProblem> {
+    // Build or use provided intent
+    let intent = request.intent.unwrap_or_else(|| {
+        minimal_intent_for(
+            request.proposal.intent_id,
+            request.proposal.requested_rollback_class.clone(),
+        )
+    });
+
+    // Determine if proposal is external based on intent trust labels and proposal attributes.
+    let is_external = intent_has_external_label(&intent)
+        || !request.proposal.taint_inputs.is_empty()
+        || proposal_has_external_metadata(&request.proposal);
+
+    // Build firewall context from proposal and intent.
+    let firewall_ctx = build_firewall_context(&intent, &request.proposal, is_external);
+
+    // Compute taint score via firewall.
+    let firewall_taint = state.runtime.firewall.compute_taint_score(&firewall_ctx);
+
+    // Preserve intent's trust labels and sensitivity labels; override taint_score with firewall-derived value.
+    let trust = TrustContextSummary {
+        input_labels: intent.trust_context.input_labels.clone(),
+        sensitivity_labels: intent.trust_context.sensitivity_labels.clone(),
+        taint_score: firewall_taint,
+        contains_external_metadata: intent.trust_context.contains_external_metadata
+            || proposal_has_external_metadata(&request.proposal),
+        contains_tool_output: intent.trust_context.contains_tool_output
+            || has_tool_output_label(&intent),
+        contains_untrusted_text: intent.trust_context.contains_untrusted_text
+            || has_untrusted_text_label(&intent),
+    };
+
+    // Evaluate against active policy bundles, then fall back to PDP.
+    // No persistence, no provenance emission, no capability minting.
+    let out = if let Some(bundle_response) =
+        evaluate_active_policy_bundles(&state.runtime.store, &intent, &request.proposal, &trust)
+            .await
+    {
+        bundle_response
+    } else {
+        match state
+            .runtime
+            .pdp
+            .evaluate(&intent, &request.proposal, &trust)
+            .await
+        {
+            Ok(out) => out,
+            Err(e) => {
+                return governance_err!(
+                    state,
+                    GovernanceRoute::PolicySimulate,
+                    ApiProblem::internal(e)
+                );
+            }
+        }
+    };
+
+    governance_ok!(state, GovernanceRoute::PolicySimulate, Ok(Json(out)))
+}
+
 /// Simulate a policy bundle against a sample proposal without side effects.
 /// No proposal, bundle, or provenance is persisted.
 async fn simulate_policy_bundle(
@@ -9465,6 +9558,7 @@ mod tests {
                 GovernanceRoute::PolicyBundlesUpdate,
                 GovernanceRoute::PolicyBundlesDelete,
                 GovernanceRoute::PolicyBundlesSetActive,
+                GovernanceRoute::PolicySimulate,
                 GovernanceRoute::PolicyBundlesSimulate,
                 GovernanceRoute::PolicyBundlesVersions,
                 GovernanceRoute::PolicyBundlesDiff,
@@ -9502,6 +9596,7 @@ mod tests {
                 GovernanceRoute::PolicyBundlesUpdate => (),
                 GovernanceRoute::PolicyBundlesDelete => (),
                 GovernanceRoute::PolicyBundlesSetActive => (),
+                GovernanceRoute::PolicySimulate => (),
                 GovernanceRoute::PolicyBundlesSimulate => (),
                 GovernanceRoute::PolicyBundlesVersions => (),
                 GovernanceRoute::PolicyBundlesDiff => (),
@@ -10427,6 +10522,106 @@ rules:
     }
 
     #[tokio::test]
+    async fn test_simulate_policy_runtime_returns_pdp_decision() {
+        let runtime = test_runtime().await;
+        let router = build_router(runtime);
+
+        let proposal = ferrum_proto::ActionProposal {
+            proposal_id: ferrum_proto::ProposalId::new(),
+            intent_id: ferrum_proto::IntentId::new(),
+            step_index: 1,
+            title: "Test Proposal".to_string(),
+            tool_name: "filesystem.read".to_string(),
+            server_name: "fs-server".to_string(),
+            raw_arguments: serde_json::json!({"path": "/tmp/test.txt"}),
+            expected_effect: "read file".to_string(),
+            estimated_risk: ferrum_proto::RiskTier::Low,
+            requested_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+            taint_inputs: Vec::new(),
+            metadata: ferrum_proto::JsonMap::new(),
+            created_at: chrono::Utc::now(),
+        };
+
+        let request = PolicySimulateRequest {
+            proposal,
+            intent: None,
+        };
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/policy/simulate")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let result: EvaluateProposalResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(result.decision, ferrum_proto::Decision::Allow);
+    }
+
+    #[tokio::test]
+    async fn test_simulate_policy_runtime_does_not_persist() {
+        let runtime = test_runtime().await;
+        let router = build_router(runtime.clone());
+
+        let proposal = ferrum_proto::ActionProposal {
+            proposal_id: ferrum_proto::ProposalId::new(),
+            intent_id: ferrum_proto::IntentId::new(),
+            step_index: 1,
+            title: "Test Proposal".to_string(),
+            tool_name: "filesystem.write".to_string(),
+            server_name: "fs-server".to_string(),
+            raw_arguments: serde_json::json!({"path": "/tmp/test.txt"}),
+            expected_effect: "write file".to_string(),
+            estimated_risk: ferrum_proto::RiskTier::Medium,
+            requested_rollback_class: ferrum_proto::RollbackClass::R1SnapshotRecoverable,
+            taint_inputs: Vec::new(),
+            metadata: ferrum_proto::JsonMap::new(),
+            created_at: chrono::Utc::now(),
+        };
+
+        let request = PolicySimulateRequest {
+            proposal: proposal.clone(),
+            intent: None,
+        };
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/policy/simulate")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Verify the proposal was NOT persisted
+        let persisted_proposal = runtime
+            .store
+            .proposals()
+            .get(proposal.proposal_id)
+            .await
+            .unwrap();
+        assert!(
+            persisted_proposal.is_none(),
+            "runtime simulate must not persist proposals"
+        );
+    }
+
+    #[tokio::test]
     async fn test_list_policy_bundle_versions() {
         let runtime = test_runtime().await;
         let router = build_router(runtime.clone());
@@ -11059,6 +11254,67 @@ rules:
                     .method("GET")
                     .uri("/v1/approvals")
                     .header("Authorization", format!("Bearer {}", token_value))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_sec6_unmapped_route_fail_closed_with_valid_token() {
+        let (runtime, config) = test_runtime_with_scoped_auth().await;
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let token_value = generate_token_value();
+        let token_salt = generate_token_salt();
+        let token_lookup_hash = hash_token_value(&token_value);
+        let token_hash = hash_token_with_salt(&token_value, &token_salt);
+        let token = ferrum_proto::ScopedToken {
+            token_id: "tok_sec6_test".to_string(),
+            actor_id: "readonly".to_string(),
+            role: ferrum_proto::TokenRole::ReadOnly,
+            scopes: vec!["policy:read".to_string()],
+            description: None,
+            expires_at: chrono::Utc::now() + chrono::Duration::days(1),
+            created_at: chrono::Utc::now(),
+            last_used_at: None,
+            revoked_at: None,
+            revoked_reason: None,
+            rotated_from: None,
+            token_lookup_hash,
+            token_hash,
+            token_salt,
+        };
+        runtime.store.tokens().insert(&token).await.unwrap();
+
+        // Unmapped routes deny-by-default (require admin:tokens scope)
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/v1/unknown")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_sec7_no_auth_unknown_route_returns_401() {
+        let (runtime, config) = test_runtime_with_scoped_auth().await;
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        // Unmapped route without auth header should fail closed with 401
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/v1/unknown")
                     .body(Body::empty())
                     .unwrap(),
             )

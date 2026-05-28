@@ -754,6 +754,32 @@ paths:
       security:
         - BearerAuth: []
 
+  /v1/policy/simulate:
+    post:
+      summary: Simulate proposal against active runtime policy
+      operationId: simulatePolicy
+      description: |
+        Evaluates a supplied proposal against the active runtime policy and PDP.
+        Side-effect free: no proposal, intent, or provenance is persisted.
+        Distinct from /v1/policy-bundles/simulate which evaluates a supplied bundle YAML.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PolicySimulateRequest'
+      responses:
+        '200':
+          description: Simulation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvaluateProposalResponse'
+        '400':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
   /v1/policy-bundles/{bundle_id}/active:
     put:
       summary: Set policy bundle active flag
@@ -1904,6 +1930,17 @@ components:
         yaml_content:
           type: string
           description: The YAML content of the policy bundle.
+
+    PolicySimulateRequest:
+      type: object
+      required: [proposal]
+      properties:
+        proposal:
+          $ref: '#/components/schemas/ActionProposal'
+        intent:
+          $ref: '#/components/schemas/IntentEnvelope'
+          nullable: true
+          description: Optional intent envelope. If omitted, a minimal intent is scaffolded from the proposal.
 
     SetPolicyBundleActiveRequest:
       type: object

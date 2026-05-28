@@ -457,6 +457,33 @@ impl Client {
         Ok(resp.text().await?)
     }
 
+    /// Simulate a proposal against the active runtime policy.
+    /// Side-effect free: no proposal or provenance is persisted.
+    pub async fn simulate_runtime_policy(
+        &self,
+        proposal: &ferrum_proto::ActionProposal,
+        intent: Option<&ferrum_proto::IntentEnvelope>,
+    ) -> Result<ferrum_proto::EvaluateProposalResponse> {
+        let url = format!("{}/v1/policy/simulate", self.base_url);
+        let request = ferrum_proto::PolicySimulateRequest {
+            proposal: proposal.clone(),
+            intent: intent.cloned(),
+        };
+        let resp = self
+            .add_auth(self.http.post(&url).json(&request))
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            if body.is_empty() {
+                bail!("HTTP {}: (empty body)", status);
+            }
+            bail!("HTTP {}: {}", status, body);
+        }
+        Ok(resp.json().await?)
+    }
+
     /// Simulate a policy bundle against a sample proposal.
     /// Side-effect free: no proposal, bundle, or provenance is persisted.
     pub async fn simulate_policy_bundle(

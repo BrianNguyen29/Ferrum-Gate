@@ -240,6 +240,18 @@ pub struct DiffPolicyBundleVersionsResponse {
     pub diff: serde_json::Value,
 }
 
+/// Request to simulate evaluation against the active runtime policy.
+/// Side-effect free: no proposal, bundle, or provenance is persisted.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct PolicySimulateRequest {
+    /// The sample proposal to evaluate against the active policy.
+    pub proposal: crate::ActionProposal,
+    /// Optional intent envelope. If omitted, a minimal intent is scaffolded
+    /// from the proposal.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub intent: Option<crate::IntentEnvelope>,
+}
+
 /// Request to rollback a policy bundle to a previous version.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct RollbackPolicyBundleRequest {

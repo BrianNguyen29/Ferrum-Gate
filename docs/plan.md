@@ -238,13 +238,14 @@ Thứ tự này giúp FerrumGate:
   - Evidence: [`docs/implementation-path/artifacts/2026-05-28-phase1.4-ferrumctl-token-lifecycle-evidence.md`](./implementation-path/artifacts/2026-05-28-phase1.4-ferrumctl-token-lifecycle-evidence.md)
 - [x] **1.5** Viết `docs/security/scoped-tokens-rbac.md` mô tả model, role mapping, và flow. (Owner: Dev / Type: Document)
   - Evidence: [`docs/security/scoped-tokens-rbac.md`](./security/scoped-tokens-rbac.md), [`docs/implementation-path/artifacts/2026-05-28-phase1.5-scoped-tokens-rbac-doc-evidence.md`](./implementation-path/artifacts/2026-05-28-phase1.5-scoped-tokens-rbac-doc-evidence.md)
-- [ ] **1.6** Viết integration tests cho RBAC deny-by-default. (Owner: Dev / Type: Build)
-- [ ] **1.7** Thiết kế và implement Policy simulation API (`POST /v1/policy/simulate`). (Owner: Dev / Type: Build)
-- [ ] **1.8** Thêm `ferrumctl policy simulate --file intent.json`. (Owner: Dev / Type: Build)
-- [ ] **1.9** Viết `docs/api/policy-simulation.md` mô tả input/output và constraints. (Owner: Dev / Type: Document)
-- [ ] **1.10** Bắt đầu chạy 7-day sustained SLO evidence window và thiết lập monitoring. (Owner: Operator / Type: Operate)
+- [x] **1.6** Viết integration tests cho RBAC deny-by-default. (Owner: Dev / Type: Build)
+- [x] **1.7** Thiết kế và implement Policy simulation API (`POST /v1/policy/simulate`). (Owner: Dev / Type: Build)
+- [x] **1.8** Thêm `ferrumctl policy simulate --file intent.json`. (Owner: Dev / Type: Build)
+- [x] **1.9** Viết `docs/api/policy-simulation.md` mô tả input/output và constraints. (Owner: Dev / Type: Document)
+- [ ] **1.10** Bắt đầu chạy 7-day sustained SLO evidence window và thiết lập monitoring. (Owner: Operator / Type: Operate) — **STARTED 2026-05-28; NOT COMPLETE** until 7–30 days of evidence are collected.
+  - Evidence: [`docs/implementation-path/artifacts/2026-05-28-phase1.10-slo-window-start-evidence.md`](./implementation-path/artifacts/2026-05-28-phase1.10-slo-window-start-evidence.md)
 
-**Success criteria:** Deny-by-default hoạt động trên 100% API; policy simulation trả về decision đúng mà không side-effect; SLO window đang chạy.  
+**Success criteria:** Deny-by-default hoạt động trên 100% API; policy simulation trả về decision đúng mà không side-effect; SLO window đang chạy. **Phase 1.10 sustained evidence collection is in progress and must not be marked complete until the observation period finishes.**  
 **Evidence artifact:** Integration test reports, `docs/security/scoped-tokens-rbac.md`, `docs/api/policy-simulation.md`, monitoring dashboard screenshot / log.
 
 ### Phase 2: Production credibility / evidence

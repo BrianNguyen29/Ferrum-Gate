@@ -311,6 +311,21 @@ enum PolicyCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Simulate a proposal against the active runtime policy (online, server required).
+    /// Side-effect free: no proposal or provenance is persisted.
+    RuntimeSimulate {
+        /// Path to a JSON file containing the sample proposal.
+        #[arg(long, value_name = "PATH")]
+        proposal: String,
+
+        /// Optional path to a JSON file containing an intent envelope.
+        #[arg(long, value_name = "PATH")]
+        intent: Option<String>,
+
+        /// Output the result as JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// List version history for a policy bundle.
     Versions {
         /// The bundle ID to list versions for.
@@ -1132,6 +1147,44 @@ async fn main() -> Result<()> {
                 let client = client::Client::new(server_url, bearer_token)?;
                 let result = client
                     .simulate_policy_bundle(&yaml_content, &proposal, intent.as_ref())
+                    .await?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("Decision: {:?}", result.decision);
+                    println!("Reason: {}", result.reason);
+                    if !result.matched_rule_ids.is_empty() {
+                        println!("Matched rules: {}", result.matched_rule_ids.join(", "));
+                    }
+                    if !result.warnings.is_empty() {
+                        println!("Warnings: {}", result.warnings.join(", "));
+                    }
+                }
+            }
+            PolicyCommand::RuntimeSimulate {
+                proposal,
+                intent,
+                json,
+            } => {
+                let proposal_json = std::fs::read_to_string(&proposal)
+                    .with_context(|| format!("failed to read proposal file {}", proposal))?;
+                let proposal: ferrum_proto::ActionProposal =
+                    serde_json::from_str(&proposal_json)
+                        .with_context(|| "failed to parse proposal JSON")?;
+                let intent = match intent {
+                    Some(path) => {
+                        let intent_json = std::fs::read_to_string(&path)
+                            .with_context(|| format!("failed to read intent file {}", path))?;
+                        Some(
+                            serde_json::from_str(&intent_json)
+                                .with_context(|| "failed to parse intent JSON")?,
+                        )
+                    }
+                    None => None,
+                };
+                let client = client::Client::new(server_url, bearer_token)?;
+                let result = client
+                    .simulate_runtime_policy(&proposal, intent.as_ref())
                     .await?;
                 if json {
                     println!("{}", serde_json::to_string_pretty(&result)?);
