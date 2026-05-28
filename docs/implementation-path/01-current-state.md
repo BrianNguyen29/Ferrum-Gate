@@ -47,6 +47,8 @@ Historical evidence artifacts may still mention older local paths such as `Ferru
 
 **May 28 delegated ship-fast waiver signoff**: [`artifacts/2026-05-28-delegated-ship-fast-waiver-signoff.md`](./artifacts/2026-05-28-delegated-ship-fast-waiver-signoff.md) — operator-delegated risk acceptance for rehearsal evidence; HA-4 unattended automated failover = USER-WAIVED / NOT COMPLETE; sustained SLO window = USER-WAIVED / NOT COMPLETE; multi-host production HA = USER-WAIVED / NOT COMPLETE.
 
+**Operator-Accepted Domainless Operations posture**: [`docs/production-readiness-v2/00c-operator-accepted-domainless-operations.md`](../production-readiness-v2/00c-operator-accepted-domainless-operations.md) — canonical posture declaration (not a tier; parallel to tier model); records D.2/D.3 opened work and preserves all non-claims.
+
 **Release support contract**:
 - Supported = SQLite-backed single-node governance core.
 - Partial = adapter crates and extended runtime integrations (uneven implementation slices exist, not production-verified).

@@ -101,6 +101,7 @@ Tier 1 is **not** production-ready. It is an intermediate milestone that says:
 - [`docs/implementation-path/artifacts/2026-05-26-domainless-candidate-plan.md`](../implementation-path/artifacts/2026-05-26-domainless-candidate-plan.md) — Tier 1 scope, B+C+HA-B work, expected evidence, and non-claims.
 - [`docs/implementation-path/artifacts/2026-05-26-domainless-tier1-complete-end-state.md`](../implementation-path/artifacts/2026-05-26-domainless-tier1-complete-end-state.md) — Final Tier 1 end-state declaration.
 - [`docs/implementation-path/artifacts/2026-05-26-domainless-tier1-operator-acknowledgment.md`](../implementation-path/artifacts/2026-05-26-domainless-tier1-operator-acknowledgment.md) — Operator acknowledgment record.
+- [`docs/production-readiness-v2/00c-operator-accepted-domainless-operations.md`](./00c-operator-accepted-domainless-operations.md) — Operator-Accepted Domainless Operations posture (not a tier; parallel to tier model).
 
 ---
 

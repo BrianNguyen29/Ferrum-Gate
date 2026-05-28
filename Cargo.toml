@@ -21,7 +21,8 @@ members = [
   "crates/ferrum-sync",
   "crates/ferrum-integrations-mcp",
   "bins/ferrum-stress",
-  "bins/ferrum-migrate"
+  "bins/ferrum-migrate",
+  "bins/ferrum-tui"
 ]
 resolver = "2"
 

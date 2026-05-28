@@ -51,6 +51,7 @@ Lock the scope of the post-conditional-pilot production path and make all non-cl
 | **Multi-tenant = NO** | No tenant isolation exists. |
 | **Tier 1 = domainless production-candidate COMPLETE / ACKNOWLEDGED** | B+C+HA-B engineering evidence complete and operator acknowledged on 2026-05-26; NOT production-ready; real domain still required for Tier 2. See [`00a-domainless-readiness-tier.md`](./00a-domainless-readiness-tier.md) and [`12-domainless-completion-status.md`](./12-domainless-completion-status.md). |
 | **Tier 1.5 = domainless production infrastructure COMPLETE / ACKNOWLEDGED** | PostgreSQL target deployment, same-VM HA topology, same-VM automated failover evidence, and operator acknowledgment are complete; NOT production-ready; real domain still required for Tier 2. See [`00b-tier-1.5-domainless-infrastructure.md`](./00b-tier-1.5-domainless-infrastructure.md) and [`13-tier-1.5-completion-status.md`](./13-tier-1.5-completion-status.md). |
+| **Operator-Accepted Domainless Operations posture = DECLARED** | Operator-delegated risk acceptance for rehearsal evidence recorded 2026-05-28; NOT a new tier; NOT production-ready; all Tier 1 / Tier 1.5 non-claims preserved. See [`00c-operator-accepted-domainless-operations.md`](./00c-operator-accepted-domainless-operations.md). |
 
 ## Scope boundaries
 

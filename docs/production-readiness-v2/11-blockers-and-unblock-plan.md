@@ -76,8 +76,8 @@ The seven blockers:
 | # | Todo | Blocker ID | Owner | Rationale |
 |---|------|------------|-------|-----------|
 | D.1 | HA/multi-node (Phase 9) | — | Engineering + Operator | Manual multi-host failover/failback drills, GCP fencing mechanism, detection-only watchdog, and host B redundancy evidence captured 2026-05-27. Local HA rehearsal after script fix (psql TCP `-h localhost`, `listen_addresses='*'`) captured 2026-05-28. HA-4 unattended automated failover and external endpoint cutover remain NOT COMPLETE. See `09-ha-roadmap.md`, `artifacts/2026-05-27-ha-phase9-multihost-drill-evidence.md`, `artifacts/2026-05-27-ha-phase9-host-b-redundancy-fenced-drill-evidence.md`, and `artifacts/2026-05-28-ha-local-rehearsal-and-script-fix-evidence.md` |
-| D.2 | Web admin dashboard / TUI | — | Engineering | CLI-first; P2 deferred per `06-admin-operator-ux-plan.md` |
-| D.3 | Terraform / Pulumi module | — | Engineering | After Helm/K8s model stabilizes per `08-hosted-deployment-plan.md` |
+| D.2 | Web admin dashboard / TUI | — | Engineering | TUI MVP (`ferrum-tui`) implemented under domainless/waiver scope; web dashboard remains P2 deferred per `06-admin-operator-ux-plan.md` |
+| D.3 | Terraform single-node module | — | Engineering | ✅ IMPLEMENTED under domainless/waiver scope — `deploy/terraform/ferrumgate-single-node/` local artifact generator using `local_file` + `null_resource`; no cloud credentials; not production-ready. Pulumi and cloud provider modules remain deferred.
 | D.4 | Multi-tenant implementation (T3–T5) | — | Engineering | After single-tenant production hardening and PG baseline per `04-security-tenant-model-adr.md` |
 | D.5 | Automated failover | — | Engineering + Operator | After manual failover drill and read replica support per `09-ha-roadmap.md` |
 | D.6 | Enterprise / SOC2-style evidence pack | — | Operator | After all core production path items complete |

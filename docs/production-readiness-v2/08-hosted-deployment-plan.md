@@ -50,7 +50,8 @@ Package FerrumGate into reproducible deployment modes so operators can deploy co
 
 ### P2 deliverables
 
-- [ ] Terraform/Pulumi module.
+- [x] Terraform single-node module (`deploy/terraform/ferrumgate-single-node/`). Local artifact generator using `local_file` + `null_resource`; no cloud credentials. Not production-ready.
+- [ ] Pulumi module / cloud modules.
 - [ ] Cloud marketplace style deployment.
 - [ ] Zero-downtime upgrade guide.
 

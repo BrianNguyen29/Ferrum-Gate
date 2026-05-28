@@ -111,6 +111,27 @@ Checks:
 
 Expected: HTTP 200 with `ok` status. A non-200 here means the gateway should not receive traffic.
 
+### TUI dashboard
+
+For a lightweight terminal view of the same endpoints:
+
+```bash
+ferrum-tui --server-url http://127.0.0.1:18080
+```
+
+The TUI shows:
+- Configured base URL and token presence (redacted)
+- Live status of `/v1/healthz`, `/v1/readyz`, and `/v1/readyz/deep`
+- Per-endpoint latency
+- Auto-refresh every 5 seconds
+
+Keyboard shortcuts:
+- `r` — refresh now
+- `?` / `h` — toggle help
+- `q` — quit
+
+> **Scope**: Operator convenience only; not production-ready. See `bins/ferrum-tui/README.md` for full non-claims.
+
 ---
 
 ## Backup and restore

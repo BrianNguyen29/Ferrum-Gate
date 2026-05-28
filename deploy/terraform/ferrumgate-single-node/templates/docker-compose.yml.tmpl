@@ -1,0 +1,19 @@
+services:
+  ferrumd:
+    image: ferrumgate/ferrumd:latest
+    container_name: ferrumgate
+    restart: unless-stopped
+    ports:
+      - "${bind_address}:${port}:${port}"
+    volumes:
+      - ${data_dir}:/var/lib/ferrumgate
+      - ${log_dir}:/var/log/ferrumgate
+      - ${config_path}:/etc/ferrumgate/ferrumgate.toml:ro
+    environment:
+      FERRUMD_BEARER_TOKEN_FILE: /run/secrets/ferrumd_token
+    secrets:
+      - ferrumd_token
+
+secrets:
+  ferrumd_token:
+    file: ./ferrumd.env

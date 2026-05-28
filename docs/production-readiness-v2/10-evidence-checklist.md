@@ -225,6 +225,7 @@ Provide a per-phase evidence checklist so that every claim in the production pat
 | 8.5b | DEP-5b: `helm template` renders valid manifests | Engineering | `docs/implementation-path/artifacts/2026-05-21-target-slo-mcp-helm-domain-evidence.md` §5 | ✅ PASS — ServiceAccount/Secret/Service/Deployment rendered |
 | 8.5c | DEP-5c: Live cluster install attempted | Engineering | `docs/implementation-path/artifacts/2026-05-21-canonical-slo-helm-conditional-signoff.md` §4 | ✅ PASS — kind cluster created; Helm release deployed; pod 1/1 Running; health/readiness returned OK/ready. NOT production K8s/HA |
 | 8.6 | DEP-6: Backup/restore procedure works in hosted mode | Engineering | `docs/implementation-path/artifacts/2026-05-19-dep6-hosted-backup-restore-evidence.md` | ✅ COMPLETE — hosted single-node SQLite temp-copy restore drill; not production-ready |
+| 8.7 | DEP-7: Terraform single-node module created | Engineering | `deploy/terraform/ferrumgate-single-node/` | ✅ COMPLETE — local artifact generator; provider-neutral (`local_file` + `null_resource`); no cloud credentials; not production-ready |
 
 ## Phase 9 — HA/multi-node
 

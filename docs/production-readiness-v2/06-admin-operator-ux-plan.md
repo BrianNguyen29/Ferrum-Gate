@@ -1,6 +1,6 @@
 # 06 — Admin/Operator UX Plan
 
-> **Status**: UX-1–UX-6 CLI complete for current scope; broader admin APIs/dashboard deferred.
+> **Status**: UX-1–UX-6 CLI complete; D.2 TUI MVP implemented under domainless/waiver scope; broader web dashboard remains deferred.
 > **Owner**: Engineering
 > **Last updated**: 2026-05-18
 > **Parent**: [`docs/ROADMAP.md`](../../ROADMAP.md)
@@ -48,9 +48,9 @@ Enable operators to run and observe the system without spelunking through docs o
    - [x] `POST /v1/admin/tokens`
    - [x] `DELETE /v1/admin/tokens/{id}`
 
-3. **Web UI/TUI (later)**
-   - [ ] Simple web dashboard (P2)
-   - [ ] TUI alternative (P2)
+3. **Web UI/TUI**
+    - [x] TUI MVP (`ferrum-tui`) — operator dashboard for health/readiness/deep probes; domainless/waiver scope; not production-ready
+    - [ ] Simple web dashboard (P2 deferred)
 
 ## Acceptance criteria
 
@@ -66,12 +66,14 @@ Enable operators to run and observe the system without spelunking through docs o
 - [`2026-05-20-scoped-token-implementation-evidence.md`](../implementation-path/artifacts/2026-05-20-scoped-token-implementation-evidence.md) — admin token APIs and `ferrumctl admin tokens` CLI evidence.
 - [`2026-05-21-sec6-audit-log-implementation-evidence.md`](../implementation-path/artifacts/2026-05-21-sec6-audit-log-implementation-evidence.md) — `ferrumctl admin audit list` evidence.
 - [`2026-05-27-phase4-security-operator-signoff.md`](../implementation-path/artifacts/2026-05-27-phase4-security-operator-signoff.md) — operator evidence review/signoff for current Phase 4 scope.
+- `bins/ferrum-tui/README.md` — D.2 TUI MVP usage and non-claims.
 
 ## Non-claims
 
-- **NOT a web dashboard**: CLI-first; web UI is P2 deferred.
+- **NOT a web dashboard**: TUI MVP only; web UI is P2 deferred.
 - **NOT production-ready**: Operator UX does not change the production-ready posture.
 - **NOT full RBAC**: Token management in this phase is scoped to admin/operator basics.
+- **NOT a security boundary**: TUI is operator convenience only; bearer token is redacted in UI.
 
 ## Related docs
 
