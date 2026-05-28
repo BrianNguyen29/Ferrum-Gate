@@ -76,7 +76,7 @@ FerrumGate nên chơi sâu ở layer giữa.
 ### P1 — Nâng cao trust và tích hợp
 
 #### 3.1. Secure MCP Tunnel integration guide
-- **Status:** `TODO/VERIFY`
+- **Status:** `DOCS COMPLETE`
 - **Action:** Integrate / Document
 - **Evidence/Target doc:** `docs/guides/secure-mcp-tunnel-integration.md`
 - **Mô tả:** Không tự build tunnel. Viết guide tích hợp OpenAI Secure MCP Tunnels / Cloudflare / Tailscale vào FerrumGate. Ghi rõ: tunnel bảo vệ connectivity, tunnel không thay thế policy, FerrumGate bảo vệ execution, không mở inbound MCP public nếu không có auth/tunnel, không log bearer token.
@@ -145,7 +145,7 @@ FerrumGate nên chơi sâu ở layer giữa.
 | Scoped token / RBAC | P0 | Build | `TODO/VERIFY` | `docs/security/scoped-tokens-rbac.md` + implementation + tests |
 | Policy simulation / dry-run | P0/P1 | Build | `TODO/VERIFY` | `docs/api/policy-simulation.md` + API + CLI |
 | Sustained SLO evidence window | P0 | Operate / Document | `TODO/VERIFY` | `docs/implementation-path/artifacts/YYYY-MM-DD-sustained-slo-window-evidence.md` |
-| Secure MCP tunnel integration guide | P1 | Integrate / Document | `TODO/VERIFY` | `docs/guides/secure-mcp-tunnel-integration.md` |
+| Secure MCP tunnel integration guide | P1 | Integrate / Document | `DOCS COMPLETE` | `docs/guides/secure-mcp-tunnel-integration.md` |
 | OIDC / JWT federation | P1 | Integrate | `TODO/VERIFY` | `docs/security/oidc-jwt-federation.md` + config + tests |
 | STRIDE threat model | P1 | Document | `TODO/VERIFY` | `docs/security/threat-model-stride.md` |
 | Tamper-evident audit | P1/P2 | Build minimal | `TODO/VERIFY` | `docs/architecture/tamper-evident-audit-design.md` + `ferrumctl audit verify` |
@@ -267,14 +267,14 @@ Thứ tự này giúp FerrumGate:
 ### Phase 3: Secure transport integration docs
 **Mục tiêu:** Tích hợp với lớp transport bên ngoài mà không build lại.
 
-- [ ] **3.1** Viết `docs/guides/secure-mcp-tunnel-integration.md` với topology và nguyên tắc rõ ràng. (Owner: Dev / Type: Document)
-- [ ] **3.2** Tạo deployment example cho OpenAI Secure MCP Tunnel + FerrumGate. (Owner: Dev / Type: Document)
-- [ ] **3.3** Tạo deployment example cho Cloudflare Tunnel + FerrumGate. (Owner: Dev / Type: Document)
-- [ ] **3.4** Tạo deployment example cho Tailscale + FerrumGate. (Owner: Dev / Type: Document)
-- [ ] **3.5** Kiểm tra và ghi rõ: không log bearer token qua tunnel; không mở inbound public. (Owner: Security / Type: Document)
+- [x] **3.1** Viết `docs/guides/secure-mcp-tunnel-integration.md` với topology và nguyên tắc rõ ràng. (Owner: Dev / Type: Document)
+- [x] **3.2** Tạo deployment example cho OpenAI Secure MCP Tunnel + FerrumGate. (Owner: Dev / Type: Document)
+- [x] **3.3** Tạo deployment example cho Cloudflare Tunnel + FerrumGate. (Owner: Dev / Type: Document)
+- [x] **3.4** Tạo deployment example cho Tailscale + FerrumGate. (Owner: Dev / Type: Document)
+- [x] **3.5** Kiểm tra và ghi rõ: không log bearer token qua tunnel; không mở inbound public. (Owner: Security / Type: Document)
 
 **Success criteria:** Người dùng có thể follow guide để deploy FerrumGate behind tunnel mà không cần hỏi thêm.  
-**Evidence artifact:** `docs/guides/secure-mcp-tunnel-integration.md`, example configs, validation log.
+**Evidence artifact:** `docs/guides/secure-mcp-tunnel-integration.md`, `docs/security/secure-mcp-tunnel-review.md`, example configs, validation log.
 
 ### Phase 4: Identity federation and agent identity
 **Mục tiêu:** Tích hợp identity provider bên ngoài và cung cấp agent identity nhẹ.
