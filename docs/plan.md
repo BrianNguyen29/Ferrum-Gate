@@ -320,7 +320,7 @@ Thứ tự này giúp FerrumGate:
 ### Phase 6: MCP interoperability
 **Mục tiêu:** Hỗ trợ HTTP transport và schema compatibility.
 
-- [ ] **6.1** Implement Streamable HTTP MCP transport. (Owner: Dev / Type: Build)
+- [x] **6.1** Implement Streamable HTTP MCP transport skeleton (`POST /mcp`, `GET /mcp` 405, CLI args, `tokio::task::spawn_blocking` around blocking client). (Owner: Dev / Type: Build)
 - [ ] **6.2** Thêm SSE response support nếu cần. (Owner: Dev / Type: Build)
 - [ ] **6.3** Thêm health/ready endpoints cho MCP server. (Owner: Dev / Type: Build)
 - [ ] **6.4** Viết `docs/mcp/streamable-http-mcp.md`. (Owner: Dev / Type: Document)

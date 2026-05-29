@@ -1,11 +1,11 @@
 //! # ferrum-mcp-server
 //!
-//! FerrumGate MCP server binary - Phase C stdio transport + Phase D-0 REST client.
+//! FerrumGate MCP server binary - Phase C stdio transport + Phase D-0 REST client + Phase 6.1 HTTP transport skeleton.
 //!
 //! ## Overview
 //!
-//! This binary implements a line-based stdio JSON-RPC transport for FerrumGate MCP server.
-//! It reads JSON-RPC requests from stdin and writes responses to stdout.
+//! This binary implements a line-based stdio JSON-RPC transport and a Streamable HTTP skeleton for FerrumGate MCP server.
+//! It reads JSON-RPC requests from stdin (stdio mode) or HTTP POST body (HTTP mode) and writes responses accordingly.
 //!
 //! ## Phase C Status
 //!
@@ -21,25 +21,63 @@
 //! - Gateway endpoint mapping for 9 read-only tools
 //! - Error classification (auth, unreachable, server error)
 //!
-//! Phase D-0 does NOT implement:
-//! - Auth middleware (bearer token validation)
-//! - Policy evaluation
-//! - Capability issuance
-//! - Provenance emission
-//! - Rollback preparation
-//! - Mutating tool execution
+//! ## Phase 6.1 Status
+//!
+//! Phase 6.1 adds:
+//! - Streamable HTTP transport skeleton (`POST /mcp`, `GET /health`, `GET /ready`)
+//! - CLI args `--transport stdio|http` and `--bind ADDR`
+//! - `GET /mcp` returns 405 (SSE streaming deferred)
+//!
+//! Phase 6.1 does NOT implement:
+//! - SSE streaming/multiplexing/resumability
+//! - Session state management
+//! - OAuth/auth implementation for MCP HTTP
+//! - Real external MCP client compatibility claim
 
+use axum::{
+    Router,
+    extract::State,
+    http::StatusCode,
+    response::IntoResponse,
+    routing::{get, post},
+};
+use clap::{Parser, ValueEnum};
 use ferrum_integrations_mcp::{
     ActorIdentity, ClientConfig, FerrumGatewayClient, JsonRpcResponse, RateLimiter,
-    dispatch_with_client, parse_request,
+    dispatch_with_client, parse_request, tool_registry,
 };
 #[allow(unused_imports)]
 use ferrum_integrations_mcp::{JsonRpcRequest, dispatch};
 use std::io::{self, BufRead, Write};
+use std::net::SocketAddr;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Flag to signal graceful shutdown.
 static SHUTDOWN: AtomicBool = AtomicBool::new(false);
+
+/// CLI arguments for ferrum-mcp-server.
+#[derive(Parser, Debug, Clone)]
+#[command(name = "ferrum-mcp-server")]
+#[command(about = "FerrumGate MCP server (stdio or HTTP transport)")]
+struct Cli {
+    /// Transport mode: stdio or http.
+    #[arg(long, value_enum, default_value_t = Transport::Stdio)]
+    transport: Transport,
+
+    /// Bind address for HTTP transport.
+    #[arg(long, default_value = "127.0.0.1:3000")]
+    bind: String,
+}
+
+/// Transport mode selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum Transport {
+    /// Line-based stdio JSON-RPC transport.
+    Stdio,
+    /// Streamable HTTP transport skeleton.
+    Http,
+}
 
 /// Handle SIGINT and SIGTERM to signal graceful shutdown.
 fn setup_signal_handlers() {
@@ -99,11 +137,8 @@ where
     }
 }
 
-/// Main entry point for the MCP server binary.
-fn main() {
-    // Set up signal handlers
-    setup_signal_handlers();
-
+/// Run the stdio transport loop.
+fn run_stdio() {
     // Create the gateway client from environment variables
     let client = match FerrumGatewayClient::from_env() {
         Ok(c) => c,
@@ -173,14 +208,167 @@ fn main() {
             }
         }
     }
+}
 
-    // Clean exit on EOF
-    std::process::exit(0);
+// ---------------------------------------------------------------------------
+// HTTP Transport (Phase 6.1)
+// ---------------------------------------------------------------------------
+
+/// Shared application state for HTTP handlers.
+struct AppState {
+    client: FerrumGatewayClient,
+    actor: ActorIdentity,
+    rate_limiter: RateLimiter,
+}
+
+/// `GET /health` — basic health probe.
+async fn health_handler() -> impl IntoResponse {
+    (
+        StatusCode::OK,
+        axum::Json(serde_json::json!({ "status": "ok" })),
+    )
+}
+
+/// `GET /ready` — shallow readiness with tool count and basic config.
+async fn ready_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let tool_count = tool_registry().len();
+    let response = serde_json::json!({
+        "status": "ready",
+        "tool_count": tool_count,
+        "transport": "http",
+        "actor_source": format!("{:?}", state.actor.source),
+    });
+    (StatusCode::OK, axum::Json(response))
+}
+
+/// `POST /mcp` — accept a single JSON-RPC message and return synchronous `application/json`.
+async fn mcp_post_handler(
+    State(state): State<Arc<AppState>>,
+    body: String,
+) -> Result<axum::Json<JsonRpcResponse>, StatusCode> {
+    let state = Arc::clone(&state);
+    let response = tokio::task::spawn_blocking(move || match parse_request(&body) {
+        Ok(request) => dispatch_with_client(
+            request,
+            &state.client,
+            &state.actor.actor_id,
+            &state.rate_limiter,
+        ),
+        Err(response) => response,
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(axum::Json(response))
+}
+
+/// `GET /mcp` — SSE streaming placeholder. Returns 405 per Phase 6.1 boundary.
+async fn mcp_get_handler() -> impl IntoResponse {
+    (
+        StatusCode::METHOD_NOT_ALLOWED,
+        axum::Json(serde_json::json!({
+            "error": "SSE streaming not implemented in Phase 6.1 skeleton",
+            "deferred": true,
+        })),
+    )
+}
+
+/// Run the HTTP transport server.
+async fn run_http(bind: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let client = match FerrumGatewayClient::from_env() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!(
+                "Failed to create gateway client: {}. Using default config.",
+                e
+            );
+            FerrumGatewayClient::new(&ClientConfig::default())
+                .expect("Failed to create client even with default config")
+        }
+    };
+
+    let actor = ActorIdentity::resolve(None);
+    let rate_limiter = RateLimiter::default_mcp();
+
+    let state = Arc::new(AppState {
+        client,
+        actor,
+        rate_limiter,
+    });
+
+    let app = Router::new()
+        .route("/health", get(health_handler))
+        .route("/ready", get(ready_handler))
+        .route("/mcp", post(mcp_post_handler).get(mcp_get_handler))
+        .with_state(state);
+
+    let addr: SocketAddr = bind.parse()?;
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    eprintln!("Ferrum MCP HTTP server listening on http://{}", addr);
+
+    axum::serve(listener, app).await?;
+    Ok(())
+}
+
+/// Main entry point for the MCP server binary.
+#[tokio::main]
+async fn main() {
+    // Set up signal handlers
+    setup_signal_handlers();
+
+    let cli = Cli::parse();
+
+    match cli.transport {
+        Transport::Stdio => {
+            run_stdio();
+            std::process::exit(0);
+        }
+        Transport::Http => {
+            if let Err(e) = run_http(&cli.bind).await {
+                eprintln!("HTTP server error: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::Body;
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+
+    #[test]
+    fn test_cli_defaults() {
+        let cli = Cli::parse_from(["ferrum-mcp-server"]);
+        assert_eq!(cli.transport, Transport::Stdio);
+        assert_eq!(cli.bind, "127.0.0.1:3000");
+    }
+
+    #[test]
+    fn test_cli_transport_http() {
+        let cli = Cli::parse_from(["ferrum-mcp-server", "--transport", "http"]);
+        assert_eq!(cli.transport, Transport::Http);
+        assert_eq!(cli.bind, "127.0.0.1:3000");
+    }
+
+    #[test]
+    fn test_cli_bind_override() {
+        let cli = Cli::parse_from([
+            "ferrum-mcp-server",
+            "--transport",
+            "http",
+            "--bind",
+            "0.0.0.0:8080",
+        ]);
+        assert_eq!(cli.transport, Transport::Http);
+        assert_eq!(cli.bind, "0.0.0.0:8080");
+    }
+
+    // -------------------------------------------------------------------------
+    // Stdio tests (preserved from Phase C)
+    // -------------------------------------------------------------------------
 
     #[test]
     fn test_process_line_ping() {
@@ -281,5 +469,166 @@ mod tests {
     fn test_process_line_whitespace_only() {
         let response = process_line_with_dispatch("   \n\t  ", dispatch);
         assert!(response.is_none());
+    }
+
+    // -------------------------------------------------------------------------
+    // HTTP transport tests (Phase 6.1)
+    // -------------------------------------------------------------------------
+
+    fn test_app() -> Router {
+        // Create the blocking client on a dedicated thread to avoid
+        // "cannot create a runtime in an async context" panic.
+        let client =
+            std::thread::spawn(|| FerrumGatewayClient::new(&ClientConfig::default()).unwrap())
+                .join()
+                .unwrap();
+        let actor = ActorIdentity::resolve(None);
+        let rate_limiter = RateLimiter::default_mcp();
+        let state = Arc::new(AppState {
+            client,
+            actor,
+            rate_limiter,
+        });
+        // Leak a clone so the Arc refcount never reaches zero inside async tests,
+        // preventing `reqwest::blocking::Client` from being dropped in an async
+        // context (which would panic because dropping a runtime while blocking
+        // is not allowed).
+        let _leaked = Box::leak(Box::new(Arc::clone(&state)));
+        Router::new()
+            .route("/health", get(health_handler))
+            .route("/ready", get(ready_handler))
+            .route("/mcp", post(mcp_post_handler).get(mcp_get_handler))
+            .with_state(state)
+    }
+
+    #[tokio::test]
+    async fn test_http_health() {
+        let app = test_app();
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["status"], "ok");
+    }
+
+    #[tokio::test]
+    async fn test_http_ready() {
+        let app = test_app();
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/ready")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["status"], "ready");
+        assert_eq!(json["tool_count"], 19);
+        assert_eq!(json["transport"], "http");
+    }
+
+    #[tokio::test]
+    async fn test_http_mcp_post_initialize() {
+        let app = test_app();
+        let body_json = r#"{"jsonrpc":"2.0","method":"initialize","id":1,"params":{}}"#;
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/mcp")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(body_json))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(json.get("result").is_some());
+        assert_eq!(json["result"]["protocol_version"], "2024-11-05");
+        assert_eq!(json["jsonrpc"], "2.0");
+    }
+
+    #[tokio::test]
+    async fn test_http_mcp_post_ping() {
+        let app = test_app();
+        let body_json = r#"{"jsonrpc":"2.0","method":"ping","id":42}"#;
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/mcp")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(body_json))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(json.get("result").is_some());
+        assert_eq!(json["result"], serde_json::json!({"success": true}));
+        assert_eq!(json["id"], 42);
+    }
+
+    #[tokio::test]
+    async fn test_http_mcp_post_invalid_json() {
+        let app = test_app();
+        let body_json = "not valid json";
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/mcp")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(body_json))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(json.get("error").is_some());
+        assert_eq!(json["error"]["code"], -32700);
+    }
+
+    #[tokio::test]
+    async fn test_http_mcp_get_returns_405() {
+        let app = test_app();
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("GET")
+                    .uri("/mcp")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["deferred"], true);
     }
 }
