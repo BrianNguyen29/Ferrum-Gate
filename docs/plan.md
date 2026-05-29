@@ -325,11 +325,12 @@ Thứ tự này giúp FerrumGate:
 - [x] **6.3** Health/ready endpoints cho MCP server included in 6.1 skeleton (`GET /health`, `GET /ready`). (Owner: Dev / Type: Build)
 - [x] **6.4** `docs/mcp/streamable-http-mcp.md` included in 6.1 skeleton documentation. (Owner: Dev / Type: Document)
 - [x] **6.5** Viết compatibility tests cho MCP tool schema/version. (Owner: Dev / Type: Build)
-- [ ] **6.6** Viết private MCP deployment guide. (Owner: Dev / Type: Document)
+- [x] **6.6** Viết private MCP deployment guide. (Owner: Dev / Type: Document)
+  - Evidence: [`docs/mcp/private-deploy.md`](./mcp/private-deploy.md)
 - [ ] **6.7** Thêm mTLS optional cho service-to-service. (Owner: Dev / Type: Integrate)
 
 **Success criteria:** MCP client remote có thể kết nối qua HTTP; compatibility test pass; private deploy guide dùng được.  
-**Evidence artifact:** `docs/mcp/streamable-http-mcp.md`, private deploy guide, compatibility test reports.
+**Evidence artifact:** `docs/mcp/streamable-http-mcp.md`, [`docs/mcp/private-deploy.md`](./mcp/private-deploy.md), compatibility test reports.
 
 ### Phase 7: Operator evidence UX
 **Mục tiêu:** Nâng cao trải nghiệm operator qua CLI/TUI.
