@@ -631,4 +631,82 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["deferred"], true);
     }
+
+    // -------------------------------------------------------------------------
+    // Phase 6.5 HTTP Transport Compatibility Tests
+    // -------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_http_mcp_post_tools_list_returns_200_with_expected_count() {
+        let app = test_app();
+        let body_json = r#"{"jsonrpc":"2.0","method":"tools/list","id":1}"#;
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/mcp")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(body_json))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(json.get("result").is_some());
+        let tools = json["result"]["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 19);
+    }
+
+    #[tokio::test]
+    async fn test_http_mcp_post_tools_list_entries_have_required_fields() {
+        let app = test_app();
+        let body_json = r#"{"jsonrpc":"2.0","method":"tools/list","id":1}"#;
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/mcp")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(body_json))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let tools = json["result"]["tools"].as_array().unwrap();
+        for tool in tools {
+            assert!(
+                tool.get("name")
+                    .and_then(|v| v.as_str())
+                    .map(|s| !s.is_empty())
+                    .unwrap_or(false),
+                "Each tool must have a non-empty name"
+            );
+            assert!(
+                tool.get("description")
+                    .and_then(|v| v.as_str())
+                    .map(|s| !s.is_empty())
+                    .unwrap_or(false),
+                "Each tool must have a non-empty description"
+            );
+            assert!(
+                tool.get("input_schema")
+                    .map(|v| v.is_object())
+                    .unwrap_or(false),
+                "Each tool must have an object input_schema"
+            );
+            let schema = tool["input_schema"].as_object().unwrap();
+            assert_eq!(
+                schema.get("type").and_then(|v| v.as_str()),
+                Some("object"),
+                "Each tool input_schema.type must be 'object'"
+            );
+        }
+    }
 }

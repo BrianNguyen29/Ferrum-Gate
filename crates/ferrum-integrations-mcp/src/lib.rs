@@ -5729,4 +5729,148 @@ mod tests {
             "Each worker should produce a unique intent_id"
         );
     }
+
+    // -------------------------------------------------------------------------
+    // Phase 6.5 Tests (MCP Compatibility — Tool Schema / Version)
+    // -------------------------------------------------------------------------
+
+    /// Phase 6.5: All tool input_schema values are JSON Schema object-like:
+    /// type == "object", properties is an object when present, and required
+    /// array entries reference existing properties.
+    #[test]
+    fn test_all_tool_input_schemas_are_object_like() {
+        for tool in tool_registry() {
+            let schema = &tool.input_schema;
+            assert!(
+                schema.is_object(),
+                "Tool '{}' input_schema must be a JSON object",
+                tool.name
+            );
+            let obj = schema.as_object().unwrap();
+            assert_eq!(
+                obj.get("type").and_then(|v| v.as_str()),
+                Some("object"),
+                "Tool '{}' input_schema.type must be 'object'",
+                tool.name
+            );
+            // If properties is present, it must be an object
+            if let Some(props) = obj.get("properties") {
+                assert!(
+                    props.is_object(),
+                    "Tool '{}' input_schema.properties must be an object when present",
+                    tool.name
+                );
+            }
+            // If required is present, each entry must reference an existing property
+            if let Some(required) = obj.get("required").and_then(|v| v.as_array()) {
+                let prop_keys: std::collections::HashSet<_> = obj
+                    .get("properties")
+                    .and_then(|p| p.as_object())
+                    .map(|o| o.keys().map(|k| k.as_str()).collect())
+                    .unwrap_or_default();
+                for req in required {
+                    if let Some(req_str) = req.as_str() {
+                        assert!(
+                            prop_keys.contains(req_str),
+                            "Tool '{}' input_schema.required contains '{}' which is not in properties",
+                            tool.name,
+                            req_str
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Phase 6.5: tools/list response entries include MCP required fields:
+    /// non-empty name, non-empty description, object input_schema.
+    #[test]
+    fn test_tools_list_response_has_required_fields() {
+        let response = handle_tools_list(None);
+        match response {
+            JsonRpcResponse::Success(success) => {
+                let result: ToolsListResult =
+                    serde_json::from_value(success.result).expect("should parse");
+                assert!(
+                    !result.tools.is_empty(),
+                    "tools/list should return at least one tool"
+                );
+                for tool in &result.tools {
+                    assert!(!tool.name.is_empty(), "Tool name must be non-empty");
+                    assert!(
+                        !tool.description.is_empty(),
+                        "Tool description must be non-empty"
+                    );
+                    assert!(
+                        tool.input_schema.is_object(),
+                        "Tool '{}' input_schema must be an object",
+                        tool.name
+                    );
+                }
+            }
+            JsonRpcResponse::Error(_) => panic!("Expected success for tools/list"),
+        }
+    }
+
+    /// Phase 6.5: initialize result includes protocol_version, capabilities.tools,
+    /// server_info.name, and server_info.version.
+    #[test]
+    fn test_initialize_result_has_required_fields() {
+        let response = handle_initialize(serde_json::Value::Null, None);
+        match response {
+            JsonRpcResponse::Success(success) => {
+                let result: InitializeResult =
+                    serde_json::from_value(success.result).expect("should parse");
+                assert_eq!(result.protocol_version, "2024-11-05");
+                assert!(
+                    result.capabilities.tools.is_some(),
+                    "capabilities.tools must be present"
+                );
+                assert!(
+                    !result.server_info.name.is_empty(),
+                    "server_info.name must be non-empty"
+                );
+                assert!(
+                    !result.server_info.version.is_empty(),
+                    "server_info.version must be non-empty"
+                );
+            }
+            JsonRpcResponse::Error(_) => panic!("Expected success for initialize"),
+        }
+    }
+
+    /// Phase 6.5: Unsupported or missing client protocol_version still returns
+    /// the server's protocol version. Documents current hardcoded behavior.
+    #[test]
+    fn test_initialize_ignores_unsupported_client_protocol_version() {
+        // Missing protocol_version (Null params)
+        let response = handle_initialize(serde_json::Value::Null, None);
+        match response {
+            JsonRpcResponse::Success(success) => {
+                let result: InitializeResult =
+                    serde_json::from_value(success.result).expect("should parse");
+                assert_eq!(result.protocol_version, "2024-11-05");
+            }
+            JsonRpcResponse::Error(_) => panic!("Expected success for null params"),
+        }
+
+        // Unsupported protocol_version in params
+        let params = serde_json::json!({
+            "protocol_version": "2099-01-01",
+            "capabilities": {},
+            "client_info": {"name": "test", "version": "1.0"}
+        });
+        let response = handle_initialize(params, None);
+        match response {
+            JsonRpcResponse::Success(success) => {
+                let result: InitializeResult =
+                    serde_json::from_value(success.result).expect("should parse");
+                assert_eq!(
+                    result.protocol_version, "2024-11-05",
+                    "Server must return its own protocol version even when client requests unsupported version"
+                );
+            }
+            JsonRpcResponse::Error(_) => panic!("Expected success for unsupported version"),
+        }
+    }
 }

@@ -322,9 +322,9 @@ Thứ tự này giúp FerrumGate:
 
 - [x] **6.1** Implement Streamable HTTP MCP transport skeleton (`POST /mcp`, `GET /mcp` 405, CLI args, `tokio::task::spawn_blocking` around blocking client). (Owner: Dev / Type: Build)
 - [ ] **6.2** Thêm SSE response support nếu cần. (Owner: Dev / Type: Build)
-- [ ] **6.3** Thêm health/ready endpoints cho MCP server. (Owner: Dev / Type: Build)
-- [ ] **6.4** Viết `docs/mcp/streamable-http-mcp.md`. (Owner: Dev / Type: Document)
-- [ ] **6.5** Viết compatibility tests cho MCP tool schema/version. (Owner: Dev / Type: Build)
+- [x] **6.3** Health/ready endpoints cho MCP server included in 6.1 skeleton (`GET /health`, `GET /ready`). (Owner: Dev / Type: Build)
+- [x] **6.4** `docs/mcp/streamable-http-mcp.md` included in 6.1 skeleton documentation. (Owner: Dev / Type: Document)
+- [x] **6.5** Viết compatibility tests cho MCP tool schema/version. (Owner: Dev / Type: Build)
 - [ ] **6.6** Viết private MCP deployment guide. (Owner: Dev / Type: Document)
 - [ ] **6.7** Thêm mTLS optional cho service-to-service. (Owner: Dev / Type: Integrate)
 
