@@ -257,6 +257,7 @@ impl StressServer {
                 pg_statement_timeout_ms: 5000,
                 pg_idle_in_transaction_timeout_ms: 10000,
                 oidc_config: None,
+                agent_clock_skew_secs: 30,
             };
             ferrum_gateway::build_router_with_auth(runtime, config)
         } else {
@@ -281,6 +282,7 @@ impl StressServer {
                 pg_statement_timeout_ms: 5000,
                 pg_idle_in_transaction_timeout_ms: 10000,
                 oidc_config: None,
+                agent_clock_skew_secs: 30,
             };
             ferrum_gateway::build_router_with_auth(runtime, config)
         };

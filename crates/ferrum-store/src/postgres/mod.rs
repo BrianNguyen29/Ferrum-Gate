@@ -22,6 +22,7 @@
 //!
 //! See ADR-50 for the phased implementation plan.
 
+mod agents;
 mod approvals;
 mod audit_log;
 mod capabilities;
@@ -36,6 +37,7 @@ mod provenance;
 mod rollback;
 mod tokens;
 
+pub use agents::PostgresAgentRepo;
 pub use approvals::PostgresApprovalRepo;
 pub use audit_log::PostgresAuditLogRepo;
 pub use capabilities::PostgresCapabilityRepo;
@@ -50,7 +52,7 @@ pub use tokens::PostgresTokenRepo;
 
 use crate::Result;
 use crate::repos::{
-    ApprovalRepo, AuditLogRepo, CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo,
+    AgentRepo, ApprovalRepo, AuditLogRepo, CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo,
     PolicyBundleRepo, ProposalRepo, ProvenanceRepo, RollbackRepo, StoreFacade, TokenRepo,
 };
 use async_trait::async_trait;
@@ -320,6 +322,10 @@ impl PostgresStore {
     pub fn audit_log(&self) -> PostgresAuditLogRepo {
         PostgresAuditLogRepo::new(self.pool.clone())
     }
+
+    pub fn agents(&self) -> PostgresAgentRepo {
+        PostgresAgentRepo::new(self.pool.clone())
+    }
 }
 
 #[async_trait]
@@ -366,6 +372,10 @@ impl StoreFacade for PostgresStore {
 
     fn audit_log(&self) -> Arc<dyn AuditLogRepo> {
         Arc::new(self.audit_log())
+    }
+
+    fn agents(&self) -> Arc<dyn AgentRepo> {
+        Arc::new(self.agents())
     }
 
     async fn health_check(&self) -> crate::Result<()> {

@@ -58,13 +58,21 @@ pub const MIGRATIONS: &[EmbeddedMigration] = &[
             "/migrations/postgres/003_add_audit_log_hash_chain.sql"
         )),
     },
+    EmbeddedMigration {
+        version: 4,
+        name: "004_add_agent_registry",
+        sql: include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/migrations/postgres/004_add_agent_registry.sql"
+        )),
+    },
 ];
 
 /// Current schema version for the PostgreSQL embedded migration.
 ///
 /// Must match the highest `version` in [`MIGRATIONS`].
 #[allow(dead_code)]
-pub const CURRENT_SCHEMA_VERSION: i64 = 3;
+pub const CURRENT_SCHEMA_VERSION: i64 = 4;
 
 #[cfg(test)]
 mod tests {

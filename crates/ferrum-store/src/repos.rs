@@ -1,10 +1,10 @@
 use async_trait::async_trait;
 use ferrum_proto::{
-    ActionProposal, ApprovalId, ApprovalRequest, ApprovalState, AuditAction, AuditLogEntry,
-    AuditResourceType, CapabilityId, CapabilityLease, CapabilityStatus, EventId, ExecutionId,
-    ExecutionRecord, ExecutionState, IntentEnvelope, IntentId, IntentStatus, PolicyBundle,
-    PolicyBundleVersion, ProposalId, ProvenanceEdge, ProvenanceEvent, ProvenanceQueryRequest,
-    RollbackContract, RollbackContractId, RollbackState, Timestamp,
+    ActionProposal, AgentRecord, ApprovalId, ApprovalRequest, ApprovalState, AuditAction,
+    AuditLogEntry, AuditResourceType, CapabilityId, CapabilityLease, CapabilityStatus, EventId,
+    ExecutionId, ExecutionRecord, ExecutionState, IntentEnvelope, IntentId, IntentStatus,
+    PolicyBundle, PolicyBundleVersion, ProposalId, ProvenanceEdge, ProvenanceEvent,
+    ProvenanceQueryRequest, RollbackContract, RollbackContractId, RollbackState, Timestamp,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -239,6 +239,31 @@ pub trait TokenRepo: Send + Sync {
     async fn touch(&self, token_id: &str) -> Result<()>;
 }
 
+/// Repository for agent registry entries.
+#[async_trait]
+pub trait AgentRepo: Send + Sync {
+    /// Insert a new agent record.
+    async fn insert(&self, agent: &AgentRecord) -> Result<()>;
+
+    /// Get an agent by its `agent_id`.
+    async fn get(&self, agent_id: &str) -> Result<Option<AgentRecord>>;
+
+    /// Get an agent by its `key_fingerprint`.
+    async fn get_by_fingerprint(&self, fingerprint: &str) -> Result<Option<AgentRecord>>;
+
+    /// List agents with optional filters.
+    async fn list(
+        &self,
+        active_only: bool,
+        limit: u32,
+        cursor: Option<&str>,
+    ) -> Result<(Vec<AgentRecord>, Option<String>)>;
+
+    /// Revoke an agent by setting `revoked_at`.
+    /// Returns true if the row was updated (was not already revoked).
+    async fn revoke(&self, agent_id: &str) -> Result<bool>;
+}
+
 /// Repository for policy bundles.
 ///
 /// Provides CRUD operations for policy bundles with content-hash based
@@ -311,6 +336,7 @@ pub trait StoreFacade: Send + Sync {
     fn policy_bundles(&self) -> Arc<dyn PolicyBundleRepo>;
     fn tokens(&self) -> Arc<dyn TokenRepo>;
     fn audit_log(&self) -> Arc<dyn AuditLogRepo>;
+    fn agents(&self) -> Arc<dyn AgentRepo>;
 
     /// Returns the current number of pending write operations in the queue.
     /// This represents operations that have been sent but not yet completed processing.

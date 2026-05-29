@@ -203,16 +203,20 @@ pub enum AuthMode {
     Scoped,
     /// OIDC/JWT bearer token validation (Phase 4.3+).
     Oidc,
+    /// Ed25519 agent identity signature verification (Phase 4.6+).
+    Agent,
 }
 
 impl std::fmt::Display for AuthMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            AuthMode::Disabled => write!(f, "disabled"),
-            AuthMode::Bearer => write!(f, "bearer"),
-            AuthMode::Scoped => write!(f, "scoped"),
-            AuthMode::Oidc => write!(f, "oidc"),
-        }
+        let s = match self {
+            AuthMode::Disabled => "disabled",
+            AuthMode::Bearer => "bearer",
+            AuthMode::Scoped => "scoped",
+            AuthMode::Oidc => "oidc",
+            AuthMode::Agent => "agent",
+        };
+        write!(f, "{}", s)
     }
 }
 
@@ -225,6 +229,7 @@ impl std::str::FromStr for AuthMode {
             "bearer" => Ok(AuthMode::Bearer),
             "scoped" => Ok(AuthMode::Scoped),
             "oidc" => Ok(AuthMode::Oidc),
+            "agent" => Ok(AuthMode::Agent),
             _ => Err(format!("invalid auth mode: {}", s)),
         }
     }

@@ -36,9 +36,12 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
+use std::time::{Duration as StdDuration, Instant};
 use tower::ServiceBuilder;
+
+use ed25519_dalek::Verifier;
 
 /// Prometheus histogram bucket boundaries in seconds.
 /// Includes: 5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2.5s, 5s, 10s
@@ -60,6 +63,8 @@ struct AppState {
     server_config: ServerConfig,
     metrics: Arc<Metrics>,
     jwks_cache: Option<Arc<OidcJwksCache>>,
+    /// In-memory nonce cache for Agent auth replay protection.
+    nonce_cache: Arc<Mutex<HashMap<String, Instant>>>,
 }
 
 /// Metrics state for the /v1/metrics endpoint.
@@ -712,6 +717,7 @@ pub async fn run_http_server(config: ServerConfig, runtime: GatewayRuntime) -> a
         server_config: config.clone(),
         metrics: Arc::new(Metrics::new()),
         jwks_cache,
+        nonce_cache: Arc::new(Mutex::new(HashMap::new())),
     });
 
     let monitoring_router = build_monitoring_router(state.clone());
@@ -780,6 +786,7 @@ pub fn build_router(runtime: GatewayRuntime) -> Router {
         server_config: ServerConfig::default(),
         metrics: Arc::new(Metrics::new()),
         jwks_cache: None,
+        nonce_cache: Arc::new(Mutex::new(HashMap::new())),
     });
     let monitoring_router = build_monitoring_router(state.clone());
     let workload_router = build_workload_router(state);
@@ -798,6 +805,7 @@ pub fn build_router_with_auth(runtime: GatewayRuntime, server_config: ServerConf
         server_config: server_config.clone(),
         metrics: Arc::new(Metrics::new()),
         jwks_cache,
+        nonce_cache: Arc::new(Mutex::new(HashMap::new())),
     });
     let monitoring_router = build_monitoring_router(state.clone());
     let workload_router = build_workload_router(state.clone());
@@ -807,6 +815,7 @@ pub fn build_router_with_auth(runtime: GatewayRuntime, server_config: ServerConf
     if server_config.auth_mode == AuthMode::Bearer
         || server_config.auth_mode == AuthMode::Scoped
         || server_config.auth_mode == AuthMode::Oidc
+        || server_config.auth_mode == AuthMode::Agent
     {
         let auth_layer = ServiceBuilder::new()
             .layer(axum::middleware::from_fn_with_state(
@@ -845,6 +854,7 @@ pub fn build_router_with_governor(
         server_config: ServerConfig::default(),
         metrics: Arc::new(Metrics::new()),
         jwks_cache: None,
+        nonce_cache: Arc::new(Mutex::new(HashMap::new())),
     });
 
     let monitoring_router = build_monitoring_router(state.clone());
@@ -965,14 +975,14 @@ fn build_workload_router(state: Arc<AppState>) -> Router {
         .layer(TraceLayer::new_for_http())
 }
 
-/// Authentication middleware supporting Bearer and Scoped modes.
+/// Authentication middleware supporting Bearer, Scoped, OIDC, and Agent modes.
 async fn auth_middleware(
     State(state): State<Arc<AppState>>,
     request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
-    let path = request.uri().path();
-    let method = request.method().as_str();
+    let path = request.uri().path().to_string();
+    let method = request.method().as_str().to_string();
 
     // Skip auth for health and metrics endpoints
     if path == "/v1/healthz"
@@ -985,25 +995,20 @@ async fn auth_middleware(
 
     let config = &state.server_config;
 
-    // Check for Authorization header
-    let auth_header = request
-        .headers()
-        .get("Authorization")
-        .and_then(|v| v.to_str().ok());
-
-    let Some(header) = auth_header else {
-        return auth_error("missing authorization header");
-    };
-
-    if !header.starts_with("Bearer ") {
-        return auth_error("invalid authorization header format");
-    }
-
-    let provided = &header[7..];
-
     match config.auth_mode {
         AuthMode::Disabled => next.run(request).await,
         AuthMode::Bearer => {
+            let auth_header = request
+                .headers()
+                .get("Authorization")
+                .and_then(|v| v.to_str().ok());
+            let Some(header) = auth_header else {
+                return auth_error("missing authorization header");
+            };
+            if !header.starts_with("Bearer ") {
+                return auth_error("invalid authorization header format");
+            }
+            let provided = &header[7..];
             let token = config.bearer_token.as_deref().unwrap_or("");
             if constant_time_eq::constant_time_eq(provided.as_bytes(), token.as_bytes()) {
                 next.run(request).await
@@ -1012,6 +1017,17 @@ async fn auth_middleware(
             }
         }
         AuthMode::Oidc => {
+            let auth_header = request
+                .headers()
+                .get("Authorization")
+                .and_then(|v| v.to_str().ok());
+            let Some(header) = auth_header else {
+                return auth_error("missing authorization header");
+            };
+            if !header.starts_with("Bearer ") {
+                return auth_error("invalid authorization header format");
+            }
+            let provided = &header[7..];
             let oidc = match &config.oidc_config {
                 Some(c) => c,
                 None => {
@@ -1029,7 +1045,8 @@ async fn auth_middleware(
                     return auth_error("oidc auth misconfigured");
                 }
             };
-            match validate_oidc_token(provided, oidc, state.jwks_cache.as_ref(), method, path).await
+            match validate_oidc_token(provided, oidc, state.jwks_cache.as_ref(), &method, &path)
+                .await
             {
                 Ok(()) => next.run(request).await,
                 Err(OidcAuthError::Unauthorized(msg)) => {
@@ -1061,6 +1078,17 @@ async fn auth_middleware(
             }
         }
         AuthMode::Scoped => {
+            let auth_header = request
+                .headers()
+                .get("Authorization")
+                .and_then(|v| v.to_str().ok());
+            let Some(header) = auth_header else {
+                return auth_error("missing authorization header");
+            };
+            if !header.starts_with("Bearer ") {
+                return auth_error("invalid authorization header format");
+            }
+            let provided = &header[7..];
             // Step 1: deterministic lookup hash (fast DB lookup)
             let lookup_hash = hash_token_value(provided);
             let token_repo = state.runtime.store.tokens();
@@ -1093,7 +1121,7 @@ async fn auth_middleware(
             }
 
             // Check scope
-            let required_scope = required_scope_for_path(method, path);
+            let required_scope = required_scope_for_path(&method, &path);
             if let Some(scope) = required_scope {
                 if !token_has_scope(&token, scope) {
                     return forbidden_error(&format!("required scope {}", scope));
@@ -1108,7 +1136,178 @@ async fn auth_middleware(
 
             next.run(request).await
         }
+        AuthMode::Agent => {
+            match verify_agent_request(&state, request, next, &method, &path).await {
+                Ok(response) => response,
+                Err(AgentAuthError::Unauthorized(msg)) => {
+                    append_audit(
+                        &state.runtime.store,
+                        "unknown",
+                        AuditAction::AgentAuthFailed,
+                        AuditResourceType::Auth,
+                        "agent",
+                        "unauthorized",
+                        Some(serde_json::json!({"reason": msg})),
+                    )
+                    .await;
+                    auth_error(&msg)
+                }
+                Err(AgentAuthError::Forbidden(msg)) => forbidden_error(&msg),
+            }
+        }
     }
+}
+
+/// Error type for Agent auth failures.
+enum AgentAuthError {
+    Unauthorized(String),
+    Forbidden(String),
+}
+
+/// Verify an Ed25519-signed agent request.
+///
+/// Flow:
+/// 1. Extract required headers.
+/// 2. Verify timestamp skew.
+/// 3. Check nonce replay cache.
+/// 4. Recompute body hash and compare.
+/// 5. Look up agent and check revocation.
+/// 6. Verify Ed25519 signature over canonical payload.
+/// 7. Enforce route scope.
+async fn verify_agent_request(
+    state: &AppState,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+    method: &str,
+    path: &str,
+) -> Result<Response, AgentAuthError> {
+    let headers = request.headers().clone();
+    let agent_id = headers
+        .get("X-Ferrum-Agent-Id")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| AgentAuthError::Unauthorized("missing X-Ferrum-Agent-Id".to_string()))?;
+    let timestamp = headers
+        .get("X-Ferrum-Timestamp")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| AgentAuthError::Unauthorized("missing X-Ferrum-Timestamp".to_string()))?;
+    let nonce = headers
+        .get("X-Ferrum-Nonce")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| AgentAuthError::Unauthorized("missing X-Ferrum-Nonce".to_string()))?;
+    let body_hash_header = headers
+        .get("X-Ferrum-Body-Hash")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| AgentAuthError::Unauthorized("missing X-Ferrum-Body-Hash".to_string()))?;
+    let signature_b64 = headers
+        .get("X-Ferrum-Signature")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| AgentAuthError::Unauthorized("missing X-Ferrum-Signature".to_string()))?;
+
+    // Verify timestamp
+    let ts = chrono::DateTime::parse_from_rfc3339(timestamp)
+        .map_err(|_| AgentAuthError::Unauthorized("invalid timestamp format".to_string()))?
+        .with_timezone(&chrono::Utc);
+    let now = chrono::Utc::now();
+    let skew = chrono::Duration::seconds(state.server_config.agent_clock_skew_secs);
+    if ts < now - skew || ts > now + skew {
+        return Err(AgentAuthError::Unauthorized(
+            "timestamp out of skew window".to_string(),
+        ));
+    }
+
+    // Verify nonce (replay protection)
+    let nonce_ttl =
+        StdDuration::from_secs((state.server_config.agent_clock_skew_secs * 2).max(60) as u64);
+    {
+        let mut cache = state.nonce_cache.lock().unwrap();
+        let now_instant = Instant::now();
+        cache.retain(|_, &mut inserted| now_instant.duration_since(inserted) < nonce_ttl);
+        if cache.contains_key(nonce) {
+            return Err(AgentAuthError::Unauthorized("replayed nonce".to_string()));
+        }
+        cache.insert(nonce.to_string(), now_instant);
+    }
+
+    // Read body and verify body hash
+    let (parts, body) = request.into_parts();
+    let bytes = axum::body::to_bytes(body, 10 * 1024 * 1024)
+        .await
+        .map_err(|_| AgentAuthError::Unauthorized("failed to read body".to_string()))?;
+    let computed_body_hash = if bytes.is_empty() {
+        "null".to_string()
+    } else {
+        blake3::hash(&bytes).to_hex().to_string()
+    };
+    if computed_body_hash != body_hash_header {
+        return Err(AgentAuthError::Unauthorized(
+            "body hash mismatch".to_string(),
+        ));
+    }
+
+    // Look up agent
+    let agent = match state.runtime.store.agents().get(agent_id).await {
+        Ok(Some(a)) => a,
+        Ok(None) => {
+            return Err(AgentAuthError::Unauthorized("agent not found".to_string()));
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "agent lookup failed");
+            return Err(AgentAuthError::Unauthorized(
+                "agent lookup failed".to_string(),
+            ));
+        }
+    };
+
+    if agent.revoked_at.is_some() {
+        return Err(AgentAuthError::Unauthorized("agent revoked".to_string()));
+    }
+
+    // Canonical payload
+    let payload = format!(
+        "{}:{}:{}:{}:{}:{}",
+        agent_id, timestamp, nonce, body_hash_header, method, path
+    );
+
+    // Decode and verify signature
+    let sig_bytes =
+        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, signature_b64)
+            .map_err(|_| AgentAuthError::Unauthorized("invalid signature encoding".to_string()))?;
+    let sig_array: [u8; 64] = sig_bytes
+        .try_into()
+        .map_err(|_| AgentAuthError::Unauthorized("invalid signature length".to_string()))?;
+    let signature = ed25519_dalek::Signature::from_bytes(&sig_array);
+    let pk_bytes = base64::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        &agent.public_key,
+    )
+    .map_err(|_| AgentAuthError::Unauthorized("invalid public key encoding".to_string()))?;
+    let pk_array: [u8; 32] = pk_bytes
+        .try_into()
+        .map_err(|_| AgentAuthError::Unauthorized("invalid public key length".to_string()))?;
+    let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(&pk_array)
+        .map_err(|_| AgentAuthError::Unauthorized("invalid public key".to_string()))?;
+
+    verifying_key
+        .verify(payload.as_bytes(), &signature)
+        .map_err(|_| AgentAuthError::Unauthorized("signature verification failed".to_string()))?;
+
+    // Scope enforcement
+    if let Some(required) = required_scope_for_path(method, path) {
+        let has_scope = agent
+            .allowed_scopes
+            .iter()
+            .any(|s| s == "*" || s == required);
+        if !has_scope {
+            return Err(AgentAuthError::Forbidden(format!(
+                "required scope {}",
+                required
+            )));
+        }
+    }
+
+    // Reconstruct request and proceed
+    let request = axum::http::Request::from_parts(parts, axum::body::Body::from(bytes));
+    Ok(next.run(request).await)
 }
 
 fn auth_error(message: &str) -> Response {
@@ -7660,13 +7859,67 @@ mod tests {
     use ferrum_pdp::StaticPdpEngine;
     use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
     use ferrum_store::repos::{
-        ApprovalRepo, AuditLogRepo, CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo,
-        PolicyBundleRepo, ProposalRepo, ProvenanceRepo, RollbackRepo, TokenRepo,
+        AgentRepo, ApprovalRepo, AuditLogRepo, CapabilityRepo, ExecutionRepo, IntentRepo,
+        LedgerRepo, PolicyBundleRepo, ProposalRepo, ProvenanceRepo, RollbackRepo, TokenRepo,
     };
     use ferrum_store::{SqliteStore, StoreError, StoreFacade};
     use ferrum_sync::{BridgeToolInfo, ExternalEventSource, McpBridge};
     use std::sync::Arc;
     use tower::ServiceExt;
+
+    use ed25519_dalek::Signer;
+
+    fn generate_agent_keypair() -> (ed25519_dalek::SigningKey, ed25519_dalek::VerifyingKey) {
+        let mut csprng = rand::rngs::OsRng;
+        let signing_key = ed25519_dalek::SigningKey::generate(&mut csprng);
+        let verifying_key = signing_key.verifying_key();
+        (signing_key, verifying_key)
+    }
+
+    fn compute_fingerprint(public_key: &ed25519_dalek::VerifyingKey) -> String {
+        use sha2::Digest;
+        let hash = sha2::Sha256::digest(public_key.as_bytes());
+        base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, hash)
+    }
+
+    async fn register_test_agent(
+        store: &Arc<dyn StoreFacade>,
+        agent_id: &str,
+        public_key_b64: &str,
+        fingerprint: &str,
+        scopes: Vec<String>,
+    ) {
+        let agent = ferrum_proto::AgentRecord {
+            agent_id: agent_id.to_string(),
+            public_key: public_key_b64.to_string(),
+            key_fingerprint: fingerprint.to_string(),
+            allowed_scopes: scopes,
+            created_at: chrono::Utc::now(),
+            revoked_at: None,
+            description: None,
+        };
+        store.agents().insert(&agent).await.unwrap();
+    }
+
+    fn sign_agent_request(
+        signing_key: &ed25519_dalek::SigningKey,
+        agent_id: &str,
+        timestamp: &str,
+        nonce: &str,
+        body_hash: &str,
+        method: &str,
+        path: &str,
+    ) -> String {
+        let payload = format!(
+            "{}:{}:{}:{}:{}:{}",
+            agent_id, timestamp, nonce, body_hash, method, path
+        );
+        let signature = signing_key.sign(payload.as_bytes());
+        base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            signature.to_bytes(),
+        )
+    }
 
     /// A test-only StoreFacade that wraps a real store but always fails health_check.
     /// Used to verify /v1/readyz/deep returns 503 when the store is unhealthy.
@@ -7714,6 +7967,9 @@ mod tests {
         }
         fn audit_log(&self) -> Arc<dyn AuditLogRepo> {
             self.inner.audit_log()
+        }
+        fn agents(&self) -> Arc<dyn AgentRepo> {
+            self.inner.agents()
         }
         fn write_queue_depth(&self) -> usize {
             self.inner.write_queue_depth()
@@ -8011,6 +8267,9 @@ mod tests {
         fn audit_log(&self) -> Arc<dyn AuditLogRepo> {
             self.inner.audit_log()
         }
+        fn agents(&self) -> Arc<dyn AgentRepo> {
+            self.inner.agents()
+        }
         fn write_queue_depth(&self) -> usize {
             self.queue_depth
         }
@@ -8131,6 +8390,9 @@ mod tests {
         }
         fn audit_log(&self) -> Arc<dyn AuditLogRepo> {
             self.inner.audit_log()
+        }
+        fn agents(&self) -> Arc<dyn AgentRepo> {
+            self.inner.agents()
         }
         fn write_queue_depth(&self) -> usize {
             self.inner.write_queue_depth()
@@ -12599,6 +12861,7 @@ rules:
             server_config: ServerConfig::default(),
             metrics: Arc::new(Metrics::new()),
             jwks_cache: Some(cache),
+            nonce_cache: Arc::new(Mutex::new(HashMap::new())),
         });
 
         let response = metrics_handler(axum::extract::State(state)).await;
@@ -12611,5 +12874,423 @@ rules:
             "metrics output missing JWKS cache age gauge: {}",
             text
         );
+    }
+
+    #[tokio::test]
+    async fn test_agent_auth_success() {
+        let runtime = test_runtime().await;
+        let (signing_key, verifying_key) = generate_agent_keypair();
+        let pk_b64 = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            verifying_key.as_bytes(),
+        );
+        let fingerprint = compute_fingerprint(&verifying_key);
+        register_test_agent(
+            &runtime.store,
+            "agent_1",
+            &pk_b64,
+            &fingerprint,
+            vec!["approval:resolve".to_string()],
+        )
+        .await;
+
+        let config = ServerConfig {
+            auth_mode: AuthMode::Agent,
+            agent_clock_skew_secs: 30,
+            ..ServerConfig::default()
+        };
+        let router = build_router_with_auth(runtime, config);
+
+        let timestamp = chrono::Utc::now().to_rfc3339();
+        let nonce = uuid::Uuid::new_v4().to_string();
+        let body_hash = "null".to_string();
+        let signature = sign_agent_request(
+            &signing_key,
+            "agent_1",
+            &timestamp,
+            &nonce,
+            &body_hash,
+            "GET",
+            "/v1/approvals",
+        );
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("X-Ferrum-Agent-Id", "agent_1")
+                    .header("X-Ferrum-Timestamp", &timestamp)
+                    .header("X-Ferrum-Nonce", &nonce)
+                    .header("X-Ferrum-Body-Hash", &body_hash)
+                    .header("X-Ferrum-Signature", &signature)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_agent_auth_missing_header() {
+        let runtime = test_runtime().await;
+        let config = ServerConfig {
+            auth_mode: AuthMode::Agent,
+            agent_clock_skew_secs: 30,
+            ..ServerConfig::default()
+        };
+        let router = build_router_with_auth(runtime, config);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("X-Ferrum-Agent-Id", "agent_1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_agent_auth_bad_signature() {
+        let runtime = test_runtime().await;
+        let (_signing_key, verifying_key) = generate_agent_keypair();
+        let pk_b64 = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            verifying_key.as_bytes(),
+        );
+        let fingerprint = compute_fingerprint(&verifying_key);
+        register_test_agent(
+            &runtime.store,
+            "agent_1",
+            &pk_b64,
+            &fingerprint,
+            vec!["approval:resolve".to_string()],
+        )
+        .await;
+
+        let config = ServerConfig {
+            auth_mode: AuthMode::Agent,
+            agent_clock_skew_secs: 30,
+            ..ServerConfig::default()
+        };
+        let router = build_router_with_auth(runtime, config);
+
+        let timestamp = chrono::Utc::now().to_rfc3339();
+        let nonce = uuid::Uuid::new_v4().to_string();
+        let body_hash = "null".to_string();
+        let signature = "invalidsignature".to_string();
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("X-Ferrum-Agent-Id", "agent_1")
+                    .header("X-Ferrum-Timestamp", &timestamp)
+                    .header("X-Ferrum-Nonce", &nonce)
+                    .header("X-Ferrum-Body-Hash", &body_hash)
+                    .header("X-Ferrum-Signature", &signature)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_agent_auth_replay_rejected() {
+        let runtime = test_runtime().await;
+        let (signing_key, verifying_key) = generate_agent_keypair();
+        let pk_b64 = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            verifying_key.as_bytes(),
+        );
+        let fingerprint = compute_fingerprint(&verifying_key);
+        register_test_agent(
+            &runtime.store,
+            "agent_1",
+            &pk_b64,
+            &fingerprint,
+            vec!["approval:resolve".to_string()],
+        )
+        .await;
+
+        let config = ServerConfig {
+            auth_mode: AuthMode::Agent,
+            agent_clock_skew_secs: 30,
+            ..ServerConfig::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let timestamp = chrono::Utc::now().to_rfc3339();
+        let nonce = uuid::Uuid::new_v4().to_string();
+        let body_hash = "null".to_string();
+        let signature = sign_agent_request(
+            &signing_key,
+            "agent_1",
+            &timestamp,
+            &nonce,
+            &body_hash,
+            "GET",
+            "/v1/approvals",
+        );
+
+        let req = Request::builder()
+            .uri("/v1/approvals")
+            .header("X-Ferrum-Agent-Id", "agent_1")
+            .header("X-Ferrum-Timestamp", &timestamp)
+            .header("X-Ferrum-Nonce", &nonce)
+            .header("X-Ferrum-Body-Hash", &body_hash)
+            .header("X-Ferrum-Signature", &signature)
+            .body(Body::empty())
+            .unwrap();
+
+        let response = router.clone().oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Replay with same nonce should be rejected
+        let req2 = Request::builder()
+            .uri("/v1/approvals")
+            .header("X-Ferrum-Agent-Id", "agent_1")
+            .header("X-Ferrum-Timestamp", &timestamp)
+            .header("X-Ferrum-Nonce", &nonce)
+            .header("X-Ferrum-Body-Hash", &body_hash)
+            .header("X-Ferrum-Signature", &signature)
+            .body(Body::empty())
+            .unwrap();
+        let response2 = router.oneshot(req2).await.unwrap();
+        assert_eq!(response2.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_agent_auth_body_hash_mismatch() {
+        let runtime = test_runtime().await;
+        let (signing_key, verifying_key) = generate_agent_keypair();
+        let pk_b64 = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            verifying_key.as_bytes(),
+        );
+        let fingerprint = compute_fingerprint(&verifying_key);
+        register_test_agent(
+            &runtime.store,
+            "agent_1",
+            &pk_b64,
+            &fingerprint,
+            vec!["approval:resolve".to_string()],
+        )
+        .await;
+
+        let config = ServerConfig {
+            auth_mode: AuthMode::Agent,
+            agent_clock_skew_secs: 30,
+            ..ServerConfig::default()
+        };
+        let router = build_router_with_auth(runtime, config);
+
+        let timestamp = chrono::Utc::now().to_rfc3339();
+        let nonce = uuid::Uuid::new_v4().to_string();
+        let body_hash = "null".to_string();
+        let signature = sign_agent_request(
+            &signing_key,
+            "agent_1",
+            &timestamp,
+            &nonce,
+            &body_hash,
+            "GET",
+            "/v1/approvals",
+        );
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("X-Ferrum-Agent-Id", "agent_1")
+                    .header("X-Ferrum-Timestamp", &timestamp)
+                    .header("X-Ferrum-Nonce", &nonce)
+                    .header("X-Ferrum-Body-Hash", "wrong_hash")
+                    .header("X-Ferrum-Signature", &signature)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_agent_auth_timestamp_skew() {
+        let runtime = test_runtime().await;
+        let (signing_key, verifying_key) = generate_agent_keypair();
+        let pk_b64 = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            verifying_key.as_bytes(),
+        );
+        let fingerprint = compute_fingerprint(&verifying_key);
+        register_test_agent(
+            &runtime.store,
+            "agent_1",
+            &pk_b64,
+            &fingerprint,
+            vec!["approval:resolve".to_string()],
+        )
+        .await;
+
+        let config = ServerConfig {
+            auth_mode: AuthMode::Agent,
+            agent_clock_skew_secs: 5,
+            ..ServerConfig::default()
+        };
+        let router = build_router_with_auth(runtime, config);
+
+        let timestamp = (chrono::Utc::now() - chrono::Duration::seconds(60)).to_rfc3339();
+        let nonce = uuid::Uuid::new_v4().to_string();
+        let body_hash = "null".to_string();
+        let signature = sign_agent_request(
+            &signing_key,
+            "agent_1",
+            &timestamp,
+            &nonce,
+            &body_hash,
+            "GET",
+            "/v1/approvals",
+        );
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("X-Ferrum-Agent-Id", "agent_1")
+                    .header("X-Ferrum-Timestamp", &timestamp)
+                    .header("X-Ferrum-Nonce", &nonce)
+                    .header("X-Ferrum-Body-Hash", &body_hash)
+                    .header("X-Ferrum-Signature", &signature)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_agent_auth_revoked() {
+        let runtime = test_runtime().await;
+        let (signing_key, verifying_key) = generate_agent_keypair();
+        let pk_b64 = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            verifying_key.as_bytes(),
+        );
+        let fingerprint = compute_fingerprint(&verifying_key);
+        register_test_agent(
+            &runtime.store,
+            "agent_1",
+            &pk_b64,
+            &fingerprint,
+            vec!["approval:resolve".to_string()],
+        )
+        .await;
+        runtime.store.agents().revoke("agent_1").await.unwrap();
+
+        let config = ServerConfig {
+            auth_mode: AuthMode::Agent,
+            agent_clock_skew_secs: 30,
+            ..ServerConfig::default()
+        };
+        let router = build_router_with_auth(runtime, config);
+
+        let timestamp = chrono::Utc::now().to_rfc3339();
+        let nonce = uuid::Uuid::new_v4().to_string();
+        let body_hash = "null".to_string();
+        let signature = sign_agent_request(
+            &signing_key,
+            "agent_1",
+            &timestamp,
+            &nonce,
+            &body_hash,
+            "GET",
+            "/v1/approvals",
+        );
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("X-Ferrum-Agent-Id", "agent_1")
+                    .header("X-Ferrum-Timestamp", &timestamp)
+                    .header("X-Ferrum-Nonce", &nonce)
+                    .header("X-Ferrum-Body-Hash", &body_hash)
+                    .header("X-Ferrum-Signature", &signature)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_agent_auth_missing_scope() {
+        let runtime = test_runtime().await;
+        let (signing_key, verifying_key) = generate_agent_keypair();
+        let pk_b64 = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            verifying_key.as_bytes(),
+        );
+        let fingerprint = compute_fingerprint(&verifying_key);
+        register_test_agent(
+            &runtime.store,
+            "agent_1",
+            &pk_b64,
+            &fingerprint,
+            vec!["provenance:read".to_string()],
+        )
+        .await;
+
+        let config = ServerConfig {
+            auth_mode: AuthMode::Agent,
+            agent_clock_skew_secs: 30,
+            ..ServerConfig::default()
+        };
+        let router = build_router_with_auth(runtime, config);
+
+        let timestamp = chrono::Utc::now().to_rfc3339();
+        let nonce = uuid::Uuid::new_v4().to_string();
+        let body_hash = "null".to_string();
+        let signature = sign_agent_request(
+            &signing_key,
+            "agent_1",
+            &timestamp,
+            &nonce,
+            &body_hash,
+            "GET",
+            "/v1/approvals",
+        );
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("X-Ferrum-Agent-Id", "agent_1")
+                    .header("X-Ferrum-Timestamp", &timestamp)
+                    .header("X-Ferrum-Nonce", &nonce)
+                    .header("X-Ferrum-Body-Hash", &body_hash)
+                    .header("X-Ferrum-Signature", &signature)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 }

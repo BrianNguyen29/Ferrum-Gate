@@ -34,6 +34,9 @@ pub enum AuditAction {
     ApprovalResolve,
     ExecutionCancel,
     AuthFailed,
+    AgentRegister,
+    AgentRevoke,
+    AgentAuthFailed,
 }
 
 impl std::fmt::Display for AuditAction {
@@ -48,6 +51,9 @@ impl std::fmt::Display for AuditAction {
             AuditAction::ApprovalResolve => "approval_resolve",
             AuditAction::ExecutionCancel => "execution_cancel",
             AuditAction::AuthFailed => "auth_failed",
+            AuditAction::AgentRegister => "agent_register",
+            AuditAction::AgentRevoke => "agent_revoke",
+            AuditAction::AgentAuthFailed => "agent_auth_failed",
         };
         write!(f, "{}", s)
     }
@@ -67,6 +73,9 @@ impl std::str::FromStr for AuditAction {
             "approval_resolve" => Ok(AuditAction::ApprovalResolve),
             "execution_cancel" => Ok(AuditAction::ExecutionCancel),
             "auth_failed" => Ok(AuditAction::AuthFailed),
+            "agent_register" => Ok(AuditAction::AgentRegister),
+            "agent_revoke" => Ok(AuditAction::AgentRevoke),
+            "agent_auth_failed" => Ok(AuditAction::AgentAuthFailed),
             _ => Err(format!("invalid audit action: {}", s)),
         }
     }

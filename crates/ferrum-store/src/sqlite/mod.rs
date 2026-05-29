@@ -1,3 +1,4 @@
+mod agents;
 mod approvals;
 mod audit_log;
 mod capabilities;
@@ -16,6 +17,7 @@ mod sync_preflight;
 pub mod tokens;
 pub mod write_queue;
 
+pub use agents::SqliteAgentRepo;
 pub use approvals::SqliteApprovalRepo;
 pub use audit_log::SqliteAuditLogRepo;
 pub use capabilities::SqliteCapabilityRepo;
@@ -33,7 +35,7 @@ pub use tokens::SqliteTokenRepo;
 
 use crate::Result;
 use crate::repos::{
-    ApprovalRepo, AuditLogRepo, CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo,
+    AgentRepo, ApprovalRepo, AuditLogRepo, CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo,
     PolicyBundleRepo, ProposalRepo, ProvenanceRepo, RollbackRepo, StoreFacade, TokenRepo,
 };
 use crate::sqlite::write_queue::{WriteQueue, WriterState, spawn_writer_task};
@@ -332,6 +334,10 @@ impl SqliteStore {
         SqliteAuditLogRepo::new(self.pool.clone())
     }
 
+    pub fn agents(&self) -> SqliteAgentRepo {
+        SqliteAgentRepo::new(self.pool.clone())
+    }
+
     /// Verify the local ledger chain integrity.
     ///
     /// Delegates to `SqliteLedgerRepo::verify_chain()` which validates:
@@ -417,6 +423,10 @@ impl StoreFacade for SqliteStore {
 
     fn audit_log(&self) -> Arc<dyn AuditLogRepo> {
         Arc::new(SqliteAuditLogRepo::new(self.pool.clone()))
+    }
+
+    fn agents(&self) -> Arc<dyn AgentRepo> {
+        Arc::new(SqliteAgentRepo::new(self.pool.clone()))
     }
 
     fn write_queue_depth(&self) -> usize {
@@ -1094,5 +1104,45 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(version, super::migrations::CURRENT_SCHEMA_VERSION);
+    }
+
+    #[tokio::test]
+    async fn test_agent_registry_crud() {
+        use ferrum_proto::AgentRecord;
+
+        let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+
+        let agent = AgentRecord {
+            agent_id: "agent_test_1".to_string(),
+            public_key: "c29tZV9rZXk=".to_string(),
+            key_fingerprint: "fp1".to_string(),
+            allowed_scopes: vec!["intent:submit".to_string(), "execution:execute".to_string()],
+            created_at: chrono::Utc::now(),
+            revoked_at: None,
+            description: Some("test agent".to_string()),
+        };
+
+        store.agents().insert(&agent).await.unwrap();
+
+        let retrieved = store.agents().get("agent_test_1").await.unwrap();
+        assert!(retrieved.is_some());
+        let retrieved = retrieved.unwrap();
+        assert_eq!(retrieved.agent_id, "agent_test_1");
+        assert_eq!(retrieved.public_key, "c29tZV9rZXk=");
+        assert_eq!(retrieved.allowed_scopes.len(), 2);
+
+        let by_fp = store.agents().get_by_fingerprint("fp1").await.unwrap();
+        assert!(by_fp.is_some());
+
+        let (list, cursor) = store.agents().list(false, 10, None).await.unwrap();
+        assert_eq!(list.len(), 1);
+        assert!(cursor.is_none());
+
+        let revoked = store.agents().revoke("agent_test_1").await.unwrap();
+        assert!(revoked);
+
+        let retrieved = store.agents().get("agent_test_1").await.unwrap().unwrap();
+        assert!(retrieved.revoked_at.is_some());
     }
 }

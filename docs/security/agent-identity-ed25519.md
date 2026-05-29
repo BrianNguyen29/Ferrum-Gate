@@ -123,10 +123,10 @@ The same `required_scope_for_path()` logic applies regardless of auth mode. The 
 
 ## 8. Phase 4.6+ Implementation Plan
 
-1. **4.6** — Add `agent_registry` table/schema, `AgentRegistry` trait in `ferrum-store`, in-memory nonce cache, and signature verification middleware.
-2. **4.6** — Wire `AuthMode::Agent` (or extend `AuthMode::Scoped` to accept Ed25519 envelopes) into `auth_middleware`.
-3. **4.7** — Implement `ferrumctl agent register`, `ferrumctl agent revoke`, `ferrumctl agent list`.
-4. **4.7** — Add integration tests: signature validation, replay rejection, scope enforcement, revocation immediacy, audit entry emission.
+1. **4.6** — Add `agent_registry` table/schema, `AgentRegistry` trait in `ferrum-store`, in-memory nonce cache, and signature verification middleware. ✅ **COMPLETE**
+2. **4.6** — Wire `AuthMode::Agent` into `auth_middleware`. ✅ **COMPLETE**
+3. **4.7** — Implement `ferrumctl agent register`, `ferrumctl agent revoke`, `ferrumctl agent list`. **PENDING**
+4. **4.7** — Add integration tests: signature validation, replay rejection, scope enforcement, revocation immediacy, audit entry emission. ✅ **COMPLETE** (tests added in Phase 4.6)
 5. **Later** — Shared nonce cache for multi-node, agent metrics (`ferrumgate_agent_auth_total`), rate-limit per agent_id.
 
 ## 9. Audit Events

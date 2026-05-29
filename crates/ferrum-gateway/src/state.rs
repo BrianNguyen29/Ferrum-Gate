@@ -362,6 +362,9 @@ pub struct ServerConfig {
     pub pg_idle_in_transaction_timeout_ms: u64,
     /// OIDC configuration. Required when `auth_mode` is `Oidc`.
     pub oidc_config: Option<OidcConfig>,
+    /// Clock skew tolerance for Agent auth timestamps in seconds.
+    /// Conservative default: 30.
+    pub agent_clock_skew_secs: i64,
 }
 
 impl Default for ServerConfig {
@@ -385,6 +388,7 @@ impl Default for ServerConfig {
             pg_statement_timeout_ms: 5000,
             pg_idle_in_transaction_timeout_ms: 10000,
             oidc_config: None,
+            agent_clock_skew_secs: 30,
         }
     }
 }
@@ -472,6 +476,11 @@ impl ServerConfig {
         }
         if self.pg_acquire_timeout_secs == 0 {
             return Err("pg_acquire_timeout_secs must be at least 1".to_string());
+        }
+
+        // Validate agent clock skew
+        if self.auth_mode == AuthMode::Agent && self.agent_clock_skew_secs <= 0 {
+            return Err("agent_clock_skew_secs must be positive".to_string());
         }
 
         Ok(())

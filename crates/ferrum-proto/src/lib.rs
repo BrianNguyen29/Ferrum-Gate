@@ -1,3 +1,4 @@
+pub mod agent;
 pub mod api;
 pub mod approval;
 pub mod audit_log;
@@ -11,6 +12,7 @@ pub mod provenance;
 pub mod rollback;
 pub mod token;
 
+pub use agent::*;
 pub use api::*;
 pub use approval::*;
 pub use audit_log::*;

@@ -547,6 +547,7 @@ fn resolve_config(args: &Args) -> Result<ServerConfig> {
         pg_statement_timeout_ms,
         pg_idle_in_transaction_timeout_ms,
         oidc_config,
+        agent_clock_skew_secs: 30,
     };
 
     // Validate configuration
