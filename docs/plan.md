@@ -339,7 +339,8 @@ Thứ tự này giúp FerrumGate:
 ### Phase 7: Operator evidence UX
 **Mục tiêu:** Nâng cao trải nghiệm operator qua CLI/TUI.
 
-- [ ] **7.1** Implement `ferrumctl evidence snapshot`. (Owner: Dev / Type: Build)
+- [x] **7.1** Implement `ferrumctl evidence snapshot`. (Owner: Dev / Type: Build)
+  - Evidence: `bins/ferrumctl/src/main.rs` `EvidenceCommand::Snapshot`, `run_evidence_snapshot`, CLI parse tests, non-claims field tests.
 - [ ] **7.2** Implement `ferrumctl evidence slo-window start/status/finalize`. (Owner: Dev / Type: Build)
 - [ ] **7.3** Implement `ferrumctl readiness report`. (Owner: Dev / Type: Build)
 - [ ] **7.4** Cập nhật TUI hiển thị: current tier, non-claims, SLO window state, pending approvals, last audit verify, readiness blockers. (Owner: Dev / Type: Build)

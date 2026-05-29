@@ -183,6 +183,11 @@ enum Command {
         #[command(subcommand)]
         sub: AdminCommand,
     },
+    /// Evidence snapshot and reporting commands.
+    Evidence {
+        #[command(subcommand)]
+        sub: EvidenceCommand,
+    },
     Health,
     ValidateRepo,
     ShowContracts,
@@ -878,6 +883,17 @@ enum AdminAuditCommand {
     },
 }
 
+/// Evidence subcommands under `evidence`.
+#[derive(Debug, Subcommand)]
+enum EvidenceCommand {
+    /// Capture a point-in-time evidence snapshot as a local JSON file.
+    Snapshot {
+        /// Directory to write the snapshot file. Defaults to the current directory.
+        #[arg(long, value_name = "DIR")]
+        output_dir: Option<PathBuf>,
+    },
+}
+
 #[derive(Debug, Subcommand)]
 enum ServerCommand {
     /// Check server health.
@@ -1235,6 +1251,201 @@ fn run_admin_config(server_url: &str, bearer_token: Option<&str>) -> Result<()> 
         },
     );
     println!("{}", serde_json::to_string_pretty(&map)?);
+    Ok(())
+}
+
+/// Generate a filesystem-safe timestamped snapshot filename.
+fn evidence_snapshot_filename(ts: &chrono::DateTime<chrono::Utc>) -> String {
+    format!("evidence-snapshot-{}.json", ts.format("%Y-%m-%dT%H-%M-%SZ"))
+}
+
+/// Capture a point-in-time evidence snapshot by aggregating existing client APIs.
+/// Individual probe failures are captured as errors in their respective sections
+/// rather than failing the whole snapshot.
+async fn run_evidence_snapshot(client: client::Client, output_dir: Option<PathBuf>) -> Result<()> {
+    let mut snapshot = serde_json::Map::new();
+    let ts = chrono::Utc::now();
+    snapshot.insert(
+        "snapshot_timestamp".to_string(),
+        serde_json::Value::String(ts.to_rfc3339()),
+    );
+    snapshot.insert(
+        "tool".to_string(),
+        serde_json::Value::String("ferrumctl evidence snapshot".to_string()),
+    );
+    snapshot.insert(
+        "non_claims_reference".to_string(),
+        serde_json::Value::String("docs/security/non-claims.md".to_string()),
+    );
+    snapshot.insert(
+        "non_claims_notice".to_string(),
+        serde_json::Value::String(
+            "This snapshot is a point-in-time operational view. It is not production-ready, Tier 2, GA, compliance, or SLO proof.".to_string(),
+        ),
+    );
+
+    // Health
+    match client.health().await {
+        Ok(h) => {
+            snapshot.insert(
+                "health".to_string(),
+                serde_json::json!({"status": h.status}),
+            );
+        }
+        Err(e) => {
+            snapshot.insert(
+                "health".to_string(),
+                serde_json::json!({"error": e.to_string()}),
+            );
+        }
+    }
+
+    // Deep readiness
+    match client.readiness_deep_json().await {
+        Ok(r) => {
+            snapshot.insert("readiness_deep".to_string(), r);
+        }
+        Err(e) => {
+            snapshot.insert(
+                "readiness_deep".to_string(),
+                serde_json::json!({"error": e.to_string()}),
+            );
+        }
+    }
+
+    // Audit chain verification
+    match client.verify_audit_chain().await {
+        Ok(v) => {
+            snapshot.insert(
+                "audit_chain".to_string(),
+                serde_json::json!({
+                    "valid": v.valid,
+                    "total_entries": v.total_entries,
+                    "hashed_entries": v.hashed_entries,
+                    "error": v.error,
+                }),
+            );
+        }
+        Err(e) => {
+            snapshot.insert(
+                "audit_chain".to_string(),
+                serde_json::json!({"error": e.to_string()}),
+            );
+        }
+    }
+
+    // Merkle roots summary
+    match client.list_audit_merkle_roots(None, 50).await {
+        Ok(list) => {
+            snapshot.insert(
+                "merkle_roots_summary".to_string(),
+                serde_json::json!({"total": list.total}),
+            );
+        }
+        Err(e) => {
+            snapshot.insert(
+                "merkle_roots_summary".to_string(),
+                serde_json::json!({"error": e.to_string()}),
+            );
+        }
+    }
+
+    // Checkpoints summary
+    match client.list_checkpoints(None, 50).await {
+        Ok(list) => {
+            snapshot.insert(
+                "checkpoints_summary".to_string(),
+                serde_json::json!({"total": list.total}),
+            );
+        }
+        Err(e) => {
+            snapshot.insert(
+                "checkpoints_summary".to_string(),
+                serde_json::json!({"error": e.to_string()}),
+            );
+        }
+    }
+
+    // Pending approvals count
+    match client.list_approvals().await {
+        Ok(approvals) => {
+            let pending = approvals.iter().filter(|a| a.state == "pending").count();
+            snapshot.insert(
+                "pending_approvals".to_string(),
+                serde_json::json!({"count": pending}),
+            );
+        }
+        Err(e) => {
+            snapshot.insert(
+                "pending_approvals".to_string(),
+                serde_json::json!({"error": e.to_string()}),
+            );
+        }
+    }
+
+    // Policy bundle summary
+    match client.list_policy_bundles().await {
+        Ok(list) => {
+            let active_count = list.bundles.iter().filter(|b| b.active).count();
+            snapshot.insert(
+                "policy_bundle_summary".to_string(),
+                serde_json::json!({
+                    "total": list.total,
+                    "active_count": active_count,
+                }),
+            );
+        }
+        Err(e) => {
+            snapshot.insert(
+                "policy_bundle_summary".to_string(),
+                serde_json::json!({"error": e.to_string()}),
+            );
+        }
+    }
+
+    // Intents summary
+    match client.list_intents(None, &[], None, 50).await {
+        Ok(items) => {
+            snapshot.insert(
+                "intents_summary".to_string(),
+                serde_json::json!({"returned_count": items.len()}),
+            );
+        }
+        Err(e) => {
+            snapshot.insert(
+                "intents_summary".to_string(),
+                serde_json::json!({"error": e.to_string()}),
+            );
+        }
+    }
+
+    // Metrics summary
+    match client.metrics().await {
+        Ok(text) => {
+            let lines = text.lines().count();
+            snapshot.insert(
+                "metrics_summary".to_string(),
+                serde_json::json!({
+                    "available": true,
+                    "line_count": lines,
+                }),
+            );
+        }
+        Err(e) => {
+            snapshot.insert(
+                "metrics_summary".to_string(),
+                serde_json::json!({"error": e.to_string()}),
+            );
+        }
+    }
+
+    let output_dir = output_dir.unwrap_or_else(|| PathBuf::from("."));
+    std::fs::create_dir_all(&output_dir)?;
+    let filename = evidence_snapshot_filename(&ts);
+    let path = output_dir.join(&filename);
+    let json = serde_json::to_string_pretty(&snapshot)?;
+    std::fs::write(&path, json)?;
+    println!("{}", path.display());
     Ok(())
 }
 
@@ -2258,6 +2469,14 @@ async fn main() -> Result<()> {
                 },
                 AdminCommand::Config => {
                     run_admin_config(&server_url, bearer_token.as_deref())?;
+                }
+            }
+        }
+        Command::Evidence { sub } => {
+            let client = client::Client::new(server_url, bearer_token)?;
+            match sub {
+                EvidenceCommand::Snapshot { output_dir } => {
+                    run_evidence_snapshot(client, output_dir).await?;
                 }
             }
         }
@@ -3731,5 +3950,142 @@ rules: []
             },
             _ => panic!("expected Audit command"),
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Evidence snapshot CLI parsing tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_evidence_snapshot_parses() {
+        let cli = Cli::parse_from(["ferrumctl", "evidence", "snapshot"]);
+        let Command::Evidence { sub } = cli.command else {
+            panic!("expected Evidence command");
+        };
+        match sub {
+            EvidenceCommand::Snapshot { output_dir } => {
+                assert!(output_dir.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn test_evidence_snapshot_output_dir_parses() {
+        let cli = Cli::parse_from([
+            "ferrumctl",
+            "evidence",
+            "snapshot",
+            "--output-dir",
+            "/tmp/evidence",
+        ]);
+        let Command::Evidence { sub } = cli.command else {
+            panic!("expected Evidence command");
+        };
+        match sub {
+            EvidenceCommand::Snapshot { output_dir } => {
+                assert_eq!(output_dir, Some(PathBuf::from("/tmp/evidence")));
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Evidence snapshot content / non-claims tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_evidence_snapshot_contains_non_claims_fields() {
+        let mut snapshot = serde_json::Map::new();
+        snapshot.insert(
+            "snapshot_timestamp".to_string(),
+            serde_json::Value::String("2026-05-29T12:00:00Z".to_string()),
+        );
+        snapshot.insert(
+            "tool".to_string(),
+            serde_json::Value::String("ferrumctl evidence snapshot".to_string()),
+        );
+        snapshot.insert(
+            "non_claims_reference".to_string(),
+            serde_json::Value::String("docs/security/non-claims.md".to_string()),
+        );
+        snapshot.insert(
+            "non_claims_notice".to_string(),
+            serde_json::Value::String(
+                "This snapshot is a point-in-time operational view. It is not production-ready, Tier 2, GA, compliance, or SLO proof."
+                    .to_string(),
+            ),
+        );
+        snapshot.insert("health".to_string(), serde_json::json!({"status": "ok"}));
+
+        let json_str = serde_json::to_string_pretty(&snapshot).unwrap();
+        assert!(json_str.contains("snapshot_timestamp"));
+        assert!(json_str.contains("ferrumctl evidence snapshot"));
+        assert!(json_str.contains("docs/security/non-claims.md"));
+        assert!(json_str.contains("not production-ready"));
+    }
+
+    #[test]
+    fn test_evidence_snapshot_no_unqualified_overclaims() {
+        let mut snapshot = serde_json::Map::new();
+        snapshot.insert(
+            "snapshot_timestamp".to_string(),
+            serde_json::Value::String("2026-05-29T12:00:00Z".to_string()),
+        );
+        snapshot.insert(
+            "tool".to_string(),
+            serde_json::Value::String("ferrumctl evidence snapshot".to_string()),
+        );
+        snapshot.insert(
+            "non_claims_reference".to_string(),
+            serde_json::Value::String("docs/security/non-claims.md".to_string()),
+        );
+        snapshot.insert(
+            "non_claims_notice".to_string(),
+            serde_json::Value::String(
+                "This snapshot is a point-in-time operational view. It is not production-ready, Tier 2, GA, compliance, or SLO proof."
+                    .to_string(),
+            ),
+        );
+        snapshot.insert("health".to_string(), serde_json::json!({"status": "ok"}));
+
+        let json_str = serde_json::to_string_pretty(&snapshot).unwrap();
+        // Ensure there are no standalone affirmative claims that would violate non-claims.
+        let forbidden = [
+            "\"production_ready\": true",
+            "\"tier_2\": true",
+            "\"tier2\": true",
+            "\"ga\": true",
+            "\"enterprise_ready\": true",
+            "\"compliance\": true",
+            "\"slo_proof\": true",
+        ];
+        for term in &forbidden {
+            assert!(
+                !json_str.to_lowercase().contains(&term.to_lowercase()),
+                "snapshot must not contain unqualified overclaim: {}",
+                term
+            );
+        }
+    }
+
+    #[test]
+    fn test_evidence_snapshot_filename_format() {
+        let ts = chrono::NaiveDate::from_ymd_opt(2026, 5, 29)
+            .unwrap()
+            .and_hms_opt(14, 30, 0)
+            .unwrap()
+            .and_utc();
+        let filename = evidence_snapshot_filename(&ts);
+        assert_eq!(filename, "evidence-snapshot-2026-05-29T14-30-00Z.json");
+    }
+
+    #[test]
+    fn test_evidence_snapshot_filename_is_filesystem_safe() {
+        let ts = chrono::Utc::now();
+        let filename = evidence_snapshot_filename(&ts);
+        // Must not contain characters illegal on common filesystems
+        assert!(!filename.contains('/'));
+        assert!(!filename.contains('\\'));
+        assert!(!filename.contains(':'));
+        assert!(filename.ends_with(".json"));
     }
 }
