@@ -154,7 +154,7 @@ FerrumGate nên chơi sâu ở layer giữa.
 | mTLS service-to-service design | P2 | Document | `DESIGN COMPLETE` | `docs/security/mtls-service-mesh.md` |
 | mTLS service-to-service native impl | P2 | Build | `DEFERRED` | Deferred until multi-node cross-host topology |
 | OWASP Agentic AI Top 10 mapping | P2 | Document | `TODO/VERIFY` | `docs/security/owasp-agentic-ai-mapping.md` |
-| Operator evidence UX | P2 | Build | `TODO/VERIFY` | `docs/operator/evidence-ux.md` + CLI/TUI |
+| Operator evidence UX | P2 | Build | `PHASE 7 COMPLETE` | [`docs/operator/evidence-ux.md`](./operator/evidence-ux.md) + CLI/TUI |
 | Web dashboard | Later | Defer | `DEFERRED` | Không có target doc cho đến khi single-tenant ổn định |
 | Tunnel service | Never / Avoid | Do not build | `AVOID` | Không build |
 | AGT-like SDK ecosystem | Avoid | Do not build | `AVOID` | Không build |
@@ -347,7 +347,8 @@ Thứ tự này giúp FerrumGate:
   - Evidence: `bins/ferrumctl/src/main.rs` `ReadinessCommand::Report`, `build_readiness_report`, `run_readiness_report`, CLI parse tests, report serialization/roundtrip, non-claims, offline mode, snapshot lookup, overall assessment hardcoded non-claims.
 - [x] **7.4** Cập nhật TUI hiển thị: current tier, non-claims, SLO window state, pending approvals, last audit verify, readiness blockers. (Owner: Dev / Type: Build)
   - Evidence: `bins/ferrum-tui/src/client.rs` `verify_audit_chain`, `bins/ferrum-tui/src/main.rs` local evidence readers + CLI args, `bins/ferrum-tui/src/app.rs` Overview enrichment + Readiness card, tests.
-- [ ] **7.5** Viết `docs/operator/evidence-ux.md`. (Owner: Dev / Type: Document)
+- [x] **7.5** Viết `docs/operator/evidence-ux.md`. (Owner: Dev / Type: Document)
+  - Evidence: [`docs/operator/evidence-ux.md`](./operator/evidence-ux.md)
 
 **Handoff / Execution order:** Prioritize 7.1–7.3 (CLI/data commands) before 7.4 (TUI). The TUI should render state produced by existing commands, not invent its own data path. 7.5 documentation can accompany and close Phase 7.
 
