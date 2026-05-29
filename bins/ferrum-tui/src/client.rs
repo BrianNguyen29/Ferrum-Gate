@@ -31,6 +31,15 @@ pub struct ListApprovalsResponse {
     pub next_cursor: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
+pub struct AuditVerifyResult {
+    pub valid: bool,
+    pub total_entries: usize,
+    pub hashed_entries: usize,
+    pub error: Option<String>,
+}
+
 pub struct Client {
     base_url: String,
     bearer_token: Option<String>,
@@ -91,5 +100,12 @@ impl Client {
         let resp = self.add_auth(self.http.get(&url)).send().await?;
         resp.error_for_status_ref()?;
         Ok(resp.text().await?)
+    }
+
+    pub async fn verify_audit_chain(&self) -> Result<AuditVerifyResult> {
+        let url = format!("{}/v1/admin/audit/verify", self.base_url);
+        let resp = self.add_auth(self.http.get(&url)).send().await?;
+        resp.error_for_status_ref()?;
+        Ok(resp.json().await?)
     }
 }

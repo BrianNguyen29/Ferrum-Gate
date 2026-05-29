@@ -6,7 +6,7 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, Tabs, Wrap},
 };
 
-use crate::client::ApprovalRequest;
+use crate::client::{ApprovalRequest, AuditVerifyResult};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
@@ -88,6 +88,30 @@ pub enum MetricsView {
     Skipped,
 }
 
+#[derive(Debug, Clone)]
+pub enum SloWindowView {
+    Missing,
+    Loaded(SloWindowState),
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct SloWindowState {
+    pub window_id: String,
+    pub status: String,
+    pub elapsed_seconds: u64,
+    pub target_days: u32,
+    pub minimum_days: u32,
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub enum AuditVerifyView {
+    Loading,
+    Verified(AuditVerifyResult),
+    Error(String),
+}
+
 pub struct App {
     pub base_url: String,
     pub token_present: bool,
@@ -102,6 +126,12 @@ pub struct App {
     pub current_tab: Tab,
     pub metrics: MetricsView,
     pub error_count: usize,
+    pub slo_window: SloWindowView,
+    pub audit_verify: AuditVerifyView,
+    pub latest_snapshot_path: Option<std::path::PathBuf>,
+    pub latest_snapshot_timestamp: Option<String>,
+    pub local_evidence_error: Option<String>,
+    pub blockers: Vec<String>,
 }
 
 impl App {
@@ -141,6 +171,12 @@ impl App {
             current_tab: Tab::Overview,
             metrics: MetricsView::Loading,
             error_count: 0,
+            slo_window: SloWindowView::Missing,
+            audit_verify: AuditVerifyView::Loading,
+            latest_snapshot_path: None,
+            latest_snapshot_timestamp: None,
+            local_evidence_error: None,
+            blockers: Vec::new(),
         }
     }
 
@@ -168,15 +204,40 @@ impl App {
         }
     }
 
-    pub fn compute_error_count(&mut self) {
-        let probe_errors = self
-            .probes
-            .iter()
-            .filter(|p| matches!(p.status, ProbeStatus::Err(_)))
-            .count();
-        let approval_error = matches!(self.approvals, ApprovalsView::Error(_)) as usize;
-        let metrics_error = matches!(self.metrics, MetricsView::Error(_)) as usize;
-        self.error_count = probe_errors + approval_error + metrics_error;
+    pub fn compute_readiness_state(&mut self) {
+        let mut errors = 0;
+        let mut blockers = Vec::new();
+
+        for p in &self.probes {
+            if let ProbeStatus::Err(ref e) = p.status {
+                errors += 1;
+                blockers.push(format!("Probe {}: {}", p.name, e));
+            }
+        }
+        if let ApprovalsView::Error(ref e) = self.approvals {
+            errors += 1;
+            blockers.push(format!("Approvals: {}", e));
+        }
+        if let MetricsView::Error(ref e) = self.metrics {
+            errors += 1;
+            blockers.push(format!("Metrics: {}", e));
+        }
+        if let AuditVerifyView::Error(ref e) = self.audit_verify {
+            errors += 1;
+            let msg = if e.contains("401") || e.to_lowercase().contains("unauthorized") {
+                "Audit verify: unauthorized".to_string()
+            } else {
+                format!("Audit verify: {}", e)
+            };
+            blockers.push(msg);
+        }
+        if let Some(ref e) = self.local_evidence_error {
+            errors += 1;
+            blockers.push(format!("Local evidence: {}", e));
+        }
+
+        self.error_count = errors;
+        self.blockers = blockers;
     }
 }
 
@@ -272,8 +333,6 @@ fn draw_summary_cards(f: &mut Frame, app: &App, area: Rect) {
     let total_appr = app.total_approvals();
     let errors = app.error_count;
 
-    let last_refresh = app.last_refresh.as_deref().unwrap_or("—");
-
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
@@ -340,18 +399,34 @@ fn draw_summary_cards(f: &mut Frame, app: &App, area: Rect) {
     .alignment(Alignment::Center);
     f.render_widget(error_text, chunks[2]);
 
-    // Last refresh card
-    let refresh_block = Block::default()
-        .title(" Refreshed ")
+    // Readiness card
+    let readiness_label = if app.dry_run {
+        "DRY-RUN"
+    } else if app.error_count > 0 {
+        "BLOCKED"
+    } else {
+        "RC-READY"
+    };
+    let readiness_color = if app.dry_run {
+        Color::Cyan
+    } else if app.error_count > 0 {
+        Color::Red
+    } else {
+        Color::Yellow
+    };
+    let readiness_block = Block::default()
+        .title(" Readiness ")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Blue));
-    let refresh_text = Paragraph::new(Span::styled(
-        last_refresh,
-        Style::default().fg(Color::White),
+        .border_style(Style::default().fg(readiness_color));
+    let readiness_text = Paragraph::new(Span::styled(
+        readiness_label,
+        Style::default()
+            .fg(readiness_color)
+            .add_modifier(Modifier::BOLD),
     ))
-    .block(refresh_block)
+    .block(readiness_block)
     .alignment(Alignment::Center);
-    f.render_widget(refresh_text, chunks[3]);
+    f.render_widget(readiness_text, chunks[3]);
 }
 
 fn draw_tab_bar(f: &mut Frame, app: &App, area: Rect) {
@@ -390,6 +465,122 @@ fn draw_content(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_overview(f: &mut Frame, app: &App, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+        .split(area);
+
+    draw_readiness_summary(f, app, chunks[0]);
+    draw_endpoint_status(f, app, chunks[1]);
+}
+
+fn draw_readiness_summary(f: &mut Frame, app: &App, area: Rect) {
+    let block = Block::default()
+        .title(" Readiness Summary ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Blue));
+
+    let slo_line = match &app.slo_window {
+        SloWindowView::Missing => Line::from("SLO window: No active window"),
+        SloWindowView::Loaded(s) => {
+            let elapsed_days = s.elapsed_seconds / 86400;
+            Line::from(format!(
+                "SLO window: {} | {} | {} days elapsed (target {} days)",
+                s.window_id, s.status, elapsed_days, s.target_days
+            ))
+        }
+    };
+
+    let audit_line = match &app.audit_verify {
+        AuditVerifyView::Loading => Line::from("Last audit verify: Loading…"),
+        AuditVerifyView::Verified(r) => {
+            let label = if r.valid { "valid" } else { "invalid" };
+            let color = if r.valid { Color::Green } else { Color::Red };
+            Line::from(vec![
+                Span::raw("Last audit verify: "),
+                Span::styled(
+                    label,
+                    Style::default().fg(color).add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(format!(
+                    " ({} hashed / {} total)",
+                    r.hashed_entries, r.total_entries
+                )),
+            ])
+        }
+        AuditVerifyView::Error(e) => {
+            let (label, color) = if e.contains("401") || e.to_lowercase().contains("unauthorized") {
+                ("unauthorized", Color::Yellow)
+            } else {
+                ("error", Color::Red)
+            };
+            Line::from(vec![
+                Span::raw("Last audit verify: "),
+                Span::styled(
+                    label,
+                    Style::default().fg(color).add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(format!(" ({})", e)),
+            ])
+        }
+    };
+
+    let snapshot_line = match (&app.latest_snapshot_path, &app.latest_snapshot_timestamp) {
+        (Some(path), Some(ts)) => Line::from(format!(
+            "Latest snapshot: {} ({})",
+            ts,
+            path.file_name()
+                .map(|n| n.to_string_lossy())
+                .unwrap_or_default()
+        )),
+        _ => Line::from("Latest snapshot: none found"),
+    };
+
+    let mut lines: Vec<Line> = vec![
+        Line::from(vec![Span::styled(
+            "Non-claims:",
+            Style::default()
+                .add_modifier(Modifier::BOLD)
+                .fg(Color::Cyan),
+        )]),
+        Line::from("  production-ready = NO"),
+        Line::from("  Tier 2 = NOT COMPLETE"),
+        Line::from("  sustained SLO = NOT COMPLETE"),
+        Line::from("  HA-4 = NOT COMPLETE"),
+        Line::from(""),
+        slo_line,
+        audit_line,
+        snapshot_line,
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            "Readiness blockers:",
+            Style::default()
+                .add_modifier(Modifier::BOLD)
+                .fg(Color::Cyan),
+        )]),
+    ];
+
+    if app.blockers.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  No operational blockers detected.",
+            Style::default().fg(Color::Green),
+        )));
+    } else {
+        for b in &app.blockers {
+            lines.push(Line::from(Span::styled(
+                format!("  • {}", b),
+                Style::default().fg(Color::Red),
+            )));
+        }
+    }
+
+    let paragraph = Paragraph::new(Text::from(lines))
+        .block(block)
+        .wrap(Wrap { trim: true });
+    f.render_widget(paragraph, area);
+}
+
+fn draw_endpoint_status(f: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
         .title(" Endpoint Status ")
         .borders(Borders::ALL)
@@ -687,6 +878,8 @@ fn draw_help_page(f: &mut Frame, _app: &App, area: Rect) {
         Line::from("  FERRUM_TUI_BEARER_TOKEN  Token fallback"),
         Line::from("  FERRUMCTL_SERVER_URL     Alternate base URL fallback"),
         Line::from("  FERRUMCTL_BEARER_TOKEN   Alternate token fallback"),
+        Line::from("  FERRUM_TUI_WINDOW_DIR    Directory for slo-window-state.json"),
+        Line::from("  FERRUM_TUI_EVIDENCE_DIR  Directory for evidence-snapshot-*.json"),
         Line::from(""),
         Line::from(vec![Span::styled(
             "Non-claims",
@@ -694,8 +887,11 @@ fn draw_help_page(f: &mut Frame, _app: &App, area: Rect) {
                 .add_modifier(Modifier::BOLD)
                 .fg(Color::Cyan),
         )]),
-        Line::from("  Operator convenience only; not production-ready."),
-        Line::from("  No mutation operations in this MVP."),
+        Line::from("  production-ready = NO"),
+        Line::from("  Tier 2 = NOT COMPLETE"),
+        Line::from("  sustained SLO = NOT COMPLETE"),
+        Line::from("  HA-4 = NOT COMPLETE"),
+        Line::from("  Operator convenience only; no mutation operations in this MVP."),
         Line::from("  Token values are redacted in the UI."),
     ]);
 
@@ -781,8 +977,11 @@ fn draw_help_overlay(f: &mut Frame, _app: &App) {
                 .add_modifier(Modifier::BOLD)
                 .fg(Color::Cyan),
         )]),
+        Line::from("  production-ready = NO"),
+        Line::from("  Tier 2 = NOT COMPLETE"),
+        Line::from("  sustained SLO = NOT COMPLETE"),
+        Line::from("  HA-4 = NOT COMPLETE"),
         Line::from("  Operator convenience only; not production-ready."),
-        Line::from("  No mutation operations in this MVP."),
     ]);
 
     let paragraph = Paragraph::new(text).block(block).wrap(Wrap { trim: true });
@@ -808,4 +1007,86 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
             Constraint::Percentage((100 - percent_x) / 2),
         ])
         .split(popup_layout[1])[1]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::{Terminal, backend::TestBackend};
+
+    #[test]
+    fn test_readiness_blocked_on_probe_error() {
+        let mut app = App::new("http://127.0.0.1:8080".to_string(), false, false, 5);
+        app.probes = vec![ProbeResult {
+            name: "Health".to_string(),
+            endpoint: "/v1/healthz".to_string(),
+            status: ProbeStatus::Err("fail".to_string()),
+            latency_ms: None,
+        }];
+        app.compute_readiness_state();
+        assert!(app.error_count > 0);
+        assert!(app.blockers.iter().any(|b| b.contains("Health")));
+    }
+
+    #[test]
+    fn test_readiness_rc_ready_when_healthy() {
+        let mut app = App::new("http://127.0.0.1:8080".to_string(), false, false, 5);
+        app.probes = vec![ProbeResult {
+            name: "Health".to_string(),
+            endpoint: "/v1/healthz".to_string(),
+            status: ProbeStatus::Ok("ok".to_string()),
+            latency_ms: None,
+        }];
+        app.compute_readiness_state();
+        assert_eq!(app.error_count, 0);
+        assert!(app.blockers.is_empty());
+    }
+
+    #[test]
+    fn test_dry_run_no_blockers() {
+        let mut app = App::new("http://127.0.0.1:8080".to_string(), false, true, 5);
+        app.compute_readiness_state();
+        assert_eq!(app.error_count, 0);
+    }
+
+    #[test]
+    fn test_blockers_include_audit_unauthorized() {
+        let mut app = App::new("http://127.0.0.1:8080".to_string(), false, false, 5);
+        app.audit_verify = AuditVerifyView::Error("401 Unauthorized".to_string());
+        app.compute_readiness_state();
+        assert_eq!(app.error_count, 1);
+        assert!(app.blockers.iter().any(|b| b.contains("unauthorized")));
+    }
+
+    #[test]
+    fn test_help_text_contains_non_claims() {
+        let backend = TestBackend::new(80, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let app = App::new("http://127.0.0.1:8080".to_string(), false, false, 5);
+        terminal
+            .draw(|f| draw_help_page(f, &app, f.area()))
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        let text: String = buf.content.iter().map(|c| c.symbol()).collect();
+        assert!(text.contains("production-ready = NO"));
+        assert!(text.contains("Tier 2 = NOT COMPLETE"));
+        assert!(text.contains("sustained SLO = NOT COMPLETE"));
+        assert!(text.contains("HA-4 = NOT COMPLETE"));
+    }
+
+    #[test]
+    fn test_readiness_summary_contains_non_claims() {
+        let backend = TestBackend::new(80, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let app = App::new("http://127.0.0.1:8080".to_string(), false, false, 5);
+        terminal
+            .draw(|f| draw_readiness_summary(f, &app, f.area()))
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        let text: String = buf.content.iter().map(|c| c.symbol()).collect();
+        assert!(text.contains("production-ready = NO"));
+        assert!(text.contains("Tier 2 = NOT COMPLETE"));
+        assert!(text.contains("sustained SLO = NOT COMPLETE"));
+        assert!(text.contains("HA-4 = NOT COMPLETE"));
+    }
 }

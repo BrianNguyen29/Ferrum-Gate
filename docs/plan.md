@@ -345,7 +345,8 @@ Thứ tự này giúp FerrumGate:
   - Evidence: `bins/ferrumctl/src/main.rs` `EvidenceCommand::SloWindow`, `SloWindowCommand`, `SloWindowState`, local JSON state-file lifecycle, CLI parse tests, state serialization/roundtrip, non-claims, missing state errors, early finalize gate, already-finalized idempotence.
 - [x] **7.3** Implement `ferrumctl readiness report`. (Owner: Dev / Type: Build)
   - Evidence: `bins/ferrumctl/src/main.rs` `ReadinessCommand::Report`, `build_readiness_report`, `run_readiness_report`, CLI parse tests, report serialization/roundtrip, non-claims, offline mode, snapshot lookup, overall assessment hardcoded non-claims.
-- [ ] **7.4** Cập nhật TUI hiển thị: current tier, non-claims, SLO window state, pending approvals, last audit verify, readiness blockers. (Owner: Dev / Type: Build)
+- [x] **7.4** Cập nhật TUI hiển thị: current tier, non-claims, SLO window state, pending approvals, last audit verify, readiness blockers. (Owner: Dev / Type: Build)
+  - Evidence: `bins/ferrum-tui/src/client.rs` `verify_audit_chain`, `bins/ferrum-tui/src/main.rs` local evidence readers + CLI args, `bins/ferrum-tui/src/app.rs` Overview enrichment + Readiness card, tests.
 - [ ] **7.5** Viết `docs/operator/evidence-ux.md`. (Owner: Dev / Type: Document)
 
 **Handoff / Execution order:** Prioritize 7.1–7.3 (CLI/data commands) before 7.4 (TUI). The TUI should render state produced by existing commands, not invent its own data path. 7.5 documentation can accompany and close Phase 7.
