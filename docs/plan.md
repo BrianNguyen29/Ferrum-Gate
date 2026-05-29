@@ -345,16 +345,22 @@ Thứ tự này giúp FerrumGate:
 - [ ] **7.4** Cập nhật TUI hiển thị: current tier, non-claims, SLO window state, pending approvals, last audit verify, readiness blockers. (Owner: Dev / Type: Build)
 - [ ] **7.5** Viết `docs/operator/evidence-ux.md`. (Owner: Dev / Type: Document)
 
-**Success criteria:** Operator chạy 1 lệnh là biết trạng thái sẵn sàng của hệ thống.  
+**Handoff / Execution order:** Prioritize 7.1–7.3 (CLI/data commands) before 7.4 (TUI). The TUI should render state produced by existing commands, not invent its own data path. 7.5 documentation can accompany and close Phase 7.
+
+**Success criteria:** Operator chạy 1 lệnh là biết trạng thái sẵn sàng của hệ thống.
 **Evidence artifact:** `docs/operator/evidence-ux.md`, CLI demo, TUI screenshots.
 
 ### Phase 8: Deferred / Explicit non-goals
 **Mục tiêu:** Ghi rõ những gì bị hoãn và tại sao.
 
-- [ ] **8.1** Tạo / cập nhật `docs/roadmap/deferred.md` ghi rõ: multi-tenant SaaS, web dashboard, unattended HA-4, WASM sandbox, full compliance automation, agent marketplace, DID/trust-score mesh. (Owner: Operator / Type: Document)
-- [ ] **8.2** Đảm bảo mỗi deferred item có lý do rõ ràng và điều kiện để reconsider. (Owner: Operator / Type: Document)
-- [ ] **8.3** Đánh dấu `Tunnel service = Do not build` trong tất cả tài liệu roadmap. (Owner: Operator / Type: Document)
-- [ ] **8.4** Đánh dấu `AGT-like SDK ecosystem = Do not build` trong tất cả tài liệu roadmap. (Owner: Operator / Type: Document)
+- [x] **8.1** Tạo / cập nhật `docs/roadmap/deferred.md` ghi rõ: multi-tenant SaaS, web dashboard, unattended HA-4, WASM sandbox, full compliance automation, agent marketplace, DID/trust-score mesh. (Owner: Operator / Type: Document)
+  - Evidence: [`docs/roadmap/deferred.md`](./roadmap/deferred.md) §3 Deferred Items Table
+- [x] **8.2** Đảm bảo mỗi deferred item có lý do rõ ràng và điều kiện để reconsider. (Owner: Operator / Type: Document)
+  - Evidence: [`docs/roadmap/deferred.md`](./roadmap/deferred.md) §3 (reason deferred + reconsideration condition per item)
+- [x] **8.3** Đánh dấu `Tunnel service = Do not build` trong tất cả tài liệu roadmap. (Owner: Operator / Type: Document)
+  - Evidence: [`docs/roadmap/deferred.md`](./roadmap/deferred.md) §4.1 Explicit Do-Not-Build — Tunnel Service
+- [x] **8.4** Đánh dấu `AGT-like SDK ecosystem = Do not build` trong tất cả tài liệu roadmap. (Owner: Operator / Type: Document)
+  - Evidence: [`docs/roadmap/deferred.md`](./roadmap/deferred.md) §4.2 Explicit Do-Not-Build — AGT-Like SDK Ecosystem
 
 **Success criteria:** Không có ambiguity về những gì đang bị hoãn; mọi stakeholder đều hiểu tại sao.  
 **Evidence artifact:** `docs/roadmap/deferred.md`, review log.
