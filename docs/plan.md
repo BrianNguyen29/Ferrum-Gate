@@ -343,7 +343,8 @@ Thứ tự này giúp FerrumGate:
   - Evidence: `bins/ferrumctl/src/main.rs` `EvidenceCommand::Snapshot`, `run_evidence_snapshot`, CLI parse tests, non-claims field tests.
 - [x] **7.2** Implement `ferrumctl evidence slo-window start/status/finalize`. (Owner: Dev / Type: Build)
   - Evidence: `bins/ferrumctl/src/main.rs` `EvidenceCommand::SloWindow`, `SloWindowCommand`, `SloWindowState`, local JSON state-file lifecycle, CLI parse tests, state serialization/roundtrip, non-claims, missing state errors, early finalize gate, already-finalized idempotence.
-- [ ] **7.3** Implement `ferrumctl readiness report`. (Owner: Dev / Type: Build)
+- [x] **7.3** Implement `ferrumctl readiness report`. (Owner: Dev / Type: Build)
+  - Evidence: `bins/ferrumctl/src/main.rs` `ReadinessCommand::Report`, `build_readiness_report`, `run_readiness_report`, CLI parse tests, report serialization/roundtrip, non-claims, offline mode, snapshot lookup, overall assessment hardcoded non-claims.
 - [ ] **7.4** Cập nhật TUI hiển thị: current tier, non-claims, SLO window state, pending approvals, last audit verify, readiness blockers. (Owner: Dev / Type: Build)
 - [ ] **7.5** Viết `docs/operator/evidence-ux.md`. (Owner: Dev / Type: Document)
 

@@ -188,6 +188,11 @@ enum Command {
         #[command(subcommand)]
         sub: EvidenceCommand,
     },
+    /// Readiness assessment and reporting commands.
+    Readiness {
+        #[command(subcommand)]
+        sub: ReadinessCommand,
+    },
     Health,
     ValidateRepo,
     ShowContracts,
@@ -936,6 +941,26 @@ enum SloWindowCommand {
     },
 }
 
+/// Readiness subcommands.
+#[derive(Debug, Subcommand)]
+enum ReadinessCommand {
+    /// Generate a read-only readiness report aggregating live probes and local state.
+    Report {
+        /// Optional evidence snapshot file path.
+        #[arg(long, value_name = "PATH")]
+        snapshot: Option<PathBuf>,
+        /// Optional SLO window state directory. Defaults to current directory.
+        #[arg(long, value_name = "DIR")]
+        window_dir: Option<PathBuf>,
+        /// Output JSON instead of text.
+        #[arg(long)]
+        json: bool,
+        /// Skip live server probes and use local state only.
+        #[arg(long)]
+        offline: bool,
+    },
+}
+
 /// Local state for an SLO evidence window.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 struct SloWindowState {
@@ -1114,6 +1139,259 @@ fn run_slo_window_finalize(
         state.elapsed_duration_seconds,
         state.elapsed_duration_seconds / 86400
     );
+    Ok(())
+}
+
+// -------------------------------------------------------------------------
+// Readiness report
+// -------------------------------------------------------------------------
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+struct OverallAssessment {
+    label: String,
+    production_ready: String,
+    tier_2: String,
+    ha4_automated_failover: String,
+    sustained_slo: String,
+    issues: Vec<String>,
+}
+
+impl Default for OverallAssessment {
+    fn default() -> Self {
+        Self {
+            label: "Cautious / Point-in-time only".to_string(),
+            production_ready: "NO".to_string(),
+            tier_2: "NOT COMPLETE".to_string(),
+            ha4_automated_failover: "NOT COMPLETE".to_string(),
+            sustained_slo: "NOT COMPLETE".to_string(),
+            issues: vec![
+                "production-ready = NO".to_string(),
+                "Tier 2 = NOT COMPLETE".to_string(),
+                "HA-4 automated failover = NOT COMPLETE".to_string(),
+                "Sustained SLO = NOT COMPLETE".to_string(),
+            ],
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+struct ReadinessReport {
+    report_timestamp: String,
+    tool: String,
+    offline_mode: bool,
+    non_claims_reference: String,
+    non_claims_notice: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    health: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    readiness: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    readiness_deep: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    functional_readiness: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metrics_summary: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    slo_window: Option<SloWindowState>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    evidence_snapshot: Option<serde_json::Value>,
+    overall: OverallAssessment,
+}
+
+fn find_latest_evidence_snapshot(dir: &std::path::Path) -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if name_str.starts_with("evidence-snapshot-") && name_str.ends_with(".json") {
+                candidates.push(entry.path());
+            }
+        }
+    }
+    candidates.sort();
+    candidates.last().cloned()
+}
+
+fn print_readiness_report(report: &ReadinessReport) {
+    println!("FerrumGate Readiness Report");
+    println!("===========================");
+    println!("report_timestamp: {}", report.report_timestamp);
+    println!("tool:             {}", report.tool);
+    println!("offline_mode:     {}", report.offline_mode);
+    println!();
+    println!("non_claims_reference: {}", report.non_claims_reference);
+    println!("non_claims_notice:    {}", report.non_claims_notice);
+    println!();
+    if let Some(ref h) = report.health {
+        println!("health:");
+        println!("{}", serde_json::to_string_pretty(h).unwrap_or_default());
+    }
+    if let Some(ref r) = report.readiness {
+        println!("readiness:");
+        println!("{}", serde_json::to_string_pretty(r).unwrap_or_default());
+    }
+    if let Some(ref r) = report.readiness_deep {
+        println!("readiness_deep:");
+        println!("{}", serde_json::to_string_pretty(r).unwrap_or_default());
+    }
+    if let Some(ref f) = report.functional_readiness {
+        println!("functional_readiness:");
+        println!("{}", serde_json::to_string_pretty(f).unwrap_or_default());
+    }
+    if let Some(ref m) = report.metrics_summary {
+        println!("metrics_summary:");
+        println!("{}", serde_json::to_string_pretty(m).unwrap_or_default());
+    }
+    if let Some(ref s) = report.slo_window {
+        println!("slo_window:");
+        println!("{}", serde_json::to_string_pretty(s).unwrap_or_default());
+    }
+    if let Some(ref e) = report.evidence_snapshot {
+        println!("evidence_snapshot:");
+        println!("{}", serde_json::to_string_pretty(e).unwrap_or_default());
+    }
+    println!();
+    println!("overall:");
+    println!("  label:                  {}", report.overall.label);
+    println!(
+        "  production_ready:       {}",
+        report.overall.production_ready
+    );
+    println!("  tier_2:                 {}", report.overall.tier_2);
+    println!(
+        "  ha4_automated_failover: {}",
+        report.overall.ha4_automated_failover
+    );
+    println!("  sustained_slo:          {}", report.overall.sustained_slo);
+    if !report.overall.issues.is_empty() {
+        println!("  issues:");
+        for issue in &report.overall.issues {
+            println!("    - {}", issue);
+        }
+    }
+}
+
+async fn build_readiness_report(
+    server_url: &str,
+    bearer_token: Option<&str>,
+    snapshot: Option<PathBuf>,
+    window_dir: Option<PathBuf>,
+    offline: bool,
+) -> Result<ReadinessReport> {
+    let mut report = ReadinessReport {
+        report_timestamp: chrono::Utc::now().to_rfc3339(),
+        tool: "ferrumctl readiness report".to_string(),
+        offline_mode: offline,
+        non_claims_reference: "docs/security/non-claims.md".to_string(),
+        non_claims_notice: "This report is a point-in-time operational view. It is not production-ready, Tier 2, GA, compliance, or SLO proof.".to_string(),
+        health: None,
+        readiness: None,
+        readiness_deep: None,
+        functional_readiness: None,
+        metrics_summary: None,
+        slo_window: None,
+        evidence_snapshot: None,
+        overall: OverallAssessment::default(),
+    };
+
+    // SLO window state
+    let window_path = slo_window_state_path(window_dir.clone());
+    if window_path.exists() {
+        match read_slo_window_state(&window_path) {
+            Ok(mut state) => {
+                state.recompute_elapsed();
+                report.slo_window = Some(state);
+            }
+            Err(e) => {
+                report
+                    .overall
+                    .issues
+                    .push(format!("slo_window read error: {}", e));
+            }
+        }
+    }
+
+    // Evidence snapshot
+    let snapshot_path = if let Some(ref path) = snapshot {
+        path.clone()
+    } else {
+        let dir = window_dir.unwrap_or_else(|| PathBuf::from("."));
+        find_latest_evidence_snapshot(&dir).unwrap_or_else(|| PathBuf::from("."))
+    };
+    if snapshot_path.exists() && snapshot_path.is_file() {
+        match std::fs::read_to_string(&snapshot_path) {
+            Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
+                Ok(val) => report.evidence_snapshot = Some(val),
+                Err(e) => {
+                    report.evidence_snapshot =
+                        Some(serde_json::json!({"error": format!("parse error: {}", e)}));
+                }
+            },
+            Err(e) => {
+                report.evidence_snapshot =
+                    Some(serde_json::json!({"error": format!("read error: {}", e)}));
+            }
+        }
+    } else if snapshot.is_some() {
+        report.evidence_snapshot = Some(
+            serde_json::json!({"error": format!("snapshot not found: {}", snapshot_path.display())}),
+        );
+    }
+
+    if !offline {
+        let client = client::Client::new(server_url.to_string(), bearer_token.map(String::from))?;
+        match client.health().await {
+            Ok(h) => report.health = Some(serde_json::json!({"status": h.status})),
+            Err(e) => report.health = Some(serde_json::json!({"error": e.to_string()})),
+        }
+        match client.readiness().await {
+            Ok(r) => report.readiness = Some(serde_json::json!({"status": r.status})),
+            Err(e) => report.readiness = Some(serde_json::json!({"error": e.to_string()})),
+        }
+        match client.readiness_deep_json().await {
+            Ok(r) => report.readiness_deep = Some(r),
+            Err(e) => report.readiness_deep = Some(serde_json::json!({"error": e.to_string()})),
+        }
+        match client.functional_readiness().await {
+            Ok(items) => {
+                report.functional_readiness =
+                    Some(serde_json::json!({"status": "ready", "approvals_found": items.len()}));
+            }
+            Err(e) => {
+                report.functional_readiness = Some(serde_json::json!({"error": e.to_string()}));
+            }
+        }
+        match client.metrics().await {
+            Ok(text) => {
+                let lines = text.lines().count();
+                report.metrics_summary =
+                    Some(serde_json::json!({"available": true, "line_count": lines}));
+            }
+            Err(e) => {
+                report.metrics_summary = Some(serde_json::json!({"error": e.to_string()}));
+            }
+        }
+    }
+
+    Ok(report)
+}
+
+async fn run_readiness_report(
+    server_url: &str,
+    bearer_token: Option<&str>,
+    snapshot: Option<PathBuf>,
+    window_dir: Option<PathBuf>,
+    json: bool,
+    offline: bool,
+) -> Result<()> {
+    let report =
+        build_readiness_report(server_url, bearer_token, snapshot, window_dir, offline).await?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        print_readiness_report(&report);
+    }
     Ok(())
 }
 
@@ -2715,6 +2993,24 @@ async fn main() -> Result<()> {
                     run_slo_window_finalize(window_dir, notes, allow_early)?;
                 }
             },
+        },
+        Command::Readiness { sub } => match sub {
+            ReadinessCommand::Report {
+                snapshot,
+                window_dir,
+                json,
+                offline,
+            } => {
+                run_readiness_report(
+                    &server_url,
+                    bearer_token.as_deref(),
+                    snapshot,
+                    window_dir,
+                    json,
+                    offline,
+                )
+                .await?;
+            }
         },
         Command::Author { sub } => match sub {
             AuthorCommand::Bundle { sub: bundle_sub } => match bundle_sub {
@@ -4670,5 +4966,252 @@ rules: []
         let path = dir.path().join("slo-window-state.json");
         let state = read_slo_window_state(&path).unwrap();
         assert_eq!(state.notes, Some("final note".to_string()));
+    }
+
+    // -------------------------------------------------------------------------
+    // Readiness report CLI parsing tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_readiness_report_cli_parses() {
+        let cli = Cli::parse_from(["ferrumctl", "readiness", "report"]);
+        let Command::Readiness { sub } = cli.command else {
+            panic!("expected Readiness command");
+        };
+        match sub {
+            ReadinessCommand::Report {
+                snapshot,
+                window_dir,
+                json,
+                offline,
+            } => {
+                assert!(snapshot.is_none());
+                assert!(window_dir.is_none());
+                assert!(!json);
+                assert!(!offline);
+            }
+        }
+    }
+
+    #[test]
+    fn test_readiness_report_cli_with_args_parses() {
+        let cli = Cli::parse_from([
+            "ferrumctl",
+            "readiness",
+            "report",
+            "--snapshot",
+            "/tmp/snap.json",
+            "--window-dir",
+            "/tmp/slo",
+            "--json",
+            "--offline",
+        ]);
+        let Command::Readiness { sub } = cli.command else {
+            panic!("expected Readiness command");
+        };
+        match sub {
+            ReadinessCommand::Report {
+                snapshot,
+                window_dir,
+                json,
+                offline,
+            } => {
+                assert_eq!(snapshot, Some(PathBuf::from("/tmp/snap.json")));
+                assert_eq!(window_dir, Some(PathBuf::from("/tmp/slo")));
+                assert!(json);
+                assert!(offline);
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Readiness report serialization / roundtrip tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_readiness_report_serialization_roundtrip() {
+        let report = ReadinessReport {
+            report_timestamp: "2026-05-29T12:00:00Z".to_string(),
+            tool: "ferrumctl readiness report".to_string(),
+            offline_mode: true,
+            non_claims_reference: "docs/security/non-claims.md".to_string(),
+            non_claims_notice: "notice".to_string(),
+            health: Some(serde_json::json!({"status": "ok"})),
+            readiness: None,
+            readiness_deep: None,
+            functional_readiness: None,
+            metrics_summary: None,
+            slo_window: None,
+            evidence_snapshot: None,
+            overall: OverallAssessment::default(),
+        };
+        let json = serde_json::to_string_pretty(&report).unwrap();
+        let restored: ReadinessReport = serde_json::from_str(&json).unwrap();
+        assert_eq!(report, restored);
+    }
+
+    // -------------------------------------------------------------------------
+    // Readiness report non-claims tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_readiness_report_non_claims_fields() {
+        let report = ReadinessReport {
+            report_timestamp: "2026-05-29T12:00:00Z".to_string(),
+            tool: "ferrumctl readiness report".to_string(),
+            offline_mode: true,
+            non_claims_reference: "docs/security/non-claims.md".to_string(),
+            non_claims_notice: "This report is a point-in-time operational view. It is not production-ready, Tier 2, GA, compliance, or SLO proof.".to_string(),
+            health: None,
+            readiness: None,
+            readiness_deep: None,
+            functional_readiness: None,
+            metrics_summary: None,
+            slo_window: None,
+            evidence_snapshot: None,
+            overall: OverallAssessment::default(),
+        };
+        let json = serde_json::to_string_pretty(&report).unwrap();
+        assert!(json.contains("non_claims_reference"));
+        assert!(json.contains("docs/security/non-claims.md"));
+        assert!(json.contains("non_claims_notice"));
+        assert!(json.contains("not production-ready"));
+        assert!(json.contains("production_ready"));
+        assert!(json.contains("NO"));
+    }
+
+    #[test]
+    fn test_readiness_report_no_unqualified_overclaims() {
+        let report = ReadinessReport {
+            report_timestamp: "2026-05-29T12:00:00Z".to_string(),
+            tool: "ferrumctl readiness report".to_string(),
+            offline_mode: true,
+            non_claims_reference: "docs/security/non-claims.md".to_string(),
+            non_claims_notice: "notice".to_string(),
+            health: None,
+            readiness: None,
+            readiness_deep: None,
+            functional_readiness: None,
+            metrics_summary: None,
+            slo_window: None,
+            evidence_snapshot: None,
+            overall: OverallAssessment::default(),
+        };
+        let json = serde_json::to_string_pretty(&report).unwrap();
+        let forbidden = [
+            "\"production_ready\": true",
+            "\"tier_2\": true",
+            "\"tier2\": true",
+            "\"ga\": true",
+            "\"enterprise_ready\": true",
+            "\"compliance\": true",
+            "\"slo_proof\": true",
+        ];
+        for term in &forbidden {
+            assert!(
+                !json.to_lowercase().contains(&term.to_lowercase()),
+                "report must not contain unqualified overclaim: {}",
+                term
+            );
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Readiness report offline mode test
+    // -------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_readiness_report_offline_mode_with_local_state() {
+        let dir = tempfile::tempdir().unwrap();
+        // Create SLO window state
+        run_slo_window_start(Some(dir.path().to_path_buf()), Some("test".to_string())).unwrap();
+        // Create evidence snapshot
+        let snapshot = serde_json::json!({
+            "snapshot_timestamp": "2026-05-29T12:00:00Z",
+            "tool": "ferrumctl evidence snapshot",
+        });
+        let snap_path = dir
+            .path()
+            .join("evidence-snapshot-2026-05-29T12-00-00Z.json");
+        std::fs::write(&snap_path, serde_json::to_string_pretty(&snapshot).unwrap()).unwrap();
+
+        let report = build_readiness_report(
+            "http://127.0.0.1:8080",
+            None,
+            Some(snap_path),
+            Some(dir.path().to_path_buf()),
+            true,
+        )
+        .await
+        .unwrap();
+
+        assert!(report.offline_mode);
+        assert!(report.slo_window.is_some());
+        assert!(report.evidence_snapshot.is_some());
+        assert!(report.health.is_none());
+        assert!(report.readiness.is_none());
+        assert_eq!(report.overall.production_ready, "NO");
+        assert_eq!(report.overall.tier_2, "NOT COMPLETE");
+    }
+
+    // -------------------------------------------------------------------------
+    // Snapshot lookup helper tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_find_latest_evidence_snapshot_finds_newest() {
+        let dir = tempfile::tempdir().unwrap();
+        let path1 = dir
+            .path()
+            .join("evidence-snapshot-2026-05-28T12-00-00Z.json");
+        let path2 = dir
+            .path()
+            .join("evidence-snapshot-2026-05-29T12-00-00Z.json");
+        std::fs::write(&path1, "{}").unwrap();
+        std::fs::write(&path2, "{}").unwrap();
+
+        let latest = find_latest_evidence_snapshot(dir.path());
+        assert_eq!(latest, Some(path2));
+    }
+
+    #[test]
+    fn test_find_latest_evidence_snapshot_empty_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let latest = find_latest_evidence_snapshot(dir.path());
+        assert!(latest.is_none());
+    }
+
+    // -------------------------------------------------------------------------
+    // Overall assessment hardcoded non-claims test
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_overall_assessment_hardcoded_non_claims() {
+        let overall = OverallAssessment::default();
+        assert_eq!(overall.production_ready, "NO");
+        assert_eq!(overall.tier_2, "NOT COMPLETE");
+        assert_eq!(overall.ha4_automated_failover, "NOT COMPLETE");
+        assert_eq!(overall.sustained_slo, "NOT COMPLETE");
+        assert_eq!(overall.label, "Cautious / Point-in-time only");
+        assert!(
+            overall
+                .issues
+                .contains(&"production-ready = NO".to_string())
+        );
+        assert!(
+            overall
+                .issues
+                .contains(&"Tier 2 = NOT COMPLETE".to_string())
+        );
+        assert!(
+            overall
+                .issues
+                .contains(&"HA-4 automated failover = NOT COMPLETE".to_string())
+        );
+        assert!(
+            overall
+                .issues
+                .contains(&"Sustained SLO = NOT COMPLETE".to_string())
+        );
     }
 }
