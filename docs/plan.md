@@ -151,7 +151,8 @@ FerrumGate nên chơi sâu ở layer giữa.
 | Tamper-evident audit | P1/P2 | Build minimal | `TODO/VERIFY` | `docs/architecture/tamper-evident-audit-design.md` + `ferrumctl audit verify` |
 | Agent Ed25519 identity | P2 | Build minimal | `TODO/VERIFY` | `docs/security/agent-identity-ed25519.md` + implementation |
 | Streamable HTTP MCP | P2 | Build | `TODO/VERIFY` | `docs/mcp/streamable-http-mcp.md` + implementation |
-| mTLS service-to-service | P2 | Integrate / Config | `TODO/VERIFY` | `docs/security/mtls-service-mesh.md` |
+| mTLS service-to-service design | P2 | Document | `DESIGN COMPLETE` | `docs/security/mtls-service-mesh.md` |
+| mTLS service-to-service native impl | P2 | Build | `DEFERRED` | Deferred until multi-node cross-host topology |
 | OWASP Agentic AI Top 10 mapping | P2 | Document | `TODO/VERIFY` | `docs/security/owasp-agentic-ai-mapping.md` |
 | Operator evidence UX | P2 | Build | `TODO/VERIFY` | `docs/operator/evidence-ux.md` + CLI/TUI |
 | Web dashboard | Later | Defer | `DEFERRED` | Không có target doc cho đến khi single-tenant ổn định |
@@ -327,7 +328,10 @@ Thứ tự này giúp FerrumGate:
 - [x] **6.5** Viết compatibility tests cho MCP tool schema/version. (Owner: Dev / Type: Build)
 - [x] **6.6** Viết private MCP deployment guide. (Owner: Dev / Type: Document)
   - Evidence: [`docs/mcp/private-deploy.md`](./mcp/private-deploy.md)
-- [ ] **6.7** Thêm mTLS optional cho service-to-service. (Owner: Dev / Type: Integrate)
+- [x] **6.7a** Thiết kế mTLS service-to-service (design doc). (Owner: Security / Type: Document)
+  - Evidence: [`docs/security/mtls-service-mesh.md`](./security/mtls-service-mesh.md)
+  - Non-claims: `production-ready = NO`; `Tier 2 = NOT COMPLETE`; native mTLS **not implemented**.
+- [ ] **6.7b** Triển khai native mTLS trong ferrumd / ferrum-mcp-server. (Owner: Dev / Type: Build) — **DEFERRED** until multi-node cross-host topology exists.
 
 **Success criteria:** MCP client remote có thể kết nối qua HTTP; compatibility test pass; private deploy guide dùng được.  
 **Evidence artifact:** `docs/mcp/streamable-http-mcp.md`, [`docs/mcp/private-deploy.md`](./mcp/private-deploy.md), compatibility test reports.

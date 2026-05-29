@@ -60,10 +60,10 @@ Boundary list:
 
 | Threat | Category | Existing Control | Gap / Deferred |
 |--------|----------|------------------|----------------|
-| Spoofing | S | Internal bridge; same process | N/A — same trust domain |
-| Tampering | T | Internal typed API | N/A |
+| Spoofing | S | Local HTTP/REST to localhost; same trust domain | N/A — same trust domain |
+| Tampering | T | Local HTTP/REST over localhost/TCP | N/A |
 | Repudiation | R | Provenance events link MCP request to execution | N/A |
-| Information Disclosure | I | In-memory only | N/A |
+| Information Disclosure | I | Localhost only; no cross-host exposure | N/A |
 | Denial of Service | D | Internal queue limits | N/A |
 | Elevation of Privilege | E | Capability validation before adapter call | N/A |
 
