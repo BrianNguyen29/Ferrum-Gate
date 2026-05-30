@@ -38,6 +38,20 @@ rules:
         value: "R3IrreversibleHighConsequence"
 ```
 
+### Version field
+
+Policy bundles use [SemVer](https://semver.org/) for the `version` field (e.g., `1.0.0`, `0.2.1`). To bump versions safely, use:
+
+```bash
+# Bump minor version and write to a new file
+ferrumctl author bundle bump my-policy.yaml --bump-type minor --output my-policy.v2.yaml
+
+# Bump patch version (default), write to stdout as JSON
+ferrumctl author bundle bump my-policy.yaml --output - --json
+```
+
+This increments the version and writes the updated bundle to the specified output path. See [`contracts/policy-bundle.example.yaml`](../../contracts/policy-bundle.example.yaml) for a canonical reference.
+
 ### Matcher reference
 
 | Matcher | Fields | Meaning |
@@ -51,6 +65,16 @@ rules:
 Rollback class values: `R0NativeReversible`, `R1SnapshotRecoverable`, `R2Compensatable`, `R3IrreversibleHighConsequence`.
 
 Effect type values: `ReadOnlyAnalysis`, `DraftCreation`, `FileMutation`, `GitMutation`, `DatabaseMutation`, `ExternalApiCall`, `ExternalCommunication`, `Scheduling`, `AdministrativeChange`.
+
+### Decision reference
+
+| Decision | YAML alias | Effect |
+|----------|------------|--------|
+| `Allow` | — | Proposal proceeds to capability minting |
+| `Deny` | — | Proposal blocked immediately |
+| `Quarantine` | — | Proposal held for manual disposition |
+| `RequireApproval` | `requireapproval` or `require_approval` | Human operator must approve before proceeding |
+| `AllowDraftOnly` | `allowdraftonly` or `allow_draft_only` | Action limited to draft/staging; no live side effect |
 
 ## Policy authoring flow
 
@@ -71,8 +95,18 @@ Create policy from template
 # Validate a policy file (local; no server required)
 ferrumctl policy validate --file my-policy.yaml
 
-# Simulate against a sample proposal (requires running server)
+# Simulate against a sample proposal (bundle simulation; requires running server)
 ferrumctl policy simulate --file my-policy.yaml --proposal proposal.json
+
+# Simulate with intent file and JSON output
+ferrumctl policy simulate --file my-policy.yaml --proposal proposal.json --intent intent.json --json
+
+# Runtime simulation: evaluate a live intent against the active runtime policy
+# Distinction: "simulate" tests a policy bundle file; "runtime-simulate" tests the currently active policy in the runtime
+ferrumctl policy runtime-simulate --proposal proposal.json
+
+# Runtime simulation with intent file and JSON output
+ferrumctl policy runtime-simulate --proposal proposal.json --intent intent.json --json
 
 # Apply as inactive (requires running server)
 ferrumctl policy apply --file my-policy.yaml
@@ -86,8 +120,12 @@ ferrumctl policy versions --bundle-id my-policy
 # Diff between versions (requires running server)
 ferrumctl policy diff --bundle-id my-policy --from 1 --to 2
 
-# Rollback to previous active (requires running server)
-ferrumctl policy rollback --bundle-id my-policy
+# Rollback to a specific version (requires running server)
+# Required: --target-version. Optional: --actor, --json
+ferrumctl policy rollback --bundle-id my-policy --target-version 2
+
+# Example with actor and JSON output
+ferrumctl policy rollback --bundle-id my-policy --target-version 2 --actor admin --json
 ```
 
 ## Templates
@@ -265,4 +303,5 @@ rules:
 
 - [`concepts.md`](./concepts.md) — Policy decision, risk class, taint scoring.
 - [`operator.md`](./operator.md) — How to set active policy bundles.
+- [`docs/api/policy-simulation.md`](../api/policy-simulation.md) — Policy simulation API reference.
 - [`docs/ROADMAP.md`](../../ROADMAP.md) — Policy UX gaps and planned features.

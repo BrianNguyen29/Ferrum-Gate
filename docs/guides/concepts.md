@@ -27,7 +27,7 @@ Intents are compiled via `POST /v1/intents/compile` and receive a stable `intent
 
 The gateway evaluates an intent against active policy and produces a **proposal**.
 
-- Contains: `decision` (Allow / Deny / RequireApproval / Quarantine / DraftOnly)
+- Contains: `decision` (Allow / Deny / Quarantine / RequireApproval / AllowDraftOnly)
 - If `Allow`: proceed to capability minting
 - If `RequireApproval`: human operator must approve before proceeding
 - If `Deny`: blocked immediately
