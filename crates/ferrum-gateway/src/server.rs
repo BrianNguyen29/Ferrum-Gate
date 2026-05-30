@@ -6,7 +6,7 @@ use axum::{
     routing::{delete, get, post, put},
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use chrono::{Duration, Utc};
+use chrono::{Duration, Timelike, Utc};
 use ferrum_cap::{CapabilityError, CapabilityService, InMemoryCapabilityService};
 use ferrum_firewall::{FirewallContext, SemanticFirewall, TaintScoringFirewall};
 use ferrum_graph::LineageGraph;
@@ -14,14 +14,15 @@ use ferrum_pdp::StaticPdpEngine;
 use ferrum_proto::{
     ActorRef, ActorType, AgentListResponse, ApiError, ApiErrorCode, ApprovalBinding, ApprovalId,
     ApprovalListEnvelope, ApprovalMode, ApprovalResolveRequest, ApprovalState, AuditAction,
-    AuditLogEntry, AuditLogListResponse, AuditResourceType, AuthorizeExecutionRequest,
-    AuthorizeExecutionResponse, CapabilityId, CapabilityLease, CapabilityMintRequest,
-    CapabilityMintResponse, CapabilityStatus, ComponentStatus, Decision, DeepHealthResponse,
-    DiffPolicyBundleVersionsResponse, EvaluateOutcomeResponse, EvaluateProposalResponse, EventId,
-    ExecutionDetailResponse, ExecutionId, ExecutionRecord, ExecutionState, HashChainRef,
-    HealthResponse, IntentCompileRequest, IntentCompileResponse, IntentEnvelope, IntentStatus,
-    LineageDirection, LineageQueryRequest, LineageQueryResponse, ListPolicyBundleVersionsResponse,
-    Matcher, ObjectRef, ObjectType, OutcomeClause, OutcomeReport, PolicyBundle, PolicyBundleId,
+    AuditLogEntry, AuditLogListResponse, AuditMerkleRootListResponse, AuditMerkleVerifyResponse,
+    AuditResourceType, AuthorizeExecutionRequest, AuthorizeExecutionResponse, CapabilityId,
+    CapabilityLease, CapabilityMintRequest, CapabilityMintResponse, CapabilityStatus,
+    ComponentStatus, Decision, DeepHealthResponse, DiffPolicyBundleVersionsResponse,
+    EvaluateOutcomeResponse, EvaluateProposalResponse, EventId, ExecutionDetailResponse,
+    ExecutionId, ExecutionRecord, ExecutionState, HashChainRef, HealthResponse,
+    IntentCompileRequest, IntentCompileResponse, IntentEnvelope, IntentStatus, LineageDirection,
+    LineageQueryRequest, LineageQueryResponse, ListPolicyBundleVersionsResponse, Matcher,
+    ObjectRef, ObjectType, OutcomeClause, OutcomeReport, PolicyBundle, PolicyBundleId,
     PolicyBundleSimulateRequest, PolicyBundleSimulateResponse, PolicyRule, PolicySimulateRequest,
     ProposalId, ProvenanceEvent, ProvenanceEventKind, ProvenanceIngestRequest,
     ProvenanceIngestResponse, ProvenanceQueryRequest, ProvenanceQueryResponse,
@@ -1016,6 +1017,17 @@ fn build_workload_router(state: Arc<AppState>) -> Router {
         .route("/v1/admin/audit-logs", get(list_audit_logs))
         .route("/v1/admin/audit-logs/export", get(export_audit_logs))
         .route("/v1/admin/audit/verify", get(verify_audit_chain))
+        .route(
+            "/v1/admin/audit/merkle-verify",
+            get(verify_audit_merkle_root),
+        )
+        .route("/v1/admin/audit/merkle-roots", get(list_audit_merkle_roots))
+        .route("/v1/admin/audit/checkpoints", post(create_checkpoint))
+        .route("/v1/admin/audit/checkpoints", get(list_checkpoints))
+        .route(
+            "/v1/admin/audit/checkpoints/{window_start}/verify",
+            get(verify_checkpoint),
+        )
         .with_state(state)
         .layer(TraceLayer::new_for_http())
 }
@@ -1503,6 +1515,13 @@ fn required_scope_for_path(method: &str, path: &str) -> Option<&'static str> {
         ("GET", "/v1/admin/audit-logs") => Some("admin:audit"),
         ("GET", "/v1/admin/audit-logs/export") => Some("admin:audit"),
         ("GET", "/v1/admin/audit/verify") => Some("admin:audit"),
+        ("GET", "/v1/admin/audit/merkle-verify") => Some("admin:audit"),
+        ("GET", "/v1/admin/audit/merkle-roots") => Some("admin:audit"),
+        ("POST", "/v1/admin/audit/checkpoints") => Some("admin:audit"),
+        ("GET", "/v1/admin/audit/checkpoints") => Some("admin:audit"),
+        ("GET", p) if p.starts_with("/v1/admin/audit/checkpoints/") && p.ends_with("/verify") => {
+            Some("admin:audit")
+        }
         _ => Some("admin:tokens"), // Deny-by-default for unknown paths
     }
 }
@@ -8007,6 +8026,535 @@ async fn verify_audit_chain(State(state): State<Arc<AppState>>) -> Response {
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct VerifyMerkleRootQuery {
+    window_start: chrono::DateTime<chrono::Utc>,
+}
+
+/// Verify (compute or retrieve) the Merkle root for an hourly audit window.
+async fn verify_audit_merkle_root(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<VerifyMerkleRootQuery>,
+) -> Response {
+    let window_start = params.window_start;
+    // Require UTC-aligned hour (fail closed).
+    if window_start.minute() != 0
+        || window_start.second() != 0
+        || window_start.timestamp_subsec_nanos() != 0
+    {
+        let error = ApiError {
+            code: ApiErrorCode::BadRequest,
+            message: "window_start must be aligned to the hour".to_string(),
+            correlation_id: uuid::Uuid::new_v4().to_string(),
+            retriable: false,
+            details: serde_json::json!({}),
+        };
+        return (StatusCode::BAD_REQUEST, Json(error)).into_response();
+    }
+
+    match state
+        .runtime
+        .store
+        .audit_merkle_roots()
+        .compute_and_cache_root(window_start)
+        .await
+    {
+        Ok(root) => {
+            let response = AuditMerkleVerifyResponse {
+                valid: true,
+                window_start: root.window_start,
+                root: root.root,
+                entry_count: root.entry_count,
+                error: None,
+            };
+            (StatusCode::OK, Json(response)).into_response()
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "audit merkle root verification failed");
+            let response = AuditMerkleVerifyResponse {
+                valid: false,
+                window_start,
+                root: String::new(),
+                entry_count: 0,
+                error: Some(e.to_string()),
+            };
+            (StatusCode::OK, Json(response)).into_response()
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct ListMerkleRootsQuery {
+    cursor: Option<String>,
+    #[serde(default = "default_merkle_limit")]
+    limit: u32,
+}
+
+fn default_merkle_limit() -> u32 {
+    50
+}
+
+/// List cached Merkle roots with cursor-based pagination.
+async fn list_audit_merkle_roots(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ListMerkleRootsQuery>,
+) -> Response {
+    let limit = params.limit.min(200);
+    match state
+        .runtime
+        .store
+        .audit_merkle_roots()
+        .list_roots(params.cursor.as_deref(), limit)
+        .await
+    {
+        Ok((items, next_cursor)) => {
+            let response = AuditMerkleRootListResponse {
+                items,
+                next_cursor,
+                total: 0,
+            };
+            (StatusCode::OK, Json(response)).into_response()
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "audit merkle root list failed");
+            let error = ApiError {
+                code: ApiErrorCode::Internal,
+                message: "failed to list merkle roots".to_string(),
+                correlation_id: uuid::Uuid::new_v4().to_string(),
+                retriable: false,
+                details: serde_json::json!({}),
+            };
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response()
+        }
+    }
+}
+
+/// Create a signed checkpoint for an audit window.
+async fn create_checkpoint(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<ferrum_proto::CreateCheckpointRequest>,
+) -> Response {
+    // Validate window_start is hour-aligned.
+    if req.window_start.minute() != 0
+        || req.window_start.second() != 0
+        || req.window_start.timestamp_subsec_nanos() != 0
+    {
+        let error = ApiError {
+            code: ApiErrorCode::BadRequest,
+            message: "window_start must be aligned to the hour".to_string(),
+            correlation_id: uuid::Uuid::new_v4().to_string(),
+            retriable: false,
+            details: serde_json::json!({}),
+        };
+        return (StatusCode::BAD_REQUEST, Json(error)).into_response();
+    }
+
+    // Verify the Merkle root matches the current computed root for the window.
+    let computed = match state
+        .runtime
+        .store
+        .audit_merkle_roots()
+        .compute_and_cache_root(req.window_start)
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, "checkpoint creation failed: merkle root computation error");
+            let error = ApiError {
+                code: ApiErrorCode::Internal,
+                message: "failed to compute merkle root for checkpoint".to_string(),
+                correlation_id: uuid::Uuid::new_v4().to_string(),
+                retriable: false,
+                details: serde_json::json!({}),
+            };
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response();
+        }
+    };
+
+    if computed.root != req.merkle_root || computed.entry_count != req.entry_count {
+        let error = ApiError {
+            code: ApiErrorCode::BadRequest,
+            message: format!(
+                "merkle root mismatch: expected root={} count={}, got root={} count={}",
+                computed.root, computed.entry_count, req.merkle_root, req.entry_count
+            ),
+            correlation_id: uuid::Uuid::new_v4().to_string(),
+            retriable: false,
+            details: serde_json::json!({}),
+        };
+        return (StatusCode::BAD_REQUEST, Json(error)).into_response();
+    }
+
+    // Verify Ed25519 signature.
+    let payload_hash = ferrum_proto::canonical_checkpoint_hash(
+        &req.window_start,
+        &req.merkle_root,
+        req.entry_count,
+        &req.signed_at,
+    );
+    let sig_bytes =
+        match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &req.signature) {
+            Ok(b) => b,
+            Err(_) => {
+                let error = ApiError {
+                    code: ApiErrorCode::BadRequest,
+                    message: "invalid signature encoding".to_string(),
+                    correlation_id: uuid::Uuid::new_v4().to_string(),
+                    retriable: false,
+                    details: serde_json::json!({}),
+                };
+                return (StatusCode::BAD_REQUEST, Json(error)).into_response();
+            }
+        };
+    let sig_array: [u8; 64] = match sig_bytes.try_into() {
+        Ok(a) => a,
+        Err(_) => {
+            let error = ApiError {
+                code: ApiErrorCode::BadRequest,
+                message: "invalid signature length".to_string(),
+                correlation_id: uuid::Uuid::new_v4().to_string(),
+                retriable: false,
+                details: serde_json::json!({}),
+            };
+            return (StatusCode::BAD_REQUEST, Json(error)).into_response();
+        }
+    };
+    let signature = ed25519_dalek::Signature::from_bytes(&sig_array);
+    let pk_bytes =
+        match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &req.public_key) {
+            Ok(b) => b,
+            Err(_) => {
+                let error = ApiError {
+                    code: ApiErrorCode::BadRequest,
+                    message: "invalid public key encoding".to_string(),
+                    correlation_id: uuid::Uuid::new_v4().to_string(),
+                    retriable: false,
+                    details: serde_json::json!({}),
+                };
+                return (StatusCode::BAD_REQUEST, Json(error)).into_response();
+            }
+        };
+    let pk_array: [u8; 32] = match pk_bytes.try_into() {
+        Ok(a) => a,
+        Err(_) => {
+            let error = ApiError {
+                code: ApiErrorCode::BadRequest,
+                message: "invalid public key length".to_string(),
+                correlation_id: uuid::Uuid::new_v4().to_string(),
+                retriable: false,
+                details: serde_json::json!({}),
+            };
+            return (StatusCode::BAD_REQUEST, Json(error)).into_response();
+        }
+    };
+    let verifying_key = match ed25519_dalek::VerifyingKey::from_bytes(&pk_array) {
+        Ok(k) => k,
+        Err(_) => {
+            let error = ApiError {
+                code: ApiErrorCode::BadRequest,
+                message: "invalid public key".to_string(),
+                correlation_id: uuid::Uuid::new_v4().to_string(),
+                retriable: false,
+                details: serde_json::json!({}),
+            };
+            return (StatusCode::BAD_REQUEST, Json(error)).into_response();
+        }
+    };
+    if verifying_key.verify(&payload_hash, &signature).is_err() {
+        let error = ApiError {
+            code: ApiErrorCode::BadRequest,
+            message: "signature verification failed".to_string(),
+            correlation_id: uuid::Uuid::new_v4().to_string(),
+            retriable: false,
+            details: serde_json::json!({}),
+        };
+        return (StatusCode::BAD_REQUEST, Json(error)).into_response();
+    }
+
+    let checkpoint = ferrum_proto::AuditCheckpoint {
+        window_start: req.window_start,
+        merkle_root: req.merkle_root,
+        entry_count: req.entry_count,
+        signer_id: req.signer_id,
+        signer_key_fingerprint: req.signer_key_fingerprint,
+        signed_at: req.signed_at,
+        signature: req.signature,
+        public_key: req.public_key,
+    };
+
+    match state
+        .runtime
+        .store
+        .audit_checkpoints()
+        .insert(&checkpoint)
+        .await
+    {
+        Ok(()) => {
+            let response = ferrum_proto::AuditCheckpointVerifyResponse {
+                valid: true,
+                window_start: checkpoint.window_start,
+                error: None,
+                checkpoint: Some(checkpoint),
+                current_root: Some(computed.root),
+                current_entry_count: Some(computed.entry_count),
+            };
+            (StatusCode::CREATED, Json(response)).into_response()
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "checkpoint insertion failed");
+            let error = ApiError {
+                code: ApiErrorCode::Internal,
+                message: "failed to store checkpoint".to_string(),
+                correlation_id: uuid::Uuid::new_v4().to_string(),
+                retriable: false,
+                details: serde_json::json!({}),
+            };
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response()
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct ListCheckpointsQuery {
+    cursor: Option<String>,
+    #[serde(default = "default_checkpoint_limit")]
+    limit: u32,
+}
+
+fn default_checkpoint_limit() -> u32 {
+    50
+}
+
+/// List signed checkpoints with cursor-based pagination.
+async fn list_checkpoints(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ListCheckpointsQuery>,
+) -> Response {
+    let limit = params.limit.min(200);
+    match state
+        .runtime
+        .store
+        .audit_checkpoints()
+        .list(params.cursor.as_deref(), limit)
+        .await
+    {
+        Ok((items, next_cursor)) => {
+            let response = ferrum_proto::AuditCheckpointListResponse {
+                items,
+                next_cursor,
+                total: 0,
+            };
+            (StatusCode::OK, Json(response)).into_response()
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "checkpoint list failed");
+            let error = ApiError {
+                code: ApiErrorCode::Internal,
+                message: "failed to list checkpoints".to_string(),
+                correlation_id: uuid::Uuid::new_v4().to_string(),
+                retriable: false,
+                details: serde_json::json!({}),
+            };
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response()
+        }
+    }
+}
+
+/// Verify a stored checkpoint for an audit window.
+async fn verify_checkpoint(
+    State(state): State<Arc<AppState>>,
+    Path(window_start): Path<chrono::DateTime<chrono::Utc>>,
+) -> Response {
+    if window_start.minute() != 0
+        || window_start.second() != 0
+        || window_start.timestamp_subsec_nanos() != 0
+    {
+        let error = ApiError {
+            code: ApiErrorCode::BadRequest,
+            message: "window_start must be aligned to the hour".to_string(),
+            correlation_id: uuid::Uuid::new_v4().to_string(),
+            retriable: false,
+            details: serde_json::json!({}),
+        };
+        return (StatusCode::BAD_REQUEST, Json(error)).into_response();
+    }
+
+    let checkpoint = match state
+        .runtime
+        .store
+        .audit_checkpoints()
+        .get(window_start)
+        .await
+    {
+        Ok(Some(cp)) => cp,
+        Ok(None) => {
+            let response = ferrum_proto::AuditCheckpointVerifyResponse {
+                valid: false,
+                window_start,
+                error: Some("no checkpoint found for window".to_string()),
+                checkpoint: None,
+                current_root: None,
+                current_entry_count: None,
+            };
+            return (StatusCode::OK, Json(response)).into_response();
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "checkpoint get failed");
+            let error = ApiError {
+                code: ApiErrorCode::Internal,
+                message: "failed to retrieve checkpoint".to_string(),
+                correlation_id: uuid::Uuid::new_v4().to_string(),
+                retriable: false,
+                details: serde_json::json!({}),
+            };
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response();
+        }
+    };
+
+    let computed = match state
+        .runtime
+        .store
+        .audit_merkle_roots()
+        .compute_and_cache_root(window_start)
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, "checkpoint verification failed: merkle root computation error");
+            let response = ferrum_proto::AuditCheckpointVerifyResponse {
+                valid: false,
+                window_start,
+                error: Some("failed to compute merkle root".to_string()),
+                checkpoint: Some(checkpoint.clone()),
+                current_root: None,
+                current_entry_count: None,
+            };
+            return (StatusCode::OK, Json(response)).into_response();
+        }
+    };
+
+    if computed.root != checkpoint.merkle_root || computed.entry_count != checkpoint.entry_count {
+        let response = ferrum_proto::AuditCheckpointVerifyResponse {
+            valid: false,
+            window_start,
+            error: Some(format!(
+                "merkle root mismatch: checkpoint root={} count={}, current root={} count={}",
+                checkpoint.merkle_root, checkpoint.entry_count, computed.root, computed.entry_count
+            )),
+            checkpoint: Some(checkpoint.clone()),
+            current_root: Some(computed.root),
+            current_entry_count: Some(computed.entry_count),
+        };
+        return (StatusCode::OK, Json(response)).into_response();
+    }
+
+    // Re-verify signature.
+    let payload_hash = ferrum_proto::canonical_checkpoint_hash(
+        &checkpoint.window_start,
+        &checkpoint.merkle_root,
+        checkpoint.entry_count,
+        &checkpoint.signed_at,
+    );
+    let sig_bytes = match base64::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        &checkpoint.signature,
+    ) {
+        Ok(b) => b,
+        Err(_) => {
+            let response = ferrum_proto::AuditCheckpointVerifyResponse {
+                valid: false,
+                window_start,
+                error: Some("invalid signature encoding in stored checkpoint".to_string()),
+                checkpoint: Some(checkpoint.clone()),
+                current_root: Some(computed.root),
+                current_entry_count: Some(computed.entry_count),
+            };
+            return (StatusCode::OK, Json(response)).into_response();
+        }
+    };
+    let sig_array: [u8; 64] = match sig_bytes.try_into() {
+        Ok(a) => a,
+        Err(_) => {
+            let response = ferrum_proto::AuditCheckpointVerifyResponse {
+                valid: false,
+                window_start,
+                error: Some("invalid signature length in stored checkpoint".to_string()),
+                checkpoint: Some(checkpoint.clone()),
+                current_root: Some(computed.root),
+                current_entry_count: Some(computed.entry_count),
+            };
+            return (StatusCode::OK, Json(response)).into_response();
+        }
+    };
+    let signature = ed25519_dalek::Signature::from_bytes(&sig_array);
+    let pk_bytes = match base64::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        &checkpoint.public_key,
+    ) {
+        Ok(b) => b,
+        Err(_) => {
+            let response = ferrum_proto::AuditCheckpointVerifyResponse {
+                valid: false,
+                window_start,
+                error: Some("invalid public key encoding in stored checkpoint".to_string()),
+                checkpoint: Some(checkpoint.clone()),
+                current_root: Some(computed.root),
+                current_entry_count: Some(computed.entry_count),
+            };
+            return (StatusCode::OK, Json(response)).into_response();
+        }
+    };
+    let pk_array: [u8; 32] = match pk_bytes.try_into() {
+        Ok(a) => a,
+        Err(_) => {
+            let response = ferrum_proto::AuditCheckpointVerifyResponse {
+                valid: false,
+                window_start,
+                error: Some("invalid public key length in stored checkpoint".to_string()),
+                checkpoint: Some(checkpoint.clone()),
+                current_root: Some(computed.root),
+                current_entry_count: Some(computed.entry_count),
+            };
+            return (StatusCode::OK, Json(response)).into_response();
+        }
+    };
+    let verifying_key = match ed25519_dalek::VerifyingKey::from_bytes(&pk_array) {
+        Ok(k) => k,
+        Err(_) => {
+            let response = ferrum_proto::AuditCheckpointVerifyResponse {
+                valid: false,
+                window_start,
+                error: Some("invalid public key in stored checkpoint".to_string()),
+                checkpoint: Some(checkpoint.clone()),
+                current_root: Some(computed.root),
+                current_entry_count: Some(computed.entry_count),
+            };
+            return (StatusCode::OK, Json(response)).into_response();
+        }
+    };
+    if verifying_key.verify(&payload_hash, &signature).is_err() {
+        let response = ferrum_proto::AuditCheckpointVerifyResponse {
+            valid: false,
+            window_start,
+            error: Some("signature verification failed".to_string()),
+            checkpoint: Some(checkpoint.clone()),
+            current_root: Some(computed.root),
+            current_entry_count: Some(computed.entry_count),
+        };
+        return (StatusCode::OK, Json(response)).into_response();
+    }
+
+    let response = ferrum_proto::AuditCheckpointVerifyResponse {
+        valid: true,
+        window_start,
+        error: None,
+        checkpoint: Some(checkpoint),
+        current_root: Some(computed.root),
+        current_entry_count: Some(computed.entry_count),
+    };
+    (StatusCode::OK, Json(response)).into_response()
+}
+
 /// Maximum rows allowed in a single export request.
 const EXPORT_MAX_ROWS: usize = 10_000;
 /// Page size for export pagination loops.
@@ -8426,15 +8974,18 @@ mod tests {
     use super::*;
     use crate::{KeyMaterial, OidcConfig};
     use axum::{body::Body, http::Request};
+    use chrono::DurationRound;
     use ferrum_cap::InMemoryCapabilityService;
     use ferrum_pdp::StaticPdpEngine;
     use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
     use ferrum_store::repos::{
-        AgentRepo, ApprovalRepo, AuditLogRepo, CapabilityRepo, ExecutionRepo, IntentRepo,
-        LedgerRepo, PolicyBundleRepo, ProposalRepo, ProvenanceRepo, RollbackRepo, TokenRepo,
+        AgentRepo, ApprovalRepo, AuditCheckpointRepo, AuditLogRepo, AuditMerkleRootRepo,
+        CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo, PolicyBundleRepo, ProposalRepo,
+        ProvenanceRepo, RollbackRepo, TokenRepo,
     };
     use ferrum_store::{SqliteStore, StoreError, StoreFacade};
     use ferrum_sync::{BridgeToolInfo, ExternalEventSource, McpBridge};
+    use sha2::Digest;
     use std::sync::Arc;
     use tower::ServiceExt;
 
@@ -8538,6 +9089,12 @@ mod tests {
         }
         fn audit_log(&self) -> Arc<dyn AuditLogRepo> {
             self.inner.audit_log()
+        }
+        fn audit_merkle_roots(&self) -> Arc<dyn AuditMerkleRootRepo> {
+            self.inner.audit_merkle_roots()
+        }
+        fn audit_checkpoints(&self) -> Arc<dyn AuditCheckpointRepo> {
+            self.inner.audit_checkpoints()
         }
         fn agents(&self) -> Arc<dyn AgentRepo> {
             self.inner.agents()
@@ -8838,6 +9395,12 @@ mod tests {
         fn audit_log(&self) -> Arc<dyn AuditLogRepo> {
             self.inner.audit_log()
         }
+        fn audit_merkle_roots(&self) -> Arc<dyn AuditMerkleRootRepo> {
+            self.inner.audit_merkle_roots()
+        }
+        fn audit_checkpoints(&self) -> Arc<dyn AuditCheckpointRepo> {
+            self.inner.audit_checkpoints()
+        }
         fn agents(&self) -> Arc<dyn AgentRepo> {
             self.inner.agents()
         }
@@ -8961,6 +9524,12 @@ mod tests {
         }
         fn audit_log(&self) -> Arc<dyn AuditLogRepo> {
             self.inner.audit_log()
+        }
+        fn audit_merkle_roots(&self) -> Arc<dyn AuditMerkleRootRepo> {
+            self.inner.audit_merkle_roots()
+        }
+        fn audit_checkpoints(&self) -> Arc<dyn AuditCheckpointRepo> {
+            self.inner.audit_checkpoints()
         }
         fn agents(&self) -> Arc<dyn AgentRepo> {
             self.inner.agents()
@@ -14320,5 +14889,395 @@ rules:
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_merkle_verify_computes_root() {
+        let (runtime, token_value) = test_runtime_with_admin_token().await;
+        let store = runtime.store.clone();
+
+        let window = chrono::Utc::now()
+            .duration_trunc(chrono::Duration::hours(1))
+            .unwrap();
+
+        let e1 = ferrum_proto::AuditLogEntry {
+            id: 0,
+            actor_id: "alice".to_string(),
+            action: ferrum_proto::AuditAction::TokenCreate,
+            resource_type: ferrum_proto::AuditResourceType::Token,
+            resource_id: "t1".to_string(),
+            result: "ok".to_string(),
+            metadata: None,
+            created_at: window + chrono::Duration::minutes(5),
+            content_hash: None,
+            previous_hash: None,
+        };
+        store.audit_log().append(&e1).await.unwrap();
+
+        let config = ServerConfig {
+            auth_mode: AuthMode::Scoped,
+            ..Default::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/v1/admin/audit/merkle-verify?window_start={}",
+                        window.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+                    ))
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let resp: ferrum_proto::AuditMerkleVerifyResponse = serde_json::from_slice(&body).unwrap();
+        assert!(resp.valid);
+        assert_eq!(resp.entry_count, 1);
+        assert!(!resp.root.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_merkle_verify_rejects_non_hour_alignment() {
+        let (runtime, token_value) = test_runtime_with_admin_token().await;
+        let config = ServerConfig {
+            auth_mode: AuthMode::Scoped,
+            ..Default::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let misaligned = chrono::Utc::now()
+            .duration_trunc(chrono::Duration::hours(1))
+            .unwrap()
+            + chrono::Duration::minutes(5);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/v1/admin/audit/merkle-verify?window_start={}",
+                        misaligned.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+                    ))
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_merkle_roots_list_and_pagination() {
+        let (runtime, token_value) = test_runtime_with_admin_token().await;
+        let store = runtime.store.clone();
+
+        let window = chrono::Utc::now()
+            .duration_trunc(chrono::Duration::hours(1))
+            .unwrap();
+        let prev_window = window - chrono::Duration::hours(1);
+
+        let e = ferrum_proto::AuditLogEntry {
+            id: 0,
+            actor_id: "alice".to_string(),
+            action: ferrum_proto::AuditAction::TokenCreate,
+            resource_type: ferrum_proto::AuditResourceType::Token,
+            resource_id: "t1".to_string(),
+            result: "ok".to_string(),
+            metadata: None,
+            created_at: prev_window + chrono::Duration::minutes(5),
+            content_hash: None,
+            previous_hash: None,
+        };
+        store.audit_log().append(&e).await.unwrap();
+        store
+            .audit_merkle_roots()
+            .compute_and_cache_root(prev_window)
+            .await
+            .unwrap();
+        store
+            .audit_merkle_roots()
+            .compute_and_cache_root(window)
+            .await
+            .unwrap();
+
+        let config = ServerConfig {
+            auth_mode: AuthMode::Scoped,
+            ..Default::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/admin/audit/merkle-roots?limit=1")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let resp: ferrum_proto::AuditMerkleRootListResponse =
+            serde_json::from_slice(&body).unwrap();
+        assert_eq!(resp.items.len(), 1);
+        assert!(resp.next_cursor.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_checkpoint_create_and_verify() {
+        let (runtime, token_value) = test_runtime_with_admin_token().await;
+        let store = runtime.store.clone();
+
+        let window = chrono::Utc::now()
+            .duration_trunc(chrono::Duration::hours(1))
+            .unwrap();
+
+        let e = ferrum_proto::AuditLogEntry {
+            id: 0,
+            actor_id: "alice".to_string(),
+            action: ferrum_proto::AuditAction::TokenCreate,
+            resource_type: ferrum_proto::AuditResourceType::Token,
+            resource_id: "t1".to_string(),
+            result: "ok".to_string(),
+            metadata: None,
+            created_at: window + chrono::Duration::minutes(5),
+            content_hash: None,
+            previous_hash: None,
+        };
+        store.audit_log().append(&e).await.unwrap();
+        let merkle = store
+            .audit_merkle_roots()
+            .compute_and_cache_root(window)
+            .await
+            .unwrap();
+
+        // Generate an Ed25519 keypair.
+        let mut rng = rand::thread_rng();
+        let signing_key = ed25519_dalek::SigningKey::generate(&mut rng);
+        let verifying_key = signing_key.verifying_key();
+        let signed_at = chrono::Utc::now();
+        let payload_hash = ferrum_proto::canonical_checkpoint_hash(
+            &window,
+            &merkle.root,
+            merkle.entry_count,
+            &signed_at,
+        );
+        let signature = signing_key.sign(&payload_hash);
+        let signature_b64 = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            signature.to_bytes(),
+        );
+        let public_key_b64 = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            verifying_key.to_bytes(),
+        );
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(verifying_key.to_bytes());
+        let fingerprint = hex::encode(hasher.finalize());
+
+        let request = ferrum_proto::CreateCheckpointRequest {
+            window_start: window,
+            merkle_root: merkle.root.clone(),
+            entry_count: merkle.entry_count,
+            signer_id: "operator-1".to_string(),
+            signer_key_fingerprint: fingerprint,
+            signed_at,
+            signature: signature_b64,
+            public_key: public_key_b64,
+        };
+
+        let config = ServerConfig {
+            auth_mode: AuthMode::Scoped,
+            ..Default::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        // Create checkpoint
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/audit/checkpoints")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+
+        // Verify checkpoint
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/v1/admin/audit/checkpoints/{}/verify",
+                        window.to_rfc3339()
+                    ))
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let resp: ferrum_proto::AuditCheckpointVerifyResponse =
+            serde_json::from_slice(&body).unwrap();
+        assert!(resp.valid);
+        assert_eq!(resp.current_root, Some(merkle.root));
+    }
+
+    #[tokio::test]
+    async fn test_checkpoint_create_rejects_tampered_root() {
+        let (runtime, token_value) = test_runtime_with_admin_token().await;
+        let store = runtime.store.clone();
+
+        let window = chrono::Utc::now()
+            .duration_trunc(chrono::Duration::hours(1))
+            .unwrap();
+
+        let e = ferrum_proto::AuditLogEntry {
+            id: 0,
+            actor_id: "alice".to_string(),
+            action: ferrum_proto::AuditAction::TokenCreate,
+            resource_type: ferrum_proto::AuditResourceType::Token,
+            resource_id: "t1".to_string(),
+            result: "ok".to_string(),
+            metadata: None,
+            created_at: window + chrono::Duration::minutes(5),
+            content_hash: None,
+            previous_hash: None,
+        };
+        store.audit_log().append(&e).await.unwrap();
+        let merkle = store
+            .audit_merkle_roots()
+            .compute_and_cache_root(window)
+            .await
+            .unwrap();
+
+        let mut rng = rand::thread_rng();
+        let signing_key = ed25519_dalek::SigningKey::generate(&mut rng);
+        let verifying_key = signing_key.verifying_key();
+        let signed_at = chrono::Utc::now();
+        // Sign the *correct* payload
+        let payload_hash = ferrum_proto::canonical_checkpoint_hash(
+            &window,
+            &merkle.root,
+            merkle.entry_count,
+            &signed_at,
+        );
+        let signature = signing_key.sign(&payload_hash);
+        let signature_b64 = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            signature.to_bytes(),
+        );
+        let public_key_b64 = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            verifying_key.to_bytes(),
+        );
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(verifying_key.to_bytes());
+        let fingerprint = hex::encode(hasher.finalize());
+
+        // But submit a tampered merkle_root in the request
+        let request = ferrum_proto::CreateCheckpointRequest {
+            window_start: window,
+            merkle_root: "tampered".to_string(),
+            entry_count: merkle.entry_count,
+            signer_id: "operator-1".to_string(),
+            signer_key_fingerprint: fingerprint,
+            signed_at,
+            signature: signature_b64,
+            public_key: public_key_b64,
+        };
+
+        let config = ServerConfig {
+            auth_mode: AuthMode::Scoped,
+            ..Default::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/audit/checkpoints")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_checkpoint_list_and_pagination() {
+        let (runtime, token_value) = test_runtime_with_admin_token().await;
+        let store = runtime.store.clone();
+
+        let window = chrono::Utc::now()
+            .duration_trunc(chrono::Duration::hours(1))
+            .unwrap();
+        let prev_window = window - chrono::Duration::hours(1);
+
+        for ws in [prev_window, window] {
+            let cp = ferrum_proto::AuditCheckpoint {
+                window_start: ws,
+                merkle_root: "root".to_string(),
+                entry_count: 0,
+                signer_id: "op".to_string(),
+                signer_key_fingerprint: "fp".to_string(),
+                signed_at: chrono::Utc::now(),
+                signature: "sig".to_string(),
+                public_key: "pk".to_string(),
+            };
+            store.audit_checkpoints().insert(&cp).await.unwrap();
+        }
+
+        let config = ServerConfig {
+            auth_mode: AuthMode::Scoped,
+            ..Default::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/admin/audit/checkpoints?limit=1")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let resp: ferrum_proto::AuditCheckpointListResponse =
+            serde_json::from_slice(&body).unwrap();
+        assert_eq!(resp.items.len(), 1);
+        assert!(resp.next_cursor.is_some());
     }
 }

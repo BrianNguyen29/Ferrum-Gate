@@ -1,5 +1,8 @@
 use anyhow::{Context, Result, bail};
+use chrono::Timelike;
 use clap::{Parser, Subcommand, ValueEnum};
+use ed25519_dalek::Signer;
+use sha2::Digest;
 use std::path::PathBuf;
 use std::process::Command as ProcessCommand;
 
@@ -802,6 +805,73 @@ enum AdminAuditCommand {
     },
     /// Verify the audit log hash chain integrity.
     Verify {
+        /// Output format: text (default) or json.
+        #[arg(long, value_name = "FORMAT", default_value = "text")]
+        format: OutputFormat,
+    },
+    /// Compute or retrieve the Merkle root for an hourly audit window.
+    MerkleVerify {
+        /// UTC-aligned hourly window start (RFC 3339).
+        #[arg(long, value_name = "TIMESTAMP")]
+        window_start: String,
+
+        /// Output format: text (default) or json.
+        #[arg(long, value_name = "FORMAT", default_value = "text")]
+        format: OutputFormat,
+    },
+    /// List cached Merkle roots with pagination.
+    MerkleRoots {
+        /// Pagination cursor.
+        #[arg(long)]
+        cursor: Option<String>,
+
+        /// Number of items per page (default 50, max 200).
+        #[arg(long, value_name = "N", default_value = "50")]
+        limit: u32,
+
+        /// Output format: text (default) or json.
+        #[arg(long, value_name = "FORMAT", default_value = "text")]
+        format: OutputFormat,
+    },
+    /// Sign and submit a checkpoint for an audit window.
+    CheckpointSign {
+        /// UTC-aligned hourly window start (RFC 3339).
+        #[arg(long, value_name = "TIMESTAMP")]
+        window_start: String,
+
+        /// Signer identifier.
+        #[arg(long, value_name = "ID")]
+        signer_id: String,
+
+        /// Ed25519 private key as base64 (32 bytes seed, 64 bytes expanded, or 32-byte raw secret).
+        /// For ed25519-dalek v2, use a 32-byte seed encoded as base64.
+        #[arg(long, value_name = "B64")]
+        private_key: String,
+
+        /// Output format: text (default) or json.
+        #[arg(long, value_name = "FORMAT", default_value = "text")]
+        format: OutputFormat,
+    },
+    /// Verify a stored checkpoint for an audit window.
+    CheckpointVerify {
+        /// UTC-aligned hourly window start (RFC 3339).
+        #[arg(long, value_name = "TIMESTAMP")]
+        window_start: String,
+
+        /// Output format: text (default) or json.
+        #[arg(long, value_name = "FORMAT", default_value = "text")]
+        format: OutputFormat,
+    },
+    /// List signed checkpoints with pagination.
+    CheckpointList {
+        /// Pagination cursor.
+        #[arg(long)]
+        cursor: Option<String>,
+
+        /// Number of items per page (default 50, max 200).
+        #[arg(long, value_name = "N", default_value = "50")]
+        limit: u32,
+
         /// Output format: text (default) or json.
         #[arg(long, value_name = "FORMAT", default_value = "text")]
         format: OutputFormat,
@@ -1954,6 +2024,233 @@ async fn main() -> Result<()> {
                                     if let Some(ref err) = response.error {
                                         println!("Error: {}", err);
                                     }
+                                }
+                            }
+                        }
+                    }
+                    AdminAuditCommand::MerkleVerify {
+                        window_start,
+                        format,
+                    } => {
+                        let response = client.verify_audit_merkle_root(&window_start).await?;
+                        match format {
+                            OutputFormat::Json => {
+                                println!("{}", serde_json::to_string_pretty(&response)?);
+                            }
+                            _ => {
+                                if response.valid {
+                                    println!(
+                                        "Merkle root for {}: {} ({} entries)",
+                                        response.window_start.to_rfc3339(),
+                                        if response.root.is_empty() {
+                                            "(empty)"
+                                        } else {
+                                            &response.root
+                                        },
+                                        response.entry_count
+                                    );
+                                } else {
+                                    println!("Merkle root verification: INVALID");
+                                    if let Some(ref err) = response.error {
+                                        println!("Error: {}", err);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    AdminAuditCommand::MerkleRoots {
+                        cursor,
+                        limit,
+                        format,
+                    } => {
+                        let response = client
+                            .list_audit_merkle_roots(cursor.as_deref(), limit)
+                            .await?;
+                        match format {
+                            OutputFormat::Json => {
+                                println!("{}", serde_json::to_string_pretty(&response)?);
+                            }
+                            _ => {
+                                println!(
+                                    "{:<32} {:<64} {:<12} {:<32}",
+                                    "WINDOW_START", "ROOT", "ENTRY_COUNT", "COMPUTED_AT"
+                                );
+                                for item in &response.items {
+                                    println!(
+                                        "{:<32} {:<64} {:<12} {:<32}",
+                                        item.window_start.to_rfc3339(),
+                                        if item.root.is_empty() {
+                                            "(empty)".to_string()
+                                        } else {
+                                            item.root.clone()
+                                        },
+                                        item.entry_count,
+                                        item.computed_at.to_rfc3339(),
+                                    );
+                                }
+                                if let Some(cursor) = response.next_cursor {
+                                    println!("Next cursor: {}", cursor);
+                                }
+                            }
+                        }
+                    }
+                    AdminAuditCommand::CheckpointSign {
+                        window_start,
+                        signer_id,
+                        private_key,
+                        format,
+                    } => {
+                        let window = chrono::DateTime::parse_from_rfc3339(&window_start)?
+                            .with_timezone(&chrono::Utc);
+                        if window.minute() != 0
+                            || window.second() != 0
+                            || window.timestamp_subsec_nanos() != 0
+                        {
+                            bail!("window_start must be aligned to the hour");
+                        }
+
+                        // Fetch the Merkle root for the window.
+                        let merkle = client.verify_audit_merkle_root(&window_start).await?;
+                        if !merkle.valid {
+                            bail!(
+                                "merkle root computation failed: {}",
+                                merkle.error.unwrap_or_default()
+                            );
+                        }
+
+                        // Decode private key.
+                        let pk_bytes = base64::Engine::decode(
+                            &base64::engine::general_purpose::STANDARD,
+                            &private_key,
+                        )
+                        .map_err(|e| anyhow::anyhow!("invalid private key base64: {}", e))?;
+                        let signing_key = if pk_bytes.len() == 32 {
+                            ed25519_dalek::SigningKey::from_bytes(&pk_bytes.try_into().unwrap())
+                        } else if pk_bytes.len() == 64 {
+                            // Expanded secret key: extract first 32 bytes as seed
+                            let seed: [u8; 32] = pk_bytes[..32]
+                                .try_into()
+                                .map_err(|_| anyhow::anyhow!("invalid private key length"))?;
+                            ed25519_dalek::SigningKey::from_bytes(&seed)
+                        } else {
+                            bail!(
+                                "invalid private key length: expected 32 or 64 bytes, got {}",
+                                pk_bytes.len()
+                            );
+                        };
+
+                        let signed_at = chrono::Utc::now();
+                        let payload_hash = ferrum_proto::canonical_checkpoint_hash(
+                            &window,
+                            &merkle.root,
+                            merkle.entry_count,
+                            &signed_at,
+                        );
+                        let signature = signing_key.sign(&payload_hash);
+                        let signature_b64 = base64::Engine::encode(
+                            &base64::engine::general_purpose::STANDARD,
+                            signature.to_bytes(),
+                        );
+
+                        // Compute public key fingerprint (SHA-256 of raw pk bytes, hex).
+                        let public_key_bytes = signing_key.verifying_key().to_bytes();
+                        let mut hasher = sha2::Sha256::new();
+                        hasher.update(public_key_bytes);
+                        let fingerprint = hex::encode(hasher.finalize());
+                        let public_key_b64 = base64::Engine::encode(
+                            &base64::engine::general_purpose::STANDARD,
+                            public_key_bytes,
+                        );
+
+                        let request = ferrum_proto::CreateCheckpointRequest {
+                            window_start: window,
+                            merkle_root: merkle.root.clone(),
+                            entry_count: merkle.entry_count,
+                            signer_id,
+                            signer_key_fingerprint: fingerprint,
+                            signed_at,
+                            signature: signature_b64,
+                            public_key: public_key_b64,
+                        };
+                        let response = client.create_checkpoint(&request).await?;
+                        match format {
+                            OutputFormat::Json => {
+                                println!("{}", serde_json::to_string_pretty(&response)?);
+                            }
+                            _ => {
+                                if response.valid {
+                                    println!(
+                                        "Checkpoint created for {} (root={} entries={})",
+                                        window_start, merkle.root, merkle.entry_count
+                                    );
+                                } else {
+                                    println!("Checkpoint creation failed");
+                                    if let Some(ref err) = response.error {
+                                        println!("Error: {}", err);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    AdminAuditCommand::CheckpointVerify {
+                        window_start,
+                        format,
+                    } => {
+                        let response = client.verify_checkpoint(&window_start).await?;
+                        match format {
+                            OutputFormat::Json => {
+                                println!("{}", serde_json::to_string_pretty(&response)?);
+                            }
+                            _ => {
+                                if response.valid {
+                                    println!("Checkpoint verification for {}: VALID", window_start);
+                                    if let Some(ref cp) = response.checkpoint {
+                                        println!(
+                                            "  signer={} fingerprint={} signed_at={}",
+                                            cp.signer_id,
+                                            cp.signer_key_fingerprint,
+                                            cp.signed_at.to_rfc3339()
+                                        );
+                                    }
+                                } else {
+                                    println!(
+                                        "Checkpoint verification for {}: INVALID",
+                                        window_start
+                                    );
+                                    if let Some(ref err) = response.error {
+                                        println!("Error: {}", err);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    AdminAuditCommand::CheckpointList {
+                        cursor,
+                        limit,
+                        format,
+                    } => {
+                        let response = client.list_checkpoints(cursor.as_deref(), limit).await?;
+                        match format {
+                            OutputFormat::Json => {
+                                println!("{}", serde_json::to_string_pretty(&response)?);
+                            }
+                            _ => {
+                                println!(
+                                    "{:<32} {:<64} {:<12} {:<24} {:<24}",
+                                    "WINDOW_START", "ROOT", "ENTRY_COUNT", "SIGNER_ID", "SIGNED_AT"
+                                );
+                                for item in &response.items {
+                                    println!(
+                                        "{:<32} {:<64} {:<12} {:<24} {:<24}",
+                                        item.window_start.to_rfc3339(),
+                                        item.merkle_root.clone(),
+                                        item.entry_count,
+                                        item.signer_id,
+                                        item.signed_at.to_rfc3339(),
+                                    );
+                                }
+                                if let Some(cursor) = response.next_cursor {
+                                    println!("Next cursor: {}", cursor);
                                 }
                             }
                         }
@@ -3299,5 +3596,140 @@ rules: []
             cli.is_ok(),
             "CLI should parse policy simulate with optional intent and json flags"
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // Admin audit Merkle CLI parsing tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_admin_audit_merkle_verify_parses() {
+        let cli = Cli::parse_from([
+            "ferrumctl",
+            "admin",
+            "audit",
+            "merkle-verify",
+            "--window-start",
+            "2024-01-01T00:00:00Z",
+        ]);
+        let Command::Admin { sub } = cli.command else {
+            panic!("expected Admin command");
+        };
+        match sub {
+            AdminCommand::Audit { sub } => match sub {
+                AdminAuditCommand::MerkleVerify { window_start, .. } => {
+                    assert_eq!(window_start, "2024-01-01T00:00:00Z");
+                }
+                _ => panic!("expected MerkleVerify command"),
+            },
+            _ => panic!("expected Audit command"),
+        }
+    }
+
+    #[test]
+    fn test_admin_audit_merkle_roots_parses() {
+        let cli = Cli::parse_from([
+            "ferrumctl",
+            "admin",
+            "audit",
+            "merkle-roots",
+            "--limit",
+            "10",
+        ]);
+        let Command::Admin { sub } = cli.command else {
+            panic!("expected Admin command");
+        };
+        match sub {
+            AdminCommand::Audit { sub } => match sub {
+                AdminAuditCommand::MerkleRoots { limit, .. } => {
+                    assert_eq!(limit, 10);
+                }
+                _ => panic!("expected MerkleRoots command"),
+            },
+            _ => panic!("expected Audit command"),
+        }
+    }
+
+    #[test]
+    fn test_admin_audit_checkpoint_sign_parses() {
+        let cli = Cli::parse_from([
+            "ferrumctl",
+            "admin",
+            "audit",
+            "checkpoint-sign",
+            "--window-start",
+            "2024-01-01T00:00:00Z",
+            "--signer-id",
+            "operator-1",
+            "--private-key",
+            "c29tZV9rZXk=",
+        ]);
+        let Command::Admin { sub } = cli.command else {
+            panic!("expected Admin command");
+        };
+        match sub {
+            AdminCommand::Audit { sub } => match sub {
+                AdminAuditCommand::CheckpointSign {
+                    window_start,
+                    signer_id,
+                    private_key,
+                    ..
+                } => {
+                    assert_eq!(window_start, "2024-01-01T00:00:00Z");
+                    assert_eq!(signer_id, "operator-1");
+                    assert_eq!(private_key, "c29tZV9rZXk=");
+                }
+                _ => panic!("expected CheckpointSign command"),
+            },
+            _ => panic!("expected Audit command"),
+        }
+    }
+
+    #[test]
+    fn test_admin_audit_checkpoint_verify_parses() {
+        let cli = Cli::parse_from([
+            "ferrumctl",
+            "admin",
+            "audit",
+            "checkpoint-verify",
+            "--window-start",
+            "2024-01-01T00:00:00Z",
+        ]);
+        let Command::Admin { sub } = cli.command else {
+            panic!("expected Admin command");
+        };
+        match sub {
+            AdminCommand::Audit { sub } => match sub {
+                AdminAuditCommand::CheckpointVerify { window_start, .. } => {
+                    assert_eq!(window_start, "2024-01-01T00:00:00Z");
+                }
+                _ => panic!("expected CheckpointVerify command"),
+            },
+            _ => panic!("expected Audit command"),
+        }
+    }
+
+    #[test]
+    fn test_admin_audit_checkpoint_list_parses() {
+        let cli = Cli::parse_from([
+            "ferrumctl",
+            "admin",
+            "audit",
+            "checkpoint-list",
+            "--limit",
+            "10",
+        ]);
+        let Command::Admin { sub } = cli.command else {
+            panic!("expected Admin command");
+        };
+        match sub {
+            AdminCommand::Audit { sub } => match sub {
+                AdminAuditCommand::CheckpointList { limit, .. } => {
+                    assert_eq!(limit, 10);
+                }
+                _ => panic!("expected CheckpointList command"),
+            },
+            _ => panic!("expected Audit command"),
+        }
     }
 }

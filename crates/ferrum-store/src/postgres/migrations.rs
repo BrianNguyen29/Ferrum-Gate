@@ -66,13 +66,29 @@ pub const MIGRATIONS: &[EmbeddedMigration] = &[
             "/migrations/postgres/004_add_agent_registry.sql"
         )),
     },
+    EmbeddedMigration {
+        version: 5,
+        name: "005_add_audit_merkle_roots",
+        sql: include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/migrations/postgres/005_add_audit_merkle_roots.sql"
+        )),
+    },
+    EmbeddedMigration {
+        version: 6,
+        name: "006_add_audit_checkpoints",
+        sql: include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/migrations/postgres/006_add_audit_checkpoints.sql"
+        )),
+    },
 ];
 
 /// Current schema version for the PostgreSQL embedded migration.
 ///
 /// Must match the highest `version` in [`MIGRATIONS`].
 #[allow(dead_code)]
-pub const CURRENT_SCHEMA_VERSION: i64 = 4;
+pub const CURRENT_SCHEMA_VERSION: i64 = 6;
 
 #[cfg(test)]
 mod tests {

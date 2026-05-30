@@ -1,10 +1,11 @@
 use async_trait::async_trait;
 use ferrum_proto::{
     ActionProposal, AgentRecord, ApprovalId, ApprovalRequest, ApprovalState, AuditAction,
-    AuditLogEntry, AuditResourceType, CapabilityId, CapabilityLease, CapabilityStatus, EventId,
-    ExecutionId, ExecutionRecord, ExecutionState, IntentEnvelope, IntentId, IntentStatus,
-    PolicyBundle, PolicyBundleVersion, ProposalId, ProvenanceEdge, ProvenanceEvent,
-    ProvenanceQueryRequest, RollbackContract, RollbackContractId, RollbackState, Timestamp,
+    AuditLogEntry, AuditMerkleRoot, AuditResourceType, CapabilityId, CapabilityLease,
+    CapabilityStatus, EventId, ExecutionId, ExecutionRecord, ExecutionState, IntentEnvelope,
+    IntentId, IntentStatus, PolicyBundle, PolicyBundleVersion, ProposalId, ProvenanceEdge,
+    ProvenanceEvent, ProvenanceQueryRequest, RollbackContract, RollbackContractId, RollbackState,
+    Timestamp,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -205,6 +206,56 @@ pub trait AuditLogRepo: Send + Sync {
     async fn verify_chain(&self) -> Result<()>;
 }
 
+/// Repository for Merkle roots over audit log time windows.
+#[async_trait]
+pub trait AuditMerkleRootRepo: Send + Sync {
+    /// Compute and cache the Merkle root for a given UTC-aligned hourly window.
+    ///
+    /// If the root is already cached, returns the cached value (idempotent).
+    /// Excludes audit log entries without a `content_hash`.
+    async fn compute_and_cache_root(
+        &self,
+        window_start: chrono::DateTime<chrono::Utc>,
+    ) -> Result<AuditMerkleRoot>;
+
+    /// Get a cached root by window start, if it exists.
+    async fn get_root(
+        &self,
+        window_start: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Option<AuditMerkleRoot>>;
+
+    /// List cached roots with cursor-based pagination.
+    /// Returns (items, next_cursor).
+    async fn list_roots(
+        &self,
+        cursor: Option<&str>,
+        limit: u32,
+    ) -> Result<(Vec<AuditMerkleRoot>, Option<String>)>;
+}
+
+/// Repository for signed audit checkpoints.
+#[async_trait]
+pub trait AuditCheckpointRepo: Send + Sync {
+    /// Insert a signed checkpoint.
+    ///
+    /// Returns an error if a checkpoint for the same window_start already exists.
+    async fn insert(&self, checkpoint: &ferrum_proto::AuditCheckpoint) -> Result<()>;
+
+    /// Get a checkpoint by window start, if it exists.
+    async fn get(
+        &self,
+        window_start: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Option<ferrum_proto::AuditCheckpoint>>;
+
+    /// List checkpoints with cursor-based pagination.
+    /// Returns (items, next_cursor).
+    async fn list(
+        &self,
+        cursor: Option<&str>,
+        limit: u32,
+    ) -> Result<(Vec<ferrum_proto::AuditCheckpoint>, Option<String>)>;
+}
+
 /// Repository for scoped tokens.
 ///
 /// Provides CRUD operations for opaque scoped bearer tokens with
@@ -341,6 +392,8 @@ pub trait StoreFacade: Send + Sync {
     fn policy_bundles(&self) -> Arc<dyn PolicyBundleRepo>;
     fn tokens(&self) -> Arc<dyn TokenRepo>;
     fn audit_log(&self) -> Arc<dyn AuditLogRepo>;
+    fn audit_merkle_roots(&self) -> Arc<dyn AuditMerkleRootRepo>;
+    fn audit_checkpoints(&self) -> Arc<dyn AuditCheckpointRepo>;
     fn agents(&self) -> Arc<dyn AgentRepo>;
 
     /// Returns the current number of pending write operations in the queue.

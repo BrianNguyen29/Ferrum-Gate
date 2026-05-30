@@ -169,3 +169,130 @@ pub struct AuditLogVerifyResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
+
+/// A cached Merkle root for an audit log time window.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct AuditMerkleRoot {
+    /// Start of the UTC-aligned hourly window (RFC 3339).
+    pub window_start: DateTime<Utc>,
+    /// Hex-encoded Merkle root hash (empty when no entries).
+    pub root: String,
+    /// Number of audit log entries included in the root.
+    pub entry_count: i64,
+    /// When the root was computed (RFC 3339).
+    pub computed_at: DateTime<Utc>,
+}
+
+/// Response from a Merkle root verification request.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct AuditMerkleVerifyResponse {
+    /// Whether the root is present and valid.
+    pub valid: bool,
+    /// The requested window start.
+    pub window_start: DateTime<Utc>,
+    /// The computed Merkle root (empty if no entries).
+    pub root: String,
+    /// Number of entries in the window.
+    pub entry_count: i64,
+    /// Human-readable error if validation failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Response envelope for paginated Merkle root lists.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct AuditMerkleRootListResponse {
+    pub items: Vec<AuditMerkleRoot>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    pub total: usize,
+}
+
+/// A signed checkpoint over a Merkle root for an audit log time window.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct AuditCheckpoint {
+    /// Start of the UTC-aligned hourly window (RFC 3339).
+    pub window_start: DateTime<Utc>,
+    /// Hex-encoded Merkle root hash.
+    pub merkle_root: String,
+    /// Number of audit log entries included in the root.
+    pub entry_count: i64,
+    /// Signer identifier (e.g., operator name, agent_id).
+    pub signer_id: String,
+    /// Hex-encoded SHA-256 fingerprint of the Ed25519 public key used to verify.
+    pub signer_key_fingerprint: String,
+    /// When the checkpoint was signed (RFC 3339).
+    pub signed_at: DateTime<Utc>,
+    /// Base64-encoded Ed25519 signature.
+    pub signature: String,
+    /// Base64-encoded Ed25519 public key used for verification.
+    pub public_key: String,
+}
+
+/// Request to create a signed checkpoint.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CreateCheckpointRequest {
+    pub window_start: DateTime<Utc>,
+    pub merkle_root: String,
+    pub entry_count: i64,
+    pub signer_id: String,
+    pub signer_key_fingerprint: String,
+    pub signed_at: DateTime<Utc>,
+    pub signature: String,
+    pub public_key: String,
+}
+
+/// Response envelope for paginated checkpoint lists.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct AuditCheckpointListResponse {
+    pub items: Vec<AuditCheckpoint>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    pub total: usize,
+}
+
+/// Response from a checkpoint verification request.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct AuditCheckpointVerifyResponse {
+    /// Whether the checkpoint is present, signature valid, and Merkle root matches.
+    pub valid: bool,
+    /// The requested window start.
+    pub window_start: DateTime<Utc>,
+    /// Human-readable error if validation failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// Stored checkpoint details (if found).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checkpoint: Option<AuditCheckpoint>,
+    /// Current computed Merkle root for the window (if available).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_root: Option<String>,
+    /// Current entry count for the window.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_entry_count: Option<i64>,
+}
+
+/// Compute the deterministic canonical checkpoint payload hash.
+///
+/// The canonical JSON is alphabetically sorted and compact:
+/// `{"entry_count":N,"merkle_root":"...","signed_at":"...","window_start":"..."}`
+/// The resulting SHA-256 digest is returned as raw bytes (32).
+pub fn canonical_checkpoint_hash(
+    window_start: &DateTime<Utc>,
+    merkle_root: &str,
+    entry_count: i64,
+    signed_at: &DateTime<Utc>,
+) -> Vec<u8> {
+    use sha2::{Digest, Sha256};
+    // Build canonical JSON with keys in alphabetical order, no extra whitespace.
+    let canonical = format!(
+        "{{\"entry_count\":{},\"merkle_root\":\"{}\",\"signed_at\":\"{}\",\"window_start\":\"{}\"}}",
+        entry_count,
+        merkle_root,
+        signed_at.to_rfc3339(),
+        window_start.to_rfc3339(),
+    );
+    let mut hasher = Sha256::new();
+    hasher.update(canonical.as_bytes());
+    hasher.finalize().to_vec()
+}

@@ -1,4 +1,5 @@
 pub mod error;
+pub mod merkle;
 pub mod repos;
 pub mod sqlite;
 pub mod sync_service;

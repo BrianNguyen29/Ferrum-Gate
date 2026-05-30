@@ -24,7 +24,9 @@
 
 mod agents;
 mod approvals;
+mod audit_checkpoint;
 mod audit_log;
+mod audit_merkle_root;
 mod capabilities;
 mod executions;
 mod helpers;
@@ -39,7 +41,9 @@ mod tokens;
 
 pub use agents::PostgresAgentRepo;
 pub use approvals::PostgresApprovalRepo;
+pub use audit_checkpoint::PostgresAuditCheckpointRepo;
 pub use audit_log::PostgresAuditLogRepo;
+pub use audit_merkle_root::PostgresAuditMerkleRootRepo;
 pub use capabilities::PostgresCapabilityRepo;
 pub use executions::PostgresExecutionRepo;
 pub use intents::PostgresIntentRepo;
@@ -52,8 +56,9 @@ pub use tokens::PostgresTokenRepo;
 
 use crate::Result;
 use crate::repos::{
-    AgentRepo, ApprovalRepo, AuditLogRepo, CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo,
-    PolicyBundleRepo, ProposalRepo, ProvenanceRepo, RollbackRepo, StoreFacade, TokenRepo,
+    AgentRepo, ApprovalRepo, AuditCheckpointRepo, AuditLogRepo, AuditMerkleRootRepo,
+    CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo, PolicyBundleRepo, ProposalRepo,
+    ProvenanceRepo, RollbackRepo, StoreFacade, TokenRepo,
 };
 use async_trait::async_trait;
 use sqlx::PgPool;
@@ -323,6 +328,14 @@ impl PostgresStore {
         PostgresAuditLogRepo::new(self.pool.clone())
     }
 
+    pub fn audit_merkle_roots(&self) -> PostgresAuditMerkleRootRepo {
+        PostgresAuditMerkleRootRepo::new(self.pool.clone())
+    }
+
+    pub fn audit_checkpoints(&self) -> PostgresAuditCheckpointRepo {
+        PostgresAuditCheckpointRepo::new(self.pool.clone())
+    }
+
     pub fn agents(&self) -> PostgresAgentRepo {
         PostgresAgentRepo::new(self.pool.clone())
     }
@@ -372,6 +385,14 @@ impl StoreFacade for PostgresStore {
 
     fn audit_log(&self) -> Arc<dyn AuditLogRepo> {
         Arc::new(self.audit_log())
+    }
+
+    fn audit_merkle_roots(&self) -> Arc<dyn AuditMerkleRootRepo> {
+        Arc::new(self.audit_merkle_roots())
+    }
+
+    fn audit_checkpoints(&self) -> Arc<dyn AuditCheckpointRepo> {
+        Arc::new(self.audit_checkpoints())
     }
 
     fn agents(&self) -> Arc<dyn AgentRepo> {
@@ -527,7 +548,7 @@ mod tests {
 
     #[test]
     fn postgres_current_schema_version_is_set() {
-        assert_eq!(super::migrations::CURRENT_SCHEMA_VERSION, 2);
+        assert_eq!(super::migrations::CURRENT_SCHEMA_VERSION, 6);
     }
 
     #[tokio::test]

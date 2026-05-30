@@ -301,8 +301,10 @@ Thứ tự này giúp FerrumGate:
 ### Phase 5: Audit / compliance hardening
 **Mục tiêu:** Làm cứng audit trail và chuẩn bị các mapping compliance.
 
-- [ ] **5.1** Implement Merkle root per time window cho audit log. (Owner: Dev / Type: Build)
-- [ ] **5.2** Implement signed checkpoint (optional, nếu scope cho phép). (Owner: Dev / Type: Build)
+- [x] **5.1** Implement Merkle root per time window cho audit log. (Owner: Dev / Type: Build)
+  - Evidence: Domain-separated SHA-256 Merkle tree (`0x00` leaf / `0x01` internal), hourly UTC-aligned windows, odd-count duplication, deterministic `id ASC` ordering, excludes legacy entries without `content_hash`. `audit_merkle_roots` table with idempotent cache. SQLite v11 + Postgres v5 migrations. Gateway endpoints `GET /v1/admin/audit/merkle-verify` and `GET /v1/admin/audit/merkle-roots` (scope `admin:audit`). CLI commands `ferrumctl admin audit merkle-verify` and `merkle-roots`. Tests: Merkle algorithm (1/2/3 leaves), store compute/cache/list, gateway endpoint auth/pagination, CLI parse.
+- [x] **5.2** Implement signed checkpoint. (Owner: Dev / Type: Build)
+  - Evidence: Ed25519-signed checkpoint over Merkle root per hourly window; canonical SHA-256 payload hash; `audit_checkpoints` table; gateway endpoints `POST /v1/admin/audit/checkpoints`, `GET /v1/admin/audit/checkpoints/{window_start}/verify`, `GET /v1/admin/audit/checkpoints`; CLI commands `ferrumctl admin audit checkpoint-sign`, `checkpoint-verify`, `checkpoint-list`. SQLite v12 + Postgres v6 migrations. Tests: create+verify, tampered-root rejection, list+pagination, CLI parse. See [`docs/implementation-path/artifacts/2026-05-29-phase5.2-signed-checkpoints-evidence.md`](./implementation-path/artifacts/2026-05-29-phase5.2-signed-checkpoints-evidence.md)
 - [x] **5.3** Implement audit export bundle (`ferrumctl audit export`). (Owner: Dev / Type: Build)
   - Evidence: `GET /v1/admin/audit-logs/export` (requires `admin:audit` scope); supports `ndjson` (default), `json`, and `csv`; bounded pagination with 10,000-row max; `since`/`until` date filters added to store layer and list endpoint; `ferrumctl admin audit export` with filters and output path/stdout; tests for store date filters, gateway export formats/auth, and CLI args.
 - [x] **5.4** Viết `docs/security/owasp-agentic-ai-mapping.md` map OWASP Agentic AI Top 10 vào controls của FerrumGate. (Owner: Security / Type: Document)

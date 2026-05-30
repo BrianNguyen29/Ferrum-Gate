@@ -1,6 +1,8 @@
 mod agents;
 mod approvals;
+mod audit_checkpoint;
 mod audit_log;
+mod audit_merkle_root;
 mod capabilities;
 mod executions;
 mod helpers;
@@ -19,7 +21,9 @@ pub mod write_queue;
 
 pub use agents::SqliteAgentRepo;
 pub use approvals::SqliteApprovalRepo;
+pub use audit_checkpoint::SqliteAuditCheckpointRepo;
 pub use audit_log::SqliteAuditLogRepo;
+pub use audit_merkle_root::SqliteAuditMerkleRootRepo;
 pub use capabilities::SqliteCapabilityRepo;
 pub use executions::SqliteExecutionRepo;
 pub use intents::SqliteIntentRepo;
@@ -35,8 +39,9 @@ pub use tokens::SqliteTokenRepo;
 
 use crate::Result;
 use crate::repos::{
-    AgentRepo, ApprovalRepo, AuditLogRepo, CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo,
-    PolicyBundleRepo, ProposalRepo, ProvenanceRepo, RollbackRepo, StoreFacade, TokenRepo,
+    AgentRepo, ApprovalRepo, AuditCheckpointRepo, AuditLogRepo, AuditMerkleRootRepo,
+    CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo, PolicyBundleRepo, ProposalRepo,
+    ProvenanceRepo, RollbackRepo, StoreFacade, TokenRepo,
 };
 use crate::sqlite::write_queue::{WriteQueue, WriterState, spawn_writer_task};
 use async_trait::async_trait;
@@ -334,6 +339,14 @@ impl SqliteStore {
         SqliteAuditLogRepo::new(self.pool.clone())
     }
 
+    pub fn audit_merkle_roots(&self) -> SqliteAuditMerkleRootRepo {
+        SqliteAuditMerkleRootRepo::new(self.pool.clone())
+    }
+
+    pub fn audit_checkpoints(&self) -> SqliteAuditCheckpointRepo {
+        SqliteAuditCheckpointRepo::new(self.pool.clone())
+    }
+
     pub fn agents(&self) -> SqliteAgentRepo {
         SqliteAgentRepo::new(self.pool.clone())
     }
@@ -423,6 +436,14 @@ impl StoreFacade for SqliteStore {
 
     fn audit_log(&self) -> Arc<dyn AuditLogRepo> {
         Arc::new(SqliteAuditLogRepo::new(self.pool.clone()))
+    }
+
+    fn audit_merkle_roots(&self) -> Arc<dyn AuditMerkleRootRepo> {
+        Arc::new(SqliteAuditMerkleRootRepo::new(self.pool.clone()))
+    }
+
+    fn audit_checkpoints(&self) -> Arc<dyn AuditCheckpointRepo> {
+        Arc::new(SqliteAuditCheckpointRepo::new(self.pool.clone()))
     }
 
     fn agents(&self) -> Arc<dyn AgentRepo> {

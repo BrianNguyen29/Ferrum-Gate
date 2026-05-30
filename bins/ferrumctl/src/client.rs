@@ -718,6 +718,34 @@ impl Client {
         Ok(resp.json().await?)
     }
 
+    pub async fn verify_audit_merkle_root(
+        &self,
+        window_start: &str,
+    ) -> Result<ferrum_proto::AuditMerkleVerifyResponse> {
+        let url = format!(
+            "{}/v1/admin/audit/merkle-verify?window_start={}",
+            self.base_url, window_start
+        );
+        let resp = self.add_auth(self.http.get(&url)).send().await?;
+        resp.error_for_status_ref()?;
+        Ok(resp.json().await?)
+    }
+
+    pub async fn list_audit_merkle_roots(
+        &self,
+        cursor: Option<&str>,
+        limit: u32,
+    ) -> Result<ferrum_proto::AuditMerkleRootListResponse> {
+        let mut url = format!("{}/v1/admin/audit/merkle-roots?", self.base_url);
+        if let Some(cursor) = cursor {
+            url.push_str(&format!("cursor={}&", cursor));
+        }
+        url.push_str(&format!("limit={}", limit));
+        let resp = self.add_auth(self.http.get(&url)).send().await?;
+        resp.error_for_status_ref()?;
+        Ok(resp.json().await?)
+    }
+
     // ── Agent Admin Methods ──
 
     pub async fn list_agents(
@@ -773,5 +801,55 @@ impl Client {
             bail!("HTTP {}: {}", status, body);
         }
         Ok(())
+    }
+
+    // ── Checkpoint Methods ──
+
+    pub async fn create_checkpoint(
+        &self,
+        request: &ferrum_proto::CreateCheckpointRequest,
+    ) -> Result<ferrum_proto::AuditCheckpointVerifyResponse> {
+        let url = format!("{}/v1/admin/audit/checkpoints", self.base_url);
+        let resp = self
+            .add_auth(self.http.post(&url).json(request))
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            if body.is_empty() {
+                bail!("HTTP {}: (empty body)", status);
+            }
+            bail!("HTTP {}: {}", status, body);
+        }
+        Ok(resp.json().await?)
+    }
+
+    pub async fn list_checkpoints(
+        &self,
+        cursor: Option<&str>,
+        limit: u32,
+    ) -> Result<ferrum_proto::AuditCheckpointListResponse> {
+        let mut url = format!("{}/v1/admin/audit/checkpoints?", self.base_url);
+        if let Some(cursor) = cursor {
+            url.push_str(&format!("cursor={}&", cursor));
+        }
+        url.push_str(&format!("limit={}", limit));
+        let resp = self.add_auth(self.http.get(&url)).send().await?;
+        resp.error_for_status_ref()?;
+        Ok(resp.json().await?)
+    }
+
+    pub async fn verify_checkpoint(
+        &self,
+        window_start: &str,
+    ) -> Result<ferrum_proto::AuditCheckpointVerifyResponse> {
+        let url = format!(
+            "{}/v1/admin/audit/checkpoints/{}/verify",
+            self.base_url, window_start
+        );
+        let resp = self.add_auth(self.http.get(&url)).send().await?;
+        resp.error_for_status_ref()?;
+        Ok(resp.json().await?)
     }
 }
