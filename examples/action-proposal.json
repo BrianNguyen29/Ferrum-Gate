@@ -1,0 +1,19 @@
+{
+  "proposal_id": "44444444-4444-4444-4444-444444444444",
+  "intent_id": "55555555-5555-5555-5555-555555555555",
+  "step_index": 1,
+  "title": "Create finance email draft",
+  "tool_name": "gmail.create_draft",
+  "server_name": "gmail",
+  "raw_arguments": {
+    "to": "finance@example.com",
+    "subject": "Invoice 2026-03",
+    "body": "Please find the invoice attached."
+  },
+  "expected_effect": "Create email draft only",
+  "estimated_risk": "Medium",
+  "requested_rollback_class": "R2Compensatable",
+  "taint_inputs": [],
+  "metadata": {},
+  "created_at": "2026-03-17T10:00:00Z"
+}

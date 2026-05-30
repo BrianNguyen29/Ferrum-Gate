@@ -1,0 +1,10 @@
+# FerrumGate PostgreSQL backup cron example (15-minute interval)
+# Review paths, user, and credentials before installing. Operator-owned; not managed by FerrumGate.
+# For D2=A pg_dump logical backup on single-node PostgreSQL (D1=A). No HA, no streaming replication.
+SHELL=/bin/bash
+PATH=/usr/local/bin:/usr/bin:/bin
+
+# Run pg_dump every 15 minutes to meet RPO=15min target.
+# Use PGPASSFILE for credentials; do not inline passwords.
+# Retain roughly 4 days of 15-minute dumps (~384 files); adjust -mmin as needed.
+*/15 * * * * backupuser PGPASSFILE=/etc/ferrumgate/.pgpass /usr/local/bin/pg_dump -h localhost -p 5432 -U backupuser -d ferrumgate -Fc --no-owner --no-privileges -f /var/backups/ferrumgate-postgres/ferrumgate_$(date +\%Y\%m\%d_\%H\%M\%S).dump && find /var/backups/ferrumgate-postgres -name "ferrumgate_*.dump" -type f -mmin +5760 -delete

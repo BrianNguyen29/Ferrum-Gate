@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ferrumgate.local/schemas/approval-request.json",
+  "title": "ApprovalRequest",
+  "type": "object",
+  "required": [
+    "approval_id",
+    "intent_id",
+    "proposal_id",
+    "requested_by",
+    "reason",
+    "action_digest",
+    "expires_at",
+    "state",
+    "created_at"
+  ],
+  "properties": {
+    "approval_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "intent_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "proposal_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "execution_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "requested_by": {
+      "type": "object",
+      "required": [
+        "actor_type",
+        "actor_id"
+      ],
+      "properties": {
+        "actor_type": {
+          "type": "string"
+        },
+        "actor_id": {
+          "type": "string"
+        },
+        "display_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "reason": {
+      "type": "string"
+    },
+    "action_digest": {
+      "type": "string"
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "Pending",
+        "Granted",
+        "Denied",
+        "Expired"
+      ]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

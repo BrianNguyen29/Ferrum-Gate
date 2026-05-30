@@ -1,0 +1,41 @@
+# Docker Compose for FerrumGate Local Demo
+#
+# ⚠️  DISCLAIMER: This is a LOCAL DEMO ONLY.
+#     - SQLite in-memory (all data is lost on container stop/restart)
+#     - Authentication is DISABLED
+#     - Bound to loopback on the host (127.0.0.1:8080)
+#     - NO production-ready claim
+#     DO NOT use this for production workloads or expose to the internet.
+#
+# Usage:
+#   docker compose -f docker-compose.demo.yml up -d --build
+#   curl http://127.0.0.1:8080/v1/healthz
+#   docker compose -f docker-compose.demo.yml down
+
+services:
+  ferrumd:
+    build: .
+    container_name: ferrumgate_demo
+    environment:
+      FERRUMD_BIND_ADDR: "0.0.0.0:8080"
+      FERRUMD_STORE_DSN: "sqlite::memory:"
+      FERRUMD_AUTH_MODE: "disabled"
+      # Required inside the container because ferrumd must listen on 0.0.0.0
+      # for Docker port publishing. The host port remains loopback-only below.
+      FERRUMD_ALLOW_INSECURE_NONLOCAL_BIND: "true"
+      FERRUMD_LOG_FILTER: "info"
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/v1/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    # Restart policy for local dev only — NOT for production
+    restart: "no"
+    # Resource limits — adjust for local testing
+    deploy:
+      resources:
+        limits:
+          memory: 256M

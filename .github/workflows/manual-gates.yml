@@ -1,0 +1,86 @@
+name: manual-gates
+
+# Manual-only workflow for expensive local gates.
+# Triggered exclusively via workflow_dispatch; does NOT run on push or pull_request.
+# This avoids burning CI minutes on long-running or resource-heavy checks.
+#
+# NOT G2. NOT production-ready. NOT target evidence.
+
+on:
+  workflow_dispatch:
+    inputs:
+      gate:
+        description: 'Which gate to run'
+        required: true
+        default: 'pretarget'
+        type: choice
+        options:
+          - audit
+          - pretarget
+          - secret-scan
+          - wal-drill
+          - pg-restart-drill
+          - restore-drill
+          - mcp-smoke
+          - all
+
+jobs:
+  manual-gate:
+    name: Manual Gate (${{ inputs.gate }})
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "ferrumgate-manual-gates"
+          cache-targets: false
+
+      - name: Gate — audit
+        if: ${{ inputs.gate == 'audit' || inputs.gate == 'all' }}
+        run: bash scripts/run_security_audit.sh
+
+      - name: Gate — pretarget
+        if: ${{ inputs.gate == 'pretarget' || inputs.gate == 'all' }}
+        run: bash scripts/run_pre_target_gate.sh
+
+      - name: Gate — secret-scan
+        if: ${{ inputs.gate == 'secret-scan' || inputs.gate == 'all' }}
+        run: bash scripts/run_secret_scan.sh
+
+      - name: Gate — wal-drill
+        if: ${{ inputs.gate == 'wal-drill' || inputs.gate == 'all' }}
+        run: bash scripts/run_wal_crash_recovery_drill.sh
+
+      - name: Gate — pg-restart-drill
+        if: ${{ inputs.gate == 'pg-restart-drill' || inputs.gate == 'all' }}
+        run: bash scripts/run_pg_container_restart_drill.sh --dry-run
+
+      - name: Gate — restore-drill
+        if: ${{ inputs.gate == 'restore-drill' || inputs.gate == 'all' }}
+        run: bash scripts/run_local_restore_drill.sh
+
+      - name: Gate — mcp-smoke
+        if: ${{ inputs.gate == 'mcp-smoke' || inputs.gate == 'all' }}
+        run: bash scripts/run_mcp_lifecycle_smoke.sh
+
+      - name: Write job summary
+        run: |
+          echo "## FerrumGate v1 — Manual Gate (${{ inputs.gate }})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**This is a manual-only workflow.**" >> $GITHUB_STEP_SUMMARY
+          echo "It does NOT run on push or pull_request." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Selected gate: **${{ inputs.gate }}**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "This does NOT constitute:" >> $GITHUB_STEP_SUMMARY
+          echo "- G2 evidence (G2.1-G2.8 remain pending operator action)" >> $GITHUB_STEP_SUMMARY
+          echo "- Target readiness (no real target values were used)" >> $GITHUB_STEP_SUMMARY
+          echo "- Pilot authorization (operator signoff required)" >> $GITHUB_STEP_SUMMARY
+          echo "- Production-ready (RC-ready/conditional)" >> $GITHUB_STEP_SUMMARY

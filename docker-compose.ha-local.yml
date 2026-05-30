@@ -1,0 +1,73 @@
+# Docker Compose for HA Local PostgreSQL Failover Simulation
+#
+# ⚠️  DISCLAIMER: LOCAL SIMULATION ONLY.
+#     - Two PostgreSQL 16 containers simulating primary/standby streaming replication
+#     - Placeholder credentials; local Docker network only
+#     - NO production HA claim, no automated failover, no multi-host
+#     DO NOT use this for production workloads.
+#
+# Usage:
+#   bash scripts/setup_ha_local.sh
+#   bash scripts/run_ha_local_failover_drill.sh
+#   bash scripts/teardown_ha_local.sh
+#
+# This service is intended for local development and HA procedure rehearsal only.
+
+services:
+  postgres_ha_primary:
+    image: postgres:16
+    container_name: ferrumgate_postgres_ha_primary
+    environment:
+      POSTGRES_USER: ferrumgate_dev
+      POSTGRES_PASSWORD: ferrumgate_dev_password  # placeholder - not for production
+      POSTGRES_DB: ferrumgate_ha_test
+    ports:
+      - "5433:5432"
+    volumes:
+      - ha_primary_data:/var/lib/postgresql/data
+      - ./scripts/ha_local_primary_init.sh:/docker-entrypoint-initdb.d/01-replication.sh:ro
+    command: >
+      postgres
+      -c wal_level=replica
+      -c max_wal_senders=10
+      -c max_replication_slots=10
+      -c hot_standby=on
+      -c listen_addresses=*
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ferrumgate_dev -d ferrumgate_ha_test"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: "no"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  postgres_ha_standby:
+    image: postgres:16
+    container_name: ferrumgate_postgres_ha_standby
+    environment:
+      POSTGRES_USER: ferrumgate_dev
+      POSTGRES_PASSWORD: ferrumgate_dev_password  # placeholder - not for production
+      POSTGRES_DB: ferrumgate_ha_test
+    ports:
+      - "5434:5432"
+    volumes:
+      - ha_standby_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ferrumgate_dev -d ferrumgate_ha_test"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: "no"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+volumes:
+  ha_primary_data:
+    driver: local
+  ha_standby_data:
+    driver: local

@@ -1,0 +1,103 @@
+name: local-profile-evidence
+
+# CI-hosted RC evidence only. NOT G2. NOT production-ready.
+# Does NOT constitute target evidence, operator signoff, or pilot authorization.
+
+on:
+  workflow_dispatch:
+    # Manual trigger for CI-hosted RC evidence run
+  push:
+    paths:
+      - '.github/workflows/local-profile-evidence.yml'
+      - 'scripts/run_local_path2_target_profile.sh'
+      - 'scripts/run_pre_target_gate.sh'
+      - 'docs/guides/'
+      - 'docs/PRODUCTION_NOTES.md'
+  pull_request:
+    paths:
+      - '.github/workflows/local-profile-evidence.yml'
+      - 'scripts/run_local_path2_target_profile.sh'
+      - 'scripts/run_pre_target_gate.sh'
+      - 'docs/guides/'
+      - 'docs/PRODUCTION_NOTES.md'
+
+jobs:
+  local-profile:
+    name: Local Profile Evidence (CI-hosted RC only)
+    runs-on: ubuntu-latest
+    # Explicit constraints:
+    # - CI-hosted means running on GitHub Actions runners (not operator target host)
+    # - RC evidence means validates tooling locally in CI environment
+    # - NOT G2 evidence - G2.1-G2.8 remain pending operator action
+    # - NOT production-ready - FerrumGate v1 remains RC-ready/conditional
+    # - NOT target evidence - no real target values used
+    # - NOT operator signoff - doc 54 remains unsigned
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show repository tree
+        run: find . -maxdepth 3 | sort
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "ferrumgate-local-profile"
+          cache-targets: false
+
+      - name: Bash syntax check - run_local_path2_target_profile.sh
+        run: bash -n scripts/run_local_path2_target_profile.sh
+
+      - name: Bash syntax check - run_pre_target_gate.sh
+        run: bash -n scripts/run_pre_target_gate.sh
+
+      - name: Build ferrumd release
+        run: cargo build --release --bin ferrumd --manifest-path Cargo.toml
+
+      - name: Build ferrumctl release
+        run: cargo build --release --bin ferrumctl --manifest-path Cargo.toml
+
+      - name: Run pre-target gate
+        run: bash scripts/run_pre_target_gate.sh
+
+      - name: Run local path2 target profile
+        run: |
+          bash scripts/run_local_path2_target_profile.sh \
+            --keep-output \
+            --output-dir "${{ runner.temp }}/ferrumgate-local-profile"
+
+      - name: Upload local profile evidence artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ferrumgate-local-profile-evidence-${{ github.run_id }}
+          path: ${{ runner.temp }}/ferrumgate-local-profile/
+          retention-days: 30
+          # No secrets or tokens in artifact - ephemeral tokens only
+
+      - name: Write job summary
+        run: |
+          echo "## FerrumGate v1 — Local Profile Evidence (CI-hosted RC only)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**This is CI-hosted RC evidence only.**" >> $GITHUB_STEP_SUMMARY
+          echo "It does NOT constitute:" >> $GITHUB_STEP_SUMMARY
+          echo "- G2 evidence (G2.1-G2.8 remain pending operator action)" >> $GITHUB_STEP_SUMMARY
+          echo "- Target readiness (no real target values were used)" >> $GITHUB_STEP_SUMMARY
+          echo "- Pilot authorized (operator signoff required)" >> $GITHUB_STEP_SUMMARY
+          echo "- Production-ready (RC-ready/conditional)" >> $GITHUB_STEP_SUMMARY
+          echo "- Operator signoff (doc 54 remains unsigned)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Artifact**: ferrumgate-local-profile-evidence-${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Profile run details**: See uploaded artifact for phase results." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "For real target deployment, operator must:" >> $GITHUB_STEP_SUMMARY
+          echo "1. Collect Critical fields from doc71" >> $GITHUB_STEP_SUMMARY
+          echo "2. Generate real bearer token (openssl rand -hex 32)" >> $GITHUB_STEP_SUMMARY
+          echo "3. Adapt configs to real target paths" >> $GITHUB_STEP_SUMMARY
+          echo "4. Execute on real target per doc66 Phase B" >> $GITHUB_STEP_SUMMARY
+          echo "5. Complete drills and fill G2 evidence per doc59" >> $GITHUB_STEP_SUMMARY
+          echo "6. Sign doc 54 only after G2 gates satisfied" >> $GITHUB_STEP_SUMMARY

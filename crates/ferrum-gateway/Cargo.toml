@@ -1,0 +1,45 @@
+[package]
+name = "ferrum-gateway"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+# PostgreSQL runtime support — feature-gated and local/bounded, NOT production-ready/HA
+postgres = ["ferrum-store/postgres"]
+# Expose test-only helpers (e.g., build_router without auth) for integration tests and local tools.
+# NOT for production use.
+test-utils = []
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+axum.workspace = true
+base64.workspace = true
+blake3.workspace = true
+chrono.workspace = true
+constant_time_eq.workspace = true
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+jsonwebtoken.workspace = true
+rand.workspace = true
+sha2.workspace = true
+hex.workspace = true
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+tower_governor.workspace = true
+tracing.workspace = true
+
+ferrum-proto = { path = "../ferrum-proto" }
+ferrum-pdp = { path = "../ferrum-pdp" }
+ferrum-cap = { path = "../ferrum-cap" }
+ferrum-rollback = { path = "../ferrum-rollback" }
+ferrum-store = { path = "../ferrum-store" }
+ferrum-graph = { path = "../ferrum-graph" }
+ferrum-sync = { path = "../ferrum-sync" }
+ferrum-firewall = { path = "../ferrum-firewall" }
+uuid.workspace = true

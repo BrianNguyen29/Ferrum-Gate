@@ -1,0 +1,2074 @@
+openapi: 3.1.0
+info:
+  title: FerrumGate Control API
+  version: 0.1.0
+  description: |
+    REST control plane API for FerrumGate v1.
+
+    ## Authentication
+
+    When auth mode is set to "bearer", all endpoints except `/v1/healthz`, `/v1/readyz`, `/v1/readyz/deep`, and `/v1/metrics`
+    require a Bearer token in the Authorization header:
+
+    ```
+    Authorization: Bearer <token>
+    ```
+
+    ## TLS
+
+    This API does not terminate TLS. Deploy behind a TLS-terminating proxy
+    (e.g., nginx, cloud load balancer) for production use.
+
+servers:
+  - url: http://localhost:8080
+
+paths:
+  /v1/healthz:
+    get:
+      summary: Basic health check (unauthenticated)
+      operationId: healthz
+      security: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /v1/readyz:
+    get:
+      summary: Basic readiness check (unauthenticated)
+      operationId: readyz
+      security: []
+      responses:
+        '200':
+          description: Ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /v1/readyz/deep:
+    get:
+      summary: Deep readiness check with component status (unauthenticated)
+      description: |
+        Returns detailed component-level readiness including store health and write queue backpressure.
+        The write_queue component provides bounded backpressure detection only; it does not
+        indicate full dependency health, ledger scan status, adapter health, rollback health,
+        connection pool saturation, or schema integrity.
+      operationId: readyzDeep
+      security: []
+      responses:
+        '200':
+          description: All components healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeepHealthResponse'
+        '503':
+          description: One or more components degraded or unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeepHealthResponse'
+
+  /v1/metrics:
+    get:
+      summary: Bounded Prometheus-style metrics (unauthenticated)
+      operationId: metrics
+      description: |
+        Returns Prometheus text exposition format with the following metric families:
+
+        - `ferrumgate_http_requests_total` - HTTP request counters by route, method, and status code (bounded status labels: 200, 503)
+        - `ferrumgate_store_health_up` - Store health gauge (1=ok, 0=unhealthy)
+        - `ferrumgate_write_queue_depth` - SQLite write queue depth gauge (accepted ops not yet processed by writer loop)
+        - `ferrumgate_metrics_scrapes_total` - Metrics endpoint scrape counter
+        - `ferrumgate_governance_errors_total` - Governance error counters by route and method
+        - `ferrumgate_governance_success_total` - Governance success counters by route and method
+        - `ferrumgate_request_duration_seconds` - Latency histogram for public endpoints with bounded labels: route, method, status, le (bucket boundary). Emits _bucket, _sum, and _count lines per route/status combination.
+
+        **Note**: This endpoint is intentionally bounded. Latency histograms are
+        implemented for public endpoints only (healthz, readyz, readyz/deep, metrics).
+        Governance route latency instrumentation is out of scope. HTTP status labels
+        are implemented for public endpoints only (bounded change, per-handler instrumentation).
+      security: []
+      responses:
+        '200':
+          description: Metrics in Prometheus text exposition format
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /v1/intents/compile:
+    post:
+      summary: Compile an IntentEnvelope
+      operationId: compileIntent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IntentCompileRequest'
+      responses:
+        '201':
+          description: Intent compiled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntentCompileResponse'
+        '400':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/intents:
+    get:
+      summary: List intents with optional filters
+      operationId: listIntents
+      parameters:
+        - name: intent_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: Filter by intent ID (exact match)
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: array
+            items:
+              type: string
+          description: |
+            Filter by intent status. Multiple values can be specified.
+            Valid values: Active, Closed, Expired, Quarantined, Revoked
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Pagination cursor from previous response
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+          description: Maximum number of intents to return
+      responses:
+        '200':
+          description: List of intents
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/IntentListItem'
+                  next_cursor:
+                    type: string
+                    nullable: true
+                    description: Cursor for next page, null if no more results
+        '400':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/proposals/{proposal_id}/evaluate:
+    post:
+      summary: Evaluate proposal via policy
+      operationId: evaluateProposal
+      parameters:
+        - $ref: '#/components/parameters/ProposalId'
+      responses:
+        '200':
+          description: Evaluation response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvaluateProposalResponse'
+        '404':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/capabilities/mint:
+    post:
+      summary: Mint a capability lease
+      operationId: mintCapability
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CapabilityMintRequest'
+      responses:
+        '201':
+          description: Capability minted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CapabilityMintResponse'
+        '400':
+          $ref: '#/components/responses/ApiError'
+        '403':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/capabilities/{capability_id}/revoke:
+    post:
+      summary: Revoke capability
+      operationId: revokeCapability
+      parameters:
+        - $ref: '#/components/parameters/CapabilityId'
+      responses:
+        '200':
+          description: Capability revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+      security:
+        - BearerAuth: []
+
+  /v1/executions/authorize:
+    post:
+      summary: Authorize execution from proposal + capability
+      operationId: authorizeExecution
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthorizeExecutionRequest'
+      responses:
+        '200':
+          description: Execution authorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthorizeExecutionResponse'
+        '403':
+          $ref: '#/components/responses/ApiError'
+        '422':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/executions/{execution_id}/prepare:
+    post:
+      summary: Prepare rollback / preflight checks
+      operationId: prepareExecution
+      parameters:
+        - $ref: '#/components/parameters/ExecutionId'
+      responses:
+        '200':
+          description: Prepare result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrepareExecutionResponse'
+        '404':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/executions/{execution_id}/execute:
+    post:
+      summary: Execute the prepared rollback contract
+      description: |
+        Executes the adapter operation for the given execution. The execution must be in
+        Prepared or Authorized state and the rollback contract must be in Prepared state.
+        Payload format is adapter-specific (e.g., `{"content": "..."}` for FileWrite).
+      operationId: executeExecution
+      parameters:
+        - $ref: '#/components/parameters/ExecutionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExecuteExecutionRequest'
+      responses:
+        '200':
+          description: Execution completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecuteExecutionResponse'
+        '404':
+          $ref: '#/components/responses/ApiError'
+        '409':
+          description: Execution not in a valid state for execute
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/executions/{execution_id}/verify:
+    post:
+      summary: Verify execution outcome against the rollback contract
+      description: |
+        Runs verify checks on the rollback contract to confirm the side effect
+        was applied correctly. Returns verified=true if all checks pass.
+      operationId: verifyExecution
+      parameters:
+        - $ref: '#/components/parameters/ExecutionId'
+      responses:
+        '200':
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerifyExecutionResponse'
+        '404':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/executions/{execution_id}:
+    get:
+      summary: Get execution record
+      operationId: getExecution
+      parameters:
+        - $ref: '#/components/parameters/ExecutionId'
+      responses:
+        '200':
+          description: Execution record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecutionRecord'
+        '404':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/approvals:
+    get:
+      summary: List pending approvals
+      operationId: listApprovals
+      parameters:
+        - name: proposal_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: Filter to only pending approvals for this proposal (exact match)
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+          description: Maximum number of approvals to return
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+          description: Number of approvals to skip
+      responses:
+        '200':
+          description: List of pending approvals
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  approvals:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ApprovalRequest'
+      security:
+        - BearerAuth: []
+
+  /v1/approvals/{approval_id}:
+    get:
+      summary: Get approval
+      operationId: getApproval
+      parameters:
+        - $ref: '#/components/parameters/ApprovalId'
+      responses:
+        '200':
+          description: Approval object
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApprovalRequest'
+        '404':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/approvals/{approval_id}/resolve:
+    post:
+      summary: Resolve approval
+      description: |
+        Resolves a pending approval by granting or denying it.
+        Only pending approvals can be resolved; terminal approvals return 409 Conflict.
+        Expired approvals return 403 Forbidden.
+      operationId: resolveApproval
+      parameters:
+        - $ref: '#/components/parameters/ApprovalId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApprovalResolveRequest'
+      responses:
+        '200':
+          description: Updated approval object
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApprovalRequest'
+        '404':
+          $ref: '#/components/responses/ApiError'
+        '409':
+          description: Approval is in terminal state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: Approval has expired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/provenance/query:
+    post:
+      summary: Query provenance events
+      operationId: queryProvenance
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProvenanceQueryRequest'
+      responses:
+        '200':
+          description: Provenance query result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProvenanceQueryResponse'
+      security:
+        - BearerAuth: []
+
+  /v1/provenance/lineage/{execution_id}:
+    get:
+      summary: Get lineage for execution
+      operationId: getExecutionLineage
+      parameters:
+        - $ref: '#/components/parameters/ExecutionId'
+      responses:
+        '200':
+          description: Lineage data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  execution_id:
+                    type: string
+                    format: uuid
+                  events:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ProvenanceEvent'
+      security:
+        - BearerAuth: []
+
+  /v1/provenance/lineage:
+    post:
+      summary: Multi-hop lineage query from seed event
+      description: |
+        Traverses provenance ancestry and/or descendant edges from a seed event_id
+        up to a configurable maximum depth (hops). Use this for debugging lineage chains
+        and understanding event dependencies.
+      operationId: queryLineage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LineageQueryRequest'
+      responses:
+        '200':
+          description: Multi-hop lineage result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LineageQueryResponse'
+        '404':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/provenance/ingest:
+    post:
+      summary: Ingest external provenance event
+      description: |
+        Ingests a provenance event from an external source runtime into FerrumGate's
+        lineage ledger. The source_runtime_id must reference a registered bridge.
+        Fails closed if the source is not a known registered bridge.
+      operationId: ingestProvenance
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProvenanceIngestRequest'
+      responses:
+        '200':
+          description: Event ingested and linked to ledger
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProvenanceIngestResponse'
+        '400':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/bridges:
+    get:
+      summary: List registered runtime bridges
+      operationId: listBridges
+      responses:
+        '200':
+          description: List of bridges and their connection status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BridgeListResponse'
+      security:
+        - BearerAuth: []
+
+  /v1/bridges/{bridge_id}/tools:
+    get:
+      summary: List tools available through a bridge
+      operationId: listBridgeTools
+      parameters:
+        - $ref: '#/components/parameters/BridgeId'
+      responses:
+        '200':
+          description: List of tools exposed by the bridge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BridgeToolsResponse'
+        '404':
+          $ref: '#/components/responses/ApiError'
+        '503':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/executions/{execution_id}/compensate:
+    post:
+      summary: Compensate (rollback) an execution via its rollback contract
+      operationId: compensateExecution
+      parameters:
+        - $ref: '#/components/parameters/ExecutionId'
+      responses:
+        '200':
+          description: Compensation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompensateExecutionResponse'
+        '404':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/executions/{execution_id}/cancel:
+    post:
+      summary: Cancel a running or pending execution
+      description: |
+        Cancels an execution that is in a non-terminal state (Proposed, Authorized, Prepared,
+        Running, AwaitingApproval, or AwaitingVerification). Terminal executions (Verified,
+        Committed, Compensated, RolledBack, Failed, Expired, Denied, Quarantined) cannot be canceled
+        and return 409 Conflict.
+      operationId: cancelExecution
+      parameters:
+        - $ref: '#/components/parameters/ExecutionId'
+      responses:
+        '200':
+          description: Execution canceled successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CancelExecutionResponse'
+        '404':
+          $ref: '#/components/responses/ApiError'
+        '409':
+          description: Execution is in a terminal state and cannot be canceled
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/executions/{execution_id}/evaluate-outcome:
+    post:
+      summary: Evaluate an execution outcome against intent policy
+      operationId: evaluateOutcome
+      parameters:
+        - $ref: '#/components/parameters/ExecutionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OutcomeReport'
+      responses:
+        '200':
+          description: Outcome evaluation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvaluateOutcomeResponse'
+        '400':
+          $ref: '#/components/responses/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/policy-bundles:
+    post:
+      summary: Create a policy bundle
+      operationId: createPolicyBundle
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePolicyBundleRequest'
+      responses:
+        '201':
+          description: Policy bundle created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyBundleResponse'
+        '400':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+    get:
+      summary: List policy bundles
+      operationId: listPolicyBundles
+      responses:
+        '200':
+          description: List of policy bundles
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyBundleListResponse'
+      security:
+        - BearerAuth: []
+
+  /v1/policy-bundles/{bundle_id}:
+    get:
+      summary: Get a policy bundle
+      operationId: getPolicyBundle
+      parameters:
+        - $ref: '#/components/parameters/BundleId'
+      responses:
+        '200':
+          description: Policy bundle
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyBundleResponse'
+        '404':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+    put:
+      summary: Update a policy bundle
+      operationId: updatePolicyBundle
+      parameters:
+        - $ref: '#/components/parameters/BundleId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePolicyBundleRequest'
+      responses:
+        '200':
+          description: Policy bundle updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyBundleResponse'
+        '400':
+          $ref: '#/components/responses/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+    delete:
+      summary: Delete a policy bundle
+      operationId: deletePolicyBundle
+      parameters:
+        - $ref: '#/components/parameters/BundleId'
+      responses:
+        '200':
+          description: Policy bundle deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, bundle_id]
+                properties:
+                  ok:
+                    type: boolean
+                  bundle_id:
+                    type: string
+        '404':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/policy/simulate:
+    post:
+      summary: Simulate proposal against active runtime policy
+      operationId: simulatePolicy
+      description: |
+        Evaluates a supplied proposal against the active runtime policy and PDP.
+        Side-effect free: no proposal, intent, or provenance is persisted.
+        Distinct from /v1/policy-bundles/simulate which evaluates a supplied bundle YAML.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PolicySimulateRequest'
+      responses:
+        '200':
+          description: Simulation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvaluateProposalResponse'
+        '400':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/policy-bundles/{bundle_id}/active:
+    put:
+      summary: Set policy bundle active flag
+      operationId: setPolicyBundleActive
+      parameters:
+        - $ref: '#/components/parameters/BundleId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetPolicyBundleActiveRequest'
+      responses:
+        '200':
+          description: Active flag updated
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, bundle_id, active]
+                properties:
+                  ok:
+                    type: boolean
+                  bundle_id:
+                    type: string
+                  active:
+                    type: boolean
+        '404':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+
+  parameters:
+    IntentId:
+      name: intent_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ProposalId:
+      name: proposal_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    CapabilityId:
+      name: capability_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ExecutionId:
+      name: execution_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ApprovalId:
+      name: approval_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    EventId:
+      name: event_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    BridgeId:
+      name: bridge_id
+      in: path
+      required: true
+      schema:
+        type: string
+        description: Runtime bridge identifier
+    BundleId:
+      name: bundle_id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Policy bundle identifier
+
+  responses:
+    ApiError:
+      description: Error response
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+
+  schemas:
+    ApiError:
+      type: object
+      required: [code, message, correlation_id, retriable, details]
+      properties:
+        code:
+          type: string
+          enum:
+            - ValidationError
+            - NotFound
+            - PolicyDenied
+            - ApprovalRequired
+            - CapabilityExpired
+            - CapabilityRevoked
+            - IntegrityMismatch
+            - RollbackUnsupported
+            - AdapterFailure
+            - Conflict
+            - Internal
+            - Unauthorized
+        message:
+          type: string
+        correlation_id:
+          type: string
+        retriable:
+          type: boolean
+        details:
+          type: object
+
+    HealthResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+
+    ComponentStatus:
+      type: object
+      required: [component, status, healthy]
+      properties:
+        component:
+          type: string
+        status:
+          type: string
+        healthy:
+          type: boolean
+        error:
+          type: string
+
+    DeepHealthResponse:
+      type: object
+      required: [status, healthy, components]
+      properties:
+        status:
+          type: string
+        healthy:
+          type: boolean
+        components:
+          type: array
+          items:
+            $ref: '#/components/schemas/ComponentStatus'
+
+    IntentCompileRequest:
+      type: object
+      required: [principal_id, title, goal, raw_inputs, requested_resource_scope, metadata]
+      properties:
+        principal_id:
+          type: string
+          format: uuid
+        session_id:
+          type: string
+          format: uuid
+          nullable: true
+        channel_id:
+          type: string
+          format: uuid
+          nullable: true
+        title:
+          type: string
+        goal:
+          type: string
+        agent_plan_summary:
+          type: string
+          nullable: true
+        trusted_context:
+          type: object
+        raw_inputs:
+          type: array
+          items:
+            $ref: '#/components/schemas/IntentInputRef'
+        requested_resource_scope:
+          type: array
+          items:
+            type: object
+        requested_risk_tier:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+
+    IntentInputRef:
+      type: object
+      required: [source_id, source_type, trust_labels, sensitivity_labels, summary]
+      properties:
+        source_id:
+          type: string
+        source_type:
+          type: string
+        trust_labels:
+          type: array
+          items:
+            type: string
+        sensitivity_labels:
+          type: array
+          items:
+            type: string
+        summary:
+          type: string
+        event_id:
+          type: string
+          format: uuid
+          nullable: true
+
+    IntentListItem:
+      type: object
+      required: [intent_id, principal_id, title, status, risk_tier, created_at]
+      properties:
+        intent_id:
+          type: string
+          format: uuid
+        principal_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        status:
+          type: string
+          description: Intent status (Active, Closed, Expired, Quarantined, Revoked)
+        risk_tier:
+          type: string
+          description: Risk tier (Low, Medium, High, Critical)
+        exec_state:
+          type: string
+          nullable: true
+          description: Latest execution state for this intent when an execution exists; null when no execution exists.
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    IntentCompileResponse:
+      type: object
+      required: [envelope, warnings]
+      properties:
+        envelope:
+          $ref: '#/components/schemas/IntentEnvelope'
+        warnings:
+          type: array
+          items:
+            type: string
+
+    IntentEnvelope:
+      type: object
+      required:
+        - intent_id
+        - principal_id
+        - title
+        - goal
+        - normalized_goal
+        - allowed_outcomes
+        - forbidden_outcomes
+        - resource_scope
+        - risk_tier
+        - approval_mode
+        - default_rollback_class
+        - time_budget
+        - trust_context
+        - status
+        - created_at
+        - expires_at
+      properties:
+        intent_id:
+          type: string
+          format: uuid
+        principal_id:
+          type: string
+          format: uuid
+        session_id:
+          type: string
+          format: uuid
+          nullable: true
+        channel_id:
+          type: string
+          format: uuid
+          nullable: true
+        title:
+          type: string
+        goal:
+          type: string
+        normalized_goal:
+          type: string
+        allowed_outcomes:
+          type: array
+          items:
+            type: object
+        forbidden_outcomes:
+          type: array
+          items:
+            type: object
+        resource_scope:
+          type: array
+          items:
+            type: object
+        risk_tier:
+          type: string
+        approval_mode:
+          type: string
+        default_rollback_class:
+          type: string
+        time_budget:
+          type: object
+        trust_context:
+          type: object
+        derived_from_event_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+        tags:
+          type: array
+          items:
+            type: string
+        metadata:
+          type: object
+        status:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+
+    ActionProposal:
+      type: object
+      required:
+        - proposal_id
+        - intent_id
+        - step_index
+        - title
+        - tool_name
+        - server_name
+        - raw_arguments
+        - expected_effect
+        - estimated_risk
+        - requested_rollback_class
+        - taint_inputs
+        - created_at
+      properties:
+        proposal_id:
+          type: string
+          format: uuid
+        intent_id:
+          type: string
+          format: uuid
+        step_index:
+          type: integer
+        title:
+          type: string
+        tool_name:
+          type: string
+        server_name:
+          type: string
+        raw_arguments: {}
+        expected_effect:
+          type: string
+        estimated_risk:
+          type: string
+        requested_rollback_class:
+          type: string
+        taint_inputs:
+          type: array
+          items:
+            type: string
+        metadata:
+          type: object
+        created_at:
+          type: string
+          format: date-time
+
+    EvaluateProposalResponse:
+      type: object
+      required: [decision, reason, matched_rule_ids, warnings]
+      properties:
+        decision:
+          type: string
+        reason:
+          type: string
+        matched_rule_ids:
+          type: array
+          items:
+            type: string
+        warnings:
+          type: array
+          items:
+            type: string
+
+    CapabilityMintRequest:
+      type: object
+      required: [intent_id, proposal_id, tool_binding, resource_bindings, argument_constraints, taint_budget, requested_ttl_secs, metadata]
+      properties:
+        intent_id:
+          type: string
+          format: uuid
+        proposal_id:
+          type: string
+          format: uuid
+        tool_binding:
+          type: object
+        resource_bindings:
+          type: array
+          items:
+            type: object
+        argument_constraints:
+          type: array
+          items:
+            type: object
+        taint_budget:
+          type: object
+        approval_binding:
+          type: object
+          nullable: true
+        requested_ttl_secs:
+          type: integer
+        metadata:
+          type: object
+
+    CapabilityMintResponse:
+      type: object
+      required: [lease, warnings]
+      properties:
+        lease:
+          $ref: '#/components/schemas/CapabilityLease'
+        warnings:
+          type: array
+          items:
+            type: string
+
+    CapabilityLease:
+      type: object
+      required:
+        - capability_id
+        - intent_id
+        - proposal_id
+        - tool_binding
+        - resource_bindings
+        - argument_constraints
+        - taint_budget
+        - issued_by
+        - policy_bundle_id
+        - status
+        - issued_at
+        - expires_at
+      properties:
+        capability_id:
+          type: string
+          format: uuid
+        intent_id:
+          type: string
+          format: uuid
+        proposal_id:
+          type: string
+          format: uuid
+        tool_binding:
+          type: object
+        resource_bindings:
+          type: array
+          items:
+            type: object
+        argument_constraints:
+          type: array
+          items:
+            type: object
+        taint_budget:
+          type: object
+        approval_binding:
+          type: object
+          nullable: true
+        issued_by:
+          type: string
+        policy_bundle_id:
+          type: string
+          format: uuid
+        tool_manifest_id:
+          type: string
+          format: uuid
+          nullable: true
+        manifest_hash:
+          type: string
+          nullable: true
+        status:
+          type: string
+        issued_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        revoked_at:
+          type: string
+          format: date-time
+          nullable: true
+        metadata:
+          type: object
+
+    AuthorizeExecutionRequest:
+      type: object
+      required: [proposal_id, capability_id, dry_run]
+      properties:
+        proposal_id:
+          type: string
+          format: uuid
+        capability_id:
+          type: string
+          format: uuid
+        dry_run:
+          type: boolean
+
+    AuthorizeExecutionResponse:
+      type: object
+      required: [execution, warnings]
+      properties:
+        execution:
+          $ref: '#/components/schemas/ExecutionRecord'
+        warnings:
+          type: array
+          items:
+            type: string
+
+    ExecutionRecord:
+      type: object
+      required: [execution_id, proposal_id, intent_id, capability_id, decision, state, started_at]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+        proposal_id:
+          type: string
+          format: uuid
+        intent_id:
+          type: string
+          format: uuid
+        capability_id:
+          type: string
+          format: uuid
+        rollback_contract_id:
+          type: string
+          format: uuid
+          nullable: true
+        decision:
+          type: string
+        state:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+        result_digest:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+
+    PrepareExecutionResponse:
+      type: object
+      required: [execution_id, prepared, warnings]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+        prepared:
+          type: boolean
+        rollback_contract:
+          $ref: '#/components/schemas/RollbackContract'
+        warnings:
+          type: array
+          items:
+            type: string
+
+    RollbackContract:
+      type: object
+      required:
+        - contract_id
+        - intent_id
+        - proposal_id
+        - execution_id
+        - action_type
+        - rollback_class
+        - adapter_key
+        - target
+        - prepare_checks
+        - verify_checks
+        - compensation_plan
+        - auto_commit
+        - state
+        - created_at
+      properties:
+        contract_id:
+          type: string
+          format: uuid
+        intent_id:
+          type: string
+          format: uuid
+        proposal_id:
+          type: string
+          format: uuid
+        execution_id:
+          type: string
+          format: uuid
+        action_type:
+          type: string
+        rollback_class:
+          type: string
+        adapter_key:
+          type: string
+        target:
+          type: object
+        prepare_checks:
+          type: array
+          items:
+            type: object
+        verify_checks:
+          type: array
+          items:
+            type: object
+        compensation_plan:
+          type: array
+          items:
+            type: object
+        auto_commit:
+          type: boolean
+        state:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        metadata:
+          type: object
+
+    ApprovalRequest:
+      type: object
+      required: [approval_id, intent_id, proposal_id, requested_by, reason, action_digest, expires_at, state, created_at]
+      properties:
+        approval_id:
+          type: string
+          format: uuid
+        intent_id:
+          type: string
+          format: uuid
+        proposal_id:
+          type: string
+          format: uuid
+        execution_id:
+          type: string
+          format: uuid
+          nullable: true
+        requested_by:
+          type: object
+        reason:
+          type: string
+        action_digest:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+        state:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    ApprovalResolveRequest:
+      type: object
+      required: [actor, approve]
+      properties:
+        actor:
+          type: object
+        approve:
+          type: boolean
+        reason:
+          type: string
+          nullable: true
+
+    ProvenanceQueryRequest:
+      type: object
+      properties:
+        intent_id:
+          type: string
+          format: uuid
+          nullable: true
+        execution_id:
+          type: string
+          format: uuid
+          nullable: true
+        capability_id:
+          type: string
+          format: uuid
+          nullable: true
+        event_kind:
+          type: string
+          nullable: true
+        since:
+          type: string
+          format: date-time
+          nullable: true
+        until:
+          type: string
+          format: date-time
+          nullable: true
+        edge_types:
+          type: array
+          items:
+            type: string
+            enum:
+              - DerivedFrom
+              - AuthorizedBy
+              - ApprovedBy
+              - TaintedBy
+              - UsesManifest
+              - EvaluatedByPolicy
+              - Caused
+              - Compensates
+              - Verifies
+              - References
+          default: []
+          description: Filter events by edge types. Only events that have at least one parent edge matching one of the specified types will be returned. Empty or omitted means no edge-type filtering.
+
+    ProvenanceQueryResponse:
+      type: object
+      required: [events]
+      properties:
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProvenanceEvent'
+
+    ProvenanceEvent:
+      type: object
+      required: [event_id, kind, occurred_at, actor, object, trust_labels, sensitivity_labels, parent_edges, hash_chain]
+      properties:
+        event_id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+        occurred_at:
+          type: string
+          format: date-time
+        actor:
+          type: object
+        object:
+          type: object
+        intent_id:
+          type: string
+          format: uuid
+          nullable: true
+        proposal_id:
+          type: string
+          format: uuid
+          nullable: true
+        execution_id:
+          type: string
+          format: uuid
+          nullable: true
+        capability_id:
+          type: string
+          format: uuid
+          nullable: true
+        rollback_contract_id:
+          type: string
+          format: uuid
+          nullable: true
+        policy_bundle_id:
+          type: string
+          format: uuid
+          nullable: true
+        trust_labels:
+          type: array
+          items:
+            type: string
+        sensitivity_labels:
+          type: array
+          items:
+            type: string
+        parent_edges:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProvenanceEdge'
+        hash_chain:
+          type: object
+        metadata:
+          type: object
+        source_runtime_id:
+          type: string
+          nullable: true
+          description: Identifier of the source runtime that produced this event. None for internally-generated events.
+
+    ProvenanceEdge:
+      type: object
+      required: [edge_type, from_event_id]
+      properties:
+        edge_type:
+          type: string
+          enum:
+            - DerivedFrom
+            - AuthorizedBy
+            - ApprovedBy
+            - TaintedBy
+            - UsesManifest
+            - EvaluatedByPolicy
+            - Caused
+            - Compensates
+            - Verifies
+            - References
+        from_event_id:
+          type: string
+          format: uuid
+          description: The parent event (source of the edge)
+        to_event_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: The child event (target of the edge), used for descendant traversal
+        summary:
+          type: string
+          nullable: true
+
+    LineageQueryRequest:
+      type: object
+      required: [event_id]
+      properties:
+        event_id:
+          type: string
+          format: uuid
+          description: The seed event_id to start traversal from
+        direction:
+          type: string
+          enum: [ancestors, descendants, both]
+          default: ancestors
+          description: Direction to traverse - ancestors (parents only), descendants (children only), or both
+        max_hops:
+          type: integer
+          minimum: 1
+          maximum: 10
+          default: 3
+          description: Maximum number of hops to traverse (1-10)
+
+    LineageQueryResponse:
+      type: object
+      required: [events, edges]
+      properties:
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProvenanceEvent'
+        edges:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProvenanceEdge'
+
+    ProvenanceIngestRequest:
+      type: object
+      required: [source_runtime_id, kind, description, trust_labels, sensitivity_labels, metadata]
+      properties:
+        source_runtime_id:
+          type: string
+          description: Identifier of the source runtime that produced this event
+        kind:
+          type: string
+          enum:
+            - UserGoalReceived
+            - IntentCompiled
+            - IntentRevoked
+            - ActionProposalSubmitted
+            - PolicyEvaluated
+            - CapabilityMinted
+            - CapabilityRevoked
+            - ApprovalRequested
+            - ApprovalGranted
+            - ApprovalDenied
+            - ToolCallPrepared
+            - ToolCallIntercepted
+            - ToolCallExecuted
+            - ToolOutputReceived
+            - ToolOutputSanitized
+            - DlpBlocked
+            - SideEffectPrepared
+            - SideEffectVerified
+            - SideEffectCommitted
+            - SideEffectCompensated
+            - SideEffectRolledBack
+            - Quarantined
+            - ErrorRaised
+            - ExternalEventReceived
+        description:
+          type: string
+        execution_id:
+          type: string
+          format: uuid
+          nullable: true
+        intent_id:
+          type: string
+          format: uuid
+          nullable: true
+        trust_labels:
+          type: array
+          items:
+            type: string
+            enum:
+              - Trusted
+              - UserProvided
+              - InternalPolicy
+              - InternalSystem
+              - ExternalWeb
+              - ExternalEmail
+              - ExternalRepoText
+              - ExternalToolMetadata
+              - ExternalToolOutput
+              - OCRExtracted
+              - Untrusted
+        sensitivity_labels:
+          type: array
+          items:
+            type: string
+            enum:
+              - Public
+              - Internal
+              - Confidential
+              - Secret
+              - Credential
+              - Pii
+        metadata:
+          type: object
+
+    ProvenanceIngestResponse:
+      type: object
+      required: [event_id, linked]
+      properties:
+        event_id:
+          type: string
+          format: uuid
+        linked:
+          type: boolean
+
+    BridgeInfo:
+      type: object
+      required: [runtime_id, connected]
+      properties:
+        runtime_id:
+          type: string
+        connected:
+          type: boolean
+
+    BridgeListResponse:
+      type: object
+      required: [bridges]
+      properties:
+        bridges:
+          type: array
+          items:
+            $ref: '#/components/schemas/BridgeInfo'
+
+    BridgeToolInfo:
+      type: object
+      required: [name, description]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        input_schema:
+          type: object
+          nullable: true
+
+    BridgeToolsResponse:
+      type: object
+      required: [runtime_id, tools]
+      properties:
+        runtime_id:
+          type: string
+        tools:
+          type: array
+          items:
+            $ref: '#/components/schemas/BridgeToolInfo'
+
+    CompensateExecutionResponse:
+      type: object
+      required: [execution_id, compensated, warnings]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+        compensated:
+          type: boolean
+        rollback_contract:
+          $ref: '#/components/schemas/RollbackContract'
+          nullable: true
+        warnings:
+          type: array
+          items:
+            type: string
+
+    CancelExecutionResponse:
+      type: object
+      required: [execution_id, previous_state, current_state, canceled_at]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+        previous_state:
+          type: string
+          description: The execution state before cancellation
+        current_state:
+          type: string
+          description: The execution state after cancellation (Canceled)
+        canceled_at:
+          type: string
+          format: date-time
+
+    EvaluateOutcomeResponse:
+      type: object
+      required: [aligned, reason, matched_rule_ids, warnings]
+      properties:
+        aligned:
+          type: boolean
+        reason:
+          type: string
+        matched_rule_ids:
+          type: array
+          items:
+            type: string
+        warnings:
+          type: array
+          items:
+            type: string
+
+    OutcomeReport:
+      type: object
+      required: [execution_id, actual_effect, description, adapter_success]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+        actual_effect:
+          type: string
+          enum:
+            - ReadOnlyAnalysis
+            - DraftCreation
+            - FileMutation
+            - GitMutation
+            - DatabaseMutation
+            - ExternalApiCall
+            - ExternalCommunication
+            - Scheduling
+            - AdministrativeChange
+        description:
+          type: string
+        result_digest:
+          type: string
+          nullable: true
+        adapter_success:
+          type: boolean
+        adapter_metadata:
+          type: object
+
+    ExecuteExecutionRequest:
+      type: object
+      required: [payload]
+      properties:
+        payload:
+          type: object
+          description: Adapter-specific execution payload. For FileWrite, use a content field. For SqliteMutation, use a sql field.
+
+    ExecuteExecutionResponse:
+      type: object
+      required: [execution_id, executed, warnings]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+        executed:
+          type: boolean
+        result_digest:
+          type: string
+          nullable: true
+        rollback_contract:
+          $ref: '#/components/schemas/RollbackContract'
+          nullable: true
+        warnings:
+          type: array
+          items:
+            type: string
+
+    VerifyExecutionResponse:
+      type: object
+      required: [execution_id, verified, warnings]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+        verified:
+          type: boolean
+        rollback_contract:
+          $ref: '#/components/schemas/RollbackContract'
+          nullable: true
+        warnings:
+          type: array
+          items:
+            type: string
+
+    CreatePolicyBundleRequest:
+      type: object
+      required: [yaml_content]
+      properties:
+        yaml_content:
+          type: string
+          description: The YAML content of the policy bundle.
+
+    UpdatePolicyBundleRequest:
+      type: object
+      required: [yaml_content]
+      properties:
+        yaml_content:
+          type: string
+          description: The YAML content of the policy bundle.
+
+    PolicySimulateRequest:
+      type: object
+      required: [proposal]
+      properties:
+        proposal:
+          $ref: '#/components/schemas/ActionProposal'
+        intent:
+          $ref: '#/components/schemas/IntentEnvelope'
+          nullable: true
+          description: Optional intent envelope. If omitted, a minimal intent is scaffolded from the proposal.
+
+    SetPolicyBundleActiveRequest:
+      type: object
+      required: [active]
+      properties:
+        active:
+          type: boolean
+
+    PolicyBundleResponse:
+      type: object
+      required: [bundle, content_hash]
+      properties:
+        bundle:
+          $ref: '#/components/schemas/PolicyBundle'
+        content_hash:
+          type: string
+          description: SHA-256 hash of the bundle content.
+
+    PolicyBundleListResponse:
+      type: object
+      required: [bundles, total]
+      properties:
+        bundles:
+          type: array
+          items:
+            $ref: '#/components/schemas/PolicyBundle'
+        total:
+          type: integer
+
+    PolicyBundle:
+      type: object
+      required: [bundle_id, version, rules, active, created_at, updated_at]
+      properties:
+        bundle_id:
+          type: string
+          description: Unique identifier for this policy bundle.
+        version:
+          type: string
+          description: Semantic version of the bundle format.
+        rules:
+          type: array
+          items:
+            $ref: '#/components/schemas/PolicyRule'
+        active:
+          type: boolean
+          description: Whether this bundle is active for evaluation.
+        content_hash:
+          type: string
+          nullable: true
+          description: SHA-256 hash of the canonical JSON representation of this bundle.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    PolicyRule:
+      type: object
+      required: [id, description, decision, priority, matchers]
+      properties:
+        id:
+          type: string
+          description: Unique rule identifier within the bundle.
+        description:
+          type: string
+          description: Human-readable description of what this rule enforces.
+        decision:
+          type: string
+          enum:
+            - Allow
+            - Deny
+            - Quarantine
+            - RequireApproval
+            - AllowDraftOnly
+        priority:
+          type: integer
+          description: Priority for rule evaluation (higher = evaluated first).
+        matchers:
+          type: array
+          items:
+            $ref: '#/components/schemas/Matcher'
+
+    Matcher:
+      oneOf:
+        - type: object
+          required: [type]
+          properties:
+            type:
+              type: string
+              enum: [scope_mismatch]
+        - type: object
+          required: [type, value]
+          properties:
+            type:
+              type: string
+              enum: [taint_at_least]
+            value:
+              type: integer
+              minimum: 0
+              maximum: 255
+        - type: object
+          required: [type]
+          properties:
+            type:
+              type: string
+              enum: [action_is_mutation]
+        - type: object
+          required: [type, value]
+          properties:
+            type:
+              type: string
+              enum: [rollback_class_equals]
+            value:
+              type: string
+        - type: object
+          required: [type, value]
+          properties:
+            type:
+              type: string
+              enum: [action_type_equals]
+            value:
+              type: string
+        - type: object
+          required: [type]
+          properties:
+            type:
+              type: string
+              enum: [unknown]
+            extra:
+              type: object

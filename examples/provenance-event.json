@@ -1,0 +1,41 @@
+{
+  "event_id": "66666666-6666-6666-6666-666666666666",
+  "kind": "CapabilityMinted",
+  "occurred_at": "2026-03-17T10:00:05Z",
+  "actor": {
+    "actor_type": "PolicyEngine",
+    "actor_id": "ferrum-pdp",
+    "display_name": "Ferrum PDP"
+  },
+  "object": {
+    "object_type": "Capability",
+    "object_id": "77777777-7777-7777-7777-777777777777",
+    "summary": "Draft email capability"
+  },
+  "intent_id": "55555555-5555-5555-5555-555555555555",
+  "proposal_id": "44444444-4444-4444-4444-444444444444",
+  "execution_id": null,
+  "capability_id": "77777777-7777-7777-7777-777777777777",
+  "rollback_contract_id": null,
+  "policy_bundle_id": "88888888-8888-8888-8888-888888888888",
+  "trust_labels": [
+    "InternalPolicy"
+  ],
+  "sensitivity_labels": [
+    "Internal"
+  ],
+  "parent_edges": [
+    {
+      "edge_type": "EvaluatedByPolicy",
+      "from_event_id": "99999999-9999-9999-9999-999999999999",
+      "summary": "Capability minted after policy allow"
+    }
+  ],
+  "hash_chain": {
+    "content_hash": null,
+    "manifest_hash": null,
+    "policy_bundle_hash": "abc123",
+    "previous_ledger_hash": "def456"
+  },
+  "metadata": {}
+}

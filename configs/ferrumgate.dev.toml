@@ -1,0 +1,61 @@
+# FerrumGate development configuration
+# This file is auto-loaded by ferrumd if no --config is specified and it exists.
+
+[server]
+# Bind address for the HTTP server
+bind_addr = "127.0.0.1:8080"
+
+# Store data source name (DSN)
+# NOTE: PostgreSQL local Docker/runtime support is implemented; production/HA/multi-node is NOT.
+# MySQL is NOT implemented. See ADR-50.
+# Examples:
+#   sqlite::memory: - in-memory database (default)
+#   sqlite://ferrumgate.dev.db - file-based SQLite
+#   sqlite:///absolute/path/to/db - absolute path
+#   postgres://user:pass@localhost:5432/db - PostgreSQL (local Docker/runtime only)
+store_dsn = "sqlite::memory:"
+
+# Authentication mode: "disabled", "bearer", "scoped", or "oidc"
+auth_mode = "disabled"
+
+# Bearer token for authentication (required when auth_mode is "bearer")
+# WARNING: Do not commit real tokens to version control
+bearer_token = ""
+
+# Allow binding to non-loopback addresses when auth is disabled.
+# DANGEROUS: Only enable for development/local testing.
+# In production, always use auth_mode = "bearer" with a valid token.
+allow_insecure_nonlocal_bind = false
+
+# Log filter (info, debug, warn, error)
+log_filter = "info"
+
+# PostgreSQL connection pool tuning (conservative defaults)
+# Only used when store_dsn starts with postgres:// or postgresql://
+pg_max_connections = 10
+pg_min_idle = 2
+pg_acquire_timeout_secs = 5
+
+# ── OIDC Configuration (Phase 4.4) ──
+# Uncomment and configure when auth_mode = "oidc".
+# Static keys take precedence over fetched JWKS keys.
+# At least one of static_keys or jwks_url must be configured.
+#
+# [oidc]
+# issuer = "https://your-issuer.example.com"
+# audiences = ["ferrumgate"]
+# jwks_url = "https://your-issuer.example.com/.well-known/jwks.json"
+# jwks_cache_ttl_secs = 300
+# actor_id_claim = "sub"
+# role_source_claim = "groups"
+# require_email_verified = true
+# allowed_algorithms = ["RS256", "ES256", "EdDSA"]
+#
+# [oidc.role_mappings]
+# fg-admins = "admin"
+# fg-operators = "operator"
+#
+# [[oidc.static_keys]]
+# kid = "key1"
+# type = "hmac"
+# secret = "base64encodedsecret=="

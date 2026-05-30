@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<section class="hero">
+  <div class="container">
+    <h1>Intent-scoped execution gateway</h1>
+    <p class="lead">
+      FerrumGate is an audit and rollback layer for agent and operator actions.
+      Before any side effect occurs, declare intent, get policy evaluation,
+      obtain a time-bound capability, and leave a complete provenance trail.
+    </p>
+    <div class="status-banner">
+      <strong>Status:</strong> RC-ready / conditional. NOT production-ready.
+      Suitable for local evaluation and single-node pilot only.
+    </div>
+  </div>
+</section>
+
+<section id="what" class="section">
+  <div class="container">
+    <h2>What problem FerrumGate solves</h2>
+    <ul>
+      <li><strong>Unaudited automation</strong> — Agents and scripts mutate systems without a trace.</li>
+      <li><strong>No rollback path</strong> — Mistakes are expensive because there is no compensation plan.</li>
+      <li><strong>Policy bypass</strong> — Tools run directly against APIs/files/databases, skipping governance.</li>
+      <li><strong>Approval gaps</strong> — High-risk actions proceed without human review.</li>
+    </ul>
+    <p>
+      FerrumGate inserts a gateway between intent and side effect:
+      compile, evaluate, mint, prepare, execute, verify, and record.
+      Every step is in the provenance graph. Every mutation has a rollback class.
+    </p>
+  </div>
+</section>
+
+<section id="when-to-use" class="section alt">
+  <div class="container">
+    <h2>When to use FerrumGate</h2>
+    <ul>
+      <li>You run automation (CI, agents, operators) that mutates files, git repos, databases, or HTTP APIs.</li>
+      <li>You need an audit trail of who/what initiated an action and whether it succeeded.</li>
+      <li>You want automatic compensation for reversible mistakes (R1).</li>
+      <li>You need a policy gate before critical actions (R3) with human approval.</li>
+      <li>You want a uniform MCP-compatible interface for diverse backends.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="when-not-to-use" class="section">
+  <div class="container">
+    <h2>When NOT to use FerrumGate</h2>
+    <ul>
+      <li><strong>High-throughput low-latency paths</strong> — The gateway adds policy, provenance, and verification overhead. It is not a zero-cost proxy.</li>
+      <li><strong>Already-governed systems</strong> — If your platform already provides intent tracking, policy, and audit, adding FerrumGate may be redundant.</li>
+      <li><strong>Simple read-only queries</strong> — R0 paths are supported, but a plain API client is simpler if you never mutate.</li>
+      <li><strong>Production without operator readiness</strong> — FerrumGate requires backup, token rotation, monitoring, and incident response discipline. See the operator guide.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="architecture" class="section alt">
+  <div class="container">
+    <h2>Architecture and lineage</h2>
+    <p>
+      FerrumGate uses a directed provenance graph to track every execution.
+      The minimum lineage chain before a side effect is committed:
+    </p>
+    <pre><code>Intent → Proposal → PolicyEvaluated → CapabilityMinted
+  → SideEffectPrepared → ToolCallPrepared → ToolCallExecuted
+  → SideEffectVerified → Terminal (Committed | Compensated | RolledBack)</code></pre>
+    <p>
+      Adapters implement prepare/execute/verify/compensate for specific domains:
+      filesystem, git, HTTP, SQLite, and mail drafts.
+      Each adapter declares a default rollback class per operation.
+    </p>
+    <p>
+      For a deeper explanation, see the <a href="{{ get_url(path='@/guides/concepts.md') }}">Concepts guide</a>.
+    </p>
+  </div>
+</section>
+
+<section id="quickstart" class="section">
+  <div class="container">
+    <h2>Quickstart</h2>
+    <p>
+      The validated local demo path runs in under 30 minutes:
+    </p>
+    <ol>
+      <li>Clone the repository and build with <code>cargo build --release</code>.</li>
+      <li>Start <code>ferrumd</code> with the dev config: in-memory SQLite, loopback binding, auth disabled.</li>
+      <li>Run the curl sequence from <code>/v1/healthz</code> through <code>/v1/provenance/lineage</code>.</li>
+      <li>Try <code>ferrumctl</code> for CLI-driven operations.</li>
+      <li>Configure an MCP client to interact via the MCP bridge.</li>
+    </ol>
+    <p>
+      <a class="cta" href="{{ get_url(path='@/guides/quickstart.md') }}">Read the full quickstart guide</a>
+    </p>
+    <p class="small muted">
+      Validated locally only. Fresh-user test has not been performed.
+      Target-host validation is separate.
+    </p>
+  </div>
+</section>
+
+<section id="docs" class="section alt">
+  <div class="container">
+    <h2>Documentation</h2>
+    <div class="doc-grid">
+      <div class="doc-card">
+        <h3><a href="{{ get_url(path='@/guides/concepts.md') }}">Concepts</a></h3>
+        <p>Intent, proposal, capability, provenance, lineage, adapters, rollback classes.</p>
+      </div>
+      <div class="doc-card">
+        <h3><a href="{{ get_url(path='@/guides/api.md') }}">API</a></h3>
+        <p>Endpoint reference, auth, errors, execution lifecycle.</p>
+      </div>
+      <div class="doc-card">
+        <h3><a href="{{ get_url(path='@/guides/operator.md') }}">Operator Guide</a></h3>
+        <p>Config, health, backup/restore, token rotation, monitoring, incident response.</p>
+      </div>
+      <div class="doc-card">
+        <h3><a href="{{ get_url(path='@/guides/adapter-reference.md') }}">Adapter Reference</a></h3>
+        <p>Per-adapter operations, rollback behavior, limitations, risk classes.</p>
+      </div>
+      <div class="doc-card">
+        <h3><a href="{{ get_url(path='@/guides/policy-authoring.md') }}">Policy Authoring</a></h3>
+        <p>Policy bundles, templates, patterns, and examples.</p>
+      </div>
+      <div class="doc-card">
+        <h3><a href="{{ get_url(path='@/guides/mcp-integration.md') }}">MCP Integration</a></h3>
+        <p>Server setup, client config, tools, auth.</p>
+      </div>
+      <div class="doc-card">
+        <h3><a href="{{ get_url(path='@/guides/hosted-deployment.md') }}">Hosted Deployment</a></h3>
+        <p>Docker Compose, systemd, PostgreSQL, future Helm.</p>
+      </div>
+      <div class="doc-card">
+        <h3><a href="{{ get_url(path='@/guides/security-model.md') }}">Security Model</a></h3>
+        <p>Bearer auth, scoped tokens, RBAC design, tenant model.</p>
+      </div>
+      <div class="doc-card">
+        <h3><a href="{{ get_url(path='@/guides/slo-sla.md') }}">SLO / SLA</a></h3>
+        <p>SLO targets, validation runbook, metrics.</p>
+      </div>
+      <div class="doc-card">
+        <h3><a href="{{ get_url(path='@/guides/troubleshooting.md') }}">Troubleshooting</a></h3>
+        <p>Common issues, diagnostics, recovery steps.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="container">
+    <h2>Current status and blockers</h2>
+    <table>
+      <thead>
+        <tr><th>Item</th><th>Status</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Core gateway (intent → capability → execution → provenance)</td><td>Implemented and locally validated</td></tr>
+        <tr><td>Adapter slices (fs, git, http, sqlite, maildraft)</td><td>Implemented; local tests pass</td></tr>
+        <tr><td>Policy bundles and evaluation</td><td>Implemented; 7 templates available</td></tr>
+        <tr><td>MCP server integration</td><td>Implemented and locally validated</td></tr>
+        <tr><td>Backup/restore (ferrumctl)</td><td>Implemented; local and target-host drills passed</td></tr>
+        <tr><td>Token rotation</td><td>Target-host validated</td></tr>
+        <tr><td>Metrics and health endpoints</td><td>Implemented</td></tr>
+        <tr><td>DOC-1 fresh-user test</td><td>NOT performed</td></tr>
+        <tr><td>Block A (real owned domain/DNS)</td><td>WAIVED/CONDITIONAL for pilot</td></tr>
+        <tr><td>Block B (inbox delivery, token rotation, escalation)</td><td>CLOSED</td></tr>
+        <tr><td>Block C (keyless backup)</td><td>CLOSED</td></tr>
+        <tr><td>HA / multi-node</td><td>Not implemented</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{% endblock content %}

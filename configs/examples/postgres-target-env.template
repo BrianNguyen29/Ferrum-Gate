@@ -1,0 +1,66 @@
+# PostgreSQL Target Environment Template
+#
+# Purpose: Environment-variable-only configuration for FerrumGate connecting to
+#          a target-host PostgreSQL instance. No hardcoded credentials.
+#
+# Scope:   Readiness-only. No production-ready claim. No HA/multi-node.
+#
+# Usage:
+#   1. Copy this file to /etc/ferrumgate/postgres-target.env on the target host.
+#   2. Replace ALL placeholder values (including <REDACTED>) with real values.
+#   3. Set permissions: chmod 600 /etc/ferrumgate/postgres-target.env
+#   4. Source from ferrumd.service or operator scripts via:
+#        EnvironmentFile=-/etc/ferrumgate/postgres-target.env
+#   5. Never commit the populated file to version control.
+#
+# Constraint: This template does NOT authorize production PostgreSQL deployment.
+#             Production remains gated on P5b-P5e completion and P6 assessment.
+
+# ---------------------------------------------------------------------------
+# PostgreSQL Connection (DSN components)
+# ---------------------------------------------------------------------------
+FERRUMD_STORE_DSN="postgres://<PG_USER>:<REDACTED>@<PG_HOST>:<PG_PORT>/<PG_DATABASE>"
+# Example after operator fill-in:
+#   FERRUMD_STORE_DSN="postgres://ferrumgate_app@db.example.com:5432/ferrumgate"
+# NOTE: Password should NOT appear in this file. Use PGPASSFILE instead.
+
+# ---------------------------------------------------------------------------
+# PostgreSQL Pool Tuning (conservative defaults)
+# ---------------------------------------------------------------------------
+FERRUMD_PG_MAX_CONNECTIONS=10
+FERRUMD_PG_MIN_IDLE=2
+FERRUMD_PG_ACQUIRE_TIMEOUT_SECS=5
+
+# ---------------------------------------------------------------------------
+# PGPASSFILE (recommended over inline passwords)
+# ---------------------------------------------------------------------------
+# Set this to a passfile with mode 600 containing:
+#   <PG_HOST>:<PG_PORT>:<PG_DATABASE>:<PG_USER>:<REDACTED>
+PGPASSFILE=/etc/ferrumgate/.pgpass
+
+# ---------------------------------------------------------------------------
+# Backup Configuration (for pg_dump scheduler)
+# ---------------------------------------------------------------------------
+FERRUMGATE_PG_BACKUP_DIR=/var/backups/ferrumgate-postgres
+FERRUMGATE_PG_BACKUP_RETENTION_MINUTES=5760
+# RPO target in minutes (default 15 minutes = 5760 minutes retention for 4 days)
+
+# ---------------------------------------------------------------------------
+# Auth Mode
+# ---------------------------------------------------------------------------
+# If auth_mode=bearer, generate token with: openssl rand -hex 32
+# Store the actual token in a separate secrets manager; do not put it here.
+FERRUMD_AUTH_MODE=bearer
+# FERRUMD_BEARER_TOKEN=<SET_VIA_SECRETS_MANAGER>
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+FERRUMD_LOG_FILTER=info
+
+# ---------------------------------------------------------------------------
+# End of template
+# ---------------------------------------------------------------------------
+# Reminder: This file must contain ONLY placeholders before being committed.
+# Operator fills in real values locally; the populated file must never enter
+# version control.

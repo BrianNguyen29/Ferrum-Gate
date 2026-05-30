@@ -1,0 +1,34 @@
+version: "0.1.0"
+bundle_id: "default-dev-bundle"
+rules:
+  - id: "deny.scope.mismatch"
+    description: "Deny when requested resources are outside intent scope"
+    decision: "Deny"
+    priority: 100
+    matchers:
+      - type: "scope_mismatch"
+
+  - id: "quarantine.high.taint.mutation"
+    description: "Quarantine mutating actions with high taint"
+    decision: "Quarantine"
+    priority: 90
+    matchers:
+      - type: "taint_at_least"
+        value: 70
+      - type: "action_is_mutation"
+
+  - id: "approval.r3.required"
+    description: "Require approval for R3 actions"
+    decision: "RequireApproval"
+    priority: 80
+    matchers:
+      - type: "rollback_class_equals"
+        value: "R3IrreversibleHighConsequence"
+
+  - id: "draft.only.external.mail"
+    description: "Force draft-only for external communication"
+    decision: "AllowDraftOnly"
+    priority: 70
+    matchers:
+      - type: "action_type_equals"
+        value: "ExternalCommunication"

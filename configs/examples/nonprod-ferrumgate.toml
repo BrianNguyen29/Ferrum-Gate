@@ -1,0 +1,88 @@
+# FerrumGate non-production configuration example
+# Use with: ferrumd --config configs/examples/nonprod-ferrumgate.toml
+# Adapt all paths, hostnames, and tokens before deploying to a non-prod host.
+
+[server]
+# Bind address for the HTTP server
+# Use the non-prod host address or 127.0.0.1 for local-only
+bind_addr = "127.0.0.1:8080"
+
+# Store data source name (DSN)
+# NOTE: PostgreSQL and MySQL are NOT implemented. See ADR-50.
+# Examples:
+#   sqlite://nonprod-ferrumgate.db - file-based SQLite in current directory
+#   sqlite:///var/lib/ferrumgate/nonprod-ferrumgate.db - absolute path
+store_dsn = "sqlite:///var/lib/ferrumgate/nonprod-ferrumgate.db"
+
+# Authentication mode: "disabled", "bearer", "scoped", or "oidc"
+# WARNING: Never use "disabled" with a non-loopback bind address in non-prod
+# Non-prod environments should use bearer auth to match production configuration
+auth_mode = "bearer"
+
+# Bearer token for authentication (required when auth_mode is "bearer")
+# IMPORTANT: Generate a secure token for non-prod use
+# Generate with: openssl rand -hex 32
+# WARNING: Do not commit real tokens to version control
+# Use environment variable FERRUMD_BEARER_TOKEN instead of hardcoding
+bearer_token = ""  # Set via FERRUMD_BEARER_TOKEN env var
+
+# Allow binding to non-loopback addresses when auth is disabled.
+# DANGEROUS: Only enable for development/local testing with auth disabled.
+# In non-prod with auth enabled, this can remain false.
+allow_insecure_nonlocal_bind = false
+
+# Log filter (info, debug, warn, error)
+log_filter = "info"
+
+# Log format: "text" (human-readable, default) or "json" (structured)
+# Use "json" in production for log aggregation systems (ELK, Loki, etc.)
+# log_format = "text"
+
+# Store synchronous mode (EXTRA_NOSYNC, NORMAL, OFF)
+# NORMAL is recommended for non-prod; provides durability without full sync overhead
+store_synchronous = "NORMAL"
+
+# Store WAL autocheckpoint (default 1000 pages)
+# Reduce for more frequent checkpoints during testing
+# store_wal_autocheckpoint = 1000
+
+# Store busy timeout in milliseconds (default 5000)
+# Adjust based on expected concurrency
+# store_busy_timeout = 5000
+
+# Rate limiting (tower_governor, per-IP token bucket)
+#
+# WARNING: The built-in defaults (2 req/s, burst 50) are intentionally
+# safety-oriented and are NOT sufficient for SLO certification. They
+# protect a single-node pilot from accidental overload but will reject
+# a large share of requests under the canonical SLO workload.
+#
+# Three supported profiles:
+#   1. Default safety — 2 req/s, burst 50 (built-in default)
+#   2. SLO certification — 1000 req/s, burst 10000 (required to pass
+#      the canonical five-phase workload in `slo-validation-runbook.md`)
+#   3. Production / operator-tuned — TBD based on real traffic volume,
+#      client IP distribution, and backend capacity.
+#
+# Adjust based on expected client behavior and server capacity.
+# rate_limit_per_second = 2
+# rate_limit_burst = 50
+
+# ── OIDC Configuration (Phase 4.4) ──
+# Uncomment and configure when auth_mode = "oidc".
+# Static keys take precedence over fetched JWKS keys.
+# At least one of static_keys or jwks_url must be configured.
+#
+# [oidc]
+# issuer = "https://your-issuer.example.com"
+# audiences = ["ferrumgate"]
+# jwks_url = "https://your-issuer.example.com/.well-known/jwks.json"
+# jwks_cache_ttl_secs = 300
+# actor_id_claim = "sub"
+# role_source_claim = "groups"
+# require_email_verified = true
+# allowed_algorithms = ["RS256", "ES256", "EdDSA"]
+#
+# [oidc.role_mappings]
+# fg-admins = "admin"
+# fg-operators = "operator"

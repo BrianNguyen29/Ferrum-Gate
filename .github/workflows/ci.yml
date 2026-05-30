@@ -1,0 +1,33 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show repository tree
+        run: find . -maxdepth 3 | sort
+      - name: Local validation
+        run: make validate
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cargo fmt check
+        run: cargo fmt --all -- --check
+      - name: Cargo check
+        run: cargo check --workspace
+      - name: Cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Cargo test
+        run: cargo test --workspace
+      - name: Cargo check (all features)
+        run: cargo check --workspace --all-features
+      - name: Cargo clippy (all features)
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Cargo check (postgres feature)
+        run: cargo check -p ferrumd -p ferrum-migrate -p ferrum-store -p ferrum-gateway --features postgres
+      - name: Cargo clippy (postgres feature)
+        run: cargo clippy -p ferrumd -p ferrum-migrate -p ferrum-store -p ferrum-gateway --features postgres -- -D warnings

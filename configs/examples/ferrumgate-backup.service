@@ -1,0 +1,13 @@
+[Unit]
+Description=FerrumGate SQLite backup
+Documentation=./docs/guides/operator.md
+After=ferrumd.service
+
+[Service]
+Type=oneshot
+User=ferrumgate
+Group=ferrumgate
+ExecStart=/usr/local/bin/ferrumctl backup create --db-path /var/lib/ferrumgate/ferrumgate.db --output-dir /var/backups/ferrumgate --retention-days 7
+ExecStartPost=/bin/sh -c 'latest=$(ls -1t /var/backups/ferrumgate/*.db | head -n1); /usr/local/bin/ferrumctl backup verify --db-path "$latest"'
+PrivateTmp=true
+NoNewPrivileges=true

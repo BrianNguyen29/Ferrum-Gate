@@ -1,0 +1,14 @@
+[Unit]
+Description=FerrumGate PostgreSQL backup
+Documentation=./docs/guides/operator.md
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=backupuser
+Group=backupuser
+Environment="PGPASSFILE=/etc/ferrumgate/.pgpass"
+ExecStart=/usr/local/bin/pg_dump -h localhost -p 5432 -U backupuser -d ferrumgate -Fc --no-owner --no-privileges -f /var/backups/ferrumgate-postgres/ferrumgate_%Y%m%d_%H%M%S.dump
+ExecStartPost=/bin/sh -c 'latest=$(ls -1t /var/backups/ferrumgate-postgres/*.dump | head -n1); pg_restore -l "$latest" > /dev/null && echo "Backup OK: $latest" || echo "Backup VERIFY FAILED: $latest"'
+PrivateTmp=true
+NoNewPrivileges=true

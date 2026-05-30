@@ -1,0 +1,20 @@
+[package]
+name = "ferrum-tui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "time", "sync"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+clap = { workspace = true, features = ["derive"] }
+chrono.workspace = true
+ratatui = "0.29"
+crossterm = "0.28"
+
+[dev-dependencies]
+tempfile.workspace = true

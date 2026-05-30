@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ferrumgate.fullname" . }}
+  labels:
+    {{- include "ferrumgate.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "ferrumgate.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "ferrumgate.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "ferrumgate.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.targetPort }}
+              protocol: TCP
+          env:
+            - name: FERRUMD_BIND_ADDR
+              value: {{ .Values.config.bindAddr | quote }}
+            - name: FERRUMD_STORE_DSN
+              value: {{ .Values.config.storeDsn | quote }}
+            - name: FERRUMD_AUTH_MODE
+              value: {{ .Values.config.authMode | quote }}
+            - name: FERRUMD_ALLOW_INSECURE_NONLOCAL_BIND
+              value: {{ .Values.config.allowInsecureNonlocalBind | quote }}
+            - name: FERRUMD_LOG_FILTER
+              value: {{ .Values.config.logFilter | quote }}
+            - name: FERRUMD_PG_MAX_CONNECTIONS
+              value: {{ .Values.config.pgMaxConnections | quote }}
+            - name: FERRUMD_PG_MIN_IDLE
+              value: {{ .Values.config.pgMinIdle | quote }}
+            - name: FERRUMD_PG_ACQUIRE_TIMEOUT_SECS
+              value: {{ .Values.config.pgAcquireTimeoutSecs | quote }}
+            - name: FERRUMD_BEARER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "ferrumgate.fullname" . }}
+                  key: bearer-token
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

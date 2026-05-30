@@ -1,0 +1,58 @@
+# FerrumGate production configuration
+# Use with: ferrumd --config configs/ferrumgate.prod.toml
+# Or set environment variable: FERRUMD_CONFIG=configs/ferrumgate.prod.toml
+
+[server]
+# Bind address for the HTTP server
+# Use 0.0.0.0 to bind to all interfaces (requires auth_mode = "bearer")
+bind_addr = "0.0.0.0:8080"
+
+# Store data source name (DSN)
+# NOTE: PostgreSQL local Docker/runtime support is implemented; production/HA/multi-node is NOT.
+# MySQL is NOT implemented. See ADR-50.
+# IMPORTANT: Use a persistent database in production
+# Examples:
+#   sqlite:///var/lib/ferrumgate/ferrumgate.db
+#   postgres://user:pass@localhost:5432/db - PostgreSQL (local Docker/runtime only)
+store_dsn = "sqlite:///var/lib/ferrumgate/ferrumgate.db"
+
+# Authentication mode: "disabled", "bearer", "scoped", or "oidc"
+# WARNING: Never use "disabled" in production with a non-loopback bind address
+auth_mode = "bearer"
+
+# Bearer token for authentication (required when auth_mode is "bearer")
+# IMPORTANT: Use a strong, randomly generated token in production
+# Generate with: openssl rand -hex 32
+bearer_token = "CHANGE_ME_TO_A_SECURE_TOKEN"
+
+# Allow binding to non-loopback addresses when auth is disabled.
+# DANGEROUS: Never enable in production.
+allow_insecure_nonlocal_bind = false
+
+# Log filter (info, debug, warn, error)
+log_filter = "info"
+
+# PostgreSQL connection pool tuning (conservative defaults)
+# Only used when store_dsn starts with postgres:// or postgresql://
+pg_max_connections = 10
+pg_min_idle = 2
+pg_acquire_timeout_secs = 5
+
+# ── OIDC Configuration (Phase 4.4) ──
+# Uncomment and configure when auth_mode = "oidc".
+# Static keys take precedence over fetched JWKS keys.
+# At least one of static_keys or jwks_url must be configured.
+#
+# [oidc]
+# issuer = "https://your-issuer.example.com"
+# audiences = ["ferrumgate"]
+# jwks_url = "https://your-issuer.example.com/.well-known/jwks.json"
+# jwks_cache_ttl_secs = 300
+# actor_id_claim = "sub"
+# role_source_claim = "groups"
+# require_email_verified = true
+# allowed_algorithms = ["RS256", "ES256", "EdDSA"]
+#
+# [oidc.role_mappings]
+# fg-admins = "admin"
+# fg-operators = "operator"

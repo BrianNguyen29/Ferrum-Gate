@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ferrumgate.local/schemas/action-proposal.json",
+  "title": "ActionProposal",
+  "type": "object",
+  "required": [
+    "proposal_id",
+    "intent_id",
+    "step_index",
+    "title",
+    "tool_name",
+    "server_name",
+    "raw_arguments",
+    "expected_effect",
+    "estimated_risk",
+    "requested_rollback_class",
+    "taint_inputs",
+    "created_at"
+  ],
+  "properties": {
+    "proposal_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "intent_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "step_index": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "title": {
+      "type": "string"
+    },
+    "tool_name": {
+      "type": "string"
+    },
+    "server_name": {
+      "type": "string"
+    },
+    "raw_arguments": {},
+    "expected_effect": {
+      "type": "string"
+    },
+    "estimated_risk": {
+      "$ref": "common.json#/definitions/RiskTier"
+    },
+    "requested_rollback_class": {
+      "$ref": "common.json#/definitions/RollbackClass"
+    },
+    "taint_inputs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "metadata": {
+      "type": "object"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

@@ -1,0 +1,18 @@
+[package]
+name = "ferrum-sync"
+description = "Read-only sync probe facade and fakeable transport adapter"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+ferrum-proto = { path = "../ferrum-proto" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+chrono = { workspace = true }
+tokio = { workspace = true, features = ["full"] }

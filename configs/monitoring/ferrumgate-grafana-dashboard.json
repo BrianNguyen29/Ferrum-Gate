@@ -1,0 +1,113 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "ferrumgate-overview",
+    "title": "FerrumGate Overview",
+    "tags": ["ferrumgate", "overview"],
+    "timezone": "utc",
+    "schemaVersion": 36,
+    "refresh": "30s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "HTTP Request Rate",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "sum(rate(ferrumgate_http_requests_total[5m]))",
+            "legendFormat": "req/s"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 }
+      },
+      {
+        "id": 2,
+        "title": "HTTP Error Rate",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "sum(rate(ferrumgate_http_requests_total{status=~\"5..\"}[5m])) / sum(rate(ferrumgate_http_requests_total[5m]))",
+            "legendFormat": "error ratio"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 }
+      },
+      {
+        "id": 3,
+        "title": "P95 Latency",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(ferrumgate_request_duration_seconds_bucket[5m])) by (le))",
+            "legendFormat": "p95"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 }
+      },
+      {
+        "id": 4,
+        "title": "PG Pool Size / Idle",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "ferrumgate_store_pg_pool_size",
+            "legendFormat": "pool size"
+          },
+          {
+            "expr": "ferrumgate_store_pg_pool_idle",
+            "legendFormat": "pool idle"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 }
+      },
+      {
+        "id": 5,
+        "title": "PG Acquire Timeouts",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(ferrumgate_store_pg_acquire_timeouts_total[5m])",
+            "legendFormat": "timeouts/s"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 }
+      },
+      {
+        "id": 6,
+        "title": "Health Check Status",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "up{job=\"ferrumgate\"}",
+            "legendFormat": "up"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 }
+      },
+      {
+        "id": 7,
+        "title": "Active Connections",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "ferrumgate_store_pg_pool_max - ferrumgate_store_pg_pool_idle",
+            "legendFormat": "active conns"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 }
+      },
+      {
+        "id": 8,
+        "title": "PG Pool Saturation %",
+        "type": "gauge",
+        "targets": [
+          {
+            "expr": "(1 - (ferrumgate_store_pg_pool_idle / ferrumgate_store_pg_pool_max)) * 100",
+            "legendFormat": "saturation %"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 }
+      }
+    ]
+  }
+}

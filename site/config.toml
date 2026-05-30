@@ -1,0 +1,35 @@
+# The URL the site will be built for
+# Local-only scaffold — no real domain or deployment is configured.
+# This value is set to the Zola default local serve address.
+base_url = "http://127.0.0.1:1111"
+
+# Whether to automatically compile all Sass files in the sass directory
+compile_sass = true
+
+# Whether to build a search index from each page and section content
+# Not used for this minimal scaffold
+build_search_index = false
+
+# The site title and description
+title = "FerrumGate"
+description = "Intent-scoped execution gateway — an audit and rollback layer for agent and operator actions."
+
+# The default language; only en is needed for now
+default_language = "en"
+
+# When set to "true", a feed is automatically generated.
+generate_feeds = false
+
+# The taxonomies to be rendered for the site and their configuration
+# Not needed for this single-page landing
+taxonomies = []
+
+[markdown]
+# Minimal landing content does not use fenced-code highlighting.
+
+[extra]
+# Custom extra variables for templates
+status_banner = "FerrumGate is NOT production-ready. It is RC-ready/conditional for evaluation and pilot use only."
+block_a_notice = "Block A (real owned domain/DNS) remains WAIVED/CONDITIONAL. A real owned domain is required for full G2 closure."
+repo_url = "https://github.com/ferrumgate/ferrum-gate"
+docs_path = "docs/guides/"

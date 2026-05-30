@@ -1,0 +1,23 @@
+[package]
+name = "ferrumctl"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+tokio.workspace = true
+clap = { version = "4", features = ["derive"] }
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+ferrum-proto = { path = "../../crates/ferrum-proto" }
+schemars.workspace = true
+rusqlite = { workspace = true, features = ["bundled", "backup"] }
+tempfile = { workspace = true }
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+sha2 = { workspace = true }
+base64 = { workspace = true }
+rand = { workspace = true }
+hex = { workspace = true }

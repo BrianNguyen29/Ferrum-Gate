@@ -1,0 +1,366 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ferrumgate.local/schemas/intent-envelope.json",
+  "title": "IntentEnvelope",
+  "type": "object",
+  "required": [
+    "intent_id",
+    "principal_id",
+    "title",
+    "goal",
+    "normalized_goal",
+    "allowed_outcomes",
+    "forbidden_outcomes",
+    "resource_scope",
+    "risk_tier",
+    "approval_mode",
+    "default_rollback_class",
+    "time_budget",
+    "trust_context",
+    "status",
+    "created_at",
+    "expires_at"
+  ],
+  "properties": {
+    "intent_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "principal_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "session_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "channel_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "goal": {
+      "type": "string",
+      "minLength": 1
+    },
+    "normalized_goal": {
+      "type": "string",
+      "minLength": 1
+    },
+    "allowed_outcomes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "description",
+          "effect_type",
+          "required"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "effect_type": {
+            "type": "string",
+            "enum": [
+              "ReadOnlyAnalysis",
+              "DraftCreation",
+              "FileMutation",
+              "GitMutation",
+              "DatabaseMutation",
+              "ExternalApiCall",
+              "ExternalCommunication",
+              "Scheduling",
+              "AdministrativeChange"
+            ]
+          },
+          "required": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "forbidden_outcomes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/properties/allowed_outcomes/items"
+      }
+    },
+    "resource_scope": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "oneOf": [
+          {
+            "required": [
+              "kind",
+              "path",
+              "mode"
+            ],
+            "properties": {
+              "kind": {
+                "const": "FilesystemPath"
+              },
+              "path": {
+                "type": "string"
+              },
+              "mode": {
+                "$ref": "common.json#/definitions/ResourceMode"
+              },
+              "content_hash": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          },
+          {
+            "required": [
+              "kind",
+              "repo_path",
+              "allowed_refs",
+              "mode"
+            ],
+            "properties": {
+              "kind": {
+                "const": "GitRepository"
+              },
+              "repo_path": {
+                "type": "string"
+              },
+              "allowed_refs": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "mode": {
+                "$ref": "common.json#/definitions/ResourceMode"
+              }
+            }
+          },
+          {
+            "required": [
+              "kind",
+              "db_path",
+              "tables",
+              "mode"
+            ],
+            "properties": {
+              "kind": {
+                "const": "SqliteDatabase"
+              },
+              "db_path": {
+                "type": "string"
+              },
+              "tables": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "mode": {
+                "$ref": "common.json#/definitions/ResourceMode"
+              }
+            }
+          },
+          {
+            "required": [
+              "kind",
+              "method",
+              "base_url",
+              "path_prefix",
+              "mode"
+            ],
+            "properties": {
+              "kind": {
+                "const": "HttpEndpoint"
+              },
+              "method": {
+                "$ref": "common.json#/definitions/HttpMethod"
+              },
+              "base_url": {
+                "type": "string"
+              },
+              "path_prefix": {
+                "type": "string"
+              },
+              "mode": {
+                "$ref": "common.json#/definitions/ResourceMode"
+              }
+            }
+          },
+          {
+            "required": [
+              "kind",
+              "recipient_allowlist",
+              "subject_prefix_allowlist",
+              "mode"
+            ],
+            "properties": {
+              "kind": {
+                "const": "EmailDraft"
+              },
+              "recipient_allowlist": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "subject_prefix_allowlist": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "mode": {
+                "$ref": "common.json#/definitions/ResourceMode"
+              }
+            }
+          },
+          {
+            "required": [
+              "kind",
+              "server_name",
+              "tool_name",
+              "mode"
+            ],
+            "properties": {
+              "kind": {
+                "const": "McpTool"
+              },
+              "server_name": {
+                "type": "string"
+              },
+              "tool_name": {
+                "type": "string"
+              },
+              "mode": {
+                "$ref": "common.json#/definitions/ResourceMode"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "risk_tier": {
+      "$ref": "common.json#/definitions/RiskTier"
+    },
+    "approval_mode": {
+      "$ref": "common.json#/definitions/ApprovalMode"
+    },
+    "default_rollback_class": {
+      "$ref": "common.json#/definitions/RollbackClass"
+    },
+    "time_budget": {
+      "type": "object",
+      "required": [
+        "max_duration_ms",
+        "max_steps",
+        "max_retries_per_step"
+      ],
+      "properties": {
+        "max_duration_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_steps": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_retries_per_step": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "trust_context": {
+      "type": "object",
+      "required": [
+        "input_labels",
+        "sensitivity_labels",
+        "taint_score",
+        "contains_external_metadata",
+        "contains_tool_output",
+        "contains_untrusted_text"
+      ],
+      "properties": {
+        "input_labels": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/definitions/TrustLabel"
+          }
+        },
+        "sensitivity_labels": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/definitions/SensitivityLabel"
+          }
+        },
+        "taint_score": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "contains_external_metadata": {
+          "type": "boolean"
+        },
+        "contains_tool_output": {
+          "type": "boolean"
+        },
+        "contains_untrusted_text": {
+          "type": "boolean"
+        }
+      }
+    },
+    "derived_from_event_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      }
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "Active",
+        "Expired",
+        "Closed",
+        "Quarantined",
+        "Revoked"
+      ]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "metadata": {
+      "type": "object"
+    }
+  }
+}

@@ -1,0 +1,11 @@
+[Unit]
+Description=FerrumGate PostgreSQL backup timer (15-minute interval)
+Documentation=./docs/guides/operator.md
+
+[Timer]
+OnCalendar=*:0/15
+Persistent=true
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target

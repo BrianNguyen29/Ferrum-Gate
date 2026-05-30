@@ -1,0 +1,17 @@
+[package]
+name = "ferrum-proto"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+schemars.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+indexmap.workspace = true
+sha2.workspace = true
+hex.workspace = true
+thiserror.workspace = true

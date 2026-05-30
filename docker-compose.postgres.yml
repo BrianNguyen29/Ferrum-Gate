@@ -1,0 +1,41 @@
+# Docker Compose for PostgreSQL Local Testing
+#
+# ⚠️  DISCLAIMER: Local Docker/runtime PostgreSQL support is complete.
+#     Production deployment remains deferred.
+#     DO NOT use this for production workloads.
+#
+# Usage:
+#   docker compose -f docker-compose.postgres.yml up -d postgres_p2
+#   docker compose -f docker-compose.postgres.yml down -v  # Cleanup
+#
+# This service is intended for local development and benchmarking.
+# postgres:// DSNs are accepted when ferrum-store is built with --features postgres.
+
+services:
+  postgres_p2:
+    image: postgres:16
+    container_name: ferrumgate_postgres_p2
+    environment:
+      POSTGRES_USER: ferrumgate_dev
+      POSTGRES_PASSWORD: ferrumgate_dev_password  # placeholder - not for production
+      POSTGRES_DB: ferrumgate_p2_test
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_p2_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ferrumgate_dev -d ferrumgate_p2_test"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # Restart policy for local dev only - NOT for production
+    restart: "no"
+    # Resource limits - adjust for local testing
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+volumes:
+  postgres_p2_data:
+    driver: local

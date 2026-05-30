@@ -1,0 +1,47 @@
+# FerrumGate Guides
+
+> **Status**: Information architecture index. Concepts, API, operator, and adapter guides expanded; landing scaffold created.
+> **Owner**: Engineering
+
+---
+
+## Guide index
+
+| Guide | Status | Description |
+|-------|--------|-------------|
+| [Quickstart](quickstart.md) | Local engineering validated | FerrumGate in 10 minutes — local demo only; API/curl, ferrumctl, and MCP paths confirmed |
+| [Concepts](concepts.md) | Expanded | Core concepts: intent, proposal, capability, provenance, lineage, adapters, R0–R3, architecture overview |
+| [API](api.md) | Expanded scaffold | Endpoint inventory, auth, errors, execution lifecycle example, rate limiting |
+| [Operator Guide](operator.md) | Expanded | Configuration, health, backup/restore, token rotation, monitoring, incident response, local-vs-hosted caveats |
+| [Policy Authoring](policy-authoring.md) | Templates validated; implemented locally | Policy bundles, 7 validated examples, common patterns; validate/simulate/apply/diff/rollback/versions implemented |
+| [MCP Integration](mcp-integration.md) | Locally validated | MCP server setup, client config, tools list, auth; local lifecycle and query_lineage validated |
+| [Hosted Deployment](hosted-deployment.md) | Expanded guide | Docker Compose, systemd, PostgreSQL, future Helm; see [Deployment status matrix](./hosted-deployment.md#deployment-status-matrix) |
+| [Security Model](security-model.md) | Expanded guide | Bearer auth, scoped tokens, RBAC design, tenant model |
+| [SLO/SLA](slo-sla.md) | Expanded guide | SLO targets, validation runbook, metrics |
+| [Adapter Reference](adapter-reference.md) | Expanded | Per-adapter operations, rollback, limitations, examples, risk classes |
+| [Troubleshooting](troubleshooting.md) | Expanded guide | Common issues, diagnostics, recovery steps |
+| [Demo Flows](demo-flows.md) | Documentation scaffolds | Six copy-paste demo flows: governed file write, git commit, SQLite mutation, approval-required R3, MCP agent, policy simulation |
+
+## Landing page
+
+A Zola-based static site scaffold is available in `site/`:
+
+- `site/config.toml` — Zola configuration (`base_url` set to local-only `http://127.0.0.1:1111`; no real domain)
+- `site/templates/` — HTML templates (base + index)
+- `site/static/css/main.css` — Stylesheet
+- `site/content/_index.md` — Root page content with summary, status, blockers, and quick links
+
+The landing page includes a prominent status banner, Block A disclaimer, architecture explanation, and links to all guides. It is designed for local build only; no deployment or domain is configured. Build with `make site-build` (validated with Zola `0.22.1`).
+
+## Non-claims
+
+- **Local validation only**: Quickstart API/curl, ferrumctl, and MCP paths were engineering-validated locally. Independent external fresh-user and target-host/cloud validation are not claimed.
+- **NOT production-ready**: These guides do not change the production-ready posture of FerrumGate.
+- **NOT a marketing site**: These are repository docs for operators and integrators.
+- **NOT complete**: Several guides reference planned features (simulation, templates, Helm, RBAC) that are not yet implemented.
+- **NOT deployed**: The `site/` scaffold is local-only. No cloud, domain, or hosting is configured.
+
+## Related docs
+
+- [`PRODUCTION_NOTES.md`](../PRODUCTION_NOTES.md) — Production posture notes
+- [`security/non-claims.md`](../security/non-claims.md) — Canonical non-claims

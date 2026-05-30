@@ -1,0 +1,30 @@
+[package]
+name = "ferrum-store"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = []
+# PostgreSQL P4.1 runtime DSN switching support — NOT production-ready/HA.
+# Enables bounded local/runtime PostgresStore support when downstream binaries opt in.
+postgres = ["sqlx/postgres"]
+
+[dependencies]
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+sqlx = { workspace = true, default-features = false }
+ferrum-proto = { path = "../ferrum-proto" }
+ferrum-sync = { path = "../ferrum-sync" }
+tracing = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+base64 = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

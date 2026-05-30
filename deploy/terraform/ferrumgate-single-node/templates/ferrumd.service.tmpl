@@ -1,0 +1,22 @@
+[Unit]
+Description=FerrumGate daemon
+Documentation=https://github.com/ferrumgate/ferrum-gate/blob/main/docs/guides/operator.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=${user}
+Group=${group}
+EnvironmentFile=-${env_file}
+ExecStart=${binary_path} --config ${config_path}
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=${data_dir} ${log_dir}
+
+[Install]
+WantedBy=multi-user.target

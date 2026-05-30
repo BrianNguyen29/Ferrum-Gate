@@ -1,0 +1,29 @@
+[package]
+name = "ferrum-integrations-mcp"
+description = "FerrumGate MCP server integration crate (Phase A-D0: skeleton + read-only REST client + D1.3.2a pure mapping helpers + Phase 6.1 HTTP transport)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
+ferrum-proto = { path = "../ferrum-proto" }
+ferrum-firewall = { path = "../ferrum-firewall" }
+uuid = { version = "1", features = ["v4", "v5", "serde"] }
+chrono = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+axum = { workspace = true }
+tower = { workspace = true }
+clap = { workspace = true }
+
+[dev-dependencies]
+mockito = "1.6"
+tiny_http = "0.12"
+ferrum-gateway = { path = "../ferrum-gateway" }
+http-body-util = { workspace = true }
