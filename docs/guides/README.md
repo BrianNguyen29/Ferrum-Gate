@@ -21,6 +21,7 @@
 | [SLO/SLA](slo-sla.md) | Expanded guide | SLO targets, validation runbook, metrics |
 | [Adapter Reference](adapter-reference.md) | Expanded | Per-adapter operations, rollback, limitations, examples, risk classes |
 | [Troubleshooting](troubleshooting.md) | Expanded guide | Common issues, diagnostics, recovery steps |
+| [Demo Flows](demo-flows.md) | Documentation scaffolds | Six copy-paste demo flows: governed file write, git commit, SQLite mutation, approval-required R3, MCP agent, policy simulation |
 
 ## Landing page
 
