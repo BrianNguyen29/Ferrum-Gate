@@ -395,7 +395,7 @@ This applies to all deployment modes. The active SLO target is operator-defined;
 | **full G2** | **NOT COMPLETE** |
 | **Tier 2** | **NOT COMPLETE** |
 | **HA-4 unattended automated failover** | **NOT COMPLETE** |
-| **sustained SLO window** | **NO** |
+| **sustained SLO window** | **NOT COMPLETE** |
 | **True zero-downtime upgrade** | **Only possible with PostgreSQL + multi-instance + LB + operator-manual drain sequence; HA-4 not complete** |
 | **SQLite zero-downtime** | **Not possible — maintenance window required** |
 | **Hot config reload** | **Not implemented — restart required for any config change** |
