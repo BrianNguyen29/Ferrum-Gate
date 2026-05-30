@@ -89,6 +89,7 @@ pub enum AuditResourceType {
     Approval,
     Execution,
     Auth,
+    Agent,
 }
 
 impl std::fmt::Display for AuditResourceType {
@@ -99,6 +100,7 @@ impl std::fmt::Display for AuditResourceType {
             AuditResourceType::Approval => "approval",
             AuditResourceType::Execution => "execution",
             AuditResourceType::Auth => "auth",
+            AuditResourceType::Agent => "agent",
         };
         write!(f, "{}", s)
     }
@@ -114,6 +116,7 @@ impl std::str::FromStr for AuditResourceType {
             "approval" => Ok(AuditResourceType::Approval),
             "execution" => Ok(AuditResourceType::Execution),
             "auth" => Ok(AuditResourceType::Auth),
+            "agent" => Ok(AuditResourceType::Agent),
             _ => Err(format!("invalid audit resource type: {}", s)),
         }
     }
@@ -132,6 +135,12 @@ pub struct AuditLogListRequest {
     pub cursor: Option<String>,
     #[serde(default = "default_limit")]
     pub limit: u32,
+    /// Filter entries created at or after this time (RFC 3339).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub since: Option<DateTime<Utc>>,
+    /// Filter entries created at or before this time (RFC 3339).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub until: Option<DateTime<Utc>>,
 }
 
 fn default_limit() -> u32 {

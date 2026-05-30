@@ -136,6 +136,8 @@ pub enum ApiErrorCode {
     Internal,
     Unauthorized,
     Forbidden,
+    BadRequest,
+    PayloadTooLarge,
 }
 
 /// Response envelope for paginated approval lists.

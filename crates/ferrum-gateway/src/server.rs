@@ -12,21 +12,22 @@ use ferrum_firewall::{FirewallContext, SemanticFirewall, TaintScoringFirewall};
 use ferrum_graph::LineageGraph;
 use ferrum_pdp::StaticPdpEngine;
 use ferrum_proto::{
-    ActorRef, ActorType, ApiError, ApiErrorCode, ApprovalBinding, ApprovalId, ApprovalListEnvelope,
-    ApprovalMode, ApprovalResolveRequest, ApprovalState, AuditAction, AuditLogEntry,
-    AuditLogListResponse, AuditResourceType, AuthorizeExecutionRequest, AuthorizeExecutionResponse,
-    CapabilityId, CapabilityLease, CapabilityMintRequest, CapabilityMintResponse, CapabilityStatus,
-    ComponentStatus, Decision, DeepHealthResponse, DiffPolicyBundleVersionsResponse,
-    EvaluateOutcomeResponse, EvaluateProposalResponse, EventId, ExecutionDetailResponse,
-    ExecutionId, ExecutionRecord, ExecutionState, HashChainRef, HealthResponse,
-    IntentCompileRequest, IntentCompileResponse, IntentEnvelope, IntentStatus, LineageDirection,
-    LineageQueryRequest, LineageQueryResponse, ListPolicyBundleVersionsResponse, Matcher,
-    ObjectRef, ObjectType, OutcomeClause, OutcomeReport, PolicyBundle, PolicyBundleId,
+    ActorRef, ActorType, AgentListResponse, ApiError, ApiErrorCode, ApprovalBinding, ApprovalId,
+    ApprovalListEnvelope, ApprovalMode, ApprovalResolveRequest, ApprovalState, AuditAction,
+    AuditLogEntry, AuditLogListResponse, AuditResourceType, AuthorizeExecutionRequest,
+    AuthorizeExecutionResponse, CapabilityId, CapabilityLease, CapabilityMintRequest,
+    CapabilityMintResponse, CapabilityStatus, ComponentStatus, Decision, DeepHealthResponse,
+    DiffPolicyBundleVersionsResponse, EvaluateOutcomeResponse, EvaluateProposalResponse, EventId,
+    ExecutionDetailResponse, ExecutionId, ExecutionRecord, ExecutionState, HashChainRef,
+    HealthResponse, IntentCompileRequest, IntentCompileResponse, IntentEnvelope, IntentStatus,
+    LineageDirection, LineageQueryRequest, LineageQueryResponse, ListPolicyBundleVersionsResponse,
+    Matcher, ObjectRef, ObjectType, OutcomeClause, OutcomeReport, PolicyBundle, PolicyBundleId,
     PolicyBundleSimulateRequest, PolicyBundleSimulateResponse, PolicyRule, PolicySimulateRequest,
     ProposalId, ProvenanceEvent, ProvenanceEventKind, ProvenanceIngestRequest,
-    ProvenanceIngestResponse, ProvenanceQueryRequest, ProvenanceQueryResponse, ResourceSelector,
-    RiskTier, RollbackClass, RollbackPolicyBundleRequest, RollbackPolicyBundleResponse,
-    RollbackTarget, TimeBudget, TrustContextSummary, TrustLabel as ProtoTrustLabel,
+    ProvenanceIngestResponse, ProvenanceQueryRequest, ProvenanceQueryResponse,
+    RegisterAgentRequest, RegisterAgentResponse, ResourceSelector, RevokeAgentRequest, RiskTier,
+    RollbackClass, RollbackPolicyBundleRequest, RollbackPolicyBundleResponse, RollbackTarget,
+    TimeBudget, TrustContextSummary, TrustLabel as ProtoTrustLabel,
 };
 use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
 use ferrum_store::SqliteStore;
@@ -110,6 +111,9 @@ struct Metrics {
     governance_errors_v1_provenance_lineage_execution_id: AtomicU64,
     governance_errors_v1_provenance_ingest: AtomicU64,
     governance_errors_v1_bridges_bridge_id_tools: AtomicU64,
+    governance_errors_v1_agents_create: AtomicU64,
+    governance_errors_v1_agents_list: AtomicU64,
+    governance_errors_v1_agents_revoke: AtomicU64,
     // Governance success counters keyed by static route template
     governance_success_v1_intents_compile: AtomicU64,
     governance_success_v1_intents_list: AtomicU64,
@@ -143,6 +147,9 @@ struct Metrics {
     governance_success_v1_provenance_lineage_execution_id: AtomicU64,
     governance_success_v1_provenance_ingest: AtomicU64,
     governance_success_v1_bridges_bridge_id_tools: AtomicU64,
+    governance_success_v1_agents_create: AtomicU64,
+    governance_success_v1_agents_list: AtomicU64,
+    governance_success_v1_agents_revoke: AtomicU64,
     // Latency histogram for /v1/healthz (always status 200)
     healthz_latency_buckets: [AtomicU64; 11],
     healthz_latency_sum: AtomicU64,
@@ -206,6 +213,9 @@ impl Metrics {
             governance_errors_v1_provenance_lineage_execution_id: AtomicU64::new(0),
             governance_errors_v1_provenance_ingest: AtomicU64::new(0),
             governance_errors_v1_bridges_bridge_id_tools: AtomicU64::new(0),
+            governance_errors_v1_agents_create: AtomicU64::new(0),
+            governance_errors_v1_agents_list: AtomicU64::new(0),
+            governance_errors_v1_agents_revoke: AtomicU64::new(0),
             governance_success_v1_intents_compile: AtomicU64::new(0),
             governance_success_v1_intents_list: AtomicU64::new(0),
             governance_success_v1_proposals_evaluate: AtomicU64::new(0),
@@ -238,6 +248,9 @@ impl Metrics {
             governance_success_v1_provenance_lineage_execution_id: AtomicU64::new(0),
             governance_success_v1_provenance_ingest: AtomicU64::new(0),
             governance_success_v1_bridges_bridge_id_tools: AtomicU64::new(0),
+            governance_success_v1_agents_create: AtomicU64::new(0),
+            governance_success_v1_agents_list: AtomicU64::new(0),
+            governance_success_v1_agents_revoke: AtomicU64::new(0),
             // Latency histogram fields
             healthz_latency_buckets: [const { AtomicU64::new(0) }; 11],
             healthz_latency_sum: AtomicU64::new(0),
@@ -356,6 +369,15 @@ impl Metrics {
             GovernanceRoute::BridgesBridgeIdTools => self
                 .governance_errors_v1_bridges_bridge_id_tools
                 .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::AgentsCreate => self
+                .governance_errors_v1_agents_create
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::AgentsList => self
+                .governance_errors_v1_agents_list
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::AgentsRevoke => self
+                .governance_errors_v1_agents_revoke
+                .fetch_add(1, Ordering::Relaxed),
         };
     }
 
@@ -458,6 +480,15 @@ impl Metrics {
             GovernanceRoute::BridgesBridgeIdTools => self
                 .governance_success_v1_bridges_bridge_id_tools
                 .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::AgentsCreate => self
+                .governance_success_v1_agents_create
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::AgentsList => self
+                .governance_success_v1_agents_list
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::AgentsRevoke => self
+                .governance_success_v1_agents_revoke
+                .fetch_add(1, Ordering::Relaxed),
         };
     }
 
@@ -554,6 +585,9 @@ enum GovernanceRoute {
     ProvenanceLineageExecutionId,
     ProvenanceIngest,
     BridgesBridgeIdTools,
+    AgentsCreate,
+    AgentsList,
+    AgentsRevoke,
 }
 
 impl GovernanceRoute {
@@ -596,6 +630,9 @@ impl GovernanceRoute {
             }
             GovernanceRoute::ProvenanceIngest => "/v1/provenance/ingest",
             GovernanceRoute::BridgesBridgeIdTools => "/v1/bridges/{bridge_id}/tools",
+            GovernanceRoute::AgentsCreate => "/v1/admin/agents",
+            GovernanceRoute::AgentsList => "/v1/admin/agents",
+            GovernanceRoute::AgentsRevoke => "/v1/admin/agents/{agent_id}",
         }
     }
 
@@ -635,6 +672,9 @@ impl GovernanceRoute {
             GovernanceRoute::ProvenanceLineageExecutionId => "GET",
             GovernanceRoute::ProvenanceIngest => "POST",
             GovernanceRoute::BridgesBridgeIdTools => "GET",
+            GovernanceRoute::AgentsCreate => "POST",
+            GovernanceRoute::AgentsList => "GET",
+            GovernanceRoute::AgentsRevoke => "DELETE",
         }
     }
 }
@@ -968,8 +1008,13 @@ fn build_workload_router(state: Arc<AppState>) -> Router {
         .route("/v1/admin/tokens", get(list_tokens))
         .route("/v1/admin/tokens/{token_id}", delete(revoke_token))
         .route("/v1/admin/tokens/{token_id}/rotate", post(rotate_token))
+        // Admin agent endpoints
+        .route("/v1/admin/agents", post(create_agent))
+        .route("/v1/admin/agents", get(list_agents))
+        .route("/v1/admin/agents/{agent_id}", delete(revoke_agent))
         // Audit log endpoints
         .route("/v1/admin/audit-logs", get(list_audit_logs))
+        .route("/v1/admin/audit-logs/export", get(export_audit_logs))
         .route("/v1/admin/audit/verify", get(verify_audit_chain))
         .with_state(state)
         .layer(TraceLayer::new_for_http())
@@ -1450,8 +1495,13 @@ fn required_scope_for_path(method: &str, path: &str) -> Option<&'static str> {
         ("POST", p) if p.starts_with("/v1/admin/tokens/") && p.ends_with("/rotate") => {
             Some("admin:tokens")
         }
+        // Admin agents
+        ("POST", "/v1/admin/agents") => Some("admin:agents"),
+        ("GET", "/v1/admin/agents") => Some("admin:agents"),
+        ("DELETE", p) if p.starts_with("/v1/admin/agents/") => Some("admin:agents"),
         // Audit logs
         ("GET", "/v1/admin/audit-logs") => Some("admin:audit"),
+        ("GET", "/v1/admin/audit-logs/export") => Some("admin:audit"),
         ("GET", "/v1/admin/audit/verify") => Some("admin:audit"),
         _ => Some("admin:tokens"), // Deny-by-default for unknown paths
     }
@@ -1971,6 +2021,18 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
         .metrics
         .governance_errors_v1_bridges_bridge_id_tools
         .load(Ordering::Relaxed);
+    let gov_err_agents_create = state
+        .metrics
+        .governance_errors_v1_agents_create
+        .load(Ordering::Relaxed);
+    let gov_err_agents_list = state
+        .metrics
+        .governance_errors_v1_agents_list
+        .load(Ordering::Relaxed);
+    let gov_err_agents_revoke = state
+        .metrics
+        .governance_errors_v1_agents_revoke
+        .load(Ordering::Relaxed);
 
     // Load governance success counters
     let gov_ok_intents_compile = state
@@ -2100,6 +2162,18 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
     let gov_ok_bridges_bridge_id_tools = state
         .metrics
         .governance_success_v1_bridges_bridge_id_tools
+        .load(Ordering::Relaxed);
+    let gov_ok_agents_create = state
+        .metrics
+        .governance_success_v1_agents_create
+        .load(Ordering::Relaxed);
+    let gov_ok_agents_list = state
+        .metrics
+        .governance_success_v1_agents_list
+        .load(Ordering::Relaxed);
+    let gov_ok_agents_revoke = state
+        .metrics
+        .governance_success_v1_agents_revoke
         .load(Ordering::Relaxed);
 
     // Load latency histogram data for /v1/healthz
@@ -2289,6 +2363,9 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
          ferrumgate_governance_errors_total{{route=\"/v1/provenance/lineage/{{execution_id}}\",method=\"GET\"}} {}\n\
          ferrumgate_governance_errors_total{{route=\"/v1/provenance/ingest\",method=\"POST\"}} {}\n\
          ferrumgate_governance_errors_total{{route=\"/v1/bridges/{{bridge_id}}/tools\",method=\"GET\"}} {}\n\
+         ferrumgate_governance_errors_total{{route=\"/v1/admin/agents\",method=\"POST\"}} {}\n\
+         ferrumgate_governance_errors_total{{route=\"/v1/admin/agents\",method=\"GET\"}} {}\n\
+         ferrumgate_governance_errors_total{{route=\"/v1/admin/agents/{{agent_id}}\",method=\"DELETE\"}} {}\n\
          # HELP ferrumgate_governance_success_total Governance successes by route and method\n\
          # TYPE ferrumgate_governance_success_total counter\n\
          ferrumgate_governance_success_total{{route=\"/v1/intents/compile\",method=\"POST\"}} {}\n\
@@ -2322,7 +2399,10 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
          ferrumgate_governance_success_total{{route=\"/v1/provenance/lineage\",method=\"POST\"}} {}\n\
          ferrumgate_governance_success_total{{route=\"/v1/provenance/lineage/{{execution_id}}\",method=\"GET\"}} {}\n\
          ferrumgate_governance_success_total{{route=\"/v1/provenance/ingest\",method=\"POST\"}} {}\n\
-         ferrumgate_governance_success_total{{route=\"/v1/bridges/{{bridge_id}}/tools\",method=\"GET\"}} {}\n",
+         ferrumgate_governance_success_total{{route=\"/v1/bridges/{{bridge_id}}/tools\",method=\"GET\"}} {}\n\
+         ferrumgate_governance_success_total{{route=\"/v1/admin/agents\",method=\"POST\"}} {}\n\
+         ferrumgate_governance_success_total{{route=\"/v1/admin/agents\",method=\"GET\"}} {}\n\
+         ferrumgate_governance_success_total{{route=\"/v1/admin/agents/{{agent_id}}\",method=\"DELETE\"}} {}\n",
         healthz_count,
         readyz_count,
         readyz_deep_count_200,
@@ -2365,6 +2445,9 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
         gov_err_provenance_lineage_execution_id,
         gov_err_provenance_ingest,
         gov_err_bridges_bridge_id_tools,
+        gov_err_agents_create,
+        gov_err_agents_list,
+        gov_err_agents_revoke,
         gov_ok_intents_compile,
         gov_ok_intents_list,
         gov_ok_proposals_evaluate,
@@ -2397,6 +2480,9 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> Response {
         gov_ok_provenance_lineage_execution_id,
         gov_ok_provenance_ingest,
         gov_ok_bridges_bridge_id_tools,
+        gov_ok_agents_create,
+        gov_ok_agents_list,
+        gov_ok_agents_revoke,
     );
 
     // Append histogram output to body
@@ -7546,6 +7632,296 @@ async fn rotate_token(
     }
 }
 
+// ── Admin Agent Handlers ──
+
+async fn create_agent(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<RegisterAgentRequest>,
+) -> Response {
+    // Validate public key is valid base64 and decodes to 32 bytes
+    let pk_bytes = match base64::engine::general_purpose::STANDARD.decode(&req.public_key) {
+        Ok(b) => b,
+        Err(_) => {
+            state
+                .metrics
+                .increment_governance_error(GovernanceRoute::AgentsCreate);
+            let error = ApiError {
+                code: ApiErrorCode::ValidationError,
+                message: "invalid public_key: must be valid base64".to_string(),
+                correlation_id: uuid::Uuid::new_v4().to_string(),
+                retriable: false,
+                details: serde_json::json!({}),
+            };
+            return (StatusCode::BAD_REQUEST, Json(error)).into_response();
+        }
+    };
+    if pk_bytes.len() != 32 {
+        state
+            .metrics
+            .increment_governance_error(GovernanceRoute::AgentsCreate);
+        let error = ApiError {
+            code: ApiErrorCode::ValidationError,
+            message: "invalid public_key: must decode to 32 bytes".to_string(),
+            correlation_id: uuid::Uuid::new_v4().to_string(),
+            retriable: false,
+            details: serde_json::json!({}),
+        };
+        return (StatusCode::BAD_REQUEST, Json(error)).into_response();
+    }
+
+    let fingerprint = {
+        use sha2::Digest;
+        let hash = sha2::Sha256::digest(&pk_bytes);
+        base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, hash)
+    };
+
+    // Pre-check duplicates to return tailored errors instead of raw DB constraint violations.
+    match state.runtime.store.agents().get(&req.agent_id).await {
+        Ok(Some(_)) => {
+            state
+                .metrics
+                .increment_governance_error(GovernanceRoute::AgentsCreate);
+            let error = ApiError {
+                code: ApiErrorCode::Conflict,
+                message: format!("agent_id '{}' already exists", req.agent_id),
+                correlation_id: uuid::Uuid::new_v4().to_string(),
+                retriable: false,
+                details: serde_json::json!({}),
+            };
+            return (StatusCode::CONFLICT, Json(error)).into_response();
+        }
+        Ok(None) => {}
+        Err(e) => {
+            tracing::error!(error = %e, "agent duplicate check failed");
+            state
+                .metrics
+                .increment_governance_error(GovernanceRoute::AgentsCreate);
+            let error = ApiError {
+                code: ApiErrorCode::Internal,
+                message: "failed to register agent".to_string(),
+                correlation_id: uuid::Uuid::new_v4().to_string(),
+                retriable: false,
+                details: serde_json::json!({}),
+            };
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response();
+        }
+    }
+
+    match state
+        .runtime
+        .store
+        .agents()
+        .get_by_fingerprint(&fingerprint)
+        .await
+    {
+        Ok(Some(existing)) => {
+            state
+                .metrics
+                .increment_governance_error(GovernanceRoute::AgentsCreate);
+            let error = ApiError {
+                code: ApiErrorCode::Conflict,
+                message: format!(
+                    "public_key already registered for agent '{}'",
+                    existing.agent_id
+                ),
+                correlation_id: uuid::Uuid::new_v4().to_string(),
+                retriable: false,
+                details: serde_json::json!({}),
+            };
+            return (StatusCode::CONFLICT, Json(error)).into_response();
+        }
+        Ok(None) => {}
+        Err(e) => {
+            tracing::error!(error = %e, "agent fingerprint check failed");
+            state
+                .metrics
+                .increment_governance_error(GovernanceRoute::AgentsCreate);
+            let error = ApiError {
+                code: ApiErrorCode::Internal,
+                message: "failed to register agent".to_string(),
+                correlation_id: uuid::Uuid::new_v4().to_string(),
+                retriable: false,
+                details: serde_json::json!({}),
+            };
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response();
+        }
+    }
+
+    let allowed_scopes = req.scopes.unwrap_or_else(|| {
+        vec![
+            "intent:submit".to_string(),
+            "proposal:evaluate".to_string(),
+            "capability:mint".to_string(),
+            "execution:authorize".to_string(),
+            "execution:prepare".to_string(),
+            "execution:execute".to_string(),
+            "execution:verify".to_string(),
+            "execution:compensate".to_string(),
+        ]
+    });
+
+    let agent = ferrum_proto::AgentRecord {
+        agent_id: req.agent_id.clone(),
+        public_key: req.public_key,
+        key_fingerprint: fingerprint.clone(),
+        allowed_scopes,
+        created_at: chrono::Utc::now(),
+        revoked_at: None,
+        description: req.description,
+    };
+
+    match state.runtime.store.agents().insert(&agent).await {
+        Ok(()) => {
+            state
+                .metrics
+                .increment_governance_success(GovernanceRoute::AgentsCreate);
+            append_audit(
+                &state.runtime.store,
+                &req.agent_id,
+                AuditAction::AgentRegister,
+                AuditResourceType::Agent,
+                &req.agent_id,
+                "success",
+                Some(serde_json::json!({
+                    "fingerprint": fingerprint,
+                })),
+            )
+            .await;
+            let response = RegisterAgentResponse { agent };
+            (StatusCode::CREATED, Json(response)).into_response()
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "agent insert failed");
+            state
+                .metrics
+                .increment_governance_error(GovernanceRoute::AgentsCreate);
+            let error = ApiError {
+                code: ApiErrorCode::Internal,
+                message: "failed to register agent".to_string(),
+                correlation_id: uuid::Uuid::new_v4().to_string(),
+                retriable: false,
+                details: serde_json::json!({}),
+            };
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response()
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct ListAgentsQuery {
+    active_only: Option<bool>,
+    limit: Option<u32>,
+    cursor: Option<String>,
+}
+
+async fn list_agents(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ListAgentsQuery>,
+) -> Response {
+    let active_only = params.active_only.unwrap_or(false);
+    let limit = params.limit.unwrap_or(50).min(200);
+    let (agents, next_cursor) = match state
+        .runtime
+        .store
+        .agents()
+        .list(active_only, limit, params.cursor.as_deref())
+        .await
+    {
+        Ok(result) => result,
+        Err(e) => {
+            tracing::error!(error = %e, "agent list failed");
+            state
+                .metrics
+                .increment_governance_error(GovernanceRoute::AgentsList);
+            let error = ApiError {
+                code: ApiErrorCode::Internal,
+                message: "failed to list agents".to_string(),
+                correlation_id: uuid::Uuid::new_v4().to_string(),
+                retriable: false,
+                details: serde_json::json!({}),
+            };
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response();
+        }
+    };
+
+    let total = match state.runtime.store.agents().count(active_only).await {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::warn!(error = %e, "agent count failed; returning items.len() as total");
+            agents.len()
+        }
+    };
+
+    state
+        .metrics
+        .increment_governance_success(GovernanceRoute::AgentsList);
+    let response = AgentListResponse {
+        items: agents,
+        next_cursor,
+        total,
+    };
+    (StatusCode::OK, Json(response)).into_response()
+}
+
+async fn revoke_agent(
+    State(state): State<Arc<AppState>>,
+    Path(agent_id): Path<String>,
+    Json(req): Json<RevokeAgentRequest>,
+) -> Response {
+    match state.runtime.store.agents().revoke(&agent_id).await {
+        Ok(true) => {
+            // NOTE: Audit actor is "unknown" because the auth middleware does not
+            // propagate authenticated actor identity to handlers via request
+            // extensions. This is consistent with revoke_token and other admin
+            // handlers. Improving this requires a broader auth-context plumbing
+            // change that is out of scope for this bounded follow-up.
+            state
+                .metrics
+                .increment_governance_success(GovernanceRoute::AgentsRevoke);
+            append_audit(
+                &state.runtime.store,
+                "unknown",
+                AuditAction::AgentRevoke,
+                AuditResourceType::Agent,
+                &agent_id,
+                "success",
+                Some(serde_json::json!({
+                    "reason": req.reason,
+                })),
+            )
+            .await;
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Ok(false) => {
+            state
+                .metrics
+                .increment_governance_error(GovernanceRoute::AgentsRevoke);
+            let error = ApiError {
+                code: ApiErrorCode::NotFound,
+                message: "agent not found or already revoked".to_string(),
+                correlation_id: uuid::Uuid::new_v4().to_string(),
+                retriable: false,
+                details: serde_json::json!({}),
+            };
+            (StatusCode::NOT_FOUND, Json(error)).into_response()
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "agent revoke failed");
+            state
+                .metrics
+                .increment_governance_error(GovernanceRoute::AgentsRevoke);
+            let error = ApiError {
+                code: ApiErrorCode::Internal,
+                message: "failed to revoke agent".to_string(),
+                correlation_id: uuid::Uuid::new_v4().to_string(),
+                retriable: false,
+                details: serde_json::json!({}),
+            };
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response()
+        }
+    }
+}
+
 // ── Audit Log Handler ──
 
 #[derive(Debug, Deserialize)]
@@ -7555,6 +7931,8 @@ struct ListAuditLogsQuery {
     resource_id: Option<String>,
     cursor: Option<String>,
     limit: Option<u32>,
+    since: Option<chrono::DateTime<chrono::Utc>>,
+    until: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 async fn list_audit_logs(
@@ -7577,6 +7955,8 @@ async fn list_audit_logs(
             params.resource_id.as_deref(),
             params.cursor.as_deref(),
             limit,
+            params.since,
+            params.until,
         )
         .await
     {
@@ -7623,6 +8003,197 @@ async fn verify_audit_chain(State(state): State<Arc<AppState>>) -> Response {
                 error: Some(e.to_string()),
             };
             (StatusCode::OK, Json(response)).into_response()
+        }
+    }
+}
+
+/// Maximum rows allowed in a single export request.
+const EXPORT_MAX_ROWS: usize = 10_000;
+/// Page size for export pagination loops.
+const EXPORT_PAGE_SIZE: u32 = 500;
+
+#[derive(Debug, Deserialize)]
+struct ExportAuditLogsQuery {
+    action: Option<String>,
+    resource_type: Option<String>,
+    resource_id: Option<String>,
+    since: Option<chrono::DateTime<chrono::Utc>>,
+    until: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default = "default_export_format")]
+    format: String,
+}
+
+fn default_export_format() -> String {
+    "ndjson".to_string()
+}
+
+/// Escape a CSV field per RFC 4180 basic rules.
+fn csv_escape_field(s: &str) -> String {
+    if s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r') {
+        let escaped = s.replace('"', "\"\"");
+        format!("\"{}\"", escaped)
+    } else {
+        s.to_string()
+    }
+}
+
+/// Export audit logs in NDJSON, JSON, or CSV format.
+///
+/// Uses bounded pagination to avoid unbounded memory use. Returns 413
+/// if the result set exceeds `EXPORT_MAX_ROWS`.
+async fn export_audit_logs(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ExportAuditLogsQuery>,
+) -> Response {
+    let action = params.action.and_then(|s| s.parse::<AuditAction>().ok());
+    let resource_type = params
+        .resource_type
+        .and_then(|s| s.parse::<AuditResourceType>().ok());
+    let format = params.format.to_lowercase();
+
+    let repo = state.runtime.store.audit_log();
+    let mut all_entries = Vec::new();
+    let mut cursor: Option<String> = None;
+
+    loop {
+        match repo
+            .list(
+                action,
+                resource_type,
+                params.resource_id.as_deref(),
+                cursor.as_deref(),
+                EXPORT_PAGE_SIZE,
+                params.since,
+                params.until,
+            )
+            .await
+        {
+            Ok((items, next_cursor)) => {
+                all_entries.extend(items);
+                if all_entries.len() > EXPORT_MAX_ROWS {
+                    let error = ApiError {
+                        code: ApiErrorCode::PayloadTooLarge,
+                        message: format!(
+                            "export exceeds maximum of {} rows; narrow filters or use pagination",
+                            EXPORT_MAX_ROWS
+                        ),
+                        correlation_id: uuid::Uuid::new_v4().to_string(),
+                        retriable: false,
+                        details: serde_json::json!({}),
+                    };
+                    return (StatusCode::PAYLOAD_TOO_LARGE, Json(error)).into_response();
+                }
+                if next_cursor.is_none() {
+                    break;
+                }
+                cursor = next_cursor;
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "audit log export failed");
+                let error = ApiError {
+                    code: ApiErrorCode::Internal,
+                    message: "failed to export audit logs".to_string(),
+                    correlation_id: uuid::Uuid::new_v4().to_string(),
+                    retriable: false,
+                    details: serde_json::json!({}),
+                };
+                return (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response();
+            }
+        }
+    }
+
+    match format.as_str() {
+        "ndjson" => {
+            let mut body = String::new();
+            for entry in &all_entries {
+                match serde_json::to_string(entry) {
+                    Ok(line) => {
+                        body.push_str(&line);
+                        body.push('\n');
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, "audit log export serialization failed");
+                        let error = ApiError {
+                            code: ApiErrorCode::Internal,
+                            message: "failed to serialize audit log export".to_string(),
+                            correlation_id: uuid::Uuid::new_v4().to_string(),
+                            retriable: false,
+                            details: serde_json::json!({}),
+                        };
+                        return (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response();
+                    }
+                }
+            }
+            (
+                StatusCode::OK,
+                [(axum::http::header::CONTENT_TYPE, "application/x-ndjson")],
+                body,
+            )
+                .into_response()
+        }
+        "json" => match serde_json::to_string(&all_entries) {
+            Ok(body) => (
+                StatusCode::OK,
+                [(axum::http::header::CONTENT_TYPE, "application/json")],
+                body,
+            )
+                .into_response(),
+            Err(e) => {
+                tracing::error!(error = %e, "audit log export serialization failed");
+                let error = ApiError {
+                    code: ApiErrorCode::Internal,
+                    message: "failed to serialize audit log export".to_string(),
+                    correlation_id: uuid::Uuid::new_v4().to_string(),
+                    retriable: false,
+                    details: serde_json::json!({}),
+                };
+                (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response()
+            }
+        },
+        "csv" => {
+            let mut body = String::from(
+                "id,actor_id,action,resource_type,resource_id,result,metadata,created_at,content_hash,previous_hash\n",
+            );
+            for entry in &all_entries {
+                let metadata = entry
+                    .metadata
+                    .as_ref()
+                    .map(|m| m.to_string())
+                    .unwrap_or_default();
+                let line = format!(
+                    "{},{},{},{},{},{},{},{},{},{}\n",
+                    entry.id,
+                    csv_escape_field(&entry.actor_id),
+                    csv_escape_field(&entry.action.to_string()),
+                    csv_escape_field(&entry.resource_type.to_string()),
+                    csv_escape_field(&entry.resource_id),
+                    csv_escape_field(&entry.result),
+                    csv_escape_field(&metadata),
+                    csv_escape_field(&entry.created_at.to_rfc3339()),
+                    csv_escape_field(entry.content_hash.as_deref().unwrap_or("")),
+                    csv_escape_field(entry.previous_hash.as_deref().unwrap_or("")),
+                );
+                body.push_str(&line);
+            }
+            (
+                StatusCode::OK,
+                [(axum::http::header::CONTENT_TYPE, "text/csv")],
+                body,
+            )
+                .into_response()
+        }
+        _ => {
+            let error = ApiError {
+                code: ApiErrorCode::BadRequest,
+                message: format!(
+                    "invalid export format '{}': expected ndjson, json, or csv",
+                    format
+                ),
+                correlation_id: uuid::Uuid::new_v4().to_string(),
+                retriable: false,
+                details: serde_json::json!({}),
+            };
+            (StatusCode::BAD_REQUEST, Json(error)).into_response()
         }
     }
 }
@@ -10140,6 +10711,9 @@ mod tests {
                 GovernanceRoute::ProvenanceLineageExecutionId,
                 GovernanceRoute::ProvenanceIngest,
                 GovernanceRoute::BridgesBridgeIdTools,
+                GovernanceRoute::AgentsCreate,
+                GovernanceRoute::AgentsList,
+                GovernanceRoute::AgentsRevoke,
             ];
 
             // Exhaustiveness check: match against all variants.
@@ -10178,6 +10752,9 @@ mod tests {
                 GovernanceRoute::ProvenanceLineageExecutionId => (),
                 GovernanceRoute::ProvenanceIngest => (),
                 GovernanceRoute::BridgesBridgeIdTools => (),
+                GovernanceRoute::AgentsCreate => (),
+                GovernanceRoute::AgentsList => (),
+                GovernanceRoute::AgentsRevoke => (),
             };
 
             ROUTES
@@ -12808,6 +13385,8 @@ rules:
                 None,
                 None,
                 10,
+                None,
+                None,
             )
             .await
             .unwrap();
@@ -13292,5 +13871,454 @@ rules:
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    // ── Admin Agent Tests ──
+
+    async fn test_runtime_with_admin_token() -> (GatewayRuntime, String) {
+        let runtime = test_runtime().await;
+        let token_value = generate_token_value();
+        let token_salt = generate_token_salt();
+        let token_lookup_hash = hash_token_value(&token_value);
+        let token_hash = hash_token_with_salt(&token_value, &token_salt);
+        let token = ferrum_proto::ScopedToken {
+            token_id: "tok_admin_1".to_string(),
+            actor_id: "admin".to_string(),
+            role: ferrum_proto::TokenRole::Admin,
+            scopes: vec!["*".to_string()],
+            description: None,
+            expires_at: chrono::Utc::now() + chrono::Duration::days(1),
+            created_at: chrono::Utc::now(),
+            last_used_at: None,
+            revoked_at: None,
+            revoked_reason: None,
+            rotated_from: None,
+            token_lookup_hash,
+            token_hash,
+            token_salt,
+        };
+        runtime.store.tokens().insert(&token).await.unwrap();
+        (runtime, token_value)
+    }
+
+    #[tokio::test]
+    async fn test_admin_agent_register_list_revoke() {
+        let (runtime, token_value) = test_runtime_with_admin_token().await;
+        let config = ServerConfig {
+            auth_mode: AuthMode::Scoped,
+            ..Default::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        // Register an agent
+        let request = ferrum_proto::RegisterAgentRequest {
+            agent_id: "agent_cli_1".to_string(),
+            public_key: base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                vec![0u8; 32],
+            ),
+            scopes: None,
+            description: Some("test agent".to_string()),
+        };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let register_resp: ferrum_proto::RegisterAgentResponse =
+            serde_json::from_slice(&body).unwrap();
+        assert_eq!(register_resp.agent.agent_id, "agent_cli_1");
+        assert!(!register_resp.agent.key_fingerprint.is_empty());
+
+        // List agents
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/v1/admin/agents")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let list_resp: ferrum_proto::AgentListResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(list_resp.items.len(), 1);
+        assert_eq!(list_resp.items[0].agent_id, "agent_cli_1");
+        assert_eq!(list_resp.total, 1);
+
+        // Duplicate agent_id should return 409 Conflict
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+
+        // Duplicate public_key should return 409 Conflict
+        let request2 = ferrum_proto::RegisterAgentRequest {
+            agent_id: "agent_cli_2".to_string(),
+            public_key: request.public_key.clone(),
+            scopes: None,
+            description: None,
+        };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&request2).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+
+        // Revoke agent
+        let revoke_request = ferrum_proto::RevokeAgentRequest {
+            reason: Some("test revocation".to_string()),
+        };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/v1/admin/agents/agent_cli_1")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&revoke_request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        // Revoke again should return 404
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/v1/admin/agents/agent_cli_1")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&revoke_request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_admin_agent_scope_enforcement() {
+        let runtime = test_runtime().await;
+        let token_value = generate_token_value();
+        let token_salt = generate_token_salt();
+        let token_lookup_hash = hash_token_value(&token_value);
+        let token_hash = hash_token_with_salt(&token_value, &token_salt);
+        let token = ferrum_proto::ScopedToken {
+            token_id: "tok_op_1".to_string(),
+            actor_id: "operator".to_string(),
+            role: ferrum_proto::TokenRole::Operator,
+            scopes: ferrum_proto::TokenRole::Operator.default_scopes(),
+            description: None,
+            expires_at: chrono::Utc::now() + chrono::Duration::days(1),
+            created_at: chrono::Utc::now(),
+            last_used_at: None,
+            revoked_at: None,
+            revoked_reason: None,
+            rotated_from: None,
+            token_lookup_hash,
+            token_hash,
+            token_salt,
+        };
+        runtime.store.tokens().insert(&token).await.unwrap();
+
+        let config = ServerConfig {
+            auth_mode: AuthMode::Scoped,
+            ..Default::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let request = ferrum_proto::RegisterAgentRequest {
+            agent_id: "agent_cli_2".to_string(),
+            public_key: base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                vec![0u8; 32],
+            ),
+            scopes: None,
+            description: None,
+        };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // Operator does not have admin:agents scope
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_admin_agent_invalid_public_key() {
+        let (runtime, token_value) = test_runtime_with_admin_token().await;
+        let config = ServerConfig {
+            auth_mode: AuthMode::Scoped,
+            ..Default::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let request = ferrum_proto::RegisterAgentRequest {
+            agent_id: "agent_cli_3".to_string(),
+            public_key: "not-valid-base64!!!".to_string(),
+            scopes: None,
+            description: None,
+        };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // ── Audit Export Tests ──
+
+    async fn setup_audit_entries(runtime: &GatewayRuntime) {
+        let entries = vec![
+            AuditLogEntry {
+                id: 0,
+                actor_id: "alice".to_string(),
+                action: AuditAction::TokenCreate,
+                resource_type: AuditResourceType::Token,
+                resource_id: "t1".to_string(),
+                result: "ok".to_string(),
+                metadata: Some(serde_json::json!({"role": "admin"})),
+                created_at: chrono::Utc::now(),
+                content_hash: None,
+                previous_hash: None,
+            },
+            AuditLogEntry {
+                id: 0,
+                actor_id: "bob".to_string(),
+                action: AuditAction::TokenRevoke,
+                resource_type: AuditResourceType::Token,
+                resource_id: "t2".to_string(),
+                result: "ok".to_string(),
+                metadata: None,
+                created_at: chrono::Utc::now(),
+                content_hash: None,
+                previous_hash: None,
+            },
+        ];
+        for entry in entries {
+            runtime.store.audit_log().append(&entry).await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn test_audit_export_ndjson() {
+        let (runtime, token_value) = test_runtime_with_admin_token().await;
+        setup_audit_entries(&runtime).await;
+        let config = ServerConfig {
+            auth_mode: AuthMode::Scoped,
+            ..Default::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/admin/audit-logs/export?format=ndjson")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let text = String::from_utf8(body.to_vec()).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 2);
+        // DESC ordering: bob appended second, appears first
+        assert!(lines[0].contains("bob"));
+        assert!(lines[1].contains("alice"));
+    }
+
+    #[tokio::test]
+    async fn test_audit_export_json() {
+        let (runtime, token_value) = test_runtime_with_admin_token().await;
+        setup_audit_entries(&runtime).await;
+        let config = ServerConfig {
+            auth_mode: AuthMode::Scoped,
+            ..Default::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/admin/audit-logs/export?format=json")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let items: Vec<AuditLogEntry> = serde_json::from_slice(&body).unwrap();
+        assert_eq!(items.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_audit_export_csv() {
+        let (runtime, token_value) = test_runtime_with_admin_token().await;
+        setup_audit_entries(&runtime).await;
+        let config = ServerConfig {
+            auth_mode: AuthMode::Scoped,
+            ..Default::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/admin/audit-logs/export?format=csv")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let text = String::from_utf8(body.to_vec()).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert!(lines[0].starts_with("id,actor_id,action"));
+        assert_eq!(lines.len(), 3); // header + 2 rows
+    }
+
+    #[tokio::test]
+    async fn test_audit_export_requires_admin_audit_scope() {
+        let runtime = test_runtime().await;
+        // Insert a token without admin:audit scope
+        let token_value = generate_token_value();
+        let token_salt = generate_token_salt();
+        let token_lookup_hash = hash_token_value(&token_value);
+        let token_hash = hash_token_with_salt(&token_value, &token_salt);
+        let token = ferrum_proto::ScopedToken {
+            token_id: "tok_no_audit".to_string(),
+            actor_id: "user".to_string(),
+            role: ferrum_proto::TokenRole::Operator,
+            scopes: vec!["policy:read".to_string()],
+            description: None,
+            expires_at: chrono::Utc::now() + chrono::Duration::days(1),
+            created_at: chrono::Utc::now(),
+            last_used_at: None,
+            revoked_at: None,
+            revoked_reason: None,
+            rotated_from: None,
+            token_lookup_hash,
+            token_hash,
+            token_salt,
+        };
+        runtime.store.tokens().insert(&token).await.unwrap();
+
+        let config = ServerConfig {
+            auth_mode: AuthMode::Scoped,
+            ..Default::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/admin/audit-logs/export")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_audit_export_invalid_format() {
+        let (runtime, token_value) = test_runtime_with_admin_token().await;
+        let config = ServerConfig {
+            auth_mode: AuthMode::Scoped,
+            ..Default::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/admin/audit-logs/export?format=xml")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 }

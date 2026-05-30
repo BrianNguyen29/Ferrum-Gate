@@ -55,6 +55,30 @@ impl std::str::FromStr for OutputFormat {
     }
 }
 
+/// Export format for audit log exports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ExportFormat {
+    #[default]
+    Ndjson,
+    Json,
+    Csv,
+}
+
+impl std::str::FromStr for ExportFormat {
+    type Err = String;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "ndjson" => Ok(ExportFormat::Ndjson),
+            "json" => Ok(ExportFormat::Json),
+            "csv" => Ok(ExportFormat::Csv),
+            _ => Err(format!(
+                "invalid export format '{}': expected ndjson, json, or csv",
+                s
+            )),
+        }
+    }
+}
+
 /// Render lineage events as Graphviz DOT format.
 /// Nodes are events, edges are parent-child relationships derived from parent_edges.
 /// Output is deterministic: events sorted by event_id, edges sorted by (from, to).
@@ -400,6 +424,11 @@ enum AdminCommand {
         #[command(subcommand)]
         sub: AdminTokensCommand,
     },
+    /// Manage agent identities (list, register, revoke).
+    Agents {
+        #[command(subcommand)]
+        sub: AdminAgentsCommand,
+    },
     /// Query audit logs.
     Audit {
         #[command(subcommand)]
@@ -648,6 +677,62 @@ enum AdminTokensCommand {
     },
 }
 
+/// Agents subcommands under `admin agents`.
+#[derive(Debug, Subcommand)]
+enum AdminAgentsCommand {
+    /// List registered agent identities.
+    List {
+        /// Show only active agents (exclude revoked).
+        #[arg(long)]
+        active_only: bool,
+
+        /// Number of items per page (default 50, max 200).
+        #[arg(long, value_name = "N", default_value = "50")]
+        limit: u32,
+
+        /// Output format: text (default) or json.
+        #[arg(long, value_name = "FORMAT", default_value = "text")]
+        format: OutputFormat,
+    },
+
+    /// Register a new agent identity.
+    Register {
+        /// Agent ID (unique identifier).
+        #[arg(long, value_name = "ID")]
+        agent_id: String,
+
+        /// Base64-encoded Ed25519 public key (32 bytes).
+        #[arg(long, value_name = "B64")]
+        public_key: String,
+
+        /// Scope list (repeatable). If omitted, uses default agent scopes.
+        #[arg(long, value_name = "SCOPE")]
+        scope: Vec<String>,
+
+        /// Description.
+        #[arg(long, value_name = "TEXT")]
+        description: Option<String>,
+
+        /// Output the registered agent as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Revoke an agent identity.
+    Revoke {
+        /// Agent ID to revoke.
+        agent_id: String,
+
+        /// Reason for revocation.
+        #[arg(long, value_name = "TEXT")]
+        reason: Option<String>,
+
+        /// Skip interactive confirmation.
+        #[arg(long)]
+        force: bool,
+    },
+}
+
 /// Audit subcommands under `admin audit`.
 #[derive(Debug, Subcommand)]
 enum AdminAuditCommand {
@@ -673,9 +758,47 @@ enum AdminAuditCommand {
         #[arg(long, value_name = "N", default_value = "50")]
         limit: u32,
 
+        /// Only include entries created at or after this time (RFC 3339).
+        #[arg(long, value_name = "TIMESTAMP")]
+        since: Option<String>,
+
+        /// Only include entries created at or before this time (RFC 3339).
+        #[arg(long, value_name = "TIMESTAMP")]
+        until: Option<String>,
+
         /// Output format: text (default) or json.
         #[arg(long, value_name = "FORMAT", default_value = "text")]
         format: OutputFormat,
+    },
+    /// Export audit logs with optional filters.
+    Export {
+        /// Filter by action (e.g., token_create, policy_bundle_activate).
+        #[arg(long, value_name = "ACTION")]
+        action: Option<String>,
+
+        /// Filter by resource type (e.g., token, policy_bundle, approval, execution).
+        #[arg(long, value_name = "TYPE")]
+        resource_type: Option<String>,
+
+        /// Filter by resource ID.
+        #[arg(long, value_name = "ID")]
+        resource_id: Option<String>,
+
+        /// Only include entries created at or after this time (RFC 3339).
+        #[arg(long, value_name = "TIMESTAMP")]
+        since: Option<String>,
+
+        /// Only include entries created at or before this time (RFC 3339).
+        #[arg(long, value_name = "TIMESTAMP")]
+        until: Option<String>,
+
+        /// Export format: ndjson (default), json, or csv.
+        #[arg(long, value_name = "FORMAT", default_value = "ndjson")]
+        format: ExportFormat,
+
+        /// Output file path (default: stdout).
+        #[arg(long, value_name = "PATH")]
+        output: Option<String>,
     },
     /// Verify the audit log hash chain integrity.
     Verify {
@@ -1647,6 +1770,92 @@ async fn main() -> Result<()> {
                         }
                     }
                 },
+                AdminCommand::Agents { sub } => match sub {
+                    AdminAgentsCommand::List {
+                        active_only,
+                        limit,
+                        format,
+                    } => {
+                        let response = client.list_agents(active_only, limit).await?;
+                        match format {
+                            OutputFormat::Json => {
+                                println!("{}", serde_json::to_string_pretty(&response)?);
+                            }
+                            _ => {
+                                println!(
+                                    "{:<24} {:<48} {:<24} {:<10}",
+                                    "AGENT_ID", "FINGERPRINT", "CREATED_AT", "STATUS"
+                                );
+                                for item in &response.items {
+                                    let status = if item.revoked_at.is_some() {
+                                        "revoked"
+                                    } else {
+                                        "active"
+                                    };
+                                    println!(
+                                        "{:<24} {:<48} {:<24} {:<10}",
+                                        item.agent_id,
+                                        item.key_fingerprint,
+                                        item.created_at.to_rfc3339(),
+                                        status
+                                    );
+                                }
+                                if let Some(cursor) = response.next_cursor {
+                                    println!("Next cursor: {}", cursor);
+                                }
+                            }
+                        }
+                    }
+                    AdminAgentsCommand::Register {
+                        agent_id,
+                        public_key,
+                        scope,
+                        description,
+                        json,
+                    } => {
+                        let scopes = if scope.is_empty() {
+                            None
+                        } else {
+                            Some(scope.clone())
+                        };
+                        let request = ferrum_proto::RegisterAgentRequest {
+                            agent_id: agent_id.clone(),
+                            public_key: public_key.clone(),
+                            scopes,
+                            description: description.clone(),
+                        };
+                        let response = client.register_agent(&request).await?;
+                        if json {
+                            println!("{}", serde_json::to_string_pretty(&response)?);
+                        } else {
+                            println!("Agent registered successfully.");
+                            println!("Agent ID:     {}", response.agent.agent_id);
+                            println!("Fingerprint:  {}", response.agent.key_fingerprint);
+                            println!("Scopes:       {}", response.agent.allowed_scopes.join(", "));
+                        }
+                    }
+                    AdminAgentsCommand::Revoke {
+                        agent_id,
+                        reason,
+                        force,
+                    } => {
+                        if !force {
+                            print!("Revoke agent {}? [y/N] ", agent_id);
+                            std::io::Write::flush(&mut std::io::stdout())?;
+                            let mut input = String::new();
+                            std::io::stdin().read_line(&mut input)?;
+                            if !input.trim().eq_ignore_ascii_case("y") {
+                                println!("Cancelled.");
+                                return Ok(());
+                            }
+                        }
+                        client.revoke_agent(&agent_id, reason.as_deref()).await?;
+                        println!("Agent {} revoked successfully.", agent_id);
+                        if let Some(reason) = reason {
+                            println!("Reason: {}", reason);
+                        }
+                    }
+                },
                 AdminCommand::Audit { sub } => match sub {
                     AdminAuditCommand::List {
                         action,
@@ -1654,6 +1863,8 @@ async fn main() -> Result<()> {
                         resource_id,
                         cursor,
                         limit,
+                        since,
+                        until,
                         format,
                     } => {
                         let response = client
@@ -1663,6 +1874,8 @@ async fn main() -> Result<()> {
                                 resource_id.as_deref(),
                                 cursor.as_deref(),
                                 limit,
+                                since.as_deref(),
+                                until.as_deref(),
                             )
                             .await?;
                         match format {
@@ -1694,6 +1907,37 @@ async fn main() -> Result<()> {
                                     println!("Next cursor: {}", cursor);
                                 }
                             }
+                        }
+                    }
+                    AdminAuditCommand::Export {
+                        action,
+                        resource_type,
+                        resource_id,
+                        since,
+                        until,
+                        format,
+                        output,
+                    } => {
+                        let format_str = match format {
+                            ExportFormat::Ndjson => "ndjson",
+                            ExportFormat::Json => "json",
+                            ExportFormat::Csv => "csv",
+                        };
+                        let body = client
+                            .export_audit_logs(
+                                action.as_deref(),
+                                resource_type.as_deref(),
+                                resource_id.as_deref(),
+                                since.as_deref(),
+                                until.as_deref(),
+                                format_str,
+                            )
+                            .await?;
+                        if let Some(path) = output {
+                            std::fs::write(&path, body)?;
+                            println!("Exported audit logs to {}", path);
+                        } else {
+                            println!("{}", body);
                         }
                     }
                     AdminAuditCommand::Verify { format } => {

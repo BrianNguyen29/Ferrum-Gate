@@ -191,6 +191,8 @@ pub trait AuditLogRepo: Send + Sync {
         resource_id: Option<&str>,
         cursor: Option<&str>,
         limit: u32,
+        since: Option<chrono::DateTime<chrono::Utc>>,
+        until: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<(Vec<AuditLogEntry>, Option<String>)>;
 
     /// Verify the audit log hash chain integrity.
@@ -258,6 +260,9 @@ pub trait AgentRepo: Send + Sync {
         limit: u32,
         cursor: Option<&str>,
     ) -> Result<(Vec<AgentRecord>, Option<String>)>;
+
+    /// Count agents, optionally excluding revoked.
+    async fn count(&self, active_only: bool) -> Result<usize>;
 
     /// Revoke an agent by setting `revoked_at`.
     /// Returns true if the row was updated (was not already revoked).

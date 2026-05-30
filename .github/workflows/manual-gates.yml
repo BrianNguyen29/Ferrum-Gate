@@ -17,6 +17,7 @@ on:
         options:
           - audit
           - pretarget
+          - secret-scan
           - wal-drill
           - pg-restart-drill
           - restore-drill
@@ -48,6 +49,10 @@ jobs:
       - name: Gate — pretarget
         if: ${{ inputs.gate == 'pretarget' || inputs.gate == 'all' }}
         run: bash scripts/run_pre_target_gate.sh
+
+      - name: Gate — secret-scan
+        if: ${{ inputs.gate == 'secret-scan' || inputs.gate == 'all' }}
+        run: bash scripts/run_secret_scan.sh
 
       - name: Gate — wal-drill
         if: ${{ inputs.gate == 'wal-drill' || inputs.gate == 'all' }}

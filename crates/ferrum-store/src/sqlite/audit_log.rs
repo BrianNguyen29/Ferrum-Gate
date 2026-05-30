@@ -114,6 +114,8 @@ impl AuditLogRepo for SqliteAuditLogRepo {
         resource_id: Option<&str>,
         cursor: Option<&str>,
         limit: u32,
+        since: Option<chrono::DateTime<chrono::Utc>>,
+        until: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<(Vec<AuditLogEntry>, Option<String>)> {
         let cursor_id = cursor.and_then(|c| c.parse::<i64>().ok());
 
@@ -130,6 +132,12 @@ impl AuditLogRepo for SqliteAuditLogRepo {
         if cursor_id.is_some() {
             sql.push_str(" AND id < ?");
         }
+        if since.is_some() {
+            sql.push_str(" AND created_at >= ?");
+        }
+        if until.is_some() {
+            sql.push_str(" AND created_at <= ?");
+        }
         sql.push_str(" ORDER BY created_at DESC, id DESC LIMIT ?");
 
         let mut query = sqlx::query(&sql);
@@ -144,6 +152,12 @@ impl AuditLogRepo for SqliteAuditLogRepo {
         }
         if let Some(cursor_id) = cursor_id {
             query = query.bind(cursor_id);
+        }
+        if let Some(since) = since {
+            query = query.bind(since.to_rfc3339());
+        }
+        if let Some(until) = until {
+            query = query.bind(until.to_rfc3339());
         }
         query = query.bind(limit + 1);
 
@@ -340,5 +354,51 @@ mod tests {
         let first_hash: String = rows[0].get("content_hash");
         let second_prev: String = rows[1].get("previous_hash");
         assert_eq!(first_hash, second_prev);
+    }
+
+    #[tokio::test]
+    async fn test_list_date_filters() {
+        let (store, _tmp) = in_memory_store().await;
+        let repo = store.audit_log();
+
+        let t1 = chrono::Utc::now() - chrono::Duration::hours(2);
+        let t2 = chrono::Utc::now() - chrono::Duration::hours(1);
+        let t3 = chrono::Utc::now();
+
+        let mut e1 = dummy_entry("alice", AuditAction::TokenCreate, "t1");
+        e1.created_at = t1;
+        repo.append(&e1).await.unwrap();
+
+        let mut e2 = dummy_entry("bob", AuditAction::TokenRevoke, "t2");
+        e2.created_at = t2;
+        repo.append(&e2).await.unwrap();
+
+        let mut e3 = dummy_entry("charlie", AuditAction::TokenRotate, "t3");
+        e3.created_at = t3;
+        repo.append(&e3).await.unwrap();
+
+        // since filter: only t2 and t3
+        let (items, _) = repo
+            .list(None, None, None, None, 10, Some(t2), None)
+            .await
+            .unwrap();
+        assert_eq!(items.len(), 2);
+        assert!(items.iter().all(|e| e.created_at >= t2));
+
+        // until filter: only t1 and t2
+        let (items, _) = repo
+            .list(None, None, None, None, 10, None, Some(t2))
+            .await
+            .unwrap();
+        assert_eq!(items.len(), 2);
+        assert!(items.iter().all(|e| e.created_at <= t2));
+
+        // since + until: only t2
+        let (items, _) = repo
+            .list(None, None, None, None, 10, Some(t2), Some(t2))
+            .await
+            .unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].actor_id, "bob");
     }
 }

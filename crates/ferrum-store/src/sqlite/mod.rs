@@ -688,7 +688,7 @@ mod tests {
 
         let (items, next_cursor) = store
             .audit_log()
-            .list(None, None, None, None, 10)
+            .list(None, None, None, None, 10, None, None)
             .await
             .unwrap();
         assert_eq!(items.len(), 1);
@@ -702,14 +702,30 @@ mod tests {
         // Test filtering by action
         let (filtered, _) = store
             .audit_log()
-            .list(Some(AuditAction::TokenCreate), None, None, None, 10)
+            .list(
+                Some(AuditAction::TokenCreate),
+                None,
+                None,
+                None,
+                10,
+                None,
+                None,
+            )
             .await
             .unwrap();
         assert_eq!(filtered.len(), 1);
 
         let (filtered, _) = store
             .audit_log()
-            .list(Some(AuditAction::TokenRevoke), None, None, None, 10)
+            .list(
+                Some(AuditAction::TokenRevoke),
+                None,
+                None,
+                None,
+                10,
+                None,
+                None,
+            )
             .await
             .unwrap();
         assert_eq!(filtered.len(), 0);
@@ -741,7 +757,7 @@ mod tests {
         // Page 1: limit 2
         let (page1, cursor1) = store
             .audit_log()
-            .list(None, None, None, None, 2)
+            .list(None, None, None, None, 2, None, None)
             .await
             .unwrap();
         assert_eq!(page1.len(), 2);
@@ -750,7 +766,7 @@ mod tests {
         // Page 2: using valid cursor
         let (page2, cursor2) = store
             .audit_log()
-            .list(None, None, None, Some(&cursor1), 2)
+            .list(None, None, None, Some(&cursor1), 2, None, None)
             .await
             .unwrap();
         assert_eq!(page2.len(), 2);
@@ -759,7 +775,7 @@ mod tests {
         // Invalid cursor should not cause bind mismatch; treat as no cursor
         let (page_all, _) = store
             .audit_log()
-            .list(None, None, None, Some("not-a-number"), 10)
+            .list(None, None, None, Some("not-a-number"), 10, None, None)
             .await
             .unwrap();
         assert_eq!(page_all.len(), 5);
@@ -1139,10 +1155,20 @@ mod tests {
         assert_eq!(list.len(), 1);
         assert!(cursor.is_none());
 
+        let count_all = store.agents().count(false).await.unwrap();
+        assert_eq!(count_all, 1);
+        let count_active = store.agents().count(true).await.unwrap();
+        assert_eq!(count_active, 1);
+
         let revoked = store.agents().revoke("agent_test_1").await.unwrap();
         assert!(revoked);
 
         let retrieved = store.agents().get("agent_test_1").await.unwrap().unwrap();
         assert!(retrieved.revoked_at.is_some());
+
+        let count_all_after = store.agents().count(false).await.unwrap();
+        assert_eq!(count_all_after, 1);
+        let count_active_after = store.agents().count(true).await.unwrap();
+        assert_eq!(count_active_after, 0);
     }
 }

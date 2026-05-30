@@ -652,6 +652,8 @@ impl Client {
         resource_id: Option<&str>,
         cursor: Option<&str>,
         limit: u32,
+        since: Option<&str>,
+        until: Option<&str>,
     ) -> Result<ferrum_proto::AuditLogListResponse> {
         let mut url = format!("{}/v1/admin/audit-logs?", self.base_url);
         if let Some(action) = action {
@@ -666,10 +668,47 @@ impl Client {
         if let Some(cursor) = cursor {
             url.push_str(&format!("cursor={}&", cursor));
         }
+        if let Some(since) = since {
+            url.push_str(&format!("since={}&", since));
+        }
+        if let Some(until) = until {
+            url.push_str(&format!("until={}&", until));
+        }
         url.push_str(&format!("limit={}", limit));
         let resp = self.add_auth(self.http.get(&url)).send().await?;
         resp.error_for_status_ref()?;
         Ok(resp.json().await?)
+    }
+
+    pub async fn export_audit_logs(
+        &self,
+        action: Option<&str>,
+        resource_type: Option<&str>,
+        resource_id: Option<&str>,
+        since: Option<&str>,
+        until: Option<&str>,
+        format: &str,
+    ) -> Result<String> {
+        let mut url = format!("{}/v1/admin/audit-logs/export?", self.base_url);
+        if let Some(action) = action {
+            url.push_str(&format!("action={}&", action));
+        }
+        if let Some(resource_type) = resource_type {
+            url.push_str(&format!("resource_type={}&", resource_type));
+        }
+        if let Some(resource_id) = resource_id {
+            url.push_str(&format!("resource_id={}&", resource_id));
+        }
+        if let Some(since) = since {
+            url.push_str(&format!("since={}&", since));
+        }
+        if let Some(until) = until {
+            url.push_str(&format!("until={}&", until));
+        }
+        url.push_str(&format!("format={}", format));
+        let resp = self.add_auth(self.http.get(&url)).send().await?;
+        resp.error_for_status_ref()?;
+        Ok(resp.text().await?)
     }
 
     pub async fn verify_audit_chain(&self) -> Result<ferrum_proto::AuditLogVerifyResponse> {
@@ -677,5 +716,62 @@ impl Client {
         let resp = self.add_auth(self.http.get(&url)).send().await?;
         resp.error_for_status_ref()?;
         Ok(resp.json().await?)
+    }
+
+    // ── Agent Admin Methods ──
+
+    pub async fn list_agents(
+        &self,
+        active_only: bool,
+        limit: u32,
+    ) -> Result<ferrum_proto::AgentListResponse> {
+        let mut url = format!("{}/v1/admin/agents?", self.base_url);
+        if active_only {
+            url.push_str("active_only=true&");
+        }
+        url.push_str(&format!("limit={}", limit));
+        let resp = self.add_auth(self.http.get(&url)).send().await?;
+        resp.error_for_status_ref()?;
+        Ok(resp.json().await?)
+    }
+
+    pub async fn register_agent(
+        &self,
+        request: &ferrum_proto::RegisterAgentRequest,
+    ) -> Result<ferrum_proto::RegisterAgentResponse> {
+        let url = format!("{}/v1/admin/agents", self.base_url);
+        let resp = self
+            .add_auth(self.http.post(&url).json(request))
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            if body.is_empty() {
+                bail!("HTTP {}: (empty body)", status);
+            }
+            bail!("HTTP {}: {}", status, body);
+        }
+        Ok(resp.json().await?)
+    }
+
+    pub async fn revoke_agent(&self, agent_id: &str, reason: Option<&str>) -> Result<()> {
+        let url = format!("{}/v1/admin/agents/{}", self.base_url, agent_id);
+        let request = ferrum_proto::RevokeAgentRequest {
+            reason: reason.map(String::from),
+        };
+        let resp = self
+            .add_auth(self.http.delete(&url).json(&request))
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            if body.is_empty() {
+                bail!("HTTP {}: (empty body)", status);
+            }
+            bail!("HTTP {}: {}", status, body);
+        }
+        Ok(())
     }
 }

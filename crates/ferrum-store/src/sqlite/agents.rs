@@ -120,6 +120,16 @@ impl AgentRepo for SqliteAgentRepo {
         Ok((agents, next_cursor))
     }
 
+    async fn count(&self, active_only: bool) -> Result<usize> {
+        let mut sql = String::from("SELECT COUNT(*) FROM agent_registry WHERE 1=1");
+        if active_only {
+            sql.push_str(" AND revoked_at IS NULL");
+        }
+        let row = sqlx::query(&sql).fetch_one(&self.pool).await?;
+        let count: i64 = row.try_get(0)?;
+        Ok(count as usize)
+    }
+
     async fn revoke(&self, agent_id: &str) -> Result<bool> {
         let now = chrono::Utc::now().to_rfc3339();
         let result = sqlx::query(

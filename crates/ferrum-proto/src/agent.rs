@@ -21,3 +21,38 @@ pub struct AgentRecord {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 }
+
+/// Request to register a new agent identity.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct RegisterAgentRequest {
+    pub agent_id: String,
+    /// Base64-encoded Ed25519 raw 32-byte public key.
+    pub public_key: String,
+    /// Scope list (repeatable). If omitted, uses a minimal default set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scopes: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+/// Response when registering a new agent identity.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct RegisterAgentResponse {
+    pub agent: AgentRecord,
+}
+
+/// Request to revoke an agent identity.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct RevokeAgentRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// Paginated list of agent identities.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct AgentListResponse {
+    pub items: Vec<AgentRecord>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    pub total: usize,
+}

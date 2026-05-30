@@ -114,6 +114,8 @@ impl AuditLogRepo for PostgresAuditLogRepo {
         resource_id: Option<&str>,
         cursor: Option<&str>,
         limit: u32,
+        since: Option<chrono::DateTime<chrono::Utc>>,
+        until: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<(Vec<AuditLogEntry>, Option<String>)> {
         let cursor_id = cursor.and_then(|c| c.parse::<i64>().ok());
 
@@ -136,6 +138,14 @@ impl AuditLogRepo for PostgresAuditLogRepo {
             sql.push_str(&format!(" AND id < ${}", param_idx));
             param_idx += 1;
         }
+        if since.is_some() {
+            sql.push_str(&format!(" AND created_at >= ${}", param_idx));
+            param_idx += 1;
+        }
+        if until.is_some() {
+            sql.push_str(&format!(" AND created_at <= ${}", param_idx));
+            param_idx += 1;
+        }
         sql.push_str(&format!(
             " ORDER BY created_at DESC, id DESC LIMIT ${}",
             param_idx
@@ -153,6 +163,12 @@ impl AuditLogRepo for PostgresAuditLogRepo {
         }
         if let Some(cursor_id) = cursor_id {
             query = query.bind(cursor_id);
+        }
+        if let Some(since) = since {
+            query = query.bind(since.to_rfc3339());
+        }
+        if let Some(until) = until {
+            query = query.bind(until.to_rfc3339());
         }
         query = query.bind((limit + 1) as i64);
 

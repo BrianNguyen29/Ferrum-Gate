@@ -1,4 +1,4 @@
-.PHONY: help check fmt lint test docs test-python-validators validate tree pretarget audit wal-drill pg-restart-drill pg-restore-drill pg-migration-drill pg-backup-retention-drill pg-partial-failure-drill pg-sustained-workload-drill pg-sustained-workload-extended pg-scheduled-timer-simulation pg-local-batch ha-local-setup ha-local-failover-drill ha-local-ferrumd-reconnect-drill ha-local-teardown site-build site-serve site-check slo-sustained-dry-run restore-drill stress check-pilot-readiness domainless-tier1-fast domainless-tier1-gate
+.PHONY: help check fmt lint test docs test-python-validators validate tree pretarget audit secret-scan wal-drill pg-restart-drill pg-restore-drill pg-migration-drill pg-backup-retention-drill pg-partial-failure-drill pg-sustained-workload-drill pg-sustained-workload-extended pg-scheduled-timer-simulation pg-local-batch ha-local-setup ha-local-failover-drill ha-local-ferrumd-reconnect-drill ha-local-teardown site-build site-serve site-check slo-sustained-dry-run restore-drill stress check-pilot-readiness domainless-tier1-fast domainless-tier1-gate
 
 help:
 	@echo "make check     - cargo check workspace"
@@ -10,6 +10,7 @@ help:
 	@echo "make tree      - print repository tree"
 	@echo "make pretarget - local pre-target gate (config validation, restore drill, doc presence, expanded validators)"
 	@echo "make audit     - local security audit gate (cargo-deny / cargo-audit)"
+	@echo "make secret-scan - local hardcoded secrets scan (dependency-free)"
 	@echo "make wal-drill      - local SQLite WAL crash-recovery drill"
 	@echo "make pg-restart-drill - local PostgreSQL container restart recovery drill"
 	@echo "make pg-restore-drill - local PostgreSQL populated backup/restore drill"
@@ -75,6 +76,9 @@ pretarget:
 
 audit:
 	@bash scripts/run_security_audit.sh
+
+secret-scan:
+	@bash scripts/run_secret_scan.sh
 
 wal-drill:
 	@echo "Running local SQLite WAL crash-recovery drill..."

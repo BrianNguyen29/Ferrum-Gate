@@ -290,7 +290,8 @@ Thứ tự này giúp FerrumGate:
   - Evidence: [`docs/security/agent-identity-ed25519.md`](./security/agent-identity-ed25519.md)
 - [x] **4.6** Implement agent registry và signature verification. (Owner: Dev / Type: Build)
   - Evidence: `crates/ferrum-store/src/sqlite/agents.rs`, `crates/ferrum-store/src/postgres/agents.rs`, `crates/ferrum-gateway/src/server.rs` agent auth middleware + tests, `crates/ferrum-proto/src/agent.rs`
-- [ ] **4.7** Implement `ferrumctl agent register` và `ferrumctl agent revoke`. (Owner: Dev / Type: Build) — **PENDING**
+- [x] **4.7** Implement `ferrumctl admin agents register/list/revoke`, gateway admin endpoints `POST/GET/DELETE /v1/admin/agents`, `admin:agents` scope mapping, and audit entries for register/revoke. (Owner: Dev / Type: Build) — **COMPLETE**
+  - Evidence: `crates/ferrum-proto/src/agent.rs` (RegisterAgentRequest/Response/AgentListResponse), `crates/ferrum-gateway/src/server.rs` (handlers + scope mapping + tests), `bins/ferrumctl/src/main.rs` + `client.rs` (CLI + client methods)
 
 > **OIDC hardening notes (post-4.4):** Future `iat` rejection added to JWT validation; missing `iat` is tolerated. OIDC authentication failures emit sanitized `AuthFailed` audit entries by default (actor_id=`unknown`, no token/header logged). JWKS cache age exposed as `ferrumgate_oidc_jwks_cache_age_seconds` in `/v1/metrics`. All changes are tested.
 
@@ -302,9 +303,14 @@ Thứ tự này giúp FerrumGate:
 
 - [ ] **5.1** Implement Merkle root per time window cho audit log. (Owner: Dev / Type: Build)
 - [ ] **5.2** Implement signed checkpoint (optional, nếu scope cho phép). (Owner: Dev / Type: Build)
-- [ ] **5.3** Implement audit export bundle (`ferrumctl audit export`). (Owner: Dev / Type: Build)
-- [ ] **5.4** Viết `docs/security/owasp-agentic-ai-mapping.md` map OWASP Agentic AI Top 10 vào controls của FerrumGate. (Owner: Security / Type: Document)
-- [ ] **5.5** Kiểm tra không có hardcoded secrets trong codebase qua scan. (Owner: Security / Type: Operate)
+- [x] **5.3** Implement audit export bundle (`ferrumctl audit export`). (Owner: Dev / Type: Build)
+  - Evidence: `GET /v1/admin/audit-logs/export` (requires `admin:audit` scope); supports `ndjson` (default), `json`, and `csv`; bounded pagination with 10,000-row max; `since`/`until` date filters added to store layer and list endpoint; `ferrumctl admin audit export` with filters and output path/stdout; tests for store date filters, gateway export formats/auth, and CLI args.
+- [x] **5.4** Viết `docs/security/owasp-agentic-ai-mapping.md` map OWASP Agentic AI Top 10 vào controls của FerrumGate. (Owner: Security / Type: Document)
+  - Evidence: [`docs/security/owasp-agentic-ai-mapping.md`](./security/owasp-agentic-ai-mapping.md), [`docs/implementation-path/artifacts/2026-05-29-phase5.4-owasp-agentic-ai-mapping-evidence.md`](./implementation-path/artifacts/2026-05-29-phase5.4-owasp-agentic-ai-mapping-evidence.md)
+  - Note: Dedicated OWASP Agentic AI Top 10 is not finalized; mapping uses official OWASP LLM Top 10 v2.0 (2025) as interim baseline. Remap required when Agentic list publishes.
+- [x] **5.5** Kiểm tra không có hardcoded secrets trong codebase qua scan. (Owner: Security / Type: Operate)
+  - Evidence: [`docs/security/secret-scan-report.md`](./security/secret-scan-report.md), [`scripts/run_secret_scan.sh`](../../scripts/run_secret_scan.sh)
+  - Result: PASS (0 findings) on 2026-05-29
 
 **Success criteria:** Audit bundle có thể export và verify ngoài hệ thống; OWASP mapping đầy đủ.  
 **Evidence artifact:** `docs/security/owasp-agentic-ai-mapping.md`, audit export demo, secret-scan report.

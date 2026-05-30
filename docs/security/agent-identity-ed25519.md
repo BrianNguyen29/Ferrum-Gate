@@ -79,7 +79,7 @@ agent_abc123:2026-05-28T12:34:56Z:a1b2c3d4...:null:POST:/v1/intents/compile
 - Reject if fingerprint already exists (prevents duplicate keys).
 - Return `agent_id` and `key_fingerprint`.
 
-CLI equivalent: `ferrumctl agent register --public-key file.pub --scopes execution:execute,provenance:read`
+CLI equivalent: `ferrumctl admin agents register --agent-id <id> --public-key <b64> --scope execution:execute --scope provenance:read`
 
 ### 5.2 Rotation
 
@@ -95,7 +95,7 @@ Rotation is **register-new + revoke-old** (no in-place key mutation). This prese
 - Entry is retained for audit/provenance; queries filter `revoked_at IS NULL`.
 - Revocation is effective immediately (nonce cache does not need purging because the agent lookup will reject).
 
-CLI equivalent: `ferrumctl agent revoke <agent_id>`
+CLI equivalent: `ferrumctl admin agents revoke <agent_id>`
 
 ## 6. Relation to OIDC and Scoped Tokens
 
@@ -125,7 +125,7 @@ The same `required_scope_for_path()` logic applies regardless of auth mode. The 
 
 1. **4.6** — Add `agent_registry` table/schema, `AgentRegistry` trait in `ferrum-store`, in-memory nonce cache, and signature verification middleware. ✅ **COMPLETE**
 2. **4.6** — Wire `AuthMode::Agent` into `auth_middleware`. ✅ **COMPLETE**
-3. **4.7** — Implement `ferrumctl agent register`, `ferrumctl agent revoke`, `ferrumctl agent list`. **PENDING**
+3. **4.7** — Implement `ferrumctl admin agents register/list/revoke`, gateway admin endpoints `POST/GET/DELETE /v1/admin/agents`, `admin:agents` scope mapping, and audit entries for register/revoke. ✅ **COMPLETE**
 4. **4.7** — Add integration tests: signature validation, replay rejection, scope enforcement, revocation immediacy, audit entry emission. ✅ **COMPLETE** (tests added in Phase 4.6)
 5. **Later** — Shared nonce cache for multi-node, agent metrics (`ferrumgate_agent_auth_total`), rate-limit per agent_id.
 
