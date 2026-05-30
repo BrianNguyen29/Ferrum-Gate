@@ -16,7 +16,7 @@
 | [Operator Guide](operator.md) | Expanded | Configuration, health, backup/restore, token rotation, monitoring, incident response, local-vs-hosted caveats |
 | [Policy Authoring](policy-authoring.md) | Templates validated; implemented locally | Policy bundles, 7 validated examples, common patterns; validate/simulate/apply/diff/rollback/versions implemented |
 | [MCP Integration](mcp-integration.md) | Locally validated | MCP server setup, client config, tools list, auth; local lifecycle and query_lineage validated after bugfix |
-| [Hosted Deployment](hosted-deployment.md) | Expanded guide | Docker Compose, systemd, PostgreSQL, future Helm |
+| [Hosted Deployment](hosted-deployment.md) | Expanded guide | Docker Compose, systemd, PostgreSQL, future Helm; see [Deployment status matrix](./hosted-deployment.md#deployment-status-matrix) |
 | [Security Model](security-model.md) | Expanded guide | Bearer auth, scoped tokens, RBAC design, tenant model |
 | [SLO/SLA](slo-sla.md) | Expanded guide | SLO targets, validation runbook, metrics |
 | [Adapter Reference](adapter-reference.md) | Expanded | Per-adapter operations, rollback, limitations, examples, risk classes |

@@ -303,6 +303,49 @@ FerrumGate's HA story is staged. Do not conflate local simulation or manual dril
 
 > **production-ready = NO**. Mode B is the only validated deployment for conditional pilot. Mode C has Tier 1.5 target evidence but is not production-ready. Mode D is not implemented. Multi-host production HA and unattended automated failover are NOT COMPLETE. See [`docs/ROADMAP.md`](../../ROADMAP.md) §4 Phase 8 and Phase 9.
 
+## Deployment status matrix
+
+> **⚠️ This matrix provides status clarity — it is NOT a production-ready claim.** See [`docs/security/non-claims.md`](../security/non-claims.md) for canonical non-claims. Sustained SLO window NOT COMPLETE, HA-4 NOT COMPLETE, Tier 2 NOT COMPLETE.
+
+**Legend:**
+
+| Symbol | Meaning |
+|--------|---------|
+| ✅ | Supported |
+| ⚠️ | Conditional / partial / operator-owned |
+| ❌ | Unsupported / not applicable |
+| ⏳ | Deferred / planned |
+
+**Feature matrix by deployment mode:**
+
+| Feature | Mode A<br>Local demo | Mode B<br>Single-node SQLite | Mode C<br>PostgreSQL self-hosted | Mode D<br>Kubernetes/Helm (future) |
+|---------|:---:|:---:|:---:|:---:|
+| **Intended use** | Development / quickstart only | Conditional pilot, internal | Production foundation (Tier 1.5) | Hosted production-like |
+| **Auth bearer** | ❌ Disabled (loopback) | ✅ Supported | ✅ Supported | ✅ Supported |
+| **Scoped tokens / RBAC** | ⚠️ Present but not enforced in dev mode | ⚠️ Present; operator-owned enforcement | ⚠️ Present; operator-owned enforcement | ⚠️ Present; operator-owned enforcement |
+| **TLS termination / domain** | ❌ None (loopback only) | ⚠️ Operator-owned reverse proxy required | ⚠️ Operator-owned reverse proxy required | ⚠️ Operator-owned reverse proxy + Ingress required |
+| **Persistent storage** | ❌ In-memory only | ✅ SQLite on filesystem | ✅ PostgreSQL (local or managed) | ⏳ PostgreSQL external / managed |
+| **Backup / restore** | ❌ Not applicable | ⚠️ `ferrumctl backup`; operator-owned scheduler | ⚠️ `pg_dump` / `pg_restore`; operator-owned scheduler | ⏳ Operator-owned |
+| **Health / readiness endpoints** | ✅ `/healthz`, `/readyz` | ✅ `/healthz`, `/readyz` | ✅ `/healthz`, `/readyz/deep` | ✅ Service health probes |
+| **Metrics / observability** | ⚠️ Prometheus metrics endpoint | ⚠️ Prometheus metrics | ✅ Prometheus metrics + PG-specific alerts | ⏳ ServiceMonitor |
+| **Grafana dashboards** | ❌ Not included | ⚠️ Operator-owned | ⚠️ Operator-owned | ⏳ Planned |
+| **PostgreSQL support** | ❌ Not applicable | ❌ SQLite only | ✅ Native | ✅ External / managed |
+| **Kubernetes / Helm support** | ❌ Not applicable | ❌ Not applicable | ❌ Not applicable | ⏳ Helm chart P1/P2 item |
+| **HA / manual failover** | ❌ Not applicable | ❌ SQLite single-node only; no streaming replication | ⚠️ Same-VM primary/standby streaming replication (Tier 1.5) | ❌ NOT COMPLETE |
+| **HA-4 automated failover** | ❌ Not applicable | ❌ SQLite single-node only; no automated failover | ⚠️ Same-VM watchdog + PgBouncer reconnect (Tier 1.5) | ❌ NOT COMPLETE |
+| **Sustained SLO evidence** | ❌ Not applicable | ⚠️ Active SLO observation; sustained window NOT COMPLETE | ⚠️ Active SLO observation; sustained window NOT COMPLETE | ❌ NOT COMPLETE |
+| **Zero-downtime upgrade path** | ❌ Not applicable | ⚠️ Maintenance window required; see [`./zero-downtime-upgrade.md`](./zero-downtime-upgrade.md) | ⚠️ Maintenance window required; see [`./zero-downtime-upgrade.md`](./zero-downtime-upgrade.md) | ⏳ Planned |
+| **Production-ready claim** | ❌ NO | ❌ NO | ❌ NO | ❌ NO |
+
+**Links:**
+
+- Non-claims: [`docs/security/non-claims.md`](../security/non-claims.md)
+- SLO/SLA: [`docs/guides/slo-sla.md`](./slo-sla.md)
+- Zero-downtime upgrade: [`docs/guides/zero-downtime-upgrade.md`](./zero-downtime-upgrade.md)
+- HA roadmap: [`docs/production-readiness-v2/09-ha-roadmap.md`](../../production-readiness-v2/09-ha-roadmap.md)
+- ROADMAP §3.10 (hosted deployment story): [`docs/ROADMAP.md`](../../ROADMAP.md) §3.10
+- ROADMAP Risk 5 (product docs overclaim mitigation): [`docs/ROADMAP.md`](../../ROADMAP.md) Risk 5
+
 ## Non-claims
 
 | Non-claim | Status |
@@ -313,7 +356,7 @@ FerrumGate's HA story is staged. Do not conflate local simulation or manual dril
 | **Tier 2** | **NOT COMPLETE** |
 | **multi-host production HA** | **NO** |
 | **HA-4 unattended automated failover** | **NOT COMPLETE** |
-| **sustained SLO window** | **NO** |
+| **sustained SLO window** | **NOT COMPLETE** |
 
 ## Related docs
 
