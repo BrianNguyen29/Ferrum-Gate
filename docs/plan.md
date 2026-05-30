@@ -142,18 +142,18 @@ FerrumGate nên chơi sâu ở layer giữa.
 
 | Capability | Priority | Action | Status | Evidence / Target doc |
 |------------|----------|--------|--------|----------------------|
-| Scoped token / RBAC | P0 | Build | `TODO/VERIFY` | `docs/security/scoped-tokens-rbac.md` + implementation + tests |
-| Policy simulation / dry-run | P0/P1 | Build | `TODO/VERIFY` | `docs/api/policy-simulation.md` + API + CLI |
-| Sustained SLO evidence window | P0 | Operate / Document | `TODO/VERIFY` | `docs/implementation-path/artifacts/YYYY-MM-DD-sustained-slo-window-evidence.md` |
+| Scoped token / RBAC | P0 | Build | `PHASE 1 COMPLETE` | `docs/security/scoped-tokens-rbac.md` + implementation + tests |
+| Policy simulation / dry-run | P0/P1 | Build | `PHASE 1 COMPLETE` | `docs/api/policy-simulation.md` + API + CLI |
+| Sustained SLO evidence window | P0 | Operate / Document | `IN PROGRESS / NOT COMPLETE` | `docs/implementation-path/artifacts/YYYY-MM-DD-sustained-slo-window-evidence.md` |
 | Secure MCP tunnel integration guide | P1 | Integrate / Document | `DOCS COMPLETE` | `docs/guides/secure-mcp-tunnel-integration.md` |
 | OIDC / JWT federation | P1 | Integrate | `PHASE 4.4 COMPLETE` | `docs/security/oidc-jwt-federation.md` + offline JWT validation + live JWKS fetch/cache + config loading + tests |
-| STRIDE threat model | P1 | Document | `TODO/VERIFY` | `docs/security/threat-model-stride.md` |
-| Tamper-evident audit | P1/P2 | Build minimal | `TODO/VERIFY` | `docs/architecture/tamper-evident-audit-design.md` + `ferrumctl audit verify` |
-| Agent Ed25519 identity | P2 | Build minimal | `TODO/VERIFY` | `docs/security/agent-identity-ed25519.md` + implementation |
-| Streamable HTTP MCP | P2 | Build | `TODO/VERIFY` | `docs/mcp/streamable-http-mcp.md` + implementation |
+| STRIDE threat model | P1 | Document | `PHASE 1 COMPLETE` | `docs/security/threat-model-stride.md` |
+| Tamper-evident audit | P1/P2 | Build minimal | `PHASE 5 COMPLETE` | `docs/architecture/tamper-evident-audit-design.md` + `ferrumctl audit verify` |
+| Agent Ed25519 identity | P2 | Build minimal | `PHASE 4 COMPLETE` | `docs/security/agent-identity-ed25519.md` + implementation |
+| Streamable HTTP MCP | P2 | Build | `PHASE 6.1 SKELETON COMPLETE; 6.2 SSE DEFERRED` | `docs/mcp/streamable-http-mcp.md` + implementation |
 | mTLS service-to-service design | P2 | Document | `DESIGN COMPLETE` | `docs/security/mtls-service-mesh.md` |
 | mTLS service-to-service native impl | P2 | Build | `DEFERRED` | Deferred until multi-node cross-host topology |
-| OWASP Agentic AI Top 10 mapping | P2 | Document | `TODO/VERIFY` | `docs/security/owasp-agentic-ai-mapping.md` |
+| OWASP Agentic AI Top 10 mapping | P2 | Document | `PHASE 5 COMPLETE` | `docs/security/owasp-agentic-ai-mapping.md` |
 | Operator evidence UX | P2 | Build | `PHASE 7 COMPLETE` | [`docs/operator/evidence-ux.md`](./operator/evidence-ux.md) + CLI/TUI |
 | Web dashboard | Later | Defer | `DEFERRED` | Không có target doc cho đến khi single-tenant ổn định |
 | Tunnel service | Never / Avoid | Do not build | `AVOID` | Không build |
