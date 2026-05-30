@@ -28,6 +28,13 @@ CLI args > env vars > config file > defaults
 | `FERRUMD_RATE_LIMIT_BURST` | Rate limit burst | `50` |
 | `FERRUMD_ALLOW_INSECURE_NONLOCAL_BIND` | Allow non-local bind without TLS | `false` (default) |
 
+#### CLI client env vars
+
+| Variable | Purpose | Example |
+|----------|---------|---------|
+| `FERRUMCTL_SERVER_URL` | Override ferrumctl server URL | `http://127.0.0.1:8080` |
+| `FERRUMCTL_BEARER_TOKEN` | Bearer token for ferrumctl (should not be printed/logged) | `hex32-string` |
+
 ### Config file example
 
 ```toml
@@ -183,6 +190,14 @@ Use `pg_dump` or your hosting provider's backup mechanism. FerrumGate does not m
 
 ## Token rotation
 
+### Using ferrumctl (recommended)
+
+```bash
+ferrumctl admin tokens rotate <TOKEN_ID> --reason "rotation" --expires-in-days 30
+```
+
+### Using the API directly
+
 1. Generate new token on the target host (never print to logs):
    ```bash
    openssl rand -hex 32
@@ -243,7 +258,7 @@ See [`slo-sla.md`](./slo-sla.md) for draft targets. Not yet ratified.
 
 ## Status caveat
 
-> **production-ready = NO**. This guide describes intended operator procedures. Some CLI expansions (admin status, approval queue, token management) are planned but not yet implemented. See [`docs/ROADMAP.md`](../../ROADMAP.md) §4 Phase 6.
+> **production-ready = NO**. This guide describes intended operator procedures. CLI expansions for admin status, approvals, token lifecycle, agent management, audit, backup/restore, and config view are implemented. Admin API endpoints remain separately tracked where applicable; do not overclaim API coverage. See [`docs/ROADMAP.md`](../../ROADMAP.md) §4 Phase 6.
 
 ## PostgreSQL reconnect and recovery
 
