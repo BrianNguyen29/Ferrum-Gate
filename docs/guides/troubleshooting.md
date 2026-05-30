@@ -295,7 +295,7 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/admin/audit-logs
 ferrumctl admin tokens list
 
 # Backup verify
-ferrumctl backup verify --file /backups/ferrumgate-YYYYMMDD-HHMMSS.db
+ferrumctl backup verify --db-path /backups/ferrumgate-YYYYMMDD-HHMMSS.db
 
 # PG backup listable
 pg_restore -l /var/backups/ferrumgate-postgres/ferrumgate-*.dump > /dev/null && echo OK

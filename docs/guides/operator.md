@@ -139,13 +139,13 @@ Keyboard shortcuts:
 ### Manual backup
 
 ```bash
-ferrumctl backup --output /backups/ferrumgate-$(date +%Y%m%d-%H%M%S).db
+ferrumctl backup create --db-path /var/lib/ferrumgate/ferrumgate.db --output-dir /backups
 ```
 
 ### Verify backup
 
 ```bash
-ferrumctl backup verify --file /backups/ferrumgate-YYYYMMDD-HHMMSS.db
+ferrumctl backup verify --db-path /backups/ferrumgate-YYYYMMDD-HHMMSS.db
 ```
 
 ### Restore
@@ -155,7 +155,7 @@ ferrumctl backup verify --file /backups/ferrumgate-YYYYMMDD-HHMMSS.db
 systemctl stop ferrumgate
 
 # Restore database
-ferrumctl restore --file /backups/ferrumgate-YYYYMMDD-HHMMSS.db --db-path /var/lib/ferrumgate/ferrumgate.db
+ferrumctl backup restore --db-path /var/lib/ferrumgate/ferrumgate.db --from /backups/ferrumgate-YYYYMMDD-HHMMSS.db --confirm
 
 # Start ferrumd
 systemctl start ferrumgate
@@ -279,6 +279,7 @@ Restart is **not** required for a transient PostgreSQL outage. Restart only if:
 - `readyz/deep` stays unhealthy for longer than your incident-response threshold despite PostgreSQL being reachable.
 - You observe a memory or connection leak that outlasts the outage.
 - You are instructed to restart as part of a specific upgrade or config migration.
+- For full upgrade procedures including zero-downtime tradeoffs, maintenance-window requirements, and rollback procedures, see [`docs/guides/zero-downtime-upgrade.md`](./zero-downtime-upgrade.md).
 
 ### Limitations
 

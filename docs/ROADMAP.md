@@ -1392,7 +1392,7 @@ MVP screens:
 
 - Terraform/Pulumi module
 - cloud marketplace style deployment
-- zero-downtime upgrade guide
+- zero-downtime upgrade guide ✅ Done — see [`docs/guides/zero-downtime-upgrade.md`](docs/guides/zero-downtime-upgrade.md)
 
 **Acceptance gates**
 

@@ -261,6 +261,8 @@ curl -s http://localhost:8080/v1/readyz/deep | jq .
 ```
 
 > **PG-P.5 evidence**: Restore drill passed on target VM with row-count and hash verification. See [`docs/implementation-path/artifacts/2026-05-27-pg-restore-drill-evidence.md`](../../implementation-path/artifacts/2026-05-27-pg-restore-drill-evidence.md).
+>
+> **Upgrade guidance**: For full upgrade procedures including zero-downtime tradeoffs, maintenance-window requirements, and rollback procedures, see [`docs/guides/zero-downtime-upgrade.md`](./zero-downtime-upgrade.md).
 
 ### Automated backup scheduling
 
