@@ -1,23 +1,22 @@
 # Security Model Guide
 
-> **Status**: Expanded guide. Scoped token/RBAC/SEC-6 implementation signed for current T1 scope; not full production security.
 > **Parent**: [`guides/README.md`](./README.md)
 
 ---
 
-## Current security posture
+## Current security controls
 
 - **Auth mode**: `Disabled` (dev), `Bearer` (pilot), or `Scoped` when explicitly enabled.
-- **Bearer token**: Single global token remains supported for conditional pilot compatibility.
-- **Scoped tokens/RBAC**: Implemented for the current T1 scope with deny-by-default middleware and admin token lifecycle APIs/CLI.
+- **Bearer token**: Single global token remains supported for pilot compatibility.
+- **Scoped tokens/RBAC**: Implemented with deny-by-default middleware and admin token lifecycle APIs/CLI.
 - **No multi-tenancy**: One deployment, one implicit tenant.
-- **Audit log**: SEC-6 minimal append-only audit log implemented for admin/policy/approval/token actions; not compliance-grade WORM/signed storage.
+- **Audit log**: Minimal append-only audit log implemented for admin/policy/approval/token actions; not compliance-grade WORM/signed storage.
 - **Token TTL enforcement**: Server-side rejection of tokens with expiry > 90 days.
 
 ## Threat model (summary)
 
-| Threat | Current mitigation | Future mitigation |
-|--------|--------------------|--------------------|
+| Threat | Current mitigation | Additional mitigation |
+|--------|--------------------|-----------------------|
 | Token theft | Token stored on VM only; rotation procedure exists; scoped tokens support expiry + revocation | OIDC/SSO and stronger operational policy |
 | Insider abuse | Operator trust plus RBAC + minimal audit log | Compliance-grade audit logging |
 | Tenant data leak | N/A (single tenant) | tenant_id filtering + PG RLS |
@@ -28,24 +27,24 @@
 
 ### What is implemented
 
-| Feature | Evidence | Status |
-|---------|----------|--------|
-| Scoped token store (SQLite + PostgreSQL) | Implemented | ✅ Complete |
-| RBAC middleware (endpoint → required scope) | `crates/ferrum-gateway/src/server.rs` | ✅ Complete |
-| Admin token lifecycle API (`POST/GET/DELETE/rotate`) | `13-token-api-contract.md` | ✅ Complete |
-| `ferrumctl admin tokens` CLI | `14-ferrumctl-admin-tokens-cli-spec.md` | ✅ Complete |
-| TTL enforcement (>90d rejected) | `test_create_token_rejects_excessive_ttl` | ✅ Complete |
-| Durable revocation (`revoked_at` in store) | `15-revocation-durability-tradeoff.md` | ✅ Complete |
+| Feature | Evidence |
+|---------|----------|
+| Scoped token store (SQLite + PostgreSQL) | Implemented |
+| RBAC middleware (endpoint → required scope) | `crates/ferrum-gateway/src/server.rs` |
+| Admin token lifecycle API (`POST/GET/DELETE/rotate`) | Admin token lifecycle API design document |
+| `ferrumctl admin tokens` CLI | ferrumctl admin tokens CLI specification |
+| TTL enforcement (>90d rejected) | `test_create_token_rejects_excessive_ttl` |
+| Durable revocation (`revoked_at` in store) | Revocation durability design document |
 
 ### Acceptance targets
 
-- [x] Read-only token cannot call mutating endpoints (SEC-1).
-- [x] Agent token cannot approve proposals (SEC-2).
-- [x] Auditor token cannot execute actions (SEC-3).
-- [x] Revoked token returns 401 (SEC-4).
-- [x] Expired token returns 401 (SEC-5).
-- [x] Audit log records actor, action, and result for current scope (SEC-6).
-- [ ] Tenant A cannot read tenant B data — deferred by single-tenant T1 decision; no multi-tenant claim.
+- Read-only token cannot call mutating endpoints (SEC-1).
+- Agent token cannot approve proposals (SEC-2).
+- Auditor token cannot execute actions (SEC-3).
+- Revoked token returns 401 (SEC-4).
+- Expired token returns 401 (SEC-5).
+- Audit log records actor, action, and result for current scope (SEC-6).
+- Tenant A cannot read tenant B data — not available by single-tenant design decision; no multi-tenant claim.
 
 ## Bearer auth hardening
 
@@ -145,42 +144,19 @@ Tenant
 
 ### Immediate (pilot)
 
-- [ ] Use `Bearer` auth mode in production pilot config.
+- [ ] Use `Bearer` auth mode in deployed pilot config.
 - [ ] Generate token with `openssl rand -hex 32`.
 - [ ] Store token with `chmod 640` and restricted ownership.
 - [ ] Rotate token after initial setup and periodically.
 - [ ] Deploy behind TLS-terminating reverse proxy.
 - [ ] Do not print tokens in logs or command history.
 
-### Near-term (post-pilot)
-
-- [x] Implement scoped tokens with metadata in store.
-- [x] Implement RBAC middleware (endpoint → required scope mapping).
-- [x] Add minimal audit log separate from provenance.
-- [x] Design tenant model ADR for T1 single-tenant scope.
-
 ### Long-term
 
-- [ ] Implement tenant_id in schema and store filters.
-- [ ] Add PostgreSQL RLS as defense-in-depth.
-- [ ] Evaluate OIDC/JWT/SSO integration.
-- [ ] Evaluate mTLS for service-to-service auth.
-
-## Status caveat
-
-> **production-ready = NO**. Scoped auth/RBAC/SEC-6 are implemented and signed for the current T1 scope, but this does not complete full G2, Block A, multi-tenant security, OIDC/SSO, or compliance-grade audit logging.
-
-## Non-claims
-
-| Non-claim | Status |
-|-----------|--------|
-| **production-ready** | **NO** |
-| **full G2** | **NOT COMPLETE** |
-| **Block A** | **WAIVED/CONDITIONAL** |
-| **Tier 2** | **NOT COMPLETE** |
-| **multi-tenant production security** | **NO** |
-| **OIDC/SSO** | **DEFERRED** |
-| **compliance-grade audit logging** | **NO** |
+- Implement tenant_id in schema and store filters.
+- Add PostgreSQL RLS as defense-in-depth.
+- Evaluate OIDC/JWT/SSO integration.
+- Evaluate mTLS for service-to-service auth.
 
 ## Related docs
 

@@ -1,6 +1,5 @@
 # FerrumGate API Guide
 
-> **Status**: Expanded scaffold. All listed endpoints exist in `crates/ferrum-gateway/src/server.rs`. OpenAPI spec is not yet generated.
 > **Parent**: [`guides/README.md`](./README.md)
 
 ---
@@ -23,7 +22,7 @@ Two auth modes are supported:
 | Mode | Behavior | Use case |
 |------|----------|----------|
 | `Disabled` | No auth required on any endpoint | Local development only |
-| `Bearer` | `Authorization: Bearer <token>` required on all endpoints except health/metrics | Production and staging |
+| `Bearer` | `Authorization: Bearer <token>` required on all endpoints except health/metrics | Bearer-auth deployments |
 
 ### Health and metrics endpoints (always unauthenticated)
 
@@ -229,12 +228,6 @@ rate_limit_burst = 50
 ```
 
 When rate limited, the API returns HTTP 429. Health and metrics endpoints are not rate limited.
-
----
-
-## Status caveat
-
-> **production-ready = NO**. This endpoint inventory reflects the current implementation in `crates/ferrum-gateway/src/server.rs`. Not all endpoints have full integration tests against every adapter.
 
 ## Related docs
 

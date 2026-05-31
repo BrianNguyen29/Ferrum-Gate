@@ -1,7 +1,6 @@
 # FerrumGate in 10 Minutes
 
-> **Status**: Local API/curl flow validated through lineage endpoint (12 steps). ferrumctl and MCP locally validated after bugfix. Engineering-run local validation is complete; independent external fresh-user validation is not claimed.
-> **Scope**: Local demo only. Not for production deployment.
+> **Scope**: Local demo only.
 > **Parent**: [`guides/README.md`](./README.md)
 
 ---
@@ -80,7 +79,7 @@ curl -X POST http://127.0.0.1:18080/v1/intents/compile \
 >
 > **Docs correction**: `requested_resource_scope` must match the capability's resource bindings. An empty array will cause `authorize` to return HTTP 403 `PolicyDenied` with `resource scope is empty but capability has resource bindings`.
 >
-> Validated example response: sanitized `intent_id` `d228bf73-c4f5-467a-b47b-53110dca7270`.
+> Example response: sanitized `intent_id` `d228bf73-c4f5-467a-b47b-53110dca7270`.
 
 ### 5. Evaluate proposal
 
@@ -94,7 +93,7 @@ curl -X POST http://127.0.0.1:18080/v1/proposals/5af85ef6-5d79-4da4-9866-299797e
 
 Note the `<PROPOSAL_ID>` you used in the URL; you will need it for the next step. Use a unique UUID per server instance if you re-run this example, because proposal IDs are unique.
 
-> Validated example response: decision `Allow`, reason `proposal passed default scaffold policy`, with advisory warning `advisory mismatch: inferred effect FileMutation is not in allowed outcomes`.
+> Example response: decision `Allow`, reason `proposal passed default scaffold policy`, with advisory warning `advisory mismatch: inferred effect FileMutation is not in allowed outcomes`.
 
 ### 6. Mint capability
 
@@ -106,7 +105,7 @@ curl -X POST http://127.0.0.1:18080/v1/capabilities/mint \
 
 Capture `lease.capability_id` from the response as `<CAPABILITY_ID>`.
 
-> Validated example response: HTTP 200 with capability id `85c9cdbb-1f3d-4a22-b1e9-c60b9cef9309`.
+> Example response: HTTP 200 with capability id `85c9cdbb-1f3d-4a22-b1e9-c60b9cef9309`.
 
 ### 7. Authorize execution
 
@@ -118,7 +117,7 @@ curl -X POST http://127.0.0.1:18080/v1/executions/authorize \
 
 Capture `<EXECUTION_ID>` from `execution.execution_id` in the response.
 
-> Validated example response: HTTP 200 with execution id `0b85c3ad-79dd-441e-9423-1141cc90f898`.
+> Example response: HTTP 200 with execution id `0b85c3ad-79dd-441e-9423-1141cc90f898`.
 
 ### 8. Prepare
 
@@ -129,7 +128,7 @@ curl -X POST http://127.0.0.1:18080/v1/executions/0b85c3ad-79dd-441e-9423-1141cc
 
 No request body is required.
 
-> Validated example response: HTTP 200, `prepared: true`.
+> Example response: HTTP 200, `prepared: true`.
 
 ### 9. Execute
 
@@ -139,7 +138,7 @@ curl -X POST http://127.0.0.1:18080/v1/executions/0b85c3ad-79dd-441e-9423-1141cc
   -d '{"payload":{"content":"hello extended"}}'
 ```
 
-> Validated example response: HTTP 200, `executed: true`.
+> Example response: HTTP 200, `executed: true`.
 
 ### 10. Verify
 
@@ -150,7 +149,7 @@ curl -X POST http://127.0.0.1:18080/v1/executions/0b85c3ad-79dd-441e-9423-1141cc
 
 No request body is required.
 
-> Validated example response: HTTP 200, `verified: true`.
+> Example response: HTTP 200, `verified: true`.
 
 ### 11. Evaluate outcome
 
@@ -160,7 +159,7 @@ curl -X POST http://127.0.0.1:18080/v1/executions/0b85c3ad-79dd-441e-9423-1141cc
   -d '{"execution_id":"0b85c3ad-79dd-441e-9423-1141cc90f898","actual_effect":"FileMutation","description":"local extended quickstart wrote /tmp/ferrum-demo-extended.txt","result_digest":null,"adapter_success":true,"adapter_metadata":{}}'
 ```
 
-> Validated example response: HTTP 200, `aligned: true`, reason `outcome matches intent expectations`, with the same advisory mismatch warning as step 5.
+> Example response: HTTP 200, `aligned: true`, reason `outcome matches intent expectations`, with the same advisory mismatch warning as step 5.
 
 ### 12. Query lineage
 
@@ -168,46 +167,44 @@ curl -X POST http://127.0.0.1:18080/v1/executions/0b85c3ad-79dd-441e-9423-1141cc
 curl http://127.0.0.1:18080/v1/provenance/lineage/0b85c3ad-79dd-441e-9423-1141cc90f898
 ```
 
-> Validated example response: HTTP 200 containing `events` and `execution_id` keys.
+> Example response: HTTP 200 containing `events` and `execution_id` keys.
 
 ## ferrumctl version
 
-> **Status**: Locally validated. All 7 tested commands pass after bugfix. Target-host validation NOT claimed.
+> **Note**: Locally validated. All 7 tested commands pass after bugfix. Target-host validation NOT claimed.
 
 ```bash
-# Health (validated)
+# Health
 ferrumctl --server-url http://127.0.0.1:18080 server health
 
-# Readiness shallow + deep (validated)
+# Readiness shallow + deep
 ferrumctl --server-url http://127.0.0.1:18080 server readiness
 ferrumctl --server-url http://127.0.0.1:18080 server readiness --deep
 
-# List intents (validated)
+# List intents
 ferrumctl --server-url http://127.0.0.1:18080 server list-intents --limit 5 --format json
 
-# Inspect lineage (validated)
+# Inspect lineage
 ferrumctl --server-url http://127.0.0.1:18080 server inspect-lineage <EXECUTION_ID> --format json
 
-# Metrics (validated)
+# Metrics
 ferrumctl --server-url http://127.0.0.1:18080 server metrics
 
-# Inspect execution (validated after bugfix)
+# Inspect execution
 ferrumctl --server-url http://127.0.0.1:18080 server inspect-execution <EXECUTION_ID>
 ```
 
 ## MCP version
 
-> **Status**: Locally validated. Connection, auth, lifecycle, read queries, and query_lineage pass after bugfix. Target-host validation NOT claimed.
+> **Note**: Locally validated. Connection, auth, lifecycle, read queries, and query_lineage pass after bugfix. Target-host validation NOT claimed.
 
 See [`mcp-integration.md`](./mcp-integration.md) for MCP client setup and detailed validation results.
 
-## Status caveat
+## Notes
 
-> **production-ready = NO**. This quickstart runs with auth disabled and an in-memory SQLite store. Do not expose to the internet. For pilot deployment, see [`hosted-deployment.md`](./hosted-deployment.md).
+> This quickstart runs with auth disabled and an in-memory SQLite store. Do not expose to the internet. For pilot deployment, see [`hosted-deployment.md`](./hosted-deployment.md).
 >
-> **Block A remains WAIVED/CONDITIONAL**: No real owned domain or DNS is available. Local loopback only.
->
-> **Validated scope**: The local API/curl flow through all 12 steps (build → lineage) was validated locally. ferrumctl (all tested commands) and MCP (all tested tools) were locally validated after bugfix. Engineering-run local validation is complete; independent external fresh-user and target-host validation are NOT claimed.
+> **Scope**: The local API/curl flow through all 12 steps (build → lineage) was validated locally. ferrumctl (all tested commands) and MCP (all tested tools) were locally validated after bugfix. Engineering-run local validation is complete; independent external fresh-user and target-host validation are NOT claimed.
 
 ## Related docs
 

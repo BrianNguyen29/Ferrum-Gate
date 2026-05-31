@@ -1,6 +1,9 @@
 # ferrum-adapter-sqlite
 
-Adapter skeleton.
+SQLite adapter for FerrumGate.
 
-Trạng thái:
-- placeholder để agent khác có thể hoàn thiện tiếp.
+## Responsibilities
+
+- SQL mutation execution within transactions
+- Transaction rollback for compensation
+- Row-count verification

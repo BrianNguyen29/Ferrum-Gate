@@ -1,10 +1,9 @@
 # ferrum-rollback
 
-Rollback kernel crate.
+Rollback kernel for FerrumGate.
 
-Vai trò:
-- prepare rollback contract
-- route qua adapter registry
-- verify / compensate / rollback
+## Responsibilities
 
-v1 hiện mới có skeleton service + noop adapter.
+- Prepare rollback contracts
+- Route through the adapter registry
+- Verify, compensate, and execute rollbacks

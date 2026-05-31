@@ -1,16 +1,14 @@
 # OWASP Agentic AI Top 10 Mapping — FerrumGate Controls, Gaps, and Coverage
 
-> **Status:** Phase 5.4 documentation artifact.  
-> **Date:** 2026-05-29  
-> **Owner / Type:** Security / Document  
-> **Parent Plan:** [`non-claims.md`](./non-claims.md)  
-> **Related boundary doc:** [`non-claims.md`](./non-claims.md)
+> **Date:** 2026-05-29
+> **Owner / Type:** Security / Document
+> **Parent Plan:** [`guides/README.md`](../guides/README.md)
 
 ---
 
 ## 1. Important Caveat
 
-**There is currently no finalized, dedicated OWASP Agentic AI Top 10.** The Agentic Security Initiative is in kickoff/drafting phase. This document therefore uses the **official OWASP Top 10 for LLM Applications v2.0 (2025)** as the current authoritative baseline and maps its ten categories to FerrumGate controls, gaps, and evidence references.
+This document uses the **official OWASP Top 10 for LLM Applications v2.0 (2025)** as the current authoritative baseline and maps its ten categories to FerrumGate controls, gaps, and evidence references.
 
 **When the dedicated OWASP Agentic AI Top 10 is published, this mapping must be reviewed and remapped.** Some categories may split, merge, or receive new identifiers. This document is explicitly versioned to the LLM Top 10 v2.0 baseline.
 
@@ -24,7 +22,7 @@ FerrumGate is an **execution-governance gateway for MCP/agentic operations**, no
 - Where FerrumGate **does not intervene** and why that is an accepted boundary.
 - Gaps and limitations that operators must address through other controls.
 
-This document is **not** a compliance certification, SOC2 mapping, or production-readiness claim.
+This document is **not** a compliance certification or SOC2 mapping.
 
 ---
 
@@ -33,7 +31,7 @@ This document is **not** a compliance certification, SOC2 mapping, or production
 | OWASP v2.0 Code | Category | FerrumGate Relevance | Coverage | Key Control | Key Gap |
 |-----------------|----------|----------------------|----------|-------------|---------|
 | **LLM01** | Prompt Injection | Indirect — FerrumGate does not parse prompts | Partial | Policy evaluation on structured intents; capability minting blocks unauthorized actions | No natural-language prompt sanitization or detection |
-| **LLM02** | Sensitive Information Disclosure | Medium | Partial | Scoped tokens, no token logging, TLS, OIDC/JWT, Ed25519 agent identity, deny-by-default | No output PII scanning; vault integration deferred |
+| **LLM02** | Sensitive Information Disclosure | Medium | Partial | Scoped tokens, no token logging, TLS, OIDC/JWT, Ed25519 agent identity, deny-by-default | No output PII scanning; vault integration not provided by this component |
 | **LLM03** | Supply Chain | Low (gateway only) | Partial | `cargo-deny`/`cargo-audit`; dependency scanning; no adapter binary signing yet | No LLM model provenance validation; no adapter attestation |
 | **LLM04** | Data and Model Poisoning | Low | Partial | Policy bundles restrict tool/action scope; tamper-evident audit log detects config changes | No training-data or model-weight validation |
 | **LLM05** | Improper Output Handling | Medium | Partial | Execution lifecycle (prepare → execute → verify); rollback classification; compensation flow | No LLM-generated code safety analysis; adapter-side integrity not enforced |
@@ -88,9 +86,9 @@ This document is **not** a compliance certification, SOC2 mapping, or production
 
 **Gaps / Limitations:**
 - FerrumGate does **not scan LLM outputs or adapter responses for PII**.
-- **Secrets management (vault integration)** is deferred; connection strings and adapter credentials are in config files.
+- **Secrets management (vault integration)** is not provided by this component; connection strings and adapter credentials are in config files.
 - There is **no Data Loss Prevention (DLP)** layer for tool outputs.
-- mTLS service-to-service is deferred (Phase 6), so inter-service traffic encryption relies on network boundaries.
+- mTLS service-to-service is not provided by this component, so inter-service traffic encryption relies on network boundaries.
 
 **Evidence / References:**
 - [`docs/security/scoped-tokens-rbac.md`](./scoped-tokens-rbac.md)
@@ -116,7 +114,7 @@ This document is **not** a compliance certification, SOC2 mapping, or production
 - FerrumGate does **not validate LLM model provenance**, training data integrity, or model provider trust.
 - There is **no adapter binary signing or attestation**. Adapters are trusted by configuration, not cryptographic verification.
 - FerrumGate does not scan adapter containers or dependencies for vulnerabilities.
-- SBOM generation and distribution are not implemented.
+- SBOM generation and distribution are not provided.
 
 **Evidence / References:**
 - `Cargo.lock`, `clippy.toml`, `Makefile` (`make audit`)
@@ -233,7 +231,7 @@ This document is **not** a compliance certification, SOC2 mapping, or production
 - **Not applicable:** No vector store integration.
 
 **Gaps / Limitations:**
-- If future FerrumGate features add RAG-based policy reasoning or semantic intent matching, this category will become relevant and must be revisited.
+- If FerrumGate adds RAG-based policy reasoning or semantic intent matching, this category will become relevant and must be revisited.
 - As of this document, there is **no RAG pipeline, no vector DB, and no embedding model** in FerrumGate.
 
 **Evidence / References:**
@@ -282,8 +280,8 @@ This document is **not** a compliance certification, SOC2 mapping, or production
 **Gaps / Limitations:**
 - FerrumGate has **no per-LLM-token quota or cost-tracking**. It cannot throttle based on LLM API usage or token count.
 - There is **no adaptive rate limiting** that responds to LLM provider rate-limit headers.
-- No resource quotas per actor, agent, or tenant (multi-tenancy is deferred).
-- MCP-specific quotas (e.g., max tool calls per session) are not implemented.
+- No resource quotas per actor, agent, or tenant (multi-tenancy is outside this document's scope).
+- MCP-specific quotas (e.g., max tool calls per session) are not provided.
 
 **Evidence / References:**
 - [`docs/security/threat-model-stride.md`](./threat-model-stride.md) — B1, B5 Denial of Service controls
@@ -313,18 +311,7 @@ This document is **not** a compliance certification, SOC2 mapping, or production
 
 ---
 
-## 6. Non-Claims
-
-This document preserves all canonical non-claims from [`non-claims.md`](./non-claims.md):
-
-- `production-ready` = **NO**
-- `Tier 2` = **NOT COMPLETE**
-- Full G2 = **NOT COMPLETE**
-- Real domain / public endpoint = **missing**
-- `HA-4` unattended automated failover = **NOT COMPLETE**
-- Sustained SLO window (7–30 days) = **NOT COMPLETE**
-
-**Additional non-claims specific to this mapping:**
+## 6. Additional Notes
 
 - This is **not** a SOC 2, ISO 27001, or formal compliance mapping.
 - This is **not** a penetration test or formal security audit.
@@ -345,4 +332,4 @@ This document must be updated when:
 
 ---
 
-*End of Phase 5.4 OWASP mapping document.*
+*End of OWASP mapping document.*

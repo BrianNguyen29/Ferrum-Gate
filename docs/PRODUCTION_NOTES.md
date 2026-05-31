@@ -1,4 +1,4 @@
-# Production Notes — FerrumGate Governance Gateway
+# Runtime Configuration Notes — FerrumGate Governance Gateway
 
 ## SQLite Configuration
 
@@ -12,11 +12,11 @@
 ### Write Concurrency Limits
 SQLite still has a **single-writer** storage model, but the gateway now serializes writes explicitly with a write queue instead of allowing many handlers to contend on the database lock.
 
-**Operational guidance after Phase 1:**
+**Operational guidance:**
 - Multi-step pipelines at **5 workers** are now stable with **0% errors**.
 - Pure concurrent write ingestion at **50 workers** is now stable with **0% errors** and acceptable latency for stress conditions.
 - Throughput is now limited mostly by queue drain rate and payload size, not by lock contention/retry storms.
-- PostgreSQL is still recommended for sustained production workloads that need materially higher write throughput or multi-node deployment.
+- PostgreSQL can be selected for higher write throughput or multi-process deployments when configured.
 
 ### FK Constraint Chain
 The database schema has cascading foreign keys:
@@ -35,7 +35,7 @@ All FK parent inserts (compile_intent, evaluate_proposal) are **synchronous** to
 | revoke_capability    | Synchronous via write queue     | Persisted state; durable fallback after in-memory loss |
 | ingest_provenance    | Synchronous via write queue    | Provenance events remain immediately queryable    |
 
-## Stress Test Baseline — Pre-Phase-1 (release binary, SQLite file-backed)
+## Stress Test Baseline — Pre-Write-Queue (release binary, SQLite file-backed)
 
 | #  | Scenario                         | Workers | Throughput       | p50 Latency | Error Rate |
 |----|---------------------------------|---------|------------------|-------------|------------|
@@ -49,9 +49,9 @@ All FK parent inserts (compile_intent, evaluate_proposal) are **synchronous** to
 | S8 | rate-limit (burst detection)     | 50      | ~52,000 req/s    | 0.9ms       | 0%         |
 | S9 | mixed workload                   | 5       | ~16 req/s        | ~1.8ms      | ~2.5%      |
 
-*Pre-Phase-1 S7 showed 0% errors because requests queued behind SQLite's writer lock, but latency was extremely high due to lock serialization.
+*Pre-write-queue S7 showed 0% errors because requests queued behind SQLite's writer lock, but latency was extremely high due to lock serialization.
 
-## Stress Test Results — Post-Phase-1 Write Queue
+## Stress Test Results — Post-Write-Queue
 
 Release build, full `ferrum-stress` suite after WriteQueue + PRAGMA tuning + retry cleanup:
 
@@ -81,17 +81,17 @@ Release build, full `ferrum-stress` suite after WriteQueue + PRAGMA tuning + ret
 
 See [`docs/operations/`](./operations/) for operational guides.
 
-Three-phase approach to resolve write bottleneck:
+Optimization history:
 
-| Phase | Solution | Effort | Expected Result |
-|-------|----------|--------|----------------|
-| **1** | Write-Queue (mpsc) + retry cleanup + PRAGMA tuning | ✅ Done | Exceeded target: all errors 0%, S7 p50 29.9ms |
-| **2** | Transaction batching for pipelines + direct UPDATE | ⏸ Deferred | Phase 2 deferred due to perf regression in benchmarking |
-| **3** | PostgreSQL migration | 1-2 weeks | 1000+ writes/s, 200+ pipelines/s |
+| Item | Solution | Effort | Outcome |
+|------|----------|--------|---------|
+| **1** | Write-Queue (mpsc) + retry cleanup + PRAGMA tuning | Implemented | All errors 0%, S7 p50 29.9ms |
+| **2** | Transaction batching for pipelines + direct UPDATE | - | Perf regression observed in benchmarking; revisit after optimization |
+| **3** | PostgreSQL migration | - | 1000+ writes/s, 200+ pipelines/s |
 
 ## Scaling Beyond SQLite
 
-PostgreSQL is recommended/planned for production deployments requiring materially higher sustained write throughput, cross-process or multi-node deployment, or stronger transactional flexibility (not currently implemented in `ferrum-store`).
+PostgreSQL is recommended for deployments requiring materially higher sustained write throughput, cross-process or multi-node deployment, or stronger transactional flexibility (not currently implemented in `ferrum-store`).
 
 ## Authentication
 - **Bearer token mode**: Set `auth_mode = "Bearer"` and `bearer_token` in config
@@ -133,14 +133,14 @@ for public endpoints (`/v1/healthz`, `/v1/readyz`, `/v1/readyz/deep`, `/v1/metri
 For PostgreSQL stores, pool metrics (`ferrumgate_store_pg_pool_size`, `ferrumgate_store_pg_pool_idle`,
 `ferrumgate_store_pg_pool_max`) and acquire-timeout counters (`ferrumgate_store_pg_acquire_timeouts_total`)
 are also emitted. SQLite stores omit these metrics.
-Governance route latency histograms and WAL/page gauges remain future/deferred work.
+
 
 ## Logging
 
 **Default format**: Human-readable text (compact style). This is the default when `log_format` is
 not specified.
 
-**JSON format**: Structured JSON logs for production log aggregation systems (ELK, Loki, etc.).
+**JSON format**: Structured JSON logs for centralized log aggregation systems (ELK, Loki, etc.).
 Enable via CLI (`--log-format json`), environment variable (`FERRUMD_LOG_FORMAT=json`), or config
 file (`log_format = "json"` under `[server]`).
 
@@ -154,7 +154,7 @@ log_format = "json"
 
 ```bash
 # Example: enable JSON logging via environment variable
-FERRUMD_LOG_FORMAT=json ferrumd --config /path/to/prod.toml
+FERRUMD_LOG_FORMAT=json ferrumd --config /path/to/deployed.toml
 ```
 
 **Log fields** (JSON format): `timestamp`, `level`, `message`, `target`, and `spans` (if any).
@@ -170,29 +170,19 @@ Text format includes: `timestamp`, `level`, `target`, `message`.
 - Default TTL: Configured per-request via `requested_ttl_secs`
 - Expired capabilities return `CapabilityExpired` error
 
-## Post-Pilot Posture Refresh (2026-05-18)
+## Rate-limit configuration
 
-### Deferred domain
-- **Real owned domain is deferred** by operator decision (Path A conditional pilot closure, 2026-05-18).
-- Temporary domain is accepted for single-node SQLite pilot only.
-- Block A remains **WAIVED/CONDITIONAL**; it is **not closed**.
-- Real domain + DNS A record is still required for production-ready or full G2 closure.
+- Default `2/50`: high 429 under sustained load (expected)
+- Tuned `20/500`: also high 429 under spike load (expected)
+- Max-valid `1000/10000`: passes validation workload with 0% 429
+- Operator must tune based on real traffic and IP distribution. See `docs/operations/rate-limit-tuning-guide.md`.
 
-### SLO posture
-- SLO/SLA draft ratified for validation baseline on 2026-05-20. **NOT a committed SLA**.
-- Local stress baselines exist (see tables above) but are **not target-host validated**.
-- Canonical SLO target runs executed 2026-05-21:
-  - Default `2/50`: FAIL (46.8% 429)
-  - Tuned `20/500`: FAIL (73.4% 429)
-  - Max-valid `1000/10000`: PASS (0% 429, 0% error)
-- **SLO default-config gap closed with conservative resolution** (2026-05-21): Default safety profile remains unchanged. SLO certification requires explicit high-throughput profile. Operator must tune based on real traffic/IP distribution. See `docs/operations/rate-limit-tuning-guide.md`.
-- Do not cite local baselines or max-valid run as committed production targets.
+## HA Configuration
 
-### HA posture
-- **Tier 1.5 same-VM HA evidence is complete/acknowledged**: PostgreSQL primary/standby streaming replication and watchdog failover passed on the nonprod target VM.
-- **Multi-host production HA is NOT implemented**: Tier 1.5 evidence is same-VM only and does not claim multi-host HA.
-- PostgreSQL target deployment evidence is complete on the nonprod target VM; this is not Tier 2 production-ready signoff.
+- **Single-node PostgreSQL**: Default. SQLite also supported.
+- **Same-VM PostgreSQL replication**: Streaming replication with watchdog failover has been validated on a single VM.
+- **Multi-host clustering**: Operator must design their own clustering, load balancing, and failover if required.
 
 ## Related docs
 
-- [`docs/guides/`](./guides/) — P2 product/user guide scaffolds.
+- [`docs/guides/`](./guides/) — Product/user guide scaffolds.

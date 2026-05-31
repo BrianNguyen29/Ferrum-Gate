@@ -1,6 +1,5 @@
 # Zero-Downtime Upgrade Guide
 
-> **Status**: Guide added 2026-05-30.
 > **Parent**: [`guides/README.md`](./README.md); [`docs/guides/hosted-deployment.md`](./hosted-deployment.md)
 > **Scope**: Bounded to documentation of upgrade patterns and tradeoffs. Does not change code, contracts, or runtime behavior.
 
@@ -13,7 +12,7 @@ True zero-downtime upgrades (no dropped requests, no connection errors) require:
 - Multiple ferrumd instances behind a load balancer
 - Healthcheck-gated rolling restart
 - PostgreSQL backend (shared state survives single-node restarts)
-- HA-4 automated failover already operational
+- Automated failover already operational
 
 If any of the above are not in place, a **maintenance window** is required. State the expected interruption class honestly — a brief SQLite restart is not the same as a multi-host HA upgrade.
 
@@ -24,11 +23,11 @@ If any of the above are not in place, a **maintenance window** is required. Stat
 | Mode | Zero-downtime possible? | Interruption class | Notes |
 |------|------------------------|--------------------|-------|
 | SQLite / single-node | **No** | Brief outage (~5–15s) | Maintenance window required. WAL commit is atomic but the process restarts. |
-| PostgreSQL / single-node | **Conditional** | Brief outage (~5–15s) if no LB; near-zero if drain-and-restart is used | HA-4 not complete; no automated failover. Manual operator-controlled restart needed. |
+| PostgreSQL / single-node | **Conditional** | Brief outage (~5–15s) if no LB; near-zero if drain-and-restart is used | No automated failover. Manual operator-controlled restart needed. |
 | PostgreSQL / multi-instance behind LB | **Yes (near-zero)** | One instance out at a time; LB routes around it | Requires ≥2 ferrumd instances, healthcheck endpoint, and operator-controlled drain/restart sequence. |
-| HA-4 automated unattended | **Yes (true)** | No operator action needed | **NOT COMPLETE** — HA-4 is deferred. Do not claim this is available. |
+| HA automated unattended | **Yes (true)** | No operator action needed | **Not available** — do not claim this is available. |
 
-> **HA-4 caveat**: Automated unattended failover is NOT COMPLETE. All multi-instance upgrade procedures below require an operator to manually orchestrate drain-and-restart. Until HA-4 is implemented, there is no truly zero-touch zero-downtime path.
+> **Note**: Automated unattended failover is not available. All multi-instance upgrade procedures below require an operator to manually orchestrate drain-and-restart. Until automated failover is available, there is no truly zero-touch zero-downtime path.
 
 ---
 
@@ -36,12 +35,11 @@ If any of the above are not in place, a **maintenance window** is required. Stat
 
 Regardless of mode, complete before any binary or config upgrade:
 
-- [ ] Review [`docs/PRODUCTION_NOTES.md`](../../PRODUCTION_NOTES.md) for current operational baseline
+- [ ] Review [`docs/PRODUCTION_NOTES.md`](../../docs/PRODUCTION_NOTES.md) for current operational baseline
 - [ ] Capture a fresh backup (see [`docs/guides/operator.md`](./operator.md) §Backup and restore)
 - [ ] For PostgreSQL: run `pg_dump` to a timestamped file
 - [ ] Verify backup is listable/restorable before proceeding
 - [ ] Notify operators if a maintenance window is needed
-- [ ] **Do not perform upgrades during an active SLO observation window** — see §Active SLO window warning below
 - [ ] Ensure you have rollback instructions (see §Rollback procedure)
 
 ---
@@ -153,7 +151,7 @@ FerrumGate uses embedded schema migration. Observe the following discipline:
 
 ### Forward-only principle
 
-- Migrations are **forward-only**. Down migrations are not implemented.
+- Migrations are **forward-only**. Down migrations are not available.
 - Each migration must be idempotent (safe to run twice).
 - The migration version is recorded in the `schema_migrations` table.
 
@@ -161,11 +159,11 @@ FerrumGate uses embedded schema migration. Observe the following discipline:
 
 1. Capture a `pg_dump -Fc` backup (see §Pre-upgrade checklist).
 2. Verify the backup is listable: `pg_restore -l <dumpfile> > /dev/null && echo OK`.
-3. Test restore to a drill database (do not overwrite production):
+3. Test restore to a drill database (do not overwrite live data):
    ```bash
    sudo -u postgres pg_restore -d ferrumgate_restore_drill <dumpfile>
    ```
-4. Verify row counts match the production database.
+4. Verify row counts match the live database.
 
 ### Rollback via restore if migration fails
 
@@ -183,9 +181,9 @@ If a migration step fails or the new binary behaves incorrectly:
 
 > **Forward-only caveat**: If the new schema is incompatible with the old binary, you must restore the backup AND use the old binary. Do not assume the old binary works with a partially-migrated schema.
 
-### Schema migration and HA-4
+### Schema migration and HA
 
-HA-4 automated failover is **NOT COMPLETE**. During a rolling upgrade with multiple ferrumd instances, each instance must run the same migration before receiving traffic. This requires manual sequencing:
+Automated unattended failover is **not available**. During a rolling upgrade with multiple ferrumd instances, each instance must run the same migration before receiving traffic. This requires manual sequencing:
 
 1. Drain instance 1 (remove from LB pool or stop).
 2. Run migration (if ferrumd does it automatically on startup, the first instance to start will apply it).
@@ -194,7 +192,7 @@ HA-4 automated failover is **NOT COMPLETE**. During a rolling upgrade with multi
 5. Put instance 1 back in service.
 6. Repeat for instance 2.
 
-Until HA-4 is complete, this is an operator-manual process.
+Until automated failover is available, this is an operator-manual process.
 
 ---
 
@@ -211,7 +209,7 @@ SQLite does not support concurrent writers and the ferrumd process must restart 
 ferrumctl backup create --db-path /var/lib/ferrumgate/ferrumgate.db --output-dir /var/backups/ferrumgate
 
 # 3. Verify backup
-ferrumctl backup verify --db-path /var/backups/ferrumgate-YYYYMMDD-HHMMSS.db
+ferrumctl backup verify --db-path /backups/ferrumgate-YYYYMMDD-HHMMSS.db
 
 # 4. Stop ferrumd
 sudo systemctl stop ferrumgate
@@ -365,40 +363,7 @@ curl -s http://localhost:8080/v1/readyz/deep | jq .
 # 5. For PostgreSQL: verify row counts match expected values
 ```
 
-> **DB restore caveat**: Restoring a PostgreSQL backup may lose writes that occurred between the backup and the failed upgrade. The RPO is determined by your backup frequency. Test restores against a drill database before production.
-
----
-
-## Active SLO window warning
-
-> **WARNING — Do not upgrade during an active SLO observation window.**
-
-If an SLO monitoring window is actively running on a deployment target:
-
-- **Do not** perform binary upgrades, config changes, or restarts unless you are intentionally invalidating or annotating the run.
-- Upgrades and restarts cause brief outages that will invalidate availability SLO measurements.
-- If an upgrade is required during an active window, you must:
-  1. Annotate the SLO tool with the intentional maintenance window.
-  2. Document the annotation in the evidence artifact.
-  3. Resume the window after the upgrade is verified.
-
-This applies to all deployment modes. The active SLO target is operator-defined; FerrumGate does not have a built-in mechanism to detect or protect an active SLO window.
-
----
-
-## Non-claims
-
-| Non-claim | Status |
-|-----------|--------|
-| **production-ready** | **NO** |
-| **full G2** | **NOT COMPLETE** |
-| **Tier 2** | **NOT COMPLETE** |
-| **HA-4 unattended automated failover** | **NOT COMPLETE** |
-| **sustained SLO window** | **NOT COMPLETE** |
-| **True zero-downtime upgrade** | **Only possible with PostgreSQL + multi-instance + LB + operator-manual drain sequence; HA-4 not complete** |
-| **SQLite zero-downtime** | **Not possible — maintenance window required** |
-| **Hot config reload** | **Not implemented — restart required for any config change** |
-| **Multi-host production HA** | **NO** |
+> **DB restore caveat**: Restoring a PostgreSQL backup may lose writes that occurred between the backup and the failed upgrade. The RPO is determined by your backup frequency. Test restores against a drill database before deploying.
 
 ---
 
@@ -406,4 +371,4 @@ This applies to all deployment modes. The active SLO target is operator-defined;
 
 - [`docs/guides/hosted-deployment.md`](./hosted-deployment.md) — Deployment modes, systemd, Docker Compose, PostgreSQL.
 - [`docs/guides/operator.md`](./operator.md) — Config, health checks, backup/restore, incident response.
-- [`docs/PRODUCTION_NOTES.md`](../../PRODUCTION_NOTES.md) — Runtime configuration baseline.
+- [`docs/PRODUCTION_NOTES.md`](../../docs/PRODUCTION_NOTES.md) — Runtime configuration baseline.

@@ -1,10 +1,10 @@
 # OpenAPI
 
-File chính:
+Main file:
 - `ferrumgate-control-api.v1.yaml`
 
-## Ghi chú
+## Notes
 
-- Đây là skeleton OpenAPI v1 đủ để sinh client/server stubs.
-- Một số schema được giữ generic ở `type: object` cho các phần oneOf phức tạp để tránh làm file quá cồng kềnh trong bản skeleton.
-- Khi code thật, nên sync với `schemas/jsonschema/`.
+- This is an OpenAPI v1 skeleton sufficient for generating client and server stubs.
+- Some schemas remain generic (`type: object`) for complex `oneOf` sections to keep the skeleton concise.
+- When implementing real code, keep this spec synchronized with `schemas/jsonschema/`.

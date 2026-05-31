@@ -1,6 +1,5 @@
 # Troubleshooting Guide
 
-> **Status**: Expanded guide. Tier 1.5 PostgreSQL, PgBouncer, HA, and alert symptoms added.
 > **Parent**: [`guides/README.md`](./README.md)
 
 ---
@@ -97,9 +96,9 @@ curl -s http://localhost:8080/v1/metrics | grep 'ferrumgate_governance_errors_to
 ```
 
 **Fix**:
-- If running canonical SLO validation, switch to the SLO-certification profile (`1000/10000`).
-- If running production traffic, measure per-IP sustained RPS and peak burst, then set `rate_limit_per_second` and `rate_limit_burst` to at least 2× observed values.
-- See [`docs/operations/rate-limit-tuning-guide.md`](../../operations/rate-limit-tuning-guide.md).
+- If running validation workloads, switch to the high-throughput profile (`1000/10000`).
+- If running real traffic, measure per-IP sustained RPS and peak burst, then set `rate_limit_per_second` and `rate_limit_burst` to at least 2× observed values.
+- See [`docs/operations/rate-limit-tuning-guide.md`](../operations/rate-limit-tuning-guide.md).
 
 ---
 
@@ -161,7 +160,7 @@ curl -s http://localhost:8080/v1/metrics | grep ferrumgate_store_pg_pool_size
 5. Verify `readyz/deep` returns 200.
 6. Rebuild old primary as standby before failback.
 
-> **Non-claim**: Automated unattended failover is NOT COMPLETE. These steps are manual/operator-controlled outside Tier 1.5 same-VM scope.
+> **Note**: Automated unattended failover is not available. These steps are manual/operator-controlled outside same-VM scope.
 
 ---
 
@@ -242,7 +241,7 @@ ls -lt /var/backups/ferrumgate-postgres/ | head -n 5
 **Fix**:
 - Increase `pg_max_connections` or PgBouncer `default_pool_size`.
 - Reduce concurrent long-running requests.
-- Scale horizontally (future; not implemented).
+- Scale horizontally (not available in current release).
 
 ---
 
@@ -266,7 +265,7 @@ curl http://localhost:8080/v1/metrics | grep request_duration_seconds
 
 ## Getting help
 
-1. Check [`docs/PRODUCTION_NOTES.md`](../../PRODUCTION_NOTES.md) for runtime configuration details.
+1. Check [`docs/PRODUCTION_NOTES.md`](../PRODUCTION_NOTES.md) for runtime configuration details.
 2. Check [`operator.md`](./operator.md) for config and incident response procedures.
 3. Review logs: `journalctl -u ferrumgate -n 500`
 4. Check metrics: `curl /v1/metrics`
@@ -301,12 +300,8 @@ ferrumctl backup verify --db-path /backups/ferrumgate-YYYYMMDD-HHMMSS.db
 pg_restore -l /var/backups/ferrumgate-postgres/ferrumgate-*.dump > /dev/null && echo OK
 ```
 
-## Status caveat
-
-> **production-ready = NO**. This troubleshooting guide is based on local testing, conditional pilot experience, and Tier 1.5 target evidence. Target-host issues may differ. Always verify with target-host evidence.
-
 ## Related docs
 
 - [`operator.md`](./operator.md) — Config, backup, incident response.
 - [`hosted-deployment.md`](./hosted-deployment.md) — Deployment modes.
-- [`docs/PRODUCTION_NOTES.md`](../../PRODUCTION_NOTES.md) — Runtime configuration and stress baselines.
+- [`docs/PRODUCTION_NOTES.md`](../PRODUCTION_NOTES.md) — Runtime configuration and stress baselines.

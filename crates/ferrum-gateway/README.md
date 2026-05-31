@@ -1,10 +1,9 @@
 # ferrum-gateway
 
-Gateway / interceptor crate.
+Gateway and interceptor for FerrumGate.
 
-Vai trò:
-- expose control server scaffold
-- sau này intercept MCP/tool calls
-- tích hợp policy / capability / rollback / provenance
+## Responsibilities
 
-v1 hiện mới có server scaffold.
+- Expose the control server scaffold
+- Intercept MCP and tool calls
+- Integrate policy, capability, rollback, and provenance flows

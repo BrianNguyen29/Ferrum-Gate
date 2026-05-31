@@ -1,6 +1,5 @@
 # Secure MCP Tunnel Security Review
 
-> **Status**: Phase 3.5 security review checklist for FerrumGate deployed behind third-party tunnels.
 > **Parent**: [`docs/guides/secure-mcp-tunnel-integration.md`](../guides/secure-mcp-tunnel-integration.md)
 
 ---
@@ -8,8 +7,6 @@
 ## 1. Scope
 
 This document is a security review checklist for operators who deploy FerrumGate behind a secure tunnel (Cloudflare Tunnel, Tailscale Funnel/Serve, or generic TLS reverse proxy). It does not replace a formal penetration test or security audit.
-
-> **production-ready = NO**. This checklist is documentation-only and does not change the production-readiness posture of FerrumGate.
 
 ---
 
@@ -70,12 +67,10 @@ This document is a security review checklist for operators who deploy FerrumGate
 
 ---
 
-## 3. Non-claims
+## 3. Notes
 
-| Non-claim | Status |
-|-----------|--------|
-| **production-ready** | **NO** |
-| **Tier 2** | **NOT COMPLETE** |
+| Note | Value |
+|------|-------|
 | **Formal security audit** | **NO** — this is a checklist, not a penetration test |
 | **Tunnel service provided by FerrumGate** | **NO** |
 | **Cloudflare / Tailscale / OpenAI liability** | **NO** — operator-owned configuration |
@@ -83,5 +78,4 @@ This document is a security review checklist for operators who deploy FerrumGate
 ## 4. Related docs
 
 - [`docs/guides/secure-mcp-tunnel-integration.md`](../guides/secure-mcp-tunnel-integration.md) — Deployment examples and topology.
-- [`docs/security/non-claims.md`](./non-claims.md) — Canonical non-claims and readiness boundaries.
 - [`docs/security/threat-model-stride.md`](./threat-model-stride.md) — STRIDE trust boundaries and controls.

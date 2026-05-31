@@ -1,7 +1,6 @@
 # ferrum-tui
 
-> **Status**: D.2 TUI MVP — operator convenience only; not production-ready; domainless/waiver scope.
-> **Scope**: Lightweight terminal dashboard for existing operator endpoints. No mutation operations.
+Lightweight terminal dashboard for FerrumGate operator endpoints. No mutation operations.
 
 ## Usage
 
@@ -74,7 +73,7 @@ Read-only list of pending approvals with state badges, truncation for narrow ter
 Parses `/v1/metrics` (Prometheus text format) and displays a curated subset of numeric metrics (health, totals, counts, pool stats, latency, etc.). If parsing yields no recognised metrics or the endpoint is unavailable, a friendly skip message is shown.
 
 ### Help
-Full-page keyboard reference and non-claims reminder.
+Full-page keyboard reference and notes reminder.
 
 ## Endpoints monitored
 
@@ -84,11 +83,10 @@ Full-page keyboard reference and non-claims reminder.
 - `GET /v1/approvals?limit=20` (read-only approvals view)
 - `GET /v1/metrics` (optional Prometheus metrics summary)
 
-## Non-claims
+## Notes
 
-- **Operator convenience only**: This TUI is a lightweight dashboard for observing endpoint health. It is not a production-ready admin tool.
+- **Operator convenience only**: This TUI is a lightweight dashboard for observing endpoint health. It is not an admin tool.
 - **Not a security boundary**: The TUI itself does not enforce auth; it forwards the bearer token to the server.
 - **No mutation operations**: MVP is read-only. No approve/reject, token rotation, or policy changes via TUI.
 - **Token redaction**: The bearer token is never rendered to the terminal surface or logs.
-- **Domainless/waiver scope**: Implemented under the same domainless/waiver scope as the rest of the pilot-tier operator UX.
 - **Metrics are best-effort**: Prometheus metric parsing is heuristic and may skip metrics it does not recognise.

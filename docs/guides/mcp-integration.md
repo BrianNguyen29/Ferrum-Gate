@@ -1,6 +1,5 @@
 # MCP Integration Guide
 
-> **Status**: Locally validated. Connection, auth, lifecycle, read queries, and query_lineage pass after bugfix. Target-host guide is pending validation.
 > **Parent**: [`guides/README.md`](./README.md)
 
 ---
@@ -119,9 +118,9 @@ ferrum_gate_submit_intent
 - **TTL is 300s max**: Capabilities expire automatically.
 - **Scope must not exceed intent**: The gateway enforces this; do not bypass.
 
-## Status caveat
+## Notes
 
-> **production-ready = NO**. MCP target-host smoke is planned but not yet executed. Local validation is complete for tested paths: connection (`ping`, `initialize`, `tools/list`), auth (mutating tools fail closed without token), lifecycle (`ferrum_gate_submit_intent` → `ferrum_gate_verify`), read queries (`ferrum_gate_get_execution`, `ferrum_gate_list_intents`), and `ferrum_gate_query_lineage` pass locally after bugfix.
+> MCP target-host smoke is planned but not yet executed. Local validation is complete for tested paths: connection (`ping`, `initialize`, `tools/list`), auth (mutating tools fail closed without token), lifecycle (`ferrum_gate_submit_intent` → `ferrum_gate_verify`), read queries (`ferrum_gate_get_execution`, `ferrum_gate_list_intents`), and `ferrum_gate_query_lineage` pass locally after bugfix.
 
 ## Related docs
 

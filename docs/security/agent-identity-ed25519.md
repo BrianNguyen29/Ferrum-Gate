@@ -1,8 +1,6 @@
-# Agent Identity with Ed25519 — Phase 4.5 Design
+# Agent Identity with Ed25519 — Design
 
-> **Status:** Design complete (Phase 4.5). Implementation deferred to Phase 4.6+.  
-> **Scope:** This document specifies the cryptographic agent identity layer. It does **not** claim production readiness, Tier 2, or enterprise readiness.  
-> **Non-claims:** No DID ecosystem, no trust-scoring mesh, no multi-tenant SaaS identity.
+> **Scope:** This document specifies the cryptographic agent identity layer.
 
 ## 1. Goal
 
@@ -101,9 +99,9 @@ CLI equivalent: `ferrumctl admin agents revoke <agent_id>`
 
 | Mechanism | Identity Type | Use Case | Where It Fits |
 |-----------|--------------|----------|---------------|
-| **OIDC/JWT** | Human / interactive | Operator login, SSO | Phase 4.3–4.4; continues to work |
-| **Scoped Bearer Tokens** | Service / short-lived | Integrations, CI jobs | Phase 1; opaque, DB-backed |
-| **Ed25519 Agent Identity** | Machine / long-lived | MCP agents, autonomous workers | Phase 4.5–4.7; cryptographic, no DB secret needed at client |
+| **OIDC/JWT** | Human / interactive | Operator login, SSO | Separate integration |
+| **Scoped Bearer Tokens** | Service / short-lived | Integrations, CI jobs | Current; opaque, DB-backed |
+| **Ed25519 Agent Identity** | Machine / long-lived | MCP agents, autonomous workers | Cryptographic, no DB secret needed at client |
 
 Ed25519 agent identity does **not** replace OIDC or scoped tokens. It coexists:
 - Human operators → OIDC.
@@ -112,22 +110,21 @@ Ed25519 agent identity does **not** replace OIDC or scoped tokens. It coexists:
 
 The same `required_scope_for_path()` logic applies regardless of auth mode. The middleware normalizes all three mechanisms to a common `(actor_id, scopes)` tuple before hitting governance endpoints.
 
-## 7. Non-Claims and Boundaries
+## 7. Boundaries
 
-- **No production-ready claim:** This is a design doc. Implementation is Phase 4.6+.
 - **No DID / trust mesh:** We intentionally avoid W3C DID, VC, or trust scoring.
 - **No multi-tenant identity:** `tenant_id` is reserved but not enforced.
-- **No mTLS replacement:** mTLS service-to-service remains a separate Phase P2 item.
-- **Bounded nonce cache:** In-memory only for pilot; shared cache deferred to multi-node hardening.
+- **No mTLS replacement:** mTLS service-to-service remains a separate item.
+- **Bounded nonce cache:** In-memory only for pilot; shared cache not yet available for multi-node.
 - **No key escrow:** FerrumGate never holds private keys. `public_key` only.
 
-## 8. Phase 4.6+ Implementation Plan
+## 8. Implementation Plan
 
-1. **4.6** — Add `agent_registry` table/schema, `AgentRegistry` trait in `ferrum-store`, in-memory nonce cache, and signature verification middleware. ✅ **COMPLETE**
-2. **4.6** — Wire `AuthMode::Agent` into `auth_middleware`. ✅ **COMPLETE**
-3. **4.7** — Implement `ferrumctl admin agents register/list/revoke`, gateway admin endpoints `POST/GET/DELETE /v1/admin/agents`, `admin:agents` scope mapping, and audit entries for register/revoke. ✅ **COMPLETE**
-4. **4.7** — Add integration tests: signature validation, replay rejection, scope enforcement, revocation immediacy, audit entry emission. ✅ **COMPLETE** (tests added in Phase 4.6)
-5. **Later** — Shared nonce cache for multi-node, agent metrics (`ferrumgate_agent_auth_total`), rate-limit per agent_id.
+1. Add `agent_registry` table/schema, `AgentRegistry` trait in `ferrum-store`, in-memory nonce cache, and signature verification middleware.
+2. Wire `AuthMode::Agent` into `auth_middleware`.
+3. Implement `ferrumctl admin agents register/list/revoke`, gateway admin endpoints `POST/GET/DELETE /v1/admin/agents`, `admin:agents` scope mapping, and audit entries for register/revoke.
+4. Add integration tests: signature validation, replay rejection, scope enforcement, revocation immediacy, audit entry emission.
+5. Shared nonce cache for multi-node, agent metrics (`ferrumgate_agent_auth_total`), rate-limit per agent_id.
 
 ## 9. Audit Events
 
@@ -137,11 +134,10 @@ New audit actions to add for agent identity:
 - `AgentAuthSuccess` (optional, off by default to avoid firehose)
 - `AgentAuthFailed` (on by default, sanitized, no signature payload)
 
-These will be added to `AuditAction` during Phase 4.6 implementation.
+These will be added to `AuditAction` during implementation.
 
 ## 10. References
 
-- Phase 4.3–4.4 OIDC/JWT: `docs/security/oidc-jwt-federation.md`
+- OIDC/JWT: `docs/security/oidc-jwt-federation.md`
 - Scoped tokens: `docs/security/scoped-tokens-rbac.md`
 - Threat model: `docs/security/threat-model-stride.md`
-- Non-claims boundary: `docs/security/non-claims.md`

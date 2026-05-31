@@ -1,11 +1,8 @@
 # FerrumGate Scoped Tokens and RBAC
 
-> **Status:** Canonical companion document for scoped token and RBAC behavior.  
-> **Phase:** 1.5 documentation artifact.  
-> **Parent Plan:** [`non-claims.md`](./non-claims.md)  
-> **Related boundary doc:** [`non-claims.md`](./non-claims.md)
+> **Parent Plan:** [`guides/README.md`](../guides/README.md)
 
-This document explains FerrumGate's scoped token model, role mapping, enforced route scopes, and request authorization flow. It documents current implementation behavior; it is **not** a production-readiness claim.
+This document explains FerrumGate's scoped token model, role mapping, enforced route scopes, and request authorization flow. It documents current implementation behavior.
 
 ## 1. Purpose and Boundary
 
@@ -16,13 +13,12 @@ Scoped tokens are **not**:
 - OIDC / SSO federation.
 - Multi-tenant isolation.
 - SOC 2 / compliance certification.
-- A production-ready claim.
 
 ## 2. Auth Modes
 
 | Mode | Intended use | Notes |
 |------|--------------|-------|
-| `Disabled` | Local development only | Must not be exposed on non-loopback production endpoints. |
+| `Disabled` | Local development only | Must not be exposed on non-loopback deployed endpoints. |
 | `Bearer` | Transitional/operator bootstrap mode | One shared bearer token gates non-public routes; no per-scope authorization. |
 | `Scoped` | Preferred least-privilege mode | Token lookup, hash verification, revocation, expiry, and scope checks are enforced. |
 
@@ -83,7 +79,7 @@ The following scopes are currently enforced by `required_scope_for_path()` for H
 | `admin:audit` | Admin audit-log routes | Read audit logs. |
 | `*` | Admin wildcard | Matches any required scope. |
 
-### Reserved or future scopes
+### Reserved scopes
 
 - `admin:config` appears in planning language but has no currently enforced route unless a config endpoint exists.
 - `backup:run` can appear in role defaults / operational planning but has no current route-enforced endpoint in this scope map.
@@ -145,27 +141,19 @@ Supported CLI lifecycle commands are implemented in `bins/ferrumctl/src/main.rs`
 - Use list output for metadata review only; it is intentionally redacted.
 - Review audit logs for token create/revoke/rotate actions.
 
-## 10. Known Limitations and Follow-Ups
+## 10. Notes
 
-| Item | Status / follow-up |
-|------|--------------------|
-| OIDC / SSO | Not implemented; future integration, not a current claim. |
-| Multi-tenancy | Not implemented; scoped tokens are single-deployment controls. |
-| Exhaustive RBAC integration tests | Tracked under Phase 1.6. |
-| Dedicated CLI parsing tests for token subcommands | Tracked under Phase 1.6. |
-| `last_used_at` / `rotated_from` integration coverage | Tracked under Phase 1.6. |
-| Scope docs alignment for future/reserved scopes | This document records current route-enforced scopes and flags reserved names. |
+- OIDC / SSO is not covered in this document.
+- Multi-tenancy is not provided; scoped tokens are single-deployment controls.
+- Exhaustive RBAC integration tests are outside this document's scope.
+- Dedicated CLI parsing tests for token subcommands are outside this document's scope.
+- `last_used_at` / `rotated_from` integration coverage is outside this document's scope.
+- This document records current route-enforced scopes and flags reserved names.
 
 ## 11. Evidence Links
 
-- [`non-claims.md`](./non-claims.md)
-- [`security-model.md`](./security-model.md) — Scoped token store and RBAC middleware implementation
+- [`security-model.md`](../guides/security-model.md) — Scoped token store and RBAC middleware implementation
 
-## 12. Non-Claims
+## 12. Notes
 
-- `production-ready` = **NO**
-- `Tier 2` = **NOT COMPLETE**
-- Full G2 = **NOT COMPLETE**
-- Real domain / public endpoint = **missing**
-- `HA-4` unattended automated failover = **NOT COMPLETE**
-- Sustained SLO window (7–30 days) = **NOT COMPLETE**
+- This document records current behavior and boundaries.

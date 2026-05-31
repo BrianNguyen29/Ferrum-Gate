@@ -1,8 +1,7 @@
 # FerrumGate Single-Node Terraform Module
 
-> **Status**: Domainless/waiver scope. Local artifact generator only.
 > **Owner**: Engineering
-> **Scope**: `docs/security/non-claims.md`
+> **Scope**: Local artifact generator only.
 
 ---
 
@@ -54,24 +53,16 @@ module "ferrumgate_single_node" {
 | `generate_systemd` | bool | `true` | no | Generate systemd unit |
 | `generate_docker_compose` | bool | `false` | no | Generate compose file |
 
-## Non-claims
+## Notes
 
-- **NOT production-ready**: This module generates files. It does not harden the
+- **Local artifact generator only**: This module generates files. It does not harden the
   host, configure TLS termination, or set up automated backups.
-- **NOT Tier 2**: Domainless/waiver scope only. Real owned domain still
-  required for Tier 2 per `BLK-A-DOM`.
-- **NOT full G2**: Full G2 closure requires operator signoff, real domain, and
-  default-config SLO pass.
 - **NOT a managed service**: Self-hosted single-node template only.
-- **NOT multi-host production HA**: Single-node only. No automated failover,
-  no read-replica wiring, no external endpoint cutover.
-- **NOT sustained SLO**: No performance or availability guarantees are made
-  by this module.
+- Single-node scope: one host only; clustering/failover are outside this module.
 - **No real domain required**: Operates on loopback or IP bind by default.
 - **No cloud providers**: `local_file` and `null_resource` only.
 
 ## Related docs
 
-- [`docs/guides/hosted-deployment.md`](../../docs/guides/hosted-deployment.md)
-- [`docs/security/non-claims.md`](../../docs/security/non-claims.md)
-- [`docs/PRODUCTION_NOTES.md`](../../docs/PRODUCTION_NOTES.md)
+- [`docs/guides/hosted-deployment.md`](../../../docs/guides/hosted-deployment.md)
+- [`docs/PRODUCTION_NOTES.md`](../../../docs/PRODUCTION_NOTES.md)

@@ -1,7 +1,6 @@
 # Demo Flows — Copy-Paste Runnable Guides
 
-> **Status**: Documentation scaffolds. These guides describe the steps for each demo flow but do not assert that every flow was executed in the current session. Where evidence exists (compose demos, quickstart), it is cited explicitly.
-> **Scope**: Local loopback-only. Do not run against any GCP target, active SLO environment, or real bearer token.
+> **Scope**: Local loopback-only. Do not run against any remote target or real bearer token.
 > **Parent**: [`guides/README.md`](./README.md)
 
 ---
@@ -10,9 +9,8 @@
 
 - **Docs are scaffolds, not execution proof**: This guide provides copy-paste command skeletons. It does not certify that each flow was run end-to-end in this session unless existing evidence is cited.
 - **Local dev config only**: Use `configs/ferrumgate.dev.toml` or `docker-compose.demo.yml`; auth disabled, loopback binding, temp dirs only.
-- **No GCP target**: Do not run any demo command against an active SLO or GCP IP. Use `127.0.0.1` or `localhost` only.
-- **No real secrets**: Do not use production bearer tokens, real credentials, or production storage DSNs.
-- **Non-claims**: See the Non-claims table at the end of this document.
+- **No remote target**: Do not run any demo command against a remote IP. Use `127.0.0.1` or `localhost` only.
+- **No real secrets**: Do not use real bearer tokens, credentials, or storage DSNs.
 
 ---
 
@@ -441,7 +439,7 @@ curl -s -X POST "$FERRUM_GATEWAY/v1/approvals/$APPROVAL_ID/approve" \
 ### Expected Outcomes
 
 - `/v1/proposals/{id}/evaluate` → decision `RequireApproval`
-- `/v1/approvals/list` → shows pending approval with correct `proposal_id`
+- `/v1/approvals/list` → shows approval with correct `proposal_id`
 - After approve, execution lifecycle proceeds normally
 - Action does NOT execute before approval is granted
 
@@ -720,27 +718,11 @@ docker compose -f docker-compose.postgres-demo.yml down -v
 
 ---
 
-## Non-Claims Table
-
-| Claim | Status |
-|-------|--------|
-| Demo flows executed end-to-end in this session | NOT CLAIMED — these are copy-paste scaffolds |
-| Production-ready | NO — local demo only |
-| Tier 2 / full G2 closure | NOT COMPLETE |
-| Sustained SLO window | NOT COMPLETE |
-| HA-4 unattended automated failover | NOT COMPLETE |
-| Target-host / GCP validation | NOT CLAIMED — loopback only |
-| Fresh-user independent validation | NOT CLAIMED |
-| Compose demo validation (2026-05-19) | VALIDATED — cited evidence only |
-
----
-
 ## Related Docs
 
 - [`quickstart.md`](./quickstart.md) — Local API/curl quickstart with validated endpoint sequence
 - [`policy-authoring.md`](./policy-authoring.md) — Policy schema, templates, validate/simulate/apply/diff/rollback/versions
 - [`mcp-integration.md`](./mcp-integration.md) — MCP server setup, tools reference, client config
 - [`operator.md`](./operator.md) — Config, health, backup/restore, monitoring
-- [`quickstart.md`](./quickstart.md) — Local API/curl quickstart with validated endpoint sequence
 - [`docker-compose.demo.yml`](../../docker-compose.demo.yml) — Local SQLite demo compose
 - [`docker-compose.postgres-demo.yml`](../../docker-compose.postgres-demo.yml) — Local PostgreSQL demo compose

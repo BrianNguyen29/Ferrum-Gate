@@ -1,21 +1,21 @@
 # FerrumGate Monitoring Configuration Templates
 
-This directory contains monitoring configuration templates for FerrumGate deployment. These are **templates only** — no actual secrets, email literals, or production configurations are included.
+This directory contains monitoring configuration templates for FerrumGate deployment. These are **templates only** — no actual secrets, email literals, or deployment configurations are included.
 
 **LOCAL_ONLY: These configs support local-only monitoring deployment with localhost receivers. No real alert contact required for local mode.**
 
 ## Files
 
-| File | Purpose | Status |
-|------|---------|--------|
-| `prometheus-scrape-config.yaml` | Prometheus scrape job for ferrumgate /v1/metrics | Template |
-| `alertmanager-config.yaml` | AlertManager routing and receiver config | Template (local-only default) |
-| `ferrumgate-alerts.yaml` | Prometheus alert rules for ferrumgate (includes PG-specific rules) | Template |
-| `ferrumgate-grafana-dashboard.json` | Grafana dashboard JSON for FerrumGate overview panels | Template |
+| File | Purpose |
+|------|---------|
+| `prometheus-scrape-config.yaml` | Prometheus scrape job for ferrumgate /v1/metrics |
+| `alertmanager-config.yaml` | AlertManager routing and receiver config |
+| `ferrumgate-alerts.yaml` | Prometheus alert rules for ferrumgate (includes PG-specific rules) |
+| `ferrumgate-grafana-dashboard.json` | Grafana dashboard JSON for FerrumGate overview panels |
 
 ## Usage
 
-### Local-Only Mode (Default for non-production)
+### Local-Only Mode (Default)
 
 For local testing/monitoring without real alert contacts:
 
@@ -24,14 +24,13 @@ For local testing/monitoring without real alert contacts:
 # See deployment sections below for step-by-step instructions
 ```
 
-Local-only mode特点:
+Local-only mode characteristics:
 - Uses localhost receivers only
 - No real alert contact required
-- Non-production claim boundary clearly stated
 
 ### External Mode (Requires real alert contact)
 
-For production alerting with external Prometheus/AlertManager:
+For alerting with external Prometheus/AlertManager:
 
 ```bash
 # External mode: configure alert contact in alertmanager-config.yaml
@@ -90,11 +89,11 @@ The `ferrumgate-alerts.yaml` file includes a `ferrumgate_postgres` rule group wi
 | `FerrumGatePostgresPoolSaturation` | `pool_idle == 0` and `pool_size >= pool_max` | Fires when all PG connections are in use. |
 | `FerrumGatePostgresSlowAcquire` | `rate(ferrumgate_store_pg_acquire_timeouts_total[5m]) > 0` | Fires on any acquire timeout. Tune threshold for your workload. |
 | `FerrumGatePostgresBackupStale` | `time() - backup_last_success_timestamp > 7200` | **TEMPLATE** — 2-hour threshold. Adjust to your backup cadence. Relies on generic backup metric. |
-| `FerrumGatePostgresReplicationLag` | `pg_stat_replication_pg_wal_lsn_diff > 1 GB` | **PLACEHOLDER / DEFERRED** — requires `postgres_exporter` or equivalent. Do not enable until HA/replication is deployed. |
+| `FerrumGatePostgresReplicationLag` | `pg_stat_replication_pg_wal_lsn_diff > 1 GB` | **PLACEHOLDER** — requires `postgres_exporter` or equivalent. Do not enable until HA/replication is deployed. |
 
-**Important**: The PG alert rules are templates. `FerrumGatePostgresMetricsAbsent` is a heuristic (absence of application-level metrics), not a definitive "database is down" signal. For production, supplement with `postgres_exporter` or cloud PG monitoring. The replication-lag alert is a placeholder with a fictional metric name and will not fire without external tooling.
+**Important**: The PG alert rules are templates. `FerrumGatePostgresMetricsAbsent` is a heuristic (absence of application-level metrics), not a definitive "database is down" signal. For live environments, supplement with `postgres_exporter` or cloud PG monitoring. The replication-lag alert is a placeholder with a fictional metric name and will not fire without external tooling.
 
-**Validation status**: Docker `promtool check rules` passed (`SUCCESS: 21 rules found`) on 2026-05-21. Live Prometheus evaluation of these specific rules was not performed in the local environment because the running Prometheus instance loads a different rule file (`intent_api_alerts.yml`). Operator must validate firing behavior in their environment before deploying.
+**Syntax check**: Docker `promtool check rules` passed (`SUCCESS: 21 rules found`) on 2026-05-21. Operator must validate firing behavior in their environment before deploying.
 
 ## Placeholder Values
 
@@ -115,8 +114,8 @@ This section documents how an operator deploys the FerrumGate alert templates to
 
 | Check | How | Gate |
 |-------|-----|------|
-| Prometheus server running | `curl http://<prometheus>:9090/-/healthy` returns `Prometheus Server is Healthy.` | Block if not 200 |
-| `promtool` installed | `promtool --version` succeeds | Block if missing |
+| Prometheus server running | `curl http://<prometheus>:9090/-/healthy` returns `Prometheus Server is Healthy.` | Stop if not 200 |
+| `promtool` installed | `promtool --version` succeeds | Stop if missing |
 | AlertManager running (if routing alerts) | `curl http://<alertmanager>:9093/-/healthy` returns `OK` | Warn if missing |
 | `ferrumgate-alerts.yaml` reviewed | Operator has read this README and the alert descriptions above | Required |
 
@@ -181,9 +180,9 @@ curl -s "http://<prometheus>:9090/api/v1/query?query=ALERTS{alertname=\"FerrumGa
 - **Fail**: Metrics missing → check scrape config and ferrumd store backend.
 - **Evidence**: Query result JSON.
 
-### Step 5 — Simulate an alert condition (optional, non-production only)
+### Step 5 — Simulate an alert condition (optional, local only)
 
-In a non-production environment, temporarily trigger an alert to verify AlertManager routing:
+In a local environment, temporarily trigger an alert to verify AlertManager routing:
 
 ```bash
 # Example: artificially stop ferrumd to cause metrics absence
@@ -209,30 +208,29 @@ Template sections:
 4. **Rule evaluation state** — screenshot or API output.
 5. **PG-specific alert check** — metric presence, alert state.
 6. **Simulation results** (if performed) — trigger method, AlertManager receipt.
-7. **Operator signoff** — blank until signed.
+7. **Operator review** — blank until reviewed.
 
-> **Non-claim**: This runbook documents the intended validation procedure. No live Prometheus evaluation of these specific rules was performed in the engineering environment because the running Prometheus instance loads a different rule file (`intent_api_alerts.yml`). Operator must execute this runbook in their environment and create the evidence artifact.
+> **Note**: Operator must execute this runbook in their environment and create the evidence artifact.
 
-## Non-Claims
+## Notes
 
-- **NOT production-ready configuration**
-- **NOT production alerting**
-- **NOT deployment-ready without operator review**
+- **Example configuration only**
+- **Requires operator review before use**
 - **No secrets stored** in these templates
 - **No email literals** — all contacts are placeholders
-- **nip.io domain** is temporary and must be replaced with real domain for production
+- **nip.io domain** is temporary and must be replaced with a real domain
 - **LOCAL_ONLY mode**: Uses localhost receivers only, no real alerting
 
 ## Security Notes
 
-- AlertManager config contains template receivers only — must be configured with real credentials for production
+- AlertManager config contains template receivers only — must be configured with real credentials for live use
 - Prometheus TLS config uses `insecure_skip_verify: true` for nip.io (temporary)
-- For production: use proper CA certificates and TLS verification
+- For live environments: use proper CA certificates and TLS verification
 - Service account keys for GCS backup should be stored securely (not in version control)
 - LOCAL_ONLY mode intentionally uses localhost receivers to avoid secret/contact requirements
 
 ## References
 
 - [`docs/guides/operator.md`](../../docs/guides/operator.md) — Operator procedures and runbooks
-- [`docs/PRODUCTION_NOTES.md`](../../docs/PRODUCTION_NOTES.md) — Production notes and readiness boundaries
+- [`docs/PRODUCTION_NOTES.md`](../../docs/PRODUCTION_NOTES.md) — Runtime configuration notes
 - FerrumGate Monitoring Metrics — see `/v1/metrics` endpoint

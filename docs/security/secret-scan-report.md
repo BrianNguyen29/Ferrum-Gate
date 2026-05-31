@@ -1,9 +1,8 @@
-# Secret Scan Report — Phase 5.5
+# Secret Scan Report
 
-**Status:** PASS  
-**Date:** 2026-05-29  
-**Scanner:** `scripts/run_secret_scan.sh` (dependency-free, lightweight)  
-**Scope:** Tracked working-tree files only. Git history is NOT scanned.  
+**Date:** 2026-05-29
+**Scanner:** `scripts/run_secret_scan.sh` (dependency-free, lightweight)
+**Scope:** Tracked working-tree files only. Git history is NOT scanned.
 
 ---
 
@@ -55,12 +54,12 @@ The following are explicitly allowed and do not trigger findings:
 
 ## Results
 
-**Findings:** 0  
+**Findings:** 0
 **Conclusion:** No potential hardcoded secrets detected in the current working tree.
 
 ---
 
-## Limitations & Non-Claims
+## Limitations
 
 - **Git history is NOT scanned.** This scan covers only the current working tree. Historical commits may contain secrets that were later removed.
 - **No external scanner dependency** means the regex coverage is limited compared to tools like `gitleaks` or `truffleHog`.
@@ -69,8 +68,7 @@ The following are explicitly allowed and do not trigger findings:
 - **This scan does NOT constitute:**
   - SOC2, ISO 27001, or any formal compliance certification.
   - A guarantee that the codebase is completely free of secrets.
-  - Production-ready or GA readiness evidence.
-- **Remediation:** If this scanner reports findings, treat them as potential secrets until verified. Do not mark Phase 5.5 complete while findings remain unaddressed.
+- **Remediation:** If this scanner reports findings, treat them as potential secrets until verified.
 
 ---
 

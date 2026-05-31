@@ -1,17 +1,14 @@
 # FerrumGate OIDC/JWT Federation Design
 
-> **Status:** Design-only — Phase 4.1 deliverable.  
-> **Phase:** 4.1 — Identity federation design.  
-> **Parent Plan:** [`../PRODUCTION_NOTES.md`](../PRODUCTION_NOTES.md)  
-> **Related boundary doc:** [`non-claims.md`](./non-claims.md)
+> **Parent Plan:** [`../PRODUCTION_NOTES.md`](../PRODUCTION_NOTES.md)
 
-This document defines the design for OIDC/JWT federation in FerrumGate. It covers the authentication mode decision, JWT validation flow, claim-to-role mapping, TOML configuration schema, security considerations, and the implementation plan for Phase 4.2+. It is **not** a production-readiness claim.
+This document defines the design for OIDC/JWT federation in FerrumGate. It covers the authentication mode decision, JWT validation flow, claim-to-role mapping, TOML configuration schema, security considerations, and the implementation plan.
 
 ---
 
 ## 1. Purpose and Boundary
 
-FerrumGate is an execution-governance gateway, not an identity provider (IdP). Phase 4.1 adds the ability to accept externally-issued OIDC JWTs as bearer tokens and map their claims into FerrumGate's existing `actor_id + role + scope` authorization model. This enables enterprise operators to reuse their existing IdP (Google Workspace, Azure AD/Entra, Keycloak, etc.) without building a login/callback/session UI inside FerrumGate.
+FerrumGate is an execution-governance gateway, not an identity provider (IdP). This design adds the ability to accept externally-issued OIDC JWTs as bearer tokens and map their claims into FerrumGate's existing `actor_id + role + scope` authorization model. This enables enterprise operators to reuse their existing IdP (Google Workspace, Azure AD/Entra, Keycloak, etc.) without building a login/callback/session UI inside FerrumGate.
 
 OIDC/JWT federation is **not**:
 
@@ -19,7 +16,6 @@ OIDC/JWT federation is **not**:
 - An identity provider; FerrumGate does not mint or issue OIDC tokens.
 - Multi-tenant SaaS identity isolation.
 - SOC 2 / compliance certification.
-- A production-ready claim.
 
 ---
 
@@ -42,7 +38,7 @@ There are currently **two `AuthMode` enums** in the workspace:
 - `crates/ferrum-proto/src/token.rs` — shared proto/model enum.
 - `crates/ferrum-gateway/src/state.rs` — gateway-specific runtime enum.
 
-**Phase 4.2 must synchronize both enums** by adding `Oidc` to each and, ideally, converging to a single source of truth (e.g., re-exporting from `ferrum-proto`) to eliminate future drift. This is tracked in the implementation plan (Section 8).
+**Implementation must synchronize both enums** by adding `Oidc` to each and, ideally, converging to a single source of truth (e.g., re-exporting from `ferrum-proto`) to eliminate drift.
 
 ---
 
@@ -173,7 +169,7 @@ When `AuthMode::Oidc` is enabled, the request authorization flow is:
 ### 5.3 Scope derivation
 
 - After a `TokenRole` is resolved, scopes are derived from `TokenRole::default_scopes()` — the same function used by `AuthMode::Scoped`.
-- No custom per-user scope overrides in Phase 4. This keeps the model simple and avoids overgrant. Future phases may add explicit scope filtering if needed.
+- No custom per-user scope overrides in this design. This keeps the model simple and avoids overgrant.
 
 ### 5.4 Deny-by-default summary
 
@@ -201,7 +197,7 @@ When `AuthMode::Oidc` is enabled, the request authorization flow is:
 
 - The highest risk in JWT federation is mapping a broad IdP group to a powerful FerrumGate role (e.g., mapping `Domain Users` to `Admin`).
 - **Mitigation**: `role_mapping` is explicit and deny-by-default. Operators must intentionally configure every mapping. Docs and logs should warn when wildcard or broad IdP groups are mapped.
-- Future hardening: add a `scope_filter` allowlist that further restricts derived scopes even after role mapping.
+- Hardening option: add a `scope_filter` allowlist that further restricts derived scopes even after role mapping.
 
 ### 6.3 Algorithm confusion
 
@@ -218,26 +214,15 @@ When `AuthMode::Oidc` is enabled, the request authorization flow is:
 
 - Stateless JWTs cannot be revoked by FerrumGate. Reliance is on short TTLs (e.g., 5–60 minutes) and IdP-level revocation.
 - **Mitigation**: document that FerrumGate does not maintain a revocation list for OIDC tokens; operators must rely on IdP session/policy management and short token lifetimes.
-- Future: optional `jti` blocklist in store (out of scope for Phase 4).
+- Optional `jti` blocklist in store (out of scope).
 
 ---
 
-## 7. Non-Claims
-
-The following boundaries from [`non-claims.md`](./non-claims.md) apply unchanged:
-
-- `production-ready` = **NO**
-- `Tier 2` = **NOT COMPLETE**
-- Full G2 = **NOT COMPLETE**
-- Real domain / public endpoint = **missing**
-- `HA-4` unattended automated failover = **NOT COMPLETE**
-- Sustained SLO window (7–30 days) = **NOT COMPLETE**
-
-Additionally:
+## 7. Boundaries
 
 - FerrumGate is **not** an IdP. It validates externally-issued JWTs; it does not issue them.
-- There is **no** login page, callback endpoint (`/oauth/callback`), session cookie, consent screen, or logout flow in Phase 4.
-- OIDC/JWT federation in Phase 4 is **design-only** (4.1) followed by **minimal implementation** (4.2–4.4). It is not a complete SSO integration.
+- There is **no** login page, callback endpoint (`/oauth/callback`), session cookie, consent screen, or logout flow.
+- OIDC/JWT federation is **design-only** followed by **minimal implementation**. It is not a complete SSO integration.
 - Multi-tenant identity isolation is **not** supported.
 
 ---
@@ -250,40 +235,40 @@ The recommended core JWT dependency for FerrumGate is **`jsonwebtoken`** (curren
 
 - **Why `jsonwebtoken`**: It is the most widely used, well-maintained Rust JWT crate. It supports the required algorithm allowlist (`RS256`, `RS384`, `RS512`, `ES256`, `ES384`, `ES512`, `EdDSA`) and provides `decode`/`validate` helpers.
 - **Why NOT `openidconnect`**: The `openidconnect` crate is heavier and designed for full RP (Relying Party) flows with discovery, authorization endpoints, and token exchange. FerrumGate only needs stateless JWT validation, not a full RP implementation.
-- **Network dependency (`reqwest`)**: JWKS fetching requires an HTTP client. `reqwest` is already a workspace dependency. It should **not** be added to `ferrum-gateway` until Phase 4.4 (JWKS fetch/cache) to keep the compile boundary minimal. Phase 4.2–4.3 can validate locally-minted test JWTs without network I/O.
+- **Network dependency (`reqwest`)**: JWKS fetching requires an HTTP client. `reqwest` is already a workspace dependency. It should **not** be added to `ferrum-gateway` for offline validation to keep the compile boundary minimal.
 - **Feature selection**: When `jsonwebtoken` is added, use only the features required for the algorithm allowlist (e.g., `rsa`, `ecdsa`, `eddsa`). Avoid enabling `openssl` if `ring` is sufficient.
 
 ### 8.2 Dependency timeline
 
-| Phase | Dependency action |
-|-------|-------------------|
-| 4.2 | Document strategy only; do **not** add `jsonwebtoken` or `reqwest` to `ferrum-gateway` yet. |
-| 4.3 | Add `jsonwebtoken` to `ferrum-gateway`/`workspace.dependencies` with minimal features. Implement offline JWT validation (test JWKS loaded from file/static JSON). |
-| 4.4 | Add `reqwest` to `ferrum-gateway` with `rustls-tls`. Implement live JWKS fetch + TTL cache, RSA JWK support, config loading from TOML/env, and fail-closed fallback. |
+| Step | Dependency action |
+|------|-------------------|
+| Design | Document strategy only; do **not** add `jsonwebtoken` or `reqwest` to `ferrum-gateway`. |
+| Offline validation | Add `jsonwebtoken` to `ferrum-gateway`/`workspace.dependencies` with minimal features. Implement offline JWT validation (test JWKS loaded from file/static JSON). |
+| Live JWKS | Add `reqwest` to `ferrum-gateway` with `rustls-tls`. Implement live JWKS fetch + TTL cache, RSA JWK support, config loading from TOML/env, and fail-closed fallback. |
 
 ---
 
-## 9. Phase 4.2+ Implementation and Test Plan
+## 9. Implementation and Test Plan
 
 ### 9.1 Implementation order
 
-| Step | Task | Owner | Type | Status |
-|------|------|-------|------|--------|
-| 4.2.1 | Add `Oidc` variant to canonical `AuthMode` (`ferrum-proto`) and re-export through `ferrum-gateway`. Remove duplicate. | Dev | Build | **DONE** |
-| 4.2.2 | Add JWT validation dependencies (`jsonwebtoken`) to `ferrum-gateway` with minimal feature set. | Dev | Build | **DONE** |
-| 4.2.3 | Implement `OidcConfig` struct, validation rules, and static key loading. | Dev | Build | **DONE** |
-| 4.2.4 | Implement JWKS fetch + cache (in-memory TTL cache; no external cache service). | Dev | Build | **DONE** |
-| 4.2.5 | Implement JWT validation middleware branch for `AuthMode::Oidc` following Section 4 flow. | Dev | Build | **DONE** |
-| 4.2.6 | Implement claim mapping and role-to-scope derivation reusing `TokenRole::default_scopes()`. | Dev | Build | **DONE** |
-| 4.2.7 | Add OIDC config loading from TOML/env into `ServerConfig.oidc_config`. | Dev | Build | **DONE** |
-| 4.3.1 | Implement role mapping middleware and deny-by-default for unmapped roles. | Dev | Build | **DONE** |
-| 4.4.1 | Write `docs/security/oidc-jwt-federation.md` (this document). | Dev | Document | **DONE (design)** |
+| Step | Task | Owner | Type |
+|------|------|-------|------|
+| 1 | Add `Oidc` variant to canonical `AuthMode` (`ferrum-proto`) and re-export through `ferrum-gateway`. Remove duplicate. | Dev | Build |
+| 2 | Add JWT validation dependencies (`jsonwebtoken`) to `ferrum-gateway` with minimal feature set. | Dev | Build |
+| 3 | Implement `OidcConfig` struct, validation rules, and static key loading. | Dev | Build |
+| 4 | Implement JWKS fetch + cache (in-memory TTL cache; no external cache service). | Dev | Build |
+| 5 | Implement JWT validation middleware branch for `AuthMode::Oidc` following Section 4 flow. | Dev | Build |
+| 6 | Implement claim mapping and role-to-scope derivation reusing `TokenRole::default_scopes()`. | Dev | Build |
+| 7 | Add OIDC config loading from TOML/env into `ServerConfig.oidc_config`. | Dev | Build |
+| 8 | Implement role mapping middleware and deny-by-default for unmapped roles. | Dev | Build |
+| 9 | Write this design document. | Dev | Document |
 
-> **Phase 4.2 boundary**: Enum sync, compile-safe OIDC placeholder (middleware attaches but fails closed with 401), dependency strategy documented. No JWT verification, no JWKS fetch, no OIDC config structs in Rust.
+> **Boundary**: Enum sync, compile-safe OIDC placeholder (middleware attaches but fails closed with 401), dependency strategy documented. No JWT verification, no JWKS fetch, no OIDC config structs in Rust.
 >
-> **Phase 4.3 boundary**: `jsonwebtoken` v9 added; `OidcConfig`, `KeyMaterial`, and offline JWT validation middleware implemented; claim-to-role-to-scope mapping is deny-by-default; hermetic tests cover valid JWT, expired JWT, wrong issuer, wrong audience, unmapped role, missing scope, invalid signature, missing actor_id, and public endpoint bypass. No live JWKS fetch, no network I/O, no `reqwest` in `ferrum-gateway`.
+> **Offline validation boundary**: `jsonwebtoken` v9 added; `OidcConfig`, `KeyMaterial`, and offline JWT validation middleware implemented; claim-to-role-to-scope mapping is deny-by-default; hermetic tests cover valid JWT, expired JWT, wrong issuer, wrong audience, unmapped role, missing scope, invalid signature, missing actor_id, and public endpoint bypass. No live JWKS fetch, no network I/O, no `reqwest` in `ferrum-gateway`.
 >
-> **Phase 4.4 boundary**: `reqwest` added to `ferrum-gateway` with `rustls-tls`; live JWKS fetch with lazy cache (`OidcJwksCache`); RSA JWK support via `KeyMaterial::RsaJwk`; static keys take precedence over fetched JWKS; config loading from TOML (`[oidc]` section) and env vars (`FERRUMD_OIDC_*`); validation allows empty `static_keys` when `jwks_url` is present; fail-closed on fetch errors (returns 401); tests cover JWKS fetch, unavailable JWKS, and JWK parsing. No OIDC discovery, no login/callback/session/PKCE, no background refresh task. |
+> **Live JWKS boundary**: `reqwest` added to `ferrum-gateway` with `rustls-tls`; live JWKS fetch with lazy cache (`OidcJwksCache`); RSA JWK support via `KeyMaterial::RsaJwk`; static keys take precedence over fetched JWKS; config loading from TOML (`[oidc]` section) and env vars (`FERRUMD_OIDC_*`); validation allows empty `static_keys` when `jwks_url` is present; fail-closed on fetch errors (returns 401); tests cover JWKS fetch, unavailable JWKS, and JWK parsing. No OIDC discovery, no login/callback/session/PKCE, no background refresh task. |
 
 ### 8.2 Required tests
 
@@ -313,10 +298,9 @@ The recommended core JWT dependency for FerrumGate is **`jsonwebtoken`** (curren
 
 ## 10. Evidence Links
 
-- [`non-claims.md`](./non-claims.md)
 - [`scoped-tokens-rbac.md`](./scoped-tokens-rbac.md)
 - [`../PRODUCTION_NOTES.md`](../PRODUCTION_NOTES.md)
 
 ---
 
-*End of Phase 4.1/4.2 OIDC/JWT federation design document.*
+*End of OIDC/JWT federation design document.*

@@ -1,10 +1,5 @@
 # Tamper-Evident Audit Design
 
-## Status
-
-Phase 5.1 complete — covers linear hash chain, Merkle root per hourly UTC-aligned window, remote verification via API/CLI, and safe legacy entry handling.
-Phase 5.2 complete — covers Ed25519-signed checkpoints over Merkle roots per hourly window. External anchoring remains deferred.
-
 ## Scope
 
 - IN (implemented):
@@ -15,7 +10,7 @@ Phase 5.2 complete — covers Ed25519-signed checkpoints over Merkle roots per h
   - `ferrumctl audit verify` remote mode.
   - Legacy entries without hash fields are skipped during verification.
   - Recomputation check: stored `content_hash` is recomputed from canonical fields on verify.
-  - **Phase 5.1** Merkle root per hourly UTC-aligned window:
+  - Merkle root per hourly UTC-aligned window:
     - Domain-separated SHA-256 Merkle tree (`0x00` leaf prefix, `0x01` internal prefix).
     - Odd-count duplication at each level.
     - Deterministic ordering by `id ASC`.
@@ -23,7 +18,7 @@ Phase 5.2 complete — covers Ed25519-signed checkpoints over Merkle roots per h
     - Cached in `audit_merkle_roots` table (idempotent insert).
     - Gateway endpoints `GET /v1/admin/audit/merkle-verify?window_start=...` and `GET /v1/admin/audit/merkle-roots`.
     - CLI commands `ferrumctl admin audit merkle-verify` and `ferrumctl admin audit merkle-roots`.
-  - **Phase 5.2** Ed25519-signed checkpoint over Merkle root:
+  - Ed25519-signed checkpoint over Merkle root:
     - Canonical SHA-256 payload hash: alphabetically sorted compact JSON `{entry_count, merkle_root, signed_at, window_start}`.
     - Ed25519 signature over payload hash; Base64-encoded signature and public key stored.
     - SHA-256 fingerprint of public key stored as `signer_key_fingerprint`.
@@ -34,7 +29,7 @@ Phase 5.2 complete — covers Ed25519-signed checkpoints over Merkle roots per h
       - `GET /v1/admin/audit/checkpoints` — list checkpoints with cursor-based pagination.
     - CLI commands: `ferrumctl admin audit checkpoint-sign`, `checkpoint-verify`, `checkpoint-list`.
 
-- OUT / deferred:
+- Not yet implemented:
   - External anchoring (e.g., blockchain, timestamp authority).
   - WORM sink integration.
   - Local DB direct-verify mode in CLI (can be added later without server).
@@ -83,7 +78,7 @@ Existing audit log rows created before this feature have `content_hash = NULL` a
 
 ## Threats NOT Addressed
 
-- **Privileged attacker with full DB access**: can truncate the table, rebuild hashes, and produce a valid-looking chain. Mitigation requires external anchoring or WORM storage (deferred).
+- **Privileged attacker with full DB access**: can truncate the table, rebuild hashes, and produce a valid-looking chain. Mitigation requires external anchoring or WORM storage (not yet implemented).
 - **Clock manipulation**: `created_at` is part of the canonical hash; changing the timestamp changes the hash, which is detectable.
 - **Collision resistance**: SHA-256 is used; no custom collision resistance claim beyond the hash function itself.
 
@@ -152,15 +147,15 @@ Calls `GET /v1/admin/audit/checkpoints` and lists signed checkpoints with cursor
 - `GET /v1/admin/audit/checkpoints/{window_start}/verify` — Scope: `admin:audit`
 - `GET /v1/admin/audit/checkpoints?cursor=&limit=` — Scope: `admin:audit`
 
-## Future Work
+## Design Extensions
 
-1. ~~Merkle root per time window (e.g., hourly) for batch verification.~~ (Done in Phase 5.1)
-2. ~~Signed checkpoint with Ed25519 signature over Merkle root.~~ (Done in Phase 5.2)
+1. ~~Merkle root per time window (e.g., hourly) for batch verification.~~ (Done)
+2. ~~Signed checkpoint with Ed25519 signature over Merkle root.~~ (Done)
 3. `ferrumctl audit export` producing a portable verification bundle.
 4. Optional external anchoring to a transparency log or blockchain.
 5. Local direct-verify mode for operators with file-system access to the SQLite database.
 
-## Non-Claims
+## Notes
 
 - This design does **not** provide Byzantine-fault tolerance.
 - It does **not** replace a dedicated SIEM or compliance platform.

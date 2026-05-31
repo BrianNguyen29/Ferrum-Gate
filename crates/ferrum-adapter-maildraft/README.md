@@ -1,6 +1,9 @@
 # ferrum-adapter-maildraft
 
-Adapter skeleton.
+Mail-draft adapter for FerrumGate.
 
-Trạng thái:
-- placeholder để agent khác có thể hoàn thiện tiếp.
+## Responsibilities
+
+- Create, update, and delete email drafts
+- Capture previous content for rollback restore
+- Draft-only operations; no external sending

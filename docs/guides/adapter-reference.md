@@ -1,6 +1,5 @@
 # Adapter Reference
 
-> **Status**: Expanded. Adapter slices are implemented; not all surfaces are production-verified.
 > **Parent**: [`guides/README.md`](./README.md)
 
 ---
@@ -44,7 +43,7 @@ If the file already exists, prepare captures a snapshot. If verification fails o
 
 - Cross-filesystem moves may not be atomic.
 - Symlinks are not fully supported.
-- Permission/symlink edge cases are post-v1 scope.
+- Permission/symlink edge cases are out of scope.
 
 ### Risk class mapping
 
@@ -95,7 +94,7 @@ If verification fails, the adapter resets hard to the captured HEAD. This fails 
 
 ### Limitations
 
-- Remote push/pull/submodule are post-v1 scope.
+- Remote push/pull/submodule are out of scope.
 - GitBranchDelete verify fails closed if branch is currently checked out.
 
 ### Risk class mapping
@@ -139,7 +138,7 @@ If verification fails, the adapter resets hard to the captured HEAD. This fails 
 
 ### Limitations
 
-- Broader replay/idempotency is post-v1 scope.
+- Broader replay/idempotency is out of scope.
 - DELETE is not replay-backed.
 - External API availability is outside FerrumGate control; verify step may fail due to transient errors.
 
@@ -178,7 +177,7 @@ If verification fails, the adapter resets hard to the captured HEAD. This fails 
 
 ### Limitations
 
-- Not production-verified beyond local tests.
+
 - Complex schema changes may require manual recovery.
 - Concurrent write access to the same database file may cause `SQLITE_BUSY` errors.
 
@@ -223,7 +222,7 @@ If verification fails, the adapter resets hard to the captured HEAD. This fails 
 ### Limitations
 
 - Actual email sending is not supported by design (draft-only).
-- Integration with external mail providers (Gmail API, Outlook, etc.) is not implemented.
+
 
 ### Risk class mapping
 
@@ -253,12 +252,6 @@ Rollback is not guaranteed in all cases:
 - **Permission changes**: If file permissions change between prepare and compensate, restore may fail.
 
 In all cases, the gateway **fails closed**: if rollback cannot be verified, the execution is marked `SideEffectCompensated` or `SideEffectRolledBack` with an error annotation in provenance.
-
----
-
-## Status caveat
-
-> **production-ready = NO**. Adapter slices are verified locally. Target-host verification and broader surface completion are planned.
 
 ## Related docs
 

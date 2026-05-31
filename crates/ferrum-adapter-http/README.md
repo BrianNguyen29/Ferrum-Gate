@@ -1,6 +1,9 @@
 # ferrum-adapter-http
 
-Adapter skeleton.
+HTTP adapter for FerrumGate.
 
-Trạng thái:
-- placeholder để agent khác có thể hoàn thiện tiếp.
+## Responsibilities
+
+- HTTP mutation requests (POST/PUT/PATCH) with idempotency-key replay
+- Validate target URL, method, and expected status codes
+- Limited rollback via replay for supported methods

@@ -3,12 +3,11 @@
 > **⚠️ DISCLAIMER: LOCAL-SAFE SCAFFOLD ONLY**
 >
 > This Helm chart is a deployment scaffold for local evaluation and development.
-> - No production-ready claim.
+> - Local evaluation and development only.
 > - No HA, no managed PostgreSQL, no real domain configuration.
 > - Secrets are placeholder-only; the operator must supply real values.
-> - Temporary domain remains conditional-only; a real owned domain is required for any production-ready claim.
 >
-> See [`docs/guides/hosted-deployment.md`](../../docs/guides/hosted-deployment.md) and [`docs/security/non-claims.md`](../../docs/security/non-claims.md) for scope.
+> See [`docs/guides/hosted-deployment.md`](../../../docs/guides/hosted-deployment.md) for scope.
 
 ---
 
@@ -104,7 +103,7 @@ helm install ferrumgate ./deploy/helm/ferrumgate -f my-values.yaml
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `replicaCount` | `1` | Number of replicas. NOT HA-ready. |
+| `replicaCount` | `1` | Number of replicas. Not HA-ready. |
 | `image.repository` | `ferrumgate/ferrumd` | Container image. |
 | `image.tag` | `Chart appVersion` | Image tag. |
 | `service.type` | `ClusterIP` | Kubernetes service type. |
@@ -117,17 +116,16 @@ helm install ferrumgate ./deploy/helm/ferrumgate -f my-values.yaml
 | `ingress.enabled` | `false` | Enable Ingress. Requires real domain + TLS. |
 | `autoscaling.enabled` | `false` | HPA. Not validated. |
 
-## Non-claims
+## Notes
 
-- **NOT production-ready**: This chart packages ferrumd for K8s, but production readiness requires operator signoff, real domain, SLO evidence, and more.
-- **NOT HA**: Single replica by default; no StatefulSet or leader election.
-- **NOT multi-tenant**: Uses single-tenant configuration.
-- **NOT a substitute for secrets management**: In production, use External Secrets Operator, Vault, or cloud provider secret stores instead of inline `values.yaml` secrets.
+- **Local evaluation only**: This chart packages ferrumd for K8s local testing.
+- **Single replica by default**: no StatefulSet or leader election.
+- **Single-tenant configuration**.
+- For shared deployments, use External Secrets Operator, Vault, or cloud provider secret stores instead of inline `values.yaml` secrets.
 - **NOT validated on all K8s distributions**: Tested only with `kind` locally.
 
 ## Related docs
 
-- [`docs/guides/hosted-deployment.md`](../../docs/guides/hosted-deployment.md)
-- [`docs/security/non-claims.md`](../../docs/security/non-claims.md)
-- [`docs/PRODUCTION_NOTES.md`](../../docs/PRODUCTION_NOTES.md)
+- [`docs/guides/hosted-deployment.md`](../../../docs/guides/hosted-deployment.md)
+- [`docs/PRODUCTION_NOTES.md`](../../../docs/PRODUCTION_NOTES.md)
 - [`configs/ferrumgate.prod.toml`](../../configs/ferrumgate.prod.toml)

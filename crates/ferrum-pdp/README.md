@@ -1,10 +1,9 @@
 # ferrum-pdp
 
-Policy Decision Point crate.
+Policy Decision Point (PDP) for FerrumGate.
 
-Vai trò:
-- nhận intent + proposal + trust context
-- trả decision
-- giải thích decision bằng matched rules / warnings
+## Responsibilities
 
-v1 hiện mới là scaffold.
+- Receive intent, action proposal, and trust context
+- Return an authorization decision
+- Explain decisions via matched rules and warnings

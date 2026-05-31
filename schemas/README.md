@@ -1,6 +1,6 @@
 # Schemas
 
-Thư mục này chứa JSON Schema cho các object cốt lõi của FerrumGate.
+This directory contains JSON Schema definitions for FerrumGate core objects.
 
 ## Files
 
@@ -14,6 +14,6 @@ Thư mục này chứa JSON Schema cho các object cốt lõi của FerrumGate.
 
 ## Notes
 
-- Các schema này được thiết kế để map sang `ferrum-proto`.
-- Nên dùng validation ở boundary request, persistence và replay.
-- Một số invariant liên object được mô tả trong `contracts/` và `docs/`, không thể encode hết ở JSON Schema.
+- These schemas are designed to map to `ferrum-proto` Rust types.
+- Validate at request boundaries, persistence layers, and replay paths.
+- Some cross-object invariants are documented in `contracts/` and `docs/` and cannot be fully encoded in JSON Schema.

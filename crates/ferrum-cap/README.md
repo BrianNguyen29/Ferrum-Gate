@@ -1,10 +1,9 @@
 # ferrum-cap
 
-Capability service crate.
+Capability service for FerrumGate.
 
-Vai trò:
-- mint capability leases
-- validate TTL / single-use / scope subset
-- revoke capability
+## Responsibilities
 
-v1 hiện mới có in-memory service placeholder.
+- Mint capability leases
+- Validate TTL, single-use constraints, and scope subsets
+- Revoke capabilities

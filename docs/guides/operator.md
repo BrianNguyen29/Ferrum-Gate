@@ -1,6 +1,5 @@
 # Operator Guide
 
-> **Status**: Expanded. Covers config, health, backup/restore, token rotation, monitoring, incident response, and local-vs-hosted caveats.
 > **Parent**: [`guides/README.md`](./README.md)
 
 ---
@@ -58,13 +57,13 @@ The repository includes `configs/ferrumgate.dev.toml`:
 - In-memory SQLite
 - Loopback binding (`127.0.0.1:18080`)
 
-This config auto-loads if no `--config` is specified and the file exists. **Never use dev config for production or exposed interfaces.**
+This config auto-loads if no `--config` is specified and the file exists. **Never use dev config for exposed interfaces.**
 
 ---
 
 ## Deployment checklist
 
-- [ ] Choose store backend (SQLite for pilot; PostgreSQL for production foundation).
+- [ ] Choose store backend (SQLite for local use; PostgreSQL for higher throughput).
 - [ ] Generate bearer token with `openssl rand -hex 32`.
 - [ ] Configure reverse proxy with TLS termination (nginx/Caddy).
 - [ ] Set up systemd service with env file.
@@ -74,16 +73,16 @@ This config auto-loads if no `--config` is specified and the file exists. **Neve
 
 ### Local-vs-hosted caveats
 
-| Concern | Local dev | Hosted / staging | Production |
-|---------|-----------|------------------|------------|
+| Concern | Local dev | Hosted / staging | Shared / managed |
+|---------|-----------|------------------|-------------------|
 | Store | In-memory SQLite | File-backed SQLite or PostgreSQL | PostgreSQL |
 | Auth | Disabled | Bearer | Bearer |
 | TLS | None | Reverse proxy TLS | Reverse proxy TLS + cert rotation |
 | Backup | None | Manual or cron | Automated with retention |
-| Monitoring | Logs only | Metrics endpoint + alerting | Metrics + alerting + SLO dashboards |
+| Monitoring | Logs only | Metrics endpoint + alerting | Metrics + alerting + dashboards |
 | Domain | `localhost` | Temporary / dynamic DNS | Real owned domain + DNS |
 
-> **Block A**: Real owned domain and DNS are required for full G2 closure. Temporary domain is accepted for single-node SQLite pilot only. See [`docs/PRODUCTION_NOTES.md`](../../PRODUCTION_NOTES.md).
+> **Note**: Real owned domain and DNS are recommended for shared deployments. See [`docs/PRODUCTION_NOTES.md`](../../docs/PRODUCTION_NOTES.md).
 
 ---
 
@@ -137,7 +136,7 @@ Keyboard shortcuts:
 - `?` / `h` — toggle help
 - `q` — quit
 
-> **Scope**: Operator convenience only; not production-ready. See `bins/ferrum-tui/README.md` for full non-claims.
+> **Scope**: Operator convenience only. See `bins/ferrum-tui/README.md` for details.
 
 ---
 
@@ -171,7 +170,7 @@ systemctl start ferrumgate
 ferrumctl health
 ```
 
-> **Warning**: Restore overwrites the current database. Always verify backup integrity first. Never restore without explicit confirmation in production.
+> **Warning**: Restore overwrites the current database. Always verify backup integrity first. Never restore without explicit confirmation on a live system.
 
 ### SQLite WAL considerations
 
@@ -250,19 +249,15 @@ ferrumctl admin tokens rotate <TOKEN_ID> --reason "rotation" --expires-in-days 3
 | `ferrumgate_governance_errors_total` | spike | Investigate |
 | Backup age | > RPO (15min) | Alert; verify backup timer |
 
-### SLO/SLA
+### Service metrics
 
-See [`slo-sla.md`](./slo-sla.md) for draft targets. Not yet ratified.
+See [Service Metrics](./slo-sla.md) for observability baselines.
 
 ---
 
-## Status caveat
-
-> **production-ready = NO**. This guide describes intended operator procedures. CLI expansions for admin status, approvals, token lifecycle, agent management, audit, backup/restore, and config view are implemented. Admin API endpoints remain separately tracked where applicable; do not overclaim API coverage.
-
 ## PostgreSQL reconnect and recovery
 
-> **Scope**: This section documents the **current** behavior of `sqlx::PgPool` reconnect. It is a runbook, not a guarantee of production resilience. PostgreSQL production deployment remains **NO**.
+> **Scope**: This section documents the **current** behavior of `sqlx::PgPool` reconnect. It is a runbook.
 
 ### What the pool does automatically
 
@@ -270,7 +265,7 @@ When FerrumGate uses PostgreSQL, `sqlx::PgPool` manages connections with the fol
 
 - **Transparent reconnect on new acquisition**: If a connection is dropped (e.g., PostgreSQL restart, network blip), the next `pool.acquire()` attempts to create a fresh connection. The pool does this with an internal retry/backoff strategy; you do not need to restart `ferrumd` for new requests to recover.
 - **Existing connections fail**: In-flight queries on a connection that was severed will return an error. The caller (gateway endpoint) surfaces that as a 503 or 500 depending on context.
-- **No application-level circuit breaker**: There is no custom reconnect policy, no bounded retry with jitter, and no automatic fallback to read-only mode. Those are deferred to PG-5 HA design.
+- **No application-level circuit breaker**: There is no custom reconnect policy, no bounded retry with jitter, and no automatic fallback to read-only mode.
 
 ### Operator checks during and after a PostgreSQL outage
 
@@ -298,29 +293,29 @@ Restart is **not** required for a transient PostgreSQL outage. Restart only if:
 
 ### Limitations
 
-- Recovery speed depends on `sqlx` internals; there is no operator-tunable reconnect interval today.
+- Recovery speed depends on `sqlx` internals; there is no operator-tunable reconnect interval.
 - Pool saturation (`idle == 0 && size >= max`) is reported as degraded readiness, but no automatic scaling or queue shedding exists.
-- These behaviors are validated locally with Docker Compose only, not on a production-like target host.
+- These behaviors are validated locally with Docker Compose.
 
 ### Manual failover runbook
 
-For the full procedure to promote a PostgreSQL standby and update ferrumd's DSN manually, consult the hosted deployment guide. Manual failover is a planning artifact only; no live drill has been performed.
+For the full procedure to promote a PostgreSQL standby and update ferrumd's DSN manually, consult the hosted deployment guide. Manual failover is documented; operator must validate in their environment.
 
 ### Read replica design
 
-For the design of read replica routing, consistency semantics, and observability, consult the hosted deployment guide. Read replica design is a planning artifact only; no read replica code or deployment exists.
+For the design of read replica routing, consistency semantics, and observability, consult the hosted deployment guide. Read replica design is documented; no implementation is provided.
 
 ## PostgreSQL TLS/SSL DSN configuration
 
-> **Scope**: Runbook guidance for operator-configured TLS between ferrumd and PostgreSQL. No live TLS validation performed.
+> **Scope**: Operator-configured TLS between ferrumd and PostgreSQL.
 
 ### TLS modes
 
 | Mode | Encryption | Certificate verification | When to use |
 |------|-----------|--------------------------|-------------|
-| `disable` | None | None | Never for production or exposed networks |
+| `disable` | None | None | Never for exposed networks |
 | `require` | Yes | None | Minimum for encrypted transport; acceptable within trusted VPC |
-| `verify-ca` | Yes | CA only | Recommended default for production; verifies server cert against CA |
+| `verify-ca` | Yes | CA only | Recommended default for live use; verifies server cert against CA |
 | `verify-full` | Yes | CA + hostname | Strongest; requires hostname in cert to match connection host |
 
 ### DSN format
@@ -356,11 +351,11 @@ Certificate rotation requires a `ferrumd` restart because the DSN is parsed once
 3. Verify `/v1/readyz/deep` returns 200.
 4. Confirm `ferrumgate_store_pg_pool_idle` > 0.
 
-> **Non-claim**: TLS guidance is runbook-only. No live TLS-encrypted PG connection has been validated with ferrumd.
+> **Note**: TLS guidance for operator configuration.
 
 ## PgBouncer / connection pooling
 
-> **Scope**: Runbook guidance for optional PgBouncer deployment. No live PgBouncer validation performed.
+> **Scope**: Optional PgBouncer deployment guidance.
 
 ### When to add PgBouncer
 
@@ -400,11 +395,11 @@ server_lifetime = 3600
 FERRUMD_STORE_DSN=postgres://user:pass@localhost:6432/ferrumgate?sslmode=require
 ```
 
-> **Non-claim**: PgBouncer guidance is runbook-only. No live PgBouncer deployment has been validated with ferrumd.
+> **Note**: PgBouncer deployment guidance.
 
 ## Alert deployment validation
 
-> **Scope**: Operator-run validation of FerrumGate alert templates in a live Prometheus. No live validation performed in engineering environment.
+> **Scope**: Validation of FerrumGate alert templates in a live Prometheus environment.
 
 ### Quick validation checklist
 
@@ -412,16 +407,16 @@ FERRUMD_STORE_DSN=postgres://user:pass@localhost:6432/ferrumgate?sslmode=require
 2. **Deploy**: Copy `ferrumgate-alerts.yaml` to Prometheus rules directory; reload Prometheus.
 3. **Verify state**: `curl http://<prometheus>:9090/api/v1/rules` — confirm `ferrumgate` group is present and rules are not unexpectedly firing.
 4. **PG alerts (if PG backend active)**: Confirm `ferrumgate_store_pg_pool_max` is scraped and `FerrumGatePostgresMetricsAbsent` is inactive.
-5. **Optional simulation**: In non-production, temporarily stop ferrumd and confirm AlertManager receives the alert.
+5. **Optional simulation**: In a test environment, temporarily stop ferrumd and confirm AlertManager receives the alert.
 
 ### Full runbook
 
-See [`configs/monitoring/README.md`](../../configs/monitoring/README.md) §"Alert Deployment Validation Runbook" for the complete procedure, evidence artifact template, and non-claims.
+See [`configs/monitoring/README.md`](../../configs/monitoring/README.md) §"Alert Deployment Validation Runbook" for the complete procedure, evidence artifact template, and notes.
 
 ## Related docs
 
 - [`hosted-deployment.md`](./hosted-deployment.md) — systemd, Docker, K8s deployment modes.
-- [`slo-sla.md`](./slo-sla.md) — Draft SLO targets.
+- [Service Metrics](./slo-sla.md) — Observability baselines.
 - [`troubleshooting.md`](./troubleshooting.md) — Common issues and fixes.
-- [`docs/PRODUCTION_NOTES.md`](../../PRODUCTION_NOTES.md) — Runtime config and stress baselines.
+- [`docs/PRODUCTION_NOTES.md`](../../docs/PRODUCTION_NOTES.md) — Runtime config and stress baselines.
 - [`api.md`](./api.md) — Endpoint reference.

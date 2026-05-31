@@ -5,10 +5,7 @@ template = "index.html"
 
 FerrumGate is an **intent-scoped execution gateway** — an audit and rollback layer for agent and operator actions. Before any side effect occurs, declare intent, get policy evaluation, obtain a time-bound capability, and leave a complete provenance trail.
 
-## Status
-
-> **RC-ready / conditional. NOT production-ready.**
-> Suitable for local evaluation and single-node pilot only.
+## Capabilities
 
 - Core gateway (intent → capability → execution → provenance): implemented and locally validated
 - Adapter slices (fs, git, http, sqlite, maildraft): implemented; local tests pass
@@ -16,12 +13,6 @@ FerrumGate is an **intent-scoped execution gateway** — an audit and rollback l
 - MCP server integration: implemented and locally validated
 - Backup/restore (ferrumctl): implemented; local and target-host drills passed
 - Token rotation: target-host validated
-
-## Blockers
-
-- **DOC-1 fresh-user test**: NOT performed
-- **Block A (real owned domain/DNS)**: WAIVED/CONDITIONAL for pilot
-- **HA / multi-node**: not implemented
 
 ## Quick links
 
@@ -34,7 +25,7 @@ FerrumGate is an **intent-scoped execution gateway** — an audit and rollback l
 - [MCP integration](@/guides/mcp-integration.md) — Server setup, client config, tools
 - [Hosted deployment](@/guides/hosted-deployment.md) — Docker Compose, systemd, PostgreSQL
 - [Security model](@/guides/security-model.md) — Bearer auth, scoped tokens, RBAC
-- [SLO / SLA](@/guides/slo-sla.md) — Draft targets, validation runbook, metrics
+- [Service metrics](@/guides/slo-sla.md) — Observability baselines, validation runbook, metrics
 - [Troubleshooting](@/guides/troubleshooting.md) — Common issues and fixes
 
 ## Site scaffold note

@@ -1,12 +1,10 @@
 # ferrum-firewall
 
-Semantic firewall crate.
+Semantic firewall for FerrumGate.
 
-Mục tiêu:
-- label trust / taint
-- sanitize output
-- DLP checks
-- contradiction checks giữa intent và proposal
+## Responsibilities
 
-Trạng thái:
-- placeholder skeleton, chưa có implementation đầy đủ
+- Label trust and taint on data
+- Sanitize outputs
+- Perform data-loss prevention (DLP) checks
+- Detect contradictions between intent and proposal

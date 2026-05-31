@@ -1,6 +1,5 @@
 # FerrumGate Concepts Guide
 
-> **Status**: Expanded. Core concepts explained with lineage chain and architecture context.
 > **Parent**: [`guides/README.md`](./README.md)
 
 ---
@@ -131,16 +130,16 @@ An implementation of a specific execution domain:
 
 Adapters are responsible for prepare, execute, verify, and compensate steps within their domain. Each adapter declares its default rollback class per operation.
 
-### Risk tiers
+### Risk levels
 
-| Tier | Name | Trigger |
-|------|------|---------|
+| Level | Name | Trigger |
+|-------|------|---------|
 | R0 | Safe | Read-only, no side effects |
 | R1 | Reversible | Side effects with automatic compensation |
 | R2 | Recoverable | Side effects with manual recovery possible |
 | R3 | Critical | Destructive; requires approval |
 
-Risk tier and rollback class are related but distinct: rollback class is an operational classification, while risk tier is the policy-facing label that triggers approval gates.
+Risk level and rollback class are related but distinct: rollback class is an operational classification, while risk level is the policy-facing label that triggers approval gates.
 
 ---
 
@@ -151,20 +150,14 @@ Risk tier and rollback class are related but distinct: rollback class is an oper
 │  Intent │────→│ Proposal │────→│Capability│────→│ Execution│
 │ Compile │     │ Evaluate │     │  Mint   │     │ Prepare  │
 └─────────┘     └──────────┘     └─────────┘     └──────────┘
-                                                     │
-                     ┌──────────┐                   ▼
-                     │ Provenance│←────────────── Execute
-                     │  /Lineage │←────────────── Verify
-                     └──────────┘←────────────── Evaluate Outcome
+                                                      │
+                      ┌──────────┐                   ▼
+                      │ Provenance│←────────────── Execute
+                      │  /Lineage │←────────────── Verify
+                      └──────────┘←────────────── Evaluate Outcome
 ```
 
 All execution paths pass through the gateway. No adapter is invoked directly without a capability.
-
----
-
-## Status caveat
-
-> **production-ready = NO**. These concepts describe the intended governance model. Not all features are fully hardened for unbounded production use.
 
 ## Related docs
 

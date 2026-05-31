@@ -1,16 +1,18 @@
 # ferrum-proto
 
-Source-of-truth Rust types cho FerrumGate.
+Source-of-truth Rust types for FerrumGate.
 
-Bao gồm:
-- strong ids
-- common enums
-- intent types
-- capability types
-- provenance types
-- rollback types
+## Includes
+
+- Strong identifiers
+- Common enums
+- Intent types
+- Capability types
+- Provenance types
+- Rollback types
 - API request/response types
 
-Nguyên tắc:
-- kiểu dữ liệu phải map được sang `schemas/` và `openapi/`
-- mọi thay đổi shape phải update cả docs/contracts
+## Principles
+
+- Types must map to `schemas/` and `openapi/` definitions.
+- Any shape change must be reflected in documentation and contracts.

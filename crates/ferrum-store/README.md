@@ -1,13 +1,11 @@
 # ferrum-store
 
-Persistence boundary cho FerrumGate.
+Persistence boundary for FerrumGate.
 
-Muc tiec:
-- luu intents
-- luu capabilities
-- luu executions
-- luu rollback contracts
-- luu provenance events
+## Responsibilities
 
-Trang thai:
-- Phase B: concrete foundation (repo traits, error type, sqlite module, migration)
+- Persist intents
+- Persist capabilities
+- Persist executions
+- Persist rollback contracts
+- Persist provenance events

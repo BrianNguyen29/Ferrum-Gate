@@ -2,9 +2,11 @@
 
 Local git repository rollback adapter primitive.
 
-## Status
+## Responsibilities
 
-Initial implementation slice complete. Provides local git ref capture and reset primitives.
+- Capture current HEAD SHA for rollback reference
+- Hard reset repository to captured reference
+- Verify HEAD matches expected reference
 
 ## Supported Operations
 
@@ -23,7 +25,7 @@ Initial implementation slice complete. Provides local git ref capture and reset 
 - `after_ref`: SHA captured at execute time (when payload provides it)
 - `current_ref`: SHA of current HEAD at verify/rollback time
 
-## Limitations (This Slice)
+## Limitations
 
 - No gateway/runtime wiring
 - No ferrumd registration

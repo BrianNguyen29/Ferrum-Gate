@@ -1,24 +1,14 @@
 # Private MCP Deployment Guide
 
-> **Status**: Phase 6.6 documentation. Private deployment reference for `ferrum-mcp-server` with Streamable HTTP transport. Not a full production operations runbook.
 > **Parent**: [`guides/README.md`](../guides/README.md)
 
 ---
 
-## 1. Status & scope
+## 1. Scope
 
 This guide documents how to deploy FerrumGate's MCP server privately behind a tunnel or reverse proxy so that remote MCP clients can reach it over HTTPS without exposing it to the public internet.
 
-| Boundary | Value |
-|----------|-------|
-| `production-ready` | **NO** |
-| `Tier 2` | **NOT COMPLETE** |
-| `full G2` | **NOT COMPLETE** |
-| Real owned domain / public endpoint | **MISSING** — examples use placeholder hostnames |
-| `HA-4` unattended automated failover | **NOT COMPLETE** |
-| Sustained SLO window | **NOT COMPLETE** |
-
-This guide is a **reference**, not a claim that FerrumGate is production-ready or fully certified for any external MCP client.
+This guide is a **reference** for integrating FerrumGate's MCP server with external clients.
 
 ---
 
@@ -64,7 +54,7 @@ Run `ferrum-mcp-server` in HTTP mode:
 
 **Always bind to a local interface** (`127.0.0.1` or a tailnet address). Do not bind to `0.0.0.0` unless a reverse proxy or firewall strictly limits access, and never bind to `0.0.0.0` without TLS.
 
-See [`docs/mcp/streamable-http-mcp.md`](./streamable-http-mcp.md) for the full Phase 6.1 skeleton details.
+See [`docs/mcp/streamable-http-mcp.md`](./streamable-http-mcp.md) for the full HTTP skeleton details.
 
 ---
 
@@ -103,7 +93,7 @@ ferrumgate.example.com {
 }
 ```
 
-> **Block A context**: A real owned domain is still required for production-ready status. Temporary domain (e.g., nip.io) may be used for rehearsal only. See [`docs/security/non-claims.md`](../security/non-claims.md).
+> **Note**: A real owned domain is recommended for deployed instances. Temporary domain (e.g., nip.io) may be used for rehearsal only.
 
 ### 5.2 Cloudflare Tunnel
 
@@ -144,7 +134,7 @@ Restrict Funnel usage via ACL node attributes. See [`docs/guides/secure-mcp-tunn
 ### 5.4 TLS at the edge
 
 - Terminate TLS at the tunnel edge or reverse proxy.
-- `ferrum-mcp-server` does not terminate TLS in Phase 6.1–6.6.
+- `ferrum-mcp-server` does not terminate TLS.
 - Use valid certificates (Let's Encrypt, managed provider, or Tailscale's internal certs) for public or tailnet endpoints.
 
 ---
@@ -218,53 +208,42 @@ This guide operates at **B2: Agent/MCP Client → FerrumGate MCP Server** per [`
 | 8 | Validate JSON-RPC request structure at the gateway layer before execution. |
 | 9 | Keep `ferrum-mcp-server` and `ferrumd` on the same host or trusted network; B3 is same-process/internal bridge today. |
 
-See [`docs/security/secure-mcp-tunnel-review.md`](../security/secure-mcp-tunnel-review.md) for the full Phase 3.5 security review checklist.
+See [`docs/security/secure-mcp-tunnel-review.md`](../security/secure-mcp-tunnel-review.md) for the full security review checklist.
 
 ---
 
-## 8. Deferred items
+## 8. Limitations
 
-The following are explicitly **not** covered by this guide and remain deferred:
+The following are explicitly **not** covered by this guide:
 
-| Item | Target phase | Reason |
-|------|--------------|--------|
-| SSE streaming (`GET /mcp`) | Phase 6.2+ | Returns 405 today; full SSE/multiplexing not implemented |
-| Session management / `Mcp-Session-Id` | Phase 6.2+ | No session store |
-| Resumability with event ID tracking | Phase 6.2+ | No replay buffer |
-| `MCP-Protocol-Version` header enforcement | Phase 6.2+ | Not enforced in skeleton |
-| DELETE `/mcp` session termination | Phase 6.2+ | No session concept yet |
-| OAuth / auth middleware specifically for MCP HTTP transport | Phase 6.2+ | Gateway bearer/scoped token auth is used instead |
-| mTLS service-to-service | Phase 6.7 | Transport hardening; tunnel integration covers baseline |
-
-Do not mark 6.2 or 6.7 complete based on this guide.
+| Item | Reason |
+|------|--------|
+| SSE streaming (`GET /mcp`) | Returns 405 today; full SSE/multiplexing not provided |
+| Session management / `Mcp-Session-Id` | No session store |
+| Resumability with event ID tracking | No replay buffer |
+| `MCP-Protocol-Version` header enforcement | Not enforced in skeleton |
+| DELETE `/mcp` session termination | No session concept yet |
+| OAuth / auth middleware specifically for MCP HTTP transport | Gateway bearer/scoped token auth is used instead |
+| mTLS service-to-service | Transport hardening; tunnel integration covers baseline |
 
 ---
 
-## 9. Non-claims
+## 9. Notes
 
-| Non-claim | Status |
-|-----------|--------|
-| `production-ready` | **NO** |
-| `Tier 2` | **NOT COMPLETE** |
-| `full G2` | **NOT COMPLETE** |
-| Real owned domain / public endpoint | **MISSING** |
-| `HA-4` unattended automated failover | **NOT COMPLETE** |
-| Sustained SLO window | **NOT COMPLETE** |
+| Note | Value |
+|------|-------|
 | Certified compatible with any external MCP client | **NO** |
-| SSE / session / resumability support | **NOT IMPLEMENTED** |
-| OAuth / mTLS for MCP transport | **NOT IMPLEMENTED** |
-| `MCP-Protocol-Version` header enforcement | **NOT IMPLEMENTED** |
-
-See [`docs/security/non-claims.md`](../security/non-claims.md) for the canonical non-claims and readiness boundary document.
+| SSE / session / resumability support | **Not provided** |
+| OAuth / mTLS for MCP transport | **Not provided** |
+| `MCP-Protocol-Version` header enforcement | **Not provided** |
 
 ---
 
 ## 10. Related docs
 
-- [`docs/mcp/streamable-http-mcp.md`](./streamable-http-mcp.md) — Phase 6.1 HTTP skeleton, routes, CLI, deferred items, non-claims.
+- [`docs/mcp/streamable-http-mcp.md`](./streamable-http-mcp.md) — HTTP skeleton, routes, CLI.
 - [`docs/guides/secure-mcp-tunnel-integration.md`](../guides/secure-mcp-tunnel-integration.md) — Reverse proxy/tunnel patterns, Caddy/Cloudflare/Tailscale examples, tunnel != auth.
 - [`docs/guides/mcp-integration.md`](../guides/mcp-integration.md) — MCP client config and token warning pattern.
-- [`docs/security/non-claims.md`](../security/non-claims.md) — Canonical non-claim vocabulary.
 - [`docs/security/threat-model-stride.md`](../security/threat-model-stride.md) — MCP Client → MCP Server trust boundary (B2).
 - [`docs/guides/security-model.md`](../guides/security-model.md) — Auth/token config and scope list.
 - [`docs/guides/operator.md`](../guides/operator.md) — Token rotation, deployment checklist, and incident response.
@@ -273,4 +252,4 @@ See [`docs/security/non-claims.md`](../security/non-claims.md) for the canonical
 
 ---
 
-*End of Phase 6.6 private MCP deployment guide.*
+*End of private MCP deployment guide.*

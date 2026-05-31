@@ -1,6 +1,5 @@
 # Secure MCP Tunnel Integration Guide
 
-> **Status**: Phase 3.1–3.4 documentation. Topology, principles, and deployment examples for FerrumGate behind third-party secure tunnels.
 > **Parent**: [`guides/README.md`](../guides/README.md)
 
 ---
@@ -46,7 +45,7 @@ What FerrumGate still provides:
 
 ---
 
-## 3. OpenAI / Generic Remote MCP Example (Phase 3.2)
+## 3. OpenAI / Generic Remote MCP Example
 
 > **Caveat**: No dedicated "OpenAI Secure MCP Tunnel" product documentation was found during research. OpenAI's documentation describes remote MCP servers over HTTPS/SSE with OAuth. The example below is therefore a **generic MCP-over-HTTPS remote server pattern** that works with any compatible client, including OpenAI's remote MCP server model, and is not specific to an OpenAI tunnel product.
 
@@ -68,7 +67,7 @@ ferrumgate.example.com {
 }
 ```
 
-> **Block A context**: A real owned domain is still required for production-ready status. Temporary domain (e.g., nip.io) may be used for rehearsal only. See [`docs/security/non-claims.md`](../security/non-claims.md).
+> **Note**: A real owned domain is recommended for deployed instances. Temporary domain (e.g., nip.io) may be used for rehearsal only.
 
 ### 3.4 Client configuration
 
@@ -91,11 +90,11 @@ Remote MCP clients that speak HTTP/SSE should point to the public HTTPS endpoint
 
 ### 3.5 stdio-to-HTTP bridge note
 
-FerrumGate's MCP server currently uses **stdio** transport. To expose it over HTTPS you may need an HTTP-to-stdio bridge (e.g., a small reverse gateway) or wait for **Streamable HTTP MCP** support (Phase 6). This guide documents the tunnel layer only; the MCP transport upgrade is tracked separately.
+FerrumGate's MCP server currently uses **stdio** transport. To expose it over HTTPS you may need an HTTP-to-stdio bridge (e.g., a small reverse gateway) or wait for **Streamable HTTP MCP** support. This guide documents the tunnel layer only; the MCP transport upgrade is tracked separately.
 
 ---
 
-## 4. Cloudflare Tunnel Example (Phase 3.3)
+## 4. Cloudflare Tunnel Example
 
 ### 4.1 Why Cloudflare Tunnel
 
@@ -139,7 +138,7 @@ Add an **Access application** for `ferrumgate.example.com`:
 - Restrict by email domain or identity provider.
 - Pass validated headers to FerrumGate if needed (FerrumGate still requires its own `Authorization` token).
 
-> **Non-claim**: FerrumGate does not validate Cloudflare Access JWTs natively. The edge must enforce identity; FerrumGate enforces its own bearer/scoped token on every request.
+> **Note**: FerrumGate does not validate Cloudflare Access JWTs natively. The edge must enforce identity; FerrumGate enforces its own bearer/scoped token on every request.
 
 ### 4.5 FerrumGate binding
 
@@ -158,7 +157,7 @@ FERRUMD_BIND_ADDR=127.0.0.1:8080
 
 ---
 
-## 5. Tailscale Funnel / Serve Example (Phase 3.4)
+## 5. Tailscale Funnel / Serve Example
 
 ### 5.1 Why Tailscale
 
@@ -207,7 +206,7 @@ Restrict which nodes can use Funnel via Tailscale ACL node attributes:
 
 Only nodes tagged `tag:ferrumgate` may open a Funnel.
 
-> **Non-claim**: FerrumGate does not manage Tailscale ACLs. The operator must configure Tailscale policy independently.
+> **Note**: FerrumGate does not manage Tailscale ACLs. The operator must configure Tailscale policy independently.
 
 ### 5.6 FerrumGate binding
 
@@ -217,7 +216,7 @@ Same as Cloudflare: bind to `127.0.0.1:8080` so FerrumGate is not reachable exce
 
 ## 6. Security checklist summary
 
-See [`docs/security/secure-mcp-tunnel-review.md`](../security/secure-mcp-tunnel-review.md) for the full Phase 3.5 security review checklist.
+See [`docs/security/secure-mcp-tunnel-review.md`](../security/secure-mcp-tunnel-review.md) for the full security review checklist.
 
 Key points:
 
@@ -233,21 +232,16 @@ Key points:
 
 ---
 
-## 7. Non-claims
+## 7. Notes
 
-| Non-claim | Status |
-|-----------|--------|
-| **production-ready** | **NO** |
-| **Tier 2** | **NOT COMPLETE** |
+| Note | Value |
+|------|-------|
 | **FerrumGate provides a tunnel service** | **NO** — integration guide only |
 | **Cloudflare / Tailscale / OpenAI configuration validated by FerrumGate** | **NO** — operator-owned; examples are illustrative |
-| **Full G2** | **NOT COMPLETE** |
-| **HA-4 unattended automated failover** | **NOT COMPLETE** |
 
 ## 8. Related docs
 
-- [`docs/security/secure-mcp-tunnel-review.md`](../security/secure-mcp-tunnel-review.md) — Phase 3.5 security review checklist.
+- [`docs/security/secure-mcp-tunnel-review.md`](../security/secure-mcp-tunnel-review.md) — Security review checklist.
 - [`docs/guides/mcp-integration.md`](./mcp-integration.md) — Local MCP setup and stdio transport.
-- [`docs/security/non-claims.md`](../security/non-claims.md) — Canonical non-claims and readiness boundaries.
 - [`docs/security/threat-model-stride.md`](../security/threat-model-stride.md) — Trust boundaries and STRIDE mapping.
-- [`docs/PRODUCTION_NOTES.md`](../PRODUCTION_NOTES.md) — Production notes.
+- [`docs/PRODUCTION_NOTES.md`](../PRODUCTION_NOTES.md) — Runtime configuration notes.

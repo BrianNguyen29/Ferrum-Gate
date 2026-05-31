@@ -1,6 +1,5 @@
 # Policy Authoring Guide
 
-> **Status**: Templates validated. 7 copy-pasteable policy examples. `validate`, `simulate`, `apply`, `diff`, `rollback`, and `versions` are implemented.
 > **Parent**: [`guides/README.md`](./README.md)
 
 ---
@@ -164,7 +163,7 @@ rules:
 
 **Purpose**: Automatically escalate any R3 (irreversible, high-consequence) action to a human approval gate.
 
-**When to use**: Production workloads where lower-risk operations are trusted but R3 actions must not execute without sign-off.
+**When to use**: Deployed workloads where lower-risk operations are trusted but R3 actions must not execute without approval.
 
 **Caveats**: Requires an active approval workflow and operator presence. R3 actions will block until approved or rejected. Do not use if the system must run unattended.
 
@@ -228,7 +227,7 @@ rules:
 
 **When to use**: Environments where every intent must declare its resource scope. Prevents open-ended operations.
 
-**Caveats**: R0 native-reversible actions bypass this check. Operators must ensure intents declare scopes correctly. This is the closest available equivalent to tenant scoping; true multi-tenant filtering requires Phase 4 tenant model work.
+**Caveats**: R0 native-reversible actions bypass this check. Operators must ensure intents declare scopes correctly. This is the closest available equivalent to tenant scoping; true multi-tenant filtering requires additional schema work.
 
 ```yaml
 version: "1.0.0"
@@ -294,10 +293,6 @@ rules:
 - **Deny mutations**: Match `action_is_mutation` with decision `Deny`. R0 actions bypass this matcher.
 - **Scope-restricted access**: Use `scope_mismatch` to enforce declared scopes. R0 actions bypass.
 - **External API approval**: Match `action_type_equals` with `ExternalApiCall`. Decision: `RequireApproval`.
-
-## Status caveat
-
-> **production-ready = NO**. Policy validation is implemented locally. Simulation, apply, diff, rollback, and versions require a running server. The matcher set is limited to the types listed above; advanced conditionals (`action_in`, `target_not_in`, `tenant_id`, `rollback_prepared`) are not yet implemented.
 
 ## Related docs
 

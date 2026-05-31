@@ -1,20 +1,11 @@
 # mTLS Service-to-Service Design
 
-> **Status**: Phase 6.7a DESIGN COMPLETE, IMPLEMENTATION DEFERRED
 > **Owner**: Security / Operator
-> **Parent**: [`security/non-claims.md`](./non-claims.md)
+> **Parent**: [`guides/README.md`](../guides/README.md)
 
 ---
 
-## 1. Status and Non-Claims
-
-| Boundary | Value |
-|----------|-------|
-| `production-ready` | **NO** |
-| `Tier 2` | **NOT COMPLETE** |
-| `full G2` | **NOT COMPLETE** |
-| Native mTLS in ferrumd / ferrum-mcp-server | **NOT IMPLEMENTED** — deferred to Phase 6.7b |
-| mTLS operator ownership | **Operator-owned** — edge proxy or tunnel |
+## 1. Scope
 
 This document is a **design-only artifact**. No native mTLS code has been added to `ferrumd`, `ferrum-mcp-server`, or any workspace crate. No new Rust dependencies (e.g., `rustls`, `native-tls`) have been introduced.
 
@@ -27,7 +18,7 @@ mTLS is treated as **optional transport-layer hardening**, not a replacement for
 mTLS benefits the following trust boundaries from [`docs/security/threat-model-stride.md`](./threat-model-stride.md):
 
 | Boundary | Benefit | Rationale |
-|----------|---------|-----------|
+|----------|---------|---------|
 | **B1** Human/Operator → Gateway | Yes | mTLS at edge proxy authenticates client certificates from operators/admin tools, adding transport-layer identity before bearer-token validation. |
 | **B2** Agent/MCP Client → MCP Server | Yes | mTLS at tunnel edge authenticates the remote MCP client machine/agent identity before request reaches `ferrum-mcp-server`. |
 | **B5** Gateway → Store | Yes | PostgreSQL native TLS/mTLS (operator-configured) encrypts and optionally authenticates the database connection. |
@@ -42,7 +33,7 @@ mTLS benefits the following trust boundaries from [`docs/security/threat-model-s
 
 ### Decision
 
-**Select edge-level, operator-owned mTLS** for all inbound and store connectivity. **Reject native mTLS implementation inside `ferrumd` and `ferrum-mcp-server` for Phase 6.7a.**
+**Select edge-level, operator-owned mTLS** for all inbound and store connectivity. **Reject native mTLS implementation inside `ferrumd` and `ferrum-mcp-server`.**
 
 ### Context
 
@@ -54,14 +45,14 @@ mTLS benefits the following trust boundaries from [`docs/security/threat-model-s
 
 | Option | Verdict | Reason |
 |--------|---------|--------|
-| A. Native `rustls` in `ferrumd` / `ferrum-mcp-server` | **REJECTED** for 6.7a | Adds dependencies, config surface, cert lifecycle, and failure modes before multi-node cross-host topology exists. |
-| B. Native `native-tls` (OpenSSL/Schannel/SecureTransport) | **REJECTED** for 6.7a | Same as A; plus platform-specific behavior and linking complexity. |
+| A. Native `rustls` in `ferrumd` / `ferrum-mcp-server` | **REJECTED** | Adds dependencies, config surface, cert lifecycle, and failure modes while the deployment topology remains single-node. |
+| B. Native `native-tls` (OpenSSL/Schannel/SecureTransport) | **REJECTED** | Same as A; plus platform-specific behavior and linking complexity. |
 | C. Edge-level operator-owned mTLS (Caddy, nginx, Cloudflare, Tailscale) | **ACCEPTED** | Leverages existing tunnel/proxy infrastructure; no code changes; operator controls CA and rotation. |
 | D. PostgreSQL native TLS/mTLS | **ACCEPTED** as operator config | Documented separately; no FerrumGate code change required. |
 
 ### Reconsideration Condition
 
-Revisit native mTLS **only when** a multi-node, cross-host deployment topology exists (e.g., gateway and MCP server on separate hosts, or store on a separate network segment). Until then, edge-level mTLS is sufficient.
+Native mTLS is relevant only for multi-node, cross-host deployment topologies (e.g., gateway and MCP server on separate hosts, or store on a separate network segment). Edge-level mTLS is sufficient for single-node deployments.
 
 ---
 
@@ -179,7 +170,7 @@ This guidance is **operator-owned**: the operator manages CA distribution, certi
 
 - Support **overlapping certificates**: a new certificate is deployed and trusted before the old one expires.
 - Edge proxies (Caddy, nginx, Cloudflare) must reload or hot-swap certificates without dropping connections.
-- FerrumGate itself does **not** reload certificates because it does not terminate TLS in Phase 6.7a.
+- FerrumGate itself does **not** reload certificates because it does not terminate TLS.
 
 ### 6.4 Revocation and Short-Lived Certs
 
@@ -194,11 +185,11 @@ This guidance is **operator-owned**: the operator manages CA distribution, certi
 
 ---
 
-## 7. Future Native mTLS Reference (Deferred)
+## 7. Native mTLS Reference
 
-If Phase 6.7b or a later multi-node topology requires native mTLS, the following surface is anticipated:
+If multi-node topology requires native mTLS, the following surface is anticipated:
 
-| Concern | Deferred Detail |
+| Concern | Detail |
 |---------|-----------------|
 | Dependencies | `rustls` + `rustls-pemfile` (or `native-tls` if platform integration is required). |
 | Config Surface | `[tls]` TOML section: `cert_file`, `key_file`, `client_ca_file`, `client_auth_mode` (`optional` / `require` / `require_and_verify`). |
@@ -206,7 +197,7 @@ If Phase 6.7b or a later multi-node topology requires native mTLS, the following
 | Failure Modes | Expired cert → fail closed (do not start listener). Missing client CA → fail closed. Mismatched SNI → TLS alert. |
 | Scope | Would apply to `ferrumd` HTTP listener and optionally `ferrum-mcp-server` HTTP listener. Store connections already handled by PostgreSQL driver. |
 
-**No implementation is planned until the reconsideration condition in Section 3 is met.**
+**No native mTLS implementation is provided.**
 
 ---
 
@@ -222,7 +213,7 @@ mTLS operates at the **transport layer** (TLS). FerrumGate's existing auth opera
 ### Rules
 
 1. **Both layers are required** in a hardening scenario: mTLS does not eliminate the need for bearer-token auth inside FerrumGate.
-2. **Do not use forwarded client certificate subject as application identity** unless a separate design maps X.509 Distinguished Names to FerrumGate `actor_id` / roles. That mapping is **not implemented**.
+2. **Do not use forwarded client certificate subject as application identity** unless a separate design maps X.509 Distinguished Names to FerrumGate `actor_id` / roles. That mapping is **not provided**.
 3. If an edge proxy forwards `X-SSL-Client-*` headers, FerrumGate may log them for observability but must not treat them as authoritative auth signals.
 
 ---
@@ -231,11 +222,11 @@ mTLS operates at the **transport layer** (TLS). FerrumGate's existing auth opera
 
 | Step | Method | Owner |
 |------|--------|-------|
-| 1. Doc review | Review this document for completeness, consistency with non-claims, and absence of overclaim. | Security |
+| 1. Doc review | Review this document for completeness, consistency, and absence of overclaim. | Security |
 | 2. Manual config validation (optional) | Operator deploys Caddy or nginx with mTLS in a test environment and confirms FerrumGate receives requests only from clients with valid certs. | Operator |
 | 3. PostgreSQL TLS test (optional) | Connect `ferrumd` to a PostgreSQL instance with `sslmode=verify-full` and confirm connection succeeds. | Operator |
 
-No `cargo` build or test execution is required for Phase 6.7a because this is a documentation-only phase.
+No `cargo` build or test execution is required because this is a documentation-only artifact.
 
 ---
 
@@ -247,7 +238,7 @@ No `cargo` build or test execution is required for Phase 6.7a because this is a 
 | Certificate expiry causes outage. | Medium | High | Expiry alerts at 30/7/1 days; automated renewal; overlapping certs. |
 | Compromised CA leads to broad impersonation. | Low | Critical | Use dedicated internal CA; short-lived certs; rotate CA if compromise suspected. |
 | mTLS perceived as replacing bearer auth, leading to auth bypass. | Medium | High | Document explicitly: mTLS is transport-layer; bearer/scoped token is still required. |
-| Native mTLS deferred too long, leaving multi-node deployments unprotected. | Low | Medium | Set clear reconsideration condition: multi-node cross-host topology triggers 6.7b planning. |
+| Service-to-service encryption relies on edge-level mTLS. | Low | Medium | Configure edge proxy with client certificate verification. |
 
 ---
 
@@ -255,9 +246,9 @@ No `cargo` build or test execution is required for Phase 6.7a because this is a 
 
 | Item | Verdict |
 |------|---------|
-| Phase 6.7a design doc | **GO** — this document satisfies the design requirement. |
-| Native mTLS implementation (6.7b) | **NO-GO for now** — defer until multi-node cross-host topology exists. |
-| Edge-level operator-owned mTLS | **GO** — recommended for production-candidate deployments. |
+| Design doc | **GO** — this document satisfies the design requirement. |
+| Native mTLS implementation | **Not provided** — use edge-level mTLS for multi-node deployments. |
+| Edge-level operator-owned mTLS | **GO** — recommended for deployed instances. |
 | PostgreSQL TLS/mTLS | **GO** — operator-configured, no code changes. |
 
 ---
@@ -265,12 +256,11 @@ No `cargo` build or test execution is required for Phase 6.7a because this is a 
 ## 12. Related Docs
 
 - [`docs/security/threat-model-stride.md`](./threat-model-stride.md) — Trust boundaries and STRIDE mapping.
-- [`docs/security/non-claims.md`](./non-claims.md) — Canonical non-claims and readiness boundaries.
 - [`docs/guides/secure-mcp-tunnel-integration.md`](../guides/secure-mcp-tunnel-integration.md) — Tunnel topology and deployment examples.
 - [`docs/mcp/private-deploy.md`](../mcp/private-deploy.md) — Private MCP deployment behind reverse proxy.
 - [`docs/mcp/streamable-http-mcp.md`](../mcp/streamable-http-mcp.md) — HTTP transport skeleton and security notes.
-- [`docs/PRODUCTION_NOTES.md`](../PRODUCTION_NOTES.md) — Production notes.
+- [`docs/PRODUCTION_NOTES.md`](../PRODUCTION_NOTES.md) — Runtime configuration notes.
 
 ---
 
-*End of Phase 6.7a mTLS design document.*
+*End of mTLS design document.*

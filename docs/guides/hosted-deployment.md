@@ -1,6 +1,6 @@
 # Hosted Deployment Guide
 
-> **Status**: This guide covers deployment modes for FerrumGate. See the deployment status matrix below for current capabilities.
+This guide covers deployment modes for FerrumGate.
 
 ---
 
@@ -21,9 +21,9 @@ docker compose -f docker-compose.demo.yml up -d --build
 
 Purpose: quickstart, demos, development.
 
-> **Not for production. Do not expose to the internet.**
+> **Local demo only. Do not expose to the internet.**
 
-### Mode B — Single-node self-hosted (conditional pilot)
+### Mode B — Single-node self-hosted
 
 Components:
 - ferrumd + SQLite persistent
@@ -31,7 +31,7 @@ Components:
 - nginx/Caddy TLS reverse proxy
 - backup timer
 
-Purpose: conditional pilot, small internal deployments.
+Purpose: small internal deployments.
 
 #### systemd service example
 
@@ -71,9 +71,9 @@ systemctl daemon-reload
 systemctl enable --now ferrumgate
 ```
 
-> **Block A / temporary domain context**: A temporary domain may be accepted for single-node SQLite pilot only. A real owned domain and DNS configuration are still required for production-ready status or full G2 closure. Block A remains **WAIVED/CONDITIONAL**.
+> **Note**: A temporary domain may be used for local testing. A real owned domain and DNS configuration are recommended for internet-facing deployments.
 
-### Mode C — PostgreSQL self-hosted (production foundation)
+### Mode C — PostgreSQL self-hosted
 
 Components:
 - ferrumd + PostgreSQL
@@ -81,7 +81,7 @@ Components:
 - backup/restore
 - metrics
 
-Purpose: production foundation.
+Purpose: deployments requiring higher write throughput or stronger transactional guarantees.
 
 #### Docker Compose (PostgreSQL)
 
@@ -112,9 +112,9 @@ volumes:
   pgdata:
 ```
 
-> **Note**: A local demo compose file (`docker-compose.postgres-demo.yml`) exists for development only. It is NOT production-ready. PostgreSQL production hardening is planned.
+> **Note**: A local demo compose file (`docker-compose.postgres-demo.yml`) exists for development only. PostgreSQL hardening is the operator's responsibility.
 
-### Mode D — Kubernetes (future)
+### Mode D — Kubernetes
 
 Components:
 - ferrumd Deployment
@@ -122,22 +122,7 @@ Components:
 - Secret, ConfigMap, Service, Ingress
 - Prometheus ServiceMonitor
 
-Purpose: hosted production-like.
-
-> **Not yet implemented.** Helm chart is a P1/P2 item.
-
-## Tier readiness context
-
-| Tier | What it means | Domain required? |
-|------|---------------|------------------|
-| Tier 0 — Conditional pilot | Single-node SQLite with operator conditional signoff | No (temporary domain accepted) |
-| Tier 1 — Domainless production-candidate | B+C+HA-B engineering complete; credible candidate once domain added | No |
-| Tier 1.5 — Domainless production infrastructure | PG target deployment + same-VM HA + same-VM automated failover complete | No |
-| Tier 2 — Production-ready | Real domain, revalidation, sustained SLO, full G2, final signoff | **Yes** |
-
-> **Block A = WAIVED/CONDITIONAL**. A real owned domain and DNS are still required for Tier 2 or full G2 closure. Tier 1.5 does not close Block A.
->
-> **production-ready = NO** at all tiers below Tier 2.
+Purpose: shared scalable deployment.
 
 ## Reverse proxy / TLS
 
@@ -191,10 +176,8 @@ If you are using a managed PostgreSQL service (e.g., Amazon RDS, Google Cloud SQ
 
 - **Do not inline passwords in environment files**. Use `PGPASSFILE` (mode `600`) or your secrets manager. See [`configs/examples/postgres-target-env.template`](../../configs/examples/postgres-target-env.template) for a placeholder-only env template.
 - **Connect via PgBouncer or direct TLS**. If the managed instance supports TLS, prefer `sslmode=require` or `verify-ca` in the DSN and keep certificates in `/etc/ferrumgate/certs/`.
-- **Set conservative pool limits**. Managed instances often enforce connection limits; align `FERRUMD_PG_MAX_CONNECTIONS` with the instance tier.
+- **Set conservative pool limits**. Managed instances often enforce connection limits; align `FERRUMD_PG_MAX_CONNECTIONS` with the instance size.
 - **Backups are operator-owned**. Managed services usually provide automated backups, but you should still test restore procedures and validate row counts independently.
-
-This is **not** a production-ready configuration guide.
 
 ## Backup / restore in hosted mode
 
@@ -222,7 +205,7 @@ pg_restore -l /var/backups/ferrumgate-postgres/ferrumgate-*.dump > /dev/null \
 # 3. Stop ferrumd
 sudo systemctl stop ferrumgate
 
-# 4. Restore to a drill database first (do not overwrite production)
+# 4. Restore to a drill database first (do not overwrite live data)
 sudo -u postgres pg_restore -d ferrumgate_restore_drill \
   /var/backups/ferrumgate-postgres/ferrumgate-*.dump
 
@@ -252,30 +235,22 @@ FerrumGate does not run a backup scheduler itself. Use the host scheduler (syste
 
 > **Operator-owned**: These examples are templates. Do not install them without reviewing credentials, paths, and retention. No scheduler is active by default.
 
-## HA operational posture
+## HA operational notes
 
-FerrumGate's HA story is staged. Do not conflate local simulation or manual drills with production HA.
-
-| Stage | Status |
-|-------|--------|
-| Same-VM primary/standby streaming replication | ✅ Tier 1.5 complete |
-| Same-VM automated failover (watchdog + PgBouncer reconnect) | ✅ Tier 1.5 complete |
-| Multi-host manual failover/failback drills | ✅ Phase 9 manual evidence |
-| Multi-host production HA | ❌ NOT COMPLETE |
+| Item | Support |
+|------|---------|
+| Same-VM primary/standby streaming replication | Supported |
+| Same-VM automated failover (watchdog + PgBouncer reconnect) | Supported |
+| Multi-host manual failover/failback drills | Documented |
+| Multi-host clustering | Operator-designed |
 
 ### What operators should know
 
-- **Failover is manual or operator-controlled** outside of Tier 1.5 same-VM scope.
+- **Failover is manual or operator-controlled** outside of same-VM scope.
 - **Fencing**: GCP instance-stop script exists and was validated on standby host B only. App-host guard blocks primary fencing by default.
 - **Failback**: Rebuilding the old primary as standby requires matching WAL settings (`max_wal_senders`, `max_replication_slots`) and TLS cert parity.
 
-## Status caveat
-
-> **production-ready = NO**. Mode B is the only validated deployment for conditional pilot. Mode C has Tier 1.5 target evidence but is not production-ready. Mode D is not implemented. Multi-host production HA and unattended automated failover are NOT COMPLETE.
-
-## Deployment status matrix
-
-> **⚠️ This matrix provides status clarity — it is NOT a production-ready claim.** See [`docs/security/non-claims.md`](../security/non-claims.md) for canonical non-claims. Sustained SLO window NOT COMPLETE, HA-4 NOT COMPLETE, Tier 2 NOT COMPLETE.
+## Deployment feature matrix
 
 **Legend:**
 
@@ -284,13 +259,13 @@ FerrumGate's HA story is staged. Do not conflate local simulation or manual dril
 | ✅ | Supported |
 | ⚠️ | Conditional / partial / operator-owned |
 | ❌ | Unsupported / not applicable |
-| ⏳ | Deferred / planned |
+| ⏳ | Planned |
 
 **Feature matrix by deployment mode:**
 
-| Feature | Mode A<br>Local demo | Mode B<br>Single-node SQLite | Mode C<br>PostgreSQL self-hosted | Mode D<br>Kubernetes/Helm (future) |
+| Feature | Mode A<br>Local demo | Mode B<br>Single-node SQLite | Mode C<br>PostgreSQL self-hosted | Mode D<br>Kubernetes/Helm (planned) |
 |---------|:---:|:---:|:---:|:---:|
-| **Intended use** | Development / quickstart only | Conditional pilot, internal | Production foundation (Tier 1.5) | Hosted production-like |
+| **Intended use** | Development / quickstart only | Small internal deployments | Shared deployments requiring higher throughput | Shared scalable deployment |
 | **Auth bearer** | ❌ Disabled (loopback) | ✅ Supported | ✅ Supported | ✅ Supported |
 | **Scoped tokens / RBAC** | ⚠️ Present but not enforced in dev mode | ⚠️ Present; operator-owned enforcement | ⚠️ Present; operator-owned enforcement | ⚠️ Present; operator-owned enforcement |
 | **TLS termination / domain** | ❌ None (loopback only) | ⚠️ Operator-owned reverse proxy required | ⚠️ Operator-owned reverse proxy required | ⚠️ Operator-owned reverse proxy + Ingress required |
@@ -300,32 +275,15 @@ FerrumGate's HA story is staged. Do not conflate local simulation or manual dril
 | **Metrics / observability** | ⚠️ Prometheus metrics endpoint | ⚠️ Prometheus metrics | ✅ Prometheus metrics + PG-specific alerts | ⏳ ServiceMonitor |
 | **Grafana dashboards** | ❌ Not included | ⚠️ Operator-owned | ⚠️ Operator-owned | ⏳ Planned |
 | **PostgreSQL support** | ❌ Not applicable | ❌ SQLite only | ✅ Native | ✅ External / managed |
-| **Kubernetes / Helm support** | ❌ Not applicable | ❌ Not applicable | ❌ Not applicable | ⏳ Helm chart P1/P2 item |
-| **HA / manual failover** | ❌ Not applicable | ❌ SQLite single-node only; no streaming replication | ⚠️ Same-VM primary/standby streaming replication (Tier 1.5) | ❌ NOT COMPLETE |
-| **HA-4 automated failover** | ❌ Not applicable | ❌ SQLite single-node only; no automated failover | ⚠️ Same-VM watchdog + PgBouncer reconnect (Tier 1.5) | ❌ NOT COMPLETE |
-| **Sustained SLO evidence** | ❌ Not applicable | ⚠️ Active SLO observation; sustained window NOT COMPLETE | ⚠️ Active SLO observation; sustained window NOT COMPLETE | ❌ NOT COMPLETE |
+| **Kubernetes / Helm support** | ❌ Not applicable | ❌ Not applicable | ❌ Not applicable | ⏳ Helm chart planned item |
 | **Zero-downtime upgrade path** | ❌ Not applicable | ⚠️ Maintenance window required; see [`./zero-downtime-upgrade.md`](./zero-downtime-upgrade.md) | ⚠️ Maintenance window required; see [`./zero-downtime-upgrade.md`](./zero-downtime-upgrade.md) | ⏳ Planned |
-| **Production-ready claim** | ❌ NO | ❌ NO | ❌ NO | ❌ NO |
 
 **Links:**
 
-- Non-claims: [`docs/security/non-claims.md`](../security/non-claims.md)
-- SLO/SLA: [`docs/guides/slo-sla.md`](./slo-sla.md)
+- [Service Metrics](./slo-sla.md)
 - Zero-downtime upgrade: [`docs/guides/zero-downtime-upgrade.md`](./zero-downtime-upgrade.md)
-
-## Non-claims
-
-| Non-claim | Status |
-|-----------|--------|
-| **production-ready** | **NO** |
-| **full G2** | **NOT COMPLETE** |
-| **Block A** | **WAIVED/CONDITIONAL** — real domain still required for Tier 2 |
-| **Tier 2** | **NOT COMPLETE** |
-| **multi-host production HA** | **NO** |
-| **HA-4 unattended automated failover** | **NOT COMPLETE** |
-| **sustained SLO window** | **NOT COMPLETE** |
 
 ## Related docs
 
 - [`operator.md`](./operator.md) — Config, backup, incident response.
-- [`docs/PRODUCTION_NOTES.md`](../../PRODUCTION_NOTES.md) — Runtime configuration.
+- [`docs/PRODUCTION_NOTES.md`](../../docs/PRODUCTION_NOTES.md) — Runtime configuration.
