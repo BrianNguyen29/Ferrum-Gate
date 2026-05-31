@@ -30,14 +30,11 @@ A Zola-based static site scaffold is available in `site/`:
 - `site/static/css/main.css` — Stylesheet
 - `site/content/_index.md` — Root page content with summary and quick links
 
-The landing page includes an architecture explanation and links to all guides. It is designed for local build only; no deployment or domain is configured. Build with `make site-build` (validated with Zola `0.22.1`).
+Build the landing page locally with `make site-build` (requires Zola `0.22.1`); configure publishing separately if you host the site.
 
-## Notes
+## Guide scope
 
-- **Local validation only**: Quickstart API/curl, ferrumctl, and MCP paths were engineering-validated locally. Independent external fresh-user and target-host/cloud validation are not claimed.
-- **NOT a marketing site**: These are repository docs for operators and integrators.
-- Several guides reference planned features (simulation, templates, Helm, RBAC) that are not yet available.
-- **NOT deployed**: The `site/` scaffold is local-only. No cloud, domain, or hosting is configured.
+These guides are for operators and integrators using FerrumGate. The `site/` landing page can be built locally with `make site-build`.
 
 ## Related docs
 

@@ -31,10 +31,10 @@
 |---------|----------|
 | Scoped token store (SQLite + PostgreSQL) | Implemented |
 | RBAC middleware (endpoint → required scope) | `crates/ferrum-gateway/src/server.rs` |
-| Admin token lifecycle API (`POST/GET/DELETE/rotate`) | Admin token lifecycle API design document |
-| `ferrumctl admin tokens` CLI | ferrumctl admin tokens CLI specification |
+| Admin token lifecycle API (`POST/GET/DELETE/rotate`) | [`docs/security/scoped-tokens-rbac.md`](../security/scoped-tokens-rbac.md) |
+| `ferrumctl admin tokens` CLI | [`docs/guides/operator.md`](./operator.md) |
 | TTL enforcement (>90d rejected) | `test_create_token_rejects_excessive_ttl` |
-| Durable revocation (`revoked_at` in store) | Revocation durability design document |
+| Durable revocation (`revoked_at` in store) | `crates/ferrum-store/src/sqlite/tokens.rs` and `postgres/tokens.rs` |
 
 ### Acceptance targets
 

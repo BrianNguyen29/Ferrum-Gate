@@ -115,7 +115,7 @@ The same `required_scope_for_path()` logic applies regardless of auth mode. The 
 - **No DID / trust mesh:** We intentionally avoid W3C DID, VC, or trust scoring.
 - **No multi-tenant identity:** `tenant_id` is reserved but not enforced.
 - **No mTLS replacement:** mTLS service-to-service remains a separate item.
-- **Bounded nonce cache:** In-memory only for pilot; shared cache not yet available for multi-node.
+- **Bounded nonce cache:** in-memory cache for single-process replay protection; shared deployments should provide a shared cache layer.
 - **No key escrow:** FerrumGate never holds private keys. `public_key` only.
 
 ## 8. Implementation Plan

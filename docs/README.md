@@ -1,7 +1,5 @@
 # FerrumGate Docs
 
-> **Repository workspace**: `/home/uong_guyen/work/Ferrum-Gate`.
-
 This is the **single docs directory** used as the foundation for the FerrumGate project.
 
 The goals of this documentation set:
@@ -28,6 +26,7 @@ If you have time to read only a few documents, read them in this order:
 - `api/` — API documentation
 - `mcp/` — MCP documentation
 - `operations/` — operations guides
+- `operator/` — operator guides
 - `diagrams/` — Mermaid source diagrams for architecture, execution lifecycle, lineage chain, and deployment topology
 
 ## Summary

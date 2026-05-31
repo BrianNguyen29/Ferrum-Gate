@@ -27,7 +27,6 @@ FINDINGS=0
 SKIP_PATTERNS=(
     "CHANGELOG.md"
     "SECURITY.md"
-    "docs/security/secret-scan-report.md"
     "^.git/"
     "^target/"
 )
