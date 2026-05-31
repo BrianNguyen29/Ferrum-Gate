@@ -1,0 +1,28 @@
+flowchart LR
+    A["PolicyEvaluated"] --> B["CapabilityMinted"]
+    B --> C["ActionProposalSubmitted"]
+    C --> D["SideEffectPrepared"]
+    D --> E["ToolCallPrepared"]
+    E --> F["ToolCallExecuted"]
+    F --> G["SideEffectVerified"]
+    G --> H["Terminal"]
+
+    subgraph TerminalOutcome["Terminal Outcome"]
+        direction TB
+        T1["SideEffectCommitted"]
+        T2["SideEffectCompensated"]
+        T3["SideEffectRolledBack"]
+    end
+
+    H --> T1
+    H --> T2
+    H --> T3
+
+    style A fill:#e1f5fe
+    style B fill:#e1f5fe
+    style C fill:#e1f5fe
+    style D fill:#fff3e0
+    style E fill:#fff3e0
+    style F fill:#fff3e0
+    style G fill:#e8f5e9
+    style H fill:#fce4ec

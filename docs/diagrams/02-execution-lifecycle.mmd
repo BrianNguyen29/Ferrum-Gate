@@ -1,0 +1,39 @@
+stateDiagram-v2
+    [*] --> IntentCompiled : compile intent
+
+    IntentCompiled --> ProposalEvaluated : evaluate proposal
+    ProposalEvaluated --> Denied : decision = Deny
+    Denied --> [*]
+
+    ProposalEvaluated --> RequireApproval : decision = RequireApproval
+    RequireApproval --> Approved : operator approves
+    RequireApproval --> Rejected : operator rejects
+    Rejected --> [*]
+
+    ProposalEvaluated --> CapabilityMinted : decision = Allow
+    Approved --> CapabilityMinted
+
+    CapabilityMinted --> SideEffectPrepared : prepare action
+    SideEffectPrepared --> ToolCallPrepared : prepare tool call
+    ToolCallPrepared --> ToolCallExecuted : execute
+    ToolCallExecuted --> SideEffectVerified : verify outcome
+
+    SideEffectVerified --> Committed : success
+    SideEffectVerified --> Compensated : compensated failure
+    SideEffectVerified --> RolledBack : rolled back failure
+
+    Committed --> [*]
+    Compensated --> [*]
+    RolledBack --> [*]
+
+    note right of CapabilityMinted
+        TTL max 300s
+        single-use only
+    end note
+
+    note right of SideEffectVerified
+        Terminal outcomes:
+        SideEffectCommitted,
+        SideEffectCompensated,
+        SideEffectRolledBack
+    end note

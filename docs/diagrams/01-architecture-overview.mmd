@@ -1,0 +1,58 @@
+flowchart TB
+    subgraph External["External"]
+        User["User / Agent / MCP Client"]
+        CLI["ferrumctl CLI"]
+    end
+
+    subgraph Boundary["TLS / Reverse Proxy Boundary (operator-managed)"]
+        RP["Reverse Proxy"]
+    end
+
+    subgraph Gateway["ferrumd Gateway"]
+        API["HTTP API Layer"]
+        Auth["Auth Middleware<br/>(Disabled / Bearer / Scoped)"]
+        Policy["Policy Engine (PDP)"]
+        Cap["Capability Manager"]
+        Exec["Execution Orchestrator"]
+        Prov["Provenance / Lineage Recorder"]
+    end
+
+    subgraph Adapters["Adapters"]
+        FS["fs"]
+        Git["git"]
+        HTTP["http"]
+        SQL["sqlite / sql"]
+        Mail["maildraft"]
+    end
+
+    subgraph Stores["Data Stores"]
+        Store[(Store<br/>SQLite or PostgreSQL)]
+    end
+
+    subgraph Observability["Observability"]
+        Metrics["/v1/metrics<br/>(Prometheus)"]
+        Logs["Structured Logs<br/>(text or JSON)"]
+        Audit["Audit Log"]
+    end
+
+    User --> RP
+    CLI --> RP
+    RP --> API
+    API --> Auth
+    Auth --> Policy
+    Policy --> Cap
+    Cap --> Exec
+    Exec --> FS
+    Exec --> Git
+    Exec --> HTTP
+    Exec --> SQL
+    Exec --> Mail
+    Exec --> Prov
+    Prov --> Store
+    Prov --> Audit
+    API --> Metrics
+    API --> Logs
+    Auth --> Store
+    Policy --> Store
+    Cap --> Store
+    Exec --> Store

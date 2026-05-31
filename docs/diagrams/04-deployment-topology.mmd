@@ -1,0 +1,52 @@
+flowchart TB
+    subgraph Clients["Clients"]
+        MCP["MCP Client<br/>(Claude Desktop / Cursor / Agent)"]
+        CLI["ferrumctl CLI"]
+        TUI["ferrum-tui"]
+    end
+
+    subgraph Boundary["Network Boundary (operator-managed)"]
+        RP["Reverse Proxy<br/>(TLS termination)"]
+    end
+
+    subgraph Node["ferrumd Node"]
+        API["HTTP API Server"]
+        GW["Gateway Core"]
+        Metrics["/v1/metrics"]
+    end
+
+    subgraph Storage["Storage"]
+        SQLite[("SQLite<br/>in-memory or file-backed")]
+        PG[("PostgreSQL<br/>(optional)")]
+    end
+
+    subgraph Adapters["Adapters"]
+        FS["fs"]
+        Git["git"]
+        HTTP["http"]
+        SQL["sqlite / sql"]
+        Mail["maildraft"]
+    end
+
+    subgraph Observability["Observability"]
+        Prom["Prometheus scraper"]
+        Logs["Log aggregator<br/>(ELK / Loki / journald)"]
+        Alerts["AlertManager"]
+    end
+
+    MCP --> RP
+    CLI --> RP
+    TUI --> API
+    RP --> API
+    API --> GW
+    GW --> Metrics
+    GW --> SQLite
+    GW --> PG
+    GW --> FS
+    GW --> Git
+    GW --> HTTP
+    GW --> SQL
+    GW --> Mail
+    Metrics --> Prom
+    API --> Logs
+    Prom --> Alerts

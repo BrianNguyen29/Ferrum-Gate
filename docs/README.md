@@ -28,7 +28,7 @@ If you have time to read only a few documents, read them in this order:
 - `api/` — API documentation
 - `mcp/` — MCP documentation
 - `operations/` — operations guides
-- `diagrams/` — visual diagrams for architecture, flows, state machines, constraints
+- `diagrams/` — Mermaid source diagrams for architecture, execution lifecycle, lineage chain, and deployment topology
 
 ## Summary
 
