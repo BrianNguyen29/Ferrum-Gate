@@ -79,6 +79,23 @@ pub struct VerifyExecutionResponse {
     pub warnings: Vec<String>,
 }
 
+/// Response envelope for the manual commit endpoint
+/// (`POST /v1/executions/{execution_id}/commit`, R3 boundary).
+///
+/// Returned only when the rollback contract was prepared with
+/// `auto_commit=false` and the execution is otherwise eligible for commit
+/// (contract state `Verified` and a `SideEffectVerified` provenance event
+/// present). On the auto-commit path the verify endpoint emits this
+/// transition in-line and the manual commit endpoint rejects the request
+/// with `409 Conflict`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CommitExecutionResponse {
+    pub execution_id: crate::ExecutionId,
+    pub committed: bool,
+    pub rollback_contract: Option<crate::RollbackContract>,
+    pub warnings: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct HealthResponse {
     pub status: String,
