@@ -336,6 +336,38 @@ paths:
       security:
         - BearerAuth: []
 
+  /v1/executions/{execution_id}/commit:
+    post:
+      summary: Manually commit a verified execution (R3 boundary)
+      description: |
+        Manually transitions a verified execution into the `Committed` terminal
+        state. This endpoint is the R3 explicit-commit boundary and only
+        accepts executions whose rollback contract was prepared with
+        `auto_commit=false`. Contracts prepared with `auto_commit=true` are
+        already committed by the verify endpoint and yield 409 Conflict here.
+
+        Required guards: the execution must not already be in a terminal
+        state, must have a `rollback_contract_id`, the rollback contract
+        state must be `Verified`, and a `SideEffectVerified` provenance
+        event must exist for the execution.
+      operationId: commitExecution
+      parameters:
+        - $ref: '#/components/parameters/ExecutionId'
+      responses:
+        '200':
+          description: Execution committed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommitExecutionResponse'
+        '404':
+          $ref: '#/components/responses/ApiError'
+        '409':
+          description: Execution is not eligible for manual commit
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
   /v1/executions/{execution_id}:
     get:
       summary: Get execution record
@@ -1906,6 +1938,23 @@ components:
           type: string
           format: uuid
         verified:
+          type: boolean
+        rollback_contract:
+          $ref: '#/components/schemas/RollbackContract'
+          nullable: true
+        warnings:
+          type: array
+          items:
+            type: string
+
+    CommitExecutionResponse:
+      type: object
+      required: [execution_id, committed, warnings]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+        committed:
           type: boolean
         rollback_contract:
           $ref: '#/components/schemas/RollbackContract'

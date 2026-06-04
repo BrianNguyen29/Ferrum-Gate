@@ -3890,6 +3890,199 @@ async fn test_i5_scope_validation_resource_bindings_within_intent_scope() {
 }
 
 // ---------------------------------------------------------------------------
+// Proposal/Capability Binding Guard
+// ---------------------------------------------------------------------------
+
+/// Verify that `authorize_execution` rejects (403 IntegrityMismatch) when the
+/// request's `proposal_id` does not match the capability lease's
+/// `proposal_id`, before any durable capability mutation.
+///
+/// Critical invariant: a holder of one capability must not be able to
+/// authorize an unrelated proposal. The guard must run before
+/// `mark_capability_used_durable` so the capability remains Active / usable.
+#[tokio::test]
+async fn test_authorize_rejects_proposal_capability_mismatch() {
+    let pdp: Arc<dyn PdpEngine> = Arc::new(StaticPdpEngine);
+    let cap: Arc<dyn CapabilityService> = Arc::new(InMemoryCapabilityService::default());
+
+    let mut registry = AdapterRegistry::default();
+    registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
+    let rollback = Arc::new(RollbackService::new(Arc::new(registry)));
+
+    let store = Arc::new(
+        SqliteStore::connect("sqlite::memory:")
+            .await
+            .expect("connect to sqlite"),
+    );
+    store
+        .apply_embedded_migrations()
+        .await
+        .expect("apply migrations");
+
+    // Setup: one intent and two distinct proposals (A = lease, B = request).
+    let intent_id = ferrum_proto::IntentId::new();
+    let intent = make_test_intent(intent_id);
+    store
+        .intents()
+        .insert(&intent)
+        .await
+        .expect("intent insert");
+
+    let proposal_a = ferrum_proto::ProposalId::new();
+    let proposal_a_record = make_test_proposal(intent_id, proposal_a);
+    store
+        .proposals()
+        .insert(&proposal_a_record)
+        .await
+        .expect("proposal A insert");
+
+    let proposal_b = ferrum_proto::ProposalId::new();
+    let proposal_b_record = make_test_proposal(intent_id, proposal_b);
+    store
+        .proposals()
+        .insert(&proposal_b_record)
+        .await
+        .expect("proposal B insert");
+
+    let runtime = GatewayRuntime::new(
+        pdp,
+        cap.clone(),
+        rollback,
+        store.clone() as Arc<dyn StoreFacade>,
+        vec![],
+    );
+    let router = build_router(runtime);
+
+    // Mint a capability bound to proposal A.
+    let mint_request = ferrum_proto::CapabilityMintRequest {
+        intent_id,
+        proposal_id: proposal_a,
+        tool_binding: ferrum_proto::ToolBinding {
+            server_name: "test-server".to_string(),
+            tool_name: "test-tool".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: Vec::new(),
+        argument_constraints: Vec::new(),
+        taint_budget: ferrum_proto::TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let request = axum::http::Request::builder()
+        .method(axum::http::Method::POST)
+        .uri("/v1/capabilities/mint")
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(
+            serde_json::to_vec(&mint_request).unwrap(),
+        ))
+        .unwrap();
+
+    let response = tower::ServiceExt::oneshot(router.clone(), request)
+        .await
+        .expect("mint should succeed");
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("read mint body");
+    let cap_response: ferrum_proto::CapabilityMintResponse =
+        serde_json::from_slice(&body).expect("valid json");
+    let capability_id = cap_response.lease.capability_id;
+    let lease_proposal_id = cap_response.lease.proposal_id;
+    assert_eq!(
+        lease_proposal_id, proposal_a,
+        "minted capability should be bound to proposal A"
+    );
+
+    // Authorize with the MISMATCHED proposal B but the same capability_id.
+    // Guard must reject (403 IntegrityMismatch) BEFORE the durable
+    // single-use mark, leaving the capability Active and reusable.
+    let auth_request = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id: proposal_b,
+        capability_id,
+        dry_run: false,
+    };
+
+    let request = axum::http::Request::builder()
+        .method(axum::http::Method::POST)
+        .uri("/v1/executions/authorize")
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(
+            serde_json::to_vec(&auth_request).unwrap(),
+        ))
+        .unwrap();
+
+    let response = tower::ServiceExt::oneshot(router.clone(), request)
+        .await
+        .expect("authorize request should complete");
+
+    assert_eq!(
+        response.status(),
+        axum::http::StatusCode::FORBIDDEN,
+        "authorize should return FORBIDDEN on proposal/capability mismatch, got: {:?}",
+        response.status()
+    );
+
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("read authorize error body");
+    let error: ferrum_proto::ApiError = serde_json::from_slice(&body).expect("valid ApiError JSON");
+    assert!(
+        matches!(error.code, ferrum_proto::ApiErrorCode::IntegrityMismatch),
+        "error code should be IntegrityMismatch on proposal/capability mismatch, got: {:?}",
+        error.code
+    );
+
+    // Capability must remain Active (not Used) after the rejected authorize
+    // — the guard runs before `mark_capability_used_durable`.
+    let lease_after = store
+        .capabilities()
+        .get(capability_id)
+        .await
+        .expect("store capability get")
+        .expect("capability should still exist");
+    assert!(
+        matches!(lease_after.status, ferrum_proto::CapabilityStatus::Active),
+        "capability must remain Active after rejected mismatched authorize, got: {:?}",
+        lease_after.status
+    );
+
+    // Sanity: a follow-up authorize with the MATCHED proposal A still
+    // succeeds (proves the capability was not consumed by the rejected call).
+    let auth_request_match = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id: proposal_a,
+        capability_id,
+        dry_run: false,
+    };
+
+    let request = axum::http::Request::builder()
+        .method(axum::http::Method::POST)
+        .uri("/v1/executions/authorize")
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(
+            serde_json::to_vec(&auth_request_match).unwrap(),
+        ))
+        .unwrap();
+
+    let response = tower::ServiceExt::oneshot(router, request)
+        .await
+        .expect("authorize request should complete");
+    assert_eq!(
+        response.status(),
+        axum::http::StatusCode::OK,
+        "matched authorize (proposal A) should succeed after rejected mismatch, got: {:?}",
+        response.status()
+    );
+}
+
+// ---------------------------------------------------------------------------
 // I6 Approval Binding Digest Validation Tests
 // ---------------------------------------------------------------------------
 
@@ -9175,6 +9368,661 @@ async fn test_verify_auto_commit_false_suppresses_committed() {
         execution_record.state,
         ExecutionState::Running,
         "execution state should be Running when auto_commit=false (not Committed)"
+    );
+
+    // Clean up
+    let _ = std::fs::remove_file(&test_file_path);
+}
+
+// ---------------------------------------------------------------------------
+// R3 manual commit endpoint (POST /v1/executions/{id}/commit) integration tests
+// ---------------------------------------------------------------------------
+
+/// Shared helper: walk a single FileWrite execution all the way to a verified
+/// `auto_commit=false` state so the manual commit endpoint can be exercised
+/// without duplicating the prepare/execute/verify boilerplate.
+///
+/// Returns the runtime, router, store, execution_id, intent_id, and the
+/// temporary file path so callers can clean up.
+#[allow(clippy::too_many_lines)]
+async fn setup_verified_auto_commit_false_execution(
+    file_tag: &str,
+) -> (
+    GatewayRuntime,
+    axum::Router,
+    Arc<SqliteStore>,
+    ferrum_proto::ExecutionId,
+    ferrum_proto::IntentId,
+    std::path::PathBuf,
+) {
+    use ferrum_proto::{CapabilityMintRequest, RollbackState, TaintBudget, ToolBinding};
+
+    let pdp = Arc::new(StaticPdpEngine);
+    let cap: Arc<dyn CapabilityService> = Arc::new(InMemoryCapabilityService::default());
+
+    // Set up registry with FsAdapter and PlannableFsAdapter
+    let mut registry = AdapterRegistry::default();
+    registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
+    register_fs_adapter(&mut registry);
+    let mut rollback_service = RollbackService::new(Arc::new(registry));
+    rollback_service.register_planner(Arc::new(PlannableFsAdapter));
+    let rollback = Arc::new(rollback_service);
+
+    let store = Arc::new(
+        SqliteStore::connect("sqlite::memory:")
+            .await
+            .expect("connect to sqlite"),
+    );
+    store
+        .apply_embedded_migrations()
+        .await
+        .expect("apply migrations");
+
+    let runtime = GatewayRuntime::new(
+        pdp,
+        cap.clone(),
+        rollback,
+        store.clone() as Arc<dyn StoreFacade>,
+        vec![],
+    );
+    let router = build_router(runtime.clone());
+
+    // Create a temp file
+    let temp_dir = std::env::temp_dir();
+    let test_file_path = temp_dir.join(format!(
+        "ferrum-r3-{}-{}.txt",
+        file_tag,
+        uuid::Uuid::new_v4()
+    ));
+    let original_content = format!("original content for r3 commit test ({})", file_tag);
+    std::fs::write(&test_file_path, &original_content).expect("failed to write temp file");
+    let file_path_str = test_file_path.to_string_lossy().to_string();
+
+    // Create intent with FileWrite resource scope
+    let intent_id = ferrum_proto::IntentId::new();
+    let now = chrono::Utc::now();
+    let intent = ferrum_proto::IntentEnvelope {
+        intent_id,
+        principal_id: ferrum_proto::PrincipalId::new(),
+        session_id: None,
+        channel_id: None,
+        title: format!("r3-commit-test-intent ({})", file_tag),
+        goal: "test r3 manual commit".to_string(),
+        normalized_goal: "test r3 manual commit".to_string(),
+        allowed_outcomes: Vec::new(),
+        forbidden_outcomes: Vec::new(),
+        resource_scope: vec![ferrum_proto::ResourceSelector::FilesystemPath {
+            path: file_path_str.clone(),
+            mode: ferrum_proto::ResourceMode::Write,
+            content_hash: None,
+        }],
+        risk_tier: ferrum_proto::RiskTier::Medium,
+        approval_mode: ferrum_proto::ApprovalMode::None,
+        default_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+        time_budget: ferrum_proto::TimeBudget {
+            max_duration_ms: 30_000,
+            max_steps: 8,
+            max_retries_per_step: 1,
+        },
+        trust_context: ferrum_proto::TrustContextSummary {
+            input_labels: Vec::new(),
+            sensitivity_labels: Vec::new(),
+            taint_score: 0,
+            contains_external_metadata: false,
+            contains_tool_output: false,
+            contains_untrusted_text: false,
+        },
+        derived_from_event_ids: Vec::new(),
+        tags: Vec::new(),
+        metadata: ferrum_proto::JsonMap::new(),
+        status: ferrum_proto::IntentStatus::Active,
+        created_at: now,
+        expires_at: now + chrono::Duration::hours(1),
+    };
+    store
+        .intents()
+        .insert(&intent)
+        .await
+        .expect("intent insert should succeed");
+
+    // Create proposal
+    let proposal_id = ferrum_proto::ProposalId::new();
+    let proposal = ferrum_proto::ActionProposal {
+        proposal_id,
+        intent_id,
+        step_index: 0,
+        title: format!("r3 commit proposal ({})", file_tag),
+        tool_name: "file_write".to_string(),
+        server_name: "test-server".to_string(),
+        raw_arguments: serde_json::json!({}),
+        expected_effect: "file is written, verified, and committed".to_string(),
+        estimated_risk: ferrum_proto::RiskTier::Medium,
+        requested_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+        taint_inputs: Vec::new(),
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    store
+        .proposals()
+        .insert(&proposal)
+        .await
+        .expect("proposal insert should succeed");
+
+    // Mint capability
+    let cap_request = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "test-server".to_string(),
+            tool_name: "file_write".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: Vec::new(),
+        argument_constraints: Vec::new(),
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let request = axum::http::Request::builder()
+        .method(axum::http::Method::POST)
+        .uri("/v1/capabilities/mint")
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(
+            serde_json::to_vec(&cap_request).unwrap(),
+        ))
+        .unwrap();
+    let response = tower::ServiceExt::oneshot(router.clone(), request)
+        .await
+        .expect("mint request should succeed");
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("read mint response body");
+    let cap_response: ferrum_proto::CapabilityMintResponse =
+        serde_json::from_slice(&body).expect("valid json");
+    let capability_id = cap_response.lease.capability_id;
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    // Authorize
+    let auth_request = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+    let request = axum::http::Request::builder()
+        .method(axum::http::Method::POST)
+        .uri("/v1/executions/authorize")
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(
+            serde_json::to_vec(&auth_request).unwrap(),
+        ))
+        .unwrap();
+    let response = tower::ServiceExt::oneshot(router.clone(), request)
+        .await
+        .expect("authorize request should succeed");
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("read authorize body");
+    let auth_response: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).expect("valid json");
+    let execution_id = auth_response.execution.execution_id;
+
+    // Prepare
+    let request = axum::http::Request::builder()
+        .method(axum::http::Method::POST)
+        .uri(format!("/v1/executions/{}/prepare", execution_id))
+        .header("content-type", "application/json")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = tower::ServiceExt::oneshot(router.clone(), request)
+        .await
+        .expect("prepare request should succeed");
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("read prepare body");
+    let prepare_response: ferrum_proto::PrepareExecutionResponse =
+        serde_json::from_slice(&body).expect("valid json");
+    assert!(prepare_response.prepared);
+    let contract_id = prepare_response
+        .rollback_contract
+        .as_ref()
+        .expect("rollback_contract present")
+        .contract_id;
+
+    // Sanity: contract must be auto_commit=false (default from PlannableFsAdapter)
+    let contract = store
+        .rollback_contracts()
+        .get(contract_id)
+        .await
+        .expect("store lookup ok")
+        .expect("contract exists");
+    assert!(
+        !contract.auto_commit,
+        "precondition for r3 commit: contract.auto_commit must be false (got state {:?})",
+        contract.state
+    );
+
+    // Execute
+    let execute_request = ferrum_proto::ExecuteExecutionRequest {
+        payload: serde_json::json!({ "content": format!("new content for r3 commit ({})", file_tag) }),
+    };
+    let request = axum::http::Request::builder()
+        .method(axum::http::Method::POST)
+        .uri(format!("/v1/executions/{}/execute", execution_id))
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(
+            serde_json::to_vec(&execute_request).unwrap(),
+        ))
+        .unwrap();
+    let response = tower::ServiceExt::oneshot(router.clone(), request)
+        .await
+        .expect("execute request should succeed");
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+    // Verify
+    let request = axum::http::Request::builder()
+        .method(axum::http::Method::POST)
+        .uri(format!("/v1/executions/{}/verify", execution_id))
+        .header("content-type", "application/json")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = tower::ServiceExt::oneshot(router.clone(), request)
+        .await
+        .expect("verify request should succeed");
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("read verify body");
+    let verify_response: ferrum_proto::VerifyExecutionResponse =
+        serde_json::from_slice(&body).expect("valid json");
+    assert!(
+        verify_response.verified,
+        "verify should succeed for r3 commit path"
+    );
+
+    // Sanity: contract should be Verified, execution should still be Running.
+    let contract = store
+        .rollback_contracts()
+        .get(contract_id)
+        .await
+        .expect("store lookup ok")
+        .expect("contract exists");
+    assert_eq!(
+        contract.state,
+        RollbackState::Verified,
+        "precondition for r3 commit: contract must be Verified"
+    );
+    let execution_record = store
+        .executions()
+        .get(execution_id)
+        .await
+        .expect("store lookup ok")
+        .expect("execution exists");
+    assert_eq!(
+        execution_record.state,
+        ExecutionState::Running,
+        "precondition for r3 commit: execution must still be Running"
+    );
+
+    (
+        runtime,
+        router,
+        store,
+        execution_id,
+        intent_id,
+        test_file_path,
+    )
+}
+
+/// Happy path: authorize → prepare → execute → verify (auto_commit=false) →
+/// commit. Asserts:
+/// - Commit returns 200 with `committed=true`.
+/// - Execution is transitioned to `Committed`.
+/// - Contract is transitioned to `Committed`.
+/// - A `SideEffectCommitted` provenance event is emitted with the correct
+///   execution/intent/proposal/correlation fields.
+#[tokio::test]
+async fn test_r3_manual_commit_happy_path() {
+    let (_runtime, router, store, execution_id, intent_id, test_file_path) =
+        setup_verified_auto_commit_false_execution("happy").await;
+
+    // Commit
+    let request = axum::http::Request::builder()
+        .method(axum::http::Method::POST)
+        .uri(format!("/v1/executions/{}/commit", execution_id))
+        .header("content-type", "application/json")
+        .body(axum::body::Body::empty())
+        .unwrap();
+
+    let response = tower::ServiceExt::oneshot(router.clone(), request)
+        .await
+        .expect("commit request should succeed");
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("read commit body");
+    let commit_response: ferrum_proto::CommitExecutionResponse =
+        serde_json::from_slice(&body).expect("valid json");
+    assert_eq!(commit_response.execution_id, execution_id);
+    assert!(
+        commit_response.committed,
+        "commit response should be committed=true"
+    );
+    let contract = commit_response
+        .rollback_contract
+        .expect("rollback contract must be present in response");
+    assert_eq!(
+        contract.state,
+        ferrum_proto::RollbackState::Committed,
+        "contract must be Committed after r3 commit"
+    );
+
+    // Execution state must be Committed in the store.
+    let execution_record = store
+        .executions()
+        .get(execution_id)
+        .await
+        .expect("store lookup ok")
+        .expect("execution exists");
+    assert_eq!(
+        execution_record.state,
+        ExecutionState::Committed,
+        "execution must be Committed after r3 commit"
+    );
+
+    // Lineage must include SideEffectCommitted bound to the same execution_id.
+    let request = axum::http::Request::builder()
+        .method(axum::http::Method::GET)
+        .uri(format!("/v1/provenance/lineage/{}", execution_id))
+        .header("content-type", "application/json")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = tower::ServiceExt::oneshot(router.clone(), request)
+        .await
+        .expect("lineage request should succeed");
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("read lineage body");
+    #[derive(serde::Deserialize)]
+    struct LineageResponse {
+        #[allow(dead_code)]
+        execution_id: ferrum_proto::ExecutionId,
+        events: Vec<ferrum_proto::ProvenanceEvent>,
+    }
+    let lineage: LineageResponse = serde_json::from_slice(&body).expect("valid json");
+    let committed_events: Vec<_> = lineage
+        .events
+        .iter()
+        .filter(|e| {
+            matches!(
+                e.kind,
+                ferrum_proto::ProvenanceEventKind::SideEffectCommitted
+            )
+        })
+        .collect();
+    assert_eq!(
+        committed_events.len(),
+        1,
+        "exactly one SideEffectCommitted event expected (got {})",
+        committed_events.len()
+    );
+    let committed = committed_events[0];
+    assert_eq!(committed.execution_id, Some(execution_id));
+    assert_eq!(committed.intent_id, Some(intent_id));
+
+    // Replaying commit should now 409 (execution is terminal).
+    let request = axum::http::Request::builder()
+        .method(axum::http::Method::POST)
+        .uri(format!("/v1/executions/{}/commit", execution_id))
+        .header("content-type", "application/json")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = tower::ServiceExt::oneshot(router.clone(), request)
+        .await
+        .expect("replay commit should respond");
+    assert_eq!(
+        response.status(),
+        axum::http::StatusCode::CONFLICT,
+        "replaying commit on a terminal execution must 409"
+    );
+
+    // Clean up
+    let _ = std::fs::remove_file(&test_file_path);
+}
+
+/// Negative path: committing before verify (no SideEffectVerified event)
+/// must return 409. Setup: authorize → prepare → execute, then call commit
+/// directly. The contract is ExecutedAwaitingVerify, not Verified, and no
+/// SideEffectVerified provenance event exists, so the commit must be rejected
+/// with 409.
+#[tokio::test]
+async fn test_r3_commit_before_verify_returns_409() {
+    use ferrum_proto::{CapabilityMintRequest, TaintBudget, ToolBinding};
+
+    let pdp = Arc::new(StaticPdpEngine);
+    let cap: Arc<dyn CapabilityService> = Arc::new(InMemoryCapabilityService::default());
+
+    let mut registry = AdapterRegistry::default();
+    registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
+    register_fs_adapter(&mut registry);
+    let mut rollback_service = RollbackService::new(Arc::new(registry));
+    rollback_service.register_planner(Arc::new(PlannableFsAdapter));
+    let rollback = Arc::new(rollback_service);
+
+    let store = Arc::new(
+        SqliteStore::connect("sqlite::memory:")
+            .await
+            .expect("connect to sqlite"),
+    );
+    store
+        .apply_embedded_migrations()
+        .await
+        .expect("apply migrations");
+
+    let runtime = GatewayRuntime::new(
+        pdp,
+        cap.clone(),
+        rollback,
+        store.clone() as Arc<dyn StoreFacade>,
+        vec![],
+    );
+    let router = build_router(runtime);
+
+    let temp_dir = std::env::temp_dir();
+    let test_file_path =
+        temp_dir.join(format!("ferrum-r3-pre-verify-{}.txt", uuid::Uuid::new_v4()));
+    std::fs::write(&test_file_path, "pre-verify original content")
+        .expect("failed to write temp file");
+    let file_path_str = test_file_path.to_string_lossy().to_string();
+
+    let intent_id = ferrum_proto::IntentId::new();
+    let now = chrono::Utc::now();
+    let intent = ferrum_proto::IntentEnvelope {
+        intent_id,
+        principal_id: ferrum_proto::PrincipalId::new(),
+        session_id: None,
+        channel_id: None,
+        title: "r3-commit-pre-verify".to_string(),
+        goal: "test r3 commit before verify".to_string(),
+        normalized_goal: "test r3 commit before verify".to_string(),
+        allowed_outcomes: Vec::new(),
+        forbidden_outcomes: Vec::new(),
+        resource_scope: vec![ferrum_proto::ResourceSelector::FilesystemPath {
+            path: file_path_str.clone(),
+            mode: ferrum_proto::ResourceMode::Write,
+            content_hash: None,
+        }],
+        risk_tier: ferrum_proto::RiskTier::Medium,
+        approval_mode: ferrum_proto::ApprovalMode::None,
+        default_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+        time_budget: ferrum_proto::TimeBudget {
+            max_duration_ms: 30_000,
+            max_steps: 8,
+            max_retries_per_step: 1,
+        },
+        trust_context: ferrum_proto::TrustContextSummary {
+            input_labels: Vec::new(),
+            sensitivity_labels: Vec::new(),
+            taint_score: 0,
+            contains_external_metadata: false,
+            contains_tool_output: false,
+            contains_untrusted_text: false,
+        },
+        derived_from_event_ids: Vec::new(),
+        tags: Vec::new(),
+        metadata: ferrum_proto::JsonMap::new(),
+        status: ferrum_proto::IntentStatus::Active,
+        created_at: now,
+        expires_at: now + chrono::Duration::hours(1),
+    };
+    store
+        .intents()
+        .insert(&intent)
+        .await
+        .expect("intent insert should succeed");
+
+    let proposal_id = ferrum_proto::ProposalId::new();
+    let proposal = ferrum_proto::ActionProposal {
+        proposal_id,
+        intent_id,
+        step_index: 0,
+        title: "r3 commit pre-verify proposal".to_string(),
+        tool_name: "file_write".to_string(),
+        server_name: "test-server".to_string(),
+        raw_arguments: serde_json::json!({}),
+        expected_effect: "file is written".to_string(),
+        estimated_risk: ferrum_proto::RiskTier::Medium,
+        requested_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+        taint_inputs: Vec::new(),
+        metadata: ferrum_proto::JsonMap::new(),
+        created_at: chrono::Utc::now(),
+    };
+    store
+        .proposals()
+        .insert(&proposal)
+        .await
+        .expect("proposal insert should succeed");
+
+    let cap_request = CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ToolBinding {
+            server_name: "test-server".to_string(),
+            tool_name: "file_write".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: Vec::new(),
+        argument_constraints: Vec::new(),
+        taint_budget: TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+    let request = axum::http::Request::builder()
+        .method(axum::http::Method::POST)
+        .uri("/v1/capabilities/mint")
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(
+            serde_json::to_vec(&cap_request).unwrap(),
+        ))
+        .unwrap();
+    let response = tower::ServiceExt::oneshot(router.clone(), request)
+        .await
+        .expect("mint request should succeed");
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("read mint body");
+    let cap_response: ferrum_proto::CapabilityMintResponse =
+        serde_json::from_slice(&body).expect("valid json");
+    let capability_id = cap_response.lease.capability_id;
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    // Authorize
+    let auth_request = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+    let request = axum::http::Request::builder()
+        .method(axum::http::Method::POST)
+        .uri("/v1/executions/authorize")
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(
+            serde_json::to_vec(&auth_request).unwrap(),
+        ))
+        .unwrap();
+    let response = tower::ServiceExt::oneshot(router.clone(), request)
+        .await
+        .expect("authorize request should succeed");
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("read authorize body");
+    let auth_response: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).expect("valid json");
+    let execution_id = auth_response.execution.execution_id;
+
+    // Prepare
+    let request = axum::http::Request::builder()
+        .method(axum::http::Method::POST)
+        .uri(format!("/v1/executions/{}/prepare", execution_id))
+        .header("content-type", "application/json")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = tower::ServiceExt::oneshot(router.clone(), request)
+        .await
+        .expect("prepare request should succeed");
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+    // Execute
+    let execute_request = ferrum_proto::ExecuteExecutionRequest {
+        payload: serde_json::json!({ "content": "pre-verify new content" }),
+    };
+    let request = axum::http::Request::builder()
+        .method(axum::http::Method::POST)
+        .uri(format!("/v1/executions/{}/execute", execution_id))
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(
+            serde_json::to_vec(&execute_request).unwrap(),
+        ))
+        .unwrap();
+    let response = tower::ServiceExt::oneshot(router.clone(), request)
+        .await
+        .expect("execute request should succeed");
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+    // Commit BEFORE verify: must 409 (contract is ExecutedAwaitingVerify, not Verified;
+    // no SideEffectVerified provenance event exists).
+    let request = axum::http::Request::builder()
+        .method(axum::http::Method::POST)
+        .uri(format!("/v1/executions/{}/commit", execution_id))
+        .header("content-type", "application/json")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = tower::ServiceExt::oneshot(router.clone(), request)
+        .await
+        .expect("pre-verify commit should respond");
+    assert_eq!(
+        response.status(),
+        axum::http::StatusCode::CONFLICT,
+        "committing before verify must 409"
     );
 
     // Clean up

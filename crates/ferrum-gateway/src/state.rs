@@ -8,6 +8,12 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+/// Re-export the canonical `AppState` so that extracted handler modules
+/// (e.g. `capabilities`, `monitoring`, `policy_eval`) can reference it via
+/// `crate::state::AppState` instead of taking a direct dependency on
+/// `crate::server`.
+pub(crate) use crate::server::AppState;
+
 #[derive(Clone)]
 pub struct GatewayRuntime {
     pub pdp: Arc<dyn PdpEngine>,
