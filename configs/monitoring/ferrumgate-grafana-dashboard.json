@@ -38,7 +38,7 @@
         "type": "timeseries",
         "targets": [
           {
-            "expr": "histogram_quantile(0.95, sum(rate(ferrumgate_request_duration_seconds_bucket[5m])) by (le))",
+            "expr": "histogram_quantile(0.95, sum(rate(ferrumgate_request_duration_seconds[5m])) by (le))",
             "legendFormat": "p95"
           }
         ],

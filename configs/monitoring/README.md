@@ -77,7 +77,15 @@ Or use `prometheus --config.file` to load directly.
 2. Ensure your Prometheus data source is named `prometheus` (or update the `datasource` fields in the JSON if you use a different name).
 3. The dashboard includes panels for HTTP request rate, error rate, P95 latency, PG pool metrics, acquire timeouts, health status, active connections, and pool saturation.
 
-**Important**: The dashboard PromQL uses FerrumGate application metric names (`ferrumgate_http_requests_total`, `ferrumgate_request_duration_seconds_bucket`, `ferrumgate_store_health_up`, and PostgreSQL pool metrics). Review and adjust expressions if your Prometheus relabeling or exporter setup changes metric names.
+**Important**: The dashboard PromQL uses FerrumGate application metric names (`ferrumgate_http_requests_total`, `ferrumgate_request_duration_seconds`, `ferrumgate_store_health_up`, and PostgreSQL pool metrics). Review and adjust expressions if your Prometheus relabeling or exporter setup changes metric names.
+
+Validate application metric references against the runtime exporter before deploying:
+
+```bash
+python3 scripts/validate_monitoring_metrics.py
+```
+
+The validator checks alert-rule and dashboard `ferrumgate_*` references against the metrics emitted by `crates/ferrum-gateway/src/monitoring.rs`. Metrics supplied by external exporters, such as `node_*` or `pg_*`, remain outside this application contract.
 
 #### PostgreSQL Alert Rules
 
@@ -88,12 +96,11 @@ The `ferrumgate-alerts.yaml` file includes a `ferrumgate_postgres` rule group wi
 | `FerrumGatePostgresMetricsAbsent` | `absent(ferrumgate_store_pg_pool_max) == 1` | **TEMPLATE** — enable only when ferrumd uses PostgreSQL. Uses absence of PG pool metrics as a proxy for PG down / disconnected. |
 | `FerrumGatePostgresPoolSaturation` | `pool_idle == 0` and `pool_size >= pool_max` | Fires when all PG connections are in use. |
 | `FerrumGatePostgresSlowAcquire` | `rate(ferrumgate_store_pg_acquire_timeouts_total[5m]) > 0` | Fires on any acquire timeout. Tune threshold for your workload. |
-| `FerrumGatePostgresBackupStale` | `time() - backup_last_success_timestamp > 7200` | **TEMPLATE** — 2-hour threshold. Adjust to your backup cadence. Relies on generic backup metric. |
 | `FerrumGatePostgresReplicationLag` | `pg_stat_replication_pg_wal_lsn_diff > 1 GB` | **PLACEHOLDER** — requires `postgres_exporter` or equivalent. Do not enable until HA/replication is deployed. |
 
 **Important**: The PG alert rules are templates. `FerrumGatePostgresMetricsAbsent` is a heuristic (absence of application-level metrics), not a definitive "database is down" signal. For live environments, supplement with `postgres_exporter` or cloud PG monitoring. The replication-lag alert is a placeholder with a fictional metric name and will not fire without external tooling.
 
-**Syntax check**: Docker `promtool check rules` passed (`SUCCESS: 21 rules found`) on 2026-05-21. Operator must validate firing behavior in their environment before deploying.
+CI validates rule syntax with `promtool check rules` and enforces the application metric contract. Operator must still validate firing behavior in their environment before deploying.
 
 ## Placeholder Values
 
@@ -126,7 +133,7 @@ This section documents how an operator deploys the FerrumGate alert templates to
 promtool check rules configs/monitoring/ferrumgate-alerts.yaml
 ```
 
-- **Pass**: `SUCCESS: 21 rules found` (or equivalent; rule count may change).
+- **Pass**: `SUCCESS: 18 rules found` (or equivalent; rule count may change).
 - **Fail**: Fix syntax errors before proceeding.
 - **Evidence**: Capture `promtool` output.
 

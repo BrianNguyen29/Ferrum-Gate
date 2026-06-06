@@ -1023,6 +1023,23 @@ fn build_workload_router(state: Arc<AppState>) -> Router {
             "/v1/admin/agents/{agent_id}",
             delete(crate::admin::agents::revoke_agent),
         )
+        // Admin lifecycle outbox operator endpoints
+        .route(
+            "/v1/admin/lifecycle-outbox",
+            get(crate::admin::lifecycle_outbox::list_lifecycle_outbox),
+        )
+        .route(
+            "/v1/admin/lifecycle-outbox/{outbox_id}",
+            get(crate::admin::lifecycle_outbox::get_lifecycle_outbox),
+        )
+        .route(
+            "/v1/admin/lifecycle-outbox/{outbox_id}/retry",
+            post(crate::admin::lifecycle_outbox::retry_lifecycle_outbox),
+        )
+        .route(
+            "/v1/admin/lifecycle-outbox/{outbox_id}/resolve",
+            post(crate::admin::lifecycle_outbox::resolve_lifecycle_outbox),
+        )
         // Audit log endpoints
         .route("/v1/admin/audit-logs", get(crate::audit::list_audit_logs))
         .route(
@@ -1951,8 +1968,8 @@ mod tests {
     use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
     use ferrum_store::repos::{
         AgentRepo, ApprovalRepo, AuditCheckpointRepo, AuditLogRepo, AuditMerkleRootRepo,
-        CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo, PolicyBundleRepo, ProposalRepo,
-        ProvenanceRepo, RollbackRepo, TokenRepo,
+        CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo, LifecycleOutboxRepo,
+        PolicyBundleRepo, ProposalRepo, ProvenanceRepo, RollbackRepo, TokenRepo,
     };
     use ferrum_store::{SqliteStore, StoreError, StoreFacade};
     use ferrum_sync::{BridgeToolInfo, ExternalEventSource, McpBridge};
@@ -2042,6 +2059,9 @@ mod tests {
         }
         fn provenance(&self) -> Arc<dyn ProvenanceRepo> {
             self.inner.provenance()
+        }
+        fn lifecycle_outbox(&self) -> Arc<dyn LifecycleOutboxRepo> {
+            self.inner.lifecycle_outbox()
         }
         fn ledger(&self) -> Arc<dyn LedgerRepo> {
             self.inner.ledger()
@@ -2348,6 +2368,9 @@ mod tests {
         fn provenance(&self) -> Arc<dyn ProvenanceRepo> {
             self.inner.provenance()
         }
+        fn lifecycle_outbox(&self) -> Arc<dyn LifecycleOutboxRepo> {
+            self.inner.lifecycle_outbox()
+        }
         fn ledger(&self) -> Arc<dyn LedgerRepo> {
             self.inner.ledger()
         }
@@ -2477,6 +2500,9 @@ mod tests {
         }
         fn provenance(&self) -> Arc<dyn ProvenanceRepo> {
             self.inner.provenance()
+        }
+        fn lifecycle_outbox(&self) -> Arc<dyn LifecycleOutboxRepo> {
+            self.inner.lifecycle_outbox()
         }
         fn ledger(&self) -> Arc<dyn LedgerRepo> {
             self.inner.ledger()

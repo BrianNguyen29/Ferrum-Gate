@@ -128,6 +128,39 @@ impl ExecutionRepo for SqliteExecutionRepo {
         self.update(&execution).await
     }
 
+    async fn compare_and_set_state(
+        &self,
+        execution_id: ExecutionId,
+        expected_states: &[ExecutionState],
+        new_state: ExecutionState,
+    ) -> Result<bool> {
+        if expected_states.is_empty() {
+            return Ok(false);
+        }
+        let new_state_text = enum_text(&new_state)?;
+        let expected = expected_states
+            .iter()
+            .map(enum_text)
+            .collect::<Result<Vec<_>>>()?;
+        let placeholders = std::iter::repeat_n("?", expected.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "UPDATE executions
+             SET state = ?2,
+                 raw_json = json_set(raw_json, '$.state', ?2)
+             WHERE execution_id = ?1 AND state IN ({placeholders})"
+        );
+        let mut query = sqlx::query(&sql)
+            .bind(execution_id.to_string())
+            .bind(new_state_text);
+        for state in expected {
+            query = query.bind(state);
+        }
+        let result = query.execute(&self.pool).await?;
+        Ok(result.rows_affected() == 1)
+    }
+
     async fn list_by_intent(&self, intent_id: IntentId) -> Result<Vec<ExecutionRecord>> {
         fetch_entities(
             &self.pool,

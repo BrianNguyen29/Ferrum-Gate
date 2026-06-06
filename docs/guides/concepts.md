@@ -90,6 +90,7 @@ Every significant event is recorded:
 - `SideEffectPrepared`
 - `SideEffectVerified`
 - Terminal (`SideEffectCommitted` / `SideEffectCompensated` / `SideEffectRolledBack`)
+- `ErrorRaised` for fail-closed terminal failures such as incomplete recovery
 
 Provenance events are queryable via `POST /v1/provenance/query` and `GET /v1/provenance/lineage/{execution_id}`.
 
@@ -111,10 +112,14 @@ ActionProposalSubmitted
   → ToolCallPrepared
   → ToolCallExecuted
   → SideEffectVerified
-  → Terminal (SideEffectCommitted | SideEffectCompensated | SideEffectRolledBack)
+  → Terminal (SideEffectCommitted | SideEffectCompensated | SideEffectRolledBack | ErrorRaised)
 ```
 
 If any required step is missing, the gateway fails closed and will not commit.
+
+If a compensation or rollback adapter returns `recovered=false`, the gateway treats the attempt as
+`recovery-incomplete`: the rollback contract and execution move to `Failed`, the HTTP response is
+not marked compensated/rolled back, and provenance emits `ErrorRaised` with recovery metadata.
 
 ### Adapter
 

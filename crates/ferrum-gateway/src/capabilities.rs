@@ -23,13 +23,16 @@ use chrono::Utc;
 use ferrum_cap::CapabilityError;
 use ferrum_proto::{
     ActorRef, ActorType, ApiErrorCode, CapabilityId, CapabilityMintRequest, CapabilityMintResponse,
-    CapabilityStatus, EventId, HashChainRef, ObjectRef, ObjectType, ProvenanceEvent,
+    CapabilityStatus, Decision, EventId, HashChainRef, ObjectRef, ObjectType, ProvenanceEvent,
+    ProvenanceEventKind, ProvenanceQueryRequest,
 };
 use std::sync::Arc;
 
+use crate::execution::{validate_approval_binding_digest, validate_argument_constraints};
 use crate::macros::{governance_err, governance_ok};
 use crate::monitoring::GovernanceRoute;
 use crate::problem::ApiProblem;
+use crate::provenance::append_governance_event;
 use crate::response::sanitize_json;
 use crate::state::AppState;
 
@@ -49,10 +52,177 @@ fn parse_capability_id(value: &str) -> Result<CapabilityId, ApiProblem> {
     Ok(CapabilityId(parsed))
 }
 
+fn decision_from_policy_event(event: &ProvenanceEvent) -> Option<Decision> {
+    match event.metadata.get("decision")?.as_str()? {
+        "Allow" => Some(Decision::Allow),
+        "Deny" => Some(Decision::Deny),
+        "Quarantine" => Some(Decision::Quarantine),
+        "RequireApproval" => Some(Decision::RequireApproval),
+        "AllowDraftOnly" => Some(Decision::AllowDraftOnly),
+        _ => None,
+    }
+}
+
+async fn latest_policy_decision_for_proposal(
+    state: &AppState,
+    proposal_id: ferrum_proto::ProposalId,
+    intent_id: ferrum_proto::IntentId,
+) -> Result<Decision, ApiProblem> {
+    let events = state
+        .runtime
+        .store
+        .provenance()
+        .query(&ProvenanceQueryRequest {
+            intent_id: Some(intent_id),
+            execution_id: None,
+            capability_id: None,
+            event_kind: Some(ProvenanceEventKind::PolicyEvaluated),
+            since: None,
+            until: None,
+            edge_types: Vec::new(),
+        })
+        .await
+        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+
+    let event = events
+        .iter()
+        .filter(|event| event.proposal_id == Some(proposal_id))
+        .max_by_key(|event| event.occurred_at)
+        .ok_or_else(|| {
+            ApiProblem::new(
+                StatusCode::CONFLICT,
+                ApiErrorCode::Conflict,
+                "capability mint requires prior PolicyEvaluated event for proposal",
+            )
+        })?;
+
+    decision_from_policy_event(event).ok_or_else(|| {
+        ApiProblem::new(
+            StatusCode::CONFLICT,
+            ApiErrorCode::Conflict,
+            "PolicyEvaluated event is missing a valid decision",
+        )
+    })
+}
+
 pub(crate) async fn mint_capability(
     State(state): State<Arc<AppState>>,
     Json(request): Json<CapabilityMintRequest>,
 ) -> Result<Json<CapabilityMintResponse>, ApiProblem> {
+    let proposal = match state
+        .runtime
+        .store
+        .proposals()
+        .get(request.proposal_id)
+        .await
+    {
+        Ok(Some(proposal)) => proposal,
+        Ok(None) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::CapabilitiesMint,
+                ApiProblem::new(
+                    StatusCode::NOT_FOUND,
+                    ApiErrorCode::NotFound,
+                    "proposal not found for capability mint",
+                )
+            );
+        }
+        Err(e) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::CapabilitiesMint,
+                ApiProblem::internal(anyhow::Error::from(e))
+            );
+        }
+    };
+
+    if proposal.intent_id != request.intent_id
+        || proposal.server_name != request.tool_binding.server_name
+        || proposal.tool_name != request.tool_binding.tool_name
+    {
+        return governance_err!(
+            state,
+            GovernanceRoute::CapabilitiesMint,
+            ApiProblem::new(
+                StatusCode::FORBIDDEN,
+                ApiErrorCode::IntegrityMismatch,
+                "capability mint binding does not match proposal",
+            )
+        );
+    }
+
+    if let Err(reason) =
+        validate_argument_constraints(&proposal.raw_arguments, &request.argument_constraints)
+    {
+        return governance_err!(
+            state,
+            GovernanceRoute::CapabilitiesMint,
+            ApiProblem::new(StatusCode::FORBIDDEN, ApiErrorCode::PolicyDenied, reason,)
+        );
+    }
+
+    match state.runtime.store.intents().get(request.intent_id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::CapabilitiesMint,
+                ApiProblem::new(
+                    StatusCode::NOT_FOUND,
+                    ApiErrorCode::NotFound,
+                    "intent not found for capability mint",
+                )
+            );
+        }
+        Err(e) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::CapabilitiesMint,
+                ApiProblem::internal(anyhow::Error::from(e))
+            );
+        }
+    }
+
+    match latest_policy_decision_for_proposal(&state, request.proposal_id, request.intent_id).await
+    {
+        Ok(Decision::Allow) => {}
+        Ok(Decision::RequireApproval) => {
+            let Some(binding) = request.approval_binding.as_ref() else {
+                return governance_err!(
+                    state,
+                    GovernanceRoute::CapabilitiesMint,
+                    ApiProblem::new(
+                        StatusCode::FORBIDDEN,
+                        ApiErrorCode::PolicyDenied,
+                        "policy requires approval before capability mint",
+                    )
+                );
+            };
+            if let Err(problem) =
+                validate_approval_binding_digest(&state.runtime.store, binding, request.proposal_id)
+                    .await
+            {
+                return governance_err!(state, GovernanceRoute::CapabilitiesMint, problem);
+            }
+        }
+        Ok(decision) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::CapabilitiesMint,
+                ApiProblem::new(
+                    StatusCode::FORBIDDEN,
+                    ApiErrorCode::PolicyDenied,
+                    format!(
+                        "policy decision {:?} does not allow capability mint",
+                        decision
+                    ),
+                )
+            );
+        }
+        Err(problem) => return governance_err!(state, GovernanceRoute::CapabilitiesMint, problem),
+    }
+
     let response = match state.runtime.cap.mint(request).await {
         Ok(response) => response,
         Err(e) => {
@@ -114,13 +284,7 @@ pub(crate) async fn mint_capability(
         metadata: ferrum_proto::JsonMap::new(),
         source_runtime_id: None,
     };
-    if let Err(e) = state
-        .runtime
-        .store
-        .provenance()
-        .append_event(&cap_event)
-        .await
-    {
+    if let Err(e) = append_governance_event(&state.runtime.store, cap_event).await {
         return governance_err!(
             state,
             GovernanceRoute::CapabilitiesMint,
@@ -258,7 +422,7 @@ pub(crate) async fn revoke_capability(
         );
     }
 
-    if let Err(e) = state.runtime.store.provenance().append_event(&event).await {
+    if let Err(e) = append_governance_event(&state.runtime.store, event).await {
         return governance_err!(
             state,
             GovernanceRoute::CapabilitiesRevoke,

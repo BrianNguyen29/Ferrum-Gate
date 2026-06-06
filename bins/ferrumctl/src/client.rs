@@ -102,6 +102,19 @@ pub struct CancelExecutionResponse {
     pub canceled_at: String,
 }
 
+#[derive(Debug, Serialize)]
+struct LifecycleOutboxRetryRequest {
+    actor_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct LifecycleOutboxResolveRequest {
+    actor_id: String,
+    reason: String,
+}
+
 // Policy Bundle types
 #[derive(Debug, Deserialize, Serialize)]
 pub struct PolicyBundleItem {
@@ -364,6 +377,89 @@ impl Client {
         let url = format!("{}/v1/executions/{}/cancel", self.base_url, execution_id);
         let resp = self.add_auth(self.http.post(&url)).send().await?;
         resp.error_for_status_ref()?;
+        Ok(resp.json().await?)
+    }
+
+    pub async fn list_lifecycle_outbox(
+        &self,
+        status: Option<&str>,
+        limit: u32,
+    ) -> Result<ferrum_proto::LifecycleOutboxListResponse> {
+        let mut url = format!("{}/v1/admin/lifecycle-outbox?", self.base_url);
+        if let Some(status) = status {
+            url.push_str(&format!("status={}&", status));
+        }
+        url.push_str(&format!("limit={}", limit));
+        let resp = self.add_auth(self.http.get(&url)).send().await?;
+        resp.error_for_status_ref()?;
+        Ok(resp.json().await?)
+    }
+
+    pub async fn get_lifecycle_outbox(
+        &self,
+        outbox_id: &str,
+    ) -> Result<ferrum_proto::LifecycleOutboxRecord> {
+        let url = format!("{}/v1/admin/lifecycle-outbox/{}", self.base_url, outbox_id);
+        let resp = self.add_auth(self.http.get(&url)).send().await?;
+        resp.error_for_status_ref()?;
+        Ok(resp.json().await?)
+    }
+
+    pub async fn retry_lifecycle_outbox(
+        &self,
+        outbox_id: &str,
+        actor_id: &str,
+        reason: Option<&str>,
+    ) -> Result<ferrum_proto::LifecycleOutboxRetryResponse> {
+        let url = format!(
+            "{}/v1/admin/lifecycle-outbox/{}/retry",
+            self.base_url, outbox_id
+        );
+        let request = LifecycleOutboxRetryRequest {
+            actor_id: actor_id.to_string(),
+            reason: reason.map(String::from),
+        };
+        let resp = self
+            .add_auth(self.http.post(&url).json(&request))
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            if body.is_empty() {
+                bail!("HTTP {}: (empty body)", status);
+            }
+            bail!("HTTP {}: {}", status, body);
+        }
+        Ok(resp.json().await?)
+    }
+
+    pub async fn resolve_lifecycle_outbox(
+        &self,
+        outbox_id: &str,
+        actor_id: &str,
+        reason: &str,
+    ) -> Result<ferrum_proto::LifecycleOutboxResolveResponse> {
+        let url = format!(
+            "{}/v1/admin/lifecycle-outbox/{}/resolve",
+            self.base_url, outbox_id
+        );
+        let request = LifecycleOutboxResolveRequest {
+            actor_id: actor_id.to_string(),
+            reason: reason.to_string(),
+        };
+        let resp = self
+            .add_auth(self.http.post(&url).json(&request))
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            if body.is_empty() {
+                bail!("HTTP {}: (empty body)", status);
+            }
+            bail!("HTTP {}: {}", status, body);
+        }
         Ok(resp.json().await?)
     }
 

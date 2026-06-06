@@ -101,6 +101,34 @@ impl ExecutionRepo for PostgresExecutionRepo {
         Ok(())
     }
 
+    async fn compare_and_set_state(
+        &self,
+        execution_id: ExecutionId,
+        expected_states: &[ExecutionState],
+        new_state: ExecutionState,
+    ) -> Result<bool> {
+        if expected_states.is_empty() {
+            return Ok(false);
+        }
+        let new_state_text = enum_text(&new_state)?;
+        let expected = expected_states
+            .iter()
+            .map(enum_text)
+            .collect::<Result<Vec<_>>>()?;
+        let result = sqlx::query(
+            "UPDATE executions
+             SET state = $2,
+                 raw_json = jsonb_set(raw_json, '{state}', to_jsonb($2::text))
+             WHERE execution_id = $1 AND state = ANY($3)",
+        )
+        .bind(execution_id.to_string())
+        .bind(new_state_text)
+        .bind(expected)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() == 1)
+    }
+
     async fn list_by_intent(&self, intent_id: IntentId) -> Result<Vec<ExecutionRecord>> {
         fetch_entities(
             &self.pool,

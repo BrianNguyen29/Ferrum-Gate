@@ -21,6 +21,7 @@ CLI args > env vars > config file > defaults
 | `FERRUMD_STORE_DSN` | Store DSN | `sqlite:/var/lib/ferrumgate/ferrumgate.db` |
 | `FERRUMD_AUTH_MODE` | Auth mode | `Bearer` |
 | `FERRUMD_BEARER_TOKEN` | Bearer token | `hex32-string` |
+| `FERRUMD_FS_WORKDIR` | Filesystem adapter sandbox root | `/var/lib/ferrumgate/workdir` |
 | `FERRUMD_LOG_FILTER` | Log filter | `info` |
 | `FERRUMD_LOG_FORMAT` | Log format | `json` |
 | `FERRUMD_RATE_LIMIT_PER_SECOND` | Rate limit | `2` |
@@ -41,6 +42,7 @@ CLI args > env vars > config file > defaults
 bind_addr = "0.0.0.0:8080"
 auth_mode = "Bearer"
 bearer_token = "<generate-with-openssl-rand-hex-32>"
+fs_workdir = "/var/lib/ferrumgate/workdir"
 log_format = "json"
 rate_limit_per_second = 2
 rate_limit_burst = 50
@@ -65,6 +67,7 @@ This config auto-loads if no `--config` is specified and the file exists. **Neve
 
 - [ ] Choose store backend (SQLite for local use; PostgreSQL for higher throughput).
 - [ ] Generate bearer token with `openssl rand -hex 32`.
+- [ ] Set `fs_workdir` / `FERRUMD_FS_WORKDIR` for any non-loopback production-like deployment.
 - [ ] Configure reverse proxy with TLS termination (nginx/Caddy).
 - [ ] Set up systemd service with env file.
 - [ ] Enable backup timer/cron.

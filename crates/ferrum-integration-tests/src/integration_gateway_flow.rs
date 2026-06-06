@@ -26,7 +26,7 @@ use ferrum_proto::{
 use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
 use ferrum_store::{
     ApprovalRepo, CapabilityRepo, ExecutionRepo, IntentRepo, PolicyBundleRepo, ProposalRepo,
-    RollbackRepo, SqliteStore, StoreFacade,
+    ProvenanceRepo, RollbackRepo, SqliteStore, StoreFacade,
 };
 use ferrum_sync::{McpBridge, RuntimeBridge};
 use std::sync::Arc;
@@ -206,12 +206,12 @@ async fn test_single_use_capability_cannot_be_reused_via_gateway() {
         title: "test proposal".to_string(),
         tool_name: "test-tool".to_string(),
         server_name: "test-server".to_string(),
-        raw_arguments: serde_json::json!({}),
+        raw_arguments: serde_json::json!({ "content": "new content written by execute" }),
         expected_effect: "test effect".to_string(),
         estimated_risk: RiskTier::Medium,
         requested_rollback_class: RollbackClass::R0NativeReversible,
         taint_inputs: Vec::new(),
-        metadata: ferrum_proto::JsonMap::new(),
+        metadata: noop_binding_metadata(),
         created_at: chrono::Utc::now(),
     };
     let proposal_id = proposal.proposal_id;
@@ -418,12 +418,12 @@ async fn test_capability_durable_after_in_memory_state_loss() {
         title: "test proposal".to_string(),
         tool_name: "test-tool".to_string(),
         server_name: "test-server".to_string(),
-        raw_arguments: serde_json::json!({}),
+        raw_arguments: serde_json::json!({ "content": "new content for verify test" }),
         expected_effect: "test effect".to_string(),
         estimated_risk: RiskTier::Medium,
         requested_rollback_class: RollbackClass::R0NativeReversible,
         taint_inputs: Vec::new(),
-        metadata: ferrum_proto::JsonMap::new(),
+        metadata: noop_binding_metadata(),
         created_at: chrono::Utc::now(),
     };
     let proposal_id = proposal.proposal_id;
@@ -648,6 +648,7 @@ async fn test_r3_contracts_have_auto_commit_false() {
         .insert(&proposal)
         .await
         .expect("insert proposal should succeed");
+    seed_policy_evaluated(&store, &proposal).await;
 
     // Mint a capability so authorize can succeed
     let cap_request = ferrum_proto::CapabilityMintRequest {
@@ -875,7 +876,7 @@ async fn compensate_execution_flow() {
         estimated_risk: RiskTier::Medium,
         requested_rollback_class: RollbackClass::R0NativeReversible,
         taint_inputs: Vec::new(),
-        metadata: ferrum_proto::JsonMap::new(),
+        metadata: noop_binding_metadata(),
         created_at: chrono::Utc::now(),
     };
 
@@ -1216,7 +1217,7 @@ async fn test_get_execution_returns_rollback_contract_with_fs_first_data() {
         title: "fs-first inspect proposal".to_string(),
         tool_name: "file_write".to_string(),
         server_name: "test-server".to_string(),
-        raw_arguments: serde_json::json!({}),
+        raw_arguments: serde_json::json!({ "content": "new content written by execute" }),
         expected_effect: "file is written".to_string(),
         estimated_risk: ferrum_proto::RiskTier::Medium,
         requested_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
@@ -1229,6 +1230,7 @@ async fn test_get_execution_returns_rollback_contract_with_fs_first_data() {
         .insert(&proposal)
         .await
         .expect("proposal insert should succeed");
+    seed_policy_evaluated(&store, &proposal).await;
 
     // Mint a capability
     let cap_request = ferrum_proto::CapabilityMintRequest {
@@ -1603,7 +1605,7 @@ async fn test_inspect_after_verify_execution_flow() {
         title: "fs-inspect-verify proposal".to_string(),
         tool_name: "file_write".to_string(),
         server_name: "test-server".to_string(),
-        raw_arguments: serde_json::json!({}),
+        raw_arguments: serde_json::json!({ "content": "new content for verify test" }),
         expected_effect: "file is written and verified".to_string(),
         estimated_risk: ferrum_proto::RiskTier::Medium,
         requested_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
@@ -1616,6 +1618,7 @@ async fn test_inspect_after_verify_execution_flow() {
         .insert(&proposal)
         .await
         .expect("proposal insert should succeed");
+    seed_policy_evaluated(&store, &proposal).await;
 
     // Mint capability
     let cap_request = ferrum_proto::CapabilityMintRequest {
@@ -1977,7 +1980,7 @@ async fn test_inspect_after_compensate_execution_flow() {
         title: "fs-inspect-compensate proposal".to_string(),
         tool_name: "file_write".to_string(),
         server_name: "test-server".to_string(),
-        raw_arguments: serde_json::json!({}),
+        raw_arguments: serde_json::json!({ "content": "modified content for compensate test" }),
         expected_effect: "file is written and compensated".to_string(),
         estimated_risk: ferrum_proto::RiskTier::Medium,
         requested_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
@@ -1990,6 +1993,7 @@ async fn test_inspect_after_compensate_execution_flow() {
         .insert(&proposal)
         .await
         .expect("proposal insert should succeed");
+    seed_policy_evaluated(&store, &proposal).await;
 
     // Mint capability
     let cap_request = ferrum_proto::CapabilityMintRequest {
@@ -2373,7 +2377,7 @@ async fn test_poisoned_context_taint_at_boundary_69_no_quarantine() {
         title: "taint boundary test".to_string(),
         tool_name: "test-tool".to_string(),
         server_name: "test-server".to_string(),
-        raw_arguments: serde_json::json!({}),
+        raw_arguments: serde_json::json!({ "content": "pre-verify new content" }),
         expected_effect: "test effect".to_string(),
         estimated_risk: RiskTier::High,
         requested_rollback_class: RollbackClass::R2Compensatable, // non-R0
@@ -3157,7 +3161,7 @@ async fn test_r0_allowed_with_empty_scope() {
         estimated_risk: RiskTier::Medium,
         requested_rollback_class: RollbackClass::R0NativeReversible,
         taint_inputs: Vec::new(),
-        metadata: ferrum_proto::JsonMap::new(),
+        metadata: noop_binding_metadata(),
         created_at: chrono::Utc::now(),
     };
 
@@ -3426,6 +3430,7 @@ async fn test_draft_only_intent_cannot_reach_prepare_by_bypassing_evaluate() {
         .insert(&proposal)
         .await
         .expect("proposal insert should succeed");
+    seed_policy_evaluated(&store, &proposal).await;
 
     // Step 3: Mint a capability to satisfy foreign key constraints
     // We need a valid capability_id in the database for the execution record.
@@ -3627,6 +3632,7 @@ async fn test_i5_scope_validation_resource_bindings_exceed_intent_scope() {
         .insert(&proposal)
         .await
         .expect("proposal insert should succeed");
+    seed_policy_evaluated(&store, &proposal).await;
 
     // Mint capability with resource binding OUTSIDE intent scope (/other/path instead of /tmp)
     let mint_request = ferrum_proto::CapabilityMintRequest {
@@ -3808,6 +3814,7 @@ async fn test_i5_scope_validation_resource_bindings_within_intent_scope() {
         .insert(&proposal)
         .await
         .expect("proposal insert should succeed");
+    seed_policy_evaluated(&store, &proposal).await;
 
     // Mint capability with resource binding WITHIN intent scope (/tmp/subdir/file.txt is under /tmp)
     let mint_request = ferrum_proto::CapabilityMintRequest {
@@ -3935,6 +3942,7 @@ async fn test_authorize_rejects_proposal_capability_mismatch() {
         .insert(&proposal_a_record)
         .await
         .expect("proposal A insert");
+    seed_policy_evaluated(&store, &proposal_a_record).await;
 
     let proposal_b = ferrum_proto::ProposalId::new();
     let proposal_b_record = make_test_proposal(intent_id, proposal_b);
@@ -3943,6 +3951,7 @@ async fn test_authorize_rejects_proposal_capability_mismatch() {
         .insert(&proposal_b_record)
         .await
         .expect("proposal B insert");
+    seed_policy_evaluated(&store, &proposal_b_record).await;
 
     let runtime = GatewayRuntime::new(
         pdp,
@@ -4122,6 +4131,7 @@ async fn test_i6_none_binding_skips_validation() {
         .insert(&proposal)
         .await
         .expect("proposal insert");
+    seed_policy_evaluated(&store, &proposal).await;
 
     let runtime = GatewayRuntime::new(
         pdp,
@@ -4239,6 +4249,7 @@ async fn test_i6_valid_binding_succeeds() {
         .insert(&proposal)
         .await
         .expect("proposal insert");
+    seed_policy_evaluated(&store, &proposal).await;
 
     let runtime = GatewayRuntime::new(
         pdp,
@@ -4385,6 +4396,7 @@ async fn test_i6_pending_approval_denied() {
         .insert(&proposal)
         .await
         .expect("proposal insert");
+    seed_policy_evaluated(&store, &proposal).await;
 
     let runtime = GatewayRuntime::new(
         pdp,
@@ -4541,6 +4553,7 @@ async fn test_i6_digest_mismatch_denied() {
         .insert(&proposal)
         .await
         .expect("proposal insert");
+    seed_policy_evaluated(&store, &proposal).await;
 
     let runtime = GatewayRuntime::new(
         pdp,
@@ -4699,6 +4712,7 @@ async fn test_i6_expired_binding_denied() {
         .insert(&proposal)
         .await
         .expect("proposal insert");
+    seed_policy_evaluated(&store, &proposal).await;
 
     let runtime = GatewayRuntime::new(
         pdp,
@@ -4860,6 +4874,7 @@ async fn test_i6_approval_not_found_denied() {
         .insert(&proposal)
         .await
         .expect("proposal insert");
+    seed_policy_evaluated(&store, &proposal).await;
 
     let runtime = GatewayRuntime::new(
         pdp,
@@ -4996,6 +5011,7 @@ async fn test_i6_chain_broken_digest_mismatch_between_approval_and_binding() {
         .insert(&proposal)
         .await
         .expect("proposal insert");
+    seed_policy_evaluated(&store, &proposal).await;
 
     let runtime = GatewayRuntime::new(
         pdp,
@@ -5571,6 +5587,7 @@ async fn test_cancel_execution_success() {
         .insert(&proposal)
         .await
         .expect("proposal insert should succeed");
+    seed_policy_evaluated(&store, &proposal).await;
 
     // Mint a capability to satisfy FK constraint on capability_id
     let cap_request = ferrum_proto::CapabilityMintRequest {
@@ -5758,6 +5775,7 @@ async fn test_cancel_execution_terminal_state_rejected() {
         .insert(&proposal)
         .await
         .expect("proposal insert should succeed");
+    seed_policy_evaluated(&store, &proposal).await;
 
     // Mint a capability to satisfy FK constraint on capability_id
     let cap_request = ferrum_proto::CapabilityMintRequest {
@@ -5874,6 +5892,7 @@ async fn test_cancel_execution_prepared_state() {
         .insert(&proposal)
         .await
         .expect("proposal insert should succeed");
+    seed_policy_evaluated(&store, &proposal).await;
 
     // Mint a capability to satisfy FK constraint on capability_id
     let cap_request = ferrum_proto::CapabilityMintRequest {
@@ -5999,6 +6018,7 @@ async fn test_i6_single_use_with_valid_approval_binding() {
         .insert(&proposal)
         .await
         .expect("proposal insert");
+    seed_policy_evaluated(&store, &proposal).await;
 
     let runtime = GatewayRuntime::new(
         pdp,
@@ -6218,6 +6238,59 @@ fn make_test_proposal(
     )
 }
 
+fn noop_binding_metadata() -> ferrum_proto::JsonMap {
+    ferrum_proto::JsonMap::from([
+        (
+            "action_type".to_string(),
+            serde_json::json!("McpToolMutation"),
+        ),
+        ("adapter_key".to_string(), serde_json::json!("noop")),
+    ])
+}
+
+async fn seed_policy_evaluated(store: &SqliteStore, proposal: &ferrum_proto::ActionProposal) {
+    let event = ferrum_proto::ProvenanceEvent {
+        event_id: ferrum_proto::EventId::new(),
+        kind: ProvenanceEventKind::PolicyEvaluated,
+        occurred_at: chrono::Utc::now(),
+        actor: ferrum_proto::ActorRef {
+            actor_type: ferrum_proto::ActorType::Gateway,
+            actor_id: "integration-test".to_string(),
+            display_name: None,
+        },
+        object: ferrum_proto::ObjectRef {
+            object_type: ferrum_proto::ObjectType::Proposal,
+            object_id: proposal.proposal_id.to_string(),
+            summary: Some("seeded policy evaluation".to_string()),
+        },
+        intent_id: Some(proposal.intent_id),
+        proposal_id: Some(proposal.proposal_id),
+        execution_id: None,
+        capability_id: None,
+        rollback_contract_id: None,
+        policy_bundle_id: None,
+        trust_labels: Vec::new(),
+        sensitivity_labels: Vec::new(),
+        parent_edges: Vec::new(),
+        hash_chain: ferrum_proto::HashChainRef {
+            content_hash: None,
+            manifest_hash: None,
+            policy_bundle_hash: None,
+            previous_ledger_hash: None,
+        },
+        metadata: ferrum_proto::JsonMap::from([(
+            "decision".to_string(),
+            serde_json::json!("Allow"),
+        )]),
+        source_runtime_id: None,
+    };
+    store
+        .provenance()
+        .append_event(&event)
+        .await
+        .expect("seed PolicyEvaluated event");
+}
+
 /// Helper to create a minimal action proposal with a specific rollback class.
 fn make_test_proposal_with_class(
     intent_id: ferrum_proto::IntentId,
@@ -6237,7 +6310,7 @@ fn make_test_proposal_with_class(
         estimated_risk: ferrum_proto::RiskTier::Medium,
         requested_rollback_class: rollback_class,
         taint_inputs: Vec::new(),
-        metadata: ferrum_proto::JsonMap::new(),
+        metadata: noop_binding_metadata(),
         created_at: now,
     }
 }
@@ -6303,6 +6376,7 @@ async fn test_pending_approvals_pagination() {
         .insert(&proposal)
         .await
         .expect("insert proposal should succeed");
+    seed_policy_evaluated(&store, &proposal).await;
 
     for i in 0..5i64 {
         let created_at = chrono::Utc::now() - chrono::Duration::seconds(1000 - i);
@@ -6792,7 +6866,7 @@ async fn test_outcome_evaluation_aligned_flow() {
         estimated_risk: RiskTier::Medium,
         requested_rollback_class: RollbackClass::R0NativeReversible,
         taint_inputs: Vec::new(),
-        metadata: ferrum_proto::JsonMap::new(),
+        metadata: noop_binding_metadata(),
         created_at: chrono::Utc::now(),
     };
     store
@@ -6800,6 +6874,7 @@ async fn test_outcome_evaluation_aligned_flow() {
         .insert(&proposal)
         .await
         .expect("proposal insert should succeed");
+    seed_policy_evaluated(&store, &proposal).await;
 
     // Step 3: Mint a capability
     let cap_request = ferrum_proto::CapabilityMintRequest {
@@ -7048,7 +7123,7 @@ async fn test_outcome_evaluation_forbidden_flow() {
         estimated_risk: RiskTier::Medium,
         requested_rollback_class: RollbackClass::R0NativeReversible,
         taint_inputs: Vec::new(),
-        metadata: ferrum_proto::JsonMap::new(),
+        metadata: noop_binding_metadata(),
         created_at: chrono::Utc::now(),
     };
     store
@@ -7056,6 +7131,7 @@ async fn test_outcome_evaluation_forbidden_flow() {
         .insert(&proposal)
         .await
         .expect("proposal insert should succeed");
+    seed_policy_evaluated(&store, &proposal).await;
 
     let cap_request = ferrum_proto::CapabilityMintRequest {
         intent_id: proposal.intent_id,
@@ -7470,6 +7546,7 @@ async fn test_fs_adapter_filewrite_through_gateway_rollback_path() {
         .insert(&proposal)
         .await
         .expect("proposal insert should succeed");
+    seed_policy_evaluated(&store, &proposal).await;
 
     // Create a direct RollbackPrepareRequest for FileWrite with FsAdapter
     // This goes through the real RollbackService.prepare() path that the gateway uses
@@ -7649,6 +7726,7 @@ async fn test_prepare_endpoint_returns_fs_adapter_for_file_write() {
         .insert(&proposal)
         .await
         .expect("proposal insert should succeed");
+    seed_policy_evaluated(&store, &proposal).await;
 
     // Mint a capability
     let cap_request = ferrum_proto::CapabilityMintRequest {
@@ -7956,7 +8034,7 @@ async fn test_compensate_endpoint_restores_file_via_fs_adapter() {
         title: "file compensate proposal".to_string(),
         tool_name: "file_write".to_string(), // This triggers fs adapter inference
         server_name: "test-server".to_string(),
-        raw_arguments: serde_json::json!({}),
+        raw_arguments: serde_json::json!({ "content": "modified content simulating execute" }),
         expected_effect: "file is written and then compensated".to_string(),
         estimated_risk: ferrum_proto::RiskTier::Medium,
         requested_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
@@ -7969,6 +8047,7 @@ async fn test_compensate_endpoint_restores_file_via_fs_adapter() {
         .insert(&proposal)
         .await
         .expect("proposal insert should succeed");
+    seed_policy_evaluated(&store, &proposal).await;
 
     // Mint a capability
     let cap_request = ferrum_proto::CapabilityMintRequest {
@@ -8349,7 +8428,7 @@ async fn test_execute_and_verify_endpoint_flow_for_file_write() {
         title: "file execute-verify proposal".to_string(),
         tool_name: "file_write".to_string(),
         server_name: "test-server".to_string(),
-        raw_arguments: serde_json::json!({}),
+        raw_arguments: serde_json::json!({ "content": "new content written by execute" }),
         expected_effect: "file is written and verified".to_string(),
         estimated_risk: ferrum_proto::RiskTier::Medium,
         requested_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
@@ -8362,6 +8441,7 @@ async fn test_execute_and_verify_endpoint_flow_for_file_write() {
         .insert(&proposal)
         .await
         .expect("proposal insert should succeed");
+    seed_policy_evaluated(&store, &proposal).await;
 
     // Mint a capability
     let cap_request = ferrum_proto::CapabilityMintRequest {
@@ -8685,6 +8765,7 @@ async fn test_execute_already_running_returns_409() {
         .insert(&proposal)
         .await
         .expect("proposal insert");
+    seed_policy_evaluated(&store, &proposal).await;
 
     // Mint capability via HTTP (same pattern as working tests)
     let cap_request = ferrum_proto::CapabilityMintRequest {
@@ -8880,6 +8961,7 @@ async fn test_execute_already_committed_returns_409() {
         .insert(&proposal)
         .await
         .expect("proposal insert");
+    seed_policy_evaluated(&store, &proposal).await;
 
     // Mint capability via HTTP
     let cap_request = ferrum_proto::CapabilityMintRequest {
@@ -9145,7 +9227,7 @@ async fn test_verify_auto_commit_false_suppresses_committed() {
         title: "auto-commit-false proposal".to_string(),
         tool_name: "file_write".to_string(),
         server_name: "test-server".to_string(),
-        raw_arguments: serde_json::json!({}),
+        raw_arguments: serde_json::json!({ "content": "new content for auto_commit=false test" }),
         expected_effect: "file is written and verified".to_string(),
         estimated_risk: ferrum_proto::RiskTier::Medium,
         requested_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
@@ -9158,6 +9240,7 @@ async fn test_verify_auto_commit_false_suppresses_committed() {
         .insert(&proposal)
         .await
         .expect("proposal insert should succeed");
+    seed_policy_evaluated(&store, &proposal).await;
 
     // Mint capability
     let cap_request = ferrum_proto::CapabilityMintRequest {
@@ -9494,7 +9577,9 @@ async fn setup_verified_auto_commit_false_execution(
         title: format!("r3 commit proposal ({})", file_tag),
         tool_name: "file_write".to_string(),
         server_name: "test-server".to_string(),
-        raw_arguments: serde_json::json!({}),
+        raw_arguments: serde_json::json!({
+            "content": format!("new content for r3 commit ({})", file_tag)
+        }),
         expected_effect: "file is written, verified, and committed".to_string(),
         estimated_risk: ferrum_proto::RiskTier::Medium,
         requested_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
@@ -9507,6 +9592,7 @@ async fn setup_verified_auto_commit_false_execution(
         .insert(&proposal)
         .await
         .expect("proposal insert should succeed");
+    seed_policy_evaluated(&store, &proposal).await;
 
     // Mint capability
     let cap_request = CapabilityMintRequest {
@@ -9900,7 +9986,7 @@ async fn test_r3_commit_before_verify_returns_409() {
         title: "r3 commit pre-verify proposal".to_string(),
         tool_name: "file_write".to_string(),
         server_name: "test-server".to_string(),
-        raw_arguments: serde_json::json!({}),
+        raw_arguments: serde_json::json!({ "content": "pre-verify new content" }),
         expected_effect: "file is written".to_string(),
         estimated_risk: ferrum_proto::RiskTier::Medium,
         requested_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
@@ -9913,6 +9999,7 @@ async fn test_r3_commit_before_verify_returns_409() {
         .insert(&proposal)
         .await
         .expect("proposal insert should succeed");
+    seed_policy_evaluated(&store, &proposal).await;
 
     let cap_request = CapabilityMintRequest {
         intent_id,
@@ -10086,6 +10173,7 @@ async fn test_i11_sanitizes_execution_response_with_control_characters() {
         .insert(&proposal)
         .await
         .expect("proposal insert should succeed");
+    seed_policy_evaluated(&store, &proposal).await;
 
     // Mint a capability and insert it to satisfy FK constraint on capability_id
     let cap_request = ferrum_proto::CapabilityMintRequest {
@@ -11214,6 +11302,7 @@ async fn test_verify_contract_not_executed_returns_409() {
         .insert(&proposal)
         .await
         .expect("proposal insert");
+    seed_policy_evaluated(&store, &proposal).await;
 
     // Mint capability via HTTP
     let cap_request = ferrum_proto::CapabilityMintRequest {
@@ -11389,6 +11478,7 @@ async fn test_verify_already_verified_returns_409() {
         .insert(&proposal)
         .await
         .expect("proposal insert");
+    seed_policy_evaluated(&store, &proposal).await;
 
     // Mint capability via HTTP
     let cap_request = ferrum_proto::CapabilityMintRequest {
@@ -11657,7 +11747,7 @@ async fn test_verify_after_compensate_returns_409() {
         title: "FileWrite test".to_string(),
         tool_name: "file_write".to_string(),
         server_name: "fs".to_string(),
-        raw_arguments: serde_json::json!({ "path": file_path_str }),
+        raw_arguments: serde_json::json!({ "content": "new content after execute" }),
         expected_effect: "write to file".to_string(),
         estimated_risk: RiskTier::Low,
         requested_rollback_class: RollbackClass::R0NativeReversible,
@@ -11670,6 +11760,7 @@ async fn test_verify_after_compensate_returns_409() {
         .insert(&proposal)
         .await
         .expect("proposal insert");
+    seed_policy_evaluated(&store, &proposal).await;
 
     // Mint capability via HTTP
     let cap_request = ferrum_proto::CapabilityMintRequest {
@@ -11897,12 +11988,12 @@ async fn test_compensate_on_prepared_contract_returns_409_conflict() {
         title: "compensate guard test".to_string(),
         tool_name: "test-tool".to_string(),
         server_name: "test-server".to_string(),
-        raw_arguments: serde_json::json!({}),
+        raw_arguments: serde_json::json!({ "content": "test content" }),
         expected_effect: "test effect".to_string(),
         estimated_risk: RiskTier::Medium,
         requested_rollback_class: RollbackClass::R0NativeReversible,
         taint_inputs: Vec::new(),
-        metadata: ferrum_proto::JsonMap::new(),
+        metadata: noop_binding_metadata(),
         created_at: chrono::Utc::now(),
     };
 
@@ -12094,12 +12185,12 @@ async fn test_repeat_compensate_on_compensated_contract_returns_409_conflict() {
         title: "repeat compensate test".to_string(),
         tool_name: "test-tool".to_string(),
         server_name: "test-server".to_string(),
-        raw_arguments: serde_json::json!({}),
+        raw_arguments: serde_json::json!({ "content": "test content" }),
         expected_effect: "test effect".to_string(),
         estimated_risk: RiskTier::Medium,
         requested_rollback_class: RollbackClass::R0NativeReversible,
         taint_inputs: Vec::new(),
-        metadata: ferrum_proto::JsonMap::new(),
+        metadata: noop_binding_metadata(),
         created_at: chrono::Utc::now(),
     };
 
@@ -12336,6 +12427,7 @@ async fn test_resolve_approval_granted_success() {
         .insert(&proposal)
         .await
         .expect("proposal insert");
+    seed_policy_evaluated(&store, &proposal).await;
 
     let approval = make_test_approval(intent_id, proposal_id, chrono::Utc::now());
     store
@@ -12432,6 +12524,7 @@ async fn test_resolve_approval_denied_success() {
         .insert(&proposal)
         .await
         .expect("proposal insert");
+    seed_policy_evaluated(&store, &proposal).await;
 
     let approval = make_test_approval(intent_id, proposal_id, chrono::Utc::now());
     store
@@ -12528,6 +12621,7 @@ async fn test_resolve_approval_conflict_already_granted() {
         .insert(&proposal)
         .await
         .expect("proposal insert");
+    seed_policy_evaluated(&store, &proposal).await;
 
     let approval_id = ferrum_proto::ApprovalId::new();
     let granted_approval = ferrum_proto::ApprovalRequest {
@@ -12629,6 +12723,7 @@ async fn test_resolve_approval_conflict_already_denied() {
         .insert(&proposal)
         .await
         .expect("proposal insert");
+    seed_policy_evaluated(&store, &proposal).await;
 
     let approval_id = ferrum_proto::ApprovalId::new();
     let denied_approval = ferrum_proto::ApprovalRequest {
@@ -12730,6 +12825,7 @@ async fn test_resolve_approval_forbidden_expired() {
         .insert(&proposal)
         .await
         .expect("proposal insert");
+    seed_policy_evaluated(&store, &proposal).await;
 
     // Create approval that expired in the past
     let approval_id = ferrum_proto::ApprovalId::new();
@@ -12832,6 +12928,7 @@ async fn test_resolve_approval_provenance_event_emitted() {
         .insert(&proposal)
         .await
         .expect("proposal insert");
+    seed_policy_evaluated(&store, &proposal).await;
 
     let approval = make_test_approval(intent_id, proposal_id, chrono::Utc::now());
     let approval_id = approval.approval_id;

@@ -35,6 +35,7 @@ strong_id!(CapabilityId);
 strong_id!(ExecutionId);
 strong_id!(EventId);
 strong_id!(RollbackContractId);
+strong_id!(LifecycleOutboxId);
 strong_id!(ApprovalId);
 strong_id!(PolicyBundleId);
 strong_id!(PrincipalId);

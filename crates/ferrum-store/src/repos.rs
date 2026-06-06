@@ -3,7 +3,8 @@ use ferrum_proto::{
     ActionProposal, AgentRecord, ApprovalId, ApprovalRequest, ApprovalState, AuditAction,
     AuditLogEntry, AuditMerkleRoot, AuditResourceType, CapabilityId, CapabilityLease,
     CapabilityStatus, EventId, ExecutionId, ExecutionRecord, ExecutionState, IntentEnvelope,
-    IntentId, IntentStatus, PolicyBundle, PolicyBundleVersion, ProposalId, ProvenanceEdge,
+    IntentId, IntentStatus, JsonMap, LifecycleOutboxId, LifecycleOutboxRecord,
+    LifecycleOutboxStatus, PolicyBundle, PolicyBundleVersion, ProposalId, ProvenanceEdge,
     ProvenanceEvent, ProvenanceQueryRequest, RollbackContract, RollbackContractId, RollbackState,
     Timestamp,
 };
@@ -38,6 +39,33 @@ pub struct PoolStatus {
     pub max_connections: u32,
     /// Cumulative count of pool acquire timeouts since process start.
     pub acquire_timeouts: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct LifecycleOutboxLease {
+    pub outbox_id: LifecycleOutboxId,
+    pub owner: String,
+    pub generation: i64,
+    pub expires_at: Timestamp,
+}
+
+#[derive(Debug, Clone)]
+pub struct LifecycleOutboxClaim {
+    pub record: LifecycleOutboxRecord,
+    pub lease: LifecycleOutboxLease,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LifecycleOutboxLeaseStats {
+    pub active: usize,
+    pub expired: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReconciliationFailureDisposition {
+    Retryable,
+    NeedsOperatorReview,
+    LeaseLost,
 }
 
 #[async_trait]
@@ -102,6 +130,12 @@ pub trait ExecutionRepo: Send + Sync {
     async fn get(&self, execution_id: ExecutionId) -> Result<Option<ExecutionRecord>>;
     async fn update(&self, execution: &ExecutionRecord) -> Result<()>;
     async fn update_state(&self, execution_id: ExecutionId, state: ExecutionState) -> Result<()>;
+    async fn compare_and_set_state(
+        &self,
+        execution_id: ExecutionId,
+        expected_states: &[ExecutionState],
+        new_state: ExecutionState,
+    ) -> Result<bool>;
     async fn list_by_intent(&self, intent_id: IntentId) -> Result<Vec<ExecutionRecord>>;
     async fn list_by_capability(&self, capability_id: CapabilityId)
     -> Result<Vec<ExecutionRecord>>;
@@ -118,6 +152,98 @@ pub trait RollbackRepo: Send + Sync {
         state: RollbackState,
     ) -> Result<()>;
     async fn list_by_execution(&self, execution_id: ExecutionId) -> Result<Vec<RollbackContract>>;
+}
+
+#[async_trait]
+pub trait LifecycleOutboxRepo: Send + Sync {
+    async fn enqueue_lifecycle_transition(&self, record: &LifecycleOutboxRecord) -> Result<()>;
+    async fn record_lifecycle_transition(
+        &self,
+        execution: &ExecutionRecord,
+        rollback_contract: Option<&RollbackContract>,
+        outbox: &LifecycleOutboxRecord,
+    ) -> Result<()>;
+    async fn record_authorization(
+        &self,
+        capability: &CapabilityLease,
+        execution: &ExecutionRecord,
+        outbox: &LifecycleOutboxRecord,
+    ) -> Result<bool>;
+    async fn mark_provenance_written(
+        &self,
+        outbox_id: LifecycleOutboxId,
+        event_id: EventId,
+    ) -> Result<()>;
+    async fn mark_provenance_obligation_written(
+        &self,
+        outbox_id: LifecycleOutboxId,
+        event_kind: ferrum_proto::ProvenanceEventKind,
+        event_id: EventId,
+    ) -> Result<bool>;
+    async fn mark_reconciled(&self, outbox_id: LifecycleOutboxId, result: JsonMap) -> Result<()>;
+    async fn mark_needs_operator_review(
+        &self,
+        outbox_id: LifecycleOutboxId,
+        reason: String,
+    ) -> Result<()>;
+    async fn reset_for_retry(
+        &self,
+        outbox_id: LifecycleOutboxId,
+        actor_id: String,
+        reason: Option<String>,
+    ) -> Result<Option<LifecycleOutboxRecord>>;
+    async fn mark_operator_resolved(
+        &self,
+        outbox_id: LifecycleOutboxId,
+        actor_id: String,
+        reason: String,
+    ) -> Result<Option<LifecycleOutboxRecord>>;
+    async fn get(&self, outbox_id: LifecycleOutboxId) -> Result<Option<LifecycleOutboxRecord>>;
+    async fn list_by_status(
+        &self,
+        status: LifecycleOutboxStatus,
+        limit: u32,
+    ) -> Result<Vec<LifecycleOutboxRecord>>;
+    async fn claim_pending_reconciliation(
+        &self,
+        limit: u32,
+        lease_owner: &str,
+        lease_ttl: chrono::Duration,
+    ) -> Result<Vec<LifecycleOutboxClaim>>;
+    async fn renew_reconciliation_lease(
+        &self,
+        lease: &LifecycleOutboxLease,
+        lease_ttl: chrono::Duration,
+    ) -> Result<bool>;
+    async fn mark_provenance_written_claimed(
+        &self,
+        lease: &LifecycleOutboxLease,
+        event_id: EventId,
+    ) -> Result<bool>;
+    async fn mark_provenance_obligation_written_claimed(
+        &self,
+        lease: &LifecycleOutboxLease,
+        event_kind: ferrum_proto::ProvenanceEventKind,
+        event_id: EventId,
+    ) -> Result<bool>;
+    async fn mark_reconciled_claimed(
+        &self,
+        lease: &LifecycleOutboxLease,
+        result: JsonMap,
+    ) -> Result<bool>;
+    async fn mark_needs_operator_review_claimed(
+        &self,
+        lease: &LifecycleOutboxLease,
+        reason: String,
+    ) -> Result<bool>;
+    async fn record_reconciliation_failure(
+        &self,
+        lease: &LifecycleOutboxLease,
+        error: String,
+        max_attempts: u32,
+    ) -> Result<ReconciliationFailureDisposition>;
+    async fn reconciliation_lease_stats(&self) -> Result<LifecycleOutboxLeaseStats>;
+    async fn list_pending_reconciliation(&self, limit: u32) -> Result<Vec<LifecycleOutboxRecord>>;
 }
 
 #[async_trait]
@@ -158,6 +284,16 @@ pub trait ApprovalRepo: Send + Sync {
 #[async_trait]
 pub trait ProvenanceRepo: Send + Sync {
     async fn append_event(&self, event: &ProvenanceEvent) -> Result<()>;
+    /// Append an event and its parent edges atomically.
+    ///
+    /// This is the required path for internally generated governance events
+    /// whose `parent_edges` are part of the causal contract. Implementations
+    /// must ensure that an edge insert failure rolls back the event insert.
+    async fn append_event_with_edges(
+        &self,
+        event: &ProvenanceEvent,
+        edges: &[ProvenanceEdge],
+    ) -> Result<()>;
     async fn get_event(&self, event_id: EventId) -> Result<Option<ProvenanceEvent>>;
     async fn append_edges(&self, to_event_id: EventId, edges: &[ProvenanceEdge]) -> Result<()>;
     async fn query(&self, request: &ProvenanceQueryRequest) -> Result<Vec<ProvenanceEvent>>;
@@ -384,6 +520,7 @@ pub trait StoreFacade: Send + Sync {
     fn capabilities(&self) -> Arc<dyn CapabilityRepo>;
     fn executions(&self) -> Arc<dyn ExecutionRepo>;
     fn rollback_contracts(&self) -> Arc<dyn RollbackRepo>;
+    fn lifecycle_outbox(&self) -> Arc<dyn LifecycleOutboxRepo>;
     fn approvals(&self) -> Arc<dyn ApprovalRepo>;
     fn provenance(&self) -> Arc<dyn ProvenanceRepo>;
     fn ledger(&self) -> Arc<dyn LedgerRepo>;

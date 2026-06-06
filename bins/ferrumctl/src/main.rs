@@ -134,6 +134,62 @@ fn escape_dot_label(s: &str) -> String {
         .replace('\n', "\\n")
 }
 
+fn print_lifecycle_outbox_list(response: &ferrum_proto::LifecycleOutboxListResponse) {
+    println!(
+        "{:<36} {:<22} {:<36} {:<20} {:<8} LAST_ERROR",
+        "OUTBOX_ID", "STATUS", "EXECUTION_ID", "NEW_STATE", "ATTEMPTS"
+    );
+    for record in &response.items {
+        println!(
+            "{:<36} {:<22} {:<36} {:<20} {:<8} {}",
+            record.outbox_id,
+            format!("{:?}", record.status),
+            record.execution_id,
+            format!("{:?}", record.new_execution_state),
+            record.attempt_count,
+            record.last_error.as_deref().unwrap_or("-")
+        );
+    }
+    println!("Total: {}", response.total);
+}
+
+fn print_lifecycle_outbox_record(record: &ferrum_proto::LifecycleOutboxRecord) {
+    println!("outbox_id: {}", record.outbox_id);
+    println!("status: {:?}", record.status);
+    println!("execution_id: {}", record.execution_id);
+    println!("new_execution_state: {:?}", record.new_execution_state);
+    if let Some(rollback_contract_id) = record.rollback_contract_id.as_ref() {
+        println!("rollback_contract_id: {}", rollback_contract_id);
+    }
+    if let Some(rollback_state) = record.new_rollback_state.as_ref() {
+        println!("new_rollback_state: {:?}", rollback_state);
+    }
+    println!(
+        "intended_provenance_kind: {:?}",
+        record.intended_provenance_kind
+    );
+    println!("attempt_count: {}", record.attempt_count);
+    println!(
+        "provenance_event_id: {}",
+        record
+            .provenance_event_id
+            .as_ref()
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| "-".to_string())
+    );
+    println!(
+        "last_error: {}",
+        record.last_error.as_deref().unwrap_or("-")
+    );
+    println!("updated_at: {}", record.updated_at.to_rfc3339());
+    if !record.metadata.is_empty() {
+        match serde_json::to_string_pretty(&record.metadata) {
+            Ok(metadata) => println!("metadata: {}", metadata),
+            Err(_) => println!("metadata: <unprintable>"),
+        }
+    }
+}
+
 fn get_env(key: &str) -> Option<String> {
     std::env::var(key).ok()
 }
@@ -427,6 +483,11 @@ enum AdminCommand {
         #[command(subcommand)]
         sub: AdminExecutionsCommand,
     },
+    /// Inspect and resolve lifecycle outbox records that need operator review.
+    LifecycleOutbox {
+        #[command(subcommand)]
+        sub: AdminLifecycleOutboxCommand,
+    },
     /// Local SQLite backup/restore commands (offline, no server required).
     Backup {
         #[command(subcommand)]
@@ -539,6 +600,68 @@ enum AdminExecutionsCommand {
         /// Output the cancellation result as JSON.
         #[arg(long)]
         json: bool,
+    },
+}
+
+/// Lifecycle outbox subcommands under `admin lifecycle-outbox`.
+#[derive(Debug, Subcommand)]
+enum AdminLifecycleOutboxCommand {
+    /// List lifecycle outbox records by reconciliation status.
+    List {
+        /// Status filter: needs_operator_review, pending, pending_provenance, provenance_written, reconciled.
+        #[arg(long, value_name = "STATUS", default_value = "needs_operator_review")]
+        status: String,
+
+        /// Number of records to return (default 50, max 200).
+        #[arg(long, value_name = "N", default_value = "50")]
+        limit: u32,
+
+        /// Output format: text (default) or json.
+        #[arg(long, value_name = "FORMAT", default_value = "text")]
+        format: OutputFormat,
+    },
+    /// Get a lifecycle outbox record and its operator-review context.
+    Get {
+        /// Lifecycle outbox ID.
+        outbox_id: String,
+
+        /// Output format: text (default) or json.
+        #[arg(long, value_name = "FORMAT", default_value = "text")]
+        format: OutputFormat,
+    },
+    /// Retry reconciliation after the operator has corrected underlying data.
+    Retry {
+        /// Lifecycle outbox ID.
+        outbox_id: String,
+
+        /// Operator or automation actor ID.
+        #[arg(long)]
+        actor_id: String,
+
+        /// Optional reason or remediation note.
+        #[arg(long, value_name = "TEXT")]
+        reason: Option<String>,
+
+        /// Output format: text (default) or json.
+        #[arg(long, value_name = "FORMAT", default_value = "text")]
+        format: OutputFormat,
+    },
+    /// Mark an operator-review record as externally resolved.
+    Resolve {
+        /// Lifecycle outbox ID.
+        outbox_id: String,
+
+        /// Operator or automation actor ID.
+        #[arg(long)]
+        actor_id: String,
+
+        /// Required resolution note for audit.
+        #[arg(long, value_name = "TEXT")]
+        reason: String,
+
+        /// Output format: text (default) or json.
+        #[arg(long, value_name = "FORMAT", default_value = "text")]
+        format: OutputFormat,
     },
 }
 
@@ -2300,6 +2423,82 @@ async fn main() -> Result<()> {
                             println!("{}", serde_json::to_string_pretty(&result)?);
                         } else {
                             println!("Execution {} canceled successfully.", result.execution_id);
+                        }
+                    }
+                },
+                AdminCommand::LifecycleOutbox { sub } => match sub {
+                    AdminLifecycleOutboxCommand::List {
+                        status,
+                        limit,
+                        format,
+                    } => {
+                        if limit == 0 || limit > 200 {
+                            bail!("--limit must be between 1 and 200");
+                        }
+                        let response = client.list_lifecycle_outbox(Some(&status), limit).await?;
+                        match format {
+                            OutputFormat::Json => {
+                                println!("{}", serde_json::to_string_pretty(&response)?);
+                            }
+                            OutputFormat::Text | OutputFormat::Dot => {
+                                print_lifecycle_outbox_list(&response);
+                            }
+                        }
+                    }
+                    AdminLifecycleOutboxCommand::Get { outbox_id, format } => {
+                        let record = client.get_lifecycle_outbox(&outbox_id).await?;
+                        match format {
+                            OutputFormat::Json => {
+                                println!("{}", serde_json::to_string_pretty(&record)?);
+                            }
+                            OutputFormat::Text | OutputFormat::Dot => {
+                                print_lifecycle_outbox_record(&record);
+                            }
+                        }
+                    }
+                    AdminLifecycleOutboxCommand::Retry {
+                        outbox_id,
+                        actor_id,
+                        reason,
+                        format,
+                    } => {
+                        let response = client
+                            .retry_lifecycle_outbox(&outbox_id, &actor_id, reason.as_deref())
+                            .await?;
+                        match format {
+                            OutputFormat::Json => {
+                                println!("{}", serde_json::to_string_pretty(&response)?);
+                            }
+                            OutputFormat::Text | OutputFormat::Dot => {
+                                println!("Reconciliation retry submitted.");
+                                print_lifecycle_outbox_record(&response.record);
+                                println!(
+                                    "reconciliation_report: {}",
+                                    serde_json::to_string(&response.reconciliation_report)?
+                                );
+                            }
+                        }
+                    }
+                    AdminLifecycleOutboxCommand::Resolve {
+                        outbox_id,
+                        actor_id,
+                        reason,
+                        format,
+                    } => {
+                        if reason.trim().is_empty() {
+                            bail!("--reason is required");
+                        }
+                        let response = client
+                            .resolve_lifecycle_outbox(&outbox_id, &actor_id, &reason)
+                            .await?;
+                        match format {
+                            OutputFormat::Json => {
+                                println!("{}", serde_json::to_string_pretty(&response)?);
+                            }
+                            OutputFormat::Text | OutputFormat::Dot => {
+                                println!("Lifecycle outbox operator review resolved.");
+                                print_lifecycle_outbox_record(&response.record);
+                            }
                         }
                     }
                 },
@@ -4185,6 +4384,128 @@ rules: []
             result.is_ok(),
             "parsing limit=0 is ok; runtime validation rejects it"
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // Admin lifecycle outbox CLI parsing tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_admin_lifecycle_outbox_list_parses() {
+        let cli = Cli::parse_from([
+            "ferrumctl",
+            "admin",
+            "lifecycle-outbox",
+            "list",
+            "--status",
+            "needs_operator_review",
+            "--limit",
+            "25",
+        ]);
+        let Command::Admin { sub } = cli.command else {
+            panic!("expected Admin command");
+        };
+        match sub {
+            AdminCommand::LifecycleOutbox { sub } => match sub {
+                AdminLifecycleOutboxCommand::List { status, limit, .. } => {
+                    assert_eq!(status, "needs_operator_review");
+                    assert_eq!(limit, 25);
+                }
+                _ => panic!("expected List command"),
+            },
+            _ => panic!("expected LifecycleOutbox command"),
+        }
+    }
+
+    #[test]
+    fn test_admin_lifecycle_outbox_get_parses() {
+        let cli = Cli::parse_from([
+            "ferrumctl",
+            "admin",
+            "lifecycle-outbox",
+            "get",
+            "550e8400-e29b-41d4-a716-446655440000",
+        ]);
+        let Command::Admin { sub } = cli.command else {
+            panic!("expected Admin command");
+        };
+        match sub {
+            AdminCommand::LifecycleOutbox { sub } => match sub {
+                AdminLifecycleOutboxCommand::Get { outbox_id, .. } => {
+                    assert_eq!(outbox_id, "550e8400-e29b-41d4-a716-446655440000");
+                }
+                _ => panic!("expected Get command"),
+            },
+            _ => panic!("expected LifecycleOutbox command"),
+        }
+    }
+
+    #[test]
+    fn test_admin_lifecycle_outbox_retry_parses() {
+        let cli = Cli::parse_from([
+            "ferrumctl",
+            "admin",
+            "lifecycle-outbox",
+            "retry",
+            "550e8400-e29b-41d4-a716-446655440000",
+            "--actor-id",
+            "operator-1",
+            "--reason",
+            "parent event repaired",
+        ]);
+        let Command::Admin { sub } = cli.command else {
+            panic!("expected Admin command");
+        };
+        match sub {
+            AdminCommand::LifecycleOutbox { sub } => match sub {
+                AdminLifecycleOutboxCommand::Retry {
+                    outbox_id,
+                    actor_id,
+                    reason,
+                    ..
+                } => {
+                    assert_eq!(outbox_id, "550e8400-e29b-41d4-a716-446655440000");
+                    assert_eq!(actor_id, "operator-1");
+                    assert_eq!(reason.as_deref(), Some("parent event repaired"));
+                }
+                _ => panic!("expected Retry command"),
+            },
+            _ => panic!("expected LifecycleOutbox command"),
+        }
+    }
+
+    #[test]
+    fn test_admin_lifecycle_outbox_resolve_parses() {
+        let cli = Cli::parse_from([
+            "ferrumctl",
+            "admin",
+            "lifecycle-outbox",
+            "resolve",
+            "550e8400-e29b-41d4-a716-446655440000",
+            "--actor-id",
+            "operator-1",
+            "--reason",
+            "verified externally",
+        ]);
+        let Command::Admin { sub } = cli.command else {
+            panic!("expected Admin command");
+        };
+        match sub {
+            AdminCommand::LifecycleOutbox { sub } => match sub {
+                AdminLifecycleOutboxCommand::Resolve {
+                    outbox_id,
+                    actor_id,
+                    reason,
+                    ..
+                } => {
+                    assert_eq!(outbox_id, "550e8400-e29b-41d4-a716-446655440000");
+                    assert_eq!(actor_id, "operator-1");
+                    assert_eq!(reason, "verified externally");
+                }
+                _ => panic!("expected Resolve command"),
+            },
+            _ => panic!("expected LifecycleOutbox command"),
+        }
     }
 
     // -------------------------------------------------------------------------

@@ -11,7 +11,7 @@ use ferrum_pdp::StaticPdpEngine;
 use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
 #[cfg(feature = "postgres")]
 use ferrum_store::postgres::PostgresStore;
-use ferrum_store::{SqliteStore, SqliteWalTuning, StoreFacade};
+use ferrum_store::{LifecycleReconciliationReport, SqliteStore, SqliteWalTuning, StoreFacade};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -21,6 +21,22 @@ const DEFAULT_BIND_ADDR: &str = "127.0.0.1:8080";
 const DEFAULT_STORE_DSN: &str = "sqlite::memory:";
 const DEFAULT_LOG_FILTER: &str = "info";
 const AUTO_CONFIG_FILE: &str = "configs/ferrumgate.dev.toml";
+
+async fn reconcile_lifecycle_outbox_before_startup(
+    store: &Arc<dyn StoreFacade>,
+) -> anyhow::Result<LifecycleReconciliationReport> {
+    let report = ferrum_store::reconcile_lifecycle_outbox(store, 1_000)
+        .await
+        .context("failed to reconcile lifecycle outbox")?;
+    tracing::info!(
+        scanned = report.scanned,
+        already_reconciled = report.already_reconciled,
+        repaired_missing_provenance = report.repaired_missing_provenance,
+        needs_operator_review = report.needs_operator_review,
+        "lifecycle outbox reconciliation completed before HTTP startup"
+    );
+    Ok(report)
+}
 
 #[derive(Debug, Parser)]
 #[command(name = "ferrumd")]
@@ -436,7 +452,8 @@ fn resolve_config(args: &Args) -> Result<ServerConfig> {
         let role_mappings_env = get_env::<String>("FERRUMD_OIDC_ROLE_MAPPINGS");
         let role_mappings: std::collections::HashMap<String, ferrum_proto::TokenRole> =
             if let Some(rm_str) = role_mappings_env {
-                let mut map = std::collections::HashMap::new();
+                let mut map: std::collections::HashMap<String, ferrum_proto::TokenRole> =
+                    std::collections::HashMap::new();
                 for pair in rm_str.split(',') {
                     let pair = pair.trim();
                     if pair.is_empty() {
@@ -453,7 +470,8 @@ fn resolve_config(args: &Args) -> Result<ServerConfig> {
                 }
                 map
             } else if let Some(oidc) = file_oidc {
-                let mut map = std::collections::HashMap::new();
+                let mut map: std::collections::HashMap<String, ferrum_proto::TokenRole> =
+                    std::collections::HashMap::new();
                 for (name, role_str) in &oidc.role_mappings {
                     let role = role_str
                         .parse::<ferrum_proto::TokenRole>()
@@ -654,6 +672,8 @@ async fn main() -> Result<()> {
         Arc::new(sqlite_store) as Arc<dyn StoreFacade>
     };
 
+    let _reconciliation_report = reconcile_lifecycle_outbox_before_startup(&store).await?;
+
     let runtime = GatewayRuntime::new(pdp, cap, rollback, store, vec![]);
     run_http_server(config, runtime).await
 }
@@ -710,6 +730,23 @@ mod tests {
         let path = std::env::temp_dir().join(format!("ferrumd-test-{}.toml", unique));
         fs::write(&path, contents).unwrap();
         path
+    }
+
+    #[tokio::test]
+    async fn test_startup_reconciler_is_idempotent_without_pending_records() {
+        let store = Arc::new(SqliteStore::connect("sqlite::memory:").await.unwrap());
+        store.apply_embedded_migrations().await.unwrap();
+        let facade: Arc<dyn StoreFacade> = store;
+
+        let first = reconcile_lifecycle_outbox_before_startup(&facade)
+            .await
+            .unwrap();
+        let second = reconcile_lifecycle_outbox_before_startup(&facade)
+            .await
+            .unwrap();
+
+        assert_eq!(first, LifecycleReconciliationReport::default());
+        assert_eq!(second, LifecycleReconciliationReport::default());
     }
 
     #[test]

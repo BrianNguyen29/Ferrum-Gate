@@ -13,16 +13,18 @@ use chrono::Utc;
 use ferrum_proto::{
     ActionProposal, ActionType, ActorRef, ActorType, ApprovalId, ApprovalRequest, ApprovalState,
     CapabilityId, CapabilityLease, CapabilityStatus, Decision, EffectType, EventId, ExecutionId,
-    ExecutionRecord, ExecutionState, IntentEnvelope, IntentId, IntentStatus, JsonMap, ObjectRef,
-    ObjectType, OutcomeClause, PolicyBundle, PolicyBundleId, PrincipalId, ProposalId,
-    ProvenanceEdge, ProvenanceEdgeType, ProvenanceEvent, ProvenanceEventKind,
-    ProvenanceQueryRequest, RiskTier, RollbackClass, RollbackContract, RollbackContractId,
-    RollbackState, RollbackTarget, Timestamp,
+    ExecutionRecord, ExecutionState, HashChainRef, IntentEnvelope, IntentId, IntentStatus, JsonMap,
+    LifecycleOutboxRecord, LifecycleOutboxStatus, ObjectRef, ObjectType, OutcomeClause,
+    PolicyBundle, PolicyBundleId, PrincipalId, ProposalId, ProvenanceEdge, ProvenanceEdgeType,
+    ProvenanceEvent, ProvenanceEventKind, ProvenanceQueryRequest, RiskTier, RollbackClass,
+    RollbackContract, RollbackContractId, RollbackState, RollbackTarget, Timestamp,
 };
 use ferrum_store::{
     ApprovalRepo, CapabilityRepo, ExecutionRepo, IntentRepo, LedgerEntry, LedgerRepo,
-    PolicyBundleRepo, ProposalRepo, ProvenanceRepo, RollbackRepo, postgres::PostgresStore,
+    LifecycleOutboxRepo, PolicyBundleRepo, ProposalRepo, ProvenanceRepo, RollbackRepo, StoreFacade,
+    postgres::PostgresStore,
 };
+use std::sync::Arc;
 
 const TEST_DSN: &str =
     "postgres://ferrumgate_dev:ferrumgate_dev_password@localhost:5432/ferrumgate_p2_test";
@@ -105,6 +107,9 @@ async fn setup() -> Option<(PostgresStore, tokio::sync::MutexGuard<'static, ()>)
     let _ = sqlx::query("DROP TABLE IF EXISTS rollback_contracts CASCADE")
         .execute(store.pool())
         .await;
+    let _ = sqlx::query("DROP TABLE IF EXISTS lifecycle_outbox CASCADE")
+        .execute(store.pool())
+        .await;
     let _ = sqlx::query("DROP TABLE IF EXISTS approvals CASCADE")
         .execute(store.pool())
         .await;
@@ -121,6 +126,9 @@ async fn setup() -> Option<(PostgresStore, tokio::sync::MutexGuard<'static, ()>)
         .execute(store.pool())
         .await;
     let _ = sqlx::query("DROP TABLE IF EXISTS intents CASCADE")
+        .execute(store.pool())
+        .await;
+    let _ = sqlx::query("DROP TABLE IF EXISTS _schema_version CASCADE")
         .execute(store.pool())
         .await;
 
@@ -1064,6 +1072,373 @@ fn make_test_rollback_contract(
     }
 }
 
+async fn seed_lifecycle_outbox_graph(store: &PostgresStore) -> (ExecutionRecord, RollbackContract) {
+    let intent_id = IntentId::new();
+    let proposal_id = ProposalId::new();
+    let capability_id = CapabilityId::new();
+    let execution_id = ExecutionId::new();
+    let contract_id = RollbackContractId::new();
+
+    store
+        .intents()
+        .insert(&make_test_intent(intent_id, IntentStatus::Active))
+        .await
+        .unwrap();
+    store
+        .proposals()
+        .insert(&make_test_proposal(proposal_id, intent_id, 0))
+        .await
+        .unwrap();
+    store
+        .capabilities()
+        .insert(&make_test_capability(
+            capability_id,
+            intent_id,
+            proposal_id,
+            CapabilityStatus::Active,
+        ))
+        .await
+        .unwrap();
+
+    let mut execution = ExecutionRecord {
+        execution_id,
+        proposal_id,
+        intent_id,
+        capability_id,
+        rollback_contract_id: None,
+        decision: Decision::Allow,
+        state: ExecutionState::Authorized,
+        started_at: ts_offset(0),
+        finished_at: None,
+        result_digest: None,
+        metadata: JsonMap::new(),
+    };
+    store.executions().insert(&execution).await.unwrap();
+
+    let mut contract = make_test_rollback_contract(contract_id, execution_id);
+    contract.intent_id = intent_id;
+    contract.proposal_id = proposal_id;
+    contract.state = RollbackState::PendingPrepare;
+    store.rollback_contracts().insert(&contract).await.unwrap();
+
+    execution.rollback_contract_id = Some(contract.contract_id);
+    store.executions().update(&execution).await.unwrap();
+
+    (execution, contract)
+}
+
+fn lifecycle_outbox_for(
+    execution: &ExecutionRecord,
+    contract: &RollbackContract,
+) -> LifecycleOutboxRecord {
+    LifecycleOutboxRecord::pending(
+        execution.execution_id,
+        Some(contract.contract_id),
+        Some(ExecutionState::Authorized),
+        ExecutionState::Prepared,
+        Some(RollbackState::PendingPrepare),
+        Some(RollbackState::Prepared),
+        ProvenanceEventKind::SideEffectPrepared,
+        format!("prepare:{}", execution.execution_id),
+    )
+}
+
+fn lifecycle_capability_minted_event(execution: &ExecutionRecord) -> ProvenanceEvent {
+    ProvenanceEvent {
+        event_id: EventId::new(),
+        kind: ProvenanceEventKind::CapabilityMinted,
+        occurred_at: ts_offset(0),
+        actor: ActorRef {
+            actor_type: ActorType::Gateway,
+            actor_id: "postgres-test".to_string(),
+            display_name: None,
+        },
+        object: ObjectRef {
+            object_type: ObjectType::Capability,
+            object_id: execution.capability_id.to_string(),
+            summary: None,
+        },
+        intent_id: Some(execution.intent_id),
+        proposal_id: Some(execution.proposal_id),
+        execution_id: None,
+        capability_id: Some(execution.capability_id),
+        rollback_contract_id: None,
+        policy_bundle_id: None,
+        trust_labels: Vec::new(),
+        sensitivity_labels: Vec::new(),
+        parent_edges: Vec::new(),
+        hash_chain: HashChainRef {
+            content_hash: None,
+            manifest_hash: None,
+            policy_bundle_hash: None,
+            previous_ledger_hash: None,
+        },
+        metadata: JsonMap::new(),
+        source_runtime_id: None,
+    }
+}
+
+fn lifecycle_prepared_event(
+    execution: &ExecutionRecord,
+    contract: &RollbackContract,
+) -> ProvenanceEvent {
+    ProvenanceEvent {
+        event_id: EventId::new(),
+        kind: ProvenanceEventKind::SideEffectPrepared,
+        occurred_at: ts_offset(0),
+        actor: ActorRef {
+            actor_type: ActorType::Gateway,
+            actor_id: "postgres-test".to_string(),
+            display_name: None,
+        },
+        object: ObjectRef {
+            object_type: ObjectType::RollbackContract,
+            object_id: contract.contract_id.to_string(),
+            summary: None,
+        },
+        intent_id: Some(execution.intent_id),
+        proposal_id: Some(execution.proposal_id),
+        execution_id: Some(execution.execution_id),
+        capability_id: Some(execution.capability_id),
+        rollback_contract_id: Some(contract.contract_id),
+        policy_bundle_id: None,
+        trust_labels: Vec::new(),
+        sensitivity_labels: Vec::new(),
+        parent_edges: Vec::new(),
+        hash_chain: HashChainRef {
+            content_hash: None,
+            manifest_hash: None,
+            policy_bundle_hash: None,
+            previous_ledger_hash: None,
+        },
+        metadata: JsonMap::new(),
+        source_runtime_id: None,
+    }
+}
+
+#[tokio::test]
+async fn postgres_lifecycle_reconciler_repairs_missing_provenance_and_edge() {
+    let (store, _guard) = match setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Skipping postgres live test: database not reachable");
+            return;
+        }
+    };
+    let store = Arc::new(store);
+    let (mut execution, mut contract) = seed_lifecycle_outbox_graph(store.as_ref()).await;
+    let repo = store.lifecycle_outbox();
+    let outbox = lifecycle_outbox_for(&execution, &contract);
+    let parent_event = lifecycle_capability_minted_event(&execution);
+    store
+        .provenance()
+        .append_event(&parent_event)
+        .await
+        .unwrap();
+
+    execution.state = ExecutionState::Prepared;
+    contract.state = RollbackState::Prepared;
+    repo.record_lifecycle_transition(&execution, Some(&contract), &outbox)
+        .await
+        .unwrap();
+
+    let facade: Arc<dyn StoreFacade> = store.clone();
+    let report = ferrum_store::reconcile_lifecycle_outbox(&facade, 10)
+        .await
+        .unwrap();
+
+    assert_eq!(report.scanned, 1);
+    assert_eq!(report.repaired_missing_provenance, 1);
+    let reconciled = repo.get(outbox.outbox_id).await.unwrap().unwrap();
+    assert_eq!(reconciled.status, LifecycleOutboxStatus::Reconciled);
+    let event_id = reconciled.provenance_event_id.unwrap();
+    let edges = store.provenance().get_edges_to(event_id).await.unwrap();
+    assert_eq!(edges.len(), 1);
+    assert_eq!(edges[0].from_event_id, parent_event.event_id);
+}
+
+#[tokio::test]
+async fn postgres_lifecycle_reconciler_repairs_missing_edge_for_existing_event() {
+    let (store, _guard) = match setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Skipping postgres live test: database not reachable");
+            return;
+        }
+    };
+    let store = Arc::new(store);
+    let (mut execution, mut contract) = seed_lifecycle_outbox_graph(store.as_ref()).await;
+    let repo = store.lifecycle_outbox();
+    let outbox = lifecycle_outbox_for(&execution, &contract);
+    let parent_event = lifecycle_capability_minted_event(&execution);
+    let prepared_event = lifecycle_prepared_event(&execution, &contract);
+    store
+        .provenance()
+        .append_event(&parent_event)
+        .await
+        .unwrap();
+    store
+        .provenance()
+        .append_event(&prepared_event)
+        .await
+        .unwrap();
+
+    execution.state = ExecutionState::Prepared;
+    contract.state = RollbackState::Prepared;
+    repo.record_lifecycle_transition(&execution, Some(&contract), &outbox)
+        .await
+        .unwrap();
+    repo.mark_provenance_written(outbox.outbox_id, prepared_event.event_id)
+        .await
+        .unwrap();
+
+    let facade: Arc<dyn StoreFacade> = store.clone();
+    let report = ferrum_store::reconcile_lifecycle_outbox(&facade, 10)
+        .await
+        .unwrap();
+
+    assert_eq!(report.scanned, 1);
+    assert_eq!(report.already_reconciled, 1);
+    let reconciled = repo.get(outbox.outbox_id).await.unwrap().unwrap();
+    assert_eq!(reconciled.status, LifecycleOutboxStatus::Reconciled);
+    let edges = store
+        .provenance()
+        .get_edges_to(prepared_event.event_id)
+        .await
+        .unwrap();
+    assert_eq!(edges.len(), 1);
+    assert_eq!(edges[0].from_event_id, parent_event.event_id);
+}
+
+#[tokio::test]
+async fn postgres_lifecycle_reconciler_marks_missing_parent_for_operator_review() {
+    let (store, _guard) = match setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Skipping postgres live test: database not reachable");
+            return;
+        }
+    };
+    let store = Arc::new(store);
+    let (mut execution, mut contract) = seed_lifecycle_outbox_graph(store.as_ref()).await;
+    let repo = store.lifecycle_outbox();
+    let outbox = lifecycle_outbox_for(&execution, &contract);
+
+    execution.state = ExecutionState::Prepared;
+    contract.state = RollbackState::Prepared;
+    repo.record_lifecycle_transition(&execution, Some(&contract), &outbox)
+        .await
+        .unwrap();
+
+    let facade: Arc<dyn StoreFacade> = store.clone();
+    let report = ferrum_store::reconcile_lifecycle_outbox(&facade, 10)
+        .await
+        .unwrap();
+
+    assert_eq!(report.scanned, 1);
+    assert_eq!(report.needs_operator_review, 1);
+    let review = repo.get(outbox.outbox_id).await.unwrap().unwrap();
+    assert_eq!(review.status, LifecycleOutboxStatus::NeedsOperatorReview);
+    assert_eq!(
+        review.last_error.as_deref(),
+        Some("required parent edge is ambiguous or missing")
+    );
+}
+
+#[tokio::test]
+async fn postgres_lifecycle_claims_do_not_overlap_before_lease_expiry() {
+    let (store, _guard) = match setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Skipping postgres live test: database not reachable");
+            return;
+        }
+    };
+    let (execution, contract) = seed_lifecycle_outbox_graph(&store).await;
+    let repo = store.lifecycle_outbox();
+    let outbox = lifecycle_outbox_for(&execution, &contract);
+    repo.enqueue_lifecycle_transition(&outbox).await.unwrap();
+
+    let first = repo
+        .claim_pending_reconciliation(10, "node-a", chrono::Duration::minutes(5))
+        .await
+        .unwrap();
+    assert_eq!(first.len(), 1);
+    assert_eq!(first[0].record.outbox_id, outbox.outbox_id);
+
+    let second = repo
+        .claim_pending_reconciliation(10, "node-b", chrono::Duration::minutes(5))
+        .await
+        .unwrap();
+    assert!(second.is_empty());
+}
+
+#[tokio::test]
+async fn postgres_lifecycle_concurrent_claims_are_disjoint_and_fenced() {
+    let (store, _guard) = match setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Skipping postgres live test: database not reachable");
+            return;
+        }
+    };
+    let (execution, contract) = seed_lifecycle_outbox_graph(&store).await;
+    let repo = store.lifecycle_outbox();
+    for index in 0..6 {
+        let mut outbox = lifecycle_outbox_for(&execution, &contract);
+        outbox.idempotency_key = format!("concurrent-claim-{index}");
+        repo.enqueue_lifecycle_transition(&outbox).await.unwrap();
+    }
+
+    let repo_a = repo.clone();
+    let repo_b = repo.clone();
+    let (claims_a, claims_b) = tokio::join!(
+        repo_a.claim_pending_reconciliation(3, "node-a", chrono::Duration::minutes(5)),
+        repo_b.claim_pending_reconciliation(3, "node-b", chrono::Duration::minutes(5))
+    );
+    let claims_a = claims_a.unwrap();
+    let claims_b = claims_b.unwrap();
+    assert_eq!(claims_a.len(), 3);
+    assert_eq!(claims_b.len(), 3);
+
+    let ids_a = claims_a
+        .iter()
+        .map(|claim| claim.record.outbox_id)
+        .collect::<std::collections::HashSet<_>>();
+    let ids_b = claims_b
+        .iter()
+        .map(|claim| claim.record.outbox_id)
+        .collect::<std::collections::HashSet<_>>();
+    assert!(ids_a.is_disjoint(&ids_b));
+
+    let stale_claim = claims_a[0].clone();
+    sqlx::query(
+        "UPDATE lifecycle_outbox
+         SET reconciliation_lease_expires_at = NOW() - INTERVAL '1 second'
+         WHERE outbox_id = $1",
+    )
+    .bind(stale_claim.record.outbox_id.to_string())
+    .execute(store.pool())
+    .await
+    .unwrap();
+    let replacement = repo
+        .claim_pending_reconciliation(1, "node-c", chrono::Duration::minutes(5))
+        .await
+        .unwrap();
+    assert_eq!(replacement.len(), 1);
+    assert_eq!(
+        replacement[0].record.outbox_id,
+        stale_claim.record.outbox_id
+    );
+    assert!(replacement[0].lease.generation > stale_claim.lease.generation);
+    assert!(
+        !repo
+            .mark_reconciled_claimed(&stale_claim.lease, JsonMap::new())
+            .await
+            .unwrap()
+    );
+}
+
 #[tokio::test]
 async fn postgres_rollback_insert_and_get_roundtrip() {
     let (store, _guard) = match setup().await {
@@ -1700,6 +2075,70 @@ async fn postgres_provenance_append_edges_and_get_edges_to() {
 }
 
 #[tokio::test]
+async fn postgres_provenance_rejects_orphan_edges() {
+    let (store, _guard) = match setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Skipping postgres live test: database not reachable");
+            return;
+        }
+    };
+
+    let repo = store.provenance();
+    let result = repo
+        .append_edges(
+            EventId::new(),
+            &[ProvenanceEdge {
+                edge_type: ProvenanceEdgeType::DerivedFrom,
+                from_event_id: EventId::new(),
+                to_event_id: None,
+                summary: Some("orphan".to_string()),
+            }],
+        )
+        .await;
+
+    assert!(result.is_err(), "orphan provenance edge must be rejected");
+}
+
+#[tokio::test]
+async fn postgres_append_event_with_edges_rolls_back_event_when_edge_insert_fails() {
+    let (store, _guard) = match setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Skipping postgres live test: database not reachable");
+            return;
+        }
+    };
+
+    let repo = store.provenance();
+    let child_id = EventId::new();
+    let child = make_test_provenance_event(
+        child_id,
+        ProvenanceEventKind::ActionProposalSubmitted,
+        ts_offset(1),
+        None,
+    );
+
+    let result = repo
+        .append_event_with_edges(
+            &child,
+            &[ProvenanceEdge {
+                edge_type: ProvenanceEdgeType::DerivedFrom,
+                from_event_id: EventId::new(),
+                to_event_id: Some(child_id),
+                summary: Some("missing parent".to_string()),
+            }],
+        )
+        .await;
+
+    assert!(result.is_err(), "invalid edge must fail the atomic append");
+    assert!(
+        repo.get_event(child_id).await.unwrap().is_none(),
+        "event insert must roll back when edge insert fails"
+    );
+}
+
+#[tokio::test]
 async fn postgres_provenance_get_edges_from() {
     let (store, _guard) = match setup().await {
         Some(s) => s,
@@ -1881,6 +2320,19 @@ fn make_test_ledger_entry(
     }
 }
 
+async fn seed_provenance_events_for_ledger(store: &PostgresStore, event_ids: &[EventId]) {
+    let repo = store.provenance();
+    for (offset, event_id) in event_ids.iter().enumerate() {
+        let event = make_test_provenance_event(
+            *event_id,
+            ProvenanceEventKind::SideEffectVerified,
+            ts_offset(offset as i64),
+            None,
+        );
+        repo.append_event(&event).await.unwrap();
+    }
+}
+
 #[tokio::test]
 async fn postgres_ledger_append_and_get_by_event() {
     let (store, _guard) = match setup().await {
@@ -1895,6 +2347,7 @@ async fn postgres_ledger_append_and_get_by_event() {
     let event_id = EventId::new();
     let entry = make_test_ledger_entry(0, event_id, Some("hash-1".to_string()), None);
 
+    seed_provenance_events_for_ledger(&store, &[event_id]).await;
     repo.append(&entry).await.unwrap();
     let fetched = repo.get_by_event(event_id).await.unwrap();
 
@@ -1919,6 +2372,7 @@ async fn postgres_ledger_list_recent_and_get_latest() {
     let e2 = EventId::new();
     let e3 = EventId::new();
 
+    seed_provenance_events_for_ledger(&store, &[e1, e2, e3]).await;
     repo.append(&make_test_ledger_entry(0, e1, Some("h1".to_string()), None))
         .await
         .unwrap();
@@ -1963,6 +2417,7 @@ async fn postgres_ledger_verify_chain_valid() {
     let e1 = EventId::new();
     let e2 = EventId::new();
 
+    seed_provenance_events_for_ledger(&store, &[e1, e2]).await;
     repo.append(&make_test_ledger_entry(
         0,
         e1,
@@ -1997,6 +2452,7 @@ async fn postgres_ledger_verify_chain_broken() {
     let e1 = EventId::new();
     let e2 = EventId::new();
 
+    seed_provenance_events_for_ledger(&store, &[e1, e2]).await;
     repo.append(&make_test_ledger_entry(
         0,
         e1,

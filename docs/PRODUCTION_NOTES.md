@@ -160,6 +160,23 @@ FERRUMD_LOG_FORMAT=json ferrumd --config /path/to/deployed.toml
 **Log fields** (JSON format): `timestamp`, `level`, `message`, `target`, and `spans` (if any).
 Text format includes: `timestamp`, `level`, `target`, `message`.
 
+## Filesystem Sandbox
+
+Production-like non-loopback deployments must configure an absolute filesystem adapter workdir:
+
+```toml
+[server]
+fs_workdir = "/var/lib/ferrumgate/workdir"
+```
+
+or:
+
+```bash
+FERRUMD_FS_WORKDIR=/var/lib/ferrumgate/workdir ferrumd --config /path/to/deployed.toml
+```
+
+The daemon creates the directory on startup when needed. Relative paths are rejected.
+
 ## Rate Limiting
 - Built-in via `tower_governor`: 2 req/s sustained, burst of 50
 - Applied per-IP using `GovernorLayer`

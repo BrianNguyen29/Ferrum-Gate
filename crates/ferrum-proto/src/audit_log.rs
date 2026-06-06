@@ -37,6 +37,8 @@ pub enum AuditAction {
     AgentRegister,
     AgentRevoke,
     AgentAuthFailed,
+    LifecycleOutboxRetry,
+    LifecycleOutboxResolve,
 }
 
 impl std::fmt::Display for AuditAction {
@@ -54,6 +56,8 @@ impl std::fmt::Display for AuditAction {
             AuditAction::AgentRegister => "agent_register",
             AuditAction::AgentRevoke => "agent_revoke",
             AuditAction::AgentAuthFailed => "agent_auth_failed",
+            AuditAction::LifecycleOutboxRetry => "lifecycle_outbox_retry",
+            AuditAction::LifecycleOutboxResolve => "lifecycle_outbox_resolve",
         };
         write!(f, "{}", s)
     }
@@ -76,6 +80,8 @@ impl std::str::FromStr for AuditAction {
             "agent_register" => Ok(AuditAction::AgentRegister),
             "agent_revoke" => Ok(AuditAction::AgentRevoke),
             "agent_auth_failed" => Ok(AuditAction::AgentAuthFailed),
+            "lifecycle_outbox_retry" => Ok(AuditAction::LifecycleOutboxRetry),
+            "lifecycle_outbox_resolve" => Ok(AuditAction::LifecycleOutboxResolve),
             _ => Err(format!("invalid audit action: {}", s)),
         }
     }
@@ -90,6 +96,7 @@ pub enum AuditResourceType {
     Execution,
     Auth,
     Agent,
+    LifecycleOutbox,
 }
 
 impl std::fmt::Display for AuditResourceType {
@@ -101,6 +108,7 @@ impl std::fmt::Display for AuditResourceType {
             AuditResourceType::Execution => "execution",
             AuditResourceType::Auth => "auth",
             AuditResourceType::Agent => "agent",
+            AuditResourceType::LifecycleOutbox => "lifecycle_outbox",
         };
         write!(f, "{}", s)
     }
@@ -117,6 +125,7 @@ impl std::str::FromStr for AuditResourceType {
             "execution" => Ok(AuditResourceType::Execution),
             "auth" => Ok(AuditResourceType::Auth),
             "agent" => Ok(AuditResourceType::Agent),
+            "lifecycle_outbox" => Ok(AuditResourceType::LifecycleOutbox),
             _ => Err(format!("invalid audit resource type: {}", s)),
         }
     }

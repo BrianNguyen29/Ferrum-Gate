@@ -5333,7 +5333,8 @@ mod tests {
                     "server_name": "fs-server",
                     "arguments": {},
                     "expected_effect": "read file",
-                    "estimated_risk": "Low"
+                    "estimated_risk": "Low",
+                    "rollback_class": "R0NativeReversible"
                 }
             })),
         };
@@ -5565,7 +5566,8 @@ mod tests {
                                 "server_name": "fs-server",
                                 "arguments": {},
                                 "expected_effect": "read file",
-                                "estimated_risk": "Low"
+                                "estimated_risk": "Low",
+                                "rollback_class": "R0NativeReversible"
                             }
                         })),
                     };

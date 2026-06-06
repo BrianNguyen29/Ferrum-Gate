@@ -88,22 +88,27 @@ use axum::{
 use chrono::Utc;
 use ferrum_cap::{CapabilityError, CapabilityService};
 use ferrum_proto::{
-    ActorRef, ActorType, ApiErrorCode, ApprovalBinding, ApprovalMode, ApprovalState, AuditAction,
-    AuditResourceType, AuthorizeExecutionRequest, AuthorizeExecutionResponse,
-    CancelExecutionResponse, CapabilityId, CapabilityLease, CapabilityStatus,
-    CommitExecutionResponse, CompensateExecutionResponse, Decision, EvaluateOutcomeResponse,
-    EventId, ExecutionId, ExecutionRecord, ExecutionState, HashChainRef, ObjectRef, ObjectType,
-    OutcomeReport, PrepareExecutionResponse, ProposalId, ProvenanceEvent, ProvenanceEventKind,
-    ProvenanceQueryRequest, ResourceSelector, RollbackClass, RollbackState, RollbackTarget,
+    ActionProposal, ActorRef, ActorType, ApiErrorCode, ApprovalBinding, ApprovalMode,
+    ApprovalState, ArgumentConstraint, AuditAction, AuditResourceType, AuthorizeExecutionRequest,
+    AuthorizeExecutionResponse, CancelExecutionResponse, CapabilityId, CapabilityLease,
+    CapabilityStatus, CommitExecutionResponse, CompensateExecutionResponse, Decision,
+    EvaluateOutcomeResponse, EventId, ExecutionId, ExecutionRecord, ExecutionState, HashChainRef,
+    LifecycleOutboxRecord, ObjectRef, ObjectType, OutcomeReport, PrepareExecutionResponse,
+    ProposalId, ProvenanceEvent, ProvenanceEventKind, ProvenanceQueryRequest, ResourceSelector,
+    RollbackClass, RollbackState, RollbackTarget,
 };
 use ferrum_rollback::RollbackService;
 use ferrum_store::StoreFacade;
+use regex::Regex;
+use std::ffi::OsString;
+use std::path::{Component, Path as StdPath, PathBuf};
 use std::sync::Arc;
 
 use crate::audit::append_audit;
 use crate::macros::{governance_err, governance_ok};
 use crate::monitoring::GovernanceRoute;
 use crate::problem::ApiProblem;
+use crate::provenance::{append_governance_event, validate_minimum_lineage_chain};
 use crate::state::AppState;
 
 pub(crate) fn infer_rollback_class(scope: &[ResourceSelector]) -> RollbackClass {
@@ -117,14 +122,245 @@ pub(crate) fn infer_rollback_class(scope: &[ResourceSelector]) -> RollbackClass 
     }
 }
 
+async fn record_lifecycle_transition_outbox(
+    store: &Arc<dyn StoreFacade>,
+    transition_name: &str,
+    previous_execution: &ExecutionRecord,
+    updated_execution: &ExecutionRecord,
+    previous_contract: Option<&ferrum_proto::RollbackContract>,
+    updated_contract: Option<&ferrum_proto::RollbackContract>,
+    intended_provenance_kind: ProvenanceEventKind,
+) -> ferrum_store::Result<LifecycleOutboxRecord> {
+    record_lifecycle_transition_outbox_with_obligations(
+        store,
+        transition_name,
+        previous_execution,
+        updated_execution,
+        previous_contract,
+        updated_contract,
+        vec![intended_provenance_kind],
+    )
+    .await
+}
+
+async fn record_lifecycle_transition_outbox_with_obligations(
+    store: &Arc<dyn StoreFacade>,
+    transition_name: &str,
+    previous_execution: &ExecutionRecord,
+    updated_execution: &ExecutionRecord,
+    previous_contract: Option<&ferrum_proto::RollbackContract>,
+    updated_contract: Option<&ferrum_proto::RollbackContract>,
+    intended_provenance_kinds: Vec<ProvenanceEventKind>,
+) -> ferrum_store::Result<LifecycleOutboxRecord> {
+    let mut outbox = LifecycleOutboxRecord::pending_with_obligations(
+        updated_execution.execution_id,
+        updated_contract
+            .map(|contract| contract.contract_id)
+            .or(updated_execution.rollback_contract_id),
+        Some(previous_execution.state.clone()),
+        updated_execution.state.clone(),
+        previous_contract.map(|contract| contract.state.clone()),
+        updated_contract.map(|contract| contract.state.clone()),
+        intended_provenance_kinds,
+        format!(
+            "{}:{}:{:?}:{}",
+            transition_name,
+            updated_execution.execution_id,
+            updated_execution.state,
+            updated_contract
+                .map(|contract| format!("{:?}", contract.state))
+                .unwrap_or_else(|| "none".to_string())
+        ),
+    );
+    outbox
+        .metadata
+        .insert("transition".to_string(), serde_json::json!(transition_name));
+    store
+        .lifecycle_outbox()
+        .record_lifecycle_transition(updated_execution, updated_contract, &outbox)
+        .await?;
+    Ok(outbox)
+}
+
+fn lifecycle_event_metadata(
+    outbox: &LifecycleOutboxRecord,
+    mut metadata: ferrum_proto::JsonMap,
+) -> ferrum_proto::JsonMap {
+    metadata.insert(
+        "lifecycle_outbox_id".to_string(),
+        serde_json::json!(outbox.outbox_id.to_string()),
+    );
+    metadata.insert(
+        "idempotency_key".to_string(),
+        serde_json::json!(outbox.idempotency_key.clone()),
+    );
+    metadata
+}
+
+async fn mark_lifecycle_obligation_written(
+    store: &Arc<dyn StoreFacade>,
+    outbox: &LifecycleOutboxRecord,
+    event_kind: ProvenanceEventKind,
+    event_id: EventId,
+) -> ferrum_store::Result<()> {
+    let updated = store
+        .lifecycle_outbox()
+        .mark_provenance_obligation_written(outbox.outbox_id, event_kind, event_id)
+        .await?;
+    if updated {
+        Ok(())
+    } else {
+        Err(ferrum_store::StoreError::Other(
+            "lifecycle outbox obligation update did not affect any row".to_string(),
+        ))
+    }
+}
+
+async fn mark_lifecycle_transition_reconciled(
+    store: &Arc<dyn StoreFacade>,
+    outbox: &LifecycleOutboxRecord,
+    event_id: EventId,
+) -> ferrum_store::Result<()> {
+    let outbox_repo = store.lifecycle_outbox();
+    mark_lifecycle_obligation_written(
+        store,
+        outbox,
+        outbox.intended_provenance_kind.clone(),
+        event_id,
+    )
+    .await?;
+    let mut result = ferrum_proto::JsonMap::new();
+    result.insert("normal_path".to_string(), serde_json::json!(true));
+    outbox_repo.mark_reconciled(outbox.outbox_id, result).await
+}
+
+pub(crate) fn validate_capability_proposal_binding(
+    lease: &CapabilityLease,
+    proposal: &ActionProposal,
+) -> Result<(), String> {
+    if lease.proposal_id != proposal.proposal_id {
+        return Err("capability proposal_id does not match proposal".to_string());
+    }
+    if lease.intent_id != proposal.intent_id {
+        return Err("capability intent_id does not match proposal intent_id".to_string());
+    }
+    if lease.tool_binding.server_name != proposal.server_name
+        || lease.tool_binding.tool_name != proposal.tool_name
+    {
+        return Err("capability tool_binding does not match proposal tool".to_string());
+    }
+    Ok(())
+}
+
+fn argument_value<'a>(payload: &'a serde_json::Value, key: &str) -> Option<&'a serde_json::Value> {
+    if key.starts_with('/') {
+        payload.pointer(key)
+    } else {
+        payload.as_object().and_then(|object| object.get(key))
+    }
+}
+
+pub(crate) fn validate_argument_constraints(
+    payload: &serde_json::Value,
+    constraints: &[ArgumentConstraint],
+) -> Result<(), String> {
+    for constraint in constraints {
+        match constraint {
+            ArgumentConstraint::ExactString { key, value } => {
+                let actual = argument_value(payload, key)
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| format!("argument constraint requires string at '{key}'"))?;
+                if actual != value {
+                    return Err(format!("argument constraint ExactString failed at '{key}'"));
+                }
+            }
+            ArgumentConstraint::StringOneOf { key, values } => {
+                let actual = argument_value(payload, key)
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| format!("argument constraint requires string at '{key}'"))?;
+                if !values.iter().any(|allowed| allowed == actual) {
+                    return Err(format!("argument constraint StringOneOf failed at '{key}'"));
+                }
+            }
+            ArgumentConstraint::StringRegex { key, pattern } => {
+                let actual = argument_value(payload, key)
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| format!("argument constraint requires string at '{key}'"))?;
+                let regex = Regex::new(pattern)
+                    .map_err(|e| format!("invalid StringRegex constraint at '{key}': {e}"))?;
+                if !regex.is_match(actual) {
+                    return Err(format!("argument constraint StringRegex failed at '{key}'"));
+                }
+            }
+            ArgumentConstraint::IntRange { key, min, max } => {
+                if min > max {
+                    return Err(format!("invalid IntRange constraint at '{key}': min > max"));
+                }
+                let actual = argument_value(payload, key)
+                    .and_then(serde_json::Value::as_i64)
+                    .ok_or_else(|| format!("argument constraint requires integer at '{key}'"))?;
+                if actual < *min || actual > *max {
+                    return Err(format!("argument constraint IntRange failed at '{key}'"));
+                }
+            }
+            ArgumentConstraint::BoolExact { key, value } => {
+                let actual = argument_value(payload, key)
+                    .and_then(serde_json::Value::as_bool)
+                    .ok_or_else(|| format!("argument constraint requires boolean at '{key}'"))?;
+                if actual != *value {
+                    return Err(format!("argument constraint BoolExact failed at '{key}'"));
+                }
+            }
+            ArgumentConstraint::JsonPointerMustExist { pointer } => {
+                if !pointer.is_empty() && !pointer.starts_with('/') {
+                    return Err(format!("invalid JSON pointer constraint '{pointer}'"));
+                }
+                if payload.pointer(pointer).is_none() {
+                    return Err(format!(
+                        "argument constraint JsonPointerMustExist failed at '{pointer}'"
+                    ));
+                }
+            }
+            ArgumentConstraint::JsonPointerMustNotExist { pointer } => {
+                if !pointer.is_empty() && !pointer.starts_with('/') {
+                    return Err(format!("invalid JSON pointer constraint '{pointer}'"));
+                }
+                if payload.pointer(pointer).is_some() {
+                    return Err(format!(
+                        "argument constraint JsonPointerMustNotExist failed at '{pointer}'"
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+fn effective_arguments(
+    proposal_arguments: &serde_json::Value,
+    execute_payload: &serde_json::Value,
+) -> serde_json::Value {
+    match (proposal_arguments, execute_payload) {
+        (serde_json::Value::Object(proposal), serde_json::Value::Object(payload)) => {
+            let mut effective = proposal.clone();
+            effective.extend(payload.clone());
+            serde_json::Value::Object(effective)
+        }
+        (_, serde_json::Value::Null) => proposal_arguments.clone(),
+        _ => execute_payload.clone(),
+    }
+}
+
 /// Validates that `resource_bindings` is a subset of `resource_scope`.
 ///
 /// Returns `Ok(())` if all capability resource bindings are within the intent's
 /// resource scope, `Err(reason)` if any binding exceeds the scope.
 ///
-/// Uses conservative prefix semantics: a binding path/uri is within scope if it
-/// starts with any matching scope entry's path/uri prefix. For example:
+/// Uses component-aware lexical path matching, with canonicalization when an
+/// existing ancestor is available. For example:
 /// - binding path `/tmp/subdir/file.txt` is within scope path `/tmp` ✓
+/// - binding path `/tmp2/file.txt` is not within scope path `/tmp` ✓
 /// - binding path `/other/file.txt` is NOT within scope path `/tmp` ✗
 ///
 /// An empty `resource_bindings` is always valid (represents no specific resources).
@@ -145,65 +381,91 @@ pub(crate) fn validate_resource_bindings_subset_of_scope(
 
     for binding in resource_bindings {
         let covered = match binding {
-            ferrum_proto::ResourceBinding::File { path, .. } => {
-                resource_scope.iter().any(|scope| {
-                    if let ResourceSelector::FilesystemPath {
-                        path: scope_path, ..
-                    } = scope
-                    {
-                        path.starts_with(scope_path)
-                    } else {
-                        false
-                    }
-                })
-            }
-            ferrum_proto::ResourceBinding::Git { repo_path, .. } => {
-                resource_scope.iter().any(|scope| {
-                    if let ResourceSelector::GitRepository {
-                        repo_path: scope_repo_path,
-                        ..
-                    } = scope
-                    {
-                        repo_path.starts_with(scope_repo_path)
-                    } else {
-                        false
-                    }
-                })
-            }
-            ferrum_proto::ResourceBinding::Sqlite { db_path, .. } => {
-                resource_scope.iter().any(|scope| {
-                    if let ResourceSelector::SqliteDatabase {
-                        db_path: scope_db_path,
-                        ..
-                    } = scope
-                    {
-                        db_path.starts_with(scope_db_path)
-                    } else {
-                        false
-                    }
-                })
-            }
-            ferrum_proto::ResourceBinding::Http {
-                base_url,
-                path_prefix,
-                ..
+            ferrum_proto::ResourceBinding::File {
+                path,
+                mode,
+                required_hash,
             } => resource_scope.iter().any(|scope| {
-                if let ResourceSelector::HttpEndpoint {
-                    base_url: scope_base_url,
-                    path_prefix: scope_path_prefix,
-                    ..
+                if let ResourceSelector::FilesystemPath {
+                    path: scope_path,
+                    mode: scope_mode,
+                    content_hash,
                 } = scope
                 {
-                    base_url.starts_with(scope_base_url)
-                        && path_prefix.starts_with(scope_path_prefix)
+                    path_within_scope(path, scope_path)
+                        && mode_allows(scope_mode, mode)
+                        && content_hash
+                            .as_ref()
+                            .is_none_or(|hash| required_hash.as_ref() == Some(hash))
                 } else {
                     false
                 }
             }),
-            ferrum_proto::ResourceBinding::EmailDraft { recipients, .. } => {
+            ferrum_proto::ResourceBinding::Git {
+                repo_path,
+                allowed_refs,
+                mode,
+            } => resource_scope.iter().any(|scope| {
+                if let ResourceSelector::GitRepository {
+                    repo_path: scope_repo_path,
+                    allowed_refs: scope_refs,
+                    mode: scope_mode,
+                } = scope
+                {
+                    path_within_scope(repo_path, scope_repo_path)
+                        && list_is_subset(allowed_refs, scope_refs)
+                        && mode_allows(scope_mode, mode)
+                } else {
+                    false
+                }
+            }),
+            ferrum_proto::ResourceBinding::Sqlite {
+                db_path,
+                tables,
+                mode,
+            } => resource_scope.iter().any(|scope| {
+                if let ResourceSelector::SqliteDatabase {
+                    db_path: scope_db_path,
+                    tables: scope_tables,
+                    mode: scope_mode,
+                } = scope
+                {
+                    path_within_scope(db_path, scope_db_path)
+                        && list_is_subset(tables, scope_tables)
+                        && mode_allows(scope_mode, mode)
+                } else {
+                    false
+                }
+            }),
+            ferrum_proto::ResourceBinding::Http {
+                method,
+                base_url,
+                path_prefix,
+                mode,
+                ..
+            } => resource_scope.iter().any(|scope| {
+                if let ResourceSelector::HttpEndpoint {
+                    method: scope_method,
+                    base_url: scope_base_url,
+                    path_prefix: scope_path_prefix,
+                    mode: scope_mode,
+                } = scope
+                {
+                    method == scope_method
+                        && http_base_within_scope(base_url, scope_base_url)
+                        && url_path_within_scope(path_prefix, scope_path_prefix)
+                        && mode_allows(scope_mode, mode)
+                } else {
+                    false
+                }
+            }),
+            ferrum_proto::ResourceBinding::EmailDraft {
+                recipients, mode, ..
+            } => {
                 resource_scope.iter().any(|scope| {
                     if let ResourceSelector::EmailDraft {
                         recipient_allowlist,
+                        mode: scope_mode,
                         ..
                     } = scope
                     {
@@ -212,6 +474,7 @@ pub(crate) fn validate_resource_bindings_subset_of_scope(
                         recipients
                             .iter()
                             .all(|r| recipient_allowlist.iter().any(|a| r.ends_with(a)))
+                            && mode_allows(scope_mode, mode)
                     } else {
                         false
                     }
@@ -230,6 +493,101 @@ pub(crate) fn validate_resource_bindings_subset_of_scope(
     Ok(())
 }
 
+fn mode_allows(scope: &ferrum_proto::ResourceMode, binding: &ferrum_proto::ResourceMode) -> bool {
+    scope == binding
+        || matches!(scope, ferrum_proto::ResourceMode::Admin)
+        || matches!(
+            (scope, binding),
+            (
+                ferrum_proto::ResourceMode::ReadWrite,
+                ferrum_proto::ResourceMode::Read
+                    | ferrum_proto::ResourceMode::Write
+                    | ferrum_proto::ResourceMode::ReadWrite
+            )
+        )
+}
+
+fn list_is_subset(binding: &[String], scope: &[String]) -> bool {
+    scope.is_empty() || binding.iter().all(|item| scope.contains(item))
+}
+
+fn lexical_normalize(path: &str) -> Option<PathBuf> {
+    let mut normalized = PathBuf::new();
+    for component in StdPath::new(path).components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => return None,
+            Component::RootDir | Component::Prefix(_) | Component::Normal(_) => {
+                normalized.push(component.as_os_str());
+            }
+        }
+    }
+    Some(normalized)
+}
+
+fn canonicalize_with_missing_tail(path: &StdPath) -> Option<PathBuf> {
+    let mut ancestor = path;
+    let mut tail: Vec<OsString> = Vec::new();
+    while !ancestor.exists() {
+        tail.push(ancestor.file_name()?.to_os_string());
+        ancestor = ancestor.parent()?;
+    }
+    let mut resolved = ancestor.canonicalize().ok()?;
+    for component in tail.into_iter().rev() {
+        resolved.push(component);
+    }
+    Some(resolved)
+}
+
+fn path_within_scope(candidate: &str, scope: &str) -> bool {
+    let Some(candidate) = lexical_normalize(candidate) else {
+        return false;
+    };
+    let Some(scope) = lexical_normalize(scope) else {
+        return false;
+    };
+    if !candidate.starts_with(&scope) {
+        return false;
+    }
+
+    match (
+        canonicalize_with_missing_tail(&candidate),
+        canonicalize_with_missing_tail(&scope),
+    ) {
+        (Some(candidate), Some(scope)) => candidate.starts_with(scope),
+        _ => true,
+    }
+}
+
+fn url_path_within_scope(candidate: &str, scope: &str) -> bool {
+    path_within_scope(
+        &format!("/{}", candidate.trim_start_matches('/')),
+        &format!("/{}", scope.trim_start_matches('/')),
+    )
+}
+
+fn http_base_within_scope(candidate: &str, scope: &str) -> bool {
+    let Ok(candidate) = reqwest::Url::parse(candidate) else {
+        return false;
+    };
+    let Ok(scope) = reqwest::Url::parse(scope) else {
+        return false;
+    };
+    candidate.scheme() == scope.scheme()
+        && candidate.host_str() == scope.host_str()
+        && candidate.port_or_known_default() == scope.port_or_known_default()
+        && candidate.username() == scope.username()
+        && candidate.password() == scope.password()
+        && url_path_within_scope(candidate.path(), scope.path())
+}
+
+fn explicit_action_binding(
+    metadata: &ferrum_proto::JsonMap,
+) -> Result<Option<(ferrum_proto::ActionType, String)>, String> {
+    ferrum_proto::ActionBinding::from_metadata(metadata)
+        .map(|binding| binding.map(|binding| (binding.action_type, binding.adapter_key)))
+}
+
 /// Infers the action_type and adapter_key from the tool_name.
 /// For FileWrite-related tools (containing "file_write", "write_file", "fs_", etc.),
 /// returns ActionType::FileWrite and adapter_key "fs".
@@ -242,47 +600,66 @@ pub(crate) fn validate_resource_bindings_subset_of_scope(
 /// For git_push, returns ActionType::GitPush and adapter_key "git".
 /// For git_pull, returns ActionType::GitPull and adapter_key "git".
 /// For git_fetch, returns ActionType::GitFetch and adapter_key "git".
-/// Otherwise, defaults to ActionType::McpToolMutation and adapter_key "noop".
-pub(crate) fn infer_action_type_and_adapter(tool_name: &str) -> (ferrum_proto::ActionType, String) {
+/// Unknown mutating tools are rejected unless the proposal carries an explicit
+/// binding contract in metadata.action_type + metadata.adapter_key.
+pub(crate) fn infer_action_type_and_adapter(
+    tool_name: &str,
+    metadata: &ferrum_proto::JsonMap,
+) -> Result<(ferrum_proto::ActionType, String), String> {
+    if let Some(binding) = explicit_action_binding(metadata)? {
+        return Ok(binding);
+    }
+
     let tool_lower = tool_name.to_lowercase();
     if tool_lower.contains("file_write")
         || tool_lower.contains("write_file")
         || tool_lower.contains("fs_")
+        || tool_lower.contains("filesystem.write")
+        || tool_lower.contains("filesystem_write")
         || tool_lower.contains("file-mutation")
     {
-        (ferrum_proto::ActionType::FileWrite, "fs".to_string())
+        Ok((ferrum_proto::ActionType::FileWrite, "fs".to_string()))
+    } else if tool_lower.contains("fs.read")
+        || tool_lower.contains("filesystem.read")
+        || tool_lower.contains("file_read")
+        || tool_lower.contains("read_file")
+    {
+        Ok((
+            ferrum_proto::ActionType::McpToolMutation,
+            "noop".to_string(),
+        ))
     } else if tool_lower.contains("sql_mutate") {
-        (ferrum_proto::ActionType::SqlMutation, "sqlite".to_string())
+        Ok((ferrum_proto::ActionType::SqlMutation, "sqlite".to_string()))
     } else if tool_lower.contains("maildraft")
         || tool_lower.contains("draft_create")
         || tool_lower.contains("email_draft")
     {
-        (ferrum_proto::ActionType::MailDraft, "maildraft".to_string())
+        Ok((ferrum_proto::ActionType::MailDraft, "maildraft".to_string()))
     } else if tool_lower.contains("git_branch_create") {
-        (ferrum_proto::ActionType::GitBranchCreate, "git".to_string())
+        Ok((ferrum_proto::ActionType::GitBranchCreate, "git".to_string()))
     } else if tool_lower.contains("git_tag_create") {
-        (ferrum_proto::ActionType::GitTagCreate, "git".to_string())
+        Ok((ferrum_proto::ActionType::GitTagCreate, "git".to_string()))
     } else if tool_lower.contains("git_branch_delete") {
-        (ferrum_proto::ActionType::GitBranchDelete, "git".to_string())
+        Ok((ferrum_proto::ActionType::GitBranchDelete, "git".to_string()))
     } else if tool_lower.contains("git_tag_delete") {
-        (ferrum_proto::ActionType::GitTagDelete, "git".to_string())
+        Ok((ferrum_proto::ActionType::GitTagDelete, "git".to_string()))
     } else if tool_lower.contains("git_push") {
-        (ferrum_proto::ActionType::GitPush, "git".to_string())
+        Ok((ferrum_proto::ActionType::GitPush, "git".to_string()))
     } else if tool_lower.contains("git_pull") {
-        (ferrum_proto::ActionType::GitPull, "git".to_string())
+        Ok((ferrum_proto::ActionType::GitPull, "git".to_string()))
     } else if tool_lower.contains("git_fetch") {
-        (ferrum_proto::ActionType::GitFetch, "git".to_string())
+        Ok((ferrum_proto::ActionType::GitFetch, "git".to_string()))
     } else if tool_lower.contains("http_post")
         || tool_lower.contains("http_put")
         || tool_lower.contains("http_patch")
         || tool_lower.contains("http_delete")
     {
-        (ferrum_proto::ActionType::HttpMutation, "http".to_string())
+        Ok((ferrum_proto::ActionType::HttpMutation, "http".to_string()))
     } else {
-        (
-            ferrum_proto::ActionType::McpToolMutation,
-            "noop".to_string(),
-        )
+        Err(format!(
+            "unknown mutating tool '{}' has no explicit action binding",
+            tool_name
+        ))
     }
 }
 
@@ -291,18 +668,17 @@ pub(crate) fn infer_action_type_and_adapter(tool_name: &str) -> (ferrum_proto::A
 pub(crate) fn build_prepare_request_for_proposal(
     rollback: &RollbackService,
     intent_id: ferrum_proto::IntentId,
-    proposal_id: ferrum_proto::ProposalId,
     execution_id: ExecutionId,
     rollback_class: &RollbackClass,
-    tool_name: &str,
+    proposal: &ActionProposal,
     resource_scope: &[ferrum_proto::ResourceSelector],
-    raw_arguments: &serde_json::Value,
-) -> ferrum_proto::RollbackPrepareRequest {
-    let (action_type, adapter_key) = infer_action_type_and_adapter(tool_name);
+) -> Result<ferrum_proto::RollbackPrepareRequest, String> {
+    let (action_type, adapter_key) =
+        infer_action_type_and_adapter(&proposal.tool_name, &proposal.metadata)?;
     let target = infer_target_from_scope(resource_scope, &action_type);
     let mut request = rollback.build_prepare_request_with_target(
         intent_id,
-        proposal_id,
+        proposal.proposal_id,
         execution_id,
         rollback_class.clone(),
         action_type,
@@ -312,10 +688,14 @@ pub(crate) fn build_prepare_request_for_proposal(
 
     // Merge proposal raw_arguments into metadata for git tools so prepare can
     // validate branch_name/remote_name during prepare (fail-closed).
-    if let Some(args) = raw_arguments.as_object() {
+    if let Some(args) = proposal.raw_arguments.as_object() {
         match request.action_type {
             ferrum_proto::ActionType::GitBranchCreate => {
-                if let Some(branch) = args.get("branch").and_then(|v| v.as_str()) {
+                let branch_name = args
+                    .get("branch_name")
+                    .or_else(|| args.get("branch"))
+                    .and_then(|v| v.as_str());
+                if let Some(branch) = branch_name {
                     request
                         .metadata
                         .insert("branch_name".to_string(), serde_json::json!(branch));
@@ -339,7 +719,18 @@ pub(crate) fn build_prepare_request_for_proposal(
         }
     }
 
-    request
+    if matches!(request.action_type, ferrum_proto::ActionType::SqlMutation) {
+        for selector in resource_scope {
+            if let ferrum_proto::ResourceSelector::SqliteDatabase { tables, .. } = selector {
+                request
+                    .metadata
+                    .insert("allowed_tables".to_string(), serde_json::json!(tables));
+                break;
+            }
+        }
+    }
+
+    Ok(request)
 }
 
 /// If the contract has an HTTP placeholder compensation plan (only url present),
@@ -581,65 +972,78 @@ pub(crate) async fn get_capability_for_authorize(
     Ok(lease)
 }
 
-/// Mark capability as used in memory and persist the updated status.
-/// If the capability is not found in memory, falls back to store and persists there.
+/// Mark capability as used by winning an atomic durable transition first.
+/// In-memory state is a cache and is synchronized only after the store accepts
+/// the single-use Active -> Used transition.
+#[allow(dead_code)]
 pub(crate) async fn mark_capability_used_durable(
     cap: &Arc<dyn CapabilityService>,
     store: &Arc<dyn StoreFacade>,
     capability_id: CapabilityId,
 ) -> Result<CapabilityLease, CapabilityError> {
-    // Try in-memory mark_used first
-    match cap.mark_used(capability_id).await {
-        Ok(lease) => {
-            // In-memory succeeded; persist the updated lease synchronously
-            store.capabilities().update(&lease).await.map_err(|e| {
-                tracing::error!(error = %e, "failed to persist used capability status");
-                CapabilityError::NotFound // Map to NotFound for API error handling
-            })?;
-            Ok(lease)
-        }
-        Err(CapabilityError::NotFound) => {
-            // In-memory miss: load from store, validate, then atomically update
-            let Some(lease) = store.capabilities().get(capability_id).await.map_err(|e| {
-                tracing::error!(error = %e, "failed to load capability from store for mark_used");
+    let Some(mut lease) = store.capabilities().get(capability_id).await.map_err(|e| {
+        tracing::error!(error = %e, "failed to load capability from store for mark_used");
+        CapabilityError::NotFound
+    })?
+    else {
+        return Err(CapabilityError::NotFound);
+    };
+
+    if matches!(lease.status, CapabilityStatus::Used) {
+        return Err(CapabilityError::AlreadyUsed);
+    }
+    if matches!(lease.status, CapabilityStatus::Revoked) {
+        return Err(CapabilityError::Revoked);
+    }
+    if lease.expires_at < Utc::now() {
+        return Err(CapabilityError::Expired);
+    }
+
+    let updated = store
+        .capabilities()
+        .update_status_if_active(capability_id, CapabilityStatus::Used)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "failed to atomically update capability status");
+            CapabilityError::NotFound
+        })?;
+
+    if !updated {
+        let status = store
+            .capabilities()
+            .get(capability_id)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "failed to reload capability after lost active update");
                 CapabilityError::NotFound
             })?
-            else {
-                return Err(CapabilityError::NotFound);
-            };
-
-            // Validate status before attempting atomic update
-            if matches!(lease.status, CapabilityStatus::Used) {
-                return Err(CapabilityError::AlreadyUsed);
-            }
-            if matches!(lease.status, CapabilityStatus::Revoked) {
-                return Err(CapabilityError::Revoked);
-            }
-            if lease.expires_at < Utc::now() {
-                return Err(CapabilityError::Expired);
-            }
-
-            // Atomically update only if still Active; if another writer won, fail
-            let updated = store
-                .capabilities()
-                .update_status_if_active(capability_id, CapabilityStatus::Used)
-                .await
-                .map_err(|e| {
-                    tracing::error!(error = %e, "failed to atomically update capability status");
-                    CapabilityError::NotFound
-                })?;
-
-            if !updated {
-                return Err(CapabilityError::AlreadyUsed);
-            }
-
-            // Reconstruct the used lease for the caller
-            let mut used_lease = lease;
-            used_lease.status = CapabilityStatus::Used;
-            Ok(used_lease)
-        }
-        Err(e) => Err(e),
+            .map(|lease| lease.status);
+        return match status {
+            Some(CapabilityStatus::Used) => Err(CapabilityError::AlreadyUsed),
+            Some(CapabilityStatus::Revoked) => Err(CapabilityError::Revoked),
+            Some(_) | None => Err(CapabilityError::NotFound),
+        };
     }
+
+    if let Err(error) = cap.mark_used(capability_id).await {
+        match error {
+            CapabilityError::NotFound | CapabilityError::AlreadyUsed => {
+                tracing::debug!(
+                    ?error,
+                    "capability store transition won; in-memory cache was absent or already used"
+                );
+            }
+            other => {
+                tracing::warn!(
+                    error = ?other,
+                    "capability store transition won but in-memory cache sync failed"
+                );
+            }
+        }
+    }
+
+    lease.status = CapabilityStatus::Used;
+    Ok(lease)
 }
 
 // ---------------------------------------------------------------------------
@@ -735,6 +1139,51 @@ pub(crate) async fn validate_approval_binding_digest(
         ));
     }
 
+    if !binding.approver_roles.is_empty() {
+        let grant_events = store
+            .provenance()
+            .query(&ProvenanceQueryRequest {
+                intent_id: Some(approval.intent_id),
+                execution_id: approval.execution_id,
+                capability_id: None,
+                event_kind: Some(ProvenanceEventKind::ApprovalGranted),
+                since: None,
+                until: None,
+                edge_types: Vec::new(),
+            })
+            .await
+            .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+        let approved_by_allowed_role = grant_events.iter().any(|event| {
+            event.proposal_id == Some(approval.proposal_id)
+                && event
+                    .metadata
+                    .get("approval_id")
+                    .and_then(|value| value.as_str())
+                    == Some(binding.approval_id.to_string().as_str())
+                && event
+                    .metadata
+                    .get("actor_role")
+                    .and_then(|value| value.as_str())
+                    .is_some_and(|role| {
+                        binding.approver_roles.iter().any(|allowed| allowed == role)
+                    })
+        }) || {
+            let requested_by_role =
+                format!("{:?}", approval.requested_by.actor_type).to_ascii_lowercase();
+            binding
+                .approver_roles
+                .iter()
+                .any(|allowed| allowed == &requested_by_role)
+        };
+        if !approved_by_allowed_role {
+            return Err(ApiProblem::new(
+                StatusCode::FORBIDDEN,
+                ApiErrorCode::PolicyDenied,
+                "approval was not granted by an allowed approver role",
+            ));
+        }
+    }
+
     Ok(())
 }
 
@@ -814,21 +1263,26 @@ pub(crate) async fn cancel_execution(
     }
 
     // Update execution state to Canceled
+    let previous_execution = execution.clone();
     let mut updated_execution = execution;
     updated_execution.state = ExecutionState::Canceled;
     updated_execution.finished_at = Some(Utc::now());
-    state
-        .runtime
-        .store
-        .executions()
-        .update(&updated_execution)
-        .await
-        .map_err(|e| {
-            state.metrics.record_governance_error(
-                GovernanceRoute::ExecutionsCancel,
-                ApiProblem::internal(anyhow::Error::from(e)),
-            )
-        })?;
+    let outbox = record_lifecycle_transition_outbox(
+        &state.runtime.store,
+        "cancel",
+        &previous_execution,
+        &updated_execution,
+        None,
+        None,
+        ProvenanceEventKind::SideEffectRolledBack,
+    )
+    .await
+    .map_err(|e| {
+        state.metrics.record_governance_error(
+            GovernanceRoute::ExecutionsCancel,
+            ApiProblem::internal(anyhow::Error::from(e)),
+        )
+    })?;
 
     // Audit log: execution canceled
     append_audit(
@@ -881,15 +1335,24 @@ pub(crate) async fn cancel_execution(
                 "previous_state".to_string(),
                 serde_json::json!(format!("{:?}", previous_state)),
             );
+            m.insert(
+                "lineage_parent_optional".to_string(),
+                serde_json::json!(true),
+            );
             m
         },
         source_runtime_id: None,
     };
-    state
-        .runtime
-        .store
-        .provenance()
-        .append_event(&cancel_event)
+    let cancel_event_id = cancel_event.event_id;
+    append_governance_event(&state.runtime.store, cancel_event)
+        .await
+        .map_err(|e| {
+            state.metrics.record_governance_error(
+                GovernanceRoute::ExecutionsCancel,
+                ApiProblem::internal(anyhow::Error::from(e)),
+            )
+        })?;
+    mark_lifecycle_transition_reconciled(&state.runtime.store, &outbox, cancel_event_id)
         .await
         .map_err(|e| {
             state.metrics.record_governance_error(
@@ -1195,37 +1658,33 @@ pub(crate) async fn commit_execution(
     }
 
     // Transition both contract and execution to Committed.
+    let previous_contract = contract.clone();
     let mut updated_contract = contract;
     updated_contract.state = RollbackState::Committed;
-    if let Err(e) = state
-        .runtime
-        .store
-        .rollback_contracts()
-        .update(&updated_contract)
-        .await
-    {
-        return governance_err!(
-            state,
-            GovernanceRoute::ExecutionsCommit,
-            ApiProblem::internal(anyhow::Error::from(e))
-        );
-    }
 
+    let previous_execution = execution.clone();
     let mut updated_execution = execution;
     updated_execution.state = ExecutionState::Committed;
-    if let Err(e) = state
-        .runtime
-        .store
-        .executions()
-        .update(&updated_execution)
-        .await
+    let outbox = match record_lifecycle_transition_outbox(
+        &state.runtime.store,
+        "commit",
+        &previous_execution,
+        &updated_execution,
+        Some(&previous_contract),
+        Some(&updated_contract),
+        ProvenanceEventKind::SideEffectCommitted,
+    )
+    .await
     {
-        return governance_err!(
-            state,
-            GovernanceRoute::ExecutionsCommit,
-            ApiProblem::internal(anyhow::Error::from(e))
-        );
-    }
+        Ok(outbox) => outbox,
+        Err(e) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsCommit,
+                ApiProblem::internal(anyhow::Error::from(e))
+            );
+        }
+    };
 
     // Emit SideEffectCommitted provenance event.
     let committed_event = ProvenanceEvent {
@@ -1245,7 +1704,7 @@ pub(crate) async fn commit_execution(
         intent_id: Some(updated_execution.intent_id),
         proposal_id: Some(updated_execution.proposal_id),
         execution_id: Some(execution_id),
-        capability_id: None,
+        capability_id: Some(updated_execution.capability_id),
         rollback_contract_id: Some(updated_contract.contract_id),
         policy_bundle_id: None,
         trust_labels: Vec::new(),
@@ -1257,15 +1716,20 @@ pub(crate) async fn commit_execution(
             policy_bundle_hash: None,
             previous_ledger_hash: None,
         },
-        metadata: ferrum_proto::JsonMap::new(),
+        metadata: lifecycle_event_metadata(&outbox, ferrum_proto::JsonMap::new()),
         source_runtime_id: None,
     };
-    if let Err(e) = state
-        .runtime
-        .store
-        .provenance()
-        .append_event(&committed_event)
-        .await
+    let committed_event_id = committed_event.event_id;
+    if let Err(e) = append_governance_event(&state.runtime.store, committed_event).await {
+        return governance_err!(
+            state,
+            GovernanceRoute::ExecutionsCommit,
+            ApiProblem::internal(anyhow::Error::from(e))
+        );
+    }
+    if let Err(e) =
+        mark_lifecycle_transition_reconciled(&state.runtime.store, &outbox, committed_event_id)
+            .await
     {
         return governance_err!(
             state,
@@ -1399,53 +1863,90 @@ pub(crate) async fn compensate_execution(
     // parse_replay_contract can validate method/payload/expected_statuses.
     let contract = enrich_http_compensation_if_needed(contract);
 
-    // Call compensate on the contract
-    if let Err(e) = state.runtime.rollback.compensate(&contract).await {
-        return governance_err!(
-            state,
-            GovernanceRoute::ExecutionsCompensate,
-            ApiProblem::internal(e)
-        );
-    }
+    // Call compensate on the contract. The adapter may report that the call
+    // completed but recovery did not; that must not be promoted to a recovered
+    // terminal state.
+    let recovery_receipt = match state.runtime.rollback.compensate(&contract).await {
+        Ok(receipt) => receipt,
+        Err(e) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsCompensate,
+                ApiProblem::internal(e)
+            );
+        }
+    };
 
-    // Update contract state to Compensated
+    let recovery_incomplete = !recovery_receipt.recovered;
+
+    // Update contract state to Compensated only after recovered=true.
+    let previous_contract = contract.clone();
     let mut updated_contract = contract.clone();
-    updated_contract.state = RollbackState::Compensated;
-    if let Err(e) = state
-        .runtime
-        .store
-        .rollback_contracts()
-        .update(&updated_contract)
-        .await
-    {
-        return governance_err!(
-            state,
-            GovernanceRoute::ExecutionsCompensate,
-            ApiProblem::internal(anyhow::Error::from(e))
+    updated_contract.state = if recovery_incomplete {
+        RollbackState::Failed
+    } else {
+        RollbackState::Compensated
+    };
+    updated_contract.metadata.insert(
+        "recovered".to_string(),
+        serde_json::json!(recovery_receipt.recovered),
+    );
+    updated_contract.metadata.insert(
+        "recovery_action".to_string(),
+        serde_json::json!("compensate"),
+    );
+    if recovery_incomplete {
+        updated_contract
+            .metadata
+            .insert("recovery_incomplete".to_string(), serde_json::json!(true));
+    }
+    if !recovery_receipt.adapter_metadata.is_empty() {
+        updated_contract.metadata.insert(
+            "recovery_adapter_metadata".to_string(),
+            serde_json::json!(recovery_receipt.adapter_metadata.clone()),
         );
     }
-
-    // Update execution state to Compensated
+    // Update execution state to Compensated only after recovered=true.
+    let previous_execution = execution.clone();
     let mut updated_execution = execution;
-    updated_execution.state = ExecutionState::Compensated;
-    if let Err(e) = state
-        .runtime
-        .store
-        .executions()
-        .update(&updated_execution)
-        .await
+    updated_execution.state = if recovery_incomplete {
+        ExecutionState::Failed
+    } else {
+        ExecutionState::Compensated
+    };
+    updated_execution.finished_at = Some(Utc::now());
+    let terminal_kind = if recovery_incomplete {
+        ProvenanceEventKind::ErrorRaised
+    } else {
+        ProvenanceEventKind::SideEffectCompensated
+    };
+    let outbox = match record_lifecycle_transition_outbox(
+        &state.runtime.store,
+        "compensate",
+        &previous_execution,
+        &updated_execution,
+        Some(&previous_contract),
+        Some(&updated_contract),
+        terminal_kind.clone(),
+    )
+    .await
     {
-        return governance_err!(
-            state,
-            GovernanceRoute::ExecutionsCompensate,
-            ApiProblem::internal(anyhow::Error::from(e))
-        );
-    }
+        Ok(outbox) => outbox,
+        Err(e) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsCompensate,
+                ApiProblem::internal(anyhow::Error::from(e))
+            );
+        }
+    };
 
-    // Emit provenance event
+    // Emit provenance event. Incomplete recovery is terminal but not recovered,
+    // so emit ErrorRaised with explicit recovery metadata instead of
+    // SideEffectCompensated.
     let terminal_event = ProvenanceEvent {
         event_id: EventId::new(),
-        kind: ProvenanceEventKind::SideEffectCompensated,
+        kind: terminal_kind,
         occurred_at: Utc::now(),
         actor: ActorRef {
             actor_type: ActorType::Gateway,
@@ -1455,12 +1956,16 @@ pub(crate) async fn compensate_execution(
         object: ObjectRef {
             object_type: ObjectType::RollbackContract,
             object_id: updated_contract.contract_id.to_string(),
-            summary: Some("Execution compensated".to_string()),
+            summary: Some(if recovery_incomplete {
+                "Recovery incomplete after compensation".to_string()
+            } else {
+                "Execution compensated".to_string()
+            }),
         },
         intent_id: Some(updated_execution.intent_id),
         proposal_id: Some(updated_execution.proposal_id),
         execution_id: Some(execution_id),
-        capability_id: None,
+        capability_id: Some(updated_execution.capability_id),
         rollback_contract_id: Some(updated_contract.contract_id),
         policy_bundle_id: None,
         trust_labels: Vec::new(),
@@ -1472,15 +1977,43 @@ pub(crate) async fn compensate_execution(
             policy_bundle_hash: None,
             previous_ledger_hash: None,
         },
-        metadata: ferrum_proto::JsonMap::new(),
+        metadata: {
+            let mut metadata = ferrum_proto::JsonMap::new();
+            metadata.insert(
+                "recovered".to_string(),
+                serde_json::json!(recovery_receipt.recovered),
+            );
+            metadata.insert(
+                "recovery_action".to_string(),
+                serde_json::json!("compensate"),
+            );
+            if recovery_incomplete {
+                metadata.insert("recovery_incomplete".to_string(), serde_json::json!(true));
+                metadata.insert(
+                    "recovery_state".to_string(),
+                    serde_json::json!("incomplete"),
+                );
+            }
+            if !recovery_receipt.adapter_metadata.is_empty() {
+                metadata.insert(
+                    "recovery_adapter_metadata".to_string(),
+                    serde_json::json!(recovery_receipt.adapter_metadata),
+                );
+            }
+            metadata
+        },
         source_runtime_id: None,
     };
-    if let Err(e) = state
-        .runtime
-        .store
-        .provenance()
-        .append_event(&terminal_event)
-        .await
+    let terminal_event_id = terminal_event.event_id;
+    if let Err(e) = append_governance_event(&state.runtime.store, terminal_event).await {
+        return governance_err!(
+            state,
+            GovernanceRoute::ExecutionsCompensate,
+            ApiProblem::internal(anyhow::Error::from(e))
+        );
+    }
+    if let Err(e) =
+        mark_lifecycle_transition_reconciled(&state.runtime.store, &outbox, terminal_event_id).await
     {
         return governance_err!(
             state,
@@ -1494,9 +2027,16 @@ pub(crate) async fn compensate_execution(
         GovernanceRoute::ExecutionsCompensate,
         Ok(Json(CompensateExecutionResponse {
             execution_id,
-            compensated: true,
+            compensated: !recovery_incomplete,
             rollback_contract: Some(updated_contract),
-            warnings: Vec::new(),
+            warnings: if recovery_incomplete {
+                vec![
+                    "recovery-incomplete: compensation adapter did not report recovered=true"
+                        .to_string(),
+                ]
+            } else {
+                Vec::new()
+            },
         }))
     )
 }
@@ -1628,6 +2168,12 @@ pub(crate) async fn verify_execution(
     // Before calling verify, update FileHashMatches checks with the result_digest
     // so that they can verify post-execute content hash.
     let mut verify_contract = contract.clone();
+    if matches!(
+        verify_contract.rollback_class,
+        RollbackClass::R3IrreversibleHighConsequence
+    ) {
+        verify_contract.auto_commit = false;
+    }
     if let Some(ref result_digest) = execution.result_digest {
         for check in &mut verify_contract.verify_checks {
             if matches!(check.check_type, ferrum_proto::CheckType::FileHashMatches) {
@@ -1661,32 +2207,20 @@ pub(crate) async fn verify_execution(
     // Persist verify_contract (not the original contract) so that verify-time
     // mutations (expected_hash on FileHashMatches checks, after_hash on target)
     // are stored for future inspection.
+    let previous_contract = contract.clone();
     let mut updated_contract = verify_contract;
     updated_contract.state = if verified {
         ferrum_proto::RollbackState::Verified
     } else {
         ferrum_proto::RollbackState::Failed
     };
-    if let Err(e) = state
-        .runtime
-        .store
-        .rollback_contracts()
-        .update(&updated_contract)
-        .await
-    {
-        return governance_err!(
-            state,
-            GovernanceRoute::ExecutionsVerify,
-            ApiProblem::internal(anyhow::Error::from(e))
-        );
-    }
-
     // D1.6 / R3 enforcement: Only set execution to Committed (and emit SideEffectCommitted)
     // when verified=true AND contract.auto_commit=true. When auto_commit=false, the execution
     // remains in Running/AwaitingVerification state to await explicit commit.
     // This preserves the verified result in contract state while respecting rollback semantics.
-    // R3 (irreversible-high-consequence) always sets auto_commit=false at prepare time;
-    // verify honors that by suppressing automatic commit. Explicit commit is required for R3.
+    // R3 (irreversible-high-consequence) is normalized to auto_commit=false before verify;
+    // explicit commit is required even if a malformed contract was inserted directly.
+    let previous_execution = execution.clone();
     let mut updated_execution = execution;
     if verified {
         if updated_contract.auto_commit {
@@ -1700,19 +2234,34 @@ pub(crate) async fn verify_execution(
     } else {
         updated_execution.state = ferrum_proto::ExecutionState::Failed;
     }
-    if let Err(e) = state
-        .runtime
-        .store
-        .executions()
-        .update(&updated_execution)
-        .await
+    let transition_provenance_kinds = if verified && updated_contract.auto_commit {
+        vec![
+            ProvenanceEventKind::SideEffectVerified,
+            ProvenanceEventKind::SideEffectCommitted,
+        ]
+    } else {
+        vec![ProvenanceEventKind::SideEffectVerified]
+    };
+    let outbox = match record_lifecycle_transition_outbox_with_obligations(
+        &state.runtime.store,
+        "verify",
+        &previous_execution,
+        &updated_execution,
+        Some(&previous_contract),
+        Some(&updated_contract),
+        transition_provenance_kinds,
+    )
+    .await
     {
-        return governance_err!(
-            state,
-            GovernanceRoute::ExecutionsVerify,
-            ApiProblem::internal(anyhow::Error::from(e))
-        );
-    }
+        Ok(outbox) => outbox,
+        Err(e) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsVerify,
+                ApiProblem::internal(anyhow::Error::from(e))
+            );
+        }
+    };
 
     // Emit SideEffectVerified provenance event (regardless of verification result).
     let verified_event = ProvenanceEvent {
@@ -1732,7 +2281,7 @@ pub(crate) async fn verify_execution(
         intent_id: Some(updated_execution.intent_id),
         proposal_id: Some(updated_execution.proposal_id),
         execution_id: Some(execution_id),
-        capability_id: None,
+        capability_id: Some(updated_execution.capability_id),
         rollback_contract_id: Some(updated_contract.contract_id),
         policy_bundle_id: None,
         trust_labels: Vec::new(),
@@ -1747,16 +2296,43 @@ pub(crate) async fn verify_execution(
         metadata: {
             let mut m = ferrum_proto::JsonMap::new();
             m.insert("verified".to_string(), serde_json::json!(verified));
-            m
+            lifecycle_event_metadata(&outbox, m)
         },
         source_runtime_id: None,
     };
-    if let Err(e) = state
-        .runtime
-        .store
-        .provenance()
-        .append_event(&verified_event)
-        .await
+    let verified_event_id = verified_event.event_id;
+    if let Err(e) = append_governance_event(&state.runtime.store, verified_event).await {
+        return governance_err!(
+            state,
+            GovernanceRoute::ExecutionsVerify,
+            ApiProblem::internal(anyhow::Error::from(e))
+        );
+    }
+    if let Err(e) = mark_lifecycle_obligation_written(
+        &state.runtime.store,
+        &outbox,
+        ProvenanceEventKind::SideEffectVerified,
+        verified_event_id,
+    )
+    .await
+    {
+        return governance_err!(
+            state,
+            GovernanceRoute::ExecutionsVerify,
+            ApiProblem::internal(anyhow::Error::from(e))
+        );
+    }
+    if !(verified && updated_contract.auto_commit)
+        && let Err(e) = {
+            let mut result = ferrum_proto::JsonMap::new();
+            result.insert("normal_path".to_string(), serde_json::json!(true));
+            state
+                .runtime
+                .store
+                .lifecycle_outbox()
+                .mark_reconciled(outbox.outbox_id, result)
+                .await
+        }
     {
         return governance_err!(
             state,
@@ -1785,7 +2361,7 @@ pub(crate) async fn verify_execution(
             intent_id: Some(updated_execution.intent_id),
             proposal_id: Some(updated_execution.proposal_id),
             execution_id: Some(execution_id),
-            capability_id: None,
+            capability_id: Some(updated_execution.capability_id),
             rollback_contract_id: Some(updated_contract.contract_id),
             policy_bundle_id: None,
             trust_labels: Vec::new(),
@@ -1797,14 +2373,38 @@ pub(crate) async fn verify_execution(
                 policy_bundle_hash: None,
                 previous_ledger_hash: None,
             },
-            metadata: ferrum_proto::JsonMap::new(),
+            metadata: lifecycle_event_metadata(&outbox, ferrum_proto::JsonMap::new()),
             source_runtime_id: None,
         };
+        let committed_event_id = committed_event.event_id;
+        if let Err(e) = append_governance_event(&state.runtime.store, committed_event).await {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsVerify,
+                ApiProblem::internal(anyhow::Error::from(e))
+            );
+        }
+        if let Err(e) = mark_lifecycle_obligation_written(
+            &state.runtime.store,
+            &outbox,
+            ProvenanceEventKind::SideEffectCommitted,
+            committed_event_id,
+        )
+        .await
+        {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsVerify,
+                ApiProblem::internal(anyhow::Error::from(e))
+            );
+        }
+        let mut result = ferrum_proto::JsonMap::new();
+        result.insert("normal_path".to_string(), serde_json::json!(true));
         if let Err(e) = state
             .runtime
             .store
-            .provenance()
-            .append_event(&committed_event)
+            .lifecycle_outbox()
+            .mark_reconciled(outbox.outbox_id, result)
             .await
         {
             return governance_err!(
@@ -1967,11 +2567,163 @@ pub(crate) async fn execute_execution(
         }
     }
 
+    if contract.execution_id != execution.execution_id
+        || contract.intent_id != execution.intent_id
+        || contract.proposal_id != execution.proposal_id
+    {
+        return governance_err!(
+            state,
+            GovernanceRoute::ExecutionsExecute,
+            ApiProblem::new(
+                StatusCode::FORBIDDEN,
+                ApiErrorCode::IntegrityMismatch,
+                "rollback contract binding does not match execution",
+            )
+        );
+    }
+
+    let capability = match state
+        .runtime
+        .store
+        .capabilities()
+        .get(execution.capability_id)
+        .await
+    {
+        Ok(Some(capability)) => capability,
+        Ok(None) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsExecute,
+                ApiProblem::new(
+                    StatusCode::NOT_FOUND,
+                    ApiErrorCode::NotFound,
+                    "capability not found for execution",
+                )
+            );
+        }
+        Err(e) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsExecute,
+                ApiProblem::internal(anyhow::Error::from(e))
+            );
+        }
+    };
+
+    let proposal = match state
+        .runtime
+        .store
+        .proposals()
+        .get(execution.proposal_id)
+        .await
+    {
+        Ok(Some(proposal)) => proposal,
+        Ok(None) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsExecute,
+                ApiProblem::new(
+                    StatusCode::NOT_FOUND,
+                    ApiErrorCode::NotFound,
+                    "proposal not found for execution",
+                )
+            );
+        }
+        Err(e) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsExecute,
+                ApiProblem::internal(anyhow::Error::from(e))
+            );
+        }
+    };
+
+    if let Err(reason) = validate_capability_proposal_binding(&capability, &proposal) {
+        return governance_err!(
+            state,
+            GovernanceRoute::ExecutionsExecute,
+            ApiProblem::new(
+                StatusCode::FORBIDDEN,
+                ApiErrorCode::IntegrityMismatch,
+                reason,
+            )
+        );
+    }
+
+    let adapter_payload = if request.payload.is_null() {
+        proposal.raw_arguments.clone()
+    } else if request.payload == proposal.raw_arguments {
+        request.payload.clone()
+    } else {
+        return governance_err!(
+            state,
+            GovernanceRoute::ExecutionsExecute,
+            ApiProblem::new(
+                StatusCode::FORBIDDEN,
+                ApiErrorCode::PolicyDenied,
+                "execute payload must exactly match approved proposal arguments",
+            )
+        );
+    };
+    if let Err(reason) =
+        validate_argument_constraints(&adapter_payload, &capability.argument_constraints)
+    {
+        return governance_err!(
+            state,
+            GovernanceRoute::ExecutionsExecute,
+            ApiProblem::new(StatusCode::FORBIDDEN, ApiErrorCode::PolicyDenied, reason,)
+        );
+    }
+
+    if let Err(reason) = validate_minimum_lineage_chain(&state.runtime.store, &execution).await {
+        return governance_err!(
+            state,
+            GovernanceRoute::ExecutionsExecute,
+            ApiProblem::new(StatusCode::CONFLICT, ApiErrorCode::Conflict, reason,)
+        );
+    }
+
+    match state
+        .runtime
+        .store
+        .executions()
+        .compare_and_set_state(
+            execution_id,
+            &[
+                ExecutionState::Prepared,
+                ExecutionState::Authorized,
+                ExecutionState::Proposed,
+            ],
+            ExecutionState::Running,
+        )
+        .await
+    {
+        Ok(true) => {}
+        Ok(false) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsExecute,
+                ApiProblem::new(
+                    StatusCode::CONFLICT,
+                    ApiErrorCode::Conflict,
+                    "execute not allowed: execution was already claimed or state changed",
+                )
+            );
+        }
+        Err(e) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsExecute,
+                ApiProblem::internal(anyhow::Error::from(e))
+            );
+        }
+    }
+
     // Call execute on the adapter via the rollback service
     let receipt = match state
         .runtime
         .rollback
-        .execute(&contract, &request.payload)
+        .execute(&contract, &adapter_payload)
         .await
     {
         Ok(receipt) => receipt,
@@ -1987,6 +2739,7 @@ pub(crate) async fn execute_execution(
     // Update contract state to ExecutedAwaitingVerify and capture after_hash from
     // the execute receipt so after_hash is available for inspection immediately
     // after execute (before verify has run).
+    let previous_contract = contract.clone();
     let mut updated_contract = contract.clone();
     updated_contract.state = ferrum_proto::RollbackState::ExecutedAwaitingVerify;
     if let ferrum_proto::RollbackTarget::FilePath {
@@ -2018,38 +2771,32 @@ pub(crate) async fn execute_execution(
     // Store execute payload for later compensation enrichment (HTTP replay).
     updated_contract
         .metadata
-        .insert("execute_payload".to_string(), request.payload.clone());
-    if let Err(e) = state
-        .runtime
-        .store
-        .rollback_contracts()
-        .update(&updated_contract)
-        .await
-    {
-        return governance_err!(
-            state,
-            GovernanceRoute::ExecutionsExecute,
-            ApiProblem::internal(anyhow::Error::from(e))
-        );
-    }
-
+        .insert("execute_payload".to_string(), adapter_payload.clone());
     // Update execution state to Running
+    let previous_execution = execution.clone();
     let mut updated_execution = execution;
     updated_execution.state = ferrum_proto::ExecutionState::Running;
     updated_execution.result_digest = receipt.result_digest.clone();
-    if let Err(e) = state
-        .runtime
-        .store
-        .executions()
-        .update(&updated_execution)
-        .await
+    let outbox = match record_lifecycle_transition_outbox(
+        &state.runtime.store,
+        "execute",
+        &previous_execution,
+        &updated_execution,
+        Some(&previous_contract),
+        Some(&updated_contract),
+        ProvenanceEventKind::ToolCallExecuted,
+    )
+    .await
     {
-        return governance_err!(
-            state,
-            GovernanceRoute::ExecutionsExecute,
-            ApiProblem::internal(anyhow::Error::from(e))
-        );
-    }
+        Ok(outbox) => outbox,
+        Err(e) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsExecute,
+                ApiProblem::internal(anyhow::Error::from(e))
+            );
+        }
+    };
 
     // Emit ToolCallExecuted provenance event.
     let tool_executed_event = ProvenanceEvent {
@@ -2081,15 +2828,20 @@ pub(crate) async fn execute_execution(
             policy_bundle_hash: None,
             previous_ledger_hash: None,
         },
-        metadata: ferrum_proto::JsonMap::new(),
+        metadata: lifecycle_event_metadata(&outbox, ferrum_proto::JsonMap::new()),
         source_runtime_id: None,
     };
-    if let Err(e) = state
-        .runtime
-        .store
-        .provenance()
-        .append_event(&tool_executed_event)
-        .await
+    let tool_executed_event_id = tool_executed_event.event_id;
+    if let Err(e) = append_governance_event(&state.runtime.store, tool_executed_event).await {
+        return governance_err!(
+            state,
+            GovernanceRoute::ExecutionsExecute,
+            ApiProblem::internal(anyhow::Error::from(e))
+        );
+    }
+    if let Err(e) =
+        mark_lifecycle_transition_reconciled(&state.runtime.store, &outbox, tool_executed_event_id)
+            .await
     {
         return governance_err!(
             state,
@@ -2128,8 +2880,8 @@ pub(crate) async fn execute_execution(
 /// 3. Rollback contract insert — the contract from `rollback.prepare` is
 ///    persisted and the execution's `rollback_contract_id` is updated.
 /// 4. Two provenance events — `SideEffectPrepared` and `ToolCallPrepared` —
-///    are emitted (parent edges empty for both, mirroring the Q1-P5
-///    conservative prepare chain).
+///    are emitted through the governance provenance helper, which links each
+///    event to its causal parent edge when the parent exists.
 pub(crate) async fn prepare_execution(
     State(state): State<Arc<AppState>>,
     Path(execution_id): Path<String>,
@@ -2257,16 +3009,27 @@ pub(crate) async fn prepare_execution(
         );
     }
 
-    let request = build_prepare_request_for_proposal(
+    let request = match build_prepare_request_for_proposal(
         &state.runtime.rollback,
         execution.intent_id,
-        execution.proposal_id,
         execution_id,
         &rollback_class,
-        &proposal.tool_name,
+        &proposal,
         &intent.resource_scope,
-        &proposal.raw_arguments,
-    );
+    ) {
+        Ok(request) => request,
+        Err(reason) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsPrepare,
+                ApiProblem::new(
+                    StatusCode::BAD_REQUEST,
+                    ApiErrorCode::ValidationError,
+                    reason,
+                )
+            );
+        }
+    };
 
     let response = match state.runtime.rollback.prepare(request).await {
         Ok(response) => response,
@@ -2279,43 +3042,41 @@ pub(crate) async fn prepare_execution(
         }
     };
 
-    // Store the contract in the database
-    if let Err(e) = state
-        .runtime
-        .store
-        .rollback_contracts()
-        .insert(&response.contract)
-        .await
-    {
-        return governance_err!(
-            state,
-            GovernanceRoute::ExecutionsPrepare,
-            ApiProblem::internal(anyhow::Error::from(e))
-        );
-    }
-
     // Capture execution IDs for provenance before moving into updated_execution
     let execution_intent_id = execution.intent_id;
     let execution_proposal_id = execution.proposal_id;
+    let execution_capability_id = execution.capability_id;
 
     // Link the contract to the execution by updating rollback_contract_id
+    let previous_execution = execution.clone();
     let mut updated_execution = execution;
     updated_execution.rollback_contract_id = Some(response.contract.contract_id);
-    if let Err(e) = state
-        .runtime
-        .store
-        .executions()
-        .update(&updated_execution)
-        .await
+    let updated_contract = response.contract.clone();
+    let outbox = match record_lifecycle_transition_outbox_with_obligations(
+        &state.runtime.store,
+        "prepare",
+        &previous_execution,
+        &updated_execution,
+        None,
+        Some(&updated_contract),
+        vec![
+            ProvenanceEventKind::SideEffectPrepared,
+            ProvenanceEventKind::ToolCallPrepared,
+        ],
+    )
+    .await
     {
-        return governance_err!(
-            state,
-            GovernanceRoute::ExecutionsPrepare,
-            ApiProblem::internal(anyhow::Error::from(e))
-        );
-    }
+        Ok(outbox) => outbox,
+        Err(e) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsPrepare,
+                ApiProblem::internal(anyhow::Error::from(e))
+            );
+        }
+    };
 
-    // Emit provenance event for preparation (Q1-P5 conservative chain: prepare).
+    // Emit provenance event for preparation.
     let prepare_event = ProvenanceEvent {
         event_id: EventId::new(),
         kind: ferrum_proto::ProvenanceEventKind::SideEffectPrepared,
@@ -2333,7 +3094,7 @@ pub(crate) async fn prepare_execution(
         intent_id: Some(execution_intent_id),
         proposal_id: Some(execution_proposal_id),
         execution_id: Some(execution_id),
-        capability_id: None,
+        capability_id: Some(execution_capability_id),
         rollback_contract_id: Some(response.contract.contract_id),
         policy_bundle_id: None,
         trust_labels: Vec::new(),
@@ -2345,15 +3106,24 @@ pub(crate) async fn prepare_execution(
             policy_bundle_hash: None,
             previous_ledger_hash: None,
         },
-        metadata: ferrum_proto::JsonMap::new(),
+        metadata: lifecycle_event_metadata(&outbox, ferrum_proto::JsonMap::new()),
         source_runtime_id: None,
     };
-    if let Err(e) = state
-        .runtime
-        .store
-        .provenance()
-        .append_event(&prepare_event)
-        .await
+    let prepare_event_id = prepare_event.event_id;
+    if let Err(e) = append_governance_event(&state.runtime.store, prepare_event).await {
+        return governance_err!(
+            state,
+            GovernanceRoute::ExecutionsPrepare,
+            ApiProblem::internal(anyhow::Error::from(e))
+        );
+    }
+    if let Err(e) = mark_lifecycle_obligation_written(
+        &state.runtime.store,
+        &outbox,
+        ProvenanceEventKind::SideEffectPrepared,
+        prepare_event_id,
+    )
+    .await
     {
         return governance_err!(
             state,
@@ -2380,7 +3150,7 @@ pub(crate) async fn prepare_execution(
         intent_id: Some(execution_intent_id),
         proposal_id: Some(execution_proposal_id),
         execution_id: Some(execution_id),
-        capability_id: None,
+        capability_id: Some(execution_capability_id),
         rollback_contract_id: Some(response.contract.contract_id),
         policy_bundle_id: None,
         trust_labels: Vec::new(),
@@ -2392,14 +3162,38 @@ pub(crate) async fn prepare_execution(
             policy_bundle_hash: None,
             previous_ledger_hash: None,
         },
-        metadata: ferrum_proto::JsonMap::new(),
+        metadata: lifecycle_event_metadata(&outbox, ferrum_proto::JsonMap::new()),
         source_runtime_id: None,
     };
+    let tool_prepared_event_id = tool_prepared_event.event_id;
+    if let Err(e) = append_governance_event(&state.runtime.store, tool_prepared_event).await {
+        return governance_err!(
+            state,
+            GovernanceRoute::ExecutionsPrepare,
+            ApiProblem::internal(anyhow::Error::from(e))
+        );
+    }
+    if let Err(e) = mark_lifecycle_obligation_written(
+        &state.runtime.store,
+        &outbox,
+        ProvenanceEventKind::ToolCallPrepared,
+        tool_prepared_event_id,
+    )
+    .await
+    {
+        return governance_err!(
+            state,
+            GovernanceRoute::ExecutionsPrepare,
+            ApiProblem::internal(anyhow::Error::from(e))
+        );
+    }
+    let mut reconciliation_result = ferrum_proto::JsonMap::new();
+    reconciliation_result.insert("normal_path".to_string(), serde_json::json!(true));
     if let Err(e) = state
         .runtime
         .store
-        .provenance()
-        .append_event(&tool_prepared_event)
+        .lifecycle_outbox()
+        .mark_reconciled(outbox.outbox_id, reconciliation_result)
         .await
     {
         return governance_err!(
@@ -2487,6 +3281,46 @@ pub(crate) async fn authorize_execution(
         );
     }
 
+    let proposal = match state
+        .runtime
+        .store
+        .proposals()
+        .get(request.proposal_id)
+        .await
+    {
+        Ok(Some(proposal)) => proposal,
+        Ok(None) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsAuthorize,
+                ApiProblem::new(
+                    StatusCode::NOT_FOUND,
+                    ApiErrorCode::NotFound,
+                    "proposal not found for capability",
+                )
+            );
+        }
+        Err(e) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsAuthorize,
+                ApiProblem::internal(anyhow::Error::from(e))
+            );
+        }
+    };
+
+    if let Err(reason) = validate_capability_proposal_binding(&lease, &proposal) {
+        return governance_err!(
+            state,
+            GovernanceRoute::ExecutionsAuthorize,
+            ApiProblem::new(
+                StatusCode::FORBIDDEN,
+                ApiErrorCode::IntegrityMismatch,
+                reason,
+            )
+        );
+    }
+
     // I5: Validate that capability resource_bindings is a subset of intent resource_scope.
     // This prevents a capability from expanding beyond the intent's authorized scope.
     let intent = match state.runtime.store.intents().get(lease.intent_id).await {
@@ -2538,26 +3372,6 @@ pub(crate) async fn authorize_execution(
             })?;
     }
 
-    // Mark the capability as used - returns AlreadyUsed if already consumed.
-    // This enforces single-use: first authorize succeeds, subsequent ones fail.
-    // Persists the updated status to store for durability.
-    match mark_capability_used_durable(
-        &state.runtime.cap,
-        &state.runtime.store,
-        request.capability_id,
-    )
-    .await
-    {
-        Ok(lease) => lease,
-        Err(e) => {
-            return governance_err!(
-                state,
-                GovernanceRoute::ExecutionsAuthorize,
-                ApiProblem::from_capability(e)
-            );
-        }
-    };
-
     let record = ExecutionRecord {
         execution_id: ExecutionId::new(),
         proposal_id: request.proposal_id,
@@ -2576,17 +3390,51 @@ pub(crate) async fn authorize_execution(
         metadata: ferrum_proto::JsonMap::new(),
     };
 
-    // Persist the execution record so subsequent prepare/execute can find it.
-    // Write-queue ensures serialized writes - no more SQLite lock contention.
-    if let Err(e) = state.runtime.store.executions().insert(&record).await {
-        return governance_err!(
-            state,
-            GovernanceRoute::ExecutionsAuthorize,
-            ApiProblem::internal(anyhow::Error::from(e))
+    let mut outbox = LifecycleOutboxRecord::pending(
+        record.execution_id,
+        None,
+        None,
+        record.state.clone(),
+        None,
+        None,
+        ProvenanceEventKind::ActionProposalSubmitted,
+        format!("authorize:{}", record.execution_id),
+    );
+    outbox
+        .metadata
+        .insert("transition".to_string(), serde_json::json!("authorize"));
+
+    match state
+        .runtime
+        .store
+        .lifecycle_outbox()
+        .record_authorization(&lease, &record, &outbox)
+        .await
+    {
+        Ok(true) => {}
+        Ok(false) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsAuthorize,
+                ApiProblem::from_capability(CapabilityError::AlreadyUsed)
+            );
+        }
+        Err(e) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsAuthorize,
+                ApiProblem::internal(anyhow::Error::from(e))
+            );
+        }
+    }
+    if let Err(error) = state.runtime.cap.mark_used(request.capability_id).await {
+        tracing::debug!(
+            ?error,
+            "capability authorization transaction committed; in-memory cache sync skipped"
         );
     }
 
-    // Emit provenance event for authorization (Q1-P5 conservative chain: authorize).
+    // Emit provenance event for authorization.
     let auth_event = ProvenanceEvent {
         event_id: EventId::new(),
         kind: ProvenanceEventKind::ActionProposalSubmitted,
@@ -2616,15 +3464,19 @@ pub(crate) async fn authorize_execution(
             policy_bundle_hash: None,
             previous_ledger_hash: None,
         },
-        metadata: ferrum_proto::JsonMap::new(),
+        metadata: lifecycle_event_metadata(&outbox, ferrum_proto::JsonMap::new()),
         source_runtime_id: None,
     };
-    if let Err(e) = state
-        .runtime
-        .store
-        .provenance()
-        .append_event(&auth_event)
-        .await
+    let auth_event_id = auth_event.event_id;
+    if let Err(e) = append_governance_event(&state.runtime.store, auth_event).await {
+        return governance_err!(
+            state,
+            GovernanceRoute::ExecutionsAuthorize,
+            ApiProblem::internal(anyhow::Error::from(e))
+        );
+    }
+    if let Err(e) =
+        mark_lifecycle_transition_reconciled(&state.runtime.store, &outbox, auth_event_id).await
     {
         return governance_err!(
             state,
@@ -2641,4 +3493,235 @@ pub(crate) async fn authorize_execution(
             warnings: Vec::new(),
         }))
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ferrum_proto::{ResourceBinding, ResourceMode};
+
+    #[test]
+    fn argument_constraints_accept_matching_payload() {
+        let payload = serde_json::json!({
+            "name": "release-42",
+            "tier": "prod",
+            "count": 3,
+            "enabled": true,
+            "nested": {"value": "present"}
+        });
+        let constraints = vec![
+            ArgumentConstraint::ExactString {
+                key: "tier".to_string(),
+                value: "prod".to_string(),
+            },
+            ArgumentConstraint::StringOneOf {
+                key: "tier".to_string(),
+                values: vec!["prod".to_string(), "staging".to_string()],
+            },
+            ArgumentConstraint::StringRegex {
+                key: "name".to_string(),
+                pattern: r"^release-\d+$".to_string(),
+            },
+            ArgumentConstraint::IntRange {
+                key: "count".to_string(),
+                min: 1,
+                max: 5,
+            },
+            ArgumentConstraint::BoolExact {
+                key: "enabled".to_string(),
+                value: true,
+            },
+            ArgumentConstraint::JsonPointerMustExist {
+                pointer: "/nested/value".to_string(),
+            },
+            ArgumentConstraint::JsonPointerMustNotExist {
+                pointer: "/secret".to_string(),
+            },
+        ];
+        assert!(validate_argument_constraints(&payload, &constraints).is_ok());
+    }
+
+    #[test]
+    fn argument_constraints_reject_mismatch_and_invalid_regex() {
+        let payload = serde_json::json!({"name": "release", "count": 9});
+        assert!(
+            validate_argument_constraints(
+                &payload,
+                &[ArgumentConstraint::IntRange {
+                    key: "count".to_string(),
+                    min: 1,
+                    max: 5,
+                }],
+            )
+            .is_err()
+        );
+        assert!(
+            validate_argument_constraints(
+                &payload,
+                &[ArgumentConstraint::StringRegex {
+                    key: "name".to_string(),
+                    pattern: "[".to_string(),
+                }],
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn execute_payload_overrides_proposal_arguments_before_constraint_check() {
+        let effective = effective_arguments(
+            &serde_json::json!({"path": "/safe/file", "content": "old"}),
+            &serde_json::json!({"content": "new"}),
+        );
+        let constraints = vec![
+            ArgumentConstraint::ExactString {
+                key: "path".to_string(),
+                value: "/safe/file".to_string(),
+            },
+            ArgumentConstraint::ExactString {
+                key: "content".to_string(),
+                value: "new".to_string(),
+            },
+        ];
+        assert!(validate_argument_constraints(&effective, &constraints).is_ok());
+    }
+
+    #[test]
+    fn unknown_mutating_tool_requires_explicit_binding() {
+        let metadata = ferrum_proto::JsonMap::new();
+        let err = infer_action_type_and_adapter("custom_mutating_tool", &metadata).unwrap_err();
+        assert!(err.contains("explicit action binding"));
+
+        let mut metadata = ferrum_proto::JsonMap::new();
+        metadata.insert(
+            "action_type".to_string(),
+            serde_json::json!("McpToolMutation"),
+        );
+        metadata.insert("adapter_key".to_string(), serde_json::json!("noop"));
+        let (action_type, adapter_key) =
+            infer_action_type_and_adapter("custom_mutating_tool", &metadata).unwrap();
+        assert!(matches!(
+            action_type,
+            ferrum_proto::ActionType::McpToolMutation
+        ));
+        assert_eq!(adapter_key, "noop");
+    }
+
+    #[tokio::test]
+    async fn capability_binding_rejects_tool_mismatch() {
+        let service = ferrum_cap::InMemoryCapabilityService::default();
+        let intent_id = ferrum_proto::IntentId::new();
+        let proposal_id = ferrum_proto::ProposalId::new();
+        let lease = service
+            .mint(ferrum_proto::CapabilityMintRequest {
+                intent_id,
+                proposal_id,
+                tool_binding: ferrum_proto::ToolBinding {
+                    server_name: "fs".to_string(),
+                    tool_name: "fs.read".to_string(),
+                    tool_version: None,
+                },
+                resource_bindings: Vec::new(),
+                argument_constraints: Vec::new(),
+                taint_budget: ferrum_proto::TaintBudget {
+                    max_taint_score: 0,
+                    allow_external_tool_output: false,
+                    allow_external_metadata: false,
+                    allow_untrusted_text: false,
+                },
+                approval_binding: None,
+                requested_ttl_secs: 60,
+                metadata: ferrum_proto::JsonMap::new(),
+            })
+            .await
+            .unwrap()
+            .lease;
+        let proposal = ActionProposal {
+            proposal_id,
+            intent_id,
+            step_index: 0,
+            title: "tool mismatch".to_string(),
+            tool_name: "fs.write".to_string(),
+            server_name: "fs".to_string(),
+            raw_arguments: serde_json::json!({}),
+            expected_effect: "write".to_string(),
+            estimated_risk: ferrum_proto::RiskTier::Low,
+            requested_rollback_class: RollbackClass::R0NativeReversible,
+            taint_inputs: Vec::new(),
+            metadata: ferrum_proto::JsonMap::new(),
+            created_at: Utc::now(),
+        };
+        assert!(validate_capability_proposal_binding(&lease, &proposal).is_err());
+    }
+
+    #[test]
+    fn scope_validation_rejects_prefix_collision_and_traversal() {
+        let scope = vec![ResourceSelector::FilesystemPath {
+            path: "/tmp/ferrum-scope".to_string(),
+            mode: ResourceMode::Write,
+            content_hash: None,
+        }];
+        for path in [
+            "/tmp/ferrum-scope-escape/file.txt",
+            "/tmp/ferrum-scope/../escape/file.txt",
+        ] {
+            let binding = vec![ResourceBinding::File {
+                path: path.to_string(),
+                mode: ResourceMode::Write,
+                required_hash: None,
+            }];
+            assert!(
+                validate_resource_bindings_subset_of_scope(&binding, &scope).is_err(),
+                "{path} must be outside scope"
+            );
+        }
+    }
+
+    #[test]
+    fn scope_validation_rejects_http_origin_lookalike() {
+        let scope = vec![ResourceSelector::HttpEndpoint {
+            method: ferrum_proto::HttpMethod::Post,
+            base_url: "https://api.example.com".to_string(),
+            path_prefix: "/v1".to_string(),
+            mode: ResourceMode::Write,
+        }];
+        let binding = vec![ResourceBinding::Http {
+            method: ferrum_proto::HttpMethod::Post,
+            base_url: "https://api.example.com.evil.test".to_string(),
+            path_prefix: "/v1".to_string(),
+            header_allowlist: Vec::new(),
+            mode: ResourceMode::Write,
+        }];
+        assert!(validate_resource_bindings_subset_of_scope(&binding, &scope).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scope_validation_rejects_symlink_escape() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!("ferrum-scope-{}", uuid::Uuid::new_v4()));
+        let inside = root.join("inside");
+        let outside = root.join("outside");
+        std::fs::create_dir_all(&inside).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        symlink(&outside, inside.join("link")).unwrap();
+
+        let scope = vec![ResourceSelector::FilesystemPath {
+            path: inside.to_string_lossy().into_owned(),
+            mode: ResourceMode::Write,
+            content_hash: None,
+        }];
+        let binding = vec![ResourceBinding::File {
+            path: inside
+                .join("link/escaped.txt")
+                .to_string_lossy()
+                .into_owned(),
+            mode: ResourceMode::Write,
+            required_hash: None,
+        }];
+        assert!(validate_resource_bindings_subset_of_scope(&binding, &scope).is_err());
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

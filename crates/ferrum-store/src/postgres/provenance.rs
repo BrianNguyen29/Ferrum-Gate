@@ -44,6 +44,57 @@ impl ProvenanceRepo for PostgresProvenanceRepo {
         Ok(())
     }
 
+    async fn append_event_with_edges(
+        &self,
+        event: &ProvenanceEvent,
+        edges: &[ProvenanceEdge],
+    ) -> Result<()> {
+        for edge in edges {
+            if edge.to_event_id.is_some_and(|id| id != event.event_id) {
+                return Err(StoreError::Other(
+                    "provenance edge to_event_id does not match appended event".to_string(),
+                ));
+            }
+        }
+
+        let raw_json = to_json(event)?;
+        let mut tx = self.pool.begin().await?;
+        sqlx::query(
+            "INSERT INTO provenance_events (
+                event_id, kind, occurred_at, intent_id, proposal_id, execution_id,
+                capability_id, rollback_contract_id, policy_bundle_id, raw_json
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+        )
+        .bind(event.event_id.to_string())
+        .bind(enum_text(&event.kind)?)
+        .bind(event.occurred_at)
+        .bind(event.intent_id.map(|id| id.to_string()))
+        .bind(event.proposal_id.map(|id| id.to_string()))
+        .bind(event.execution_id.map(|id| id.to_string()))
+        .bind(event.capability_id.map(|id| id.to_string()))
+        .bind(event.rollback_contract_id.map(|id| id.to_string()))
+        .bind(event.policy_bundle_id.map(|id| id.to_string()))
+        .bind(raw_json)
+        .execute(&mut *tx)
+        .await?;
+
+        for edge in edges {
+            sqlx::query(
+                "INSERT INTO provenance_edges (to_event_id, from_event_id, edge_type, summary)
+                 VALUES ($1, $2, $3, $4)",
+            )
+            .bind(event.event_id.to_string())
+            .bind(edge.from_event_id.to_string())
+            .bind(enum_text(&edge.edge_type)?)
+            .bind(&edge.summary)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await?;
+        Ok(())
+    }
+
     async fn get_event(&self, event_id: EventId) -> Result<Option<ProvenanceEvent>> {
         fetch_entity_by_id(
             &self.pool,
