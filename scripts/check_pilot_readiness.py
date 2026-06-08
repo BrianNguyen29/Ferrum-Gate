@@ -96,14 +96,14 @@ def check_shallow_readiness(server_url, bearer_token):
 
 
 def check_deep_readiness(server_url, bearer_token):
-    """Deep readiness probe: GET /v1/readyz/deep (no auth required)."""
+    """Deep readiness probe: GET /v1/readyz/deep (auth required when gateway auth is enabled)."""
     cmd = [
         FERRUMCTL,
         "--server-url", server_url,
-        "server",
-        "readiness",
-        "--deep",
     ]
+    if bearer_token:
+        cmd.extend(["--bearer-token", bearer_token])
+    cmd.extend(["server", "readiness", "--deep"])
     success, output = run_command(cmd, "Deep Readiness (/v1/readyz/deep)", capture_json=True)
 
     # Attempt to parse JSON body and verify components if safe

@@ -113,7 +113,8 @@ Expected: `{"status":"ready"}` (HTTP 200).
 ### Deep readiness
 
 ```bash
-curl http://127.0.0.1:18080/v1/readyz/deep
+TOKEN="${FERRUMD_BEARER_TOKEN:?set bearer token}"
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:18080/v1/readyz/deep
 ```
 
 Checks:
@@ -186,8 +187,9 @@ Resolution requires a non-empty reason. Keep the reason specific enough for inci
 ### Post-action checks
 
 ```bash
-curl -fsS http://127.0.0.1:18080/v1/readyz/deep
-curl -fsS http://127.0.0.1:18080/v1/metrics | grep ferrumgate_lifecycle_outbox
+TOKEN="${FERRUMD_BEARER_TOKEN:?set bearer token}"
+curl -fsS -H "Authorization: Bearer $TOKEN" http://127.0.0.1:18080/v1/readyz/deep
+curl -fsS -H "Authorization: Bearer $TOKEN" http://127.0.0.1:18080/v1/metrics | grep ferrumgate_lifecycle_outbox
 ```
 
 Expected after remediation: `ferrumgate_lifecycle_outbox_operator_review` returns to `0`, expired leases do not grow, and deep readiness no longer reports lifecycle outbox degradation.
@@ -274,8 +276,8 @@ ferrumctl admin tokens rotate <TOKEN_ID> --reason "rotation" --expires-in-days 3
 
 ## Incident response
 
-1. **Check health**: `curl /v1/healthz` and `/v1/readyz/deep`
-2. **Check metrics**: `curl /v1/metrics`
+1. **Check health**: `/v1/healthz` and `/v1/readyz` are public; `/v1/readyz/deep` requires bearer auth when auth is enabled.
+2. **Check metrics**: `/v1/metrics` requires bearer auth when auth is enabled.
 3. **Check logs**: `journalctl -u ferrumgate -n 500`
 4. **Check backup age**: verify latest backup is within RPO
 5. **If store unhealthy**: fail closed; do not bypass gateway
@@ -324,14 +326,14 @@ When FerrumGate uses PostgreSQL, `sqlx::PgPool` manages connections with the fol
 ### Operator checks during and after a PostgreSQL outage
 
 1. **During outage**:
-   - `curl /v1/readyz/deep` will likely return 503 because the store health check cannot acquire a healthy connection.
+   - `curl -H "Authorization: Bearer $TOKEN" /v1/readyz/deep` will likely return 503 because the store health check cannot acquire a healthy connection.
    - Metrics `ferrumgate_store_health_up` drops to `0`.
    - Metrics `ferrumgate_store_pg_acquire_timeouts_total` may increment if the pool is exhausted.
    - The gateway is **fail-closed**: requests that need the store will fail rather than bypass governance.
 
 2. **After PostgreSQL returns**:
    - Watch `ferrumgate_store_health_up` return to `1`.
-   - Confirm `curl /v1/readyz/deep` returns HTTP 200.
+   - Confirm `curl -H "Authorization: Bearer $TOKEN" /v1/readyz/deep` returns HTTP 200.
    - Confirm `ferrumgate_store_pg_pool_idle` is > 0 (pool has recovered spare connections).
    - No `ferrumd` restart is required for basic recovery.
 
@@ -402,7 +404,7 @@ Certificate rotation requires a `ferrumd` restart because the DSN is parsed once
 
 1. Replace certificate files.
 2. Restart `ferrumd`.
-3. Verify `/v1/readyz/deep` returns 200.
+3. Verify `/v1/readyz/deep` returns 200 with bearer auth.
 4. Confirm `ferrumgate_store_pg_pool_idle` > 0.
 
 > **Note**: TLS guidance for operator configuration.

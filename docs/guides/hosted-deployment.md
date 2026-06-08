@@ -166,8 +166,8 @@ For PostgreSQL deployment details, see:
 
 1. `systemctl status postgresql@16-main` — active
 2. `pg_isready -h localhost -p 5432` — accepting connections
-3. `curl http://localhost:8080/v1/readyz/deep` — store, write_queue, pool all healthy
-4. `curl http://localhost:8080/v1/metrics | grep ferrumgate_store_pg_pool_max` — non-zero
+3. `curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/readyz/deep` — store, write_queue, pool all healthy
+4. `curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/metrics | grep ferrumgate_store_pg_pool_max` — non-zero
 5. `promtool check rules /etc/prometheus/rules/ferrumgate-postgres-alerts.yml` — syntax pass
 
 ## Managed PostgreSQL guide
@@ -214,7 +214,8 @@ sudo -u postgres pg_restore -d ferrumgate_restore_drill \
 sudo systemctl start ferrumgate
 
 # 7. Validate deep readiness
-curl -s http://localhost:8080/v1/readyz/deep | jq .
+TOKEN="${FERRUMD_BEARER_TOKEN:?set bearer token}"
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/readyz/deep | jq .
 ```
 
 > **Upgrade guidance**: For full upgrade procedures including zero-downtime tradeoffs, maintenance-window requirements, and rollback procedures, see [`docs/guides/zero-downtime-upgrade.md`](./zero-downtime-upgrade.md).
@@ -271,8 +272,8 @@ FerrumGate does not run a backup scheduler itself. Use the host scheduler (syste
 | **TLS termination / domain** | ❌ None (loopback only) | ⚠️ Operator-owned reverse proxy required | ⚠️ Operator-owned reverse proxy required | ⚠️ Operator-owned reverse proxy + Ingress required |
 | **Persistent storage** | ❌ In-memory only | ✅ SQLite on filesystem | ✅ PostgreSQL (local or managed) | ⏳ PostgreSQL external / managed |
 | **Backup / restore** | ❌ Not applicable | ⚠️ `ferrumctl backup`; operator-owned scheduler | ⚠️ `pg_dump` / `pg_restore`; operator-owned scheduler | ⏳ Operator-owned |
-| **Health / readiness endpoints** | ✅ `/healthz`, `/readyz` | ✅ `/healthz`, `/readyz` | ✅ `/healthz`, `/readyz/deep` | ✅ Service health probes |
-| **Metrics / observability** | ⚠️ Prometheus metrics endpoint | ⚠️ Prometheus metrics | ✅ Prometheus metrics + PG-specific alerts | ⏳ ServiceMonitor |
+| **Health / readiness endpoints** | ✅ `/healthz`, `/readyz` | ✅ `/healthz`, `/readyz`; `/readyz/deep` requires auth | ✅ `/healthz`, `/readyz`; `/readyz/deep` requires auth | ✅ Service health probes |
+| **Metrics / observability** | ⚠️ Prometheus metrics endpoint | ⚠️ Metrics require auth when auth is enabled | ✅ Authenticated metrics + PG-specific alerts | ⏳ ServiceMonitor |
 | **Grafana dashboards** | ❌ Not included | ⚠️ Operator-owned | ⚠️ Operator-owned | ⏳ Planned |
 | **PostgreSQL support** | ❌ Not applicable | ❌ SQLite only | ✅ Native | ✅ External / managed |
 | **Kubernetes / Helm support** | ❌ Not applicable | ❌ Not applicable | ❌ Not applicable | ⏳ Helm chart planned item |

@@ -247,13 +247,25 @@ else
     FAILED=$((FAILED + 1))
 fi
 
-if check_endpoint "GET" "/v1/readyz/deep" "200" "GET /v1/readyz/deep (no auth)"; then
+if check_endpoint "GET" "/v1/readyz/deep" "401" "GET /v1/readyz/deep (no auth)"; then
     PASSED=$((PASSED + 1))
 else
     FAILED=$((FAILED + 1))
 fi
 
-if check_endpoint "GET" "/v1/metrics" "200" "GET /v1/metrics (no auth)"; then
+if check_endpoint "GET" "/v1/metrics" "401" "GET /v1/metrics (no auth)"; then
+    PASSED=$((PASSED + 1))
+else
+    FAILED=$((FAILED + 1))
+fi
+
+if check_endpoint "GET" "/v1/readyz/deep" "200" "GET /v1/readyz/deep (correct token)" "Bearer $SMOKE_TOKEN"; then
+    PASSED=$((PASSED + 1))
+else
+    FAILED=$((FAILED + 1))
+fi
+
+if check_endpoint "GET" "/v1/metrics" "200" "GET /v1/metrics (correct token)" "Bearer $SMOKE_TOKEN"; then
     PASSED=$((PASSED + 1))
 else
     FAILED=$((FAILED + 1))

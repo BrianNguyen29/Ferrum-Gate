@@ -1,7 +1,8 @@
 //! Monitoring endpoints: `/v1/healthz`, `/v1/readyz`, `/v1/readyz/deep`, `/v1/metrics`.
 //!
-//! These handlers are always unauthenticated and are the primary health/observability
-//! surface of the gateway. This module owns the `Metrics` aggregate, the governance
+//! The shallow `/v1/healthz` and `/v1/readyz` routes remain public when gateway auth
+//! is enabled; deep readiness and metrics are protected by the top-level auth
+//! middleware. This module owns the `Metrics` aggregate, the governance
 //! route catalog (`GovernanceRoute`), the per-endpoint latency routing (`PublicRoute`),
 //! and the Prometheus histogram boundary table (`HISTOGRAM_BOUNDARIES`) used by both
 //! the handlers and `Metrics::record_latency`.
@@ -17,7 +18,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use ferrum_proto::{ComponentStatus, DeepHealthResponse, HealthResponse};
+use ferrum_proto::{ComponentStatus, DeepHealthResponse, HealthResponse, LifecycleOutboxStatus};
 use tower_http::trace::TraceLayer;
 
 use crate::state::AppState;
@@ -27,6 +28,7 @@ use crate::state::AppState;
 pub(crate) const HISTOGRAM_BOUNDARIES: &[f64] = &[
     0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
 ];
+const LIFECYCLE_OUTBOX_METRIC_LIMIT: u32 = 10_000;
 
 pub(crate) use crate::server::{GovernanceRoute, PublicRoute};
 
@@ -217,6 +219,25 @@ pub(crate) async fn metrics_handler(State(state): State<Arc<AppState>>) -> Respo
     let store_up = state.metrics.store_health_up.load(Ordering::Relaxed);
     let write_queue_depth = state.runtime.store.write_queue_depth();
     let pool_status = state.runtime.store.pool_status();
+    let lifecycle_outbox_operator_review = match state
+        .runtime
+        .store
+        .lifecycle_outbox()
+        .list_by_status(
+            LifecycleOutboxStatus::NeedsOperatorReview,
+            LIFECYCLE_OUTBOX_METRIC_LIMIT,
+        )
+        .await
+    {
+        Ok(records) => records.len(),
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "failed to load lifecycle outbox operator-review metric"
+            );
+            0
+        }
+    };
 
     // Load governance error counters
     let gov_err_intents_compile = state
@@ -659,6 +680,9 @@ pub(crate) async fn metrics_handler(State(state): State<Arc<AppState>>) -> Respo
          # HELP ferrumgate_rate_limit_burst Effective rate limit burst size per IP\n\
          # TYPE ferrumgate_rate_limit_burst gauge\n\
          ferrumgate_rate_limit_burst {}\n\
+         # HELP ferrumgate_lifecycle_outbox_operator_review Number of lifecycle outbox records requiring operator review\n\
+         # TYPE ferrumgate_lifecycle_outbox_operator_review gauge\n\
+         ferrumgate_lifecycle_outbox_operator_review {}\n\
          # HELP ferrumgate_metrics_scrapes_total Number of times /v1/metrics was scraped\n\
          # TYPE ferrumgate_metrics_scrapes_total counter\n\
          ferrumgate_metrics_scrapes_total {}\n\
@@ -747,6 +771,7 @@ pub(crate) async fn metrics_handler(State(state): State<Arc<AppState>>) -> Respo
         write_queue_depth,
         state.server_config.rate_limit_per_second,
         state.server_config.rate_limit_burst,
+        lifecycle_outbox_operator_review,
         metrics_count,
         gov_err_intents_compile,
         gov_err_intents_list,
@@ -886,15 +911,15 @@ pub(crate) async fn metrics_handler(State(state): State<Arc<AppState>>) -> Respo
 }
 
 /// Build the router for monitoring endpoints (`/v1/healthz`, `/v1/readyz`,
-/// `/v1/readyz/deep`, `/v1/metrics`). These routes are always unauthenticated
-/// and are merged into the workload router by the top-level builder.
+/// `/v1/readyz/deep`, `/v1/metrics`). Shallow health/readiness stay public
+/// when auth is enabled; deep readiness and metrics are protected by the
+/// top-level auth middleware.
 pub(crate) fn build_monitoring_router(state: Arc<AppState>) -> Router {
     Router::new()
-        // Health endpoints - always unauthenticated
+        // Shallow health endpoints stay unauthenticated under bearer auth.
         .route("/v1/healthz", get(healthz))
         .route("/v1/readyz", get(readyz))
         .route("/v1/readyz/deep", get(readyz_deep))
-        // Metrics endpoint - always unauthenticated
         .route("/v1/metrics", get(metrics_handler))
         .with_state(state)
         .layer(TraceLayer::new_for_http())
