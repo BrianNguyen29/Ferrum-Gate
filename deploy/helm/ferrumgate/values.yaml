@@ -7,6 +7,17 @@
 
 replicaCount: 1
 
+persistence:
+  # Required by the default file-backed SQLite store. Set existingClaim to reuse
+  # operator-managed storage. Multi-replica deployments must use PostgreSQL.
+  enabled: true
+  existingClaim: ""
+  accessModes:
+    - ReadWriteOnce
+  size: 10Gi
+  storageClass: ""
+  mountPath: /var/lib/ferrumgate
+
 image:
   repository: ferrumgate/ferrumd
   pullPolicy: IfNotPresent
@@ -72,7 +83,7 @@ livenessProbe:
 
 readinessProbe:
   httpGet:
-    path: /v1/readyz
+    path: /v1/readyz/deep
     port: http
   initialDelaySeconds: 5
   periodSeconds: 5
@@ -96,15 +107,21 @@ affinity: {}
 # See configs/ferrumgate.prod.toml for field descriptions.
 config:
   bindAddr: "0.0.0.0:8080"
-  storeDsn: "sqlite::memory:"
-  authMode: "disabled"
-  allowInsecureNonlocalBind: "true"
+  storeDsn: "sqlite:///var/lib/ferrumgate/ferrumgate.db"
+  authMode: "bearer"
+  allowInsecureNonlocalBind: "false"
   logFilter: "info"
   pgMaxConnections: "10"
   pgMinIdle: "2"
   pgAcquireTimeoutSecs: "5"
+  fsWorkdir: "/var/lib/ferrumgate/workdir"
+  # Empty values keep the corresponding mutation adapter disabled.
+  gitRepoRoots: ""
+  sqliteDbRoots: ""
 
 # Secrets — operator must supply real values via external secret management.
 # NEVER commit real tokens to version control.
 secrets:
+  existingSecret: ""
+  existingSecretKey: "bearer-token"
   bearerToken: "CHANGE_ME_TO_A_SECURE_TOKEN"

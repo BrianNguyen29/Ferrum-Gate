@@ -29,7 +29,7 @@ pub struct ProvenanceEvent {
     pub source_runtime_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum ProvenanceEventKind {
     UserGoalReceived,
     IntentCompiled,
@@ -82,6 +82,56 @@ pub enum ProvenanceEdgeType {
     Compensates,
     Verifies,
     References,
+}
+
+pub fn lineage_parent_spec(
+    kind: &ProvenanceEventKind,
+) -> Option<(ProvenanceEventKind, ProvenanceEdgeType)> {
+    match kind {
+        ProvenanceEventKind::CapabilityMinted => Some((
+            ProvenanceEventKind::PolicyEvaluated,
+            ProvenanceEdgeType::EvaluatedByPolicy,
+        )),
+        ProvenanceEventKind::CapabilityRevoked => Some((
+            ProvenanceEventKind::CapabilityMinted,
+            ProvenanceEdgeType::References,
+        )),
+        ProvenanceEventKind::ApprovalGranted | ProvenanceEventKind::ApprovalDenied => Some((
+            ProvenanceEventKind::PolicyEvaluated,
+            ProvenanceEdgeType::ApprovedBy,
+        )),
+        ProvenanceEventKind::ActionProposalSubmitted => Some((
+            ProvenanceEventKind::CapabilityMinted,
+            ProvenanceEdgeType::AuthorizedBy,
+        )),
+        ProvenanceEventKind::SideEffectPrepared => Some((
+            ProvenanceEventKind::ActionProposalSubmitted,
+            ProvenanceEdgeType::Caused,
+        )),
+        ProvenanceEventKind::ToolCallPrepared => Some((
+            ProvenanceEventKind::SideEffectPrepared,
+            ProvenanceEdgeType::Caused,
+        )),
+        ProvenanceEventKind::ToolCallExecuted => Some((
+            ProvenanceEventKind::ToolCallPrepared,
+            ProvenanceEdgeType::Caused,
+        )),
+        ProvenanceEventKind::SideEffectVerified => Some((
+            ProvenanceEventKind::ToolCallExecuted,
+            ProvenanceEdgeType::Verifies,
+        )),
+        ProvenanceEventKind::SideEffectCommitted => Some((
+            ProvenanceEventKind::SideEffectVerified,
+            ProvenanceEdgeType::Caused,
+        )),
+        ProvenanceEventKind::SideEffectCompensated | ProvenanceEventKind::SideEffectRolledBack => {
+            Some((
+                ProvenanceEventKind::ToolCallExecuted,
+                ProvenanceEdgeType::Compensates,
+            ))
+        }
+        _ => None,
+    }
 }
 
 /// Request for provenance query with optional edge-type filtering.

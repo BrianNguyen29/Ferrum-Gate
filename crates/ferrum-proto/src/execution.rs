@@ -1,3 +1,4 @@
+use crate::rollback::ActionType;
 use crate::{
     CapabilityId, ExecutionId, JsonMap, ProposalId, RiskTier, RollbackClass, RollbackContractId,
     Timestamp,
@@ -41,6 +42,47 @@ pub struct ActionProposal {
     pub taint_inputs: Vec<String>,
     pub metadata: JsonMap,
     pub created_at: Timestamp,
+}
+
+/// Explicit adapter/action binding for proposals whose side effects cannot be
+/// safely inferred from a tool name.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ActionBinding {
+    pub action_type: ActionType,
+    pub adapter_key: String,
+}
+
+impl ActionBinding {
+    /// Parses the compatibility metadata representation used by existing
+    /// `ActionProposal` clients:
+    /// `metadata.action_type` + `metadata.adapter_key`.
+    pub fn from_metadata(metadata: &JsonMap) -> Result<Option<Self>, String> {
+        let Some(action_type_value) = metadata.get("action_type") else {
+            return Ok(None);
+        };
+        let Some(adapter_key) = metadata.get("adapter_key").and_then(|value| value.as_str()) else {
+            return Err("explicit action binding requires metadata.adapter_key".to_string());
+        };
+        if adapter_key.trim().is_empty() {
+            return Err("explicit action binding adapter_key must not be empty".to_string());
+        }
+
+        let action_type: ActionType =
+            serde_json::from_value(action_type_value.clone()).map_err(|e| {
+                format!(
+                    "metadata.action_type is not a valid ferrum_proto::ActionType: {}",
+                    e
+                )
+            })?;
+        if matches!(action_type, ActionType::Unknown) {
+            return Err("explicit action binding must not use ActionType::Unknown".to_string());
+        }
+
+        Ok(Some(Self {
+            action_type,
+            adapter_key: adapter_key.to_string(),
+        }))
+    }
 }
 
 impl ActionProposal {
@@ -168,6 +210,45 @@ mod tests {
         let digest2 = proposal.canonical_action_digest();
         assert_eq!(digest1, digest2, "Digest should be deterministic");
         assert_eq!(digest1.len(), 64, "SHA-256 hex should be 64 characters");
+    }
+
+    #[test]
+    fn test_action_binding_from_metadata_valid() {
+        let metadata: JsonMap = serde_json::from_value(serde_json::json!({
+            "action_type": "FileWrite",
+            "adapter_key": "fs"
+        }))
+        .unwrap();
+
+        let binding = ActionBinding::from_metadata(&metadata).unwrap().unwrap();
+
+        assert_eq!(binding.action_type, ActionType::FileWrite);
+        assert_eq!(binding.adapter_key, "fs");
+    }
+
+    #[test]
+    fn test_action_binding_from_metadata_requires_adapter_key() {
+        let metadata: JsonMap = serde_json::from_value(serde_json::json!({
+            "action_type": "FileWrite"
+        }))
+        .unwrap();
+
+        let err = ActionBinding::from_metadata(&metadata).unwrap_err();
+
+        assert!(err.contains("metadata.adapter_key"));
+    }
+
+    #[test]
+    fn test_action_binding_from_metadata_rejects_unknown() {
+        let metadata: JsonMap = serde_json::from_value(serde_json::json!({
+            "action_type": "Unknown",
+            "adapter_key": "noop"
+        }))
+        .unwrap();
+
+        let err = ActionBinding::from_metadata(&metadata).unwrap_err();
+
+        assert!(err.contains("ActionType::Unknown"));
     }
 
     #[test]

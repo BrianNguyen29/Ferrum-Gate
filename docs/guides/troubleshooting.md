@@ -49,6 +49,8 @@ curl http://localhost:8080/v1/readyz/deep
 curl http://localhost:8080/v1/metrics | grep ferrumgate_store_health_up
 curl http://localhost:8080/v1/metrics | grep ferrumgate_write_queue_depth
 ```
+If auth is enabled, include the same bearer/scoped/OIDC/agent credentials you
+use for operator probes.
 
 **Fixes**:
 - If store unhealthy: check disk space, run `PRAGMA integrity_check` on SQLite.
@@ -94,6 +96,7 @@ curl http://localhost:8080/v1/metrics | grep ferrumgate_write_queue_depth
 ```bash
 curl -s http://localhost:8080/v1/metrics | grep 'ferrumgate_governance_errors_total{status="429"}'
 ```
+If auth is enabled, include operator credentials for `/v1/metrics`.
 
 **Fix**:
 - If running validation workloads, switch to the high-throughput profile (`1000/10000`).

@@ -1,7 +1,7 @@
 //! PostgreSQL embedded migration parity.
 //!
 //! `MIGRATIONS` is the ordered list of forward-only schema changes.
-//! `CURRENT_SCHEMA_VERSION` is **2** after adding `policy_bundle_version`.
+//! `CURRENT_SCHEMA_VERSION` is **10** after adding lifecycle outbox fencing.
 //!
 //! # SQLite-only migrations intentionally skipped
 //!
@@ -82,13 +82,45 @@ pub const MIGRATIONS: &[EmbeddedMigration] = &[
             "/migrations/postgres/006_add_audit_checkpoints.sql"
         )),
     },
+    EmbeddedMigration {
+        version: 7,
+        name: "007_add_provenance_foreign_keys",
+        sql: include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/migrations/postgres/007_add_provenance_foreign_keys.sql"
+        )),
+    },
+    EmbeddedMigration {
+        version: 8,
+        name: "008_add_lifecycle_outbox",
+        sql: include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/migrations/postgres/008_add_lifecycle_outbox.sql"
+        )),
+    },
+    EmbeddedMigration {
+        version: 9,
+        name: "009_add_lifecycle_outbox_reconciliation_lease",
+        sql: include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/migrations/postgres/009_add_lifecycle_outbox_reconciliation_lease.sql"
+        )),
+    },
+    EmbeddedMigration {
+        version: 10,
+        name: "010_add_lifecycle_outbox_fencing",
+        sql: include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/migrations/postgres/010_add_lifecycle_outbox_fencing.sql"
+        )),
+    },
 ];
 
 /// Current schema version for the PostgreSQL embedded migration.
 ///
 /// Must match the highest `version` in [`MIGRATIONS`].
 #[allow(dead_code)]
-pub const CURRENT_SCHEMA_VERSION: i64 = 6;
+pub const CURRENT_SCHEMA_VERSION: i64 = 10;
 
 #[cfg(test)]
 mod tests {

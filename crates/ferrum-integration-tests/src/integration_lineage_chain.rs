@@ -6,7 +6,7 @@
 use axum::Router;
 use axum::body::Body;
 use ferrum_adapter_fs::PlannableFsAdapter;
-use ferrum_adapter_git::{PlannableGitAdapter, register_git_adapter};
+use ferrum_adapter_git::{GitRollbackAdapter, PlannableGitAdapter};
 use ferrum_adapter_maildraft::PlannableMailDraftAdapter;
 use ferrum_adapter_sqlite::{PlannableSqliteAdapter, SqliteAdapter};
 use ferrum_cap::{CapabilityService, InMemoryCapabilityService};
@@ -23,6 +23,16 @@ use ferrum_store::{IntentRepo, SqliteStore, StoreFacade};
 use http::{Method, Request, StatusCode};
 use std::sync::Arc;
 use tower::ServiceExt;
+
+fn noop_binding_metadata() -> ferrum_proto::JsonMap {
+    ferrum_proto::JsonMap::from([
+        (
+            "action_type".to_string(),
+            serde_json::json!("McpToolMutation"),
+        ),
+        ("adapter_key".to_string(), serde_json::json!("noop")),
+    ])
+}
 
 /// Spawn a test server backed by an in-memory sqlite store.
 async fn spawn_test_server() -> Router {
@@ -156,13 +166,13 @@ async fn test_lineage_chain_minimum_provenance_events() {
         estimated_risk: RiskTier::Medium,
         requested_rollback_class: RollbackClass::R0NativeReversible,
         taint_inputs: Vec::new(),
-        metadata: ferrum_proto::JsonMap::new(),
+        metadata: noop_binding_metadata(),
         created_at: chrono::Utc::now(),
     };
 
     let request = Request::builder()
         .method(Method::POST)
-        .uri("/v1/proposals/test/evaluate")
+        .uri(format!("/v1/proposals/{}/evaluate", proposal.proposal_id))
         .header("content-type", "application/json")
         .body(Body::from(serde_json::to_vec(&proposal).unwrap()))
         .unwrap();
@@ -378,6 +388,11 @@ async fn test_lineage_chain_minimum_provenance_events() {
             "all lineage events must have execution_id set, event_id={}",
             event.event_id
         );
+        assert!(
+            !event.parent_edges.is_empty(),
+            "every execution lineage event must have a causal parent edge, event_id={}",
+            event.event_id
+        );
     }
 }
 
@@ -446,13 +461,13 @@ async fn test_lineage_adversarial_partial_execution_no_terminal() {
         estimated_risk: RiskTier::Medium,
         requested_rollback_class: RollbackClass::R0NativeReversible,
         taint_inputs: Vec::new(),
-        metadata: ferrum_proto::JsonMap::new(),
+        metadata: noop_binding_metadata(),
         created_at: chrono::Utc::now(),
     };
 
     let request = Request::builder()
         .method(Method::POST)
-        .uri("/v1/proposals/test/evaluate")
+        .uri(format!("/v1/proposals/{}/evaluate", proposal.proposal_id))
         .header("content-type", "application/json")
         .body(Body::from(serde_json::to_vec(&proposal).unwrap()))
         .unwrap();
@@ -711,13 +726,13 @@ async fn test_lineage_chain_full_provenance_events() {
         estimated_risk: RiskTier::Medium,
         requested_rollback_class: RollbackClass::R0NativeReversible,
         taint_inputs: Vec::new(),
-        metadata: ferrum_proto::JsonMap::new(),
+        metadata: noop_binding_metadata(),
         created_at: chrono::Utc::now(),
     };
 
     let request = Request::builder()
         .method(Method::POST)
-        .uri("/v1/proposals/test/evaluate")
+        .uri(format!("/v1/proposals/{}/evaluate", proposal.proposal_id))
         .header("content-type", "application/json")
         .body(Body::from(serde_json::to_vec(&proposal).unwrap()))
         .unwrap();
@@ -1063,6 +1078,8 @@ async fn test_lineage_chain_fs_adapter_compensate() {
     );
     let router = build_router(runtime);
 
+    let execute_payload = serde_json::json!({ "content": "modified content for compensate" });
+
     // Step 1: Evaluate a proposal
     let proposal = ActionProposal {
         proposal_id: ProposalId::new(),
@@ -1071,7 +1088,7 @@ async fn test_lineage_chain_fs_adapter_compensate() {
         title: "fs-lineage-compensate proposal".to_string(),
         tool_name: "file_write".to_string(),
         server_name: "test-server".to_string(),
-        raw_arguments: serde_json::json!({}),
+        raw_arguments: execute_payload.clone(),
         expected_effect: "file is written and compensated".to_string(),
         estimated_risk: RiskTier::Medium,
         requested_rollback_class: RollbackClass::R0NativeReversible,
@@ -1082,7 +1099,7 @@ async fn test_lineage_chain_fs_adapter_compensate() {
 
     let request = Request::builder()
         .method(Method::POST)
-        .uri("/v1/proposals/test/evaluate")
+        .uri(format!("/v1/proposals/{}/evaluate", proposal.proposal_id))
         .header("content-type", "application/json")
         .body(Body::from(serde_json::to_vec(&proposal).unwrap()))
         .unwrap();
@@ -1183,7 +1200,7 @@ async fn test_lineage_chain_fs_adapter_compensate() {
 
     // Step 5: Execute execution (transitions contract to ExecutedAwaitingVerify)
     let execute_request = ferrum_proto::ExecuteExecutionRequest {
-        payload: serde_json::json!({ "content": "modified content for compensate" }),
+        payload: execute_payload,
     };
     let request = Request::builder()
         .method(Method::POST)
@@ -1377,6 +1394,8 @@ async fn test_lineage_chain_fs_adapter_full_committed() {
     );
     let router = build_router(runtime);
 
+    let execute_payload = serde_json::json!({ "content": "new committed content" });
+
     // Step 1: Evaluate a proposal
     let proposal = ActionProposal {
         proposal_id: ProposalId::new(),
@@ -1385,7 +1404,7 @@ async fn test_lineage_chain_fs_adapter_full_committed() {
         title: "fs-lineage-committed proposal".to_string(),
         tool_name: "file_write".to_string(),
         server_name: "test-server".to_string(),
-        raw_arguments: serde_json::json!({}),
+        raw_arguments: execute_payload.clone(),
         expected_effect: "file is written and verified".to_string(),
         estimated_risk: RiskTier::Medium,
         requested_rollback_class: RollbackClass::R0NativeReversible,
@@ -1396,7 +1415,7 @@ async fn test_lineage_chain_fs_adapter_full_committed() {
 
     let request = Request::builder()
         .method(Method::POST)
-        .uri("/v1/proposals/test/evaluate")
+        .uri(format!("/v1/proposals/{}/evaluate", proposal.proposal_id))
         .header("content-type", "application/json")
         .body(Body::from(serde_json::to_vec(&proposal).unwrap()))
         .unwrap();
@@ -1518,7 +1537,7 @@ async fn test_lineage_chain_fs_adapter_full_committed() {
 
     // Step 5: Execute execution (transitions contract to ExecutedAwaitingVerify)
     let execute_request = ferrum_proto::ExecuteExecutionRequest {
-        payload: serde_json::json!({ "content": "new committed content" }),
+        payload: execute_payload,
     };
     let request = Request::builder()
         .method(Method::POST)
@@ -1726,10 +1745,34 @@ async fn test_lineage_chain_sqlite_adapter_compensate() {
     let pdp = Arc::new(StaticPdpEngine);
     let cap: Arc<dyn CapabilityService> = Arc::new(InMemoryCapabilityService::default());
 
+    // Create temp SQLite DB for SqliteAdapter before constructing bounded adapter roots.
+    let temp_dir = std::env::temp_dir().join(format!(
+        "ferrum-lineage-sqlite-root-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&temp_dir).expect("create temp sqlite root");
+    let test_db_path = temp_dir.join(format!("ferrum-lineage-sqlite-{}.db", uuid::Uuid::new_v4()));
+    let db_path_str = test_db_path.to_string_lossy().to_string();
+
+    // Pre-create the database with a table.
+    {
+        let conn = rusqlite::Connection::open(&test_db_path).expect("open temp db");
+        conn.execute(
+            "CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT NOT NULL)",
+            [],
+        )
+        .expect("create table");
+        conn.execute("INSERT INTO items (name) VALUES ('test_item')", [])
+            .expect("insert test row");
+    }
+
     // Register SqliteAdapter + PlannableSqliteAdapter so prepare selects sqlite path
     let mut registry = AdapterRegistry::default();
     registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
-    registry.register(Arc::new(SqliteAdapter::new("sqlite")));
+    registry.register(Arc::new(
+        SqliteAdapter::new("sqlite", vec![temp_dir.clone()])
+            .expect("create bounded sqlite adapter"),
+    ));
     let mut rollback_service = RollbackService::new(Arc::new(registry));
     rollback_service.register_planner(Arc::new(PlannableSqliteAdapter));
     let rollback = Arc::new(rollback_service);
@@ -1743,23 +1786,6 @@ async fn test_lineage_chain_sqlite_adapter_compensate() {
         .apply_embedded_migrations()
         .await
         .expect("apply migrations");
-
-    // Create temp SQLite DB for SqliteAdapter
-    let temp_dir = std::env::temp_dir();
-    let test_db_path = temp_dir.join(format!("ferrum-lineage-sqlite-{}.db", uuid::Uuid::new_v4()));
-    let db_path_str = test_db_path.to_string_lossy().to_string();
-
-    // Pre-create the database with a table
-    {
-        let conn = rusqlite::Connection::open(&test_db_path).expect("open temp db");
-        conn.execute(
-            "CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT NOT NULL)",
-            [],
-        )
-        .expect("create table");
-        conn.execute("INSERT INTO items (name) VALUES ('test_item')", [])
-            .expect("insert test row");
-    }
 
     // Pre-insert intent to satisfy FK constraint
     let intent_id = ferrum_proto::IntentId::new();
@@ -1779,6 +1805,10 @@ async fn test_lineage_chain_sqlite_adapter_compensate() {
     );
     let router = build_router(runtime);
 
+    let execute_payload = serde_json::json!({
+        "sql": "INSERT INTO items (name) VALUES ('new_item')"
+    });
+
     // Step 1: Evaluate a proposal
     let proposal = ActionProposal {
         proposal_id: ProposalId::new(),
@@ -1787,7 +1817,7 @@ async fn test_lineage_chain_sqlite_adapter_compensate() {
         title: "sqlite-lineage-compensate proposal".to_string(),
         tool_name: "sql_mutate".to_string(),
         server_name: "test-server".to_string(),
-        raw_arguments: serde_json::json!({}),
+        raw_arguments: execute_payload.clone(),
         expected_effect: "row is inserted and compensated".to_string(),
         estimated_risk: RiskTier::Medium,
         requested_rollback_class: RollbackClass::R0NativeReversible,
@@ -1798,7 +1828,7 @@ async fn test_lineage_chain_sqlite_adapter_compensate() {
 
     let request = Request::builder()
         .method(Method::POST)
-        .uri("/v1/proposals/test/evaluate")
+        .uri(format!("/v1/proposals/{}/evaluate", proposal.proposal_id))
         .header("content-type", "application/json")
         .body(Body::from(serde_json::to_vec(&proposal).unwrap()))
         .unwrap();
@@ -1899,9 +1929,7 @@ async fn test_lineage_chain_sqlite_adapter_compensate() {
 
     // Step 5: Execute execution - INSERT a new row
     let execute_request = ferrum_proto::ExecuteExecutionRequest {
-        payload: serde_json::json!({
-            "sql": "INSERT INTO items (name) VALUES ('new_item')"
-        }),
+        payload: execute_payload,
     };
     let request = Request::builder()
         .method(Method::POST)
@@ -2172,6 +2200,14 @@ async fn test_lineage_chain_maildraft_adapter_compensate() {
     );
     let router = build_router(runtime);
 
+    let execute_payload = serde_json::json!({
+        "draft_id": "test-maildraft-draft",
+        "from": "sender@example.com",
+        "to": ["recipient@example.com"],
+        "subject": "Test Subject",
+        "body": "Test Body Content"
+    });
+
     // Step 1: Evaluate a proposal
     let proposal = ActionProposal {
         proposal_id: ProposalId::new(),
@@ -2180,7 +2216,7 @@ async fn test_lineage_chain_maildraft_adapter_compensate() {
         title: "maildraft-lineage-compensate proposal".to_string(),
         tool_name: "maildraft_create".to_string(),
         server_name: "test-server".to_string(),
-        raw_arguments: serde_json::json!({}),
+        raw_arguments: execute_payload.clone(),
         expected_effect: "draft is created and compensated".to_string(),
         estimated_risk: RiskTier::Medium,
         requested_rollback_class: RollbackClass::R0NativeReversible,
@@ -2191,7 +2227,7 @@ async fn test_lineage_chain_maildraft_adapter_compensate() {
 
     let request = Request::builder()
         .method(Method::POST)
-        .uri("/v1/proposals/test/evaluate")
+        .uri(format!("/v1/proposals/{}/evaluate", proposal.proposal_id))
         .header("content-type", "application/json")
         .body(Body::from(serde_json::to_vec(&proposal).unwrap()))
         .unwrap();
@@ -2292,13 +2328,7 @@ async fn test_lineage_chain_maildraft_adapter_compensate() {
 
     // Step 5: Execute execution - create a draft via payload
     let execute_request = ferrum_proto::ExecuteExecutionRequest {
-        payload: serde_json::json!({
-            "draft_id": "test-maildraft-draft",
-            "from": "sender@example.com",
-            "to": ["recipient@example.com"],
-            "subject": "Test Subject",
-            "body": "Test Body Content"
-        }),
+        payload: execute_payload,
     };
     let request = Request::builder()
         .method(Method::POST)
@@ -2484,10 +2514,19 @@ async fn test_lineage_chain_git_adapter_compensate() {
     let pdp = Arc::new(StaticPdpEngine);
     let cap: Arc<dyn CapabilityService> = Arc::new(InMemoryCapabilityService::default());
 
+    // Create temp git repo path before constructing bounded adapter roots.
+    let temp_dir =
+        std::env::temp_dir().join(format!("ferrum-lineage-git-root-{}", uuid::Uuid::new_v4()));
+    let test_repo_path = temp_dir.join(format!("ferrum-lineage-git-{}", uuid::Uuid::new_v4()));
+    let repo_path_str = test_repo_path.to_string_lossy().to_string();
+    std::fs::create_dir_all(&test_repo_path).expect("create temp dir");
+
     // Register GitAdapter + PlannableGitAdapter so prepare selects git path
     let mut registry = AdapterRegistry::default();
     registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
-    register_git_adapter(&mut registry);
+    registry.register(Arc::new(
+        GitRollbackAdapter::new(vec![temp_dir.clone()]).expect("create bounded git adapter"),
+    ));
     let mut rollback_service = RollbackService::new(Arc::new(registry));
     rollback_service.register_planner(Arc::new(PlannableGitAdapter));
     let rollback = Arc::new(rollback_service);
@@ -2502,13 +2541,7 @@ async fn test_lineage_chain_git_adapter_compensate() {
         .await
         .expect("apply migrations");
 
-    // Create temp git repo for GitAdapter
-    let temp_dir = std::env::temp_dir();
-    let test_repo_path = temp_dir.join(format!("ferrum-lineage-git-{}", uuid::Uuid::new_v4()));
-    let repo_path_str = test_repo_path.to_string_lossy().to_string();
-
     // Initialize the temp git repo
-    std::fs::create_dir_all(&test_repo_path).expect("create temp dir");
     let git_init = std::process::Command::new("git")
         .current_dir(&test_repo_path)
         .args(["init"])
@@ -2559,6 +2592,11 @@ async fn test_lineage_chain_git_adapter_compensate() {
     );
     let router = build_router(runtime);
 
+    let execute_payload = serde_json::json!({
+        "branch_name": "test-branch-lineage",
+        "base_ref": "HEAD"
+    });
+
     // Step 1: Evaluate a proposal
     let proposal = ActionProposal {
         proposal_id: ProposalId::new(),
@@ -2567,9 +2605,7 @@ async fn test_lineage_chain_git_adapter_compensate() {
         title: "git-lineage-compensate proposal".to_string(),
         tool_name: "git_branch_create".to_string(),
         server_name: "test-server".to_string(),
-        raw_arguments: serde_json::json!({
-            "branch": "test-branch-lineage"
-        }),
+        raw_arguments: execute_payload.clone(),
         expected_effect: "branch is created and compensated".to_string(),
         estimated_risk: RiskTier::Medium,
         requested_rollback_class: RollbackClass::R0NativeReversible,
@@ -2580,7 +2616,7 @@ async fn test_lineage_chain_git_adapter_compensate() {
 
     let request = Request::builder()
         .method(Method::POST)
-        .uri("/v1/proposals/test/evaluate")
+        .uri(format!("/v1/proposals/{}/evaluate", proposal.proposal_id))
         .header("content-type", "application/json")
         .body(Body::from(serde_json::to_vec(&proposal).unwrap()))
         .unwrap();
@@ -2681,10 +2717,7 @@ async fn test_lineage_chain_git_adapter_compensate() {
 
     // Step 5: Execute execution - create a branch
     let execute_request = ferrum_proto::ExecuteExecutionRequest {
-        payload: serde_json::json!({
-            "branch_name": "test-branch-lineage",
-            "base_ref": "HEAD"
-        }),
+        payload: execute_payload,
     };
     let request = Request::builder()
         .method(Method::POST)

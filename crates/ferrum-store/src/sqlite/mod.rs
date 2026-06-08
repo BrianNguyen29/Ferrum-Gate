@@ -10,6 +10,7 @@ mod intents;
 mod leader_allowlist;
 mod leader_tip_cache;
 mod ledger;
+mod lifecycle_outbox;
 mod migrations;
 mod policy_bundles;
 mod proposals;
@@ -30,6 +31,7 @@ pub use intents::SqliteIntentRepo;
 pub use leader_allowlist::LeaderAllowlist;
 pub use leader_tip_cache::{CacheWriteError, LeaderTipCache};
 pub use ledger::SqliteLedgerRepo;
+pub use lifecycle_outbox::SqliteLifecycleOutboxRepo;
 pub use policy_bundles::SqlitePolicyBundleRepo;
 pub use proposals::SqliteProposalRepo;
 pub use provenance::SqliteProvenanceRepo;
@@ -40,12 +42,15 @@ pub use tokens::SqliteTokenRepo;
 use crate::Result;
 use crate::repos::{
     AgentRepo, ApprovalRepo, AuditCheckpointRepo, AuditLogRepo, AuditMerkleRootRepo,
-    CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo, PolicyBundleRepo, ProposalRepo,
-    ProvenanceRepo, RollbackRepo, StoreFacade, TokenRepo,
+    CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo, LifecycleOutboxRepo, PolicyBundleRepo,
+    ProposalRepo, ProvenanceRepo, RollbackRepo, StoreFacade, TokenRepo,
 };
 use crate::sqlite::write_queue::{WriteQueue, WriterState, spawn_writer_task};
 use async_trait::async_trait;
-use sqlx::sqlite::{SqlitePool, SqlitePoolOptions, SqliteSynchronous};
+use sqlx::{
+    Row,
+    sqlite::{SqlitePool, SqlitePoolOptions, SqliteSynchronous},
+};
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::Mutex as TokioMutex;
@@ -131,6 +136,9 @@ impl SqliteStore {
             builder = builder.after_connect(move |conn, _meta| {
                 let tuning = tuning.clone();
                 Box::pin(async move {
+                    sqlx::query("PRAGMA foreign_keys=ON")
+                        .execute(&mut *conn)
+                        .await?;
                     // WAL mode - always set, idempotent
                     sqlx::query("PRAGMA journal_mode=WAL")
                         .execute(&mut *conn)
@@ -165,6 +173,9 @@ impl SqliteStore {
             // No tuning or in-memory - use safe defaults
             builder = builder.after_connect(|conn, _meta| {
                 Box::pin(async move {
+                    sqlx::query("PRAGMA foreign_keys=ON")
+                        .execute(&mut *conn)
+                        .await?;
                     sqlx::query("PRAGMA journal_mode=WAL")
                         .execute(&mut *conn)
                         .await?;
@@ -252,9 +263,14 @@ impl SqliteStore {
                 .unwrap_or(0);
 
         if current_version >= migrations::CURRENT_SCHEMA_VERSION {
+            ensure_lifecycle_outbox_reconciliation_lease_columns(&mut tx).await?;
             tx.commit().await?;
             return Ok(());
         }
+
+        // Existing databases may be at schema v13. Ensure columns required by
+        // migration 014 exist before replaying the idempotent migration bundle.
+        ensure_lifecycle_outbox_reconciliation_lease_columns(&mut tx).await?;
 
         let mut statement = String::new();
 
@@ -280,6 +296,8 @@ impl SqliteStore {
         if !sql.is_empty() {
             sqlx::query(sql).execute(&mut *tx).await?;
         }
+
+        ensure_lifecycle_outbox_reconciliation_lease_columns(&mut tx).await?;
 
         let now = chrono::Utc::now().to_rfc3339();
         sqlx::query(
@@ -313,6 +331,10 @@ impl SqliteStore {
 
     pub fn rollback_contracts(&self) -> SqliteRollbackRepo {
         SqliteRollbackRepo::new(self.pool.clone())
+    }
+
+    pub fn lifecycle_outbox(&self) -> SqliteLifecycleOutboxRepo {
+        SqliteLifecycleOutboxRepo::new(self.pool.clone())
     }
 
     pub fn approvals(&self) -> SqliteApprovalRepo {
@@ -381,6 +403,68 @@ impl SqliteStore {
     }
 }
 
+async fn ensure_lifecycle_outbox_reconciliation_lease_columns(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+) -> Result<()> {
+    let table_exists: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'lifecycle_outbox'",
+    )
+    .fetch_optional(&mut **tx)
+    .await?;
+    if table_exists.is_none() {
+        return Ok(());
+    }
+
+    let columns = sqlx::query("PRAGMA table_info(lifecycle_outbox)")
+        .fetch_all(&mut **tx)
+        .await?;
+    let has_owner = columns
+        .iter()
+        .any(|row| row.get::<String, _>("name") == "reconciliation_lease_owner");
+    let has_expires = columns
+        .iter()
+        .any(|row| row.get::<String, _>("name") == "reconciliation_lease_expires_at");
+    let has_generation = columns
+        .iter()
+        .any(|row| row.get::<String, _>("name") == "reconciliation_lease_generation");
+
+    if !has_owner {
+        sqlx::query("ALTER TABLE lifecycle_outbox ADD COLUMN reconciliation_lease_owner TEXT")
+            .execute(&mut **tx)
+            .await?;
+    }
+    if !has_expires {
+        sqlx::query("ALTER TABLE lifecycle_outbox ADD COLUMN reconciliation_lease_expires_at TEXT")
+            .execute(&mut **tx)
+            .await?;
+    }
+    if !has_generation {
+        sqlx::query(
+            "ALTER TABLE lifecycle_outbox
+             ADD COLUMN reconciliation_lease_generation INTEGER NOT NULL DEFAULT 0",
+        )
+        .execute(&mut **tx)
+        .await?;
+    }
+    sqlx::query("DROP INDEX IF EXISTS idx_lifecycle_outbox_reconciliation_lease")
+        .execute(&mut **tx)
+        .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_lifecycle_outbox_reconciliation_lease
+         ON lifecycle_outbox(
+            status,
+            reconciliation_lease_expires_at,
+            reconciliation_lease_generation,
+            created_at,
+            outbox_id
+         )",
+    )
+    .execute(&mut **tx)
+    .await?;
+
+    Ok(())
+}
+
 #[async_trait]
 impl StoreFacade for SqliteStore {
     fn capabilities(&self) -> Arc<dyn CapabilityRepo> {
@@ -396,6 +480,12 @@ impl StoreFacade for SqliteStore {
     fn rollback_contracts(&self) -> Arc<dyn RollbackRepo> {
         Arc::new(
             SqliteRollbackRepo::new(self.pool.clone()).with_write_queue(self.write_queue.clone()),
+        )
+    }
+    fn lifecycle_outbox(&self) -> Arc<dyn LifecycleOutboxRepo> {
+        Arc::new(
+            SqliteLifecycleOutboxRepo::new(self.pool.clone())
+                .with_write_queue(self.write_queue.clone()),
         )
     }
     fn approvals(&self) -> Arc<dyn ApprovalRepo> {
@@ -484,6 +574,7 @@ mod tests {
         let _ = facade.capabilities();
         let _ = facade.executions();
         let _ = facade.rollback_contracts();
+        let _ = facade.lifecycle_outbox();
         let _ = facade.approvals();
         let _ = facade.provenance();
         let _ = facade.ledger();
@@ -1141,6 +1232,70 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(version, super::migrations::CURRENT_SCHEMA_VERSION);
+    }
+
+    #[tokio::test]
+    async fn test_migration_upgrades_v13_lifecycle_outbox_with_fencing_generation() {
+        let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(
+            "CREATE TABLE _schema_version (
+                version INTEGER PRIMARY KEY,
+                applied_at TEXT NOT NULL
+             )",
+        )
+        .execute(store.pool())
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO _schema_version(version, applied_at)
+             VALUES (13, '2026-01-01T00:00:00Z')",
+        )
+        .execute(store.pool())
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TABLE lifecycle_outbox (
+                outbox_id TEXT PRIMARY KEY,
+                execution_id TEXT NOT NULL,
+                rollback_contract_id TEXT,
+                previous_execution_state TEXT,
+                new_execution_state TEXT NOT NULL,
+                previous_rollback_state TEXT,
+                new_rollback_state TEXT,
+                intended_provenance_kind TEXT NOT NULL,
+                idempotency_key TEXT NOT NULL UNIQUE,
+                status TEXT NOT NULL,
+                provenance_event_id TEXT,
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT,
+                reconciliation_lease_owner TEXT,
+                reconciliation_lease_expires_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                raw_json TEXT NOT NULL
+             )",
+        )
+        .execute(store.pool())
+        .await
+        .unwrap();
+
+        store.apply_embedded_migrations().await.unwrap();
+
+        let columns = sqlx::query("PRAGMA table_info(lifecycle_outbox)")
+            .fetch_all(store.pool())
+            .await
+            .unwrap();
+        assert!(
+            columns
+                .iter()
+                .any(|row| { row.get::<String, _>("name") == "reconciliation_lease_generation" })
+        );
+        let version: i64 =
+            sqlx::query_scalar("SELECT version FROM _schema_version ORDER BY version DESC LIMIT 1")
+                .fetch_one(store.pool())
+                .await
+                .unwrap();
+        assert_eq!(version, 14);
     }
 
     #[tokio::test]

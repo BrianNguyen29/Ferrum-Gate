@@ -16,6 +16,14 @@ bind_addr = "0.0.0.0:8080"
 #   postgres://user:pass@localhost:5432/db - PostgreSQL (local Docker/runtime only)
 store_dsn = "sqlite:///var/lib/ferrumgate/ferrumgate.db"
 
+# Filesystem adapter sandbox root. Required for production-like non-loopback deployments.
+# The daemon creates this directory at startup if it does not exist.
+fs_workdir = "/var/lib/ferrumgate/workdir"
+
+# Git and SQLite mutation adapters are disabled unless these allowlists are non-empty.
+git_repo_roots = ["/var/lib/ferrumgate/repos"]
+sqlite_db_roots = ["/var/lib/ferrumgate/databases"]
+
 # Authentication mode: "disabled", "bearer", "scoped", or "oidc"
 # WARNING: Never use "disabled" in production with a non-loopback bind address
 auth_mode = "bearer"

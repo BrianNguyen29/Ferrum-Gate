@@ -72,20 +72,6 @@ groups:
           description: "Write queue depth is {{ $value }}. System is blocking writes. Immediate action required."
           runbook_url: "https://docs.example.com/runbooks/ferrumgate-queue-full"
 
-      # Backup status
-      - alert: FerrumGateNoRecentBackup
-        expr: |
-          (time() - ferrumgate_backup_last_success_timestamp) > 3600
-        for: 5m
-        labels:
-          severity: warning
-          service: ferrumgate
-          team: platform
-        annotations:
-          summary: "FerrumGate has no recent backup"
-          description: "No successful backup in the last hour. Last backup was {{ $value | humanizeDuration }} ago."
-          runbook_url: "https://docs.example.com/runbooks/ferrumgate-no-recent-backup"
-
       # High error rate (5xx responses)
       - alert: FerrumGateHighErrorRate
         expr: |
@@ -104,7 +90,7 @@ groups:
       - alert: FerrumGateHighLatency
         expr: |
           histogram_quantile(0.99,
-            sum(rate(ferrumgate_http_request_duration_seconds_bucket[5m])) by (le, handler)
+            sum(rate(ferrumgate_request_duration_seconds[5m])) by (le, route)
           ) > 5
         for: 5m
         labels:
@@ -113,27 +99,16 @@ groups:
           team: platform
         annotations:
           summary: "FerrumGate high latency"
-          description: "99th percentile latency is {{ $value | printf \"%.2f\" }}s for handler {{ $labels.handler }}."
+          description: "99th percentile latency is {{ $value | printf \"%.2f\" }}s for route {{ $labels.route }}."
           runbook_url: "https://docs.example.com/runbooks/ferrumgate-high-latency"
-
-      # Authentication failures
-      - alert: FerrumGateHighAuthFailureRate
-        expr: |
-          rate(ferrumgate_auth_failures_total[5m]) > 10
-        for: 5m
-        labels:
-          severity: warning
-          service: ferrumgate
-          team: platform
-        annotations:
-          summary: "FerrumGate high authentication failure rate"
-          description: "Authentication failure rate is {{ $value | printf \"%.2f\" }} failures/sec. Possible brute force attack."
-          runbook_url: "https://docs.example.com/runbooks/ferrumgate-auth-failures"
 
       # Capability minting failures
       - alert: FerrumGateCapabilityMintFailures
         expr: |
-          rate(ferrumgate_capability_mint_failures_total[5m]) > 0.1
+          rate(ferrumgate_governance_errors_total{
+            route="/v1/capabilities/mint",
+            method="POST"
+          }[5m]) > 0.1
         for: 5m
         labels:
           severity: warning
@@ -147,7 +122,10 @@ groups:
       # Policy evaluation failures
       - alert: FerrumGatePolicyEvalFailures
         expr: |
-          rate(ferrumgate_policy_evaluation_failures_total[5m]) > 0.1
+          rate(ferrumgate_governance_errors_total{
+            route="/v1/proposals/{proposal_id}/evaluate",
+            method="POST"
+          }[5m]) > 0.1
         for: 5m
         labels:
           severity: warning
@@ -161,7 +139,10 @@ groups:
       # Execution failures
       - alert: FerrumGateExecutionFailures
         expr: |
-          rate(ferrumgate_execution_failures_total[5m]) > 0.05
+          sum(rate(ferrumgate_governance_errors_total{
+            route=~"/v1/executions/.*",
+            method="POST"
+          }[5m])) > 0.05
         for: 5m
         labels:
           severity: warning
@@ -175,7 +156,10 @@ groups:
       # Rollback failures
       - alert: FerrumGateRollbackFailures
         expr: |
-          rate(ferrumgate_rollback_failures_total[5m]) > 0.01
+          rate(ferrumgate_governance_errors_total{
+            route="/v1/executions/{execution_id}/compensate",
+            method="POST"
+          }[5m]) > 0.01
         for: 5m
         labels:
           severity: critical
@@ -189,7 +173,7 @@ groups:
       # Provenance chain gaps
       - alert: FerrumGateProvenanceGaps
         expr: |
-          rate(ferrumgate_provenance_gaps_total[5m]) > 0
+          ferrumgate_lifecycle_outbox_operator_review > 0
         for: 5m
         labels:
           severity: warning
@@ -197,7 +181,7 @@ groups:
           team: platform
         annotations:
           summary: "FerrumGate provenance chain gaps detected"
-          description: "Provenance gap rate is {{ $value | printf \"%.3f\" }} gaps/sec. Lineage may be incomplete."
+          description: "{{ $value }} lifecycle records require operator review because automatic provenance reconciliation could not complete."
           runbook_url: "https://docs.example.com/runbooks/ferrumgate-provenance-gaps"
 
   # Instance-level alerts
@@ -304,21 +288,6 @@ groups:
           summary: "FerrumGate PostgreSQL connection acquire timeouts"
           description: "PG pool acquire timeout rate is {{ $value | printf \"%.3f\" }} timeouts/sec. Pool may be undersized or PG may be slow/unreachable."
           runbook_url: "https://docs.example.com/runbooks/ferrumgate-pg-slow-acquire"
-
-      # Backup stale — PG-specific threshold (relies on generic backup metric).
-      # TEMPLATE: Adjust threshold based on your backup cadence.
-      - alert: FerrumGatePostgresBackupStale
-        expr: |
-          (time() - ferrumgate_backup_last_success_timestamp) > 7200
-        for: 5m
-        labels:
-          severity: warning
-          service: ferrumgate
-          team: platform
-        annotations:
-          summary: "FerrumGate PostgreSQL backup is stale"
-          description: "No successful backup in the last 2 hours. Last backup was {{ $value | humanizeDuration }} ago."
-          runbook_url: "https://docs.example.com/runbooks/ferrumgate-pg-backup-stale"
 
       # Replication lag — PLACEHOLDER / DEFERRED.
       # Requires postgres_exporter or equivalent for pg_stat_replication metrics.

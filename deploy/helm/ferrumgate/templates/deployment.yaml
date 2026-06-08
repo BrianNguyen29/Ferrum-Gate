@@ -1,3 +1,6 @@
+{{- if and (hasPrefix "sqlite:" .Values.config.storeDsn) (or .Values.autoscaling.enabled (gt (int .Values.replicaCount) 1)) }}
+{{- fail "SQLite store supports only one FerrumGate replica; use PostgreSQL for multi-node deployments" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -54,17 +57,34 @@ spec:
               value: {{ .Values.config.pgMinIdle | quote }}
             - name: FERRUMD_PG_ACQUIRE_TIMEOUT_SECS
               value: {{ .Values.config.pgAcquireTimeoutSecs | quote }}
+            - name: FERRUMD_FS_WORKDIR
+              value: {{ .Values.config.fsWorkdir | quote }}
+            - name: FERRUMD_GIT_REPO_ROOTS
+              value: {{ .Values.config.gitRepoRoots | quote }}
+            - name: FERRUMD_SQLITE_DB_ROOTS
+              value: {{ .Values.config.sqliteDbRoots | quote }}
             - name: FERRUMD_BEARER_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "ferrumgate.fullname" . }}
-                  key: bearer-token
+                  name: {{ default (include "ferrumgate.fullname" .) .Values.secrets.existingSecret }}
+                  key: {{ default "bearer-token" .Values.secrets.existingSecretKey | quote }}
           livenessProbe:
             {{- toYaml .Values.livenessProbe | nindent 12 }}
           readinessProbe:
             {{- toYaml .Values.readinessProbe | nindent 12 }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+          {{- if .Values.persistence.enabled }}
+          volumeMounts:
+            - name: data
+              mountPath: {{ .Values.persistence.mountPath | quote }}
+          {{- end }}
+      {{- if .Values.persistence.enabled }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ default (include "ferrumgate.fullname" .) .Values.persistence.existingClaim }}
+      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

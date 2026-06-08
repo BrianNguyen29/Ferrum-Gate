@@ -16,5 +16,8 @@ rusqlite = { workspace = true, features = ["bundled"] }
 tempfile = { workspace = true }
 chrono = { workspace = true }
 
+[features]
+unsafe-unbounded-adapters = []
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }

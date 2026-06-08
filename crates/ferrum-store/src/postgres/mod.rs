@@ -32,6 +32,7 @@ mod executions;
 mod helpers;
 mod intents;
 mod ledger;
+mod lifecycle_outbox;
 mod migrations;
 mod policy_bundles;
 mod proposals;
@@ -48,6 +49,7 @@ pub use capabilities::PostgresCapabilityRepo;
 pub use executions::PostgresExecutionRepo;
 pub use intents::PostgresIntentRepo;
 pub use ledger::PostgresLedgerRepo;
+pub use lifecycle_outbox::PostgresLifecycleOutboxRepo;
 pub use policy_bundles::PostgresPolicyBundleRepo;
 pub use proposals::PostgresProposalRepo;
 pub use provenance::PostgresProvenanceRepo;
@@ -57,8 +59,8 @@ pub use tokens::PostgresTokenRepo;
 use crate::Result;
 use crate::repos::{
     AgentRepo, ApprovalRepo, AuditCheckpointRepo, AuditLogRepo, AuditMerkleRootRepo,
-    CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo, PolicyBundleRepo, ProposalRepo,
-    ProvenanceRepo, RollbackRepo, StoreFacade, TokenRepo,
+    CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo, LifecycleOutboxRepo, PolicyBundleRepo,
+    ProposalRepo, ProvenanceRepo, RollbackRepo, StoreFacade, TokenRepo,
 };
 use async_trait::async_trait;
 use sqlx::PgPool;
@@ -238,28 +240,7 @@ impl PostgresStore {
                 continue;
             }
 
-            let mut statement = String::new();
-
-            for line in migration.sql.lines() {
-                let trimmed = line.trim();
-                if trimmed.starts_with("--") {
-                    continue;
-                }
-
-                statement.push_str(line);
-                statement.push('\n');
-
-                if trimmed.ends_with(';') {
-                    let sql = statement.trim();
-                    if !sql.is_empty() {
-                        sqlx::query(sql).execute(&mut *tx).await?;
-                    }
-                    statement.clear();
-                }
-            }
-
-            let sql = statement.trim();
-            if !sql.is_empty() {
+            for sql in split_postgres_statements(migration.sql) {
                 sqlx::query(sql).execute(&mut *tx).await?;
             }
 
@@ -304,6 +285,10 @@ impl PostgresStore {
         PostgresRollbackRepo::new(self.pool.clone())
     }
 
+    pub fn lifecycle_outbox(&self) -> PostgresLifecycleOutboxRepo {
+        PostgresLifecycleOutboxRepo::new(self.pool.clone())
+    }
+
     pub fn approvals(&self) -> PostgresApprovalRepo {
         PostgresApprovalRepo::new(self.pool.clone())
     }
@@ -341,6 +326,93 @@ impl PostgresStore {
     }
 }
 
+fn split_postgres_statements(sql: &str) -> Vec<&str> {
+    let mut statements = Vec::new();
+    let mut start = 0usize;
+    let mut in_line_comment = false;
+    let mut in_single_quote = false;
+    let mut dollar_tag: Option<String> = None;
+    let bytes = sql.as_bytes();
+    let mut i = 0usize;
+
+    while i < bytes.len() {
+        if in_line_comment {
+            if bytes[i] == b'\n' {
+                in_line_comment = false;
+            }
+            i += 1;
+            continue;
+        }
+
+        if let Some(tag) = dollar_tag.as_ref() {
+            if sql[i..].starts_with(tag) {
+                i += tag.len();
+                dollar_tag = None;
+            } else {
+                i += 1;
+            }
+            continue;
+        }
+
+        if in_single_quote {
+            if bytes[i] == b'\'' {
+                if bytes.get(i + 1) == Some(&b'\'') {
+                    i += 2;
+                } else {
+                    in_single_quote = false;
+                    i += 1;
+                }
+            } else {
+                i += 1;
+            }
+            continue;
+        }
+
+        if bytes[i] == b'-' && bytes.get(i + 1) == Some(&b'-') {
+            in_line_comment = true;
+            i += 2;
+            continue;
+        }
+
+        if bytes[i] == b'\'' {
+            in_single_quote = true;
+            i += 1;
+            continue;
+        }
+
+        if bytes[i] == b'$' {
+            if let Some(end) = sql[i + 1..].find('$') {
+                let tag_end = i + 1 + end;
+                let tag_body = &sql[i + 1..tag_end];
+                if tag_body
+                    .chars()
+                    .all(|c| c == '_' || c.is_ascii_alphanumeric())
+                {
+                    dollar_tag = Some(sql[i..=tag_end].to_string());
+                    i = tag_end + 1;
+                    continue;
+                }
+            }
+        }
+
+        if bytes[i] == b';' {
+            let statement = sql[start..=i].trim();
+            if !statement.is_empty() {
+                statements.push(statement);
+            }
+            start = i + 1;
+        }
+        i += 1;
+    }
+
+    let tail = sql[start..].trim();
+    if !tail.is_empty() {
+        statements.push(tail);
+    }
+
+    statements
+}
+
 #[async_trait]
 impl StoreFacade for PostgresStore {
     fn capabilities(&self) -> Arc<dyn CapabilityRepo> {
@@ -353,6 +425,10 @@ impl StoreFacade for PostgresStore {
 
     fn rollback_contracts(&self) -> Arc<dyn RollbackRepo> {
         Arc::new(self.rollback_contracts())
+    }
+
+    fn lifecycle_outbox(&self) -> Arc<dyn LifecycleOutboxRepo> {
+        Arc::new(self.lifecycle_outbox())
     }
 
     fn approvals(&self) -> Arc<dyn ApprovalRepo> {
@@ -548,7 +624,27 @@ mod tests {
 
     #[test]
     fn postgres_current_schema_version_is_set() {
-        assert_eq!(super::migrations::CURRENT_SCHEMA_VERSION, 6);
+        assert_eq!(super::migrations::CURRENT_SCHEMA_VERSION, 10);
+    }
+
+    #[test]
+    fn postgres_statement_splitter_preserves_dollar_quoted_blocks() {
+        let sql = r#"
+            CREATE TABLE example (id integer);
+            DO $$
+            BEGIN
+                IF NOT EXISTS (SELECT 1) THEN
+                    ALTER TABLE example ADD CONSTRAINT example_check CHECK (id > 0) NOT VALID;
+                END IF;
+            END $$;
+            SELECT 'semi;colon';
+        "#;
+
+        let statements = super::split_postgres_statements(sql);
+        assert_eq!(statements.len(), 3);
+        assert!(statements[1].starts_with("DO $$"));
+        assert!(statements[1].contains("NOT VALID;"));
+        assert_eq!(statements[2], "SELECT 'semi;colon';");
     }
 
     #[tokio::test]

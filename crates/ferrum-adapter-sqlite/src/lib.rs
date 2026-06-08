@@ -18,7 +18,7 @@ use ferrum_rollback::{
     AdapterError, ExecuteReceipt, PrepareReceipt, RecoveryReceipt, RollbackAdapter, VerifyReceipt,
 };
 use rusqlite::Connection;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use thiserror::Error;
 
@@ -75,11 +75,89 @@ enum SqlType {
 /// prepare→execute→verify→rollback lifecycle testing with transaction-based rollback.
 pub struct SqliteAdapter {
     key: &'static str,
+    allowed_db_roots: Vec<PathBuf>,
 }
 
 impl SqliteAdapter {
-    pub fn new(key: &'static str) -> Self {
-        Self { key }
+    pub fn new(key: &'static str, allowed_db_roots: Vec<PathBuf>) -> Result<Self, AdapterError> {
+        let allowed_db_roots = Self::canonicalize_db_roots(allowed_db_roots)?;
+        Ok(Self {
+            key,
+            allowed_db_roots,
+        })
+    }
+
+    #[cfg(any(test, feature = "unsafe-unbounded-adapters"))]
+    pub fn new_unbounded(key: &'static str) -> Self {
+        Self {
+            key,
+            allowed_db_roots: Vec::new(),
+        }
+    }
+
+    fn canonicalize_db_roots(roots: Vec<PathBuf>) -> Result<Vec<PathBuf>, AdapterError> {
+        if roots.is_empty() {
+            return Err(AdapterError::Validation(
+                "sqlite adapter requires at least one allowed database root".to_string(),
+            ));
+        }
+        let mut canonical = Vec::with_capacity(roots.len());
+        for root in roots {
+            if !root.is_absolute() {
+                return Err(AdapterError::Validation(format!(
+                    "sqlite database root must be absolute: {}",
+                    root.display()
+                )));
+            }
+            let resolved = std::fs::canonicalize(&root).map_err(|e| {
+                AdapterError::Validation(format!(
+                    "failed to canonicalize sqlite database root {}: {}",
+                    root.display(),
+                    e
+                ))
+            })?;
+            if !resolved.is_dir() {
+                return Err(AdapterError::Validation(format!(
+                    "sqlite database root is not a directory: {}",
+                    resolved.display()
+                )));
+            }
+            canonical.push(resolved);
+        }
+        Ok(canonical)
+    }
+
+    fn canonical_db_path_allowed(&self, db_path: &str) -> Result<PathBuf, AdapterError> {
+        if self.allowed_db_roots.is_empty() {
+            return Ok(PathBuf::from(db_path));
+        }
+        let resolved = std::fs::canonicalize(db_path).map_err(|e| {
+            AdapterError::Validation(format!(
+                "failed to canonicalize sqlite database path {}: {}",
+                db_path, e
+            ))
+        })?;
+        if self
+            .allowed_db_roots
+            .iter()
+            .any(|root| resolved.starts_with(root))
+        {
+            return Ok(resolved);
+        }
+        Err(AdapterError::Validation(format!(
+            "sqlite database path {} is outside configured database roots",
+            resolved.display()
+        )))
+    }
+
+    fn canonical_db_path_string(&self, db_path: &str) -> Result<String, AdapterError> {
+        let resolved = self.canonical_db_path_allowed(db_path)?;
+        resolved
+            .to_str()
+            .map(|path| path.to_string())
+            .ok_or_else(|| {
+                AdapterError::Validation("sqlite database path is not valid UTF-8".into())
+            })
     }
 
     /// Extracts the db_path from a RollbackTarget::SqliteTxn variant.
@@ -268,6 +346,8 @@ impl RollbackAdapter for SqliteAdapter {
     ) -> Result<PrepareReceipt, AdapterError> {
         // Validate that target is SqliteTxn
         let db_path = Self::extract_db_path(&request.target)?;
+        let db_path = self.canonical_db_path_string(db_path)?;
+        let db_path = db_path.as_str();
 
         // Validate that action_type is SqlMutation
         match request.action_type {
@@ -314,6 +394,8 @@ impl RollbackAdapter for SqliteAdapter {
         payload: &serde_json::Value,
     ) -> Result<ExecuteReceipt, AdapterError> {
         let db_path = Self::extract_db_path(&contract.target)?;
+        let db_path = self.canonical_db_path_string(db_path)?;
+        let db_path = db_path.as_str();
 
         // Extract SQL from payload
         let sql = match payload {
@@ -434,6 +516,8 @@ impl RollbackAdapter for SqliteAdapter {
 
     async fn verify(&self, contract: &RollbackContract) -> Result<VerifyReceipt, AdapterError> {
         let db_path = Self::extract_db_path(&contract.target)?;
+        let db_path = self.canonical_db_path_string(db_path)?;
+        let db_path = db_path.as_str();
 
         // Fail-closed with verified=false for DB connection/lock/path errors
         // This follows the pattern: if we cannot verify due to infrastructure issues,
@@ -484,6 +568,8 @@ impl RollbackAdapter for SqliteAdapter {
 
     async fn rollback(&self, contract: &RollbackContract) -> Result<RecoveryReceipt, AdapterError> {
         let db_path = Self::extract_db_path(&contract.target)?;
+        let db_path = self.canonical_db_path_string(db_path)?;
+        let db_path = db_path.as_str();
 
         // Get sql_type and schema_capture from contract metadata
         let sql_type_str = contract
@@ -613,10 +699,10 @@ impl RollbackAdapter for SqliteAdapter {
     }
 }
 
-/// Register the SqliteAdapter with the given registry using "sqlite" as the adapter key.
-/// This allows the adapter to be used for SqlMutation operations via the rollback service.
+/// Register an unbounded SQLite adapter for tests or explicit unsafe builds.
+#[cfg(any(test, feature = "unsafe-unbounded-adapters"))]
 pub fn register_sqlite_adapter(registry: &mut ferrum_rollback::AdapterRegistry) {
-    registry.register(std::sync::Arc::new(SqliteAdapter::new("sqlite")));
+    registry.register(std::sync::Arc::new(SqliteAdapter::new_unbounded("sqlite")));
 }
 
 // =============================================================================
@@ -695,7 +781,7 @@ mod tests {
         let db_path_str = db_path.display().to_string();
 
         // Create the adapter
-        let adapter = SqliteAdapter::new("sqlite");
+        let adapter = SqliteAdapter::new_unbounded("sqlite");
 
         // Create the DB file and table using Connection::open (creates if not exists)
         {
@@ -782,7 +868,7 @@ mod tests {
         // Create the DB file first
         Connection::open(&db_path).unwrap();
 
-        let adapter = SqliteAdapter::new("sqlite");
+        let adapter = SqliteAdapter::new_unbounded("sqlite");
         let request = create_test_request(&db_path_str);
         let receipt = adapter.prepare(&request).await.unwrap();
         assert!(receipt.accepted);
@@ -790,7 +876,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_prepare_fails_on_nonexistent_db_path() {
-        let adapter = SqliteAdapter::new("sqlite");
+        let adapter = SqliteAdapter::new_unbounded("sqlite");
         let request = create_test_request("/nonexistent/path/to/db.sqlite");
         let result = adapter.prepare(&request).await;
         assert!(result.is_err());
@@ -809,7 +895,7 @@ mod tests {
                 .unwrap();
         }
 
-        let adapter = SqliteAdapter::new("sqlite");
+        let adapter = SqliteAdapter::new_unbounded("sqlite");
         let mut contract_with_verify = create_test_contract(&db_path_str);
         contract_with_verify.verify_checks = vec![CheckSpec {
             check_type: CheckType::SqlRowCountRange,
@@ -834,7 +920,7 @@ mod tests {
     async fn test_verify_returns_verified_false_on_nonexistent_db() {
         // G-E1 SQLite hardening: verify() should fail closed with verified=false
         // (not a hard error) when the database file doesn't exist.
-        let adapter = SqliteAdapter::new("sqlite");
+        let adapter = SqliteAdapter::new_unbounded("sqlite");
         let contract = create_test_contract("/nonexistent/path/to/db.sqlite");
 
         let result = adapter.verify(&contract).await.unwrap();
@@ -862,7 +948,7 @@ mod tests {
             .unwrap();
         drop(conn);
 
-        let adapter = SqliteAdapter::new("sqlite");
+        let adapter = SqliteAdapter::new_unbounded("sqlite");
 
         let contract = create_test_contract(&db_path_str);
         let result = adapter.verify(&contract).await.unwrap();
@@ -902,7 +988,7 @@ mod tests {
                 .unwrap();
         }
 
-        let adapter = SqliteAdapter::new("sqlite");
+        let adapter = SqliteAdapter::new_unbounded("sqlite");
         let contract = create_test_contract(&db_path_str);
 
         // Try to execute invalid SQL
@@ -925,7 +1011,7 @@ mod tests {
                 .unwrap();
         }
 
-        let adapter = SqliteAdapter::new("sqlite");
+        let adapter = SqliteAdapter::new_unbounded("sqlite");
         let mut contract = create_test_contract(&db_path_str);
         contract.compensation_plan = vec![CompensationStep {
             order: 1,
@@ -954,7 +1040,7 @@ mod tests {
         let db_path = temp_dir.path().join("test.db");
         let db_path_str = db_path.display().to_string();
 
-        let adapter = SqliteAdapter::new("sqlite");
+        let adapter = SqliteAdapter::new_unbounded("sqlite");
 
         // Create table first
         {
@@ -1028,7 +1114,7 @@ mod tests {
         let db_path = temp_dir.path().join("test.db");
         let db_path_str = db_path.display().to_string();
 
-        let adapter = SqliteAdapter::new("sqlite");
+        let adapter = SqliteAdapter::new_unbounded("sqlite");
 
         // Create table with data
         {
@@ -1093,7 +1179,7 @@ mod tests {
         let db_path = temp_dir.path().join("test.db");
         let db_path_str = db_path.display().to_string();
 
-        let adapter = SqliteAdapter::new("sqlite");
+        let adapter = SqliteAdapter::new_unbounded("sqlite");
 
         // Create table with data
         {
@@ -1158,7 +1244,7 @@ mod tests {
         let db_path = temp_dir.path().join("test.db");
         let db_path_str = db_path.display().to_string();
 
-        let adapter = SqliteAdapter::new("sqlite");
+        let adapter = SqliteAdapter::new_unbounded("sqlite");
 
         // Create table
         {
@@ -1241,7 +1327,7 @@ mod tests {
         let db_path = temp_dir.path().join("test.db");
         let db_path_str = db_path.display().to_string();
 
-        let adapter = SqliteAdapter::new("sqlite");
+        let adapter = SqliteAdapter::new_unbounded("sqlite");
 
         // Create table with data
         {
@@ -1327,7 +1413,7 @@ mod tests {
         let db_path = temp_dir.path().join("test.db");
         let db_path_str = db_path.display().to_string();
 
-        let adapter = SqliteAdapter::new("sqlite");
+        let adapter = SqliteAdapter::new_unbounded("sqlite");
 
         // Create table with data
         {
@@ -1413,7 +1499,7 @@ mod tests {
         let db_path = temp_dir.path().join("test.db");
         let db_path_str = db_path.display().to_string();
 
-        let adapter = SqliteAdapter::new("sqlite");
+        let adapter = SqliteAdapter::new_unbounded("sqlite");
 
         // Create table
         {
@@ -1508,7 +1594,7 @@ mod tests {
         let db_path = temp_dir.path().join("test.db");
         let db_path_str = db_path.display().to_string();
 
-        let adapter = SqliteAdapter::new("sqlite");
+        let adapter = SqliteAdapter::new_unbounded("sqlite");
 
         // Create an empty database
         {
@@ -1610,7 +1696,7 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let dir_path = temp_dir.path().display().to_string();
 
-        let adapter = SqliteAdapter::new("sqlite");
+        let adapter = SqliteAdapter::new_unbounded("sqlite");
         let request = create_test_request(&dir_path);
         let result = adapter.prepare(&request).await;
         assert!(result.is_err());
@@ -1621,7 +1707,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_fails_on_nonexistent_db() {
         // execute() should fail with a connection error when DB path does not exist
-        let adapter = SqliteAdapter::new("sqlite");
+        let adapter = SqliteAdapter::new_unbounded("sqlite");
         let contract = create_test_contract("/nonexistent/path/to/db.sqlite");
         let payload = serde_json::json!({ "sql": "INSERT INTO items (name) VALUES ('x')" });
         let result = adapter.execute(&contract, &payload).await;
@@ -1643,7 +1729,7 @@ mod tests {
             .unwrap();
         drop(conn);
 
-        let adapter = SqliteAdapter::new("sqlite");
+        let adapter = SqliteAdapter::new_unbounded("sqlite");
         let contract = create_test_contract(&db_path_str);
         // Contract has empty compensation_plan (default) and sql_type defaults to DML
         let result = adapter.rollback(&contract).await;
@@ -1655,7 +1741,7 @@ mod tests {
     #[tokio::test]
     async fn test_rollback_dml_fails_on_missing_db_path() {
         // DML rollback should fail with a connection error when DB path does not exist
-        let adapter = SqliteAdapter::new("sqlite");
+        let adapter = SqliteAdapter::new_unbounded("sqlite");
         let mut contract = create_test_contract("/nonexistent/path/to/db.sqlite");
         contract.metadata.insert(
             "sql_type".to_string(),
@@ -1684,7 +1770,7 @@ mod tests {
     #[tokio::test]
     async fn test_rollback_ddl_fails_on_missing_db_path() {
         // DDL rollback should fail with a connection error when DB path does not exist
-        let adapter = SqliteAdapter::new("sqlite");
+        let adapter = SqliteAdapter::new_unbounded("sqlite");
         let mut contract = create_test_contract("/nonexistent/path/to/db.sqlite");
         contract.metadata.insert(
             "sql_type".to_string(),
@@ -1722,7 +1808,7 @@ mod tests {
             .unwrap();
         drop(conn);
 
-        let adapter = SqliteAdapter::new("sqlite");
+        let adapter = SqliteAdapter::new_unbounded("sqlite");
 
         // Build a DDL contract with NO schema_capture in metadata
         let mut contract = create_test_contract(&db_path_str);
@@ -1767,7 +1853,7 @@ mod tests {
             .unwrap();
         drop(conn);
 
-        let adapter = SqliteAdapter::new("sqlite");
+        let adapter = SqliteAdapter::new_unbounded("sqlite");
         let mut contract = create_test_contract(&db_path_str);
         contract.verify_checks = vec![CheckSpec {
             check_type: CheckType::SqlRowCountRange,
@@ -1802,7 +1888,7 @@ mod tests {
             .unwrap();
         drop(conn);
 
-        let adapter = SqliteAdapter::new("sqlite");
+        let adapter = SqliteAdapter::new_unbounded("sqlite");
         let contract = create_test_contract(&db_path_str);
 
         // Object with no 'sql' key
@@ -1825,7 +1911,7 @@ mod tests {
             .unwrap();
         drop(conn);
 
-        let adapter = SqliteAdapter::new("sqlite");
+        let adapter = SqliteAdapter::new_unbounded("sqlite");
         let contract = create_test_contract(&db_path_str);
 
         let payload = serde_json::json!(42);
@@ -1846,7 +1932,7 @@ mod tests {
             .unwrap();
         drop(conn);
 
-        let adapter = SqliteAdapter::new("sqlite");
+        let adapter = SqliteAdapter::new_unbounded("sqlite");
         let contract = create_test_contract(&db_path_str);
 
         let payload = serde_json::json!(["sql1", "sql2"]);
@@ -1865,7 +1951,7 @@ mod tests {
             .unwrap();
         drop(conn);
 
-        let adapter = SqliteAdapter::new("sqlite");
+        let adapter = SqliteAdapter::new_unbounded("sqlite");
         let contract = create_test_contract(&db_path_str);
 
         let payload = serde_json::Value::Null;
@@ -1896,7 +1982,7 @@ mod tests {
             .unwrap();
         drop(conn);
 
-        let adapter = SqliteAdapter::new("sqlite");
+        let adapter = SqliteAdapter::new_unbounded("sqlite");
 
         // verify_check that queries a nonexistent table triggers query error -> verified=false
         let mut contract = create_test_contract(&db_path_str);
@@ -1935,7 +2021,7 @@ mod tests {
         let db_path = temp_dir.path().join("test.db");
         let db_path_str = db_path.display().to_string();
 
-        let adapter = SqliteAdapter::new("sqlite");
+        let adapter = SqliteAdapter::new_unbounded("sqlite");
 
         // Create table
         {

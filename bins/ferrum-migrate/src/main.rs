@@ -31,7 +31,7 @@ fn parse_chunk_size(s: &str) -> Result<usize, String> {
 
 #[derive(Debug, Parser)]
 #[command(name = "ferrum-migrate")]
-#[command(about = "FerrumGate SQLite to PostgreSQL migration tool (P5e.4 streaming)")]
+#[command(about = "FerrumGate core-only SQLite to PostgreSQL migration tool (P5e.4 streaming)")]
 struct Args {
     /// Source SQLite DSN (e.g., sqlite://path/to/db or sqlite::memory:).
     #[arg(long)]
@@ -75,6 +75,13 @@ struct TableResult {
     errors: Vec<String>,
 }
 
+impl TableResult {
+    #[allow(dead_code)]
+    fn validation_clean(&self) -> bool {
+        self.count_match && self.id_match && self.hash_match && self.errors.is_empty()
+    }
+}
+
 /// Overall migration report.
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
 struct MigrationReport {
@@ -95,6 +102,8 @@ struct TableMigration<'a> {
     insert_sql: &'a str,
     /// Column name containing the stable ID, if any.
     id_column: Option<&'a str>,
+    /// PostgreSQL ON CONFLICT target for idempotent resume, if any.
+    conflict_target: Option<&'a str>,
     /// Number of bind parameters in insert_sql.
     param_count: usize,
 }
@@ -108,6 +117,7 @@ fn table_migrations() -> Vec<TableMigration<'static>> {
             select_columns: "intent_id, principal_id, normalized_goal, status, risk_tier, approval_mode, default_rollback_class, created_at, expires_at, raw_json",
             insert_sql: "INSERT INTO intents (intent_id, principal_id, normalized_goal, status, risk_tier, approval_mode, default_rollback_class, created_at, expires_at, raw_json) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
             id_column: Some("intent_id"),
+            conflict_target: Some("intent_id"),
             param_count: 10,
         },
         TableMigration {
@@ -115,6 +125,7 @@ fn table_migrations() -> Vec<TableMigration<'static>> {
             select_columns: "proposal_id, intent_id, step_index, server_name, tool_name, estimated_risk, requested_rollback_class, created_at, raw_json",
             insert_sql: "INSERT INTO proposals (proposal_id, intent_id, step_index, server_name, tool_name, estimated_risk, requested_rollback_class, created_at, raw_json) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
             id_column: Some("proposal_id"),
+            conflict_target: Some("proposal_id"),
             param_count: 9,
         },
         TableMigration {
@@ -122,6 +133,7 @@ fn table_migrations() -> Vec<TableMigration<'static>> {
             select_columns: "capability_id, intent_id, proposal_id, server_name, tool_name, status, issued_at, expires_at, revoked_at, raw_json",
             insert_sql: "INSERT INTO capabilities (capability_id, intent_id, proposal_id, server_name, tool_name, status, issued_at, expires_at, revoked_at, raw_json) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
             id_column: Some("capability_id"),
+            conflict_target: Some("capability_id"),
             param_count: 10,
         },
         TableMigration {
@@ -129,6 +141,7 @@ fn table_migrations() -> Vec<TableMigration<'static>> {
             select_columns: "execution_id, intent_id, proposal_id, capability_id, rollback_contract_id, decision, state, started_at, finished_at, result_digest, raw_json",
             insert_sql: "INSERT INTO executions (execution_id, intent_id, proposal_id, capability_id, rollback_contract_id, decision, state, started_at, finished_at, result_digest, raw_json) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
             id_column: Some("execution_id"),
+            conflict_target: Some("execution_id"),
             param_count: 11,
         },
         TableMigration {
@@ -136,6 +149,7 @@ fn table_migrations() -> Vec<TableMigration<'static>> {
             select_columns: "contract_id, intent_id, proposal_id, execution_id, adapter_key, action_type, rollback_class, state, auto_commit, created_at, expires_at, raw_json",
             insert_sql: "INSERT INTO rollback_contracts (contract_id, intent_id, proposal_id, execution_id, adapter_key, action_type, rollback_class, state, auto_commit, created_at, expires_at, raw_json) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
             id_column: Some("contract_id"),
+            conflict_target: Some("contract_id"),
             param_count: 12,
         },
         TableMigration {
@@ -143,6 +157,7 @@ fn table_migrations() -> Vec<TableMigration<'static>> {
             select_columns: "approval_id, intent_id, proposal_id, execution_id, action_digest, state, expires_at, created_at, raw_json",
             insert_sql: "INSERT INTO approvals (approval_id, intent_id, proposal_id, execution_id, action_digest, state, expires_at, created_at, raw_json) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
             id_column: Some("approval_id"),
+            conflict_target: Some("approval_id"),
             param_count: 9,
         },
         TableMigration {
@@ -150,6 +165,7 @@ fn table_migrations() -> Vec<TableMigration<'static>> {
             select_columns: "event_id, kind, occurred_at, intent_id, proposal_id, execution_id, capability_id, rollback_contract_id, policy_bundle_id, raw_json",
             insert_sql: "INSERT INTO provenance_events (event_id, kind, occurred_at, intent_id, proposal_id, execution_id, capability_id, rollback_contract_id, policy_bundle_id, raw_json) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
             id_column: Some("event_id"),
+            conflict_target: Some("event_id"),
             param_count: 10,
         },
         TableMigration {
@@ -157,6 +173,7 @@ fn table_migrations() -> Vec<TableMigration<'static>> {
             select_columns: "to_event_id, from_event_id, edge_type, summary",
             insert_sql: "INSERT INTO provenance_edges (to_event_id, from_event_id, edge_type, summary) VALUES ($1, $2, $3, $4)",
             id_column: None,
+            conflict_target: Some("to_event_id, from_event_id, edge_type"),
             param_count: 4,
         },
         TableMigration {
@@ -164,6 +181,7 @@ fn table_migrations() -> Vec<TableMigration<'static>> {
             select_columns: "entry_id, event_id, intent_id, execution_id, occurred_at, content_hash, previous_ledger_hash, raw_json",
             insert_sql: "INSERT INTO ledger_entries (entry_id, event_id, intent_id, execution_id, occurred_at, content_hash, previous_ledger_hash, raw_json) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
             id_column: Some("entry_id"),
+            conflict_target: Some("entry_id"),
             param_count: 8,
         },
         TableMigration {
@@ -171,6 +189,7 @@ fn table_migrations() -> Vec<TableMigration<'static>> {
             select_columns: "bundle_id, version, active, content_hash, created_at, updated_at, raw_json",
             insert_sql: "INSERT INTO policy_bundles (bundle_id, version, active, content_hash, created_at, updated_at, raw_json) VALUES ($1, $2, $3, $4, $5, $6, $7)",
             id_column: Some("bundle_id"),
+            conflict_target: Some("bundle_id"),
             param_count: 7,
         },
     ]
@@ -319,6 +338,34 @@ async fn compute_target_hash(
     Ok(aggregate_hash(hashes))
 }
 
+/// Compute the aggregate content hash for a SQLite source table.
+#[cfg(feature = "postgres")]
+async fn compute_source_hash(
+    sqlite: &SqlitePool,
+    table: &str,
+    select_columns: &str,
+    chunk_size: usize,
+) -> Result<String> {
+    let count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {}", table))
+        .fetch_one(sqlite)
+        .await?;
+    let count = count as usize;
+    let mut hashes = Vec::new();
+    for offset in (0..count).step_by(chunk_size) {
+        let sql = format!(
+            "SELECT {} FROM {} LIMIT {} OFFSET {}",
+            select_columns, table, chunk_size, offset
+        );
+        let rows = sqlx::query(&sql).fetch_all(sqlite).await?;
+        for row in &rows {
+            let canonical = canonical_row(row, select_columns)?;
+            let hash = format!("{:x}", Sha256::digest(canonical.as_bytes()));
+            hashes.push(hash);
+        }
+    }
+    Ok(aggregate_hash(hashes))
+}
+
 /// Ensure the checkpoint table exists on the PostgreSQL target.
 #[cfg(feature = "postgres")]
 async fn ensure_checkpoint_table(pg: &PgPool) -> Result<()> {
@@ -331,6 +378,33 @@ async fn ensure_checkpoint_table(pg: &PgPool) -> Result<()> {
     )
     .execute(pg)
     .await?;
+    Ok(())
+}
+
+#[cfg(feature = "postgres")]
+async fn ensure_resume_idempotency_constraints(pg: &PgPool) -> Result<()> {
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_migration_provenance_edges_natural_key
+         ON provenance_edges(to_event_id, from_event_id, edge_type)",
+    )
+    .execute(pg)
+    .await
+    .context("failed to ensure provenance_edges natural-key uniqueness for resume")?;
+    Ok(())
+}
+
+#[cfg(feature = "postgres")]
+async fn reset_postgres_sequences(pg: &PgPool) -> Result<()> {
+    sqlx::query(
+        "SELECT setval(
+            pg_get_serial_sequence('ledger_entries', 'entry_id'),
+            GREATEST(COALESCE((SELECT MAX(entry_id) FROM ledger_entries), 1), 1),
+            COALESCE((SELECT MAX(entry_id) FROM ledger_entries), 0) > 0
+        )",
+    )
+    .execute(pg)
+    .await
+    .context("failed to reset ledger_entries entry_id sequence after explicit ID migration")?;
     Ok(())
 }
 
@@ -399,17 +473,21 @@ fn checkpoint_action(
 
 /// Build the INSERT (or upsert) SQL for a table.
 #[cfg(any(feature = "postgres", test))]
-fn build_insert_sql(insert_sql: &str, id_column: Option<&str>, resume: bool) -> Result<String> {
+fn build_insert_sql(
+    insert_sql: &str,
+    conflict_target: Option<&str>,
+    resume: bool,
+) -> Result<String> {
     if !resume {
         return Ok(insert_sql.to_string());
     }
-    match id_column {
-        Some(id_col) => Ok(format!(
+    match conflict_target {
+        Some(target) => Ok(format!(
             "{} ON CONFLICT ({}) DO NOTHING",
-            insert_sql, id_col
+            insert_sql, target
         )),
         None => bail!(
-            "Table has no stable ID column and cannot be safely resumed. \
+            "Table has no stable conflict target and cannot be safely resumed. \
              Run without --resume or add a PRIMARY KEY/UNIQUE constraint."
         ),
     }
@@ -448,7 +526,7 @@ async fn migrate_table(
             );
         }
 
-        let sql = build_insert_sql(tm.insert_sql, tm.id_column, resume)?;
+        let sql = build_insert_sql(tm.insert_sql, tm.conflict_target, resume)?;
         let mut source_ids = BTreeSet::new();
         let mut source_hashes = Vec::new();
 
@@ -667,6 +745,7 @@ async fn run_migration(args: &Args) -> Result<MigrationReport> {
         let pg_store = ferrum_store::postgres::PostgresStore::connect(&args.to).await?;
         pg_store.apply_embedded_migrations().await?;
         ensure_checkpoint_table(&pg).await?;
+        ensure_resume_idempotency_constraints(&pg).await?;
     }
 
     let migrations = table_migrations();
@@ -691,7 +770,35 @@ async fn run_migration(args: &Args) -> Result<MigrationReport> {
                             .fetch_one(&pg)
                             .await?;
                     let count_match = target_count == source_count;
+                    let source_hash =
+                        compute_source_hash(&sqlite, tm.name, tm.select_columns, args.chunk_size)
+                            .await;
+                    let target_hash =
+                        compute_target_hash(&pg, tm.name, tm.select_columns, args.chunk_size).await;
+                    let hash_match = matches!(
+                        (&source_hash, &target_hash),
+                        (Ok(source), Ok(target)) if source == target
+                    );
+                    let mut errors = Vec::new();
                     if !count_match {
+                        errors.push(
+                            "checkpoint skip: target row count does not match checkpoint"
+                                .to_string(),
+                        );
+                    }
+                    if let Err(e) = &source_hash {
+                        errors.push(format!("checkpoint skip: source hash error: {}", e));
+                    }
+                    if let Err(e) = &target_hash {
+                        errors.push(format!("checkpoint skip: target hash error: {}", e));
+                    }
+                    if count_match && !hash_match {
+                        errors.push(
+                            "checkpoint skip: target content hash does not match source"
+                                .to_string(),
+                        );
+                    }
+                    if !count_match || !hash_match || !errors.is_empty() {
                         overall_success = false;
                     }
                     tables.push(TableResult {
@@ -701,17 +808,10 @@ async fn run_migration(args: &Args) -> Result<MigrationReport> {
                         migrated_count: 0,
                         id_match: count_match,
                         count_match,
-                        hash_match: count_match,
-                        source_content_hash: None,
-                        target_content_hash: None,
-                        errors: if count_match {
-                            vec![]
-                        } else {
-                            vec![
-                                "checkpoint skip: target row count does not match checkpoint"
-                                    .to_string(),
-                            ]
-                        },
+                        hash_match,
+                        source_content_hash: source_hash.ok(),
+                        target_content_hash: target_hash.ok(),
+                        errors,
                     });
                     continue;
                 }
@@ -734,11 +834,12 @@ async fn run_migration(args: &Args) -> Result<MigrationReport> {
         .await
         {
             Ok(tr) => {
-                if !tr.count_match || !tr.id_match || !tr.hash_match || !tr.errors.is_empty() {
+                let validation_clean = tr.validation_clean();
+                if !validation_clean {
                     overall_success = false;
                 }
                 tables.push(tr);
-                if args.apply {
+                if args.apply && validation_clean {
                     if let Err(e) = write_checkpoint(&pg, tm.name, source_count).await {
                         overall_success = false;
                         if let Some(last) = tables.last_mut() {
@@ -762,6 +863,24 @@ async fn run_migration(args: &Args) -> Result<MigrationReport> {
                     errors: vec![e.to_string()],
                 });
             }
+        }
+    }
+
+    if args.apply {
+        if let Err(e) = reset_postgres_sequences(&pg).await {
+            overall_success = false;
+            tables.push(TableResult {
+                table: "_postgres_sequences".to_string(),
+                source_count: 0,
+                target_count: 0,
+                migrated_count: 0,
+                id_match: false,
+                count_match: false,
+                hash_match: false,
+                source_content_hash: None,
+                target_content_hash: None,
+                errors: vec![e.to_string()],
+            });
         }
     }
 
@@ -946,19 +1065,24 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
-            err.contains("no stable ID column"),
-            "error should explain missing ID: {}",
+            err.contains("no stable conflict target"),
+            "error should explain missing conflict target: {}",
             err
         );
     }
 
     #[test]
-    fn test_table_migrations_have_conflict_target_except_edges() {
+    fn test_table_migrations_have_resume_conflict_targets() {
         for tm in table_migrations() {
+            assert!(
+                tm.conflict_target.is_some(),
+                "table '{}' must have a conflict target to support resume",
+                tm.name
+            );
             if tm.name == "provenance_edges" {
                 assert!(
                     tm.id_column.is_none(),
-                    "provenance_edges is expected to lack a safe conflict target"
+                    "provenance_edges uses a natural-key conflict target, not a single ID column"
                 );
             } else {
                 assert!(

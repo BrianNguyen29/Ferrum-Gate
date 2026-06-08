@@ -1,7 +1,7 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use chrono::Utc;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use ferrum_cap::InMemoryCapabilityService;
 use ferrum_gateway::{AuthMode, GatewayRuntime, ServerConfig};
 use ferrum_pdp::StaticPdpEngine;
@@ -15,8 +15,9 @@ use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
 use ferrum_store::{SqliteStore, StoreFacade};
 use ferrum_sync::{BridgeSubmitResult, BridgeToolInfo, RuntimeBridge};
 use reqwest::Client;
+use serde::Serialize;
 use std::sync::atomic::AtomicU32;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::net::TcpListener;
@@ -25,7 +26,15 @@ use tokio::time::sleep as tokio_sleep;
 
 /// Global error counter for rate-limited debug logging
 static ERROR_COUNT: AtomicU64 = AtomicU64::new(0);
+static TEXT_OUTPUT_ENABLED: AtomicBool = AtomicBool::new(true);
 const MAX_ERROR_LOGS: u64 = 5;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum StressOutputFormat {
+    Text,
+    Json,
+    Junit,
+}
 
 /// CLI arguments for ferrum-stress
 #[derive(Debug, Parser)]
@@ -55,6 +64,22 @@ struct Args {
     /// Enable rate limiting
     #[arg(long, default_value = "false")]
     rate_limit: bool,
+
+    /// Target an already-running FerrumGate server instead of starting an in-process server.
+    #[arg(long)]
+    server_url: Option<String>,
+
+    /// Maximum allowed error rate as a ratio in [0.0, 1.0], e.g. 0.01 for 1%.
+    #[arg(long)]
+    max_error_rate: Option<f64>,
+
+    /// Maximum allowed p95 latency in milliseconds.
+    #[arg(long)]
+    max_p95_ms: Option<u64>,
+
+    /// Output format.
+    #[arg(long, value_enum, default_value_t = StressOutputFormat::Text)]
+    output_format: StressOutputFormat,
 }
 
 /// Fake bridge for testing ingest without real MCP runtime
@@ -202,7 +227,11 @@ struct StressServer {
 }
 
 impl StressServer {
-    async fn start(auth_enabled: bool, bearer_token: Option<String>) -> Result<Self> {
+    async fn start(
+        auth_enabled: bool,
+        bearer_token: Option<String>,
+        rate_limit_enabled: bool,
+    ) -> Result<Self> {
         // Create temp SQLite database
         let temp_db = tempfile::NamedTempFile::new()?;
         let db_path = temp_db.path().to_str().unwrap();
@@ -236,6 +265,14 @@ impl StressServer {
             vec![bridge],
         );
 
+        let (rate_limit_per_second, rate_limit_burst) = if rate_limit_enabled {
+            (2, 50)
+        } else {
+            // Keep the limiter effectively out of the way without violating
+            // ServerConfig validation.
+            (1_000_000, 10_000)
+        };
+
         // Build router
         let router = if auth_enabled {
             let config = ServerConfig {
@@ -248,14 +285,17 @@ impl StressServer {
                 log_format: ferrum_gateway::LogFormat::Text,
                 store_synchronous: None,
                 store_wal_autocheckpoint: None,
-                rate_limit_per_second: 2,
-                rate_limit_burst: 50,
+                rate_limit_per_second,
+                rate_limit_burst,
                 write_queue_threshold: 100,
                 pg_max_connections: 10,
                 pg_min_idle: 2,
                 pg_acquire_timeout_secs: 5,
                 pg_statement_timeout_ms: 5000,
                 pg_idle_in_transaction_timeout_ms: 10000,
+                fs_workdir: None,
+                git_repo_roots: Vec::new(),
+                sqlite_db_roots: Vec::new(),
                 oidc_config: None,
                 agent_clock_skew_secs: 30,
             };
@@ -273,14 +313,17 @@ impl StressServer {
                 log_format: ferrum_gateway::LogFormat::Text,
                 store_synchronous: None,
                 store_wal_autocheckpoint: None,
-                rate_limit_per_second: 2,
-                rate_limit_burst: 50,
+                rate_limit_per_second,
+                rate_limit_burst,
                 write_queue_threshold: 100,
                 pg_max_connections: 10,
                 pg_min_idle: 2,
                 pg_acquire_timeout_secs: 5,
                 pg_statement_timeout_ms: 5000,
                 pg_idle_in_transaction_timeout_ms: 10000,
+                fs_workdir: None,
+                git_repo_roots: Vec::new(),
+                sqlite_db_roots: Vec::new(),
                 oidc_config: None,
                 agent_clock_skew_secs: 30,
             };
@@ -337,16 +380,25 @@ fn format_number(n: u64) -> String {
 }
 
 fn print_separator() {
+    if !TEXT_OUTPUT_ENABLED.load(Ordering::Relaxed) {
+        return;
+    }
     println!("═══════════════════════════════════════════════════════════════");
 }
 
 fn print_scenario_header(name: &str, workers: usize, duration: u64) {
+    if !TEXT_OUTPUT_ENABLED.load(Ordering::Relaxed) {
+        return;
+    }
     print_separator();
     println!("  SCENARIO: {}  ({} workers, {}s)", name, workers, duration);
     print_separator();
 }
 
 fn print_stats_report(report: &StatsReport) {
+    if !TEXT_OUTPUT_ENABLED.load(Ordering::Relaxed) {
+        return;
+    }
     let error_pct = if report.total_requests > 0 {
         report.errors as f64 / report.total_requests as f64 * 100.0
     } else {
@@ -379,6 +431,127 @@ fn print_stats_report(report: &StatsReport) {
     }
     print_separator();
     println!();
+}
+
+#[derive(Debug, Serialize)]
+struct ScenarioSummary {
+    scenario: String,
+    concurrency: usize,
+    duration_secs: u64,
+    total_requests: u64,
+    errors: u64,
+    error_rate: f64,
+    req_per_sec: f64,
+    p95_ms: f64,
+    p99_ms: f64,
+    status_histogram: std::collections::HashMap<u16, u64>,
+}
+
+#[derive(Debug, Serialize)]
+struct StressSummary {
+    target: String,
+    auth_enabled: bool,
+    rate_limit_enabled: bool,
+    scenarios: Vec<ScenarioSummary>,
+}
+
+fn scenario_summary(
+    scenario: &str,
+    concurrency: usize,
+    duration_secs: u64,
+    stats: &Stats,
+) -> ScenarioSummary {
+    let mut report = stats.report();
+    report.req_per_sec = if duration_secs > 0 {
+        report.total_requests as f64 / duration_secs as f64
+    } else {
+        0.0
+    };
+    let denominator = report.total_requests + report.errors;
+    let error_rate = if denominator > 0 {
+        report.errors as f64 / denominator as f64
+    } else {
+        0.0
+    };
+    ScenarioSummary {
+        scenario: scenario.to_string(),
+        concurrency,
+        duration_secs,
+        total_requests: report.total_requests,
+        errors: report.errors,
+        error_rate,
+        req_per_sec: report.req_per_sec,
+        p95_ms: report.p95.as_secs_f64() * 1000.0,
+        p99_ms: report.p99.as_secs_f64() * 1000.0,
+        status_histogram: report.status_histogram,
+    }
+}
+
+fn check_thresholds(
+    summaries: &[ScenarioSummary],
+    max_error_rate: Option<f64>,
+    max_p95_ms: Option<u64>,
+) -> Result<()> {
+    if let Some(max_error_rate) = max_error_rate
+        && !(0.0..=1.0).contains(&max_error_rate)
+    {
+        bail!("--max-error-rate must be between 0.0 and 1.0");
+    }
+    for summary in summaries {
+        if let Some(max_error_rate) = max_error_rate
+            && summary.error_rate > max_error_rate
+        {
+            bail!(
+                "scenario '{}' exceeded max error rate: {:.4} > {:.4}",
+                summary.scenario,
+                summary.error_rate,
+                max_error_rate
+            );
+        }
+        if let Some(max_p95_ms) = max_p95_ms
+            && summary.p95_ms > max_p95_ms as f64
+        {
+            bail!(
+                "scenario '{}' exceeded max p95 latency: {:.2}ms > {}ms",
+                summary.scenario,
+                summary.p95_ms,
+                max_p95_ms
+            );
+        }
+    }
+    Ok(())
+}
+
+fn print_json_summary(summary: &StressSummary) -> Result<()> {
+    println!("{}", serde_json::to_string_pretty(summary)?);
+    Ok(())
+}
+
+fn escape_xml_attr(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+fn print_junit_summary(summary: &StressSummary) {
+    println!(
+        r#"<testsuite name="ferrum-stress" tests="{}">"#,
+        summary.scenarios.len()
+    );
+    for scenario in &summary.scenarios {
+        println!(
+            r#"  <testcase classname="ferrum-stress" name="{}">"#,
+            escape_xml_attr(&scenario.scenario)
+        );
+        println!(
+            r#"    <system-out>requests={} errors={} error_rate={:.6} p95_ms={:.3}</system-out>"#,
+            scenario.total_requests, scenario.errors, scenario.error_rate, scenario.p95_ms
+        );
+        println!("  </testcase>");
+    }
+    println!("</testsuite>");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -421,7 +594,6 @@ async fn run_health_scenario(
 
     let mut report = stats.report();
     report.req_per_sec = report.total_requests as f64 / duration_secs as f64;
-    println!();
     print_scenario_header("health", concurrency, duration_secs);
     print_stats_report(&report);
 
@@ -483,7 +655,6 @@ async fn run_auth_scenario(
 
     let mut report = stats.report();
     report.req_per_sec = report.total_requests as f64 / duration_secs as f64;
-    println!();
     print_scenario_header("auth", concurrency, duration_secs);
     print_stats_report(&report);
 
@@ -535,7 +706,6 @@ async fn run_provenance_query_scenario(
 
     let mut report = stats.report();
     report.req_per_sec = report.total_requests as f64 / duration_secs as f64;
-    println!();
     print_scenario_header("provenance-query", concurrency, duration_secs);
     print_stats_report(&report);
 
@@ -602,7 +772,6 @@ async fn run_intent_compile_scenario(
 
     let mut report = stats.report();
     report.req_per_sec = report.total_requests as f64 / duration_secs as f64;
-    println!();
     print_scenario_header("intent-compile", concurrency, duration_secs);
     print_stats_report(&report);
 
@@ -947,7 +1116,6 @@ async fn run_execution_pipeline_scenario(
 
     let mut report = stats.report();
     report.req_per_sec = report.total_requests as f64 / duration_secs as f64;
-    println!();
     print_scenario_header("execution-pipeline", concurrency, duration_secs);
     print_stats_report(&report);
 
@@ -1159,7 +1327,6 @@ async fn run_capability_scenario(
 
     let mut report = stats.report();
     report.req_per_sec = report.total_requests as f64 / duration_secs as f64;
-    println!();
     print_scenario_header("capability", concurrency, duration_secs);
     print_stats_report(&report);
 
@@ -1218,7 +1385,6 @@ async fn run_sqlite_contention_scenario(
 
     let mut report = stats.report();
     report.req_per_sec = report.total_requests as f64 / duration_secs as f64;
-    println!();
     print_scenario_header("sqlite-contention", concurrency, duration_secs);
     print_stats_report(&report);
 
@@ -1232,10 +1398,13 @@ async fn run_rate_limit_scenario(
     concurrency: usize,
     duration_secs: u64,
 ) -> Arc<Stats> {
-    println!();
-    println!("  NOTE: Rate limiting requires --rate-limit flag to be set at server start.");
-    println!("  This scenario sends burst traffic to detect 429 responses.");
-    println!();
+    if TEXT_OUTPUT_ENABLED.load(Ordering::Relaxed) {
+        println!();
+        println!(
+            "  This scenario sends burst traffic to a workload route to detect 429 responses."
+        );
+        println!();
+    }
 
     let stats = Arc::new(Stats::new());
     let end_time = Instant::now() + Duration::from_secs(duration_secs);
@@ -1250,7 +1419,7 @@ async fn run_rate_limit_scenario(
             tokio::spawn(async move {
                 while Instant::now() < end_time {
                     let start = Instant::now();
-                    let mut req = client.get(format!("{}/v1/healthz", base_url));
+                    let mut req = client.get(format!("{}/v1/intents?limit=1", base_url));
 
                     if let Some(t) = &token {
                         req = req.header("Authorization", format!("Bearer {}", t));
@@ -1273,11 +1442,13 @@ async fn run_rate_limit_scenario(
 
     let mut report = stats.report();
     report.req_per_sec = report.total_requests as f64 / duration_secs as f64;
-    println!();
     print_scenario_header("rate-limit", concurrency, duration_secs);
     print_stats_report(&report);
 
     // Check for 429 responses
+    if !TEXT_OUTPUT_ENABLED.load(Ordering::Relaxed) {
+        return stats;
+    }
     if let Some(count) = report.status_histogram.get(&429) {
         println!(
             "  Rate limit detected: {} requests got 429 (Too Many Requests)",
@@ -1518,7 +1689,6 @@ async fn run_mixed_scenario(
 
     let mut report = stats.report();
     report.req_per_sec = report.total_requests as f64 / duration_secs as f64;
-    println!();
     print_scenario_header("mixed", concurrency, duration_secs);
     print_stats_report(&report);
 
@@ -1532,6 +1702,21 @@ async fn run_mixed_scenario(
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+    if args.concurrency == 0 {
+        bail!("--concurrency must be greater than 0");
+    }
+    if args.duration == 0 {
+        bail!("--duration must be greater than 0");
+    }
+    if let Some(max_error_rate) = args.max_error_rate
+        && !(0.0..=1.0).contains(&max_error_rate)
+    {
+        bail!("--max-error-rate must be between 0.0 and 1.0");
+    }
+    TEXT_OUTPUT_ENABLED.store(
+        args.output_format == StressOutputFormat::Text,
+        Ordering::Relaxed,
+    );
 
     // Suppress all tracing output - stress test uses its own stats
     // axum response_failed ERROR logs are too noisy at 50 workers
@@ -1540,28 +1725,34 @@ async fn main() -> Result<()> {
         .with_target(false)
         .init();
 
-    println!();
-    println!("╔═══════════════════════════════════════════════════════════════╗");
-    println!("║           FERRUM-GATE STRESS TEST v0.1.0                     ║");
-    println!("╚═══════════════════════════════════════════════════════════════╝");
-    println!();
-    println!("  Configuration:");
-    println!("    Scenario:    {}", args.scenario);
-    println!("    Concurrency: {}", args.concurrency);
-    println!("    Duration:    {}s", args.duration);
-    println!(
-        "    Auth:        {}",
-        if args.auth { "enabled" } else { "disabled" }
-    );
-    println!(
-        "    Rate Limit:  {}",
-        if args.rate_limit {
-            "enabled"
-        } else {
-            "disabled"
-        }
-    );
-    println!();
+    if TEXT_OUTPUT_ENABLED.load(Ordering::Relaxed) {
+        println!();
+        println!("╔═══════════════════════════════════════════════════════════════╗");
+        println!("║           FERRUM-GATE STRESS TEST v0.1.0                     ║");
+        println!("╚═══════════════════════════════════════════════════════════════╝");
+        println!();
+        println!("  Configuration:");
+        println!("    Scenario:    {}", args.scenario);
+        println!("    Concurrency: {}", args.concurrency);
+        println!("    Duration:    {}s", args.duration);
+        println!(
+            "    Target:      {}",
+            args.server_url.as_deref().unwrap_or("in-process")
+        );
+        println!(
+            "    Auth:        {}",
+            if args.auth { "enabled" } else { "disabled" }
+        );
+        println!(
+            "    Rate Limit:  {}",
+            if args.rate_limit {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        );
+        println!();
+    }
 
     // Start test server
     let token = if args.auth {
@@ -1570,10 +1761,20 @@ async fn main() -> Result<()> {
         None
     };
 
-    println!("Starting test server...");
-    let server = StressServer::start(args.auth, token.clone()).await?;
-    println!("Server started at: {}", server.base_url);
-    println!();
+    let (base_url, _server) = if let Some(server_url) = args.server_url.clone() {
+        (server_url.trim_end_matches('/').to_string(), None)
+    } else {
+        if TEXT_OUTPUT_ENABLED.load(Ordering::Relaxed) {
+            println!("Starting test server...");
+        }
+        let server = StressServer::start(args.auth, token.clone(), args.rate_limit).await?;
+        let base_url = server.base_url.clone();
+        if TEXT_OUTPUT_ENABLED.load(Ordering::Relaxed) {
+            println!("Server started at: {}", base_url);
+            println!();
+        }
+        (base_url, Some(server))
+    };
 
     let client = Client::builder()
         .timeout(Duration::from_secs(5))
@@ -1581,173 +1782,223 @@ async fn main() -> Result<()> {
         .context("failed to build HTTP client")?;
 
     let scenario = args.scenario.to_lowercase();
+    let mut summaries = Vec::new();
+    macro_rules! run_and_record {
+        ($name:literal, $concurrency:expr, $future:expr) => {{
+            let effective_concurrency = $concurrency;
+            let stats = $future.await;
+            summaries.push(scenario_summary(
+                $name,
+                effective_concurrency,
+                args.duration,
+                &stats,
+            ));
+        }};
+    }
     match scenario.as_str() {
         "health" => {
-            run_health_scenario(
-                &client,
-                &server.base_url,
-                &token,
+            run_and_record!(
+                "health",
                 args.concurrency,
-                args.duration,
-            )
-            .await;
+                run_health_scenario(&client, &base_url, &token, args.concurrency, args.duration,)
+            );
         }
         "auth" => {
-            run_auth_scenario(
-                &client,
-                &server.base_url,
-                &token,
+            run_and_record!(
+                "auth",
                 args.concurrency,
-                args.duration,
-            )
-            .await;
+                run_auth_scenario(&client, &base_url, &token, args.concurrency, args.duration,)
+            );
         }
         "provenance-query" => {
-            run_provenance_query_scenario(
-                &client,
-                &server.base_url,
-                &token,
+            run_and_record!(
+                "provenance-query",
                 args.concurrency,
-                args.duration,
-            )
-            .await;
+                run_provenance_query_scenario(
+                    &client,
+                    &base_url,
+                    &token,
+                    args.concurrency,
+                    args.duration,
+                )
+            );
         }
         "intent-compile" => {
-            run_intent_compile_scenario(
-                &client,
-                &server.base_url,
-                &token,
-                std::cmp::min(args.concurrency, 5), // cap at 5: SQLite single-writer bottleneck
-                args.duration,
-            )
-            .await;
+            let effective_concurrency = std::cmp::min(args.concurrency, 5);
+            run_and_record!(
+                "intent-compile",
+                effective_concurrency,
+                run_intent_compile_scenario(
+                    &client,
+                    &base_url,
+                    &token,
+                    effective_concurrency, // cap at 5: SQLite single-writer bottleneck
+                    args.duration,
+                )
+            );
         }
         "execution-pipeline" => {
-            run_execution_pipeline_scenario(
-                &client,
-                &server.base_url,
-                &token,
-                std::cmp::min(args.concurrency, 5), // cap at 5: SQLite single-writer bottleneck
-                args.duration,
-            )
-            .await;
+            let effective_concurrency = std::cmp::min(args.concurrency, 5);
+            run_and_record!(
+                "execution-pipeline",
+                effective_concurrency,
+                run_execution_pipeline_scenario(
+                    &client,
+                    &base_url,
+                    &token,
+                    effective_concurrency, // cap at 5: SQLite single-writer bottleneck
+                    args.duration,
+                )
+            );
         }
         "capability" => {
-            run_capability_scenario(
-                &client,
-                &server.base_url,
-                &token,
-                std::cmp::min(args.concurrency, 5), // cap at 5: SQLite single-writer bottleneck
-                args.duration,
-            )
-            .await;
+            let effective_concurrency = std::cmp::min(args.concurrency, 5);
+            run_and_record!(
+                "capability",
+                effective_concurrency,
+                run_capability_scenario(
+                    &client,
+                    &base_url,
+                    &token,
+                    effective_concurrency, // cap at 5: SQLite single-writer bottleneck
+                    args.duration,
+                )
+            );
         }
         "sqlite-contention" => {
-            run_sqlite_contention_scenario(
-                &client,
-                &server.base_url,
-                &token,
+            run_and_record!(
+                "sqlite-contention",
                 args.concurrency,
-                args.duration,
-            )
-            .await;
+                run_sqlite_contention_scenario(
+                    &client,
+                    &base_url,
+                    &token,
+                    args.concurrency,
+                    args.duration,
+                )
+            );
         }
         "rate-limit" => {
-            run_rate_limit_scenario(
-                &client,
-                &server.base_url,
-                &token,
+            run_and_record!(
+                "rate-limit",
                 args.concurrency,
-                args.duration,
-            )
-            .await;
+                run_rate_limit_scenario(
+                    &client,
+                    &base_url,
+                    &token,
+                    args.concurrency,
+                    args.duration,
+                )
+            );
         }
         "mixed" => {
-            run_mixed_scenario(
-                &client,
-                &server.base_url,
-                &token,
-                std::cmp::min(args.concurrency, 5), // cap at 5: SQLite single-writer bottleneck
-                args.duration,
-            )
-            .await;
+            let effective_concurrency = std::cmp::min(args.concurrency, 5);
+            run_and_record!(
+                "mixed",
+                effective_concurrency,
+                run_mixed_scenario(
+                    &client,
+                    &base_url,
+                    &token,
+                    effective_concurrency, // cap at 5: SQLite single-writer bottleneck
+                    args.duration,
+                )
+            );
         }
         "all" => {
             // Run all scenarios sequentially
-            println!("Running ALL scenarios sequentially...\n");
+            if TEXT_OUTPUT_ENABLED.load(Ordering::Relaxed) {
+                println!("Running ALL scenarios sequentially...\n");
+            }
 
-            run_health_scenario(
-                &client,
-                &server.base_url,
-                &token,
+            run_and_record!(
+                "health",
                 args.concurrency,
-                args.duration,
-            )
-            .await;
-            run_auth_scenario(
-                &client,
-                &server.base_url,
-                &token,
+                run_health_scenario(&client, &base_url, &token, args.concurrency, args.duration,)
+            );
+            run_and_record!(
+                "auth",
                 args.concurrency,
-                args.duration,
-            )
-            .await;
-            run_provenance_query_scenario(
-                &client,
-                &server.base_url,
-                &token,
+                run_auth_scenario(&client, &base_url, &token, args.concurrency, args.duration,)
+            );
+            run_and_record!(
+                "provenance-query",
                 args.concurrency,
-                args.duration,
-            )
-            .await;
-            run_intent_compile_scenario(
-                &client,
-                &server.base_url,
-                &token,
-                std::cmp::min(args.concurrency, 5), // cap at 5: SQLite single-writer bottleneck
-                args.duration,
-            )
-            .await;
-            run_execution_pipeline_scenario(
-                &client,
-                &server.base_url,
-                &token,
-                std::cmp::min(args.concurrency, 5), // cap at 5: SQLite single-writer bottleneck
-                args.duration,
-            )
-            .await;
-            run_capability_scenario(
-                &client,
-                &server.base_url,
-                &token,
-                std::cmp::min(args.concurrency, 5), // cap at 5: SQLite single-writer bottleneck
-                args.duration,
-            )
-            .await;
-            run_sqlite_contention_scenario(
-                &client,
-                &server.base_url,
-                &token,
+                run_provenance_query_scenario(
+                    &client,
+                    &base_url,
+                    &token,
+                    args.concurrency,
+                    args.duration,
+                )
+            );
+            let effective_concurrency = std::cmp::min(args.concurrency, 5);
+            run_and_record!(
+                "intent-compile",
+                effective_concurrency,
+                run_intent_compile_scenario(
+                    &client,
+                    &base_url,
+                    &token,
+                    effective_concurrency, // cap at 5: SQLite single-writer bottleneck
+                    args.duration,
+                )
+            );
+            run_and_record!(
+                "execution-pipeline",
+                effective_concurrency,
+                run_execution_pipeline_scenario(
+                    &client,
+                    &base_url,
+                    &token,
+                    effective_concurrency, // cap at 5: SQLite single-writer bottleneck
+                    args.duration,
+                )
+            );
+            run_and_record!(
+                "capability",
+                effective_concurrency,
+                run_capability_scenario(
+                    &client,
+                    &base_url,
+                    &token,
+                    effective_concurrency, // cap at 5: SQLite single-writer bottleneck
+                    args.duration,
+                )
+            );
+            run_and_record!(
+                "sqlite-contention",
                 args.concurrency,
-                args.duration,
-            )
-            .await;
-            run_rate_limit_scenario(
-                &client,
-                &server.base_url,
-                &token,
+                run_sqlite_contention_scenario(
+                    &client,
+                    &base_url,
+                    &token,
+                    args.concurrency,
+                    args.duration,
+                )
+            );
+            run_and_record!(
+                "rate-limit",
                 args.concurrency,
-                args.duration,
-            )
-            .await;
-            run_mixed_scenario(
-                &client,
-                &server.base_url,
-                &token,
-                std::cmp::min(args.concurrency, 5), // cap at 5: SQLite single-writer bottleneck
-                args.duration,
-            )
-            .await;
+                run_rate_limit_scenario(
+                    &client,
+                    &base_url,
+                    &token,
+                    args.concurrency,
+                    args.duration,
+                )
+            );
+            run_and_record!(
+                "mixed",
+                effective_concurrency,
+                run_mixed_scenario(
+                    &client,
+                    &base_url,
+                    &token,
+                    effective_concurrency, // cap at 5: SQLite single-writer bottleneck
+                    args.duration,
+                )
+            );
         }
         _ => {
             eprintln!("Unknown scenario: {}", scenario);
@@ -1759,8 +2010,22 @@ async fn main() -> Result<()> {
         }
     }
 
-    println!();
-    println!("Stress test completed.");
+    let summary = StressSummary {
+        target: base_url,
+        auth_enabled: args.auth,
+        rate_limit_enabled: args.rate_limit,
+        scenarios: summaries,
+    };
+    check_thresholds(&summary.scenarios, args.max_error_rate, args.max_p95_ms)?;
+
+    match args.output_format {
+        StressOutputFormat::Text => {
+            println!();
+            println!("Stress test completed.");
+        }
+        StressOutputFormat::Json => print_json_summary(&summary)?,
+        StressOutputFormat::Junit => print_junit_summary(&summary),
+    }
 
     // Force exit: reqwest connection pool and axum server spawn background
     // tasks that keep the tokio runtime alive. For a stress-test tool,

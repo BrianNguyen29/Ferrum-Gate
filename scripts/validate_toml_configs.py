@@ -66,6 +66,16 @@ def check_safety(path: Path) -> list[str]:
             errors.append(
                 f"{_rel(path)}: prod-like config has allow_insecure_nonlocal_bind=true"
             )
+        for field in ("git_repo_roots", "sqlite_db_roots"):
+            roots = server.get(field, [])
+            if not isinstance(roots, list):
+                errors.append(f"{_rel(path)}: {field} must be an array")
+                continue
+            for root in roots:
+                if not isinstance(root, str) or not Path(root).is_absolute():
+                    errors.append(
+                        f"{_rel(path)}: {field} entries must be absolute paths"
+                    )
 
     return errors
 

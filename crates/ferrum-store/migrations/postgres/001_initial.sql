@@ -109,7 +109,11 @@ CREATE TABLE IF NOT EXISTS provenance_edges (
     to_event_id TEXT NOT NULL,
     from_event_id TEXT NOT NULL,
     edge_type TEXT NOT NULL,
-    summary TEXT
+    summary TEXT,
+    CONSTRAINT fk_provenance_edges_to_event
+        FOREIGN KEY (to_event_id) REFERENCES provenance_events(event_id),
+    CONSTRAINT fk_provenance_edges_from_event
+        FOREIGN KEY (from_event_id) REFERENCES provenance_events(event_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_provenance_edges_to_event_id ON provenance_edges(to_event_id);
@@ -123,7 +127,9 @@ CREATE TABLE IF NOT EXISTS ledger_entries (
     occurred_at TEXT NOT NULL,
     content_hash TEXT,
     previous_ledger_hash TEXT,
-    raw_json TEXT NOT NULL
+    raw_json TEXT NOT NULL,
+    CONSTRAINT fk_ledger_entries_event
+        FOREIGN KEY (event_id) REFERENCES provenance_events(event_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_ledger_entries_occurred_at ON ledger_entries(occurred_at);

@@ -53,10 +53,15 @@ impl TokenRole {
         match self {
             TokenRole::Admin => vec!["*".to_string()],
             TokenRole::Operator => vec![
+                "approval:read".to_string(),
                 "approval:resolve".to_string(),
+                "admin:lifecycle-outbox:read".to_string(),
+                "admin:lifecycle-outbox:write".to_string(),
                 "provenance:read".to_string(),
+                "provenance:write".to_string(),
                 "policy:read".to_string(),
                 "execution:verify".to_string(),
+                "execution:commit".to_string(),
                 "backup:run".to_string(),
             ],
             TokenRole::PolicyAuthor => vec![
@@ -74,6 +79,7 @@ impl TokenRole {
                 "execution:execute".to_string(),
                 "execution:verify".to_string(),
                 "execution:compensate".to_string(),
+                "provenance:write".to_string(),
             ],
             TokenRole::ReadOnly => vec!["policy:read".to_string(), "provenance:read".to_string()],
         }

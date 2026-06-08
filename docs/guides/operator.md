@@ -21,6 +21,9 @@ CLI args > env vars > config file > defaults
 | `FERRUMD_STORE_DSN` | Store DSN | `sqlite:/var/lib/ferrumgate/ferrumgate.db` |
 | `FERRUMD_AUTH_MODE` | Auth mode | `Bearer` |
 | `FERRUMD_BEARER_TOKEN` | Bearer token | `hex32-string` |
+| `FERRUMD_FS_WORKDIR` | Filesystem adapter sandbox root | `/var/lib/ferrumgate/workdir` |
+| `FERRUMD_GIT_REPO_ROOTS` | Comma-separated Git repository parent roots | `/srv/repos,/var/lib/ferrumgate/repos` |
+| `FERRUMD_SQLITE_DB_ROOTS` | Comma-separated SQLite database parent roots | `/var/lib/ferrumgate/databases` |
 | `FERRUMD_LOG_FILTER` | Log filter | `info` |
 | `FERRUMD_LOG_FORMAT` | Log format | `json` |
 | `FERRUMD_RATE_LIMIT_PER_SECOND` | Rate limit | `2` |
@@ -41,12 +44,13 @@ CLI args > env vars > config file > defaults
 bind_addr = "0.0.0.0:8080"
 auth_mode = "Bearer"
 bearer_token = "<generate-with-openssl-rand-hex-32>"
+fs_workdir = "/var/lib/ferrumgate/workdir"
+git_repo_roots = ["/var/lib/ferrumgate/repos"]
+sqlite_db_roots = ["/var/lib/ferrumgate/databases"]
 log_format = "json"
 rate_limit_per_second = 2
 rate_limit_burst = 50
-
-[store]
-dsn = "sqlite:/var/lib/ferrumgate/ferrumgate.db"
+store_dsn = "sqlite:///var/lib/ferrumgate/ferrumgate.db"
 ```
 
 ### Local development config
@@ -55,7 +59,7 @@ The repository includes `configs/ferrumgate.dev.toml`:
 
 - `auth_mode = "Disabled"`
 - In-memory SQLite
-- Loopback binding (`127.0.0.1:18080`)
+- Loopback binding (`127.0.0.1:8080`)
 
 This config auto-loads if no `--config` is specified and the file exists. **Never use dev config for exposed interfaces.**
 
@@ -65,6 +69,8 @@ This config auto-loads if no `--config` is specified and the file exists. **Neve
 
 - [ ] Choose store backend (SQLite for local use; PostgreSQL for higher throughput).
 - [ ] Generate bearer token with `openssl rand -hex 32`.
+- [ ] Set `fs_workdir` / `FERRUMD_FS_WORKDIR` for any non-loopback production-like deployment.
+- [ ] Set Git and SQLite root allowlists before enabling their mutation adapters.
 - [ ] Configure reverse proxy with TLS termination (nginx/Caddy).
 - [ ] Set up systemd service with env file.
 - [ ] Enable backup timer/cron.
@@ -137,6 +143,54 @@ Keyboard shortcuts:
 - `q` — quit
 
 > **Scope**: Operator convenience only. See `bins/ferrum-tui/README.md` for details.
+
+---
+
+## Lifecycle outbox operator review
+
+FerrumGate marks lifecycle records as `NeedsOperatorReview` when automatic provenance reconciliation cannot safely repair state, for example missing or ambiguous parent provenance, execution state drift, rollback state drift, or repeated reconciliation failures.
+
+### Inspect records
+
+```bash
+ferrumctl admin lifecycle-outbox list --status needs_operator_review --limit 50
+ferrumctl admin lifecycle-outbox get <outbox-id>
+```
+
+Review `last_error`, `attempt_count`, `previous_*_state`, `next_*_state`, `provenance_obligations`, and the linked execution/rollback identifiers before taking action.
+
+### Retry after fixing data
+
+Use retry only after the underlying issue has been corrected, such as restoring a missing provenance parent or resolving a temporary store failure:
+
+```bash
+ferrumctl admin lifecycle-outbox retry <outbox-id> \
+  --actor-id "<operator-id>" \
+  --reason "restored missing parent provenance event"
+```
+
+Retry resets the record to pending reconciliation and emits an audit trail with the operator actor and reason.
+
+### Resolve manually
+
+Use resolve only when the operator has verified the lifecycle state externally and automatic repair should not run again:
+
+```bash
+ferrumctl admin lifecycle-outbox resolve <outbox-id> \
+  --actor-id "<operator-id>" \
+  --reason "verified execution terminal state against external audit log"
+```
+
+Resolution requires a non-empty reason. Keep the reason specific enough for incident review.
+
+### Post-action checks
+
+```bash
+curl -fsS http://127.0.0.1:18080/v1/readyz/deep
+curl -fsS http://127.0.0.1:18080/v1/metrics | grep ferrumgate_lifecycle_outbox
+```
+
+Expected after remediation: `ferrumgate_lifecycle_outbox_operator_review` returns to `0`, expired leases do not grow, and deep readiness no longer reports lifecycle outbox degradation.
 
 ---
 

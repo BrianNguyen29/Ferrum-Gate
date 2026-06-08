@@ -4,6 +4,21 @@
 
 ---
 
+## Proposal action binding
+
+Known first-party tools may be mapped by the gateway from `tool_name` to an adapter/action pair.
+Unknown mutating tools fail closed unless the `ActionProposal.metadata` carries an explicit binding:
+
+```json
+{
+  "action_type": "FileWrite",
+  "adapter_key": "fs"
+}
+```
+
+This metadata is parsed as the typed `ActionBinding` contract and copied into the
+`RollbackPrepareRequest`. `action_type = "Unknown"` and empty `adapter_key` are rejected.
+
 ## fs — Filesystem adapter
 
 ### Supported operations

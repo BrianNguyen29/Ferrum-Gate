@@ -6,7 +6,7 @@ use ferrum_proto::{
 };
 use std::sync::Arc;
 
-use crate::{AdapterError, AdapterRegistry, ExecuteReceipt, PlannableAdapter};
+use crate::{AdapterError, AdapterRegistry, ExecuteReceipt, PlannableAdapter, RecoveryReceipt};
 
 pub struct RollbackService {
     registry: Arc<AdapterRegistry>,
@@ -27,8 +27,15 @@ impl RollbackService {
 
     pub async fn prepare(
         &self,
-        request: RollbackPrepareRequest,
+        mut request: RollbackPrepareRequest,
     ) -> anyhow::Result<RollbackPrepareResponse> {
+        if matches!(
+            request.rollback_class,
+            ferrum_proto::RollbackClass::R3IrreversibleHighConsequence
+        ) {
+            request.auto_commit = false;
+        }
+
         let adapter = self
             .registry
             .get(&request.adapter_key)
@@ -95,6 +102,17 @@ impl RollbackService {
             merged_metadata.insert(k.clone(), v.clone());
         }
 
+        // Hard invariant: R3 actions never auto-commit, regardless of whether
+        // the value came from a caller-supplied request or an adapter planner.
+        let final_auto_commit = if matches!(
+            request.rollback_class,
+            ferrum_proto::RollbackClass::R3IrreversibleHighConsequence
+        ) {
+            false
+        } else {
+            final_auto_commit
+        };
+
         let contract = RollbackContract {
             contract_id: RollbackContractId::new(),
             intent_id: request.intent_id,
@@ -148,25 +166,25 @@ impl RollbackService {
         Ok(receipt)
     }
 
-    pub async fn compensate(&self, contract: &RollbackContract) -> anyhow::Result<()> {
+    pub async fn compensate(&self, contract: &RollbackContract) -> anyhow::Result<RecoveryReceipt> {
         let adapter = self
             .registry
             .get(&contract.adapter_key)
             .context("adapter not registered")?;
-        adapter
+        let receipt = adapter
             .compensate(contract)
             .await
             .map_err(map_adapter_err)?;
-        Ok(())
+        Ok(receipt)
     }
 
-    pub async fn rollback(&self, contract: &RollbackContract) -> anyhow::Result<()> {
+    pub async fn rollback(&self, contract: &RollbackContract) -> anyhow::Result<RecoveryReceipt> {
         let adapter = self
             .registry
             .get(&contract.adapter_key)
             .context("adapter not registered")?;
-        adapter.rollback(contract).await.map_err(map_adapter_err)?;
-        Ok(())
+        let receipt = adapter.rollback(contract).await.map_err(map_adapter_err)?;
+        Ok(receipt)
     }
 
     pub fn default_prepare_request(
@@ -529,12 +547,24 @@ mod tests {
         let mut request = make_request_with_empty_plan();
         request.rollback_class = ferrum_proto::RollbackClass::R3IrreversibleHighConsequence;
         request.compensation_plan = Vec::new(); // empty, R3 doesn't use compensation
-        request.auto_commit = false; // R3 must not auto-commit (enforced at prepare)
+        request.auto_commit = true; // malicious/direct caller attempt
 
         let response = service.prepare(request).await.unwrap();
         // R3 should succeed even with empty compensation plan (Invariant 9 applies to R2 only)
         assert!(response.contract.compensation_plan.is_empty());
-        // R3 prepare sets auto_commit=false; verify must honor it and suppress SideEffectCommitted.
+        // R3 prepare must override caller input and suppress auto-commit.
+        assert!(!response.contract.auto_commit);
+    }
+
+    #[tokio::test]
+    async fn test_r3_planner_cannot_enable_auto_commit() {
+        let (mut service, _registry) = make_test_service_with_adapter();
+        service.register_planner(Arc::new(FakePlannableAdapter { should_plan: true }));
+
+        let mut request = make_request_with_empty_plan();
+        request.rollback_class = ferrum_proto::RollbackClass::R3IrreversibleHighConsequence;
+
+        let response = service.prepare(request).await.unwrap();
         assert!(!response.contract.auto_commit);
     }
 }

@@ -7,17 +7,18 @@ use crate::error::StoreError;
 use crate::repos::LedgerEntry;
 use crate::sqlite::{
     SqliteApprovalRepo, SqliteCapabilityRepo, SqliteExecutionRepo, SqliteIntentRepo,
-    SqliteLedgerRepo, SqliteProposalRepo, SqliteProvenanceRepo, SqliteRollbackRepo,
+    SqliteLedgerRepo, SqliteLifecycleOutboxRepo, SqliteProposalRepo, SqliteProvenanceRepo,
+    SqliteRollbackRepo,
 };
 use crate::{
-    ApprovalRepo, CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo, ProposalRepo,
-    ProvenanceRepo, Result, RollbackRepo,
+    ApprovalRepo, CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo, LifecycleOutboxRepo,
+    ProposalRepo, ProvenanceRepo, Result, RollbackRepo,
 };
 use ferrum_proto::{
     ActionProposal, ApprovalId, ApprovalRequest, ApprovalState, CapabilityId, CapabilityLease,
     CapabilityStatus, EventId, ExecutionId, ExecutionRecord, ExecutionState, IntentEnvelope,
-    IntentId, IntentStatus, ProvenanceEdge, ProvenanceEvent, RollbackContract, RollbackContractId,
-    RollbackState,
+    IntentId, IntentStatus, LifecycleOutboxRecord, ProvenanceEdge, ProvenanceEvent,
+    RollbackContract, RollbackContractId, RollbackState,
 };
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -95,6 +96,18 @@ pub enum WriteOp {
         reply: oneshot::Sender<Result<()>>,
     },
 
+    // Lifecycle outbox operations
+    EnqueueLifecycleOutbox {
+        data: Box<LifecycleOutboxRecord>,
+        reply: oneshot::Sender<Result<()>>,
+    },
+    RecordLifecycleTransition {
+        execution: Box<ExecutionRecord>,
+        rollback_contract: Box<Option<RollbackContract>>,
+        outbox: Box<LifecycleOutboxRecord>,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
     // Approval operations
     InsertApproval {
         data: ApprovalRequest,
@@ -113,6 +126,11 @@ pub enum WriteOp {
     // Provenance operations
     AppendProvenanceEvent {
         data: ProvenanceEvent,
+        reply: oneshot::Sender<Result<()>>,
+    },
+    AppendProvenanceEventWithEdges {
+        data: ProvenanceEvent,
+        edges: Vec<ProvenanceEdge>,
         reply: oneshot::Sender<Result<()>>,
     },
     AppendProvenanceEdges {
@@ -245,6 +263,20 @@ impl WriteQueue {
                 state,
                 reply,
             },
+            WriteOp::EnqueueLifecycleOutbox { data, .. } => {
+                WriteOp::EnqueueLifecycleOutbox { data, reply }
+            }
+            WriteOp::RecordLifecycleTransition {
+                execution,
+                rollback_contract,
+                outbox,
+                ..
+            } => WriteOp::RecordLifecycleTransition {
+                execution,
+                rollback_contract,
+                outbox,
+                reply,
+            },
             WriteOp::InsertApproval { data, .. } => WriteOp::InsertApproval { data, reply },
             WriteOp::UpdateApproval { data, .. } => WriteOp::UpdateApproval { data, reply },
             WriteOp::ResolveApproval {
@@ -256,6 +288,9 @@ impl WriteQueue {
             },
             WriteOp::AppendProvenanceEvent { data, .. } => {
                 WriteOp::AppendProvenanceEvent { data, reply }
+            }
+            WriteOp::AppendProvenanceEventWithEdges { data, edges, .. } => {
+                WriteOp::AppendProvenanceEventWithEdges { data, edges, reply }
             }
             WriteOp::AppendProvenanceEdges {
                 to_event_id, edges, ..
@@ -354,6 +389,27 @@ async fn execute_write_op(pool: &SqlitePool, op: WriteOp) -> Result<()> {
             let result = repo.update_state(contract_id, state).await;
             let _ = reply.send(result);
         }
+        WriteOp::EnqueueLifecycleOutbox { data, reply } => {
+            let repo = SqliteLifecycleOutboxRepo::new(pool.clone());
+            let result = repo.enqueue_lifecycle_transition(&data).await;
+            let _ = reply.send(result);
+        }
+        WriteOp::RecordLifecycleTransition {
+            execution,
+            rollback_contract,
+            outbox,
+            reply,
+        } => {
+            let repo = SqliteLifecycleOutboxRepo::new(pool.clone());
+            let result = repo
+                .record_lifecycle_transition(
+                    &execution,
+                    rollback_contract.as_ref().as_ref(),
+                    &outbox,
+                )
+                .await;
+            let _ = reply.send(result);
+        }
         WriteOp::InsertApproval { data, reply } => {
             let repo = SqliteApprovalRepo::new(pool.clone());
             let result = repo.insert(&data).await;
@@ -376,6 +432,11 @@ async fn execute_write_op(pool: &SqlitePool, op: WriteOp) -> Result<()> {
         WriteOp::AppendProvenanceEvent { data, reply } => {
             let repo = SqliteProvenanceRepo::new(pool.clone());
             let result = repo.append_event(&data).await;
+            let _ = reply.send(result);
+        }
+        WriteOp::AppendProvenanceEventWithEdges { data, edges, reply } => {
+            let repo = SqliteProvenanceRepo::new(pool.clone());
+            let result = repo.append_event_with_edges(&data, &edges).await;
             let _ = reply.send(result);
         }
         WriteOp::AppendProvenanceEdges {

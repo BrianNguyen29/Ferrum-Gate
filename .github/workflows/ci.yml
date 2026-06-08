@@ -13,6 +13,27 @@ jobs:
         run: find . -maxdepth 3 | sort
       - name: Local validation
         run: make validate
+      - name: Route scope documentation contract
+        run: python3 scripts/validate_route_scope_docs.py
+      - name: Documentation TOML snippets contract
+        run: python3 scripts/validate_docs_toml_snippets.py
+      - name: Monitoring metric contract
+        run: python3 scripts/validate_monitoring_metrics.py
+      - name: Prometheus rule validation
+        run: >-
+          docker run --rm
+          --entrypoint /bin/promtool
+          --volume "$PWD/configs/monitoring:/rules:ro"
+          prom/prometheus:v2.53.5
+          check rules /rules/ferrumgate-alerts.yaml
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+      - name: Helm chart lint and render
+        run: |
+          helm lint deploy/helm/ferrumgate \
+            --set secrets.bearerToken=ci-placeholder-token-not-for-production
+          helm template ferrumgate deploy/helm/ferrumgate \
+            --set secrets.bearerToken=ci-placeholder-token-not-for-production >/tmp/ferrumgate-rendered.yaml
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Cargo fmt check
@@ -31,3 +52,75 @@ jobs:
         run: cargo check -p ferrumd -p ferrum-migrate -p ferrum-store -p ferrum-gateway --features postgres
       - name: Cargo clippy (postgres feature)
         run: cargo clippy -p ferrumd -p ferrum-migrate -p ferrum-store -p ferrum-gateway --features postgres -- -D warnings
+      - name: Release profile smoke
+        run: bash scripts/validate_release_feature_profile.sh
+      - name: ferrum-stress machine-readable smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run -q -p ferrum-stress -- \
+            --scenario health \
+            --duration 1 \
+            --concurrency 1 \
+            --output-format json >/tmp/ferrum-stress.json
+          python3 - <<'PY'
+          import json
+
+          with open("/tmp/ferrum-stress.json", encoding="utf-8") as fh:
+              summary = json.load(fh)
+          assert summary["scenarios"][0]["scenario"] == "health"
+          assert summary["scenarios"][0]["total_requests"] > 0
+          PY
+
+          cargo run -q -p ferrum-stress -- \
+            --scenario health \
+            --duration 1 \
+            --concurrency 1 \
+            --output-format junit >/tmp/ferrum-stress.xml
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse("/tmp/ferrum-stress.xml").getroot()
+          assert root.tag == "testsuite"
+          assert root.attrib["name"] == "ferrum-stress"
+          PY
+
+  postgres-live-tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ferrumgate_dev
+          POSTGRES_PASSWORD: ferrumgate_dev_password
+          POSTGRES_DB: ferrumgate_p2_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ferrumgate_dev -d ferrumgate_p2_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cargo test (PostgreSQL live, no skips)
+        shell: bash
+        run: |
+          set -euo pipefail
+          log_file="$(mktemp)"
+          trap 'rm -f "$log_file"' EXIT
+
+          cargo test -p ferrum-store --features postgres \
+            --test postgres_intents -- --nocapture 2>&1 | tee "$log_file"
+
+          if grep -Eq 'Skipping postgres live test|apply_embedded_migrations failed' "$log_file"; then
+            echo "PostgreSQL live tests reported a skipped or failed database setup." >&2
+            exit 1
+          fi
+
+          if ! grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored;' "$log_file"; then
+            echo "PostgreSQL live tests did not report a non-empty, fully executed suite." >&2
+            exit 1
+          fi

@@ -14,6 +14,7 @@ mod policy;
 mod policy_eval;
 mod problem;
 mod proposals;
+mod provenance;
 mod response;
 mod server;
 mod state;

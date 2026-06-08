@@ -38,7 +38,7 @@ pub enum RollbackState {
     Expired,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub enum ActionType {
     FileWrite,
     FileDelete,
